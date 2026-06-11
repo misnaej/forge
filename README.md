@@ -1,18 +1,24 @@
 # Forge
 
-A small **shared engineering foundation** for Python repos. Forge ships:
+AI agents write more code, faster — but unconstrained, they drift:
+silently disabled lint rules, half-written docstrings, standards that
+live as prose nobody runs. Good output needs hard guardrails, not good
+intentions.
+
+Forge ships those guardrails as **deterministic tools** that run the
+same way whether a human or an agent invokes them:
 
 - A pip-installable Python package (`forge-scripts`) with CLIs that
   codify a repo's quality standards (lint, docstrings, test naming,
   GitHub labels, env diagnostics).
 - A **drop-in pre-commit hook** that runs those CLIs in order on every
   commit, with no per-repo wiring.
-- An optional **Claude Code plugin** (agents, skills, hooks) that
-  orchestrates the same CLIs from inside an editor session — an add-on,
-  not a prerequisite.
+- An optional **Claude Code plugin** (agents, skills, hooks) that wires
+  the same CLIs into an agent session — an add-on, not a prerequisite.
 
 Everything mechanical is a plain CLI or shell hook. The Claude Code
-plugin is a thin orchestrator on top.
+plugin is a thin orchestrator on top — the gate is the CLI, never the
+model.
 
 ---
 
