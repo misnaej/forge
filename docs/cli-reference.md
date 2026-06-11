@@ -198,8 +198,8 @@ options:
 ## forge-continuation-append
 
 ```text
-usage: forge-continuation-append [-h]
-                                 (--commit HASH | --pr NUMBER | --merge HASH)
+usage: forge-continuation-append [-h] (--commit HASH | --pr NUMBER |
+                                 --merge HASH)
                                  subject
 
 Append one line to .plan/CONTINUATION.md's auto-appended activity section.
@@ -482,6 +482,19 @@ Verify every [project.scripts] entry in pyproject.toml is reachable from at
 least one wiring source path (install-forge-bootstrap STEPS, forge.precommit
 steps, audit/, git hooks, claude-hooks, dev/, agents/, skills/) or is listed
 in cli_wiring_exempt.toml with a reason.
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## verify-forge-docstring-coverage
+
+```text
+usage: verify-forge-docstring-coverage [-h]
+
+Measure docstring coverage with interrogate. Reads [tool.interrogate] for the
+gate and [tool.forge.docstring_coverage].badge for SVG output. Writes
+code_health/docstring_coverage.log.
 
 options:
   -h, --help  show this help message and exit
