@@ -1,9 +1,9 @@
 # Forge
 
-AI agents write more code, faster — but unconstrained, they drift:
-silently disabled lint rules, half-written docstrings, standards that
-live as prose nobody runs. Good output needs hard guardrails, not good
-intentions.
+AI agents write more code, faster — but without guardrails, quality
+drifts: lint rules silently disabled, docstrings half-written,
+standards left as prose nobody runs. Good output needs hard guardrails,
+not good intentions.
 
 Forge ships those guardrails as **deterministic tools** that run the
 same way whether a human or an agent invokes them:
@@ -80,7 +80,7 @@ edit `.githooks/pre-commit` directly. No plugin system, no config file.
 
 | Category | Items |
 |---|---|
-| **CLIs** (pip package, no Claude required) | `install-forge-bootstrap` (one-shot umbrella), `forge-upgrade` (two-phase upgrade flow), `forge-precommit` (full sequence dispatcher), `fix-forge-ruff` (ruff phase), `verify-forge-docstrings`, `verify-forge-repo-structure`, `verify-forge-test-naming`, `verify-forge-manifest`, `verify-forge-plugin-version`, `forge-continuation-append`, `forge-next-prep`, `install-forge-labels`, `forge-doctor`, `install-forge-githooks`, `install-forge-claude-md` |
+| **CLIs** (pip package, no Claude required) | `install-forge-bootstrap` (one-shot umbrella), `forge-upgrade` (two-phase upgrade flow), `forge-precommit` (full sequence dispatcher), `fix-forge-ruff` (ruff phase), `verify-forge-docstrings`, `verify-forge-docstring-coverage`, `verify-forge-repo-structure`, `verify-forge-test-naming`, `verify-forge-manifest`, `verify-forge-plugin-version`, `verify-forge-cli-wiring`, `forge-continuation-append`, `forge-next-prep`, `install-forge-labels`, `forge-doctor`, `install-forge-githooks`, `install-forge-claude-md` |
 | **Audit-pack CLIs** (pip package, optional `[audit]` extras) | `forge-audit-dup`, `forge-audit-deps`, `forge-audit-suppressions`, `forge-audit-orphans`, `forge-audit-data`, `forge-audit-claims`, `forge-audit-agents` (non-blocking template-conformance audit), `forge-audit-all` — see [`docs/audit-pack.md`](docs/audit-pack.md) |
 | **Git hooks** (drop-in, no Claude required) | `.githooks/pre-commit` (dispatcher), `.githooks/post-merge` + `.githooks/post-checkout` (auto-warn on FOUNDATION.md drift) |
 | **Process docs** | `docs/security.md`, `docs/audit-pack.md`, `docs/cli-reference.md` (generated CLI reference), `docs/api-digest.md` (generated index of all top-level functions/classes, public API + internal helpers); foundation engineering principles at `FOUNDATION.md` |
@@ -211,7 +211,12 @@ nothing is lost.
 |---|---|---|
 | `ruff` | `fix-forge-ruff` — runs `ruff format` (in-place) + `ruff check --fix --unsafe-fixes`, re-stages modified tracked files via `git add`, writes `code_health/ruff.log`. PASSes iff ruff cleared every violation; residue (rules without autofix) lands in the log. | Always (skipped if no `src/` or `tests/`) |
 | `docstrings` | `verify-forge-docstrings` — validates Google-style Args/Returns against signatures | Always (CLI picks files via staged + unstaged + branch diff vs main; reports cleanly when nothing matches) |
+| `docstring_coverage` | `verify-forge-docstring-coverage` — interrogate-based aggregate coverage %, per-file table, and a `MISSING:` symbol list for `forge:precommit-fixer`. | When `[tool.interrogate]` config + a source tree exist (self-skips otherwise). **Non-blocking**: reports only, never refuses the commit. |
+| `test_naming` | `verify-forge-test-naming` — validates test file / function naming conventions | When source / test dirs exist (skipped if none detected) |
+| `repo_structure` | `verify-forge-repo-structure` — asserts `REPO_STRUCTURE.md` matches the actual tree | Only when `REPO_STRUCTURE.md` exists |
 | `manifest_json` | Validates `.claude-plugin/*.json` as parseable JSON | Only when `.claude-plugin/` exists |
+| `cli_wiring` | `verify-forge-cli-wiring` — asserts every `[project.scripts]` entry is reachable from a wiring source (install/precommit/audit/hooks/agents/skills) | Opt-in via `[tool.forge.cli_wiring] enabled = true`; self-skips otherwise |
+| `commit_types_parity` | `forge-gen-commit-types --check` — asserts the conventional-commit types in `claude-hooks/check_commit_format.sh` match the canonical `CONVENTIONAL_COMMIT_TYPES` tuple | Only when `claude-hooks/check_commit_format.sh` exists |
 | `plugin_version` | Asserts `plugin.json["version"] > latest_tag` (semver) | Only when `.claude-plugin/plugin.json` exists and tags exist; skipped on the release commit |
 | `pip_audit` | `pip-audit --skip-editable --desc` — dependency CVE scan | Always (skipped if `pip-audit` not on PATH). **Non-blocking**: failures render as yellow `WARN` and do NOT refuse the commit. |
 
@@ -222,7 +227,8 @@ directly. To customize further, see
 
 Per-step stdout is captured to `code_health/<step>.log`. The hook exits
 non-zero if any **blocking** non-skipped step fails. Non-blocking
-warnings (currently `pip_audit`) print but don't change the exit code.
+steps (currently `pip_audit` and `docstring_coverage`) print but don't
+change the exit code.
 
 ---
 
