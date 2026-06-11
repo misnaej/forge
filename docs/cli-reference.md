@@ -1,0 +1,553 @@
+# CLI Reference
+
+Forge's console-script CLIs are its real public surface. This page documents each CLI's command-line interface, captured from its `--help` output.
+
+> **Generated file — do not edit by hand.** Regenerate with `forge-gen-cli-reference`; check for drift with `forge-gen-cli-reference --check`.
+
+## fix-forge-ruff
+
+```text
+usage: fix-forge-ruff [-h] [dirs ...]
+
+Run `ruff format` + `ruff check --fix --unsafe-fixes` in-place, re-stage
+modified tracked files, and write code_health/ruff.log.
+
+positional arguments:
+  dirs        Source dirs to fix. If empty, auto-detect from candidate list.
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## forge-audit-agents
+
+```text
+usage: forge-audit-agents [-h] [--scope {full,changed}] [--roots [ROOTS ...]]
+                          [--output OUTPUT]
+
+Measure forge agents against the canonical template in agents/_TEMPLATE.md.
+Non-blocking initially; promoted after Layer 3 trim PRs.
+
+options:
+  -h, --help            show this help message and exit
+  --scope {full,changed}
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        modified files vs main.
+  --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
+                        if omitted.
+  --output OUTPUT       Override log path. Defaults to
+                        code_health/audit_<name>.log.
+```
+
+## forge-audit-all
+
+```text
+usage: forge-audit-all [-h] [--scope {full,changed}] [--roots [ROOTS ...]]
+                       [--only [{suppressions,agents,dup,deps,orphans,data,claims} ...]]
+                       [--output OUTPUT]
+
+Run every forge-audit-* script and aggregate results.
+
+options:
+  -h, --help            show this help message and exit
+  --scope {full,changed}
+  --roots [ROOTS ...]
+  --only [{suppressions,agents,dup,deps,orphans,data,claims} ...]
+                        Run only these sub-audits (default: all).
+  --output OUTPUT       Override summary log path (default:
+                        code_health/audit_summary.log).
+```
+
+## forge-audit-claims
+
+```text
+usage: forge-audit-claims [-h] [--scope {full,changed}] [--roots [ROOTS ...]]
+                          [--output OUTPUT] [--no-default-lexicon]
+
+Extract domain claims from docstrings/comments for verification.
+
+options:
+  -h, --help            show this help message and exit
+  --scope {full,changed}
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        modified files vs main.
+  --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
+                        if omitted.
+  --output OUTPUT       Override log path. Defaults to
+                        code_health/audit_<name>.log.
+  --no-default-lexicon  Disable the built-in lexicon (use only forge-audit-
+                        claims.toml).
+```
+
+## forge-audit-data
+
+```text
+usage: forge-audit-data [-h] [--scope {full,changed}] [--roots [ROOTS ...]]
+                        [--output OUTPUT]
+
+Structured-data integrity (CSV alignment + parse checks).
+
+options:
+  -h, --help            show this help message and exit
+  --scope {full,changed}
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        modified files vs main.
+  --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
+                        if omitted.
+  --output OUTPUT       Override log path. Defaults to
+                        code_health/audit_<name>.log.
+```
+
+## forge-audit-deps
+
+```text
+usage: forge-audit-deps [-h] [--scope {full,changed}] [--roots [ROOTS ...]]
+                        [--output OUTPUT]
+                        [--distance-threshold DISTANCE_THRESHOLD] [--tree]
+
+Module dependency analysis (cycles + Martin I/A/D metrics). Also renders a
+readable dependency tree to code_health/audit_deps_tree.log.
+
+options:
+  -h, --help            show this help message and exit
+  --scope {full,changed}
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        modified files vs main.
+  --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
+                        if omitted.
+  --output OUTPUT       Override log path. Defaults to
+                        code_health/audit_<name>.log.
+  --distance-threshold DISTANCE_THRESHOLD
+                        Report modules with main-sequence distance above this
+                        value (default: 0.7).
+  --tree                Print the rendered dependency tree to stdout. The tree
+                        is always written to code_health/audit_deps_tree.log
+                        regardless of this flag.
+```
+
+## forge-audit-dup
+
+```text
+usage: forge-audit-dup [-h] [--scope {full,changed}] [--roots [ROOTS ...]]
+                       [--output OUTPUT] [--min-tokens MIN_TOKENS]
+                       [--jaccard-threshold JACCARD_THRESHOLD]
+                       [--shingle-size SHINGLE_SIZE]
+
+Detect duplicate / near-duplicate / name-colliding functions.
+
+options:
+  -h, --help            show this help message and exit
+  --scope {full,changed}
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        modified files vs main.
+  --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
+                        if omitted.
+  --output OUTPUT       Override log path. Defaults to
+                        code_health/audit_<name>.log.
+  --min-tokens MIN_TOKENS
+                        Skip functions with fewer normalized tokens (default:
+                        30).
+  --jaccard-threshold JACCARD_THRESHOLD
+                        Minimum Jaccard similarity for near-duplicate report
+                        (default: 0.85).
+  --shingle-size SHINGLE_SIZE
+                        K-gram shingle window (default: 5).
+```
+
+## forge-audit-orphans
+
+```text
+usage: forge-audit-orphans [-h] [--scope {full,changed}] [--roots [ROOTS ...]]
+                           [--output OUTPUT] [--min-confidence MIN_CONFIDENCE]
+
+Detect unused code via vulture (>= min-confidence).
+
+options:
+  -h, --help            show this help message and exit
+  --scope {full,changed}
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        modified files vs main.
+  --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
+                        if omitted.
+  --output OUTPUT       Override log path. Defaults to
+                        code_health/audit_<name>.log.
+  --min-confidence MIN_CONFIDENCE
+                        Minimum vulture confidence (0-100) to report (default:
+                        80).
+```
+
+## forge-audit-suppressions
+
+```text
+usage: forge-audit-suppressions [-h] [--scope {full,changed}]
+                                [--roots [ROOTS ...]] [--output OUTPUT]
+
+List lint/type/coverage suppressions and resolve rule names.
+
+options:
+  -h, --help            show this help message and exit
+  --scope {full,changed}
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        modified files vs main.
+  --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
+                        if omitted.
+  --output OUTPUT       Override log path. Defaults to
+                        code_health/audit_<name>.log.
+```
+
+## forge-continuation-append
+
+```text
+usage: forge-continuation-append [-h]
+                                 (--commit HASH | --pr NUMBER | --merge HASH)
+                                 subject
+
+Append one line to .plan/CONTINUATION.md's auto-appended activity section.
+Single source of truth for the format used by forge:git-commit-push and
+forge:pr-manager.
+
+positional arguments:
+  subject        Subject line — commit subject, PR title, or merge subject.
+
+options:
+  -h, --help     show this help message and exit
+  --commit HASH  Record a commit. HASH is the short SHA.
+  --pr NUMBER    Record a PR wrap-up. NUMBER is the PR number (no leading #).
+  --merge HASH   Record a PR merge on main. HASH is the short SHA.
+```
+
+## forge-doctor
+
+```text
+usage: forge-doctor [-h] [--json] [--plugin-name PLUGIN_NAME]
+                    [--skip-plugin-checks]
+
+Validate a forge install in the current environment.
+
+options:
+  -h, --help            show this help message and exit
+  --json                Emit JSON instead of human-readable output.
+  --plugin-name PLUGIN_NAME
+                        Claude Code plugin name to check (default: forge). The
+                        plugin checks self-skip if no install is found, so
+                        consumers who don't use Claude Code can ignore this
+                        flag.
+  --skip-plugin-checks  Skip all Claude Code plugin checks entirely. Useful
+                        for consumers who only adopt the pip CLIs.
+```
+
+## forge-gen-api-digest
+
+```text
+usage: forge-gen-api-digest [-h] [--roots [ROOTS ...]] [--check]
+
+Generate docs/api-digest.md indexing top-level functions and classes (public
+API and internal helpers).
+
+options:
+  -h, --help           show this help message and exit
+  --roots [ROOTS ...]  Source dirs to scan. Auto-detected (src/ or packages)
+                       if omitted.
+  --check              Verify docs/api-digest.md is in sync; do not write.
+```
+
+## forge-gen-cli-reference
+
+```text
+usage: forge-gen-cli-reference [-h] [--check]
+
+Generate docs/cli-reference.md from forge CLI --help output.
+
+options:
+  -h, --help  show this help message and exit
+  --check     Verify docs/cli-reference.md is in sync; do not write.
+```
+
+## forge-gen-commit-types
+
+```text
+usage: forge-gen-commit-types [-h] [--check]
+
+Regenerate the conventional-commit alternation in claude-
+hooks/check_commit_format.sh from the canonical CONVENTIONAL_COMMIT_TYPES
+tuple in forge.pr_squash_comment.
+
+options:
+  -h, --help  show this help message and exit
+  --check     Verify the managed block matches the canonical alternation
+              without writing. Exit 1 on drift.
+```
+
+## forge-next-prep
+
+```text
+usage: forge-next-prep [-h] [--tag] [--no-prune-branches]
+                       [--target {dev,base}]
+
+Prepare main for the next task: fetch + pull --ff-only, optionally tag the
+rolling-next release, prune stale local branches. Used by the /next skill.
+
+options:
+  -h, --help           show this help message and exit
+  --tag                Tag plugin.json's version when it's ahead of the latest
+                       v* tag and push the tag (forge's rolling-next
+                       workflow). Off by default.
+  --no-prune-branches  Skip the stale-branch prune step.
+  --target {dev,base}  Branch to refresh. Resolved through [tool.forge] in
+                       pyproject.toml; falls back to 'main' if the config is
+                       absent. Most repos can leave this at the default.
+```
+
+## forge-post-checkout
+
+```text
+usage: forge-post-checkout [-h] [prev_head] [new_head] [branch_flag]
+
+Forge-managed post-checkout git-hook entrypoint. Invoked by the thin
+.githooks/post-checkout wrapper. Runs the foundation drift check only when the
+HEAD actually moved (branch_flag == '1'). No-ops in non-interactive contexts
+(FOUNDATION §15).
+
+positional arguments:
+  prev_head    prior HEAD (passed by git)
+  new_head     new HEAD (passed by git)
+  branch_flag  '1' for branch-changing checkouts; '0' for file-level checkouts
+
+options:
+  -h, --help   show this help message and exit
+```
+
+## forge-post-merge
+
+```text
+usage: forge-post-merge [-h]
+
+Forge-managed post-merge git-hook entrypoint. Invoked by the thin
+.githooks/post-merge wrapper. Runs the foundation drift check and backgrounds
+a self-refresh of managed hook wrappers. No-ops in non-interactive contexts
+(FOUNDATION §15).
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## forge-pr-squash-comment
+
+```text
+usage: forge-pr-squash-comment [-h] (--pr PR | --patch COMMENT_ID | --dry-run)
+                               --title TITLE [--bullet TEXT]
+
+Validate, fence-wrap, and post a squash-merge message as a PR comment.
+Replaces hand-built heredoc templates in pr-manager. Rules per FOUNDATION §6.
+
+options:
+  -h, --help          show this help message and exit
+  --pr PR             PR number to comment on (creates a new comment).
+  --patch COMMENT_ID  Rewrite an existing comment instead of posting a new
+                      one.
+  --dry-run           Print the wrapped body to stdout; do not call gh.
+  --title TITLE       Squash title (conventional-commit format).
+  --bullet TEXT       Bullet line. Repeat 3-5 times.
+```
+
+## forge-precommit
+
+```text
+usage: forge-precommit [-h] [--json]
+
+Run the forge pre-commit check sequence: ruff (format + check, self-healing
+with --unsafe-fixes on failure) + docstring verification (diff vs main) +
+test-name verification (diff vs main) + repo-structure verification
+(REPO_STRUCTURE.md vs the tree) + plugin manifest JSON + plugin version drift
+guard + pip-audit (non-blocking) — when applicable. Ruff fixes apply
+automatically on every run; fixed files are re-staged. Pytest is not in the
+default sequence — run it in CI or wire it into .githooks/pre-commit
+explicitly. Used by any repo that adopts forge via install-forge-githooks.
+
+options:
+  -h, --help  show this help message and exit
+  --json      Emit a JSON summary on stdout instead of human output.
+```
+
+## forge-upgrade
+
+```text
+usage: forge-upgrade [-h] [--channel {main,dev} | --to REF] [--continue]
+                     [--check] [--apply] [--pip-timeout SECONDS]
+
+Two-phase forge upgrade. Phase 1 (default): rewrite the forge-scripts pin in
+pyproject.toml + print the exact pip command. Phase 2 (--continue): after
+running pip, re-sync managed artifacts via install-forge-bootstrap.
+
+options:
+  -h, --help            show this help message and exit
+  --channel {main,dev}  Pin to a channel — `main` (slow, minor-only) or `dev`
+                        (every patch).
+  --to REF              Pin to a specific git ref (e.g. `v1.3.0`).
+  --continue            Phase 2: run install-forge-bootstrap to re-sync
+                        managed artifacts. Use after the phase-1 pip command
+                        has been run.
+  --check               Dry-run: print what would change without rewriting the
+                        pin.
+  --apply               One-shot: rewrite the pin + run pip install --force-
+                        reinstall + re-sync managed artifacts. For human-run
+                        setup scripts only — Claude Code agents are blocked
+                        from this flag by block_install_deps (FOUNDATION §2).
+  --pip-timeout SECONDS
+                        Wall-clock cap on the pip subprocess during --apply.
+                        Default: no timeout interactively, 600s in CI
+                        (detected via FORGE_NON_INTERACTIVE / CI / stdin TTY).
+                        Returns exit 124 on timeout (matches GNU timeout(1)).
+```
+
+## install-forge-bootstrap
+
+```text
+usage: install-forge-bootstrap [-h] [--check] [--skip SLUG] [--strict]
+
+One-shot consumer onboarding to forge's full capability set. Runs every
+install-forge-* installer + every forge-gen-* / forge-audit-* generator in
+dependency order. Idempotent.
+
+options:
+  -h, --help   show this help message and exit
+  --check      Dry-run. Each step that supports --check runs in check mode;
+               others just print their intent.
+  --skip SLUG  Skip a step by slug. Repeatable. Known slugs: githooks, claude-
+               md, labels, api-digest, cli-reference, audit-deps, doctor.
+  --strict     Abort on the first failed step. Default is continue-on-fail.
+```
+
+## install-forge-claude-md
+
+```text
+usage: install-forge-claude-md [-h] [--check] [--quiet] [--migrate] [--force]
+
+Sync the forge foundation into this repo. Writes/updates FOUNDATION.md
+(managed by forge); scaffolds CLAUDE.md with an `@FOUNDATION.md` include if it
+doesn't exist; creates `.claude/hooks/` with a README documenting the
+`${CLAUDE_PROJECT_DIR}/.claude/hooks/<name>.sh` path convention; writes a
+minimal `.claude/settings.json` if missing. Existing consumer-owned files are
+never touched.
+
+options:
+  -h, --help  show this help message and exit
+  --check     Exit non-zero if FOUNDATION.md drifts from the installed forge
+              version. Also warns if CLAUDE.md exists without the
+              `@FOUNDATION.md` include.
+  --quiet     Suppress 'already in sync' info logs (intended for git hooks).
+  --migrate   Convert a v1.1.2-or-earlier inline-block CLAUDE.md to the split
+              layout (FOUNDATION.md + @FOUNDATION.md include).
+  --force     Overwrite an existing FOUNDATION.md that lacks the forge-managed
+              markers. Use sparingly.
+```
+
+## install-forge-githooks
+
+```text
+usage: install-forge-githooks [-h] [--force] [--refresh] [--quiet]
+
+Install forge's managed git hooks (pre-commit, post-merge, post-checkout) and
+set core.hooksPath. Idempotent. Use --force to overwrite user-customized hooks
+or an existing core.hooksPath value.
+
+options:
+  -h, --help  show this help message and exit
+  --force     Overwrite user-customized hook files and any existing
+              non-.githooks core.hooksPath value.
+  --refresh   Rewrite managed hook files unconditionally (used by the post-
+              merge auto-refresh to pick up a new forge version). Does not
+              override user-customized hooks — pair with --force for that.
+  --quiet     Suppress INFO logs (used by the post-merge auto-refresh).
+```
+
+## install-forge-labels
+
+```text
+usage: install-forge-labels [-h] [--repo REPO]
+
+Install Forge canonical labels.
+
+options:
+  -h, --help   show this help message and exit
+  --repo REPO  OWNER/REPO (defaults to current dir's remote)
+```
+
+## verify-forge-cli-wiring
+
+```text
+usage: verify-forge-cli-wiring [-h]
+
+Verify every [project.scripts] entry in pyproject.toml is reachable from at
+least one wiring source path (install-forge-bootstrap STEPS, forge.precommit
+steps, audit/, git hooks, claude-hooks, dev/, agents/, skills/) or is listed
+in cli_wiring_exempt.toml with a reason.
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## verify-forge-docstrings
+
+```text
+usage: verify-forge-docstrings [-h] [target]
+
+Verify docstring accuracy against actual code signatures.
+
+positional arguments:
+  target      Optional file path to check. Defaults to modified files vs main.
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## verify-forge-manifest
+
+```text
+usage: verify-forge-manifest [-h]
+
+Validate that every .claude-plugin/*.json file parses as JSON. Writes
+code_health/manifest_json.log.
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## verify-forge-plugin-version
+
+```text
+usage: verify-forge-plugin-version [-h]
+
+Assert .claude-plugin/plugin.json['version'] is strictly greater than the
+latest git tag. Writes code_health/plugin_version.log.
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## verify-forge-repo-structure
+
+```text
+usage: verify-forge-repo-structure [-h] [--verbose]
+
+Verify REPO_STRUCTURE.md is in sync with actual structure.
+
+options:
+  -h, --help     show this help message and exit
+  --verbose, -v  Show all extracted paths.
+```
+
+## verify-forge-test-naming
+
+```text
+usage: verify-forge-test-naming [-h] [target]
+
+Verify test naming standards on auto-detected or given files.
+
+positional arguments:
+  target      Optional test file to check. Defaults to modified files under
+              test/ or tests/.
+
+options:
+  -h, --help  show this help message and exit
+```

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "forge",
+  "description": "Forge: shared engineering foundation. Process docs, pre-commit verification, git hooks, plus an optional Claude Code plugin.",
+  "owner": {
+    "name": "Jean Simonnet",
+    "url": "https://github.com/misnaej/forge"
+  },
+  "plugins": [
+    {
+      "name": "forge",
+      "description": "Shared agents, skills, hooks, and CLAUDE.md core for engineering foundations.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

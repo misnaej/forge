@@ -1,0 +1,50 @@
+{
+  "name": "forge",
+  "version": "1.16.1",
+  "description": "A shared engineering foundation for Python repos: pip-installable quality-gate CLIs (lint, docstrings, audits), a drop-in pre-commit hook, and an optional Claude Code plugin layered on top.",
+  "author": {
+    "name": "Jean Simonnet",
+    "url": "https://github.com/misnaej/forge"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/misnaej/forge",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_branches.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_force_push.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_pr_merge.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_no_verify.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_install_deps.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_claude_attribution.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_continuation_delete.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/check_commit_format.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/warn_pr_checks.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_raw_ruff.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_raw_git.sh", "timeout": 5 }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_files.sh", "timeout": 5 }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_files.sh", "timeout": 5 }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/check_foundation_sync.sh", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}

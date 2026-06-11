@@ -1,0 +1,205 @@
+"""Tests for ``forge.verify_docstring_coverage``."""
+
+from __future__ import annotations
+
+import textwrap
+from typing import TYPE_CHECKING
+
+from forge import verify_docstring_coverage
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
+
+
+_WELL_DOCUMENTED = textwrap.dedent(
+    '''
+    """Module-level docstring."""
+
+
+    def well_documented() -> int:
+        """Return seven."""
+        return 7
+
+
+    class Foo:
+        """Class docstring."""
+
+        def method(self) -> int:
+            """Return zero."""
+            return 0
+    '''
+).lstrip()
+
+
+_PARTIALLY_DOCUMENTED = textwrap.dedent(
+    '''
+    """Module-level docstring."""
+
+
+    def documented() -> int:
+        """Return seven."""
+        return 7
+
+
+    def undocumented() -> int:
+        return 0
+
+
+    def also_undocumented() -> int:
+        return -1
+    '''
+).lstrip()
+
+
+def _write_pyproject(root: Path, *, fail_under: float, badge: bool = False) -> None:
+    """Write a minimal ``pyproject.toml`` configuring the coverage gate.
+
+    Args:
+        root: Repository root to write into.
+        fail_under: Coverage threshold for ``[tool.interrogate]``.
+        badge: When True, opt into badge generation via
+            ``[tool.forge.docstring_coverage].badge = true``.
+    """
+    badge_section = "[tool.forge.docstring_coverage]\nbadge = true\n\n" if badge else ""
+    (root / "pyproject.toml").write_text(
+        textwrap.dedent(
+            f"""
+            [project]
+            name = "demo"
+            version = "0.0.0"
+
+            {badge_section}[tool.interrogate]
+            fail-under = {fail_under}
+            """
+        ).lstrip()
+    )
+
+
+def _write_src(root: Path, body: str, name: str = "demo.py") -> None:
+    """Write a Python module under ``src/`` to drive the coverage check.
+
+    Args:
+        root: Repository root.
+        body: Module body (already-dedented Python source).
+        name: Module filename, default ``demo.py``.
+    """
+    src = root / "src"
+    src.mkdir(exist_ok=True)
+    (src / name).write_text(body)
+
+
+def test_pass_when_coverage_meets_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Coverage at or above ``fail-under`` returns exit 0 + writes log."""
+    _write_pyproject(tmp_path, fail_under=90.0)
+    _write_src(tmp_path, _WELL_DOCUMENTED)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
+    assert verify_docstring_coverage.main() == 0
+    log = (tmp_path / "code_health" / "docstring_coverage.log").read_text()
+    assert ">= fail-under" in log
+
+
+def test_fail_when_coverage_below_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Coverage below ``fail-under`` returns exit 1 + logs the gap."""
+    _write_pyproject(tmp_path, fail_under=90.0)
+    _write_src(tmp_path, _PARTIALLY_DOCUMENTED)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
+    assert verify_docstring_coverage.main() == 1
+    log = (tmp_path / "code_health" / "docstring_coverage.log").read_text()
+    assert "< fail-under" in log
+
+
+def test_skip_when_no_pyproject(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No ``pyproject.toml`` → skip (consumer has not opted in)."""
+    _write_src(tmp_path, _WELL_DOCUMENTED)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
+    assert verify_docstring_coverage.main() == 0
+    log = (tmp_path / "code_health" / "docstring_coverage.log").read_text()
+    assert "skipped" in log
+
+
+def test_skip_when_no_src_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``pyproject.toml`` present but no ``src/`` → skip."""
+    _write_pyproject(tmp_path, fail_under=90.0)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
+    assert verify_docstring_coverage.main() == 0
+    log = (tmp_path / "code_health" / "docstring_coverage.log").read_text()
+    assert "skipped" in log
+
+
+def test_badge_written_when_opted_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``badge = true`` writes ``.badges/DocstringCoverage.svg``."""
+    _write_pyproject(tmp_path, fail_under=90.0, badge=True)
+    _write_src(tmp_path, _WELL_DOCUMENTED)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
+    assert verify_docstring_coverage.main() == 0
+    badge = tmp_path / ".badges" / "DocstringCoverage.svg"
+    assert badge.is_file()
+    assert badge.read_text().lstrip().startswith(
+        "<?xml"
+    ) or badge.read_text().lstrip().startswith("<svg")
+
+
+def test_badge_omitted_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without ``badge = true`` the ``.badges/`` directory stays untouched."""
+    _write_pyproject(tmp_path, fail_under=90.0)
+    _write_src(tmp_path, _WELL_DOCUMENTED)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
+    assert verify_docstring_coverage.main() == 0
+    assert not (tmp_path / ".badges").exists()
+
+
+def test_missing_list_format_for_precommit_fixer_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``MISSING: <path>:<line>:<name>`` lines emit per undocumented symbol.
+
+    This format is the dispatch contract with ``forge:precommit-fixer``.
+    Breaking it silently breaks the agent's ability to find the symbols
+    needing docstrings.
+    """
+    _write_pyproject(tmp_path, fail_under=50.0)
+    _write_src(tmp_path, _PARTIALLY_DOCUMENTED)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
+    verify_docstring_coverage.main()
+    log = (tmp_path / "code_health" / "docstring_coverage.log").read_text()
+    assert "## Missing docstrings (" in log
+    assert "MISSING:" in log
+    assert "undocumented" in log
+    assert "also_undocumented" in log
+
+
+def test_default_fail_under_matches_foundation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No ``fail-under`` in ``[tool.interrogate]`` → default 90 (FOUNDATION §8)."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.0.0"\n\n[tool.interrogate]\n'
+    )
+    _write_src(tmp_path, _WELL_DOCUMENTED)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
+    assert verify_docstring_coverage.main() == 0
+    log = (tmp_path / "code_health" / "docstring_coverage.log").read_text()
+    assert "fail-under 90" in log

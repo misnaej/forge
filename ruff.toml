@@ -1,0 +1,34 @@
+line-length = 88
+target-version = "py310"
+
+[lint]
+select = ["ALL"]
+ignore = [
+    "COM812",  # trailing comma — conflicts with ruff format
+    "ISC001",  # implicit string concat — conflicts with ruff format
+]
+
+[lint.per-file-ignores]
+"src/forge/**/*.py" = [
+    "S603",  # subprocess-without-shell: CLIs invoke gh/git/ruff by design
+    "S607",  # subprocess-partial-path: same — `gh`, `git` resolved via PATH
+]
+
+"tests/**/*.py" = [
+    "S101",     # assert-used: pytest's idiom
+    "PLR2004",  # magic-value-comparison: tests use literal status codes
+    "SLF001",   # private-member-access: tests reach into _helpers intentionally
+    "ARG001",   # unused-function-argument: fixtures get passed for side-effects
+    "S603",     # subprocess-without-shell: test helpers invoke git directly
+    "S607",     # subprocess-partial-path: `git` resolved via PATH in test env
+]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.isort]
+known-first-party = ["forge"]
+lines-after-imports = 2
+
+[format]
+docstring-code-format = true

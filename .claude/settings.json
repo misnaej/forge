@@ -1,0 +1,14 @@
+{
+  "enabledPlugins": {
+    "forge@forge": true
+  },
+  "extraKnownMarketplaces": {
+    "forge": {
+      "source": {
+        "source": "github",
+        "repo": "misnaej/forge",
+        "ref": "dev"
+      }
+    }
+  }
+}

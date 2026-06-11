@@ -1,0 +1,362 @@
+# API Digest
+
+A compact index of this codebase's symbols — every top-level function and class, with its signature and one-line summary. Both public API and internal helpers are indexed; internal helpers are tagged _(internal)_. Use it to check whether a helper for a task already exists before writing a new one (DRY) — reuse candidates are often private.
+
+> **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
+
+_27 modules, 266 symbols._
+
+## `forge.audit.agents`
+
+- `class AgentDoc` — Parsed view of one ``agents/*.md`` file.
+- `_split_frontmatter(text: str) -> tuple[dict[str, str | tuple[str, ...]], str]` _(internal)_ — Split YAML-ish frontmatter from the rest of an agent file.
+- `_strip_code_blocks(body: str) -> str` _(internal)_ — Remove fenced code blocks (``` ... ```) from *body*.
+- `_parse_agent(path: Path, repo_root_path: Path) -> AgentDoc` _(internal)_ — Read and parse one agent file.
+- `_word_count(body_no_code: str) -> int` _(internal)_ — Return the whitespace-split token count of *body_no_code*.
+- `_check_word_count(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag agent bodies above the length budget.
+- `_check_frontmatter(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag missing required frontmatter keys.
+- `_check_description_shape(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag descriptions that read as role labels rather than routing triggers.
+- `_check_reporter_tools(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag reporter agents holding mutating tools (`Write`/`Edit`).
+- `_check_required_sections(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag missing canonical H2 sections.
+- `_tokens(text: str) -> list[str]` _(internal)_ — Return whitespace-split lowercase tokens of *text*.
+- `_ngrams(tokens: list[str], n: int) -> set[str]` _(internal)_ — Return the set of *n*-token windows from *tokens*.
+- `_check_foundation_restatements(agent: AgentDoc, foundation_ngrams: set[str]) -> list[Finding]` _(internal)_ — Flag substrings of ``SHARED_TOKEN_MIN`` tokens shared with FOUNDATION.
+- `_cross_agent_duplicate_findings(agents: list[AgentDoc]) -> list[Finding]` _(internal)_ — Flag n-grams that appear in two or more agent files.
+- `class AgentsConfig` — Configuration for ``forge-audit-agents``.
+- `_iter_agent_files(repo_root_path: Path) -> list[Path]` _(internal)_ — Return every public agent markdown file under ``agents/``.
+- `_per_agent_findings(agent: AgentDoc, foundation_ngrams: set[str]) -> list[Finding]` _(internal)_ — Run every per-agent check and return the combined finding list.
+- `_render_summary(agents: list[AgentDoc], findings: list[Finding]) -> str` _(internal)_ — Render the per-agent summary table for the log header.
+- `run(scope: Scope, _roots: list[Path], config: AgentsConfig) -> int` — Walk every agent file and emit findings to ``code_health/audit_agents.log``.
+- `main() -> int` — CLI entry point for ``forge-audit-agents``.
+
+## `forge.audit.all`
+
+- `class SubResult` — Outcome of running one sub-audit.
+- `_read_finding_count(log_text: str) -> int` _(internal)_ — Parse the ``# findings: N`` header line from a log.
+- `_run_one(name: str, scope: str, roots: list[str] | None) -> SubResult` _(internal)_ — Invoke a sub-audit CLI and parse its log.
+- `_render_summary(results: list[SubResult]) -> str` _(internal)_ — Render the aggregate summary log text.
+- `main() -> int` — Run every sub-audit and write ``code_health/audit_summary.log``.
+
+## `forge.audit.claims`
+
+- `class ClaimsConfig` — Tunable knobs for the claims audit.
+- `_is_suppression_comment(line_text: str) -> bool` _(internal)_ — Return ``True`` if a comment is a known lint/type-checker directive.
+- `_looks_like_claim(text: str) -> bool` _(internal)_ — Return ``True`` if ``text`` matches any of the claim patterns.
+- `_matched_terms(text: str, lexicon: frozenset[str]) -> list[str]` _(internal)_ — Return the lexicon terms that appear in ``text`` (case-insensitive).
+- `_docstring_findings(source_lines: list[str], docstring: str, docstring_lineno: int, rel: str, lexicon: frozenset[str]) -> list[Finding]` _(internal)_ — Build claim findings from one docstring.
+- `_locate_claim_line(source_lines: list[str], start_line: int, claim_text: str, *, fallback_offset: int) -> int` _(internal)_ — Find the absolute line number containing ``claim_text``.
+- `_docstring_node_findings(tree: ast.Module, source_lines: list[str], rel: str, lexicon: frozenset[str]) -> list[Finding]` _(internal)_ — Scan every module / class / function docstring in a tree.
+- `_comment_findings(text: str, source_lines: list[str], rel: str, lexicon: frozenset[str]) -> list[Finding]` _(internal)_ — Scan every inline ``#`` comment for claims.
+- `_scan_file(path: Path, lexicon: frozenset[str]) -> list[Finding]` _(internal)_ — Scan a single ``.py`` file for claim candidates.
+- `load_repo_lexicon(*, use_default: bool = True) -> frozenset[str]` — Read ``forge-audit-claims.toml`` (if present) and merge with default.
+- `run(scope: Scope, roots: list[Path], config: ClaimsConfig) -> int` — Execute the claims-extraction pipeline.
+- `main() -> int` — CLI entry point for ``forge-audit-claims``.
+
+## `forge.audit.common`
+
+- `class Scope` — Audit scope selector.
+- `class Severity` — Finding severity tier.
+- `class Finding` — One audit observation with provenance.
+  - `render(self) -> str` — Render this finding as a single block in the log file.
+- `make_audit_parser(prog: str, description: str) -> argparse.ArgumentParser` — Build the shared CLI surface for an audit script.
+- `resolve_roots(roots: list[str] | None) -> list[Path]` — Resolve the effective scan roots.
+- `_is_excluded(path: Path) -> bool` _(internal)_ — Return ``True`` if ``path`` lies under any default-excluded directory.
+- `iter_files(scope: Scope, roots: list[Path], *, suffix: str = '.py') -> Iterator[Path]` — Yield matching files under ``roots`` respecting ``scope``.
+- `relpath(path: Path) -> str` — Render ``path`` relative to the repo root for log stability.
+- `write_log(name: str, findings: Iterable[Finding], summary: str, *, output: Path | None = None) -> Path` — Write findings + summary to ``code_health/audit_<name>.log``.
+- `exit_code_for(findings: Iterable[Finding]) -> int` — Map findings to a process exit code.
+- `count_by_severity(findings: Iterable[Finding]) -> dict[Severity, int]` — Tally findings per severity tier.
+
+## `forge.audit.data`
+
+- `class DataConfig` — Tunable knobs for the data audit.
+- `_gather_files(scope: Scope, roots: list[Path], suffixes: tuple[str, ...]) -> list[Path]` _(internal)_ — Collect candidate data files across the configured suffixes.
+- `_check_csv(path: Path) -> list[Finding]` _(internal)_ — Verify CSV column count is consistent across every row.
+- `_check_json(path: Path) -> list[Finding]` _(internal)_ — Parse a JSON file; report any decode error.
+- `_check_jsonschema(path: Path, data: object) -> list[Finding]` _(internal)_ — Validate a parsed JSON document against ``<path>.schema.json`` if present.
+- `_check_toml(path: Path) -> list[Finding]` _(internal)_ — Parse a TOML file; report any decode error.
+- `_check_yaml(path: Path) -> list[Finding]` _(internal)_ — Parse a YAML file; report any decode error.
+- `_check_one(path: Path) -> list[Finding]` _(internal)_ — Dispatch a single file to the appropriate parser.
+- `run(scope: Scope, roots: list[Path], config: DataConfig) -> int` — Execute the data-integrity audit.
+- `main() -> int` — CLI entry point for ``forge-audit-data``.
+
+## `forge.audit.deps`
+
+- `class ModuleNode` — One Python module after parsing.
+- `class DepsConfig` — Tunable knobs for the dependency-analysis pipeline.
+- `_resolve_module_name(path: Path, package_roots: list[Path]) -> str | None` _(internal)_ — Translate a ``.py`` path to a dotted module name.
+- `_extract_imports(tree: ast.Module, current_module: str) -> set[str]` _(internal)_ — Return the set of fully-qualified import-candidate targets.
+- `_closest_known(target: str, modules: dict[str, ModuleNode]) -> str | None` _(internal)_ — Walk up the dotted name until a known module is found.
+- `_abstractness(tree: ast.Module) -> tuple[int, int]` _(internal)_ — Count abstract vs total class definitions in a module.
+- `class _TarjanState` _(internal)_ — Mutable scratch space shared across Tarjan recursion frames.
+- `_pop_scc(state: _TarjanState, root: str) -> None` _(internal)_ — Pop nodes off the DFS stack down to ``root``, forming one SCC.
+- `_strongconnect(node: str, graph: dict[str, set[str]], state: _TarjanState) -> None` _(internal)_ — Tarjan inner step rooted at ``node``.
+- `_tarjan_scc(graph: dict[str, set[str]]) -> list[list[str]]` _(internal)_ — Compute strongly-connected components via Tarjan's algorithm.
+- `_compute_couplings(graph: dict[str, set[str]]) -> tuple[dict[str, int], dict[str, int]]` _(internal)_ — Compute afferent and efferent coupling counts.
+- `_instability(ca: int, ce: int) -> float` _(internal)_ — Compute the Martin instability metric.
+- `_build_cycle_findings(sccs: list[list[str]], modules: dict[str, ModuleNode]) -> list[Finding]` _(internal)_ — Render multi-node SCCs as CRITICAL ADP-violation findings.
+- `_build_distance_findings(modules: dict[str, ModuleNode], ca: dict[str, int], ce: dict[str, int], *, threshold: float) -> list[Finding]` _(internal)_ — Render main-sequence-distance violations as MEDIUM findings.
+- `_run_tach() -> list[Finding]` _(internal)_ — Run optional ``tach check`` and translate violations to findings.
+- `_scan_module(path: Path, package_roots: list[Path]) -> tuple[str, ModuleNode, set[str]] | None` _(internal)_ — Parse a single file into (name, node, raw-imports).
+- `_build_internal_graph(modules: dict[str, ModuleNode], raw_imports: dict[str, set[str]]) -> dict[str, set[str]]` _(internal)_ — Project raw imports onto the known-module graph.
+- `render_dependency_tree(graph: dict[str, set[str]], sccs: list[list[str]]) -> str` — Render the internal dependency graph as a readable plain-text tree.
+- `_write_tree_log(tree: str, *, output: Path | None) -> Path` _(internal)_ — Write the rendered dependency tree to ``code_health/audit_deps_tree.log``.
+- `run(scope: Scope, roots: list[Path], config: DepsConfig) -> int` — Execute the full dependency-analysis pipeline.
+- `main() -> int` — CLI entry point for ``forge-audit-deps``.
+
+## `forge.audit.dup`
+
+- `class CodeUnit` — One function definition extracted from the source tree.
+- `_strip_docstring(body: list[ast.stmt]) -> list[ast.stmt]` _(internal)_ — Return ``body`` with a leading docstring (if any) removed.
+- `_normalize_body(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str` _(internal)_ — Render the function body to canonical source (no docstring).
+- `_tokenize_body(source: str) -> list[str]` _(internal)_ — Tokenize ``source`` into a stable string sequence for shingling.
+- `_shingles(tokens: list[str], k: int) -> frozenset[tuple[str, ...]]` _(internal)_ — Return the set of ``k``-grams over the token sequence.
+- `_walk_functions(tree: ast.Module) -> Iterable[tuple[_FuncDef, str]]` _(internal)_ — Yield every function definition with its qualified-name prefix.
+- `extract_units(path: Path, *, min_tokens: int, shingle_size: int) -> list[CodeUnit]` — Extract every function-sized unit from a single file.
+- `_group_by_hash(units: list[CodeUnit]) -> list[list[CodeUnit]]` _(internal)_ — Group units sharing an identical body hash.
+- `_jaccard(a: frozenset[tuple[str, ...]], b: frozenset[tuple[str, ...]]) -> float` _(internal)_ — Jaccard similarity between two shingle sets.
+- `_find_near_dups(units: list[CodeUnit], exact_dup_ids: set[int], *, threshold: float) -> list[tuple[CodeUnit, CodeUnit, float]]` _(internal)_ — Pairwise scan for near-duplicate pairs above the Jaccard threshold.
+- `_find_name_collisions(units: list[CodeUnit], exact_dup_ids: set[int]) -> list[list[CodeUnit]]` _(internal)_ — Group units sharing a bare name across files but with different bodies.
+- `_exact_severity(paths: set[str]) -> Severity` _(internal)_ — Pick severity for an exact-duplicate group.
+- `_build_exact_findings(groups: list[list[CodeUnit]]) -> tuple[list[Finding], set[int]]` _(internal)_ — Render exact-duplicate groups as ``Finding`` records.
+- `_build_near_findings(pairs: list[tuple[CodeUnit, CodeUnit, float]]) -> list[Finding]` _(internal)_ — Render near-duplicate pairs as ``Finding`` records.
+- `_build_name_findings(groups: list[list[CodeUnit]]) -> list[Finding]` _(internal)_ — Render name-collision groups as informational findings.
+- `_summary(n_units: int, n_exact: int, n_near: int, n_name: int) -> str` _(internal)_ — Render the one-paragraph audit summary.
+- `class DupConfig` — Tunable knobs for the duplicate-detection pipeline.
+- `run(scope: Scope, roots: list[Path], config: DupConfig) -> int` — Execute the full duplicate-detection pipeline.
+- `main() -> int` — CLI entry point for ``forge-audit-dup``.
+
+## `forge.audit.orphans`
+
+- `class OrphansConfig` — Tunable knobs for the orphans audit.
+- `_load_vulture() -> object` _(internal)_ — Import the vulture module or exit with an install hint.
+- `_severity(confidence: int) -> Severity` _(internal)_ — Map a vulture confidence percentage to a finding severity.
+- `_build_findings(items: list[object]) -> list[Finding]` _(internal)_ — Translate vulture items to ``Finding`` records.
+- `_scavenge_paths(scope: Scope, roots: list[Path]) -> list[Path]` _(internal)_ — Decide what paths to hand to ``Vulture.scavenge``.
+- `run(scope: Scope, roots: list[Path], config: OrphansConfig) -> int` — Execute the orphans audit.
+- `main() -> int` — CLI entry point for ``forge-audit-orphans``.
+
+## `forge.audit.suppressions`
+
+- `class SuppressionsConfig` — Tunable knobs for the suppressions audit.
+- `_parse_codes(raw: str | None) -> list[str]` _(internal)_ — Split a comma-separated suppression-code string into trimmed codes.
+- `resolve_ruff_rule(code: str, cache: dict[str, tuple[str, str] | None]) -> tuple[str, str] | None` — Return ``(name, summary)`` for a ruff rule code, or ``None`` if unknown.
+- `_noqa_findings(path: str, line_no: int, line: str, rule_cache: dict[str, tuple[str, str] | None]) -> list[Finding]` _(internal)_ — Build findings for any ``# noqa`` directive on ``line``.
+- `_type_ignore_findings(path: str, line_no: int, line: str) -> list[Finding]` _(internal)_ — Build findings for any ``# type: ignore`` directive on ``line``.
+- `_pragma_findings(path: str, line_no: int, line: str) -> list[Finding]` _(internal)_ — Build findings for ``# pragma: no cover`` directives on ``line``.
+- `_iter_comments(text: str) -> list[tuple[int, str]]` _(internal)_ — Yield ``(line_no, line_text)`` for every line that holds a COMMENT.
+- `_scan_file(path: Path, rule_cache: dict[str, tuple[str, str] | None]) -> list[Finding]` _(internal)_ — Scan one source file for suppression directives.
+- `run(scope: Scope, roots: list[Path], config: SuppressionsConfig) -> int` — Execute the suppressions audit.
+- `main() -> int` — CLI entry point for ``forge-audit-suppressions``.
+
+## `forge.continuation_append`
+
+- `_today_iso() -> str` _(internal)_ — Return today's date as ``YYYY-MM-DD``.
+- `_ensure_file_and_section(path: Path) -> None` _(internal)_ — Create the file with the canonical headers if missing.
+- `_append_line(path: Path, line: str) -> None` _(internal)_ — Append *line* to *path* with a trailing newline.
+- `main() -> int` — Append one activity-log line to ``.plan/CONTINUATION.md``.
+
+## `forge.doctor`
+
+- `class CheckResult` — Outcome of one diagnostic check.
+- `_expected_clis() -> list[str]` _(internal)_ — Return the console-script names shipped by ``forge-scripts``.
+- `_check_clis() -> list[CheckResult]` _(internal)_ — One result per expected CLI entry point on PATH.
+- `_check_gh() -> list[CheckResult]` _(internal)_ — Check `gh` is installed and authenticated.
+- `_find_plugin_dir(plugin_name: str) -> Path | None` _(internal)_ — Locate a Claude Code plugin cache directory by name.
+- `_check_plugin_install(plugin_name: str) -> CheckResult` _(internal)_ — Verify Claude Code has installed the named plugin locally.
+- `_read_json(path: Path) -> tuple[dict, str | None]` _(internal)_ — Read a JSON file. Returns (data, error_message_or_None).
+- `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
+- `_check_plugin_contents(plugin_root: Path | None) -> list[CheckResult]` _(internal)_ — Verify the expected plugin sub-directories contain files.
+- `_check_under_used_capabilities(repo_root: Path) -> list[CheckResult]` _(internal)_ — Surface installed-but-never-run forge capabilities.
+- `_print_human(results: list[CheckResult]) -> None` _(internal)_ — Pretty-print results.
+- `main() -> int` — Run all forge-doctor checks and print the results.
+
+## `forge.fix_ruff`
+
+- `_restage_modified(repo_root: Path, source_dirs: list[str]) -> list[str]` _(internal)_ — ``git add`` tracked files modified inside *source_dirs*.
+- `_validate_dirs(repo_root: Path, dirs: list[str]) -> list[str]` _(internal)_ — Ensure every entry in *dirs* resolves inside *repo_root*.
+- `main() -> int` — Apply ruff fixes and write ``code_health/ruff.log``.
+
+## `forge.gen_api_digest`
+
+- `class Symbol` — One top-level symbol extracted from a module.
+- `class ModuleDigest` — The top-level symbols of a single module.
+- `detect_roots(root: Path, explicit: list[str] | None) -> list[Path]` — Resolve the source roots to scan for Python modules.
+- `_is_test_module(path: Path) -> bool` _(internal)_ — Return whether a module path is a test module to skip.
+- `iter_modules(roots: list[Path]) -> Iterator[Path]` — Yield Python module files under the given source roots.
+- `_annotation(node: ast.expr | None) -> str` _(internal)_ — Render an AST annotation node as source text.
+- `_format_arg(arg: ast.arg, default: ast.expr | None) -> str` _(internal)_ — Render a single argument with its annotation and default.
+- `_positional_args(args: ast.arguments) -> list[str]` _(internal)_ — Render the positional (and positional-only) arguments.
+- `_keyword_only_args(args: ast.arguments) -> list[str]` _(internal)_ — Render the keyword-only arguments, including the ``*`` marker.
+- `format_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str` — Reconstruct a function's signature from its AST node.
+- `_summary_line(node: ast.AST) -> str` _(internal)_ — Return the first line of an AST node's docstring.
+- `_is_public(name: str) -> bool` _(internal)_ — Return whether a symbol name is public.
+- `_is_dunder(name: str) -> bool` _(internal)_ — Return whether a symbol name is a dunder name.
+- `_class_methods(node: ast.ClassDef) -> tuple[tuple[str, str], ...]` _(internal)_ — Extract the public methods of a class.
+- `extract_symbols(tree: ast.Module) -> tuple[Symbol, ...]` — Extract top-level symbols from a parsed module.
+- `_dotted_name(path: Path, root: Path) -> str` _(internal)_ — Render a module path as a dotted name relative to the repo root.
+- `build_digest(root: Path, roots: list[Path]) -> list[ModuleDigest]` — Build the per-module digest for every module under the roots.
+- `_render_symbol(symbol: Symbol) -> list[str]` _(internal)_ — Render one symbol (and any methods) as markdown lines.
+- `count_symbols(digests: list[ModuleDigest]) -> int` — Return the total number of top-level symbols across all modules.
+- `render_digest(digests: list[ModuleDigest]) -> str` — Render the full API digest markdown document.
+- `main() -> int` — Generate or verify the API digest doc.
+
+## `forge.gen_cli_reference`
+
+- `class CliEntry` — A single forge console-script CLI.
+- `discover_clis(distribution: str = DISTRIBUTION) -> list[CliEntry]` — Discover the console-script CLIs shipped by a distribution.
+- `capture_help(entry: CliEntry) -> str` — Capture the ``--help`` output of a single CLI.
+- `render_reference(entries: list[CliEntry]) -> str` — Render the full CLI reference markdown document.
+- `main() -> int` — Generate or verify the forge CLI reference doc.
+
+## `forge.gen_common`
+
+- `check_doc_drift(root: Path, doc_relpath: str, generated: str, regen_cmd: str) -> int` — Compare freshly generated content against a committed doc.
+
+## `forge.git_utils`
+
+- `detect_existing_source_dirs(repo_root: Path) -> list[str]` — Return the subset of ``DEFAULT_SOURCE_DIRS`` that exist under *repo_root*.
+- `repo_root() -> Path` — Return the git repo root for the current working directory.
+- `configure_cli_logging() -> None` — Apply forge's canonical CLI logging setup.
+- `emit(msg: str) -> None` — Write *msg* to stdout with a trailing newline.
+- `parse_semver(version: str) -> tuple[int, int, int] | None` — Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
+- `require_cli(name: str, *, caller: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
+- `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
+- `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.
+- `_run_git(*args: str) -> str` _(internal)_ — Run a git command and return stdout.
+- `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
+- `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get list of modified files from git.
+
+## `forge.install_bootstrap`
+
+- `class Step` — One bootstrap step.
+- `_gate_labels(_root: Path) -> str | None` _(internal)_ — Skip ``install-forge-labels`` when ``gh`` or the GitHub remote is missing.
+- `_run_step(step: Step, *, check_mode: bool, root: Path) -> int` _(internal)_ — Execute one bootstrap step. Return its exit code.
+- `_resolve_steps(skip: Iterable[str]) -> list[Step]` _(internal)_ — Return the ordered step list with *skip* entries removed.
+- `main() -> int` — Run every install / generator step in order. Return non-zero on failure.
+
+## `forge.install_claudemd`
+
+- `_foundation_text() -> str` _(internal)_ — Return the bundled FOUNDATION.md text shipped with the pip package.
+- `_forge_version() -> str` _(internal)_ — Return the installed ``forge-scripts`` version, or ``unknown``.
+- `_build_foundation_file(*, foundation: str, version: str) -> str` _(internal)_ — Render the full ``FOUNDATION.md`` content including markers.
+- `_has_managed_markers(text: str) -> bool` _(internal)_ — Return True if *text* contains a forge-managed START/END pair.
+- `_normalize(text: str) -> str` _(internal)_ — Strip the version-stamped comment for drift comparison.
+- `sync_foundation(foundation_path: Path, *, check_only: bool = False, force: bool = False) -> bool` — Write or update ``FOUNDATION.md`` with the shipped foundation text.
+- `_claudemd_has_include(text: str) -> bool` _(internal)_ — Return True if *text* has an ``@FOUNDATION.md`` include directive.
+- `scaffold_claudemd(claudemd_path: Path) -> bool` — Write a minimal scaffold ``CLAUDE.md`` if the file does not exist.
+- `scaffold_claude_settings(settings_path: Path) -> bool` — Write a minimal ``.claude/settings.json`` if the file does not exist.
+- `ensure_claude_hooks_dir(hooks_dir: Path) -> bool` — Create ``.claude/hooks/`` with a README documenting the path convention.
+- `_installed_forge_scripts_version() -> str | None` _(internal)_ — Return the installed ``forge-scripts`` distribution version.
+- `_plugin_entry_version(entry: object) -> str | None` _(internal)_ — Pull the ``version`` field out of a single forge@forge entry.
+- `_installed_plugin_version(plugins_file: Path) -> str | None` _(internal)_ — Read the installed Claude Code plugin version from the manifest.
+- `_upstream_cache_path() -> Path` _(internal)_ — Return the upstream-version-check cache file path.
+- `_read_upstream_cache(cache_path: Path, ttl_hours: int) -> str | None` _(internal)_ — Return the cached latest-tag string if the cache is still fresh.
+- `_write_upstream_cache(cache_path: Path, latest_tag: str) -> None` _(internal)_ — Persist the latest-tag + check timestamp.
+- `_fetch_upstream_latest_tag() -> str | None` _(internal)_ — Query GitHub for the most recent forge tag.
+- `_is_behind(installed: str | None, latest: str | None) -> bool` _(internal)_ — Return ``True`` when *installed* is strictly older than *latest*.
+- `check_upstream(*, plugins_file: Path | None = None, cache_ttl_hours: int = _UPSTREAM_CACHE_TTL_HOURS_DEFAULT, fetch: Callable[[], str | None] = _fetch_upstream_latest_tag) -> None` — Warn (only) when the installed forge is behind the latest upstream tag.
+- `warn_claudemd_missing_include(claudemd_path: Path) -> None` — Log a warning when ``CLAUDE.md`` lacks the ``@FOUNDATION.md`` include.
+- `migrate_inline_block(claudemd_path: Path) -> bool` — Convert a v1.1.2-style inline-block ``CLAUDE.md`` to the split layout.
+- `main() -> int` — CLI entry point.
+
+## `forge.install_githooks`
+
+- `_installed_forge_version() -> str` _(internal)_ — Return the installed ``forge-scripts`` version, or ``0.0.0`` if absent.
+- `managed_marker(forge_version: str) -> str` — Render the managed-hook marker line for *forge_version*.
+- `class HookSpec` — A git hook the installer maintains.
+- `_hook_content(spec: HookSpec, forge_version: str) -> str` _(internal)_ — Render the full file content for *spec*.
+- `_is_managed(hook: Path) -> bool` _(internal)_ — Return True if *hook* carries any forge-managed marker.
+- `_write_hook(hook: Path, spec: HookSpec, forge_version: str, *, force: bool, refresh: bool = False) -> bool` _(internal)_ — Write *spec* to *hook* if it is missing or managed.
+- `_set_hooks_path(repo: Path, *, force: bool) -> None` _(internal)_ — Set ``core.hooksPath`` to ``.githooks``.
+- `main() -> int` — CLI entry point.
+
+## `forge.install_labels`
+
+- `_existing_labels(repo: str | None) -> set[str]` _(internal)_ — Return set of existing label names in the repo.
+- `_create_label(label: dict[str, str], repo: str | None) -> bool` _(internal)_ — Create one label. Returns True on success.
+- `main() -> int` — Install canonical foundation labels in the current GitHub repo.
+
+## `forge.next_prep`
+
+- `_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` _(internal)_ — Run ``git`` with *args*, return stripped stdout.
+- `_read_plugin_version(repo_root: Path) -> str | None` _(internal)_ — Return ``.claude-plugin/plugin.json["version"]`` or ``None`` if absent.
+- `_latest_v_tag(repo_root: Path) -> str | None` _(internal)_ — Return the highest ``v*`` git tag by sort-V, or ``None`` if none.
+- `_is_newer(plugin_ver: str, latest_tag: str | None) -> bool` _(internal)_ — Return True when ``v<plugin_ver>`` would sort *after* ``latest_tag``.
+- `_maybe_tag_release(repo_root: Path) -> str | None` _(internal)_ — Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
+- `_gone_branches(repo_root: Path) -> list[str]` _(internal)_ — Return local branch names whose tracking remote is ``[origin/...: gone]``.
+- `_prune_gone_branches(repo_root: Path) -> tuple[list[str], list[str]]` _(internal)_ — ``git branch -d`` every branch whose remote is gone.
+- `main() -> int` — Refresh main, optionally tag the release, prune stale local branches.
+
+## `forge.precommit`
+
+- `_color(code: str) -> str` _(internal)_ — Return *code* if stdout is a TTY, else an empty string.
+- `class StepResult` — Outcome of a single pre-commit step.
+- `_run(cmd: list[str], cwd: Path) -> tuple[bool, str]` _(internal)_ — Run *cmd* and capture combined output.
+- `step_ruff(repo_root: Path) -> StepResult` — Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
+- `step_docstrings(repo_root: Path) -> StepResult` — Run ``verify-forge-docstrings`` over the current diff vs main.
+- `step_test_naming(repo_root: Path) -> StepResult` — Run ``verify-forge-test-naming`` over the current diff vs main.
+- `step_repo_structure(repo_root: Path) -> StepResult` — Run ``verify-forge-repo-structure``; hard-fail if missing (FOUNDATION §2).
+- `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
+- `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.
+- `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
+- `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
+- `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
+- `run_all(repo_root: Path | None = None, *, print_progress: bool = True) -> list[StepResult]` — Run every step in order and return their results.
+- `main() -> int` — CLI entry point.
+
+## `forge.verify_docstrings`
+
+- `class Issue` — Represents a docstring issue found during verification.
+- `class DocstringVerifier` — AST visitor to verify docstrings match function signatures.
+  - `visit_Module(self, node: ast.Module) -> None` — Check module-level docstring.
+  - `visit_ClassDef(self, node: ast.ClassDef) -> None` — Check class docstring.
+  - `visit_FunctionDef(self, node: ast.FunctionDef) -> None` — Check function/method docstring.
+  - `visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None` — Check async function/method docstring.
+- `verify_file(filepath: Path) -> list[Issue]` — Verify docstrings in a single file.
+- `_group_issues_by_severity(all_issues: list[Issue]) -> tuple[list[Issue], list[Issue], list[Issue]]` _(internal)_ — Split issues into errors, warnings, and info lists.
+- `_short_path(full: str, repo_root_str: str) -> str` _(internal)_ — Return *full* relative to repo root (best-effort).
+- `_log_at_level(level: int, label: str, issues: list[Issue], repo_root_str: str) -> None` _(internal)_ — Log issues at a given severity level, one per line.
+- `_log_warnings_grouped(warnings: list[Issue], repo_root_str: str) -> None` _(internal)_ — Log warnings grouped by file.
+- `_log_issues(errors: list[Issue], warnings: list[Issue], infos: list[Issue], repo_root: Path, *, file_count: int) -> None` _(internal)_ — Log categorized issues and print a summary line.
+- `main() -> int` — Main entry point for docstring verification.
+
+## `forge.verify_manifest`
+
+- `_parse_json_error(manifest: Path) -> str | None` _(internal)_ — Return a formatted error if *manifest* is invalid JSON, else None.
+- `main() -> int` — Validate every ``.claude-plugin/*.json`` file and write the log.
+
+## `forge.verify_plugin_version`
+
+- `_is_release_commit(repo_root: Path, tag: str) -> bool` _(internal)_ — Return True if ``HEAD`` is the commit that *tag* points to.
+- `main() -> int` — Enforce plugin.json version > latest git tag.
+
+## `forge.verify_repo_structure`
+
+- `should_ignore(name: str) -> bool` — Check whether a top-level path name should be ignored.
+- `_filter_paths(paths: set[str]) -> set[str]` _(internal)_ — Filter out non-filesystem strings from extracted paths.
+- `_add_inline_paths(line: str, paths: set[str]) -> None` _(internal)_ — Extract backtick paths and top-level references from a single line.
+- `extract_paths_from_markdown(content: str) -> set[str]` — Extract filesystem paths mentioned in REPO_STRUCTURE.md.
+- `path_is_covered(path: str, documented_paths: set[str]) -> bool` — Check whether a path is covered by the documented paths.
+- `get_actual_top_level(root: Path) -> set[str]` — Get the top-level items that should be documented.
+- `verify_documented_paths_exist(documented_paths: set[str], root: Path) -> set[str]` — Find documented paths that do not exist on disk.
+- `verify_structure(root: Path, *, verbose: bool = False) -> tuple[set[str], set[str], int]` — Verify REPO_STRUCTURE.md against the actual repository tree.
+- `_log_issues(not_found: set[str], not_documented: set[str]) -> None` _(internal)_ — Log details about the drift found.
+- `_log_fix_instructions(not_found: set[str], not_documented: set[str]) -> None` _(internal)_ — Log instructions for resolving the detected drift.
+- `main() -> int` — Verify REPO_STRUCTURE.md is in sync with the repository tree.
+
+## `forge.verify_test_naming`
+
+- `class Issue` — Represents a test naming issue found during verification.
+- `class TestNamingVerifier` — AST visitor to verify test naming standards.
+  - `visit_FunctionDef(self, node: ast.FunctionDef) -> None` — Check function definition for naming issues.
+  - `visit_ClassDef(self, node: ast.ClassDef) -> None` — Visit class definition and track class context.
+  - `visit_Assign(self, node: ast.Assign) -> None` — Check module-level variable assignments for naming conventions.
+- `verify_file(filepath: Path) -> list[Issue]` — Verify test naming standards in a single file.
+- `_check_file_name_alignment(filepath: Path) -> list[Issue]` _(internal)_ — Verify the ``test_`` prefix on test file names (Rule 2).
+- `_check_duplicate_file_names(all_files: list[Path]) -> list[Issue]` _(internal)_ — Check for duplicate or ambiguous file names.
+- `_resolve_test_files(repo_root: Path, target: str | None) -> list[str]` _(internal)_ — Return repo-relative test file paths from CLI arg or git-modified set.
+- `_scan_files(py_files: list[str], repo_root: Path) -> tuple[list[Issue], list[str], int]` _(internal)_ — Verify each file, plus a cross-file duplicate-name check.
+- `_log_warnings(warnings: list[Issue]) -> None` _(internal)_ — Print warnings grouped by file.
+- `_report(files_scanned: int, all_issues: list[Issue], files_with_issues: list[str]) -> None` _(internal)_ — Print the verification summary.
+- `main() -> int` — Main entry point for test naming verification.

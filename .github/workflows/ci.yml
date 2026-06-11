@@ -1,0 +1,51 @@
+name: CI
+
+# Runs the same checks the local pre-commit hook runs, on every PR + push to
+# `main` or `dev`. Everything is invoked via forge's own CLIs
+# (`forge-precommit`, `verify-forge-docstrings`, `forge-doctor`,
+# `install-forge-claude-md`) — no bash duplication of what those CLIs already
+# do. If the hook passes locally, CI passes here.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+# Defense-in-depth: workflow only reads (no artifact uploads, no PR comments,
+# no label mutations). Pinning least privilege documents intent.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for setuptools-scm)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install forge-scripts (editable, with test deps)
+        run: pip install -e ".[test]"
+
+      # Same sequence the local pre-commit hook runs: ruff lint + ruff
+      # format + verify-forge-docstrings (diff vs main) + pytest + plugin
+      # manifest JSON. No CI-specific bash.
+      - name: forge-precommit (pre-commit hook sequence)
+        run: forge-precommit
+
+      # Same drift check the post-merge / post-checkout hooks run locally:
+      # the foundation block in CLAUDE.md must match FOUNDATION.md as
+      # shipped by the installed forge-scripts.
+      - name: install-forge-claude-md --check (CLAUDE.md sync)
+        run: install-forge-claude-md --check

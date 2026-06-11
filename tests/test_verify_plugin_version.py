@@ -1,0 +1,229 @@
+"""Tests for ``forge.verify_plugin_version``."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from typing import TYPE_CHECKING
+
+from forge import verify_plugin_version
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
+
+
+def _init_git_repo(repo: Path) -> None:
+    """Initialize a minimal git repo with one commit on ``main``.
+
+    Args:
+        repo: Directory to initialize. Must already exist.
+    """
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "PATH": os.environ.get("PATH", ""),
+    }
+    for cmd in (
+        ["git", "init", "-q", "-b", "main"],
+        ["git", "commit", "-q", "--allow-empty", "-m", "initial"],
+    ):
+        subprocess.run(cmd, cwd=repo, env=env, check=True)
+
+
+def _write_plugin(repo: Path, version: str) -> None:
+    """Write a minimal ``.claude-plugin/plugin.json`` with the given version.
+
+    Args:
+        repo: Repository directory.
+        version: Version string for ``plugin.json["version"]``.
+    """
+    plugin_dir = repo / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text(
+        json.dumps({"name": "x", "version": version})
+    )
+
+
+def _write_plugin_overwrite(repo: Path, version: str) -> None:
+    """Overwrite an existing ``plugin.json`` with a new version.
+
+    Companion to :func:`_write_plugin` for tests that bump the version
+    post-tag (mkdir would fail on the second call).
+
+    Args:
+        repo: Repository directory.
+        version: Version string for ``plugin.json["version"]``.
+    """
+    (repo / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "x", "version": version})
+    )
+
+
+def test_parse_semver_round_trip() -> None:
+    """``_parse_semver`` handles plain, v-prefixed, and pre-release suffixes."""
+    assert verify_plugin_version._parse_semver("1.2.3") == (1, 2, 3)
+    assert verify_plugin_version._parse_semver("v1.2.3") == (1, 2, 3)
+    assert verify_plugin_version._parse_semver("v1.2.3-rc1") == (1, 2, 3)
+    assert verify_plugin_version._parse_semver("1.2.3+build") == (1, 2, 3)
+
+
+def test_parse_semver_rejects_invalid() -> None:
+    """``_parse_semver`` returns ``None`` on non-X.Y.Z input."""
+    assert verify_plugin_version._parse_semver("1.2") is None
+    assert verify_plugin_version._parse_semver("v1.x.3") is None
+    assert verify_plugin_version._parse_semver("") is None
+
+
+def test_skipped_without_plugin_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No plugin.json → exit 0 and log says (skipped)."""
+    _init_git_repo(tmp_path)
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, check=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 0
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "no .claude-plugin/plugin.json" in log
+
+
+def test_skipped_without_tags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No git tags → exit 0 and log says (skipped)."""
+    _init_git_repo(tmp_path)
+    _write_plugin(tmp_path, "1.0.0")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 0
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "no git tags" in log
+
+
+def test_fail_when_version_not_strictly_greater(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """plugin.json version <= latest tag → exit 1.
+
+    The post-tag commit must actually change file content for the guard
+    to fire — empty / ``-s ours`` commits with identical trees are
+    correctly treated as the release state itself (covered separately
+    in ``test_skipped_when_tree_matches_tag_via_ours_merge`` and
+    ``test_skipped_on_release_commit``).
+    """
+    _init_git_repo(tmp_path)
+    _write_plugin(tmp_path, "1.0.0")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add plugin"], cwd=tmp_path, check=True
+    )
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, check=True)
+    # Real content change post-tag — must bump plugin.json or fail.
+    (tmp_path / "other.txt").write_text("post-tag work\n")
+    subprocess.run(["git", "add", "other.txt"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "post-tag content"], cwd=tmp_path, check=True
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 1
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "must be strictly greater" in log
+
+
+def test_pass_when_version_ahead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """plugin.json version > latest tag → exit 0 via the success path.
+
+    HEAD must carry a content change vs the tag's tree so the
+    tree-equality skip does not short-circuit; this test asserts the
+    actual comparison log.
+    """
+    _init_git_repo(tmp_path)
+    _write_plugin(tmp_path, "1.0.0")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add plugin"], cwd=tmp_path, check=True
+    )
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, check=True)
+    # Bump plugin.json post-tag — real content change, tree differs.
+    _write_plugin_overwrite(tmp_path, "1.0.1")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "bump to 1.0.1"], cwd=tmp_path, check=True
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 0
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "> latest tag" in log
+
+
+def test_skipped_on_release_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When HEAD is the tagged commit, plugin.json may equal the tag."""
+    _init_git_repo(tmp_path)
+    _write_plugin(tmp_path, "1.0.0")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add plugin"], cwd=tmp_path, check=True
+    )
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, check=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 0
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "release commit" in log
+
+
+def test_skipped_when_tree_matches_tag_via_ours_merge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``-s ours`` merge whose tree equals the tag's tree skips the guard.
+
+    Models the dual-track promotion scenario: dev merges main with ``-s
+    ours`` to absorb past promotion squash commits without changing any
+    file content. HEAD is a new commit SHA, but its tree equals the
+    tag's tree — the guard must skip.
+    """
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "PATH": os.environ.get("PATH", ""),
+    }
+    _init_git_repo(tmp_path)
+    _write_plugin(tmp_path, "1.0.0")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, env=env, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add plugin"], cwd=tmp_path, env=env, check=True
+    )
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=env, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "other"], cwd=tmp_path, env=env, check=True
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "divergent"],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+    )
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=tmp_path, env=env, check=True)
+    subprocess.run(
+        ["git", "merge", "-q", "-s", "ours", "other", "-m", "merge other"],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 0
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "release commit" in log

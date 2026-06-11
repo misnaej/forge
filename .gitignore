@@ -1,0 +1,37 @@
+__pycache__/
+*.pyc
+*.pyo
+*.swp
+.DS_Store
+.idea/
+.vscode/
+*.egg-info/
+dist/
+build/
+node_modules/
+
+# Session state — gitignored by foundation convention (see FOUNDATION.md §10)
+.plan/
+
+# Per-user Claude Code settings live in .claude/settings.local.json.
+# Exceptions tracked in the repo so every contributor gets them on
+# clone:
+# - .claude/skills/ — forge-private project-local skills (e.g.
+#   /promote — forge's dev→main release ceremony). Not exported via
+#   the plugin manifest.
+# - .claude/settings.json — project-shared Claude Code config:
+#   enables the forge plugin pinned to the dev channel so the
+#   marketplace + plugin config is identical for every contributor.
+.claude/*
+!.claude/settings.json
+!.claude/skills/
+!.claude/skills/**
+
+# Local scratch.
+tmp/
+
+# Pre-commit check logs (FOUNDATION §13).
+code_health/
+
+# Local issue exports for offline review (forge contributor workflow).
+issue_*.md
