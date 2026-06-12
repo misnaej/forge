@@ -114,10 +114,10 @@ Stop immediately and report if any step fails.
 ## Important Rules
 
 - **Always fetch from remote** before assuming branch / PR state.
-- **Tag the merge before pruning branches** — version-tracked repos need the release tag at the merge commit on main, not at some later commit. Step 4 runs after `git pull`, before stale-branch cleanup, so the tag points at the canonical release commit.
-- **Force-delete (`-D`) only confirmed-merged branches.** `forge-next-prep` deletes merged branches with safe `-d` and reports any it skips for "unmerged commits." A squash-merge makes `-d` refuse (the squashed commits are not ancestors of the base), so for each skipped branch, confirm its PR is merged/closed (`gh pr view <n> --json state`) and then `git branch -D <branch>`. **Never `-D` a branch with no merged/closed PR** — that risks losing genuinely unmerged work.
+- **Tag the merge before pruning branches** — version-tracked repos need the release tag at the merge commit, not at some later commit. The tag step (Step 2's `--tag` bullet) runs after `git pull`, before stale-branch cleanup, so the tag points at the canonical release commit.
+- **Force-delete (`-D`) only `MERGED` branches.** `forge-next-prep` deletes merged branches with safe `-d` and reports any it skips for "unmerged commits." A squash-merge makes `-d` refuse (the squashed commits are not ancestors of the base), so for each skipped branch, confirm its PR state is `MERGED` (`gh pr view <n> --json state` → `MERGED`) and then `git branch -D <branch>`. A `CLOSED`-but-unmerged PR means the work never landed — **leave it for the user; never `-D` it.** Never `-D` a branch with no merged PR.
 - **Never proceed with dirty git state** — always stop and let the user decide.
 - **Never delete `.plan/CONTINUATION.md`** — carry it forward in place (Phase 6).
-- **Skip Phases 3–4 when the user has already chosen the next task.** /next defaults to recommending from the backlog, but if the user's prior turn names a specific carry-over, follow-up, or open PR finding to work on, treat that as the chosen task and go straight to Phase 5 step 15 (branch creation) — do NOT delegate to `issue-triage`.
+- **Skip Phases 3–4 when the user has already chosen the next task.** /next defaults to recommending from the backlog, but if the user's prior turn names a specific carry-over, follow-up, or open PR finding to work on, treat that as the chosen task and go straight to Phase 5 step 13 (branch creation) — do NOT delegate to `issue-triage`.
 - **Delegate task selection** to `issue-triage` only when there is no pre-existing direction.
 - **Never delete docs without user confirmation.**

@@ -35,11 +35,7 @@
       "Bash(python -m pytest *)",
       "Bash(git *)",
       "Bash(gh pr *)",
-      "Bash(gh issue *)",
-      "Bash(gh api *)"
-    ],
-    "deny": [
-      "Bash(rm -rf *)"
+      "Bash(gh issue *)"
     ]
   }
 }

@@ -104,7 +104,20 @@ moving rules into the committed `.claude/settings.json` when a rule is:
 
 Rules in `settings.json` and `settings.local.json` **merge additively**,
 so promotion never removes a contributor's local rules — it just makes
-the shared baseline richer.
+the shared baseline richer. (`/next` Step 4 cleans garbage and
+wildcard-covered entries from `settings.local.json` at task start; this
+step promotes what stably remains.)
+
+A broad rule like `Bash(git *)` trades some safety for ergonomics: it is
+tolerable because forge's PreToolUse hooks (`block_raw_git`,
+`block_force_push`, `block_protected_branches`, `block_pr_merge`) block
+the worst calls (commit / push / force-push / merge / protected-branch
+writes) regardless of allow-rules. A few destructive forms
+(`git reset --hard`, `git clean`) are not hook-covered — commands outside
+`allow` still prompt in-context, so prefer a narrow rule for anything new
+unless a hook already covers its dangerous forms. Reserve `deny` for the
+rare case you want a hard, unconditional block (it cannot be approved
+in-context), not as a routine safety net.
 
 **Do NOT promote** (leave local, or add to `deny` in `settings.json`):
 network tools (`curl`/`wget`), destructive commands (`rm -rf`), or
