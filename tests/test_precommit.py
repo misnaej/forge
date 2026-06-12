@@ -312,7 +312,18 @@ def test_run_all_writes_code_health_logs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """run_all writes one log per step under code_health/."""
+    """run_all writes one log per step under code_health/.
+
+    SCENARIO: run_all executes the full step sequence end-to-end and
+    must persist each step's output to its own log file.
+    MOCK SETUP: swaps step_docstrings, step_test_naming,
+    step_repo_structure, step_pip_audit, and step_docstring_coverage
+    with `_stub_*` helpers so no real CLI / network call fires; ruff,
+    manifest_json, and plugin_version run their real shell-out path
+    against the empty tmp_path repo (which short-circuits to skip).
+    EXPECTED BEHAVIOR: code_health/ exists and contains a log file for
+    every step in the sequence.
+    """
     _stub_docstrings_passing(monkeypatch)
     _stub_test_naming_passing(monkeypatch)
     _stub_repo_structure_passing(monkeypatch)
@@ -339,7 +350,17 @@ def test_main_exit_code_zero_when_all_pass(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """main() returns 0 when every step is skipped or passed."""
+    """main() returns 0 when every step is skipped or passed.
+
+    SCENARIO: a clean repo where no check has anything to report —
+    main() must exit 0 and print the all-clear summary.
+    MOCK SETUP: get_repo_root is pinned to tmp_path; step_docstrings,
+    step_test_naming, step_repo_structure, step_pip_audit, and
+    step_docstring_coverage are stubbed to pass/skip; sys.argv is
+    patched to the bare `forge-precommit` invocation to drive main().
+    EXPECTED BEHAVIOR: main() returns 0 and stdout reports "All checks
+    passed".
+    """
     monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
     _stub_docstrings_passing(monkeypatch)
     _stub_test_naming_passing(monkeypatch)
@@ -358,7 +379,18 @@ def test_main_emits_json(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """--json emits a parseable list of step results without progress lines."""
+    """--json emits a parseable list of step results without progress lines.
+
+    SCENARIO: a tool consuming forge-precommit programmatically passes
+    --json and must receive machine-readable results, not the human
+    progress banners.
+    MOCK SETUP: get_repo_root is pinned to tmp_path; step_docstrings,
+    step_test_naming, step_repo_structure, step_pip_audit, and
+    step_docstring_coverage are stubbed to pass/skip; sys.argv is
+    patched to `forge-precommit --json`.
+    EXPECTED BEHAVIOR: stdout parses as a JSON list whose step names
+    cover the full sequence.
+    """
     monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
     _stub_docstrings_passing(monkeypatch)
     _stub_test_naming_passing(monkeypatch)
@@ -475,7 +507,17 @@ def test_non_blocking_warning_does_not_fail_main(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A non_blocking step that fails reports WARN but main() returns 0."""
+    """A non_blocking step that fails reports WARN but main() returns 0.
+
+    SCENARIO: an advisory (non-blocking) step fails — main() must
+    surface it as a WARN without flipping the overall exit code.
+    MOCK SETUP: get_repo_root is pinned to tmp_path; step_docstrings,
+    step_test_naming, and step_repo_structure are stubbed to pass;
+    step_pip_audit is replaced with a failing non_blocking StepResult;
+    sys.argv is patched to the bare `forge-precommit` invocation.
+    EXPECTED BEHAVIOR: main() returns 0; stdout prints WARN, the
+    all-blocking-passed summary, and names pip_audit with its log path.
+    """
     monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
     _stub_docstrings_passing(monkeypatch)
     _stub_test_naming_passing(monkeypatch)
@@ -505,7 +547,19 @@ def test_main_lists_failed_steps_with_log_paths(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """On blocking failure, the summary names every failed step + its log."""
+    """On blocking failure, the summary names every failed step + its log.
+
+    SCENARIO: two blocking steps fail in the same run — the failure
+    summary must enumerate each one with a pointer to its log.
+    MOCK SETUP: get_repo_root is pinned to tmp_path; step_repo_structure,
+    step_pip_audit, and step_docstring_coverage are stubbed to pass/skip;
+    step_docstrings and step_test_naming are replaced with failing
+    StepResults; sys.argv is patched to the bare `forge-precommit`
+    invocation.
+    EXPECTED BEHAVIOR: main() returns 1; stdout prints the failure
+    header and one "<step>: see code_health/<step>.log" line per
+    failed step.
+    """
     monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
     _stub_repo_structure_passing(monkeypatch)
     _stub_pip_audit_skipped(monkeypatch)

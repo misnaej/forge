@@ -1,5 +1,14 @@
 """Tests for ``forge.audit.all`` — the audit orchestrator."""
 
+# MOCKING STRATEGY: no sub-audit CLI actually runs — the orchestration logic is
+# exercised in isolation.
+#   - subprocess.run: replaced by `fake_run` closures returning an anonymous
+#     process object (returncode/stdout/stderr) so no child process spawns.
+#   - repo_root / require_cli: stubbed to a tmp_path and a no-op so the run
+#     neither touches the real repo nor enforces CLI presence.
+#   - git_utils.repo_root.cache_clear: no-op'd to avoid clearing the real cache.
+#   - patch(sys.argv): drives main()'s argument parsing (--only, defaults).
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

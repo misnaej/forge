@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from forge import upgrade
+from tests.conftest import FakeProc
 
 
 if TYPE_CHECKING:
@@ -359,7 +360,17 @@ def test_apply_runs_pip_and_bootstrap(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """`--apply` rewrites pin, runs pip force-reinstall, then bootstrap."""
+    """`--apply` rewrites pin, runs pip force-reinstall, then bootstrap.
+
+    SCENARIO: Happy-path ``--apply`` on a repo with a valid pin and usable
+        git auth.
+    MOCK SETUP: ``repo_root`` → sandbox; ``_stub_run_context`` pins
+        ``git_auth_mode``/``is_non_interactive`` past the CI gate;
+        ``subprocess.run`` captures the pip argv (returncode 0);
+        ``_bootstrap_main`` counts its invocations.
+    EXPECTED BEHAVIOR: pin rewritten to ``@main``, pip invoked with
+        ``--force-reinstall --no-deps``, bootstrap run exactly once, rc 0.
+    """
     pp = tmp_path / "pyproject.toml"
     pp.write_text(_BASE_PYPROJECT)
     monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
@@ -367,14 +378,9 @@ def test_apply_runs_pip_and_bootstrap(
 
     pip_calls: list[list[str]] = []
 
-    class _Proc:
-        """Mock subprocess result."""
-
-        returncode = 0
-
-    def _fake_run(cmd: list[str], **_kw: object) -> _Proc:
+    def _fake_run(cmd: list[str], **_kw: object) -> FakeProc:
         pip_calls.append(cmd)
-        return _Proc()
+        return FakeProc(returncode=0)
 
     bootstrap_calls: dict[str, int] = {"n": 0}
 
@@ -403,21 +409,24 @@ def test_apply_aborts_if_pip_fails(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """When pip fails, `--apply` reports failure and skips bootstrap."""
+    """When pip fails, `--apply` reports failure and skips bootstrap.
+
+    SCENARIO: ``--apply`` where the pip force-reinstall exits non-zero.
+    MOCK SETUP: ``repo_root`` → sandbox; ``_stub_run_context`` clears the
+        CI gate; ``subprocess.run`` returns ``FakeProc(returncode=1)`` to
+        simulate a pip failure; ``_bootstrap_main`` counts invocations.
+    EXPECTED BEHAVIOR: rc 1, bootstrap never called, a "pip install failed"
+        log emitted.
+    """
     pp = tmp_path / "pyproject.toml"
     pp.write_text(_BASE_PYPROJECT)
     monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
     _stub_run_context(monkeypatch)
 
-    class _Proc:
-        """Mock subprocess result."""
-
-        returncode = 1
-
     bootstrap_calls: dict[str, int] = {"n": 0}
 
-    def _fake_run(_cmd: list[str], **_kw: object) -> _Proc:
-        return _Proc()
+    def _fake_run(_cmd: list[str], **_kw: object) -> FakeProc:
+        return FakeProc(returncode=1)
 
     def _fake_bootstrap() -> int:
         bootstrap_calls["n"] += 1
@@ -506,7 +515,13 @@ def test_apply_aborts_when_auth_none_and_non_interactive(
 ) -> None:
     """auth=none + non-interactive → abort 2 before pip runs.
 
-    No credential prompt against ``/dev/null``, no hung subprocess.
+    SCENARIO: CI-style run where no git auth is usable and there is no TTY
+        to prompt for credentials.
+    MOCK SETUP: ``repo_root`` → sandbox; ``git_auth_mode`` → ``"none"`` and
+        ``is_non_interactive`` → ``True`` to arm the abort guard;
+        ``subprocess.run`` raises if reached, asserting pip is never run.
+    EXPECTED BEHAVIOR: rc 2 with a "no usable git auth detected" log, no
+        credential prompt against ``/dev/null``, no hung subprocess.
     """
     pp = tmp_path / "pyproject.toml"
     pp.write_text(_BASE_PYPROJECT)
@@ -536,7 +551,16 @@ def test_apply_passes_ssh_auth_to_pip_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """auth=ssh in --apply → pip subprocess receives the ssh URL."""
+    """auth=ssh in --apply → pip subprocess receives the ssh URL.
+
+    SCENARIO: ``--apply`` in an environment whose only usable git auth is
+        ssh; the pip install URL form must follow.
+    MOCK SETUP: ``repo_root`` → sandbox; ``_stub_run_context`` pins
+        ``git_auth_mode`` → ``"ssh"`` past the CI gate; ``subprocess.run``
+        captures the pip argv; ``_bootstrap_main`` stubbed to a no-op.
+    EXPECTED BEHAVIOR: the captured pin spec carries a
+        ``git+ssh://git@github.com/`` URL.
+    """
     pp = tmp_path / "pyproject.toml"
     pp.write_text(_BASE_PYPROJECT)
     monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
@@ -544,14 +568,9 @@ def test_apply_passes_ssh_auth_to_pip_command(
 
     pip_calls: list[list[str]] = []
 
-    class _Proc:
-        """Mock subprocess result."""
-
-        returncode = 0
-
-    def _fake_run(cmd: list[str], **_kw: object) -> _Proc:
+    def _fake_run(cmd: list[str], **_kw: object) -> FakeProc:
         pip_calls.append(cmd)
-        return _Proc()
+        return FakeProc(returncode=0)
 
     monkeypatch.setattr(upgrade.subprocess, "run", _fake_run)
     monkeypatch.setattr(upgrade, "_bootstrap_main", lambda: 0)
@@ -569,7 +588,17 @@ def test_apply_pip_timeout_default_ci(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Non-interactive --apply defaults pip timeout to ``_DEFAULT_PIP_TIMEOUT_CI``."""
+    """Non-interactive --apply defaults pip timeout to ``_DEFAULT_PIP_TIMEOUT_CI``.
+
+    SCENARIO: ``--apply`` with no ``--pip-timeout`` flag in a
+        non-interactive (CI) run.
+    MOCK SETUP: ``repo_root`` → sandbox; ``git_auth_mode`` → ``"ssh"`` and
+        ``is_non_interactive`` → ``True`` to select the CI default;
+        ``subprocess.run`` captures the ``timeout`` kwarg;
+        ``_bootstrap_main`` stubbed to a no-op.
+    EXPECTED BEHAVIOR: the subprocess receives
+        ``timeout == _DEFAULT_PIP_TIMEOUT_CI``.
+    """
     pp = tmp_path / "pyproject.toml"
     pp.write_text(_BASE_PYPROJECT)
     monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
@@ -578,14 +607,9 @@ def test_apply_pip_timeout_default_ci(
 
     captured_timeout: dict[str, object] = {}
 
-    class _Proc:
-        """Mock subprocess result."""
-
-        returncode = 0
-
-    def _fake_run(_cmd: list[str], **kw: object) -> _Proc:
+    def _fake_run(_cmd: list[str], **kw: object) -> FakeProc:
         captured_timeout["timeout"] = kw.get("timeout")
-        return _Proc()
+        return FakeProc(returncode=0)
 
     monkeypatch.setattr(upgrade.subprocess, "run", _fake_run)
     monkeypatch.setattr(upgrade, "_bootstrap_main", lambda: 0)
@@ -601,7 +625,15 @@ def test_apply_pip_timeout_explicit_override(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``--pip-timeout 42`` reaches the subprocess timeout kwarg."""
+    """``--pip-timeout 42`` reaches the subprocess timeout kwarg.
+
+    SCENARIO: ``--apply`` with an explicit ``--pip-timeout 42`` overriding
+        the CI default.
+    MOCK SETUP: ``repo_root`` → sandbox; ``_stub_run_context`` pins ssh auth
+        past the CI gate; ``subprocess.run`` captures the ``timeout`` kwarg;
+        ``_bootstrap_main`` stubbed to a no-op.
+    EXPECTED BEHAVIOR: the subprocess receives ``timeout == 42``.
+    """
     pp = tmp_path / "pyproject.toml"
     pp.write_text(_BASE_PYPROJECT)
     monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
@@ -609,14 +641,9 @@ def test_apply_pip_timeout_explicit_override(
 
     captured_timeout: dict[str, object] = {}
 
-    class _Proc:
-        """Mock subprocess result."""
-
-        returncode = 0
-
-    def _fake_run(_cmd: list[str], **kw: object) -> _Proc:
+    def _fake_run(_cmd: list[str], **kw: object) -> FakeProc:
         captured_timeout["timeout"] = kw.get("timeout")
-        return _Proc()
+        return FakeProc(returncode=0)
 
     monkeypatch.setattr(upgrade.subprocess, "run", _fake_run)
     monkeypatch.setattr(upgrade, "_bootstrap_main", lambda: 0)
@@ -632,7 +659,16 @@ def test_apply_returns_124_on_pip_timeout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pip subprocess timeout → exit 124 (matches GNU ``timeout(1)``)."""
+    """Pip subprocess timeout → exit 124 (matches GNU ``timeout(1)``).
+
+    SCENARIO: ``--apply --pip-timeout 1`` where the pip install exceeds its
+        deadline.
+    MOCK SETUP: ``repo_root`` → sandbox; ``_stub_run_context`` pins ssh auth
+        past the CI gate; ``subprocess.run`` raises ``TimeoutExpired``;
+        ``_bootstrap_main`` records whether it was reached.
+    EXPECTED BEHAVIOR: rc 124 and bootstrap skipped (pip failure short-
+        circuits the flow).
+    """
     pp = tmp_path / "pyproject.toml"
     pp.write_text(_BASE_PYPROJECT)
     monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)

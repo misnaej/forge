@@ -1,5 +1,9 @@
 """Tests for ``forge.audit.orphans`` — mocked since vulture is optional."""
 
+# MOCKING STRATEGY: orphans._load_vulture is monkeypatched to a `FakeVulture`
+# returning pre-baked `FakeVultureItem` records, so the optional vulture dependency
+# never runs; common.repo_root is pointed at a tmp_path via the `fake_repo` fixture.
+
 from __future__ import annotations
 
 from dataclasses import dataclass
