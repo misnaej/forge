@@ -1,5 +1,11 @@
 """Tests for forge-doctor diagnostic CLI."""
 
+# MOCKING STRATEGY: forge-doctor only probes the environment; every probe is
+# monkeypatched so no real tools, subprocesses, or cwd are touched.
+#   - shutil.which: stub which CLIs resolve on PATH.
+#   - subprocess.run (via make_fake_run): stub gh / version probes.
+#   - Path.cwd: pin the working directory.
+
 from __future__ import annotations
 
 import json
