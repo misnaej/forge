@@ -188,6 +188,15 @@ def _promotion_status_lines(
         and pv[2] == 0
         and base_tuple < pv <= dev_tuple
     )
+    if not staged:
+        # MINOR/MAJOR gap detected but no ``X.Y.0`` tag in range — the
+        # minor was never tagged (fresh or mid-flight repo). Don't print a
+        # misleading "promote these (0):" header with an empty list.
+        lines.append(
+            "Promotion pending, but no X.Y.0 release tag found in range "
+            "— check that the target minor was tagged."
+        )
+        return lines
     lines.append(f"Promotion pending — promote these in order ({len(staged)}):")
     lines.extend(f"  {tag}" for _, tag in staged)
     return lines
