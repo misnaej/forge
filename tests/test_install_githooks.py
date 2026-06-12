@@ -206,8 +206,22 @@ def test_marker_embeds_body_sha_not_forge_version() -> None:
     assert "forge-version=" not in with_sha
 
 
-def test_parse_marker_extracts_v2_fields() -> None:
-    """_parse_marker pulls hook-version + forge-version + body-sha from a v2 marker."""
+def test_parse_marker_extracts_current_v2_fields() -> None:
+    """_parse_marker parses current v2 marker: hook-version and body-sha."""
+    content = (
+        "#!/usr/bin/env bash\n"
+        "# forge:githook-managed v2 body-sha=abc123def456\n"
+        "set -euo pipefail\n"
+    )
+    parsed = install_githooks._parse_marker(content)
+    assert parsed is not None
+    assert parsed["hook_version"] == "2"
+    assert parsed["body-sha"] == "abc123def456"
+    assert "forge-version" not in parsed
+
+
+def test_parse_marker_tolerates_legacy_v2_with_embedded_version() -> None:
+    """A pre-sidecar v2 marker carrying forge-version= is still parsed (back-compat)."""
     content = (
         "#!/usr/bin/env bash\n"
         "# forge:githook-managed v2 forge-version=1.11.0 body-sha=abc123def456\n"
