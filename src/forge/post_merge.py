@@ -13,6 +13,10 @@ process runs interactively, performs two side effects:
    not run this step; the installed forge-scripts version only
    changes via ``pip install``, which is most naturally chained
    off a ``git pull``.
+3. Consumer extension scripts in ``.githooks/post-merge.d/`` via
+   :func:`forge._hook_helpers.run_hook_extensions` — a sanctioned
+   drop-in point that survives every refresh (the installer never
+   touches the ``.d`` subdirectory).
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ import shutil
 import subprocess
 import sys
 
-from forge._hook_helpers import run_foundation_drift_check
+from forge._hook_helpers import run_foundation_drift_check, run_hook_extensions
 from forge.git_utils import configure_cli_logging
 from forge.run_context import is_non_interactive
 
@@ -87,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
             start_new_session=True,
         )
 
+    run_hook_extensions("post-merge")
     return 0
 
 
