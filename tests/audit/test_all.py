@@ -1,11 +1,21 @@
 """Tests for ``forge.audit.all`` — the audit orchestrator."""
 
+# MOCKING STRATEGY: no sub-audit CLI actually runs — the orchestration logic is
+# exercised in isolation.
+#   - subprocess.run: replaced by `fake_run` closures returning the canonical
+#     `FakeProc` (returncode/stdout/stderr) so no child process spawns.
+#   - repo_root / require_cli: stubbed to a tmp_path and a no-op so the run
+#     neither touches the real repo nor enforces CLI presence.
+#   - git_utils.repo_root.cache_clear: no-op'd to avoid clearing the real cache.
+#   - patch(sys.argv): drives main()'s argument parsing (--only, defaults).
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from forge.audit import all as audit_all
+from tests.conftest import FakeProc
 
 
 if TYPE_CHECKING:
@@ -73,7 +83,7 @@ def test_main_invokes_every_selected_subaudit(
 
     def fake_run(cmd: list[str], **_kwargs: object) -> object:
         invoked.append(cmd[0])
-        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        return FakeProc(returncode=0)
 
     monkeypatch.setattr(audit_all.subprocess, "run", fake_run)
     with patch("sys.argv", ["forge-audit-all"]):
@@ -99,7 +109,7 @@ def test_main_only_filters_subaudits(
 
     def fake_run(cmd: list[str], **_kwargs: object) -> object:
         invoked.append(cmd[0])
-        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        return FakeProc(returncode=0)
 
     monkeypatch.setattr(audit_all.subprocess, "run", fake_run)
     with patch("sys.argv", ["forge-audit-all", "--only", "dup", "deps"]):
@@ -120,7 +130,7 @@ def test_main_returns_max_subaudit_exit_code(
     codes = iter([0, 2, 1])
 
     def fake_run(_cmd: list[str], **_kwargs: object) -> object:
-        return type("P", (), {"returncode": next(codes), "stdout": "", "stderr": ""})()
+        return FakeProc(returncode=next(codes))
 
     monkeypatch.setattr(audit_all.subprocess, "run", fake_run)
     with patch("sys.argv", ["forge-audit-all", "--only", "dup", "deps", "orphans"]):

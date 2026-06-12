@@ -1,0 +1,5 @@
+# CLIs intentionally not wired into an in-repo caller (verify-forge-cli-wiring
+# exempts these). Each needs a one-line reason.
+
+[exempt."forge-slow-tests-report"]
+reason = "CI/local reporting convenience invoked from the CI recipe and ad-hoc after a pytest run; no pre-commit/hook/bootstrap caller by design."

@@ -1,5 +1,12 @@
 """Tests for ``forge.audit.suppressions``."""
 
+# MOCKING STRATEGY: no real ruff invocation — rule lookups are faked.
+#   - resolve_ruff_rule: monkeypatched to return canned (name, summary) tuples
+#     (or None) so finding rendering is tested without shelling out to `ruff rule`.
+#   - subprocess.run: replaced by a `fake_run` returning a stand-in process with a
+#     fixed JSON payload, used to verify resolve_ruff_rule's caching.
+#   - common.repo_root: pointed at a tmp_path via the `fake_repo` fixture.
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

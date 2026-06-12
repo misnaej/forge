@@ -17,7 +17,7 @@ import argparse
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -73,14 +73,14 @@ DEFAULT_EXCLUDES: tuple[str, ...] = (
 )
 
 
-class Scope(str, Enum):
+class Scope(StrEnum):
     """Audit scope selector."""
 
     FULL = "full"
     CHANGED = "changed"
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     """Finding severity tier.
 
     Used for downstream sorting and report rendering. Agents may surface

@@ -7,7 +7,7 @@ name = "forge-scripts"
 dynamic = ["version"]
 description = "A shared engineering foundation for Python repos: pip-installable quality-gate CLIs (lint, docstrings, audits), a drop-in pre-commit hook, and an optional Claude Code plugin layered on top."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Jean Simonnet" }]
 classifiers = [
@@ -45,6 +45,7 @@ install-forge-claude-md = "forge.install_claudemd:main"
 install-forge-bootstrap = "forge.install_bootstrap:main"
 forge-upgrade = "forge.upgrade:main"
 forge-pr-squash-comment = "forge.pr_squash_comment:main"
+forge-slow-tests-report = "forge.slow_tests_report:main"
 forge-audit-agents = "forge.audit.agents:main"
 forge-audit-deps = "forge.audit.deps:main"
 forge-audit-dup = "forge.audit.dup:main"
@@ -68,6 +69,14 @@ dev = ["forge-scripts[test,audit]"]
 [project.urls]
 Homepage = "https://github.com/misnaej/forge"
 Repository = "https://github.com/misnaej/forge"
+
+[tool.pytest.ini_options]
+# Single source of truth for the test directory + durations capture.
+# A bare local `pytest` and CI both pick these up, so the
+# --durations flags that feed `forge-slow-tests-report` are declared
+# once here rather than repeated at every call site (DRY).
+testpaths = ["tests"]
+addopts = "--durations=25 --durations-min=1.0"
 
 [tool.forge]
 # Dual-track release channels. Feature/fix PRs target `dev_branch`;
