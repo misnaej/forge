@@ -31,11 +31,11 @@ import logging
 import re
 import sys
 import tokenize
+import tomllib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from forge.audit.common import (
-    TOMLLIB,
     Finding,
     Scope,
     Severity,
@@ -360,13 +360,10 @@ def load_repo_lexicon(*, use_default: bool = True) -> frozenset[str]:
     config_path = repo_root() / CLAIMS_CONFIG_FILENAME
     if not config_path.exists():
         return frozenset(base)
-    if TOMLLIB is None:
-        logger.warning("%s present but tomllib unavailable; using default", config_path)
-        return frozenset(base)
     try:
         with config_path.open("rb") as fh:
-            data = TOMLLIB.load(fh)
-    except (TOMLLIB.TOMLDecodeError, OSError) as exc:
+            data = tomllib.load(fh)
+    except (tomllib.TOMLDecodeError, OSError) as exc:
         logger.warning("failed to read %s: %s", config_path, exc)
         return frozenset(base)
     extra = data.get("lexicon", [])
