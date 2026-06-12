@@ -38,9 +38,9 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import tomllib
 from pathlib import Path
 
-import tomllib
 from interrogate.badge_gen import create as create_badge
 from interrogate.config import InterrogateConfig
 from interrogate.coverage import InterrogateCoverage

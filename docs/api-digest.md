@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_38 modules, 348 symbols._
+_39 modules, 353 symbols._
 
 ## `forge._hook_helpers`
 
@@ -382,6 +382,14 @@ _38 modules, 348 symbols._
 - `git_auth_mode() -> AuthMode` — Detect the git / pip auth context the environment can actually use.
 - `_ssh_agent_has_identity() -> bool` _(internal)_ — Return True when ``ssh-add -l`` reports at least one loaded key.
 - `progress_logger(step_name: str, *, out: object = None) -> Iterator[Callable[[str], None]]` — Yield a flushed printer; emit start / end markers with elapsed time.
+
+## `forge.slow_tests_report`
+
+- `class Duration` — One test-phase timing parsed from a pytest durations section.
+- `parse_durations(text: str) -> list[Duration]` — Extract and rank every durations entry in a pytest log.
+- `format_report(durations: list[Duration], top: int) -> str` — Render a ranked durations table as plain text.
+- `_read_source(log: str) -> str` _(internal)_ — Read the pytest log from a file path or stdin.
+- `main() -> int` — Entry point for ``forge-slow-tests-report``.
 
 ## `forge.upgrade`
 
