@@ -52,14 +52,14 @@ Apply the testing documentation standards in
 TEST-WRITER COMPLETE
 
 Files written: <paths>
-Cases added: <count> (unit: N, error: N, integration: N)
+Cases added: <count> (happy-path: N, edge/error: N)
 pytest: <N passed / N failed>  (command run)
-Standards applied: naming, markers, fixture naming, mock docs, Null Objects
+Standards applied: naming, fixture naming, mock docs, Null Objects
 NEXT: forge:test-advisor (review) → forge:precommit-fixer
 ```
 
 ## Success Criteria
 
 - New/extended tests pass `pytest` on the files touched.
-- Tests follow the naming, marker, fixture, and mock-doc standards.
+- Tests follow the naming, fixture, and mock-doc standards.
 - No production (`src/`) code modified to force a pass.

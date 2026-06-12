@@ -28,6 +28,7 @@ Capture the review SHA first (reporter-agent header contract):
 
 ```bash
 sha=$(git rev-parse --short HEAD); branch=$(git branch --show-current)
+pr=$(gh pr view --json number --jq '.number' 2>/dev/null || echo "?")
 ```
 
 **Advise mode** (caller asks "what should I test?"):
@@ -35,9 +36,10 @@ sha=$(git rev-parse --short HEAD); branch=$(git branch --show-current)
 1. Read the target module(s): public functions, classes, branches, error
    conditions, I/O seams.
 2. Emit a recommendation: mirrored test-file path
-   (`src/foo/bar.py` → `tests/foo/test_bar.py`), suggested cases grouped
-   unit / error / integration, fixtures needed (named for *what they
-   contain*), and which collaborators want Null Objects vs real instances.
+   (`src/foo/bar.py` → `tests/foo/test_bar.py`), suggested cases (at least a
+   happy-path + an edge/error case per public function), fixtures needed
+   (named for *what they contain*), and which collaborators want Null
+   Objects vs real instances.
 
 **Review mode** (caller asks "are these tests good?"):
 
