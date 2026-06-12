@@ -488,6 +488,15 @@ def _channel_tags(
     main_tag: str | None = None,
     dev_tag: str | None = None,
 ) -> install_claudemd.ChannelTags:
+    """Build a ChannelTags with the given main/dev tags (None when unset).
+
+    Args:
+        main_tag: Git tag for the main release, or None if unset.
+        dev_tag: Git tag for the dev release, or None if unset.
+
+    Returns:
+        A ChannelTags object populated with the given tags.
+    """
     return install_claudemd.ChannelTags(main_tag=main_tag, dev_tag=dev_tag)
 
 
