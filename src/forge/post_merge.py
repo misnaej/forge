@@ -38,8 +38,10 @@ def main(argv: list[str] | None = None) -> int:
     Args:
         argv: Optional argv override (used by tests). When ``None``,
             reads from :data:`sys.argv` (skipping the program name).
-            Git invokes ``post-merge`` with no positional args; the
-            parser accepts only ``--help``.
+            Git invokes ``post-merge`` with one positional — a
+            squash-status flag (``1`` for a squash merge, ``0``
+            otherwise) — which the thin wrapper forwards via ``"$@"``.
+            The parser accepts and ignores it.
 
     Returns:
         ``0`` in non-interactive contexts (CI / no-TTY) — fast exit
@@ -55,6 +57,11 @@ def main(argv: list[str] | None = None) -> int:
             "drift check and backgrounds a self-refresh of managed hook "
             "wrappers. No-ops in non-interactive contexts (FOUNDATION §15)."
         ),
+    )
+    parser.add_argument(
+        "squash_flag",
+        nargs="?",
+        help="squash-merge status flag passed by git (1=squash, 0=otherwise); ignored",
     )
     raw = sys.argv[1:] if argv is None else argv
     parser.parse_args(raw)

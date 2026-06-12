@@ -10,9 +10,14 @@
 # consumer-facing surface.
 #
 # Usage:
-#   ./dev/setup.sh                                  # env name: forge
-#   CONDA_ENV_NAME=forge-dev ./dev/setup.sh         # override env name
+#   ./dev/setup.sh                                  # env name: forge (or .conda_env_name)
+#   CONDA_ENV_NAME=forge_dev ./dev/setup.sh         # override env name
 #   PYTHON_VERSION=3.12 ./dev/setup.sh              # override python version
+#
+# Env name is resolved by dev/get_conda_env_name.sh:
+#   $CONDA_ENV_NAME env var > .conda_env_name file (repo root) > "forge".
+# Drop a .conda_env_name file at the repo root (see .conda_env_name.example)
+# to give parallel clones (dev-0, dev-1, ...) their own conda envs.
 #
 # Re-run safe: skips steps already done.
 
@@ -26,7 +31,9 @@ NC='\033[0m'
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-ENV_NAME="${CONDA_ENV_NAME:-forge}"
+# Resolve ENV_NAME: $CONDA_ENV_NAME > .conda_env_name file > "forge".
+# shellcheck source=dev/get_conda_env_name.sh
+source "$REPO_ROOT/dev/get_conda_env_name.sh"
 PYTHON_VERSION="${PYTHON_VERSION:-3.13}"
 
 # 1. Require conda.

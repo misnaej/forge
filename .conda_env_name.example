@@ -1,0 +1,21 @@
+# Local conda environment name for THIS forge working copy.
+#
+# Copy this file to `.conda_env_name` (same directory) and set a unique
+# name so this clone gets its own conda env — enabling parallel forge
+# development across several clones (e.g. dev-0, dev-1, dev-2), each
+# isolated in its own environment.
+#
+#   cp .conda_env_name.example .conda_env_name
+#   # edit .conda_env_name, then run:
+#   ./dev/setup.sh
+#
+# Rules:
+#   - Use letters, digits, and underscores ONLY. NO DASHES — conda reads a
+#     leading dash as a flag, and dashed env names break activation.
+#   - Make it unique per clone (e.g. forge_dev0, forge_dev1, forge_exp).
+#
+# Precedence: $CONDA_ENV_NAME env var > this file > default "forge".
+# If `.conda_env_name` does not exist, ./dev/setup.sh uses: forge
+#
+# Uncomment and edit the line below, then save this file as `.conda_env_name`:
+# forge_dev0

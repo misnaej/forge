@@ -35,3 +35,11 @@ code_health/
 
 # Local issue exports for offline review (forge contributor workflow).
 issue_*.md
+
+# Per-clone conda env name (see .conda_env_name.example). Gitignored so each
+# working copy can name its own env without touching tracked files.
+.conda_env_name
+
+# Per-clone forge git-hook version stamp (written by install-forge-githooks).
+# Gitignored so refreshing the recorded version never dirties the tracked hooks.
+.githooks/.forge-hook-version
