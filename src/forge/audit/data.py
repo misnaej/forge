@@ -30,11 +30,11 @@ import csv
 import json
 import logging
 import sys
+import tomllib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from forge.audit.common import (
-    TOMLLIB,
     Finding,
     Scope,
     Severity,
@@ -264,24 +264,13 @@ def _check_toml(path: Path) -> list[Finding]:
         path: Absolute path to a ``.toml`` file.
 
     Returns:
-        One HIGH finding on parse failure. One LOW finding when ``tomllib``
-        is unavailable (Python 3.10).
+        One HIGH finding on parse failure.
     """
     rel = relpath(path)
-    if TOMLLIB is None:
-        return [
-            Finding(
-                audit="data",
-                severity=Severity.LOW,
-                path=rel,
-                line=0,
-                message="TOML parser unavailable (Python < 3.11); skipped.",
-            ),
-        ]
     try:
         with path.open("rb") as fh:
-            TOMLLIB.load(fh)
-    except (TOMLLIB.TOMLDecodeError, OSError) as exc:
+            tomllib.load(fh)
+    except (tomllib.TOMLDecodeError, OSError) as exc:
         return [
             Finding(
                 audit="data",

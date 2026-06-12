@@ -128,8 +128,6 @@ def test_check_json_low_when_schema_present_but_jsonschema_missing(
 
 def test_check_toml_clean(fake_repo: Path) -> None:
     """Valid TOML yields no findings (Python 3.11+)."""
-    if data.TOMLLIB is None:
-        pytest.skip("tomllib unavailable on this Python")
     f = fake_repo / "docs" / "ok.toml"
     _write(f, '[section]\nkey = "value"\n')
     assert _check_toml(f) == []
@@ -137,26 +135,11 @@ def test_check_toml_clean(fake_repo: Path) -> None:
 
 def test_check_toml_reports_parse_error(fake_repo: Path) -> None:
     """Malformed TOML yields a HIGH parse-error finding."""
-    if data.TOMLLIB is None:
-        pytest.skip("tomllib unavailable on this Python")
     f = fake_repo / "docs" / "bad.toml"
     _write(f, "[section\nkey = no quotes\n")
     findings = _check_toml(f)
     assert len(findings) == 1
     assert findings[0].severity is Severity.HIGH
-
-
-def test_check_toml_low_when_module_missing(
-    fake_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """On Python 3.10 (no tomllib) the checker emits a LOW skip notice."""
-    monkeypatch.setattr(data, "TOMLLIB", None)
-    f = fake_repo / "docs" / "any.toml"
-    _write(f, "")
-    findings = _check_toml(f)
-    assert len(findings) == 1
-    assert findings[0].severity is Severity.LOW
 
 
 def test_check_yaml_low_when_pyyaml_missing(
