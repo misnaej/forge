@@ -211,8 +211,8 @@ nothing is lost.
 |---|---|---|
 | `ruff` | `fix-forge-ruff` — runs `ruff format` (in-place) + `ruff check --fix --unsafe-fixes`, re-stages modified tracked files via `git add`, writes `code_health/ruff.log`. PASSes iff ruff cleared every violation; residue (rules without autofix) lands in the log. | Always (skipped if no `src/` or `tests/`) |
 | `docstrings` | `verify-forge-docstrings` — validates Google-style Args/Returns against signatures | Always (CLI picks files via staged + unstaged + branch diff vs main; reports cleanly when nothing matches) |
-| `docstring_coverage` | `verify-forge-docstring-coverage` — interrogate-based aggregate coverage %, per-file table, and a `MISSING:` symbol list for `forge:precommit-fixer`. | When `[tool.interrogate]` config + a source tree exist (self-skips otherwise). **Non-blocking**: reports only, never refuses the commit. |
-| `test_naming` | `verify-forge-test-naming` — validates test file / function naming conventions | When source / test dirs exist (skipped if none detected) |
+| `docstring_coverage` | `verify-forge-docstring-coverage` — interrogate-based aggregate coverage %, per-file table, and a `MISSING:` symbol list for `forge:precommit-fixer`. | When `pyproject.toml` + a `src/` tree exist (self-skips otherwise). No `[tool.interrogate]` section required — forge defaults apply when it's absent. **Non-blocking**: reports only, never refuses the commit. |
+| `test_naming` | `verify-forge-test-naming` — validates test file / function naming conventions | Always (CLI selects modified test files from the diff vs main). **Warning-only**: always exits 0, never refuses a commit. |
 | `repo_structure` | `verify-forge-repo-structure` — asserts `REPO_STRUCTURE.md` matches the actual tree | Only when `REPO_STRUCTURE.md` exists |
 | `manifest_json` | Validates `.claude-plugin/*.json` as parseable JSON | Only when `.claude-plugin/` exists |
 | `cli_wiring` | `verify-forge-cli-wiring` — asserts every `[project.scripts]` entry is reachable from a wiring source (install/precommit/audit/hooks/agents/skills) | Opt-in via `[tool.forge.cli_wiring] enabled = true`; self-skips otherwise |
@@ -226,9 +226,9 @@ directly. To customize further, see
 [`docs/customizing-precommit.md`](docs/customizing-precommit.md).
 
 Per-step stdout is captured to `code_health/<step>.log`. The hook exits
-non-zero if any **blocking** non-skipped step fails. Non-blocking
-steps (currently `pip_audit` and `docstring_coverage`) print but don't
-change the exit code.
+non-zero if any **blocking** non-skipped step fails. Non-blocking steps
+(`pip_audit`, `docstring_coverage`) and warning-only steps
+(`test_naming`) print but don't change the exit code.
 
 ---
 
