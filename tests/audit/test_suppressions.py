@@ -143,7 +143,7 @@ def test_resolve_ruff_rule_caches_results(monkeypatch: pytest.MonkeyPatch) -> No
     """Repeated lookups for the same code don't re-invoke subprocess."""
     calls = {"n": 0}
 
-    def fake_run(_cmd: list[str], **_kw: object) -> object:
+    def _fake_run(_cmd: list[str], **_kw: object) -> object:
         """Pretend to be ``ruff rule`` returning a fixed JSON payload.
 
         Args:
@@ -164,7 +164,7 @@ def test_resolve_ruff_rule_caches_results(monkeypatch: pytest.MonkeyPatch) -> No
             },
         )
 
-    monkeypatch.setattr(suppressions.subprocess, "run", fake_run)
+    monkeypatch.setattr(suppressions.subprocess, "run", _fake_run)
     cache: dict[str, tuple[str, str] | None] = {}
     a = resolve_ruff_rule("E501", cache)
     b = resolve_ruff_rule("E501", cache)

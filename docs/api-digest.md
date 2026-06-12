@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_39 modules, 353 symbols._
+_39 modules, 356 symbols._
 
 ## `forge._hook_helpers`
 
@@ -316,6 +316,7 @@ _39 modules, 353 symbols._
 
 - `_read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` _(internal)_ — Return ``plugin.json["version"]`` at the given git ref, or ``None`` when absent.
 - `_check_promote_pending_message(repo_root: Path, dev_branch: str, base_branch: str) -> str | None` _(internal)_ — Return a one-line user-facing prompt when promotion is pending, else ``None``.
+- `_promotion_status_lines(repo_root: Path, dev_branch: str, base_branch: str) -> list[str]` _(internal)_ — Build the read-only promotion-status report.
 - `_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` _(internal)_ — Run ``git`` with *args*, return stripped stdout.
 - `_read_plugin_version(repo_root: Path) -> str | None` _(internal)_ — Return ``.claude-plugin/plugin.json["version"]`` or ``None`` if absent.
 - `_latest_v_tag(repo_root: Path) -> str | None` _(internal)_ — Return the highest ``v*`` git tag by sort-V, or ``None`` if none.
@@ -323,6 +324,8 @@ _39 modules, 353 symbols._
 - `_maybe_tag_release(repo_root: Path) -> str | None` _(internal)_ — Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
 - `_gone_branches(repo_root: Path) -> list[str]` _(internal)_ — Return local branch names whose tracking remote is ``[origin/...: gone]``.
 - `_prune_gone_branches(repo_root: Path) -> tuple[list[str], list[str]]` _(internal)_ — ``git branch -d`` every branch whose remote is gone.
+- `_emit_promotion_status(repo_root: Path, dev_branch: str, base_branch: str) -> int` _(internal)_ — Fetch tags and log the read-only promotion-status report.
+- `_log_prune_result(repo_root: Path) -> None` _(internal)_ — Prune stale local branches and log the outcome.
 - `main() -> int` — Refresh main, optionally tag the release, prune stale local branches.
 
 ## `forge.post_checkout`
