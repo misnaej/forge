@@ -18,8 +18,14 @@ actually hold, forge needs to run them against its own code. That's what
   ```
   Override env name with `CONDA_ENV_NAME=<name>`, Python version with
   `PYTHON_VERSION=<ver>` (defaults to 3.13).
+
+  **After adding a new `[project.scripts]` entry**, re-run `./dev/setup.sh`
+  to register the new console script on `PATH` — an editable install only
+  exposes entry points that existed at install time. This is the canonical
+  reinstall path; do not hand-run `pip install -e` (the script is idempotent
+  and also re-checks hooks + doctor).
 - `test-matrix.sh` — run `pytest tests/` across every supported Python
-  version (3.10, 3.11, 3.12, 3.13). Creates one throwaway conda env
+  version (3.11, 3.12, 3.13). Creates one throwaway conda env
   per version. Use this before tagging a release to verify forge
   still works on the full supported range:
   ```bash
