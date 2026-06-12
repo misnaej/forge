@@ -88,3 +88,26 @@ def test_handles_short_argv_gracefully(
     assert post_checkout.main([]) == 0
     assert post_checkout.main(["only-one"]) == 0
     assert captured.calls == []
+
+
+def test_runs_hook_extensions_on_branch_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Branch checkout + interactive runs the ``post-checkout.d`` extensions."""
+    monkeypatch.setattr(post_checkout, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(_hook_helpers.shutil, "which", lambda _n: "/fake/bin")
+    monkeypatch.setattr(_hook_helpers.subprocess, "run", make_fake_run(returncode=0))
+    calls: list[str] = []
+    monkeypatch.setattr(post_checkout, "run_hook_extensions", calls.append)
+    assert post_checkout.main(["prev", "new", "1"]) == 0
+    assert calls == ["post-checkout"]
+
+
+def test_skips_hook_extensions_on_file_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """File-level checkout (flag=0) fast-exits before the extension runner."""
+    calls: list[str] = []
+    monkeypatch.setattr(post_checkout, "run_hook_extensions", calls.append)
+    assert post_checkout.main(["prev", "new", "0"]) == 0
+    assert calls == []

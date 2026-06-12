@@ -4,11 +4,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_39 modules, 350 symbols._
+_39 modules, 353 symbols._
 
 ## `forge._hook_helpers`
 
 - `run_foundation_drift_check(hook_name: str) -> int` — Run ``install-forge-claude-md --check --quiet``.
+- `run_hook_extensions(hook_name: str) -> None` — Run consumer extension scripts under ``.githooks/<hook_name>.d/``.
 
 ## `forge.audit.agents`
 
@@ -291,16 +292,18 @@ _39 modules, 350 symbols._
 
 - `_installed_forge_version() -> str` _(internal)_ — Return the installed ``forge-scripts`` version, or ``0.0.0`` if absent.
 - `_compute_body_sha(body: str) -> str` _(internal)_ — Return a short hex SHA-256 digest of *body* for marker embedding.
-- `managed_marker(forge_version: str, body_sha: str | None = None) -> str` — Render the managed-hook marker line for *forge_version*.
+- `managed_marker(body_sha: str | None = None) -> str` — Render the managed-hook marker line.
 - `_parse_marker(content: str) -> dict[str, str] | None` _(internal)_ — Extract the managed marker's fields from full hook content.
 - `class HookSpec` — A git hook the installer maintains.
-- `_hook_content(spec: HookSpec, forge_version: str) -> str` _(internal)_ — Render the full file content for *spec*.
+- `_hook_content(spec: HookSpec) -> str` _(internal)_ — Render the full file content for *spec*.
 - `_is_managed(hook: Path) -> bool` _(internal)_ — Return True if *hook* carries any forge-managed marker.
 - `_hook_body_from_content(content: str) -> str` _(internal)_ — Return the body portion of a managed hook file's full content.
 - `_wrapper_is_unmodified(hook: Path, spec: HookSpec) -> bool` _(internal)_ — Return True when *hook* still carries the body forge originally wrote.
 - `_backup_hook(hook: Path, forge_version: str) -> Path` _(internal)_ — Save the current hook content to a versioned backup file.
 - `_write_hook(hook: Path, spec: HookSpec, forge_version: str, *, force: bool, refresh: bool = False) -> bool` _(internal)_ — Write *spec* to *hook*, honoring the wrapper-pattern contract.
 - `_set_hooks_path(repo: Path, *, force: bool) -> None` _(internal)_ — Set ``core.hooksPath`` to ``.githooks``.
+- `_write_version_sidecar(githooks_dir: Path, forge_version: str) -> None` _(internal)_ — Record the installed forge version in the gitignored sidecar.
+- `_ensure_sidecar_gitignored(root: Path) -> None` _(internal)_ — Ensure the version sidecar path is listed in the repo ``.gitignore``.
 - `main() -> int` — CLI entry point.
 
 ## `forge.install_labels`

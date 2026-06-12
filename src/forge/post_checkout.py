@@ -10,12 +10,13 @@ moved (``branch_flag == "1"``) to avoid running on every file-level
 ``git checkout <path>``.
 
 Shares the drift-check sequence with ``post_merge`` via
-:mod:`forge._hook_helpers`. The asymmetry between the two
-entrypoints is intentional: ``post-merge`` additionally backgrounds
-``install-forge-githooks --refresh`` because a ``git pull`` is the
-common trigger for a forge-scripts upgrade. A branch checkout does
-not change the installed forge-scripts version, so no self-refresh
-is needed here.
+:mod:`forge._hook_helpers`, and runs consumer extension scripts in
+``.githooks/post-checkout.d/`` through the same shared helper. The
+asymmetry between the two entrypoints is intentional: ``post-merge``
+additionally backgrounds ``install-forge-githooks --refresh`` because
+a ``git pull`` is the common trigger for a forge-scripts upgrade. A
+branch checkout does not change the installed forge-scripts version,
+so no self-refresh is needed here.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ import argparse
 import logging
 import sys
 
-from forge._hook_helpers import run_foundation_drift_check
+from forge._hook_helpers import run_foundation_drift_check, run_hook_extensions
 from forge.git_utils import configure_cli_logging
 from forge.run_context import is_non_interactive
 
@@ -82,7 +83,9 @@ def main(argv: list[str] | None = None) -> int:
     if is_non_interactive():
         return 0
 
-    return run_foundation_drift_check("post-checkout")
+    rc = run_foundation_drift_check("post-checkout")
+    run_hook_extensions("post-checkout")
+    return rc
 
 
 if __name__ == "__main__":

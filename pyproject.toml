@@ -101,15 +101,18 @@ badge = true
 
 [tool.interrogate]
 # Docstring-coverage threshold consumed by the forge-precommit step
-# `docstring_coverage`. Forge dogfoods the strictest setting (100%)
-# to demonstrate the tightest plausible config — every public symbol
-# AND every nested function / closure carries a docstring. Consumers
-# typically start at the FOUNDATION §8 default of 90 and ratchet up
-# as the codebase matures (see FOUNDATION §4 "threshold = current
-# passing baseline. Raise over time.").
-fail-under = 96
+# `docstring_coverage`. Nested functions / closures are EXEMPT
+# (ignore-nested-functions): trivial test stubs (fake_run, _stub) carry
+# their meaning in the name, ruff's D-rules already skip nested defs, and
+# requiring a docstring on each is boilerplate, not signal. Every
+# top-level public symbol is still required, so forge holds the real
+# surface at 100%. Consumers typically start at the FOUNDATION §8 default
+# of 90 and ratchet up (see FOUNDATION §4 "threshold = current passing
+# baseline. Raise over time.").
+fail-under = 100
 ignore-init-method = false
 ignore-init-module = false
+ignore-nested-functions = true
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -84,7 +84,7 @@ edit `.githooks/pre-commit` directly. No plugin system, no config file.
 | **Audit-pack CLIs** (pip package, optional `[audit]` extras) | `forge-audit-dup`, `forge-audit-deps`, `forge-audit-suppressions`, `forge-audit-orphans`, `forge-audit-data`, `forge-audit-claims`, `forge-audit-agents` (non-blocking template-conformance audit), `forge-audit-all` — see [`docs/audit-pack.md`](docs/audit-pack.md) |
 | **Git hooks** (drop-in, no Claude required) | `.githooks/pre-commit` (dispatcher), `.githooks/post-merge` + `.githooks/post-checkout` (auto-warn on FOUNDATION.md drift) |
 | **Process docs** | `docs/security.md`, `docs/audit-pack.md`, `docs/cli-reference.md` (generated CLI reference), `docs/api-digest.md` (generated index of all top-level functions/classes, public API + internal helpers); foundation engineering principles at `FOUNDATION.md` |
-| **Claude Code plugin** (optional) | Agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, `design-checker`, `docs-types-checker`, `security-checker`, `issue-triage`, `perf-optimizer`, `weekly-summary`, `knowledge-search`); skills (`commit`, `pr`, `next`, `triage`, `weekly`, `fix`, `review`); Claude Code hooks (`block_protected_branches`, `block_force_push`, `block_pr_merge`, `block_no_verify`, `block_install_deps`, `block_claude_attribution`, `block_continuation_delete`, `block_protected_files`, `check_commit_format`, `check_foundation_sync`, `warn_pr_checks`, `block_raw_ruff`, `block_raw_git`) |
+| **Claude Code plugin** (optional) | Agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, `design-checker`, `docs-types-checker`, `security-checker`, `issue-triage`, `perf-optimizer`, `weekly-summary`, `knowledge-search`, `test-advisor`, `test-writer`); skills (`commit`, `pr`, `next`, `triage`, `weekly`, `fix`, `review`); Claude Code hooks (`block_protected_branches`, `block_force_push`, `block_pr_merge`, `block_branch_deletion`, `block_no_verify`, `block_install_deps`, `block_claude_attribution`, `block_continuation_delete`, `block_protected_files`, `check_commit_format`, `check_foundation_sync`, `warn_pr_checks`, `block_raw_ruff`, `block_raw_git`) |
 
 Everything in the first three rows is **Claude-independent** — works
 from any shell, CI, or IDE.
@@ -178,7 +178,7 @@ a one-line wrapper that calls a forge-shipped CLI:
 
 ```bash
 #!/usr/bin/env bash
-# forge:githook-managed v2 forge-version=X.Y.Z body-sha=<hex>
+# forge:githook-managed v2 body-sha=<hex>
 set -euo pipefail
 # (staleness preamble — advisory warning when installed forge is newer)
 forge-post-merge "$@"
@@ -190,7 +190,7 @@ repo-specific steps after the forge CLI call:
 
 ```bash
 #!/usr/bin/env bash
-# forge:githook-managed v2 forge-version=X.Y.Z body-sha=<hex>
+# forge:githook-managed v2 body-sha=<hex>
 set -euo pipefail
 forge-post-merge "$@"
 ./scripts/install-editable.sh   # consumer step — survives forge upgrades
@@ -204,6 +204,30 @@ automatically — but auto-refresh **leaves modified wrappers alone**
 --force` to override and rewrite a modified wrapper; the previous
 content is saved as `.githooks/<name>.before-forge-vX.Y.Z.bak` so
 nothing is lost.
+
+**Cleaner: drop-in extension directories.** Rather than editing the
+managed wrapper at all, drop an executable script into
+`.githooks/post-merge.d/` (or `.githooks/post-checkout.d/`). After its
+own work, `forge-post-merge` / `forge-post-checkout` runs every
+executable `*.sh` in that directory in sorted filename order (`10-`,
+`20-`, … the `cron.d` convention). The subdirectory is one
+`install-forge-githooks` never writes, so your scripts survive every
+refresh with no body-sha bookkeeping:
+
+```bash
+# .githooks/post-merge.d/10-refresh-deps.sh   (yours — remember chmod +x)
+#!/usr/bin/env bash
+./scripts/install-editable.sh
+```
+
+A failing extension logs a warning and is skipped — it never breaks
+your `git pull` / `git checkout`. Extensions run only in interactive
+contexts (skipped in CI, same posture as the drift check). Each script
+needs a shebang and the executable bit; it runs with the repo root as
+its working directory and inherits your shell environment. Because a
+`.d/` script is committed and runs automatically, review it with the
+same care as any executable hook — the directory is intentionally
+outside forge's refresh cycle, so forge never inspects or rewrites it.
 
 `git commit` now runs the canonical pre-commit sequence:
 

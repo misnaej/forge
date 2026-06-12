@@ -136,6 +136,15 @@ cheaper than reverting.
   `block_pr_merge` hook enforces this for agents (blocks `gh pr merge` and
   the equivalent `gh api .../pulls/N/merge` call). Users still merge
   themselves via `! gh pr merge ...`.
+- **NEVER delete a protected remote branch** (`base_branch` / `dev_branch`,
+  default `main` / `dev`). Deleting a shared branch is irreversible and —
+  because an agent runs with the user's credentials — *bypasses* server-side
+  rulesets that "restrict deletions". The `block_branch_deletion` hook
+  enforces this for agents with **no bypass** (not even
+  `forge:git-commit-push`): it blocks `git push --delete` / `git push :ref`
+  and `gh api -X DELETE …/branches/…` targeting a protected branch. Local
+  `git branch -d/-D` is untouched (it never affects the remote). If a human
+  truly intends a remote delete, they run it themselves with `! …`.
 - **No backwards-compatibility shims** unless the user explicitly requests.
   No `OldName = NewName`, no deprecation warnings, no re-exports of moved
   modules. Clean breaks are the default.
@@ -189,10 +198,11 @@ directly is forbidden.
 Foundation agents ship via the `forge` Claude Code plugin and resolve as
 `forge:<name>` after install (e.g. `forge:pr-manager`). Calling them by
 bare name (`pr-manager`) fails with `Agent type '<name>' not found`. The
-ten foundation agents are: `forge:design-checker`,
+twelve foundation agents are: `forge:design-checker`,
 `forge:docs-types-checker`, `forge:git-commit-push`, `forge:issue-triage`,
 `forge:knowledge-search`, `forge:perf-optimizer`, `forge:pr-manager`,
-`forge:precommit-fixer`, `forge:security-checker`, `forge:weekly-summary`.
+`forge:precommit-fixer`, `forge:security-checker`, `forge:test-advisor`,
+`forge:test-writer`, `forge:weekly-summary`.
 
 **Consumer wrappers MUST use distinct names.** When a consumer repo
 needs to layer repo-specific extras on top of a foundation agent (extra
@@ -219,7 +229,8 @@ suffix that distinguishes them from the canonical name.
 | Edit existing file | `forge:design-checker` (or a `design-checker-<repo>` wrapper that delegates here) | **BEFORE** writing code |
 | Clear pre-commit failures | `forge:precommit-fixer` | Before commit |
 | Commit + push | `forge:git-commit-push` | After `forge:precommit-fixer` |
-| Write tests | `test-writer` (consumer-shipped) | After `test-advisor` |
+| Plan test coverage / review tests | `forge:test-advisor` | Before writing tests; and after, to review |
+| Write tests | `forge:test-writer` | After `forge:test-advisor` (advise) |
 | Design / security review | `forge:design-checker` / `forge:security-checker` | Reports only — main agent acts |
 | PR lifecycle | `forge:pr-manager` | After all checks |
 | Issue triage | `forge:issue-triage` | Backlog management |
@@ -239,7 +250,7 @@ suffix that distinguishes them from the canonical name.
 
 **PR finalization:** `forge:design-checker` + `forge:security-checker` + `forge:docs-types-checker` (parallel) → `forge:precommit-fixer` (mode `strict`) → `forge:pr-manager`
 
-**Test writing:** `test-advisor` → `test-writer` → `test-advisor` (review) → `forge:precommit-fixer`
+**Test writing:** `forge:test-advisor` (advise) → `forge:test-writer` → `forge:test-advisor` (review) → `forge:precommit-fixer`
 
 ---
 
@@ -457,11 +468,13 @@ why is the new step adding value?".
 **Why interrogate is non-blocking:** ruff D100–D107 are the actual
 gate. Any commit that lands a missing docstring on a top-level
 public symbol is refused at the ruff layer. The interrogate step
-exists to catch what ruff doesn't — primarily **nested functions /
-closures**, which the ruff D-rules silently skip — and to surface a
-parseable `MISSING:` list that `forge:precommit-fixer` can act on.
-Blocking at this layer would be redundant with ruff and would
-mostly fire on edge cases ruff already considers acceptable.
+exists to measure **aggregate coverage across the full tree** (ruff
+only sees the diff) and to surface a parseable `MISSING:` list that
+`forge:precommit-fixer` can act on. Trivial **nested functions /
+closures are exempt by default** (`ignore-nested-functions`) — ruff
+already skips them, and a docstring on every throwaway test stub
+(`fake_run`, `_stub`) is boilerplate, not signal. Blocking at this
+layer would be redundant with ruff.
 
 **Configuration:** the consumer's `pyproject.toml`
 `[tool.interrogate]` is the single source of truth — the CLI reads
@@ -471,6 +484,33 @@ tighten per §4 ("threshold = current passing baseline. Raise over
 time."). Opt into badge generation with
 `[tool.forge.docstring_coverage] badge = true` — writes
 `.badges/DocstringCoverage.svg` for README embedding.
+
+### Testing documentation standards
+
+Test code is documented for **signal, not uniformly**. This is the
+canonical "what"; `forge:test-advisor` (review) and `forge:test-writer`
+(produce) own the "how".
+
+- **Injected fixtures are NOT documented as `Args`.** pytest injects them;
+  they are not call-site parameters. `verify-forge-docstrings` is
+  fixture-aware (it filters `tmp_path` / `monkeypatch` / `caplog` plus
+  conftest- and locally-defined fixtures) and is the source of truth for
+  real test-param docs. ruff `D417` is therefore ignored in `tests/**` (it
+  is not fixture-aware and would demand fixtures once an `Args:` exists).
+- **Real (non-fixture) parameters are still documented** in `Args`.
+- **Trivial nested helpers / closures need no docstring** —
+  `ignore-nested-functions` exempts them; a self-describing name suffices.
+- **Fixtures are named for WHAT they contain**, not where used
+  (`dataset_with_missing_values`, not `data`).
+- **Mock-heavy tests carry a structured docstring** — `SCENARIO:` /
+  `MOCK SETUP:` / `EXPECTED BEHAVIOR:`; files that mock extensively carry a
+  module-level `# MOCKING STRATEGY:` overview. No tool enforces this format;
+  `forge:test-writer` produces it and `forge:test-advisor` reviews it.
+- **Prefer Null / Fake objects over `unittest.mock.Mock`** — less brittle
+  when interfaces change; reserve `Mock` for when a Null Object costs more
+  than it saves.
+- **Coverage intent:** each public function gets at least a happy-path plus
+  an edge / error case.
 
 ---
 
