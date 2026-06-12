@@ -281,7 +281,7 @@ options:
 ## forge-next-prep
 
 ```text
-usage: forge-next-prep [-h] [--tag] [--no-prune-branches]
+usage: forge-next-prep [-h] [--tag] [--no-prune-branches] [--promotion-status]
                        [--target {dev,base}]
 
 Prepare main for the next task: fetch + pull --ff-only, optionally tag the
@@ -293,6 +293,10 @@ options:
                        v* tag and push the tag (forge's rolling-next
                        workflow). Off by default.
   --no-prune-branches  Skip the stale-branch prune step.
+  --promotion-status   Read-only: fetch tags, then print the base/dev plugin
+                       versions and the ordered list of v* releases pending
+                       promotion, and exit. No checkout, pull, tag, or prune.
+                       Used by the /promote skill.
   --target {dev,base}  Branch to refresh. Resolved through [tool.forge] in
                        pyproject.toml; falls back to 'main' if the config is
                        absent. Most repos can leave this at the default.
