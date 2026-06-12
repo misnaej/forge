@@ -1,6 +1,6 @@
 {
   "name": "forge",
-  "version": "1.16.3",
+  "version": "1.16.4",
   "description": "A shared engineering foundation for Python repos: pip-installable quality-gate CLIs (lint, docstrings, audits), a drop-in pre-commit hook, and an optional Claude Code plugin layered on top.",
   "author": {
     "name": "Jean Simonnet",
