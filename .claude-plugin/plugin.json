@@ -16,6 +16,7 @@
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_branches.sh", "timeout": 5 },
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_force_push.sh", "timeout": 5 },
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_pr_merge.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_branch_deletion.sh", "timeout": 5 },
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_no_verify.sh", "timeout": 5 },
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_install_deps.sh", "timeout": 5 },
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_claude_attribution.sh", "timeout": 5 },
