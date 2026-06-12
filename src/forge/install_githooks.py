@@ -15,8 +15,11 @@ installer detects consumer-modified wrappers via a body-hash field
 in the managed marker and skips them on auto-refresh — only an
 unmodified wrapper is rewritten.
 
-All three are written with a versioned ``# forge:githook-managed
-v<N> forge-version=X.Y.Z body-sha=<hex>`` marker. Re-running this
+All three carry a ``# forge:githook-managed v<N> body-sha=<hex>``
+marker. The forge version is **not** embedded in the tracked file —
+it lives in a gitignored ``.githooks/.forge-hook-version`` sidecar
+that the staleness preamble reads at runtime, so refreshing the
+recorded version never dirties the committed hook. Re-running this
 CLI upgrades managed hooks that are still pristine; modified
 wrappers survive (use ``--force`` to override).
 """
@@ -46,15 +49,18 @@ logger = logging.getLogger(__name__)
 
 HOOK_VERSION = 2
 MANAGED_MARKER_PREFIX = "# forge:githook-managed"
-FORGE_VERSION_KEY = "forge-version"
 BODY_SHA_KEY = "body-sha"
 _BODY_SHA_LEN = 12
 _UNKNOWN_FORGE_VERSION = "0.0.0"
+# Per-clone, gitignored file recording the forge version that last
+# wrote the hooks. The staleness preamble reads it at runtime so the
+# volatile version never lands in the tracked hook (no churn / dirt).
+SIDECAR_NAME = ".forge-hook-version"
 
 # Pattern matching the full managed marker line. Captures the hook-
-# version digit and every ``key=value`` field. ``forge-version`` is
-# always present; ``body-sha`` is present only for v2+ markers (v1
-# hooks predate body-hash detection).
+# version digit and every ``key=value`` field. Current markers carry
+# only ``body-sha``; legacy markers also carried ``forge-version``,
+# which the generic field parser still tolerates.
 _MARKER_RE = re.compile(
     r"^"
     + re.escape(MANAGED_MARKER_PREFIX)
@@ -98,25 +104,23 @@ def _compute_body_sha(body: str) -> str:
     return digest[:_BODY_SHA_LEN]
 
 
-def managed_marker(forge_version: str, body_sha: str | None = None) -> str:
-    """Render the managed-hook marker line for *forge_version*.
+def managed_marker(body_sha: str | None = None) -> str:
+    """Render the managed-hook marker line.
 
     Args:
-        forge_version: Bare version string (e.g. ``"1.2.13"``).
-        body_sha: Body hash that v2+ markers embed for tamper detection.
-            ``None`` renders a legacy v1-style marker (used only by
-            the v1-content reconstructor in migration detection).
+        body_sha: Body hash that v2 markers embed for tamper detection.
+            ``None`` renders a bare prefix-only marker.
 
     Returns:
         Full marker line. The v2 shape is
-        ``"# forge:githook-managed v2 forge-version=X.Y.Z body-sha=<hex>"``.
-        ``_is_managed`` keys on the prefix only, so older hooks written
-        without the ``body-sha=`` field remain recognised and get
-        migrated on the next install.
+        ``"# forge:githook-managed v2 body-sha=<hex>"``. The forge
+        version is **not** embedded — it lives in the gitignored
+        ``.forge-hook-version`` sidecar so refreshing the recorded
+        version never dirties the tracked hook. ``_is_managed`` keys on
+        the prefix only, so legacy hooks carrying ``forge-version=`` are
+        still recognised and migrated on the next install.
     """
-    base = (
-        f"{MANAGED_MARKER_PREFIX} v{HOOK_VERSION} {FORGE_VERSION_KEY}={forge_version}"
-    )
+    base = f"{MANAGED_MARKER_PREFIX} v{HOOK_VERSION}"
     if body_sha is None:
         return base
     return f"{base} {BODY_SHA_KEY}={body_sha}"
@@ -157,20 +161,25 @@ def _parse_marker(content: str) -> dict[str, str] | None:
 # unavailable the entire check silently no-ops.
 _STALENESS_PREAMBLE_TEMPLATE = """\
 # Forge staleness check: warn (don't block) when the installed
-# forge-scripts version is newer than the version that wrote this
-# hook. Whole block is `set +e`-guarded so a missing python3, an
-# old `sort`, or any other PATH oddity can never break the
-# underlying git command.
-forge_hook_version="__FORGE_VERSION__"
+# forge-scripts version is newer than the version recorded in the
+# gitignored `.forge-hook-version` sidecar next to this hook (written
+# by install-forge-githooks). Reading the version from the sidecar —
+# rather than a baked-in constant — keeps the tracked hook byte-stable
+# across version bumps. Whole block is `set +e`-guarded so a missing
+# python3, a missing sidecar, an old `sort`, or any other PATH oddity
+# can never break the underlying git command — advisory, never
+# load-bearing.
 set +e
+forge_hook_version="$(cat "$(dirname "$0")/.forge-hook-version" 2>/dev/null)"
 forge_installed_version=$(python3 -c \
     'from importlib.metadata import version; print(version("forge-scripts"))' \
     2>/dev/null)
-if [ -n "${forge_installed_version}" ] \
+if [ -n "${forge_hook_version}" ] \
+    && [ -n "${forge_installed_version}" ] \
     && [ "${forge_installed_version}" != "${forge_hook_version}" ] \
     && [ "$(printf '%s\\n%s\\n' "${forge_hook_version}" "${forge_installed_version}" \
         | sort -V 2>/dev/null | tail -n1)" = "${forge_installed_version}" ]; then
-    msg="[forge] hook generated by forge ${forge_hook_version};"
+    msg="[forge] hooks recorded forge ${forge_hook_version};"
     msg="${msg} installed is ${forge_installed_version}."
     echo "${msg}" >&2
     echo "[forge] run \\`install-forge-githooks --refresh\\` to regenerate." >&2
@@ -257,31 +266,31 @@ _V1_HOOK_BODIES: dict[str, str] = {
 }
 
 
-def _hook_content(spec: HookSpec, forge_version: str) -> str:
+def _hook_content(spec: HookSpec) -> str:
     """Render the full file content for *spec*.
+
+    The rendered text is version-free: the forge version is read at
+    runtime from the ``.forge-hook-version`` sidecar, not embedded
+    here. This keeps the tracked hook byte-stable across version
+    bumps so the post-merge auto-refresh never dirties it.
 
     Args:
         spec: Hook spec to render.
-        forge_version: Forge version to embed in the managed marker and
-            in the staleness preamble. Hooks generated by an older forge
-            will emit a stderr warning on every run once the installed
-            forge becomes newer.
 
     Returns:
         Full bash script text including shebang, marker (with body
         SHA), staleness preamble, and body.
     """
     body_sha = _compute_body_sha(spec.body)
-    preamble = _STALENESS_PREAMBLE_TEMPLATE.replace("__FORGE_VERSION__", forge_version)
     return (
         "#!/usr/bin/env bash\n"
-        f"{managed_marker(forge_version, body_sha)}\n"
+        f"{managed_marker(body_sha)}\n"
         f"# {spec.name} hook. Generated by install-forge-githooks.\n"
         "# Edit freely; reinstalling forge respects consumer edits\n"
         "# (auto-refresh leaves modified wrappers alone). Use --force\n"
         "# to override and rewrite to the canonical one-liner.\n"
         "set -euo pipefail\n"
-        f"{preamble}\n"
+        f"{_STALENESS_PREAMBLE_TEMPLATE}\n"
         f"{spec.body}\n"
     )
 
@@ -398,10 +407,9 @@ def _write_hook(
     Args:
         hook: Destination path.
         spec: Hook spec describing what to write.
-        forge_version: Forge version to embed in the marker + staleness
-            preamble. Threaded explicitly so callers (and tests) can
-            simulate older installs without monkey-patching
-            ``importlib.metadata``.
+        forge_version: Forge version, used only to label the ``.bak``
+            file when a migration or ``--force`` overwrite backs up the
+            previous content. Not embedded in the hook itself.
         force: Overwrite even when the existing file is consumer-modified.
         refresh: Rewrite even when current content already matches
             (used by ``--refresh`` and by the post-merge auto-refresh,
@@ -415,7 +423,7 @@ def _write_hook(
         because the existing content already matches and *refresh* is
         False.
     """
-    content = _hook_content(spec, forge_version)
+    content = _hook_content(spec)
     if hook.exists() and not _is_managed(hook) and not force:
         logger.info(
             "✓ .githooks/%s exists and is user-customized — leaving alone "
@@ -494,6 +502,53 @@ def _set_hooks_path(repo: Path, *, force: bool) -> None:
     logger.info("✓ core.hooksPath → .githooks")
 
 
+def _write_version_sidecar(githooks_dir: Path, forge_version: str) -> None:
+    """Record the installed forge version in the gitignored sidecar.
+
+    The staleness preamble in each managed hook reads this file at
+    runtime instead of a baked-in constant, so refreshing the recorded
+    version never rewrites — and never dirties — the tracked hook. The
+    file is per-clone and gitignored, like ``.conda_env_name``.
+
+    Args:
+        githooks_dir: The ``.githooks`` directory the sidecar sits in.
+        forge_version: Full installed version string (dev suffix and
+            all) to record.
+    """
+    githooks_dir.mkdir(exist_ok=True)
+    (githooks_dir / SIDECAR_NAME).write_text(f"{forge_version}\n")
+
+
+_SIDECAR_GITIGNORE_BLOCK = (
+    "\n# Per-clone forge git-hook version stamp (written by "
+    "install-forge-githooks).\n"
+    "# Gitignored so refreshing the recorded version never dirties the "
+    "tracked hooks.\n"
+    f".githooks/{SIDECAR_NAME}\n"
+)
+
+
+def _ensure_sidecar_gitignored(root: Path) -> None:
+    """Ensure the version sidecar path is listed in the repo ``.gitignore``.
+
+    Idempotent: appends a commented ignore block only when the entry is
+    absent. Without this, the first hook run in a fresh clone would
+    surface the sidecar as an untracked file — the exact dirt this
+    mechanism exists to avoid.
+
+    Args:
+        root: Git repo root holding ``.gitignore``.
+    """
+    entry = f".githooks/{SIDECAR_NAME}"
+    gitignore = root / ".gitignore"
+    existing = gitignore.read_text() if gitignore.exists() else ""
+    if entry in existing.splitlines():
+        return
+    with gitignore.open("a", encoding="utf-8") as handle:
+        handle.write(_SIDECAR_GITIGNORE_BLOCK)
+    logger.info("✓ added %s to .gitignore", entry)
+
+
 def main() -> int:
     """CLI entry point.
 
@@ -548,6 +603,8 @@ def main() -> int:
             force=args.force,
             refresh=args.refresh,
         )
+    _write_version_sidecar(githooks_dir, forge_version)
+    _ensure_sidecar_gitignored(root)
     _set_hooks_path(root, force=args.force)
     logger.info(
         "\nNext: `git commit` fires forge-precommit. "

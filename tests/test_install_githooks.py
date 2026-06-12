@@ -69,8 +69,10 @@ def test_write_hook_creates_file_with_marker(tmp_path: Path) -> None:
     assert hook.is_file()
     content = hook.read_text()
     body_sha = install_githooks._compute_body_sha(spec.body)
-    assert install_githooks.managed_marker("1.2.13", body_sha) in content
+    assert install_githooks.managed_marker(body_sha) in content
     assert spec.body.splitlines()[0] in content
+    # The forge version is never baked into the tracked hook.
+    assert "1.2.13" not in content
     assert hook.stat().st_mode & 0o111
 
 
@@ -93,7 +95,7 @@ def test_write_hook_force_overwrites_user_customized_file(tmp_path: Path) -> Non
     hook.write_text("#!/bin/sh\necho user wrote this\n")
     written = install_githooks._write_hook(hook, spec, "1.2.13", force=True)
     assert written
-    assert install_githooks.managed_marker("1.2.13") in hook.read_text()
+    assert install_githooks.MANAGED_MARKER_PREFIX in hook.read_text()
 
 
 def test_write_hook_idempotent_when_already_in_sync(tmp_path: Path) -> None:
@@ -144,16 +146,24 @@ def test_write_hook_force_overwrites_consumer_modified_with_backup(
     assert "./scripts/install-editable.sh" in backup.read_text()
 
 
-def test_write_hook_upgrades_outdated_forge_version(tmp_path: Path) -> None:
-    """Stale forge-version marker (body unchanged) → rewrite on plain install."""
+def test_write_hook_version_change_leaves_tracked_hook_byte_stable(
+    tmp_path: Path,
+) -> None:
+    """A newer forge version alone does NOT rewrite the hook; version in sidecar.
+
+    This is the core anti-churn guarantee: the tracked hook is
+    version-free, so bumping the installed forge between two installs
+    produces byte-identical content and no rewrite.
+    """
     spec = install_githooks.HOOKS[0]
     hook = tmp_path / ".githooks" / spec.name
     install_githooks._write_hook(hook, spec, "1.2.13", force=False)
-    # Re-invoke with a newer forge version. Body is unchanged, but the
-    # marker carries a different forge-version field, so content differs.
+    first = hook.read_text()
     written = install_githooks._write_hook(hook, spec, "1.3.0", force=False)
-    assert written
-    assert "forge-version=1.3.0" in hook.read_text()
+    assert not written
+    assert hook.read_text() == first
+    assert "1.2.13" not in first
+    assert "1.3.0" not in hook.read_text()
 
 
 def test_write_hook_refresh_rewrites_unconditionally(tmp_path: Path) -> None:
@@ -185,17 +195,33 @@ def test_write_hook_refresh_still_respects_user_customization(
     assert "echo mine" in hook.read_text()
 
 
-def test_marker_embeds_forge_version_and_body_sha() -> None:
-    """managed_marker() embeds forge-version= and (when provided) body-sha=."""
-    marker_no_sha = install_githooks.managed_marker("1.2.13")
-    assert "forge-version=1.2.13" in marker_no_sha
-    assert marker_no_sha.startswith(install_githooks.MANAGED_MARKER_PREFIX)
-    marker_with_sha = install_githooks.managed_marker("1.2.13", "abc123def456")
-    assert "body-sha=abc123def456" in marker_with_sha
+def test_marker_embeds_body_sha_not_forge_version() -> None:
+    """managed_marker() embeds body-sha=, never forge-version= (version in sidecar)."""
+    bare = install_githooks.managed_marker()
+    assert bare.startswith(install_githooks.MANAGED_MARKER_PREFIX)
+    assert "body-sha=" not in bare
+    assert "forge-version=" not in bare
+    with_sha = install_githooks.managed_marker("abc123def456")
+    assert "body-sha=abc123def456" in with_sha
+    assert "forge-version=" not in with_sha
 
 
-def test_parse_marker_extracts_v2_fields() -> None:
-    """_parse_marker pulls hook-version + forge-version + body-sha from a v2 marker."""
+def test_parse_marker_extracts_current_v2_fields() -> None:
+    """_parse_marker parses current v2 marker: hook-version and body-sha."""
+    content = (
+        "#!/usr/bin/env bash\n"
+        "# forge:githook-managed v2 body-sha=abc123def456\n"
+        "set -euo pipefail\n"
+    )
+    parsed = install_githooks._parse_marker(content)
+    assert parsed is not None
+    assert parsed["hook_version"] == "2"
+    assert parsed["body-sha"] == "abc123def456"
+    assert "forge-version" not in parsed
+
+
+def test_parse_marker_tolerates_legacy_v2_with_embedded_version() -> None:
+    """A pre-sidecar v2 marker carrying forge-version= is still parsed (back-compat)."""
     content = (
         "#!/usr/bin/env bash\n"
         "# forge:githook-managed v2 forge-version=1.11.0 body-sha=abc123def456\n"
@@ -232,16 +258,16 @@ def test_v1_to_v2_migration_backs_up_consumer_customized(tmp_path: Path) -> None
     spec = next(s for s in install_githooks.HOOKS if s.name == "post-merge")
     hook = tmp_path / ".githooks" / "post-merge"
     hook.parent.mkdir()
-    # Build a pristine v1 file: marker + preamble + v1 body.
+    # Build a pristine v1 file: marker + a legacy preamble (ending in
+    # `set -e`, the body-detection terminator) + the canonical v1 body.
     v1_body = install_githooks._V1_HOOK_BODIES["post-merge"]
-    preamble = install_githooks._STALENESS_PREAMBLE_TEMPLATE.replace(
-        "__FORGE_VERSION__", "1.10.0"
-    )
     hook.write_text(
         "#!/usr/bin/env bash\n"
         "# forge:githook-managed v1 forge-version=1.10.0\n"
         "set -euo pipefail\n"
-        f"{preamble}\n"
+        'forge_hook_version="1.10.0"\n'
+        "set +e\n"
+        "set -e\n"
         f"{v1_body}\n"
     )
     written = install_githooks._write_hook(
@@ -273,12 +299,14 @@ def test_is_managed_recognises_legacy_marker_without_forge_version(
     assert install_githooks._is_managed(hook) is True
 
 
-def test_hook_content_includes_staleness_preamble() -> None:
-    """Generated hooks carry the forge_hook_version + sort -V comparison block."""
-    content = install_githooks._hook_content(install_githooks.HOOKS[0], "1.2.13")
-    assert 'forge_hook_version="1.2.13"' in content
+def test_hook_content_reads_version_from_sidecar() -> None:
+    """Generated hooks read version from sidecar and run sort -V comparison."""
+    content = install_githooks._hook_content(install_githooks.HOOKS[0])
+    assert install_githooks.SIDECAR_NAME in content
     assert "sort -V" in content
     assert "install-forge-githooks --refresh" in content
+    # No baked-in version placeholder or constant survives.
+    assert "__FORGE_VERSION__" not in content
 
 
 def test_post_merge_body_calls_forge_post_merge_cli() -> None:
@@ -408,3 +436,72 @@ def test_main_quiet_suppresses_info_logs(
         install_githooks.main()
     info_records = [r for r in caplog.records if r.levelname == "INFO"]
     assert info_records == []
+
+
+def test_write_version_sidecar_records_full_version(tmp_path: Path) -> None:
+    """The sidecar holds the full version string (dev suffix and all)."""
+    githooks = tmp_path / ".githooks"
+    version = "1.16.2.dev4+g5b5b916c4.d20260612"
+    install_githooks._write_version_sidecar(githooks, version)
+    sidecar = githooks / install_githooks.SIDECAR_NAME
+    assert sidecar.read_text().strip() == version
+
+
+def test_ensure_sidecar_gitignored_is_idempotent(tmp_path: Path) -> None:
+    """The ignore entry is appended once and never duplicated on re-run."""
+    install_githooks._ensure_sidecar_gitignored(tmp_path)
+    install_githooks._ensure_sidecar_gitignored(tmp_path)
+    text = (tmp_path / ".gitignore").read_text()
+    entry = f".githooks/{install_githooks.SIDECAR_NAME}"
+    assert text.count(entry) == 1
+
+
+def test_main_writes_and_gitignores_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """main() drops the version sidecar and ensures it is gitignored."""
+    monkeypatch.setattr(install_githooks, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(install_githooks, "_set_hooks_path", lambda *_, **__: None)
+    with patch.object(install_githooks.sys, "argv", ["install-forge-githooks"]):
+        install_githooks.main()
+    sidecar = tmp_path / ".githooks" / install_githooks.SIDECAR_NAME
+    assert sidecar.is_file()
+    assert sidecar.read_text().strip() == install_githooks._installed_forge_version()
+    assert (
+        f".githooks/{install_githooks.SIDECAR_NAME}"
+        in (tmp_path / ".gitignore").read_text()
+    )
+
+
+def test_main_refresh_across_versions_keeps_hooks_byte_stable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A version bump between two installs leaves every tracked hook byte-identical.
+
+    The end-to-end anti-churn guarantee: only the gitignored sidecar
+    changes when the installed forge version advances.
+    """
+    monkeypatch.setattr(install_githooks, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(install_githooks, "_set_hooks_path", lambda *_, **__: None)
+    monkeypatch.setattr(
+        install_githooks, "_installed_forge_version", lambda: "1.16.2.dev1+gaaa"
+    )
+    with patch.object(install_githooks.sys, "argv", ["install-forge-githooks"]):
+        install_githooks.main()
+    before = {
+        spec.name: (tmp_path / ".githooks" / spec.name).read_text()
+        for spec in install_githooks.HOOKS
+    }
+    monkeypatch.setattr(
+        install_githooks, "_installed_forge_version", lambda: "1.16.2.dev9+gbbb"
+    )
+    with patch.object(
+        install_githooks.sys, "argv", ["install-forge-githooks", "--refresh"]
+    ):
+        install_githooks.main()
+    for spec in install_githooks.HOOKS:
+        assert (tmp_path / ".githooks" / spec.name).read_text() == before[spec.name]
+    sidecar = tmp_path / ".githooks" / install_githooks.SIDECAR_NAME
+    assert sidecar.read_text().strip() == "1.16.2.dev9+gbbb"

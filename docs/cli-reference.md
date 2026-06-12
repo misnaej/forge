@@ -320,15 +320,19 @@ options:
 ## forge-post-merge
 
 ```text
-usage: forge-post-merge [-h]
+usage: forge-post-merge [-h] [squash_flag]
 
 Forge-managed post-merge git-hook entrypoint. Invoked by the thin
 .githooks/post-merge wrapper. Runs the foundation drift check and backgrounds
 a self-refresh of managed hook wrappers. No-ops in non-interactive contexts
 (FOUNDATION §15).
 
+positional arguments:
+  squash_flag  squash-merge status flag passed by git (1=squash, 0=otherwise);
+               ignored
+
 options:
-  -h, --help  show this help message and exit
+  -h, --help   show this help message and exit
 ```
 
 ## forge-pr-squash-comment
