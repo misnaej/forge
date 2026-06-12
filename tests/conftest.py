@@ -21,9 +21,9 @@ class FakeProc:
     """Minimal ``subprocess.CompletedProcess`` stand-in.
 
     Attributes:
-        returncode: Mock exit code.
-        stdout: Mock standard output.
-        stderr: Mock standard error.
+        returncode: Simulated exit code.
+        stdout: Simulated standard output.
+        stderr: Simulated standard error.
     """
 
     returncode: int = 0
