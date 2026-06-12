@@ -176,7 +176,7 @@ roots. Skips lock files (`package-lock.json`, `yarn.lock`, …).
   unquoted commas inside description fields.
 - JSON: must parse. If `<file>.schema.json` sits alongside AND
   `jsonschema` is importable, validate.
-- TOML: must parse (Python 3.11+). Graceful skip on 3.10.
+- TOML: must parse (Python 3.11+).
 - YAML: must parse. PyYAML ships with the `[audit]` extra, so it is
   present in any environment set up per [Installation](#installation);
   if it is somehow missing, YAML files are skipped gracefully.
