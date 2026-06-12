@@ -136,6 +136,15 @@ cheaper than reverting.
   `block_pr_merge` hook enforces this for agents (blocks `gh pr merge` and
   the equivalent `gh api .../pulls/N/merge` call). Users still merge
   themselves via `! gh pr merge ...`.
+- **NEVER delete a protected remote branch** (`base_branch` / `dev_branch`,
+  default `main` / `dev`). Deleting a shared branch is irreversible and —
+  because an agent runs with the user's credentials — *bypasses* server-side
+  rulesets that "restrict deletions". The `block_branch_deletion` hook
+  enforces this for agents with **no bypass** (not even
+  `forge:git-commit-push`): it blocks `git push --delete` / `git push :ref`
+  and `gh api -X DELETE …/branches/…` targeting a protected branch. Local
+  `git branch -d/-D` is untouched (it never affects the remote). If a human
+  truly intends a remote delete, they run it themselves with `! …`.
 - **No backwards-compatibility shims** unless the user explicitly requests.
   No `OldName = NewName`, no deprecation warnings, no re-exports of moved
   modules. Clean breaks are the default.
