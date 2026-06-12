@@ -27,6 +27,20 @@ def test_no_op_in_non_interactive_context(
     assert captured.calls == []
 
 
+def test_accepts_git_squash_flag_positional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Git passes post-merge a squash-status flag; the parser must accept it.
+
+    Regression: a bare ``parse_args`` with no positional rejected git's
+    ``$1`` with ``error: unrecognized arguments: 0`` (exit 2) on every
+    merge, silently killing the drift check + self-refresh.
+    """
+    monkeypatch.setattr(post_merge, "is_non_interactive", lambda: True)
+    for flag in ("0", "1"):
+        assert post_merge.main([flag]) == 0
+
+
 def test_hard_fail_when_install_forge_claude_md_missing(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
