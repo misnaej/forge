@@ -105,3 +105,47 @@ def test_backgrounds_self_refresh_when_githooks_cli_present(
     )
     assert post_merge.main([]) == 0
     assert popen_calls == [["install-forge-githooks", "--refresh", "--quiet"]]
+
+
+def test_runs_hook_extensions_when_interactive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Interactive context runs the ``post-merge.d`` consumer extensions."""
+    monkeypatch.setattr(post_merge, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(_hook_helpers.shutil, "which", lambda _n: "/fake/bin")
+    # Stub Popen so the backgrounded self-refresh is harmless (shutil is
+    # shared across modules, so we cannot null `which` to skip it).
+    monkeypatch.setattr(post_merge.subprocess, "Popen", lambda *_a, **_kw: None)
+    monkeypatch.setattr(_hook_helpers.subprocess, "run", make_fake_run(returncode=0))
+    calls: list[str] = []
+    monkeypatch.setattr(post_merge, "run_hook_extensions", calls.append)
+    assert post_merge.main([]) == 0
+    assert calls == ["post-merge"]
+
+
+def test_skips_hook_extensions_in_non_interactive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CI / non-interactive fast-exit never reaches the extension runner."""
+    monkeypatch.setattr(post_merge, "is_non_interactive", lambda: True)
+    calls: list[str] = []
+    monkeypatch.setattr(post_merge, "run_hook_extensions", calls.append)
+    assert post_merge.main([]) == 0
+    assert calls == []
+
+
+def test_runs_hook_extensions_even_when_drift_check_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Extensions are consumer logic — they run even if the drift check returns 1.
+
+    Symmetric with post-checkout: a forge misconfiguration (drift CLI
+    not on PATH) must not silently suppress the consumer's extensions.
+    The drift rc is still propagated as the exit code.
+    """
+    monkeypatch.setattr(post_merge, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(post_merge, "run_foundation_drift_check", lambda _n: 1)
+    calls: list[str] = []
+    monkeypatch.setattr(post_merge, "run_hook_extensions", calls.append)
+    assert post_merge.main([]) == 1
+    assert calls == ["post-merge"]

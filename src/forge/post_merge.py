@@ -13,6 +13,10 @@ process runs interactively, performs two side effects:
    not run this step; the installed forge-scripts version only
    changes via ``pip install``, which is most naturally chained
    off a ``git pull``.
+3. Consumer extension scripts in ``.githooks/post-merge.d/`` via
+   :func:`forge._hook_helpers.run_hook_extensions` — a sanctioned
+   drop-in point that survives every refresh (the installer never
+   touches the ``.d`` subdirectory).
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ import shutil
 import subprocess
 import sys
 
-from forge._hook_helpers import run_foundation_drift_check
+from forge._hook_helpers import run_foundation_drift_check, run_hook_extensions
 from forge.git_utils import configure_cli_logging
 from forge.run_context import is_non_interactive
 
@@ -70,15 +74,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     rc = run_foundation_drift_check("post-merge")
-    if rc != 0:
-        return rc
 
     # Self-refresh — backgrounded + output-redirected. The hook
     # process exits first, then ``install-forge-githooks`` rewrites
     # the managed hook files. A mid-execution self-rewrite would
     # risk bash reading stale buffers past the current chunk
-    # boundary.
-    if shutil.which("install-forge-githooks") is not None:
+    # boundary. Skipped when the drift check failed (forge-scripts not
+    # installed) or the installer CLI is absent.
+    if rc == 0 and shutil.which("install-forge-githooks") is not None:
         subprocess.Popen(
             ["install-forge-githooks", "--refresh", "--quiet"],
             stdout=subprocess.DEVNULL,
@@ -87,7 +90,12 @@ def main(argv: list[str] | None = None) -> int:
             start_new_session=True,
         )
 
-    return 0
+    # Consumer extensions run in any interactive context, independent of
+    # the forge drift check — symmetric with post-checkout. They are the
+    # consumer's logic, not forge's, so a forge misconfiguration must not
+    # silently suppress them.
+    run_hook_extensions("post-merge")
+    return rc
 
 
 if __name__ == "__main__":
