@@ -141,8 +141,10 @@ def _promotion_status_lines(
     """Build the read-only promotion-status report.
 
     Reports the base/dev plugin versions and, when dev is a MINOR/MAJOR
-    ahead, the ordered list of ``v*`` tags that ``base`` must be promoted
-    up to — one release per line, ascending. Shares version-read and
+    ahead, the ordered list of ``X.Y.0`` releases that ``base`` must be
+    promoted up to — one minor per line, ascending. ``base`` is
+    minor-only: interleaved patch tags are excluded because they fold
+    into the next minor's promotion. Shares version-read and
     pending-detection helpers with the ``/next`` advisory, giving the
     ``/promote`` skill a single authoritative source for the git/version
     comparison.
@@ -174,11 +176,27 @@ def _promotion_status_lines(
     if base_tuple is None or dev_tuple is None or base_tuple[:2] >= dev_tuple[:2]:
         lines.append("Up to date — nothing to promote.")
         return lines
+    # Only MINOR/MAJOR releases (``X.Y.0``) are promotion targets — base
+    # is minor-only, and accumulated patches fold into the next minor's
+    # promotion (e.g. 1.5.1 / 1.5.2 ride along when 1.6.0 is promoted).
+    # Filtering on ``pv[2] == 0`` drops the interleaved patch tags the
+    # version range would otherwise list as separate promotions.
     staged = sorted(
         (pv, tag)
         for tag in _git("tag", "--list", "v*", cwd=repo_root, check=False).split()
-        if (pv := parse_semver(tag)) is not None and base_tuple < pv <= dev_tuple
+        if (pv := parse_semver(tag)) is not None
+        and pv[2] == 0
+        and base_tuple < pv <= dev_tuple
     )
+    if not staged:
+        # MINOR/MAJOR gap detected but no ``X.Y.0`` tag in range — the
+        # minor was never tagged (fresh or mid-flight repo). Don't print a
+        # misleading "promote these (0):" header with an empty list.
+        lines.append(
+            "Promotion pending, but no X.Y.0 release tag found in range "
+            "— check that the target minor was tagged."
+        )
+        return lines
     lines.append(f"Promotion pending — promote these in order ({len(staged)}):")
     lines.extend(f"  {tag}" for _, tag in staged)
     return lines
