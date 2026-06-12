@@ -84,6 +84,33 @@ Documentation must stay in sync with code. For each item below, update **only if
 
 A PR that changes code without updating affected docs is not ready to merge.
 
+## Step 3.5: Promote standard permission rules (optional)
+
+Work accumulates one-off `Bash(...)` approvals in the gitignored
+`.claude/settings.local.json`. PR finalization is the natural moment to
+ask: *did any of these become standard enough to share with the team?*
+
+Review `.claude/settings.local.json` and **propose** (never auto-apply)
+moving rules into the committed `.claude/settings.json` when a rule is:
+
+- **recurring** — used across multiple sessions, not a one-shot, AND
+- **a forge-standard CLI or a safe read-only command** (e.g.
+  `Bash(forge-precommit *)`, `Bash(forge-audit-all *)`,
+  `Bash(python -m pytest *)`), AND
+- **not over-broad** — per the [Claude Code Bash permission
+  guidance](https://code.claude.com/docs/en/permissions.md#bash),
+  argument-constraining patterns are fragile; prefer exact commands or
+  space-boundary prefixes over sweeping wildcards.
+
+Rules in `settings.json` and `settings.local.json` **merge additively**,
+so promotion never removes a contributor's local rules — it just makes
+the shared baseline richer.
+
+**Do NOT promote** (leave local, or add to `deny` in `settings.json`):
+network tools (`curl`/`wget`), destructive commands (`rm -rf`), or
+anything that touches secrets. List the candidates, get user
+confirmation, then edit `settings.json` — the change rides in this PR.
+
 ## Step 4: Finalize via `pr-manager` (MANDATORY)
 
 14. Delegate finalization. **Pass the Step 1 reports verbatim in the prompt** so `pr-manager` does not re-run the same three verification agents — see [agents/pr-manager.md "Pre-run reports" note](../../agents/pr-manager.md). Two passes per PR is pure waste.
