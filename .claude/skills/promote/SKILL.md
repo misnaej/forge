@@ -43,23 +43,29 @@ starting the next.
 
 ## Step 1: Identify the pending release(s)
 
+Use the CLI — do not hand-roll the version comparison:
+
 ```bash
-git fetch origin --tags
-MAIN_V=$(git show origin/main:.claude-plugin/plugin.json | python -c 'import json,sys; print(json.load(sys.stdin)["version"])')
-DEV_V=$(git show origin/dev:.claude-plugin/plugin.json  | python -c 'import json,sys; print(json.load(sys.stdin)["version"])')
-echo "main=$MAIN_V  dev=$DEV_V"
-git tag --sort=v:refname | sed -n "/v$MAIN_V/,/v$DEV_V/p"   # the minors to promote, in order
+forge-next-prep --promotion-status
 ```
 
-Skip entirely when:
+It fetches tags and prints the base/dev plugin versions plus the
+ordered list of `v*` releases pending promotion, e.g.:
 
-- `main`'s minor ≥ `dev`'s minor (nothing to promote, or only patch
-  differences — `dev` accumulates patches between minor releases per
-  CLAUDE.md "rolling-next").
-- A promotion PR (base `main`) is already open (Step 2).
+```text
+main (origin/main): v1.17.0
+dev (origin/dev): v1.19.0
+Promotion pending — promote these in order (2):
+  v1.18.0
+  v1.19.0
+```
 
-Set `$NEW` to the **lowest** un-promoted minor (e.g. if main is `1.17.0`
-and dev is `1.19.0`, promote `v1.18.0` first, then `v1.19.0`).
+Skip entirely when it reports **"Up to date — nothing to promote"**
+(`main`'s minor ≥ `dev`'s minor; patch differences accumulate on `dev`
+between releases per CLAUDE.md "rolling-next"), or when a promotion PR
+(base `main`) is already open (Step 2).
+
+Set `$NEW` to the **first** (lowest) listed release and promote that one.
 
 ## Step 2: Refuse to open a duplicate
 

@@ -297,6 +297,55 @@ def test_check_promote_pending_emits_major_bump_message(
     assert "MAJOR" in result
 
 
+# ---------------------------------------------------------------------------
+# _promotion_status_lines
+# ---------------------------------------------------------------------------
+
+
+def test_promotion_status_single_branch(tmp_path: Path) -> None:
+    """A single-branch repo has no promotion model."""
+    lines = next_prep._promotion_status_lines(tmp_path, "main", "main")
+    assert "Single-branch" in lines[0]
+
+
+def test_promotion_status_up_to_date(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Equal minors → up to date, nothing to promote."""
+    monkeypatch.setattr(
+        next_prep, "_read_plugin_version_at_ref", lambda _root, _ref: "1.19.0"
+    )
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    assert any("Up to date" in line for line in lines)
+
+
+def test_promotion_status_lists_pending_minors_in_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When dev is two minors ahead, list the pending v* releases in ascending order."""
+    monkeypatch.setattr(
+        next_prep,
+        "_read_plugin_version_at_ref",
+        lambda _root, ref: "1.19.0" if "dev" in ref else "1.17.0",
+    )
+    monkeypatch.setattr(
+        next_prep,
+        "_git",
+        lambda *args, **_kw: (
+            "v1.16.4 v1.17.0 v1.18.0 v1.19.0" if args[:1] == ("tag",) else ""
+        ),
+    )
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    text = "\n".join(lines)
+    assert "main (origin/main): v1.17.0" in text
+    assert "dev (origin/dev): v1.19.0" in text
+    assert "Promotion pending" in text
+    pending = [line.strip() for line in lines if line.startswith("  ")]
+    assert pending == ["v1.18.0", "v1.19.0"]
+
+
 def test_check_promote_pending_silent_when_either_manifest_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
