@@ -74,15 +74,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     rc = run_foundation_drift_check("post-merge")
-    if rc != 0:
-        return rc
 
     # Self-refresh — backgrounded + output-redirected. The hook
     # process exits first, then ``install-forge-githooks`` rewrites
     # the managed hook files. A mid-execution self-rewrite would
     # risk bash reading stale buffers past the current chunk
-    # boundary.
-    if shutil.which("install-forge-githooks") is not None:
+    # boundary. Skipped when the drift check failed (forge-scripts not
+    # installed) or the installer CLI is absent.
+    if rc == 0 and shutil.which("install-forge-githooks") is not None:
         subprocess.Popen(
             ["install-forge-githooks", "--refresh", "--quiet"],
             stdout=subprocess.DEVNULL,
@@ -91,8 +90,12 @@ def main(argv: list[str] | None = None) -> int:
             start_new_session=True,
         )
 
+    # Consumer extensions run in any interactive context, independent of
+    # the forge drift check — symmetric with post-checkout. They are the
+    # consumer's logic, not forge's, so a forge misconfiguration must not
+    # silently suppress them.
     run_hook_extensions("post-merge")
-    return 0
+    return rc
 
 
 if __name__ == "__main__":

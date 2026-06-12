@@ -71,8 +71,10 @@ def run_hook_extensions(hook_name: str) -> None:
     its scripts survive every refresh.
 
     Scripts run in sorted filename order (use a numeric prefix like
-    ``10-`` to order them, the ``cron.d`` convention). Non-executable
-    files are skipped silently. Failure-tolerant: a non-zero exit is
+    ``10-`` to order them, the ``cron.d`` convention). Each is executed
+    directly, so it must carry a shebang (e.g. ``#!/usr/bin/env bash``).
+    Non-executable files are skipped silently. Failure-tolerant: a
+    non-zero exit is
     logged to stderr and the next script still runs — a managed git
     hook must never fail the underlying git operation over a consumer
     extension, the same posture as the foundation drift check.

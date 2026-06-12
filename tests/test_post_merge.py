@@ -132,3 +132,20 @@ def test_skips_hook_extensions_in_non_interactive(
     monkeypatch.setattr(post_merge, "run_hook_extensions", calls.append)
     assert post_merge.main([]) == 0
     assert calls == []
+
+
+def test_runs_hook_extensions_even_when_drift_check_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Extensions are consumer logic — they run even if the drift check returns 1.
+
+    Symmetric with post-checkout: a forge misconfiguration (drift CLI
+    not on PATH) must not silently suppress the consumer's extensions.
+    The drift rc is still propagated as the exit code.
+    """
+    monkeypatch.setattr(post_merge, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(post_merge, "run_foundation_drift_check", lambda _n: 1)
+    calls: list[str] = []
+    monkeypatch.setattr(post_merge, "run_hook_extensions", calls.append)
+    assert post_merge.main([]) == 1
+    assert calls == ["post-merge"]

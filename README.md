@@ -222,7 +222,12 @@ refresh with no body-sha bookkeeping:
 
 A failing extension logs a warning and is skipped — it never breaks
 your `git pull` / `git checkout`. Extensions run only in interactive
-contexts (skipped in CI, same posture as the drift check).
+contexts (skipped in CI, same posture as the drift check). Each script
+needs a shebang and the executable bit; it runs with the repo root as
+its working directory and inherits your shell environment. Because a
+`.d/` script is committed and runs automatically, review it with the
+same care as any executable hook — the directory is intentionally
+outside forge's refresh cycle, so forge never inspects or rewrites it.
 
 `git commit` now runs the canonical pre-commit sequence:
 
