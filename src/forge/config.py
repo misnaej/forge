@@ -22,25 +22,13 @@ mirror it there.
 from __future__ import annotations
 
 import logging
+import tomllib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
     from pathlib import Path
-    from types import ModuleType
-
-
-# Same guarded-import pattern as forge.audit.common — tomllib is stdlib
-# on Python 3.11+ but a forge consumer running 3.10 falls back to
-# defaults silently.
-TOMLLIB: ModuleType | None
-try:
-    import tomllib
-
-    TOMLLIB = tomllib
-except ImportError:
-    TOMLLIB = None
 
 
 logger = logging.getLogger(__name__)
@@ -107,7 +95,7 @@ def load_config(repo_root: Path) -> ForgeConfig:
         ``[tool.forge]`` to opt in.
     """
     pyproject = repo_root / "pyproject.toml"
-    if not pyproject.is_file() or TOMLLIB is None:
+    if not pyproject.is_file():
         return ForgeConfig()
     try:
         text = pyproject.read_text()
@@ -115,7 +103,7 @@ def load_config(repo_root: Path) -> ForgeConfig:
         logger.debug("forge.config: could not read %s (%s)", pyproject, exc)
         return ForgeConfig()
     try:
-        data = TOMLLIB.loads(text)
+        data = tomllib.loads(text)
     except ValueError as exc:
         logger.debug("forge.config: could not parse %s (%s)", pyproject, exc)
         return ForgeConfig()

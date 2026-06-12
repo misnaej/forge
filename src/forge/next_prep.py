@@ -19,6 +19,12 @@ Operations (in order, each idempotent):
    local branches whose remote shows ``[origin/...: gone]``. Uses
    ``git branch -d`` (safe) — never ``-D``.
 
+``--promotion-status`` is a separate read-only mode: it fetches tags,
+prints the base/dev plugin versions and the ordered list of ``v*``
+releases still pending promotion, then exits — no checkout, pull, tag,
+or prune. The ``/promote`` skill calls it instead of hand-rolling the
+git/version comparison.
+
 The ``--target`` flag (forge-internal) lets the CLI refresh a different
 branch when the repo's ``[tool.forge]`` block names one. Standard
 single-branch repos can ignore it.
@@ -125,6 +131,57 @@ def _check_promote_pending_message(
         f"Run /promote (or your repo's equivalent) to open the "
         f"{dev_branch}→{base_branch} release PR."
     )
+
+
+def _promotion_status_lines(
+    repo_root: Path,
+    dev_branch: str,
+    base_branch: str,
+) -> list[str]:
+    """Build the read-only promotion-status report.
+
+    Reports the base/dev plugin versions and, when dev is a MINOR/MAJOR
+    ahead, the ordered list of ``v*`` tags that ``base`` must be promoted
+    up to — one release per line, ascending. Shares version-read and
+    pending-detection helpers with the ``/next`` advisory, giving the
+    ``/promote`` skill a single authoritative source for the git/version
+    comparison.
+
+    Args:
+        repo_root: Working directory for git operations.
+        dev_branch: Fast-channel branch name (e.g. ``"dev"``).
+        base_branch: Slow-channel branch name (e.g. ``"main"``).
+
+    Returns:
+        Human-readable report lines (never empty). Reads ``origin/*``
+        tracking refs — the caller is responsible for fetching first.
+    """
+    if dev_branch == base_branch:
+        return ["Single-branch repo — no dev→base promotion model."]
+    base_ver = _read_plugin_version_at_ref(repo_root, f"origin/{base_branch}")
+    dev_ver = _read_plugin_version_at_ref(repo_root, f"origin/{dev_branch}")
+    if base_ver is None or dev_ver is None:
+        return [f"No plugin manifest on origin/{base_branch} or origin/{dev_branch}."]
+    lines = [
+        f"{base_branch} (origin/{base_branch}): v{base_ver}",
+        f"{dev_branch} (origin/{dev_branch}): v{dev_ver}",
+    ]
+    base_tuple = parse_semver(base_ver)
+    dev_tuple = parse_semver(dev_ver)
+    # Pending only on a MINOR/MAJOR gap with dev ahead — patches
+    # accumulate on dev between releases (rolling-next). Compared from the
+    # already-read versions; no second round of git reads.
+    if base_tuple is None or dev_tuple is None or base_tuple[:2] >= dev_tuple[:2]:
+        lines.append("Up to date — nothing to promote.")
+        return lines
+    staged = sorted(
+        (pv, tag)
+        for tag in _git("tag", "--list", "v*", cwd=repo_root, check=False).split()
+        if (pv := parse_semver(tag)) is not None and base_tuple < pv <= dev_tuple
+    )
+    lines.append(f"Promotion pending — promote these in order ({len(staged)}):")
+    lines.extend(f"  {tag}" for _, tag in staged)
+    return lines
 
 
 def _git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
@@ -289,6 +346,46 @@ def _prune_gone_branches(repo_root: Path) -> tuple[list[str], list[str]]:
     return deleted, skipped
 
 
+def _emit_promotion_status(
+    repo_root: Path,
+    dev_branch: str,
+    base_branch: str,
+) -> int:
+    """Fetch tags and log the read-only promotion-status report.
+
+    Args:
+        repo_root: Working directory for git operations.
+        dev_branch: Fast-channel branch name.
+        base_branch: Slow-channel branch name.
+
+    Returns:
+        Always ``0`` — this is a pure read-only report.
+    """
+    _git("fetch", "origin", "--tags", "--quiet", cwd=repo_root, check=False)
+    for line in _promotion_status_lines(repo_root, dev_branch, base_branch):
+        logger.info("%s", line)
+    return 0
+
+
+def _log_prune_result(repo_root: Path) -> None:
+    """Prune stale local branches and log the outcome.
+
+    Args:
+        repo_root: Working directory for git operations.
+    """
+    deleted, skipped = _prune_gone_branches(repo_root)
+    if deleted:
+        logger.info("Pruned stale branches: %s", ", ".join(deleted))
+    if skipped:
+        logger.warning(
+            "Skipped branches with unmerged commits (use -D manually if "
+            "you really want to drop them): %s",
+            ", ".join(skipped),
+        )
+    if not deleted and not skipped:
+        logger.info("No stale branches to prune.")
+
+
 def main() -> int:
     """Refresh main, optionally tag the release, prune stale local branches.
 
@@ -323,6 +420,15 @@ def main() -> int:
         help="Skip the stale-branch prune step.",
     )
     parser.add_argument(
+        "--promotion-status",
+        action="store_true",
+        help=(
+            "Read-only: fetch tags, then print the base/dev plugin versions "
+            "and the ordered list of v* releases pending promotion, and exit. "
+            "No checkout, pull, tag, or prune. Used by the /promote skill."
+        ),
+    )
+    parser.add_argument(
         "--target",
         choices=("dev", "base"),
         default="dev",
@@ -336,6 +442,10 @@ def main() -> int:
 
     repo_root = Path.cwd()
     cfg = load_config(repo_root)
+
+    if args.promotion_status:
+        return _emit_promotion_status(repo_root, cfg.dev_branch, cfg.base_branch)
+
     target_branch = cfg.dev_branch if args.target == "dev" else cfg.base_branch
 
     logger.info("Fetching from origin...")
@@ -386,17 +496,7 @@ def main() -> int:
             logger.info("No release tag needed.")
 
     if not args.no_prune_branches:
-        deleted, skipped = _prune_gone_branches(repo_root)
-        if deleted:
-            logger.info("Pruned stale branches: %s", ", ".join(deleted))
-        if skipped:
-            logger.warning(
-                "Skipped branches with unmerged commits (use -D manually if "
-                "you really want to drop them): %s",
-                ", ".join(skipped),
-            )
-        if not deleted and not skipped:
-            logger.info("No stale branches to prune.")
+        _log_prune_result(repo_root)
 
     # Promotion-pending advisory. Self-gating: only emits when
     # ``[tool.forge]`` declares a separate ``dev_branch`` (dual-track
