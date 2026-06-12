@@ -44,7 +44,7 @@ def _verify(tmp_path: Path, name: str, source: str) -> list[verify_test_naming.I
     return verify_test_naming.verify_file(path)
 
 
-def test_rule3_singular_raise_in_test_name_flagged(tmp_path: Path) -> None:
+def test_rule3_singular_raises_in_test_name_flagged(tmp_path: Path) -> None:
     """A test named ``test_X_raise`` → flagged (must be ``_raises``).
 
     Ruff has no equivalent — this is a test-naming convention.

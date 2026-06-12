@@ -81,11 +81,20 @@ def test_main_invokes_every_selected_subaudit(
 
     invoked: list[str] = []
 
-    def fake_run(cmd: list[str], **_kwargs: object) -> object:
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        """Record invoked commands and return a fake process.
+
+        Args:
+            cmd: Command argv (first element is recorded).
+            **_kwargs: Ignored keyword arguments.
+
+        Returns:
+            A fake process object with returncode 0.
+        """
         invoked.append(cmd[0])
         return FakeProc(returncode=0)
 
-    monkeypatch.setattr(audit_all.subprocess, "run", fake_run)
+    monkeypatch.setattr(audit_all.subprocess, "run", _fake_run)
     with patch("sys.argv", ["forge-audit-all"]):
         rc = audit_all.main()
 
@@ -107,11 +116,20 @@ def test_main_only_filters_subaudits(
 
     invoked: list[str] = []
 
-    def fake_run(cmd: list[str], **_kwargs: object) -> object:
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        """Record invoked commands and return a fake process.
+
+        Args:
+            cmd: Command argv (first element is recorded).
+            **_kwargs: Ignored keyword arguments.
+
+        Returns:
+            A fake process object with returncode 0.
+        """
         invoked.append(cmd[0])
         return FakeProc(returncode=0)
 
-    monkeypatch.setattr(audit_all.subprocess, "run", fake_run)
+    monkeypatch.setattr(audit_all.subprocess, "run", _fake_run)
     with patch("sys.argv", ["forge-audit-all", "--only", "dup", "deps"]):
         rc = audit_all.main()
 
@@ -129,10 +147,19 @@ def test_main_returns_max_subaudit_exit_code(
 
     codes = iter([0, 2, 1])
 
-    def fake_run(_cmd: list[str], **_kwargs: object) -> object:
+    def _fake_run(_cmd: list[str], **_kwargs: object) -> object:
+        """Return a fake process with the next exit code from the iterator.
+
+        Args:
+            _cmd: Ignored command argv.
+            **_kwargs: Ignored keyword arguments.
+
+        Returns:
+            A fake process object with the next returncode from the iterator.
+        """
         return FakeProc(returncode=next(codes))
 
-    monkeypatch.setattr(audit_all.subprocess, "run", fake_run)
+    monkeypatch.setattr(audit_all.subprocess, "run", _fake_run)
     with patch("sys.argv", ["forge-audit-all", "--only", "dup", "deps", "orphans"]):
         rc = audit_all.main()
 
