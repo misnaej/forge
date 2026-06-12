@@ -15,6 +15,8 @@ Each test below either:
 
 from __future__ import annotations
 
+import logging
+import sys
 from typing import TYPE_CHECKING
 
 from forge import verify_test_naming
@@ -22,6 +24,8 @@ from forge import verify_test_naming
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 
 def _verify(tmp_path: Path, name: str, source: str) -> list[verify_test_naming.Issue]:
@@ -174,3 +178,71 @@ def build_widget():
 """
     issues = _verify(tmp_path, "conftest.py", src)
     assert not any(i.function == "build_widget" for i in issues)
+
+
+# ---------------------------------------------------------------------------
+# main() — CLI entrypoint (verify-forge-test-naming)
+# ---------------------------------------------------------------------------
+
+
+def test_main_returns_zero_and_reports_clean_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A well-named target file exits 0 and reports no issues."""
+    target = tmp_path / "tests" / "test_widget.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def test_widget_returns_expected():\n    assert True\n")
+    monkeypatch.setattr("forge.verify_test_naming.repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["verify-forge-test-naming", "tests/test_widget.py"]
+    )
+    with caplog.at_level(logging.INFO):
+        result = verify_test_naming.main()
+    assert result == 0
+    assert any("No test naming issues found" in r.getMessage() for r in caplog.records)
+
+
+def test_main_is_warning_only_returns_zero_on_violation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A naming violation is reported but the exit code is still 0.
+
+    ``verify-forge-test-naming`` is warning-only by contract (FOUNDATION §8):
+    it surfaces issues in the log but never refuses a commit, so ``main()``
+    returns 0 even when violations exist.
+    """
+    target = tmp_path / "tests" / "test_widget.py"
+    target.parent.mkdir(parents=True)
+    # Helper without a `_` prefix in a test file → Rule 4 violation.
+    target.write_text(
+        "def build_widget():\n    return 1\n\n\ndef test_widget_size():\n"
+        "    assert build_widget()\n"
+    )
+    monkeypatch.setattr("forge.verify_test_naming.repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["verify-forge-test-naming", "tests/test_widget.py"]
+    )
+    with caplog.at_level(logging.INFO):
+        result = verify_test_naming.main()
+    assert result == 0
+    assert any("SUMMARY" in r.getMessage() for r in caplog.records)
+
+
+def test_main_returns_zero_when_target_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A nonexistent target resolves to no files; main() exits 0."""
+    monkeypatch.setattr("forge.verify_test_naming.repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["verify-forge-test-naming", "tests/test_absent.py"]
+    )
+    with caplog.at_level(logging.INFO):
+        result = verify_test_naming.main()
+    assert result == 0
+    assert any("No test files to check" in r.getMessage() for r in caplog.records)

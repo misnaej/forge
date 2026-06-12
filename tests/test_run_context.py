@@ -30,7 +30,6 @@ def test_is_non_interactive_when_ci_marker_set(
 
     Args:
         marker: Name of a CI env var from ``_CI_MARKERS``.
-        monkeypatch: Pytest monkeypatch fixture.
     """
     _clear_ci_env(monkeypatch)
     monkeypatch.setenv(marker, "1")
@@ -120,7 +119,6 @@ def test_git_auth_mode_https_token(
 
     Args:
         token_var: Name of an HTTPS-token env var from ``_HTTPS_TOKEN_ENV``.
-        monkeypatch: Pytest monkeypatch fixture.
     """
     _force_no_ssh(monkeypatch)
     _clear_token_env(monkeypatch)
@@ -205,7 +203,6 @@ def test_ssh_agent_has_identity_false_on_subprocess_error(
     Args:
         exc: Exception instance the patched subprocess.run will raise.
         label: pytest-id label (unused at runtime; parametrize tag only).
-        monkeypatch: Pytest monkeypatch fixture.
     """
     del label
     monkeypatch.setattr(mod.shutil, "which", lambda _name: "/usr/bin/ssh-add")

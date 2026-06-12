@@ -1,5 +1,14 @@
 """Tests for forge.precommit dispatcher."""
 
+# MOCKING STRATEGY: no real check runs — every external dependency of the
+# dispatcher is swapped out so run_all/main orchestration is tested in
+# isolation.
+#   - shutil.which / _run: stub tool presence and command exit codes.
+#   - step_* functions: replaced by `_stub_*` helpers returning canned
+#     StepResults, so the sequence/exit-code logic is exercised without
+#     running the real checks.
+#   - patch(sys.argv): drives main()'s argument parsing.
+
 from __future__ import annotations
 
 import json

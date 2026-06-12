@@ -1,5 +1,12 @@
 """Tests for forge.upgrade."""
 
+# MOCKING STRATEGY: the upgrade flow shells out and reads CI/auth context;
+# all of it is stubbed so no real pip/git runs.
+#   - subprocess.run: faked to capture the pip/git commands + return codes.
+#   - _bootstrap_main / repo_root: neutralized (no real bootstrap; sandbox root).
+#   - git_auth_mode / is_non_interactive: pinned to exercise the CI-gate and
+#     auth-URL-form branches deterministically (see `_stub_run_context`).
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
