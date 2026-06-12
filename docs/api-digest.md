@@ -4,11 +4,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_38 modules, 347 symbols._
+_38 modules, 348 symbols._
 
 ## `forge._hook_helpers`
 
 - `run_foundation_drift_check(hook_name: str) -> int` — Run ``install-forge-claude-md --check --quiet``.
+- `run_hook_extensions(hook_name: str) -> None` — Run consumer extension scripts under ``.githooks/<hook_name>.d/``.
 
 ## `forge.audit.agents`
 

@@ -505,3 +505,24 @@ def test_main_refresh_across_versions_keeps_hooks_byte_stable(
         assert (tmp_path / ".githooks" / spec.name).read_text() == before[spec.name]
     sidecar = tmp_path / ".githooks" / install_githooks.SIDECAR_NAME
     assert sidecar.read_text().strip() == "1.16.2.dev9+gbbb"
+
+
+def test_refresh_leaves_extension_dir_untouched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--refresh` never rewrites or deletes consumer `.githooks/<hook>.d/` scripts."""
+    monkeypatch.setattr(install_githooks, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(install_githooks, "_set_hooks_path", lambda *_, **__: None)
+    with patch.object(install_githooks.sys, "argv", ["install-forge-githooks"]):
+        install_githooks.main()
+    ext = tmp_path / ".githooks" / "post-merge.d" / "10-refresh-deps.sh"
+    ext.parent.mkdir(parents=True)
+    ext.write_text("#!/usr/bin/env bash\n./scripts/install-editable.sh\n")
+    original = ext.read_text()
+    with patch.object(
+        install_githooks.sys, "argv", ["install-forge-githooks", "--refresh"]
+    ):
+        install_githooks.main()
+    assert ext.is_file()
+    assert ext.read_text() == original
