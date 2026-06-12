@@ -26,16 +26,6 @@ from forge.git_utils import get_modified_files, repo_root
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
-    from types import ModuleType
-
-
-TOMLLIB: ModuleType | None
-try:
-    import tomllib
-
-    TOMLLIB = tomllib
-except ImportError:
-    TOMLLIB = None
 
 
 logger = logging.getLogger(__name__)
