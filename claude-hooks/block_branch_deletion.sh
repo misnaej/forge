@@ -16,6 +16,12 @@
 # Scope: REMOTE deletion only. Local `git branch -d/-D` is untouched
 # (forge-next-prep prunes local [gone] branches with `-d` by design).
 #
+# Deletion forms caught (per command segment):
+#   - git push <remote> --delete|-d <branch>     (and --delete=)
+#   - git push <remote> :<branch> / :refs/heads/<branch>
+#   - git push <remote> --mirror | --prune       (can delete ANY remote ref)
+#   - gh api (-X|--method)[ =]DELETE .../(refs/heads/|branches/)<branch>
+#
 # No agent_type bypass: there is no legitimate reason for ANY agent to
 # delete main/dev. If a human truly intends it, they run the command
 # directly with `! ...` (user shell commands do not pass through agent
@@ -30,23 +36,16 @@ INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 [ -z "$COMMAND" ] && exit 0
 
-# Fast path: only git-push and gh-api commands can delete a remote branch.
-is_git_push=false
-is_gh_delete=false
-echo "$COMMAND" | grep -qE '(^|[;&|]|&&)[[:space:]]*git[[:space:]]+push' && is_git_push=true
-if echo "$COMMAND" | grep -qE 'gh[[:space:]]+api' \
-    && echo "$COMMAND" | grep -qiE '(-X|--method)[[:space:]]+DELETE'; then
-    is_gh_delete=true
-fi
-[ "$is_git_push" = false ] && [ "$is_gh_delete" = false ] && exit 0
+# Split on shell separators so a ':main' / 'DELETE' token in one segment
+# (e.g. a commit message) can never trip a push/api in another segment.
+# `||` before `|` so a double-pipe collapses to one break.
+SEGMENTS=$(printf '%s' "$COMMAND" | sed -E 's/(&&|\|\||;|\|)/\n/g')
 
-# For git push, only a deletion form is relevant (--delete / -d / :refspec).
-git_delete=false
-if [ "$is_git_push" = true ] && echo "$COMMAND" \
-    | grep -qE '(--delete([[:space:]=]|$)|[[:space:]]-d([[:space:]]|$)|[[:space:]]:)'; then
-    git_delete=true
+# Cheap bail: no segment is a git push or a gh api at all.
+if ! echo "$SEGMENTS" | grep -qE 'git[[:space:]]+push' \
+    && ! echo "$SEGMENTS" | grep -qE 'gh[[:space:]]+api'; then
+    exit 0
 fi
-[ "$git_delete" = false ] && [ "$is_gh_delete" = false ] && exit 0
 
 REPO_ROOT=$(echo "$INPUT" | jq -r '.cwd // empty')
 if [ -z "$REPO_ROOT" ] || ! echo "$REPO_ROOT" | grep -qE '^/'; then
@@ -81,19 +80,47 @@ PY
 # Trailing word-boundary so "main" does not match "main-thing"/"mainframe".
 bound='([^A-Za-z0-9._/-]|$)'
 blocked=""
-for b in $protected; do
-    if [ "$git_delete" = true ] && echo "$COMMAND" | grep -qE \
-        "((--delete[[:space:]=]+|[[:space:]]-d[[:space:]]+)(refs/heads/)?${b}${bound}|[[:space:]]:(refs/heads/)?${b}${bound})"; then
-        blocked="$b"; break
+reason=""
+while IFS= read -r seg; do
+    [ -z "$seg" ] && continue
+
+    if echo "$seg" | grep -qE 'git[[:space:]]+push'; then
+        # Blanket-dangerous push modes: delete remote refs without naming
+        # a branch, so they threaten main/dev regardless of the target.
+        if echo "$seg" | grep -qE '(--mirror|--prune)([[:space:]=]|$)'; then
+            blocked="main/dev"
+            reason="git push --mirror/--prune can delete remote branches"
+            break
+        fi
+        # Named deletion forms targeting a protected branch.
+        for b in $protected; do
+            if echo "$seg" | grep -qE \
+                "((--delete[[:space:]=]+|[[:space:]]-d[[:space:]]+)(refs/heads/)?${b}${bound}|[[:space:]]:(refs/heads/)?${b}${bound})"; then
+                blocked="$b"
+                reason="git push deletes '${b}'"
+                break
+            fi
+        done
+        [ -n "$blocked" ] && break
     fi
-    if [ "$is_gh_delete" = true ] && echo "$COMMAND" | grep -qE \
-        "(refs/heads/|/branches/)${b}${bound}"; then
-        blocked="$b"; break
+
+    if echo "$seg" | grep -qE 'gh[[:space:]]+api' \
+        && echo "$seg" | grep -qiE '(-X|--method)[[:space:]=]+DELETE'; then
+        for b in $protected; do
+            if echo "$seg" | grep -qE "(refs/heads/|/branches/)${b}${bound}"; then
+                blocked="$b"
+                reason="gh api DELETE of '${b}'"
+                break
+            fi
+        done
+        [ -n "$blocked" ] && break
     fi
-done
+done <<EOF
+$SEGMENTS
+EOF
 
 if [ -n "$blocked" ]; then
-    echo "BLOCKED: refusing to delete the protected remote branch '${blocked}'. Deleting main/dev is irreversible and bypasses server-side rulesets when run with a privileged account (an agent runs with your credentials). If this is genuinely intended, run it yourself: ! ${COMMAND}" >&2
+    echo "BLOCKED: refusing to delete a protected remote branch (${reason}). Deleting main/dev is irreversible and bypasses server-side rulesets when run with a privileged account (an agent runs with your credentials). If this is genuinely intended, run it yourself: ! ${COMMAND}" >&2
     exit 2
 fi
 exit 0
