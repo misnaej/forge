@@ -352,7 +352,15 @@ Per-PR CI step:
 - run: install-forge-bootstrap          # idempotent re-sync
 - run: install-forge-bootstrap --check  # fail PR if anything drifted
 - run: forge-precommit                  # full quality gate
+- run: pytest -q | tee code_health/pytest.log
+- if: always()                          # slow + failing is when you want it
+  run: forge-slow-tests-report --out code_health/slow_tests.log
 ```
+
+`forge-slow-tests-report` parses pytest's `slowest N durations` output
+(the `--durations` flags live once in `[tool.pytest.ini_options]`) and
+prints the slowest tests, merged across batches. Read-only, always
+exits `0` — a reporter, not a gate.
 
 Full pasteable workflows (per-PR CI + scheduled
 `forge-upgrade --apply`) are in

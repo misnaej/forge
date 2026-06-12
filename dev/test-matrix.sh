@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Run the test suite across all supported Python versions.
 #
-# Forge supports Python >=3.10 (see pyproject.toml). This script creates
+# Forge supports Python >=3.11 (see pyproject.toml). This script creates
 # (or reuses) one throwaway conda env per version, editable-installs
 # forge with test deps, and runs `pytest tests/`.
 #
 # Idempotent: existing envs are reused. To wipe and rebuild:
-#     conda env remove -n forge-test-py310   # etc.
+#     conda env remove -n forge-test-py311   # etc.
 #
 # Usage:
-#     ./dev/test-matrix.sh                # 3.10, 3.11, 3.12, 3.13
+#     ./dev/test-matrix.sh                # 3.11, 3.12, 3.13
 #     PY_VERSIONS="3.12 3.13" ./dev/test-matrix.sh
 #
 # Forge-only — consumers run their own matrices (tox, nox, GitHub Actions).
@@ -24,7 +24,7 @@ NC='\033[0m'
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-PY_VERSIONS="${PY_VERSIONS:-3.10 3.11 3.12 3.13}"
+PY_VERSIONS="${PY_VERSIONS:-3.11 3.12 3.13}"
 
 if ! command -v conda >/dev/null 2>&1; then
     echo -e "${RED}conda not on PATH.${NC}" >&2

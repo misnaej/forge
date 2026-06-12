@@ -60,10 +60,24 @@ jobs:
       - name: Run forge pre-commit
         run: forge-precommit
 
-      - run: pytest -q
+      - name: Tests
+        run: pytest -q | tee code_health/pytest.log
+
+      - name: Slow tests report
+        if: always()
+        run: forge-slow-tests-report --log code_health/pytest.log --out code_health/slow_tests.log
 ```
 
 Notes:
+
+- `pytest` emits its `slowest N durations` section automatically — the
+  `--durations` flags live once in `[tool.pytest.ini_options]`
+  (`addopts`), so a bare local `pytest` and CI produce the same output.
+- `forge-slow-tests-report` parses that log, merges every durations
+  section, and prints the slowest tests ranked. `if: always()` runs it
+  even when tests fail — slow + failing is when you most want the list.
+  It is read-only and always exits `0`, so it never changes the job's
+  pass/fail.
 
 - `install-forge-bootstrap` is idempotent — running it on every CI
   job is cheap and guarantees the managed artifacts (`FOUNDATION.md`,
