@@ -10,5 +10,36 @@
         "ref": "dev"
       }
     }
+  },
+  "permissions": {
+    "allow": [
+      "Bash(forge-doctor)",
+      "Bash(forge-precommit *)",
+      "Bash(forge-next-prep *)",
+      "Bash(forge-audit-all *)",
+      "Bash(forge-audit-claims *)",
+      "Bash(forge-audit-data *)",
+      "Bash(forge-audit-deps *)",
+      "Bash(forge-audit-dup *)",
+      "Bash(forge-audit-orphans *)",
+      "Bash(forge-audit-suppressions *)",
+      "Bash(forge-audit-agents *)",
+      "Bash(forge-gen-cli-reference)",
+      "Bash(forge-gen-api-digest)",
+      "Bash(forge-gen-commit-types)",
+      "Bash(forge-continuation-append *)",
+      "Bash(forge-pr-squash-comment *)",
+      "Bash(install-forge-githooks *)",
+      "Bash(install-forge-claude-md *)",
+      "Bash(install-forge-labels)",
+      "Bash(python -m pytest *)",
+      "Bash(git *)",
+      "Bash(gh pr *)",
+      "Bash(gh issue *)",
+      "Bash(gh api *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)"
+    ]
   }
 }
