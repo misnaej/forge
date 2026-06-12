@@ -178,7 +178,7 @@ a one-line wrapper that calls a forge-shipped CLI:
 
 ```bash
 #!/usr/bin/env bash
-# forge:githook-managed v2 forge-version=X.Y.Z body-sha=<hex>
+# forge:githook-managed v2 body-sha=<hex>
 set -euo pipefail
 # (staleness preamble — advisory warning when installed forge is newer)
 forge-post-merge "$@"
@@ -190,7 +190,7 @@ repo-specific steps after the forge CLI call:
 
 ```bash
 #!/usr/bin/env bash
-# forge:githook-managed v2 forge-version=X.Y.Z body-sha=<hex>
+# forge:githook-managed v2 body-sha=<hex>
 set -euo pipefail
 forge-post-merge "$@"
 ./scripts/install-editable.sh   # consumer step — survives forge upgrades
@@ -204,6 +204,30 @@ automatically — but auto-refresh **leaves modified wrappers alone**
 --force` to override and rewrite a modified wrapper; the previous
 content is saved as `.githooks/<name>.before-forge-vX.Y.Z.bak` so
 nothing is lost.
+
+**Cleaner: drop-in extension directories.** Rather than editing the
+managed wrapper at all, drop an executable script into
+`.githooks/post-merge.d/` (or `.githooks/post-checkout.d/`). After its
+own work, `forge-post-merge` / `forge-post-checkout` runs every
+executable `*.sh` in that directory in sorted filename order (`10-`,
+`20-`, … the `cron.d` convention). The subdirectory is one
+`install-forge-githooks` never writes, so your scripts survive every
+refresh with no body-sha bookkeeping:
+
+```bash
+# .githooks/post-merge.d/10-refresh-deps.sh   (yours — remember chmod +x)
+#!/usr/bin/env bash
+./scripts/install-editable.sh
+```
+
+A failing extension logs a warning and is skipped — it never breaks
+your `git pull` / `git checkout`. Extensions run only in interactive
+contexts (skipped in CI, same posture as the drift check). Each script
+needs a shebang and the executable bit; it runs with the repo root as
+its working directory and inherits your shell environment. Because a
+`.d/` script is committed and runs automatically, review it with the
+same care as any executable hook — the directory is intentionally
+outside forge's refresh cycle, so forge never inspects or rewrites it.
 
 `git commit` now runs the canonical pre-commit sequence:
 
