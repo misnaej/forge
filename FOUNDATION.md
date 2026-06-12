@@ -768,6 +768,17 @@ GitHub is the **canonical** backlog. No markdown files. The `forge:issue-triage`
 agent reads live `gh` data, applies labels, and curates a single auto-generated
 "📋 Backlog Index" issue per repo.
 
+### Issue structure — lead with `Requires:`
+
+**Every issue opens with a `Requires:` line** as its first content (before
+the body), naming any blocking dependency — another issue or PR that must
+land first — or `Requires: nothing` when standalone. This surfaces ordering
+constraints up front so a blocked task is never mistaken for a quick-win and
+started out of order (e.g. a cleanup that depends on an unmerged floor-raise).
+`forge:issue-triage` adds a `Requires:` line when an issue lacks one (asking
+the author if the dependency is unclear) and labels an issue `blocked` while
+its stated prerequisite is still open.
+
 ### Canonical label schema
 
 Foundation declares these labels. Use `install-forge-labels` (foundation
