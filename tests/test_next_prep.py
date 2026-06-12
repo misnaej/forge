@@ -215,6 +215,11 @@ def _run_main_capturing_git(
         """Mock subprocess result."""
 
         def __init__(self, rc: int = 0) -> None:
+            """Capture the return code; stdout/stderr default to empty.
+
+            Args:
+                rc: Return code for the mock process.
+            """
             self.returncode = rc
             self.stdout = ""
             self.stderr = ""

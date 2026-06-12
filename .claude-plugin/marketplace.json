@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "forge",
-  "description": "Forge: shared engineering foundation. Process docs, pre-commit verification, git hooks, plus an optional Claude Code plugin.",
+  "description": "Automate Python CI/CD and code-quality standards — with or without an AI agent. Pip CLIs + a drop-in pre-commit hook, plus this optional Claude Code plugin.",
   "owner": {
     "name": "Jean Simonnet",
     "url": "https://github.com/misnaej/forge"
@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "forge",
-      "description": "Shared agents, skills, hooks, and CLAUDE.md core for engineering foundations.",
+      "description": "Agents, skills, and hooks that orchestrate forge's CLIs from a Claude Code session — an add-on, never a prerequisite.",
       "source": "./",
       "category": "productivity"
     }
