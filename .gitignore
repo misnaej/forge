@@ -35,3 +35,7 @@ code_health/
 
 # Local issue exports for offline review (forge contributor workflow).
 issue_*.md
+
+# Per-clone conda env name (see .conda_env_name.example). Gitignored so each
+# working copy can name its own env without touching tracked files.
+.conda_env_name
