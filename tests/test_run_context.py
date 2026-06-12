@@ -8,6 +8,7 @@ import subprocess
 import pytest
 
 from forge import run_context as mod
+from tests.conftest import FakeProc
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +31,6 @@ def test_is_non_interactive_when_ci_marker_set(
 
     Args:
         marker: Name of a CI env var from ``_CI_MARKERS``.
-        monkeypatch: Pytest monkeypatch fixture.
     """
     _clear_ci_env(monkeypatch)
     monkeypatch.setenv(marker, "1")
@@ -120,7 +120,6 @@ def test_git_auth_mode_https_token(
 
     Args:
         token_var: Name of an HTTPS-token env var from ``_HTTPS_TOKEN_ENV``.
-        monkeypatch: Pytest monkeypatch fixture.
     """
     _force_no_ssh(monkeypatch)
     _clear_token_env(monkeypatch)
@@ -161,14 +160,8 @@ def test_ssh_agent_has_identity_true_on_zero_exit_with_output(
 ) -> None:
     """Zero exit + non-empty stdout from ``ssh-add -l`` → True."""
     monkeypatch.setattr(mod.shutil, "which", lambda _name: "/usr/bin/ssh-add")
-
-    class _Proc:
-        """Stub returning zero exit + a loaded-identity line."""
-
-        returncode = 0
-        stdout = "256 SHA256:abc user@host (ED25519)\n"
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_kw: _Proc())
+    proc = FakeProc(returncode=0, stdout="256 SHA256:abc user@host (ED25519)\n")
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_kw: proc)
     assert mod._ssh_agent_has_identity() is True
 
 
@@ -177,14 +170,8 @@ def test_ssh_agent_has_identity_false_on_no_identities(
 ) -> None:
     """Exit 1 ('agent has no identities') → False."""
     monkeypatch.setattr(mod.shutil, "which", lambda _name: "/usr/bin/ssh-add")
-
-    class _Proc:
-        """Stub for the no-identities exit code."""
-
-        returncode = 1
-        stdout = "The agent has no identities.\n"
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_kw: _Proc())
+    proc = FakeProc(returncode=1, stdout="The agent has no identities.\n")
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_kw: proc)
     assert mod._ssh_agent_has_identity() is False
 
 
@@ -205,7 +192,6 @@ def test_ssh_agent_has_identity_false_on_subprocess_error(
     Args:
         exc: Exception instance the patched subprocess.run will raise.
         label: pytest-id label (unused at runtime; parametrize tag only).
-        monkeypatch: Pytest monkeypatch fixture.
     """
     del label
     monkeypatch.setattr(mod.shutil, "which", lambda _name: "/usr/bin/ssh-add")

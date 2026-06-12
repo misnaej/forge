@@ -1,5 +1,13 @@
 """Tests for forge.post_merge."""
 
+# MOCKING STRATEGY: no real git-hook side effects — every external seam is stubbed.
+#   - subprocess.run: replaced by `make_fake_run` (capturing argv) so the drift
+#     check never spawns a child process.
+#   - subprocess.Popen: stubbed so the backgrounded self-refresh is inert and its
+#     argv can be asserted instead of executed.
+#   - shutil.which: stubbed to fake/None to drive the CLI-present vs -missing paths.
+#   - is_non_interactive: forced True/False to select the fast-exit vs active path.
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

@@ -135,3 +135,22 @@ def test_main_returns_one_when_repo_structure_missing(
         "REPO_STRUCTURE.md not found" in record.getMessage()
         for record in caplog.records
     )
+
+
+def test_verify_structure_flags_undocumented_must_document_item(tmp_path: Path) -> None:
+    """Verify disk item absent from markdown is caught as important_not_documented."""
+    _build_in_sync_repo(tmp_path)
+    # `docs` is in MUST_DOCUMENT but is not referenced by IN_SYNC_MARKDOWN.
+    (tmp_path / "docs").mkdir()
+    _documented_not_found, important_not_documented, _total = verify_structure(tmp_path)
+    assert "docs" in important_not_documented
+
+
+def test_extract_paths_from_markdown_empty_returns_empty() -> None:
+    """Empty markdown yields no paths."""
+    assert extract_paths_from_markdown("") == set()
+
+
+def test_extract_paths_from_markdown_prose_only_returns_empty() -> None:
+    """Markdown with no path-like tokens yields no paths."""
+    assert extract_paths_from_markdown("# Title\n\nJust prose, no paths.\n") == set()

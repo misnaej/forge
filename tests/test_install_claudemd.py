@@ -1,5 +1,13 @@
 """Tests for forge.install_claudemd (v1.1.3+ split-layout)."""
 
+# MOCKING STRATEGY: the foundation-drift and upstream-version checks read
+# forge's installed version and query GitHub; both are stubbed so tests are
+# offline and deterministic.
+#   - _foundation_text / _forge_version: return canned content/versions.
+#   - check_upstream / _upstream_cache_path / is_non_interactive: neutralized;
+#     tests that exercise check_upstream directly inject their own `fetch=`
+#     fake and an isolated cache path (never the network).
+
 from __future__ import annotations
 
 import json

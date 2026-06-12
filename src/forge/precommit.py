@@ -38,10 +38,9 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
-
-import tomllib
 
 from forge.git_utils import (
     detect_existing_source_dirs,

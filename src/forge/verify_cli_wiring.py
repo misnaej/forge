@@ -34,9 +34,8 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from typing import TYPE_CHECKING
-
 import tomllib
+from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
