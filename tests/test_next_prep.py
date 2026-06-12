@@ -1,11 +1,20 @@
 """Tests for ``forge.next_prep`` — helpers + CLI smoke."""
 
+# MOCKING STRATEGY: the CLI path tests stub two seams. The high-level
+# ``next_prep._git`` helper is replaced with a fake that records its
+# argv and returns empty output, and ``next_prep.subprocess.run`` is
+# replaced with a fake returning the canonical ``FakeProc`` whose
+# ``returncode`` is branch-dependent (``git switch`` reports the
+# configurable ``switch_rc`` to exercise the ``git checkout`` fallback;
+# every other command reports 0).
+
 from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING
 
 from forge import next_prep
+from tests.conftest import FakeProc
 
 
 if TYPE_CHECKING:
@@ -211,27 +220,14 @@ def _run_main_capturing_git(
         captured.append(list(args))
         return ""
 
-    class _Proc:
-        """Mock subprocess result."""
-
-        def __init__(self, rc: int = 0) -> None:
-            """Capture the return code; stdout/stderr default to empty.
-
-            Args:
-                rc: Return code for the mock process.
-            """
-            self.returncode = rc
-            self.stdout = ""
-            self.stderr = ""
-
-    def _fake_run(cmd: list[str], **_kw: object) -> _Proc:
+    def _fake_run(cmd: list[str], **_kw: object) -> FakeProc:
         # Strip leading "git" so callers can assert against the same
         # shape as _fake_git's captured argv.
         argv_tail = cmd[1:] if cmd and cmd[0] == "git" else cmd
         captured.append(list(argv_tail))
         if argv_tail[:1] == ["switch"]:
-            return _Proc(switch_rc)
-        return _Proc(0)
+            return FakeProc(returncode=switch_rc)
+        return FakeProc(returncode=0)
 
     monkeypatch.setattr(next_prep, "_git", _fake_git)
     monkeypatch.setattr(next_prep.subprocess, "run", _fake_run)
