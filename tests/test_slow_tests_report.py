@@ -61,6 +61,16 @@ def test_parse_merges_sections_keeping_worst() -> None:
     assert durations[0] == Duration(5.00, "call", "tests/test_c.py::test_z")
 
 
+def test_parse_handles_bare_durations_header() -> None:
+    """`pytest --durations=0` emits 'slowest durations' (no count) — still parsed."""
+    bare = (
+        "===================== slowest durations ======================\n"
+        "1.50s call     tests/test_a.py::test_z\n"
+        "===================== 1 passed in 1.6s =======================\n"
+    )
+    assert parse_durations(bare) == [Duration(1.50, "call", "tests/test_a.py::test_z")]
+
+
 def test_parse_ignores_durations_lines_outside_a_section() -> None:
     """A duration-shaped line with no preceding header is not captured."""
     stray = "0.99s call tests/test_a.py::test_orphan\n"
