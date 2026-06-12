@@ -1,4 +1,4 @@
-"""Tests for ``forge.next_prep`` — helpers + CLI smoke.
+"""Tests for ``forge.next_prep`` — helpers + CLI smoke."""
 
 # MOCKING STRATEGY: the CLI path tests stub two seams. The high-level
 # ``next_prep._git`` helper is replaced with a fake that records its
@@ -7,7 +7,6 @@
 # ``returncode`` is branch-dependent (``git switch`` reports the
 # configurable ``switch_rc`` to exercise the ``git checkout`` fallback;
 # every other command reports 0).
-"""
 
 from __future__ import annotations
 

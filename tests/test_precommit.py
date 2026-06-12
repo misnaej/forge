@@ -512,9 +512,10 @@ def test_non_blocking_warning_does_not_fail_main(
     SCENARIO: an advisory (non-blocking) step fails — main() must
     surface it as a WARN without flipping the overall exit code.
     MOCK SETUP: get_repo_root is pinned to tmp_path; step_docstrings,
-    step_test_naming, and step_repo_structure are stubbed to pass;
-    step_pip_audit is replaced with a failing non_blocking StepResult;
-    sys.argv is patched to the bare `forge-precommit` invocation.
+    step_test_naming, step_repo_structure, and step_docstring_coverage
+    are stubbed to pass/skip; step_pip_audit is replaced with a failing
+    non_blocking StepResult; sys.argv is patched to the bare
+    `forge-precommit` invocation.
     EXPECTED BEHAVIOR: main() returns 0; stdout prints WARN, the
     all-blocking-passed summary, and names pip_audit with its log path.
     """
@@ -522,6 +523,7 @@ def test_non_blocking_warning_does_not_fail_main(
     _stub_docstrings_passing(monkeypatch)
     _stub_test_naming_passing(monkeypatch)
     _stub_repo_structure_passing(monkeypatch)
+    _stub_docstring_coverage_skipped(monkeypatch)
 
     def _failing_non_blocking(_root: object) -> precommit.StepResult:
         return precommit.StepResult(

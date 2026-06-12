@@ -8,6 +8,7 @@ import subprocess
 import pytest
 
 from forge import run_context as mod
+from tests.conftest import FakeProc
 
 
 # ---------------------------------------------------------------------------
@@ -159,14 +160,8 @@ def test_ssh_agent_has_identity_true_on_zero_exit_with_output(
 ) -> None:
     """Zero exit + non-empty stdout from ``ssh-add -l`` → True."""
     monkeypatch.setattr(mod.shutil, "which", lambda _name: "/usr/bin/ssh-add")
-
-    class _Proc:
-        """Stub returning zero exit + a loaded-identity line."""
-
-        returncode = 0
-        stdout = "256 SHA256:abc user@host (ED25519)\n"
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_kw: _Proc())
+    proc = FakeProc(returncode=0, stdout="256 SHA256:abc user@host (ED25519)\n")
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_kw: proc)
     assert mod._ssh_agent_has_identity() is True
 
 
@@ -175,14 +170,8 @@ def test_ssh_agent_has_identity_false_on_no_identities(
 ) -> None:
     """Exit 1 ('agent has no identities') → False."""
     monkeypatch.setattr(mod.shutil, "which", lambda _name: "/usr/bin/ssh-add")
-
-    class _Proc:
-        """Stub for the no-identities exit code."""
-
-        returncode = 1
-        stdout = "The agent has no identities.\n"
-
-    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_kw: _Proc())
+    proc = FakeProc(returncode=1, stdout="The agent has no identities.\n")
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_kw: proc)
     assert mod._ssh_agent_has_identity() is False
 
 

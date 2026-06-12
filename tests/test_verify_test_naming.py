@@ -211,7 +211,8 @@ def test_main_is_warning_only_returns_zero_on_violation(
 ) -> None:
     """A naming violation is reported but the exit code is still 0.
 
-    ``verify-forge-test-naming`` is warning-only by contract (FOUNDATION §8):
+    ``verify-forge-test-naming`` is warning-only by contract (see the
+    ``verify_test_naming`` module docstring / its ``main()`` returns 0):
     it surfaces issues in the log but never refuses a commit, so ``main()``
     returns 0 even when violations exist.
     """
