@@ -7,6 +7,7 @@ import sys
 import pytest
 
 from forge import pr_squash_comment as mod
+from tests.conftest import FakeProc
 
 
 VALID_TITLE = "feat(#42): example squash title"
@@ -250,12 +251,7 @@ def test_main_pr_mode_calls_gh_pr_comment(
     """Without --dry-run, main shells out to ``gh pr comment``."""
     calls: list[list[str]] = []
 
-    class _Proc:
-        """Minimal stub for ``subprocess.CompletedProcess``."""
-
-        returncode = 0
-
-    def _fake_run(cmd: list[str], **_kw: object) -> _Proc:
+    def _fake_run(cmd: list[str], **_kw: object) -> FakeProc:
         """Capture cmd; return a zero-exit stub.
 
         Args:
@@ -263,10 +259,10 @@ def test_main_pr_mode_calls_gh_pr_comment(
             **_kw: Additional keyword arguments (unused).
 
         Returns:
-            A stub _Proc with returncode 0.
+            A FakeProc with returncode 0.
         """
         calls.append(cmd)
-        return _Proc()
+        return FakeProc()
 
     monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fake_run)
     sys.argv.extend(
@@ -290,20 +286,7 @@ def test_main_patch_mode_calls_gh_api_patch(
     """``--patch`` shells out to ``gh api -X PATCH`` for the comment id."""
     calls: list[list[str]] = []
 
-    class _Proc:
-        """Minimal stub returning JSON for repo detection + ok for patch."""
-
-        def __init__(self, stdout: str = "", returncode: int = 0) -> None:
-            """Record outputs for the simulated invocation.
-
-            Args:
-                stdout: Captured stdout for the stub call.
-                returncode: Exit code to expose.
-            """
-            self.stdout = stdout
-            self.returncode = returncode
-
-    def _fake_run(cmd: list[str], **_kw: object) -> _Proc:
+    def _fake_run(cmd: list[str], **_kw: object) -> FakeProc:
         """Return a repo slug on the lookup call; ok on the patch call.
 
         Args:
@@ -311,12 +294,12 @@ def test_main_patch_mode_calls_gh_api_patch(
             **_kw: Additional keyword arguments (unused).
 
         Returns:
-            A _Proc with JSON output for repo view calls, else default ok response.
+            A FakeProc with JSON output for repo view calls, else default ok response.
         """
         calls.append(cmd)
         if cmd[:3] == ["gh", "repo", "view"]:
-            return _Proc(stdout='{"nameWithOwner":"x/y"}\n')
-        return _Proc()
+            return FakeProc(stdout='{"nameWithOwner":"x/y"}\n')
+        return FakeProc()
 
     monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fake_run)
     sys.argv.extend(
