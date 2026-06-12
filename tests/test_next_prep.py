@@ -342,6 +342,30 @@ def test_promotion_status_lists_pending_minors_in_order(
     assert pending == ["v1.18.0", "v1.19.0"]
 
 
+def test_main_promotion_status_early_exits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--promotion-status` runs the read-only report, exits before checkout/pull."""
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        next_prep,
+        "_emit_promotion_status",
+        lambda _root, dev, base: (calls.append((dev, base)), 0)[1],
+    )
+    ran: list[list[str]] = []
+    monkeypatch.setattr(
+        next_prep.subprocess,
+        "run",
+        lambda argv, **_kw: (ran.append(argv), FakeProc(returncode=0))[1],
+    )
+    monkeypatch.setattr(
+        next_prep.sys, "argv", ["forge-next-prep", "--promotion-status"]
+    )
+    assert next_prep.main() == 0
+    assert len(calls) == 1
+    assert ran == []  # no fetch / switch / pull — early exit before the main flow
+
+
 def test_check_promote_pending_silent_when_either_manifest_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

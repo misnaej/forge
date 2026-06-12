@@ -142,9 +142,10 @@ def _promotion_status_lines(
 
     Reports the base/dev plugin versions and, when dev is a MINOR/MAJOR
     ahead, the ordered list of ``v*`` tags that ``base`` must be promoted
-    up to — one release per line, ascending. Reuses the same
-    version-read + pending-detection helpers the ``/next`` advisory uses
-    so the ``/promote`` skill no longer hand-rolls the git/version logic.
+    up to — one release per line, ascending. Shares version-read and
+    pending-detection helpers with the ``/next`` advisory, giving the
+    ``/promote`` skill a single authoritative source for the git/version
+    comparison.
 
     Args:
         repo_root: Working directory for git operations.
@@ -165,12 +166,13 @@ def _promotion_status_lines(
         f"{base_branch} (origin/{base_branch}): v{base_ver}",
         f"{dev_branch} (origin/{dev_branch}): v{dev_ver}",
     ]
-    if _check_promote_pending_message(repo_root, dev_branch, base_branch) is None:
-        lines.append("Up to date — nothing to promote.")
-        return lines
     base_tuple = parse_semver(base_ver)
     dev_tuple = parse_semver(dev_ver)
-    if base_tuple is None or dev_tuple is None:
+    # Pending only on a MINOR/MAJOR gap with dev ahead — patches
+    # accumulate on dev between releases (rolling-next). Compared from the
+    # already-read versions; no second round of git reads.
+    if base_tuple is None or dev_tuple is None or base_tuple[:2] >= dev_tuple[:2]:
+        lines.append("Up to date — nothing to promote.")
         return lines
     staged = sorted(
         (pv, tag)

@@ -88,7 +88,8 @@ git switch -c "release/v$NEW" origin/dev
 # main is several behind → branch from main and cherry-pick only that
 # minor's commit(s) (squash-merges of earlier promotions break ancestry,
 # so a plain dev→main diff would redundantly re-show already-promoted
-# minors). Resolve the plugin.json version during the pick:
+# minors). Resolve any cherry-pick conflicts — plugin.json is the most
+# likely point if the version was bumped again on dev:
 #   git switch -c "release/v$NEW" origin/main
 #   git cherry-pick -n <sha-of-that-minor>
 
@@ -111,7 +112,7 @@ gh pr create --base main --head "release/v$NEW" \
 $(git log --oneline origin/main..release/v$NEW)
 
 ## After merge
-- [ ] \`v$NEW\` tag — usually already created on \`dev\` by \`/next\` (\`forge-next-prep --tag\`); create + push it only if absent.
+- [ ] Tag handling per CLAUDE.md \"Dual-track tag cadence\": \`/next\` (\`forge-next-prep --tag\`) already created \`v$NEW\` on the dev commit. Confirm the tag exists; follow that section for any main-side tagging.
 - [ ] If more minors remain behind, promote the next one (repeat from Step 1).
 "
 ```
