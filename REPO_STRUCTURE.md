@@ -188,6 +188,7 @@ Forge's own bootstrap tooling (not a consumer pattern):
 - claude-code-plugin.md: optional Claude Code plugin install + extension
 - cli-reference.md: generated CLI reference (`forge-gen-cli-reference`)
 - customizing-precommit.md: adding repo-specific steps to `.githooks/pre-commit`
+- rust-core-migration-plan.md: proposal/RFC for splitting forge into a Rust governance-core binary + optional Python analysis pack
 - security.md: security policy and review documentation
 - standalone-installers.md: per-installer reference for manual usage (sibling of `install-forge-bootstrap`)
 
