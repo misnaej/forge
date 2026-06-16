@@ -14,12 +14,13 @@
 # intentional: the hook fires on every `git commit` / `git push` and
 # must not require forge-scripts to be installed or importable.
 #
-# Failure posture: advisory and default-permissive. On any failure
-# (missing python3, no pyproject, malformed TOML, tomllib unavailable on
-# Python 3.10), the protected list collapses to `["main"]`. Blocking
-# every commit because of a parse failure would be more disruptive than
-# trusting the contributor to know what branch they're on; GitHub branch
-# protection remains the authoritative gate.
+# Failure posture: fail safe to the default protected set. On any
+# failure (missing python3, no pyproject, malformed TOML, tomllib
+# unavailable on Python 3.10), the protected list collapses to
+# `["main", "dev"]` — the documented default (FOUNDATION §2), matching
+# the sibling `block_branch_deletion` hook. A parse failure never
+# *narrows* protection; GitHub branch protection remains the
+# authoritative gate.
 set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')

@@ -7,9 +7,18 @@ accumulate on `dev` between minors and fold into the next minor's
 promotion. Pin `@main` to track the entries below; pin `@dev` for every
 patch. Each entry corresponds to one `dev → main` promotion.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/);
-forge versions follow the rolling-next convention (`plugin.json` always
-names the next release about to be tagged).
+**Reading this as a forge consumer.** You're usually jumping several
+minors at once: read every entry newer than your current version, top to
+bottom, and read each **⚠️ Upgrade notes** lane first — that's the
+actions your repo may need (breaking changes, config, new mandatory
+behavior). Releases without that lane are additive or internal and need
+nothing from you.
+
+**Format.** Per release: an optional **⚠️ Upgrade notes** lane, then
+change groups by conventional-commit type (**Features / Fixes / Refactor
+/ Tooling / Docs / Chore**) mirroring the promotion squash message.
+Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
+versions follow forge's rolling-next convention.
 
 ## v1.21.0 — 2026-06-12
 
@@ -24,6 +33,16 @@ names the next release about to be tagged).
 - Remove dead `tomllib` import guards now that the Python floor is 3.11.
 
 ## v1.20.0 — 2026-06-12
+
+### ⚠️ Upgrade notes
+- **Python floor raised to 3.11.** `forge-scripts` no longer installs on
+  Python 3.10 (it uses `datetime.UTC` / `tomllib`, both 3.11+ stdlib).
+  Move your repo and CI to Python ≥ 3.11 before upgrading forge.
+- **Slow-tests CI recipe changed.** If you adopt the slow-tests report,
+  pass `--durations` explicitly on the pytest command —
+  `pytest --durations=25 --durations-min=1.0 | tee code_health/pytest.log`.
+  A bare `pytest` yields an empty report: the durations flags live in
+  forge's *own* `pyproject.toml`, not yours.
 
 ### Features
 - `forge-slow-tests-report` CLI: parses pytest `--durations`, merges
@@ -43,14 +62,30 @@ names the next release about to be tagged).
 - Consumer hook-extension directories — `post-merge.d` / `post-checkout.d`
   run consumer `*.sh` scripts after the managed hook (sorted,
   failure-tolerant, interactive-only, and surviving hook refresh).
+  Additive and opt-in; drop scripts in those dirs to use it.
 
 ## v1.18.0 — 2026-06-12
+
+### ⚠️ Upgrade notes
+- **New `block_branch_deletion` hook.** Claude Code agents can no longer
+  delete a protected remote branch (`base_branch` / `dev_branch`). No
+  action unless you relied on an agent doing that — run the delete
+  yourself with `! …` instead.
 
 ### Features
 - `block_branch_deletion` hook — blocks agents from deleting protected
   remote branches.
 
 ## v1.17.0 — 2026-06-12
+
+### ⚠️ Upgrade notes
+- **Hook-version sidecar.** Managed git hooks now read their version from
+  a per-clone `.githooks/.forge-hook-version` file (keeps tracked
+  `.githooks/*` byte-stable across bumps). Add `.githooks/.forge-hook-version`
+  to your `.gitignore` — the installer does not write the ignore rule for
+  you.
+- **Two new foundation agents** — `forge:test-advisor` + `forge:test-writer`
+  become available after `/plugin update forge@forge` + `/reload-plugins`.
 
 ### Features
 - Add the `forge:test-advisor` + `forge:test-writer` foundation agents
@@ -59,7 +94,8 @@ names the next release about to be tagged).
   `ignore-nested-functions` + ruff `D417` in tests) — 12 foundation
   agents total.
 - Per-clone conda env name via `.conda_env_name`, so parallel forge
-  clones each get their own environment.
+  clones each get their own environment (opt-in: drop a `.conda_env_name`
+  file at the repo root).
 
 ### Fixes
 - `forge-post-merge` now accepts git's squash-flag positional argument

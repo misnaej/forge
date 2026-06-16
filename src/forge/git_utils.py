@@ -137,7 +137,7 @@ def parse_semver(version: str) -> tuple[int, int, int] | None:
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
-def latest_v_tag(repo_root: Path) -> str | None:
+def latest_v_tag(root: Path) -> str | None:
     """Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
 
     Resolves the latest release **globally** — ``git tag --list "v*"
@@ -151,14 +151,14 @@ def latest_v_tag(repo_root: Path) -> str | None:
     manifest slip past the guard.
 
     Args:
-        repo_root: Repo root (cwd for the git invocation).
+        root: Repo root (cwd for the git invocation).
 
     Returns:
         Tag name like ``"v1.2.9"``, or ``None`` when no ``v*`` tags exist.
     """
     proc = subprocess.run(
         ["git", "tag", "--list", "v*", "--sort=-v:refname"],
-        cwd=repo_root,
+        cwd=root,
         capture_output=True,
         text=True,
         check=False,
