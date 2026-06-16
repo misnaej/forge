@@ -96,6 +96,7 @@ subdirectory holds a single `SKILL.md`:
 - next/: clean up state and pick next task
 - pr/: full PR finalization flow
 - review/: address PR review comments
+- test/: write tests via the test agents (advisor → writer → review → precommit-fixer)
 - triage/: issue backlog triage
 - weekly/: weekly summary report
 
