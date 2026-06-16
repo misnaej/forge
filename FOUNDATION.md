@@ -484,9 +484,28 @@ layer would be redundant with ruff.
 every standard interrogate key (threshold, `exclude`, `ignore-*`
 flags). The foundation default threshold is `fail-under = 90`;
 tighten per §4 ("threshold = current passing baseline. Raise over
-time."). Opt into badge generation with
-`[tool.forge.docstring_coverage] badge = true` — writes
-`.badges/DocstringCoverage.svg` for README embedding.
+time.").
+
+Forge reads interrogate's **native** section directly and does **not**
+wrap it: re-exposing a third-party tool's whole config surface under a
+forge namespace (plus a key-name mapping to maintain) is a needless
+wrapper — the tool's own section is the right home, exactly as forge
+reads `ruff.toml` rather than copying it. Only keys interrogate has no
+concept of live under `[tool.forge.docstring_coverage]`: `badge = true`
+(writes `.badges/DocstringCoverage.svg`) and `paths` (a per-tool scan-root
+override that otherwise defaults to the repo-wide layout
+`[tool.forge].source_dirs + test_dirs`). **Project layout** is itself a
+`[tool.forge]` single-ground-truth: `source_dirs` (default `["src"]`) and
+`test_dirs` (default `["tests"]`) — split source-vs-test so a source-only
+tool doesn't pull test dirs in — so every layout-aware tool reads the
+repo's roots from one place. **Config-home rule:** a forge tool that
+wraps a third-party library reads the library's native config section
+directly; only forge-specific keys are namespaced under
+`[tool.forge.<tool>]`. `forge-config --list` enumerates every
+`[tool.forge.*]` key forge reads and names the native sections (like
+`[tool.interrogate]`) it reads too — so the config surface is
+discoverable without doc-hunting, and `install-forge-bootstrap` surfaces
+it as a post-install nudge.
 
 ### Testing documentation standards
 
