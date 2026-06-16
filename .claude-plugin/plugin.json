@@ -1,6 +1,6 @@
 {
   "name": "forge",
-  "version": "1.23.0",
+  "version": "1.23.1",
   "description": "Automate Python CI/CD and code-quality standards — deterministic CLIs + a drop-in pre-commit hook, runnable with or without an AI agent. This optional Claude Code plugin orchestrates them; the gate is the CLI, never the model.",
   "author": {
     "name": "Jean Simonnet",

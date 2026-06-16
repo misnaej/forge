@@ -13,6 +13,7 @@
 ## Forge-specific rules
 
 - **Version derivation**: pip package version comes from the latest git tag via setuptools-scm. There is no manual `version = "x.y.z"` in `pyproject.toml`. Release flow: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+- **Rolling-next guard skips ANY tagged-release tree, not just the latest** (`verify_plugin_version._is_release_commit`): the `plugin.json > latest_tag` rule is suppressed whenever `HEAD`'s git **tree** reproduces *any* `v*` tag's tree — not only the global-max tag. This is **load-bearing for the staged `dev→main` promotion**: a `release/vX.Y.Z` branch for a minor *below* the global-max tag (e.g. promoting `v1.22.0` while `v1.23.0` is already tagged) carries a `plugin.json` below the latest tag, yet is a legitimate release commit and must pass. Narrowing the check back to the latest tag (as the #43 ancestry→global switch effectively did) re-breaks multi-minor catch-up. Locked by `test_main_skips_when_head_reproduces_older_tag`. **Do not change this without that test staying green.**
 - **Plugin manifest version is rolling-next**: `.claude-plugin/plugin.json["version"]` always names the version about to be released. `step_plugin_version` in `forge-precommit` enforces `plugin.json > latest_tag` on every commit (skipped on the release commit itself). Workflow:
   1. On the release PR, set `plugin.json["version"]` to the version about to be tagged (e.g. `"1.1.2"`).
   2. Merge the PR, then `git tag vX.Y.Z` at the merge commit. The guard skips that single commit (`HEAD` == tag commit).
