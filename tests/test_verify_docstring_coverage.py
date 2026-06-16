@@ -129,10 +129,10 @@ def test_skip_when_no_pyproject(
     assert "skipped" in log
 
 
-def test_skip_when_no_src_directory(
+def test_skip_when_no_configured_paths_exist(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``pyproject.toml`` present but no ``src/`` → skip."""
+    """``pyproject.toml`` present but no configured scan root exists → skip."""
     _write_pyproject(tmp_path, fail_under=90.0)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])

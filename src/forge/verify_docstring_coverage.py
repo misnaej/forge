@@ -191,7 +191,10 @@ def _scan_paths(data: dict, repo_root: Path) -> list[str]:
         # Per-tool override.
         raw_paths = list(configured)
     else:
-        # Default to the repo-wide layout ([tool.forge].source_dirs + test_dirs).
+        # Default to the repo-wide layout ([tool.forge].source_dirs +
+        # test_dirs). Read from the already-parsed dict here (mirrors
+        # forge.config.load_config's read of the same keys — keep in sync)
+        # to avoid re-reading the file.
         raw_paths = list(forge.get("source_dirs", DEFAULT_SOURCE_DIRS)) + list(
             forge.get("test_dirs", DEFAULT_TEST_DIRS)
         )

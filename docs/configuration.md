@@ -39,7 +39,7 @@ Most repos need only this:
 ```toml
 [tool.forge]
 base_branch = "main"
-dev_branch  = "dev"   # omit if you don't use a dev branch (it defaults to "dev")
+dev_branch  = "dev"   # omit for a single-branch repo — it defaults to base_branch ("main")
 ```
 
 Everything else has a sensible default and is opt-in. Run `forge-config --list`
@@ -52,7 +52,7 @@ to see what, if anything, is worth adding for your repo.
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
 | `base_branch` | `"main"` | Slow-channel / release branch. Protected from direct agent push; the `dev → main` promotion target. | Your release branch isn't `main`. |
-| `dev_branch` | `"dev"` | Fast-channel integration branch. Protected from direct agent push. | Set it **equal to `base_branch`** for a single-branch (trunk) repo, so only one branch is protected. |
+| `dev_branch` | `"main"` (= `base_branch`) | Fast-channel integration branch. Protected from direct agent push. **Defaults to `base_branch`** → single-track, only one branch protected. | You run dual-track — set e.g. `dev_branch = "dev"` to opt in. |
 | `source_dirs` | `["src"]` | Repo **source** roots — the single ground truth for your project layout, consumed by layout-aware tools (e.g. docstring-coverage scan roots). | Your source lives outside `src/` — e.g. `source_dirs = ["src", "projects"]`. |
 | `test_dirs` | `["tests"]` | Repo **test** roots. Kept separate from `source_dirs` so a source-only tool doesn't pull test dirs in. | Your tests aren't under `tests/`. |
 
@@ -71,7 +71,7 @@ these are the keys interrogate has no concept of.)
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
 | `paths` | `[tool.forge].source_dirs + test_dirs` | Per-tool **override** of the scan roots for the coverage report and badge. Defaults to the repo-wide layout above; set this only when docstring-coverage should scan something different. Paths resolving outside the repo are rejected. | You want coverage scoped differently from the rest of forge — otherwise prefer setting `[tool.forge].source_dirs` once. |
-| `badge` | `false` | Write `.badges/DocstringCoverage.svg` for README embedding. | You want a coverage badge in your README. |
+| `badge` | `false` | Generate **interrogate's own** coverage badge (via `interrogate.badge_gen`) to `.badges/DocstringCoverage.svg` for README embedding. forge invokes interrogate as a library, so this opt-in triggers the badge programmatically. | You want a coverage badge in your README. |
 
 ## `[tool.interrogate]` — native section, read by forge
 

@@ -67,9 +67,10 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ),
     ConfigKey(
         ("tool", "forge", "dev_branch"),
-        "dev",
-        "Fast-channel integration branch (protected). Set == base_branch "
-        "for single-branch repos.",
+        "main",
+        "Fast-channel integration branch (protected). Defaults to "
+        "base_branch (single-track); set to e.g. 'dev' to opt into "
+        "dual-track.",
     ),
     ConfigKey(
         ("tool", "forge", "source_dirs"),
@@ -91,14 +92,14 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ConfigKey(
         ("tool", "forge", "docstring_coverage", "badge"),
         default=False,
-        description="Write .badges/DocstringCoverage.svg for README embedding.",
+        description="Generate interrogate's coverage badge to "
+        ".badges/DocstringCoverage.svg for README embedding.",
     ),
     ConfigKey(
         ("tool", "forge", "docstring_coverage", "paths"),
-        ["src", "tests"],
-        "Scan roots for the coverage report (forge-specific; interrogate "
-        "has no scan-root concept).",
-        recommended=True,
+        "source_dirs + test_dirs",
+        "Per-tool override of the coverage scan roots; otherwise inherits "
+        "the repo-wide [tool.forge].source_dirs + test_dirs.",
     ),
 )
 

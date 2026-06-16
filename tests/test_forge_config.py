@@ -52,11 +52,28 @@ def test_report_lists_layout_dirs() -> None:
     assert "<default: ['tests']>" in text
 
 
-def test_report_advises_on_recommended_unset_keys() -> None:
-    """A recommended-but-unset key (paths) appears in the suggested-setup block."""
+def test_report_omits_suggested_setup_when_nothing_recommended() -> None:
+    """No [tool.forge.*] key is recommended by default, so no nudge block.
+
+    Override-only keys like `docstring_coverage.paths` are deliberately
+    NOT recommended — nudging them would have a consumer override the
+    repo-wide layout they already set.
+    """
+    text = "\n".join(forge_config.build_report({}))
+    assert "Suggested setup" not in text
+
+
+def test_report_suggests_recommended_unset_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The advisor mechanism: a recommended-but-unset key is nudged."""
+    key = forge_config.ConfigKey(
+        ("tool", "forge", "demo"), "x", "Demo key.", recommended=True
+    )
+    monkeypatch.setattr(forge_config, "CONFIG_KEYS", (key,))
     text = "\n".join(forge_config.build_report({}))
     assert "Suggested setup" in text
-    assert "docstring_coverage].paths" in text
+    assert "tool.forge].demo" in text
 
 
 def test_report_names_interrogate_as_native_section() -> None:
