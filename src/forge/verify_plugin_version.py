@@ -25,7 +25,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from forge.git_utils import capturing_to_step_log, configure_cli_logging, parse_semver
+from forge.git_utils import (
+    capturing_to_step_log,
+    configure_cli_logging,
+    latest_v_tag,
+    parse_semver,
+)
 
 
 configure_cli_logging()
@@ -107,18 +112,16 @@ def main() -> int:
             logger.info("(no .claude-plugin/plugin.json — skipped)")
             return 0
 
-        tag_proc = subprocess.run(
-            ["git", "describe", "--tags", "--abbrev=0"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if tag_proc.returncode != 0:
+        # Global semver-max ``v*`` tag, NOT ancestry-scoped ``git
+        # describe`` — the guard and the auto-tagger (forge-next-prep)
+        # must resolve "latest release" the same way, or they disagree in
+        # the dual-track case (a release tagged on main is absent from
+        # dev's history). See forge.git_utils.latest_v_tag.
+        latest_tag = latest_v_tag(repo_root)
+        if latest_tag is None:
             logger.info("(no git tags yet — skipped)")
             return 0
 
-        latest_tag = tag_proc.stdout.strip()
         if _is_release_commit(repo_root, latest_tag):
             logger.info("(HEAD is the %s release commit — skipped)", latest_tag)
             return 0

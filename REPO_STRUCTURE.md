@@ -204,6 +204,7 @@ Forge's own bootstrap tooling (not a consumer pattern):
    - FOUNDATION.md: shared engineering principles (single source of truth)
    - README.md: main repository documentation
    - REPO_STRUCTURE.md: this file
+   - CHANGELOG.md: main-only release history (Keep a Changelog format)
    - CONTRIBUTING.md: contribution guidelines
    - LICENSE: MIT license
 

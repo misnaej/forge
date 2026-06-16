@@ -44,7 +44,7 @@ import sys
 from pathlib import Path
 
 from forge.config import load_config
-from forge.git_utils import configure_cli_logging, parse_semver
+from forge.git_utils import configure_cli_logging, latest_v_tag, parse_semver
 
 
 configure_cli_logging()
@@ -250,21 +250,6 @@ def _read_plugin_version(repo_root: Path) -> str | None:
     return version
 
 
-def _latest_v_tag(repo_root: Path) -> str | None:
-    """Return the highest ``v*`` git tag by sort-V, or ``None`` if none.
-
-    Args:
-        repo_root: Repo root (cwd for git invocation).
-
-    Returns:
-        Tag name like ``"v1.2.9"`` or ``None`` when no ``v*`` tags exist.
-    """
-    out = _git("tag", "--list", "v*", "--sort=-v:refname", cwd=repo_root, check=False)
-    if not out:
-        return None
-    return out.splitlines()[0]
-
-
 def _is_newer(plugin_ver: str, latest_tag: str | None) -> bool:
     """Return True when ``v<plugin_ver>`` would sort *after* ``latest_tag``.
 
@@ -307,7 +292,7 @@ def _maybe_tag_release(repo_root: Path) -> str | None:
     plugin_ver = _read_plugin_version(repo_root)
     if plugin_ver is None:
         return None
-    latest = _latest_v_tag(repo_root)
+    latest = latest_v_tag(repo_root)
     if not _is_newer(plugin_ver, latest):
         return None
     tag = f"v{plugin_ver}"
