@@ -18,10 +18,12 @@ ruff already considers acceptable. The MISSING list in the log is
 the dispatch contract: ``forge:precommit-fixer`` reads it and adds
 docstrings per entry.
 
-Reads ``[tool.interrogate]`` for threshold + excludes
-(``fail-under`` default 90). When
-``[tool.forge.docstring_coverage].badge = true`` writes
-``.badges/DocstringCoverage.svg`` for README embedding. Writes
+Reads ``[tool.interrogate]`` (the tool's own native section — forge
+does not wrap it) for threshold + excludes (``fail-under`` default 90).
+Forge-specific keys live under ``[tool.forge.docstring_coverage]``:
+``paths`` (scan roots, default ``("src", "tests")`` — interrogate has no
+scan-root concept) and ``badge = true`` (writes
+``.badges/DocstringCoverage.svg`` for README embedding). Writes
 ``code_health/docstring_coverage.log``.
 
 Exit codes:
@@ -178,6 +180,45 @@ def _emit_missing_list(results: object) -> None:
         logger.info("MISSING: %s:%s:%s", path, lineno, name)
 
 
+def _scan_paths(data: dict, repo_root: Path) -> list[str]:
+    """Resolve the docstring-coverage scan roots from config, safely.
+
+    Reads ``[tool.forge.docstring_coverage].paths`` — a forge-specific
+    key, since ``interrogate`` has no scan-root concept of its own —
+    falling back to ``("src", "tests")``. Each configured root resolves
+    against *repo_root*; any that escapes the repo (absolute path or
+    ``..`` traversal) is rejected so the reporter never reads files
+    outside the repository (mirrors ``gen_api_digest.detect_roots``).
+    Non-existent roots are dropped.
+
+    Args:
+        data: Parsed ``pyproject.toml`` data.
+        repo_root: Repository root the configured paths resolve against.
+
+    Returns:
+        Existing in-repo directory paths to scan, as strings. Empty when
+        none of the configured roots exist.
+    """
+    section = data.get("tool", {}).get("forge", {}).get("docstring_coverage", {})
+    configured = section.get("paths")
+    raw_paths = (
+        list(configured) if isinstance(configured, list) else list(_DEFAULT_PATHS)
+    )
+    root_resolved = repo_root.resolve()
+    scan: list[str] = []
+    for raw in raw_paths:
+        resolved = (repo_root / raw).resolve()
+        if not resolved.is_relative_to(root_resolved):
+            logger.error(
+                "Ignoring docstring_coverage path %r — outside repo root.",
+                raw,
+            )
+            continue
+        if resolved.is_dir():
+            scan.append(str(resolved))
+    return scan
+
+
 def main() -> int:
     """CLI entry point for ``verify-forge-docstring-coverage``.
 
@@ -203,9 +244,11 @@ def main() -> int:
             return 0
 
         config, fail_under, excludes = _interrogate_config(data)
-        paths = [str(repo_root / p) for p in _DEFAULT_PATHS if (repo_root / p).is_dir()]
+        paths = _scan_paths(data, repo_root)
         if not paths:
-            logger.info("(no src/ directory — skipped)")
+            logger.info(
+                "(none of the configured docstring_coverage paths exist — skipped)"
+            )
             return 0
 
         cov = InterrogateCoverage(

@@ -203,3 +203,41 @@ def test_default_fail_under_matches_foundation(
     assert verify_docstring_coverage.main() == 0
     log = (tmp_path / "code_health" / "docstring_coverage.log").read_text()
     assert "fail-under 90" in log
+
+
+def test_scan_paths_defaults_to_src_and_tests(tmp_path: Path) -> None:
+    """No ``paths`` key → existing ``src`` / ``tests`` roots."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    result = verify_docstring_coverage._scan_paths({}, tmp_path)
+    assert result == [
+        str((tmp_path / "src").resolve()),
+        str((tmp_path / "tests").resolve()),
+    ]
+
+
+def test_scan_paths_honors_configured_paths(tmp_path: Path) -> None:
+    """``[tool.forge.docstring_coverage].paths`` overrides the default roots."""
+    (tmp_path / "projects").mkdir()
+    (tmp_path / "src").mkdir()
+    data = {"tool": {"forge": {"docstring_coverage": {"paths": ["projects", "src"]}}}}
+    result = verify_docstring_coverage._scan_paths(data, tmp_path)
+    assert result == [
+        str((tmp_path / "projects").resolve()),
+        str((tmp_path / "src").resolve()),
+    ]
+
+
+def test_scan_paths_rejects_traversal_outside_repo(tmp_path: Path) -> None:
+    """A ``..`` path escaping the repo is dropped (path-traversal guard)."""
+    (tmp_path / "src").mkdir()
+    (tmp_path.parent / "secret").mkdir(exist_ok=True)
+    data = {"tool": {"forge": {"docstring_coverage": {"paths": ["../secret", "src"]}}}}
+    result = verify_docstring_coverage._scan_paths(data, tmp_path)
+    assert result == [str((tmp_path / "src").resolve())]
+
+
+def test_scan_paths_empty_when_none_exist(tmp_path: Path) -> None:
+    """Configured roots that don't exist → empty list (caller skips cleanly)."""
+    data = {"tool": {"forge": {"docstring_coverage": {"paths": ["nope"]}}}}
+    assert verify_docstring_coverage._scan_paths(data, tmp_path) == []

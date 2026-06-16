@@ -80,7 +80,7 @@ edit `.githooks/pre-commit` directly. No plugin system, no config file.
 
 | Category | Items |
 |---|---|
-| **CLIs** (pip package, no Claude required) | `install-forge-bootstrap` (one-shot umbrella), `forge-upgrade` (two-phase upgrade flow), `forge-precommit` (full sequence dispatcher), `fix-forge-ruff` (ruff phase), `verify-forge-docstrings`, `verify-forge-docstring-coverage`, `verify-forge-repo-structure`, `verify-forge-test-naming`, `verify-forge-manifest`, `verify-forge-plugin-version`, `verify-forge-cli-wiring`, `forge-continuation-append`, `forge-next-prep`, `install-forge-labels`, `forge-doctor`, `install-forge-githooks`, `install-forge-claude-md` |
+| **CLIs** (pip package, no Claude required) | `install-forge-bootstrap` (one-shot umbrella), `forge-upgrade` (two-phase upgrade flow), `forge-precommit` (full sequence dispatcher), `fix-forge-ruff` (ruff phase), `verify-forge-docstrings`, `verify-forge-docstring-coverage`, `verify-forge-repo-structure`, `verify-forge-test-naming`, `verify-forge-manifest`, `verify-forge-plugin-version`, `verify-forge-cli-wiring`, `forge-continuation-append`, `forge-next-prep`, `forge-config` (config reference + setup advisor — see [`docs/configuration.md`](docs/configuration.md)), `install-forge-labels`, `forge-doctor`, `install-forge-githooks`, `install-forge-claude-md` |
 | **Audit-pack CLIs** (pip package, optional `[audit]` extras) | `forge-audit-dup`, `forge-audit-deps`, `forge-audit-suppressions`, `forge-audit-orphans`, `forge-audit-data`, `forge-audit-claims`, `forge-audit-agents` (non-blocking template-conformance audit), `forge-audit-all` — see [`docs/audit-pack.md`](docs/audit-pack.md) |
 | **Git hooks** (drop-in, no Claude required) | `.githooks/pre-commit` (dispatcher), `.githooks/post-merge` + `.githooks/post-checkout` (auto-warn on FOUNDATION.md drift) |
 | **Process docs** | `docs/security.md`, `docs/audit-pack.md`, `docs/cli-reference.md` (generated CLI reference), `docs/api-digest.md` (generated index of all top-level functions/classes, public API + internal helpers); foundation engineering principles at `FOUNDATION.md` |
@@ -164,6 +164,7 @@ order. Idempotent — re-run safely after every forge upgrade.
 | 5 | `forge-gen-cli-reference` | `docs/cli-reference.md` (generated from each CLI's `--help`) |
 | 6 | `forge-audit-deps --tree` | `code_health/audit_deps_tree.log` (dependency tree) |
 | 7 | `forge-doctor` | Verifies the install |
+| 8 | `forge-config` | Post-install nudge: what `[tool.forge.*]` config forge reads + what to set ([`docs/configuration.md`](docs/configuration.md)) |
 
 Flags: `--check` (dry-run), `--skip <slug>` (repeatable; slugs are
 `githooks`, `claude-md`, `labels`, `api-digest`, `cli-reference`,
