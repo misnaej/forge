@@ -35,11 +35,21 @@ def test_report_shows_defaults_when_unset() -> None:
 def test_report_shows_configured_values() -> None:
     """Set keys render their actual value, not the default."""
     data = {"tool": {"forge": {"base_branch": "main", "dev_branch": "dev"}}}
-    text = "\n".join(forge_config.build_report(data))
-    assert "= 'main'" in text
-    assert "= 'dev'" in text
-    # The [tool.forge] block (before cli_wiring) has both keys set — no defaults there.
-    assert "<default:" not in text.split("[tool.forge.cli_wiring]")[0]
+    lines = forge_config.build_report(data)
+    # Set keys render their value (not a <default> placeholder).
+    base_line = next(line for line in lines if "base_branch" in line)
+    dev_line = next(line for line in lines if "dev_branch" in line)
+    assert base_line.endswith("'main'")
+    assert dev_line.endswith("'dev'")
+
+
+def test_report_lists_layout_dirs() -> None:
+    """The report enumerates the repo-wide source_dirs / test_dirs keys."""
+    text = "\n".join(forge_config.build_report({}))
+    assert "source_dirs" in text
+    assert "test_dirs" in text
+    assert "<default: ['src']>" in text
+    assert "<default: ['tests']>" in text
 
 
 def test_report_advises_on_recommended_unset_keys() -> None:

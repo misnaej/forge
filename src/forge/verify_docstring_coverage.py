@@ -20,11 +20,12 @@ docstrings per entry.
 
 Reads ``[tool.interrogate]`` (the tool's own native section — forge
 does not wrap it) for threshold + excludes (``fail-under`` default 90).
-Forge-specific keys live under ``[tool.forge.docstring_coverage]``:
-``paths`` (scan roots, default ``("src", "tests")`` — interrogate has no
-scan-root concept) and ``badge = true`` (writes
-``.badges/DocstringCoverage.svg`` for README embedding). Writes
-``code_health/docstring_coverage.log``.
+Scan roots default to the repo-wide layout
+``[tool.forge].source_dirs + test_dirs`` (default ``src`` + ``tests``);
+a per-tool ``[tool.forge.docstring_coverage].paths`` overrides them
+(interrogate has no scan-root concept). ``[tool.forge.docstring_coverage]
+.badge = true`` writes ``.badges/DocstringCoverage.svg`` for README
+embedding. Writes ``code_health/docstring_coverage.log``.
 
 Exit codes:
 
@@ -46,7 +47,11 @@ from interrogate.badge_gen import create as create_badge
 from interrogate.config import InterrogateConfig
 from interrogate.coverage import InterrogateCoverage
 
-from forge.config import read_pyproject_raw
+from forge.config import (
+    DEFAULT_SOURCE_DIRS,
+    DEFAULT_TEST_DIRS,
+    read_pyproject_raw,
+)
 from forge.git_utils import capturing_to_step_log, configure_cli_logging
 
 
@@ -55,7 +60,6 @@ logger = logging.getLogger(__name__)
 
 
 _DEFAULT_FAIL_UNDER = 90.0
-_DEFAULT_PATHS: tuple[str, ...] = ("src", "tests")
 _BADGE_DIR = ".badges"
 _BADGE_FILENAME = "DocstringCoverage.svg"
 
@@ -163,9 +167,11 @@ def _emit_missing_list(results: object) -> None:
 def _scan_paths(data: dict, repo_root: Path) -> list[str]:
     """Resolve the docstring-coverage scan roots from config, safely.
 
-    Reads ``[tool.forge.docstring_coverage].paths`` — a forge-specific
-    key, since ``interrogate`` has no scan-root concept of its own —
-    falling back to ``("src", "tests")``. Each configured root resolves
+    A per-tool ``[tool.forge.docstring_coverage].paths`` override wins
+    when set (interrogate has no scan-root concept of its own). Otherwise
+    the default is the **repo-wide layout** —
+    ``[tool.forge].source_dirs + test_dirs`` (default ``src`` + ``tests``)
+    — so the project's roots live in one place. Each root resolves
     against *repo_root*; any that escapes the repo (absolute path or
     ``..`` traversal) is rejected so the reporter never reads files
     outside the repository (mirrors ``gen_api_digest.detect_roots``).
@@ -179,11 +185,16 @@ def _scan_paths(data: dict, repo_root: Path) -> list[str]:
         Existing in-repo directory paths to scan, as strings. Empty when
         none of the configured roots exist.
     """
-    section = data.get("tool", {}).get("forge", {}).get("docstring_coverage", {})
-    configured = section.get("paths")
-    raw_paths = (
-        list(configured) if isinstance(configured, list) else list(_DEFAULT_PATHS)
-    )
+    forge = data.get("tool", {}).get("forge", {})
+    configured = forge.get("docstring_coverage", {}).get("paths")
+    if isinstance(configured, list):
+        # Per-tool override.
+        raw_paths = list(configured)
+    else:
+        # Default to the repo-wide layout ([tool.forge].source_dirs + test_dirs).
+        raw_paths = list(forge.get("source_dirs", DEFAULT_SOURCE_DIRS)) + list(
+            forge.get("test_dirs", DEFAULT_TEST_DIRS)
+        )
     root_resolved = repo_root.resolve()
     scan: list[str] = []
     for raw in raw_paths:

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 
@@ -42,24 +42,37 @@ logger = logging.getLogger(__name__)
 DEFAULT_BASE_BRANCH = "main"
 DEFAULT_DEV_BRANCH = "main"
 
+# Repo-wide project layout. The single ground truth for "what are this
+# repo's source / test roots", shared by every layout-consuming tool
+# (docstring-coverage scan roots, etc.) so the answer lives in one place.
+# Split into source vs test (semantic) rather than a flat union, so a
+# tool that wants only source roots (e.g. api-digest) can take
+# ``source_dirs`` without test dirs leaking in.
+DEFAULT_SOURCE_DIRS = ("src",)
+DEFAULT_TEST_DIRS = ("tests",)
+
 
 @dataclass(frozen=True)
 class ForgeConfig:
-    """Branch-name configuration sourced from ``[tool.forge]``.
+    """Repo configuration sourced from ``[tool.forge]``.
 
-    The release-channel semantics (what each branch represents,
-    cadence trade-offs) live in FOUNDATION §6. This class just
-    carries the names.
+    Release-channel semantics live in FOUNDATION §6; the project-layout
+    rationale in §8 / `docs/configuration.md`. This class carries the
+    `[tool.forge]` values forge reads repo-wide.
 
     Attributes:
         base_branch: Name of the slow channel (typically ``"main"``).
         dev_branch: Name of the fast channel (typically ``"dev"``).
             Equal to ``base_branch`` when the consumer hasn't opted
             into dual-track.
+        source_dirs: Repo source roots (default ``["src"]``).
+        test_dirs: Repo test roots (default ``["tests"]``).
     """
 
     base_branch: str = DEFAULT_BASE_BRANCH
     dev_branch: str = DEFAULT_DEV_BRANCH
+    source_dirs: list[str] = field(default_factory=lambda: list(DEFAULT_SOURCE_DIRS))
+    test_dirs: list[str] = field(default_factory=lambda: list(DEFAULT_TEST_DIRS))
 
     @property
     def dual_track(self) -> bool:
@@ -130,4 +143,6 @@ def load_config(repo_root: Path) -> ForgeConfig:
     return ForgeConfig(
         base_branch=section.get("base_branch", DEFAULT_BASE_BRANCH),
         dev_branch=section.get("dev_branch", DEFAULT_DEV_BRANCH),
+        source_dirs=list(section.get("source_dirs", DEFAULT_SOURCE_DIRS)),
+        test_dirs=list(section.get("test_dirs", DEFAULT_TEST_DIRS)),
     )

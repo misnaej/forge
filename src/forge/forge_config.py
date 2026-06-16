@@ -72,6 +72,17 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "for single-branch repos.",
     ),
     ConfigKey(
+        ("tool", "forge", "source_dirs"),
+        ["src"],
+        "Repo source roots (repo-wide layout). Consumed by layout-aware "
+        "tools, e.g. docstring-coverage scan roots.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "test_dirs"),
+        ["tests"],
+        "Repo test roots (repo-wide layout).",
+    ),
+    ConfigKey(
         ("tool", "forge", "cli_wiring", "enabled"),
         default=False,
         description="Opt into the cli_wiring pre-commit step (every [project.scripts] "

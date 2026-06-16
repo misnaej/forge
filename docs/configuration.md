@@ -53,6 +53,8 @@ to see what, if anything, is worth adding for your repo.
 |---|---|---|---|
 | `base_branch` | `"main"` | Slow-channel / release branch. Protected from direct agent push; the `dev → main` promotion target. | Your release branch isn't `main`. |
 | `dev_branch` | `"dev"` | Fast-channel integration branch. Protected from direct agent push. | Set it **equal to `base_branch`** for a single-branch (trunk) repo, so only one branch is protected. |
+| `source_dirs` | `["src"]` | Repo **source** roots — the single ground truth for your project layout, consumed by layout-aware tools (e.g. docstring-coverage scan roots). | Your source lives outside `src/` — e.g. `source_dirs = ["src", "projects"]`. |
+| `test_dirs` | `["tests"]` | Repo **test** roots. Kept separate from `source_dirs` so a source-only tool doesn't pull test dirs in. | Your tests aren't under `tests/`. |
 
 ## `[tool.forge.cli_wiring]`
 
@@ -68,7 +70,7 @@ these are the keys interrogate has no concept of.)
 
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
-| `paths` | `["src", "tests"]` | Scan roots for the coverage report and badge. Paths resolving outside the repo are rejected. | You keep first-class code outside `src/` — e.g. `projects/`, `apps/`. Example: `paths = ["src", "projects", "tests"]`. |
+| `paths` | `[tool.forge].source_dirs + test_dirs` | Per-tool **override** of the scan roots for the coverage report and badge. Defaults to the repo-wide layout above; set this only when docstring-coverage should scan something different. Paths resolving outside the repo are rejected. | You want coverage scoped differently from the rest of forge — otherwise prefer setting `[tool.forge].source_dirs` once. |
 | `badge` | `false` | Write `.badges/DocstringCoverage.svg` for README embedding. | You want a coverage badge in your README. |
 
 ## `[tool.interrogate]` — native section, read by forge

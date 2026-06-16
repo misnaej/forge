@@ -216,6 +216,34 @@ def test_scan_paths_defaults_to_src_and_tests(tmp_path: Path) -> None:
     ]
 
 
+def test_scan_paths_defaults_to_repo_layout(tmp_path: Path) -> None:
+    """No per-tool paths → ``[tool.forge].source_dirs + test_dirs``."""
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "t").mkdir()
+    data = {"tool": {"forge": {"source_dirs": ["lib"], "test_dirs": ["t"]}}}
+    result = verify_docstring_coverage._scan_paths(data, tmp_path)
+    assert result == [
+        str((tmp_path / "lib").resolve()),
+        str((tmp_path / "t").resolve()),
+    ]
+
+
+def test_scan_paths_per_tool_override_wins(tmp_path: Path) -> None:
+    """``[tool.forge.docstring_coverage].paths`` overrides the repo layout."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "only").mkdir()
+    data = {
+        "tool": {
+            "forge": {
+                "source_dirs": ["src"],
+                "docstring_coverage": {"paths": ["only"]},
+            }
+        }
+    }
+    result = verify_docstring_coverage._scan_paths(data, tmp_path)
+    assert result == [str((tmp_path / "only").resolve())]
+
+
 def test_scan_paths_honors_configured_paths(tmp_path: Path) -> None:
     """``[tool.forge.docstring_coverage].paths`` overrides the default roots."""
     (tmp_path / "projects").mkdir()

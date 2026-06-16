@@ -92,6 +92,23 @@ def test_load_config_partial_block_uses_defaults(tmp_path: Path) -> None:
     assert cfg.dev_branch == "trunk"
 
 
+def test_load_config_default_layout_dirs(tmp_path: Path) -> None:
+    """No ``[tool.forge]`` → source_dirs ``["src"]`` / test_dirs ``["tests"]``."""
+    cfg = load_config(tmp_path)
+    assert cfg.source_dirs == ["src"]
+    assert cfg.test_dirs == ["tests"]
+
+
+def test_load_config_reads_layout_dirs(tmp_path: Path) -> None:
+    """``source_dirs`` / ``test_dirs`` override the repo-layout defaults."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src", "projects"]\ntest_dirs = ["t"]\n'
+    )
+    cfg = load_config(tmp_path)
+    assert cfg.source_dirs == ["src", "projects"]
+    assert cfg.test_dirs == ["t"]
+
+
 def test_read_pyproject_raw_returns_full_dict(tmp_path: Path) -> None:
     """The shared raw reader returns the whole parsed TOML tree."""
     (tmp_path / "pyproject.toml").write_text(
