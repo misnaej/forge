@@ -40,13 +40,13 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import tomllib
 from pathlib import Path
 
 from interrogate.badge_gen import create as create_badge
 from interrogate.config import InterrogateConfig
 from interrogate.coverage import InterrogateCoverage
 
+from forge.config import read_pyproject_raw
 from forge.git_utils import capturing_to_step_log, configure_cli_logging
 
 
@@ -58,26 +58,6 @@ _DEFAULT_FAIL_UNDER = 90.0
 _DEFAULT_PATHS: tuple[str, ...] = ("src", "tests")
 _BADGE_DIR = ".badges"
 _BADGE_FILENAME = "DocstringCoverage.svg"
-
-
-def _read_pyproject(repo_root: Path) -> dict:
-    """Load ``pyproject.toml`` from *repo_root*, or ``{}`` when absent.
-
-    Args:
-        repo_root: Repository root containing ``pyproject.toml``.
-
-    Returns:
-        Parsed TOML data, or an empty dict when the file is missing /
-        unreadable. Caller treats either as "consumer has not opted
-        in" and skips cleanly.
-    """
-    pyproject = repo_root / "pyproject.toml"
-    if not pyproject.is_file():
-        return {}
-    try:
-        return tomllib.loads(pyproject.read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
 
 
 def _interrogate_config(data: dict) -> tuple[InterrogateConfig, float, list[str]]:
@@ -238,7 +218,7 @@ def main() -> int:
 
     repo_root = Path.cwd()
     with capturing_to_step_log(repo_root, "docstring_coverage"):
-        data = _read_pyproject(repo_root)
+        data = read_pyproject_raw(repo_root)
         if not data:
             logger.info("(no pyproject.toml — skipped)")
             return 0

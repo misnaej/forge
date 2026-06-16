@@ -75,6 +75,38 @@ class ForgeConfig:
         return self.base_branch != self.dev_branch
 
 
+def read_pyproject_raw(repo_root: Path) -> dict:
+    """Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
+
+    The canonical "load the whole TOML, degrade to empty on missing /
+    unreadable / unparseable" reader shared by every forge config
+    consumer (``load_config`` here, plus the docstring-coverage step and
+    the ``forge-config`` advisor). Deliberately forgiving — config reads
+    happen in hot paths and any failure should degrade to defaults, not
+    block the workflow.
+
+    Args:
+        repo_root: Git repo root containing ``pyproject.toml``.
+
+    Returns:
+        Parsed TOML data, or an empty dict when the file is missing,
+        unreadable, or not valid TOML.
+    """
+    pyproject = repo_root / "pyproject.toml"
+    if not pyproject.is_file():
+        return {}
+    try:
+        text = pyproject.read_text()
+    except OSError as exc:
+        logger.debug("forge.config: could not read %s (%s)", pyproject, exc)
+        return {}
+    try:
+        return tomllib.loads(text)
+    except ValueError as exc:
+        logger.debug("forge.config: could not parse %s (%s)", pyproject, exc)
+        return {}
+
+
 def load_config(repo_root: Path) -> ForgeConfig:
     """Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.
 
@@ -94,20 +126,7 @@ def load_config(repo_root: Path) -> ForgeConfig:
         single-branch flow. Override ``dev_branch`` in
         ``[tool.forge]`` to opt in.
     """
-    pyproject = repo_root / "pyproject.toml"
-    if not pyproject.is_file():
-        return ForgeConfig()
-    try:
-        text = pyproject.read_text()
-    except OSError as exc:
-        logger.debug("forge.config: could not read %s (%s)", pyproject, exc)
-        return ForgeConfig()
-    try:
-        data = tomllib.loads(text)
-    except ValueError as exc:
-        logger.debug("forge.config: could not parse %s (%s)", pyproject, exc)
-        return ForgeConfig()
-    section = data.get("tool", {}).get("forge", {})
+    section = read_pyproject_raw(repo_root).get("tool", {}).get("forge", {})
     return ForgeConfig(
         base_branch=section.get("base_branch", DEFAULT_BASE_BRANCH),
         dev_branch=section.get("dev_branch", DEFAULT_DEV_BRANCH),

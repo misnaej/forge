@@ -26,10 +26,10 @@ from __future__ import annotations
 
 import argparse
 import logging
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from forge.config import read_pyproject_raw
 from forge.git_utils import configure_cli_logging
 
 
@@ -94,9 +94,10 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
 # Third-party tools forge reads from their OWN native section rather than
 # wrapping under [tool.forge.*]. Named here so consumers see what forge
 # reads without it being hidden behind a forge namespace.
-NATIVE_SECTIONS: tuple[tuple[str, str], ...] = (
+# Path tuples match CONFIG_KEYS.path encoding (not dotted strings).
+NATIVE_SECTIONS: tuple[tuple[tuple[str, ...], str], ...] = (
     (
-        "tool.interrogate",
+        ("tool", "interrogate"),
         "Docstring-coverage gate (fail-under, exclude, ignore-*) read by "
         "verify-forge-docstring-coverage. interrogate's own section — "
         "forge reads it directly, not a forge wrapper.",
@@ -167,9 +168,10 @@ def build_report(data: dict) -> list[str]:
             lines.append(f"  {leaf:<14} = {value!r}")
 
     lines.append("")
-    for section, desc in NATIVE_SECTIONS:
-        present = _lookup(data, tuple(section.split("."))) is not _UNSET
+    for path, desc in NATIVE_SECTIONS:
+        present = _lookup(data, path) is not _UNSET
         flag = "set" if present else "not set"
+        section = ".".join(path)
         lines.append(f"[{section}]  ({flag} — native tool section, read by forge)")
         lines.append(f"  {desc}")
 
@@ -180,25 +182,6 @@ def build_report(data: dict) -> list[str]:
             lines.append(f"  • [{_section_of(key)}].{key.path[-1]} — {key.description}")
             lines.append(f"        {key.path[-1]} = {key.default!r}")
     return lines
-
-
-def _read_pyproject(repo_root: Path) -> dict:
-    """Load ``pyproject.toml`` from *repo_root*, or ``{}`` when absent.
-
-    Args:
-        repo_root: Repository root containing ``pyproject.toml``.
-
-    Returns:
-        Parsed TOML data, or an empty dict when the file is missing or
-        unparseable (treated as "no forge config set").
-    """
-    pyproject = repo_root / "pyproject.toml"
-    if not pyproject.is_file():
-        return {}
-    try:
-        return tomllib.loads(pyproject.read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
 
 
 def main() -> int:
@@ -222,7 +205,7 @@ def main() -> int:
     )
     parser.parse_args()
 
-    for line in build_report(_read_pyproject(Path.cwd())):
+    for line in build_report(read_pyproject_raw(Path.cwd())):
         logger.info("%s", line)
     return 0
 

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_40 modules, 363 symbols._
+_40 modules, 362 symbols._
 
 ## `forge._hook_helpers`
 
@@ -160,6 +160,7 @@ _40 modules, 363 symbols._
 
 - `class ForgeConfig` — Branch-name configuration sourced from ``[tool.forge]``.
   - `dual_track(self) -> bool` — Return ``True`` when base and dev are distinct branches.
+- `read_pyproject_raw(repo_root: Path) -> dict` — Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
 - `load_config(repo_root: Path) -> ForgeConfig` — Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.
 
 ## `forge.continuation_append`
@@ -198,7 +199,6 @@ _40 modules, 363 symbols._
 - `_lookup(data: dict, path: tuple[str, ...]) -> object` _(internal)_ — Return the value at *path* in nested *data*, or ``_UNSET`` if absent.
 - `_section_of(key: ConfigKey) -> str` _(internal)_ — Return the section header (path without the leaf key) for *key*.
 - `build_report(data: dict) -> list[str]` — Build the ``forge-config`` report lines from parsed pyproject data.
-- `_read_pyproject(repo_root: Path) -> dict` _(internal)_ — Load ``pyproject.toml`` from *repo_root*, or ``{}`` when absent.
 - `main() -> int` — Entry point for ``forge-config``.
 
 ## `forge.gen_api_digest`
@@ -434,7 +434,6 @@ _40 modules, 363 symbols._
 
 ## `forge.verify_docstring_coverage`
 
-- `_read_pyproject(repo_root: Path) -> dict` _(internal)_ — Load ``pyproject.toml`` from *repo_root*, or ``{}`` when absent.
 - `_interrogate_config(data: dict) -> tuple[InterrogateConfig, float, list[str]]` _(internal)_ — Build the interrogate config + threshold + excludes from TOML data.
 - `_badge_enabled(data: dict) -> bool` _(internal)_ — Return True when the consumer opted into badge generation.
 - `_write_badge(repo_root: Path, results: object) -> Path` _(internal)_ — Write a coverage SVG badge under ``.badges/`` and return its path.

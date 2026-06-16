@@ -168,7 +168,7 @@ order. Idempotent — re-run safely after every forge upgrade.
 
 Flags: `--check` (dry-run), `--skip <slug>` (repeatable; slugs are
 `githooks`, `claude-md`, `labels`, `api-digest`, `cli-reference`,
-`audit-deps`, `doctor`), `--strict` (abort on first failure; default is
+`audit-deps`, `doctor`, `config`), `--strict` (abort on first failure; default is
 continue-on-fail).
 
 Want to run an installer on its own? Each step is also a standalone CLI

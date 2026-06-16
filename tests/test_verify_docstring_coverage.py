@@ -237,6 +237,14 @@ def test_scan_paths_rejects_traversal_outside_repo(tmp_path: Path) -> None:
     assert result == [str((tmp_path / "src").resolve())]
 
 
+def test_scan_paths_rejects_absolute_path_outside_repo(tmp_path: Path) -> None:
+    """An absolute path outside the repo is dropped (path-traversal guard)."""
+    (tmp_path / "src").mkdir()
+    data = {"tool": {"forge": {"docstring_coverage": {"paths": ["/etc", "src"]}}}}
+    result = verify_docstring_coverage._scan_paths(data, tmp_path)
+    assert result == [str((tmp_path / "src").resolve())]
+
+
 def test_scan_paths_empty_when_none_exist(tmp_path: Path) -> None:
     """Configured roots that don't exist → empty list (caller skips cleanly)."""
     data = {"tool": {"forge": {"docstring_coverage": {"paths": ["nope"]}}}}
