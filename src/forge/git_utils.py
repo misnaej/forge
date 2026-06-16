@@ -137,6 +137,38 @@ def parse_semver(version: str) -> tuple[int, int, int] | None:
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
+def latest_v_tag(repo_root: Path) -> str | None:
+    """Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
+
+    Resolves the latest release **globally** — ``git tag --list "v*"
+    --sort=-v:refname`` — independent of ``HEAD``'s ancestry. This is the
+    single source of truth for "latest release tag", shared by the
+    rolling-next pre-commit guard (``verify-forge-plugin-version``) and
+    the auto-tagger (``forge-next-prep``). A branch-independent resolution
+    is required in the dual-track (dev/main) model: a release tagged on
+    one branch is not in the other's history, so an ancestry-scoped
+    ``git describe`` would disagree with the auto-tagger and let a stale
+    manifest slip past the guard.
+
+    Args:
+        repo_root: Repo root (cwd for the git invocation).
+
+    Returns:
+        Tag name like ``"v1.2.9"``, or ``None`` when no ``v*`` tags exist.
+    """
+    proc = subprocess.run(
+        ["git", "tag", "--list", "v*", "--sort=-v:refname"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    out = proc.stdout.strip()
+    if not out:
+        return None
+    return out.splitlines()[0]
+
+
 def require_cli(name: str, *, caller: str | None = None) -> None:
     """Abort with a clear install hint if *name* isn't on PATH.
 

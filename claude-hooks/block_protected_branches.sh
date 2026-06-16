@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Block direct `git commit` / `git push` on protected branches. Defaults
-# to blocking `main`; the protected list can be overridden by setting
+# to blocking `main` and `dev` (FOUNDATION §2); the protected list can be
+# overridden by setting
 # `[tool.forge] base_branch` / `dev_branch` in pyproject.toml (used by
 # forge's own repo for its release workflow — most consumers leave it
 # alone).
@@ -38,33 +39,30 @@ branch=$(git -C "${REPO_ROOT:-.}" branch --show-current 2>/dev/null)
 
 # Read the protected-branch list from pyproject.toml. python3 is already a
 # hard dependency of every forge repo (forge IS Python), so this is safe.
-# Defaults to "main" when:
+# Defaults to "main" + "dev" when:
 #   - pyproject.toml is missing
 #   - tomllib is unavailable (Python < 3.11)
 #   - [tool.forge] is empty or absent
 # Emits one branch per line. Portable to bash 3.2 (macOS default) — no
 # mapfile / readarray.
-protected=$(python3 - "${REPO_ROOT:-.}" <<'PY' 2>/dev/null || echo main
+protected=$(python3 - "${REPO_ROOT:-.}" <<'PY' 2>/dev/null || printf 'main\ndev\n'
 import sys
 from pathlib import Path
 try:
     import tomllib
 except ImportError:
-    print("main")
-    raise SystemExit(0)
+    print("main"); print("dev"); raise SystemExit(0)
 root = Path(sys.argv[1])
 pp = root / "pyproject.toml"
 if not pp.is_file():
-    print("main")
-    raise SystemExit(0)
+    print("main"); print("dev"); raise SystemExit(0)
 try:
     data = tomllib.loads(pp.read_text())
 except Exception:
-    print("main")
-    raise SystemExit(0)
+    print("main"); print("dev"); raise SystemExit(0)
 section = data.get("tool", {}).get("forge", {})
 base = section.get("base_branch", "main")
-dev = section.get("dev_branch", "main")
+dev = section.get("dev_branch", "dev")
 print(base)
 if dev != base:
     print(dev)

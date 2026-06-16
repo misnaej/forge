@@ -129,8 +129,11 @@ cheaper than reverting.
   divergence first: `git fetch origin && git log origin/<branch>`.
 - **NEVER add Claude/AI attribution** in commits, PRs, or merge messages
   (no `Co-Authored-By`, no `Generated with Claude`, no AI references).
-- **NEVER push directly to `main`**. Always create a feature branch first.
-  The `block_protected_branches` hook enforces this for agents.
+- **NEVER push directly to a protected branch** (`base_branch` /
+  `dev_branch`, default `main` / `dev`). Always create a feature branch
+  first. The `block_protected_branches` hook enforces this for agents —
+  defaulting to the same `main` + `dev` set as the sibling
+  `block_branch_deletion` hook.
 - **NEVER merge PRs autonomously.** Merging is the user's decision — produce
   the squash-merge message and wrap-up comment, then stop. The
   `block_pr_merge` hook enforces this for agents (blocks `gh pr merge` and

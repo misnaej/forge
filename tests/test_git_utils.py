@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import git_utils
+from tests.conftest import make_fake_run
 
 
 if TYPE_CHECKING:
@@ -329,3 +330,23 @@ def test_configure_cli_logging_is_idempotent() -> None:
     """Calling configure_cli_logging twice is safe (handlers already attached)."""
     git_utils.configure_cli_logging()
     git_utils.configure_cli_logging()  # second call must not raise
+
+
+def test_latest_v_tag_returns_highest_sorted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first line of the ``--sort=-v:refname`` output (highest) is returned."""
+    monkeypatch.setattr(
+        git_utils.subprocess,
+        "run",
+        make_fake_run(stdout="v1.21.0\nv1.20.2\nv1.20.0\n"),
+    )
+    assert git_utils.latest_v_tag(tmp_path) == "v1.21.0"
+
+
+def test_latest_v_tag_none_when_no_tags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No ``v*`` tags → ``None``."""
+    monkeypatch.setattr(git_utils.subprocess, "run", make_fake_run(stdout=""))
+    assert git_utils.latest_v_tag(tmp_path) is None

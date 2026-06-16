@@ -148,12 +148,8 @@ def test_maybe_tag_release_skips_when_version_equals_latest_tag(
         json.dumps({"name": "x", "version": "1.0.0"})
     )
 
-    def _fake_git(*args: str, **_kw: object) -> str:
-        if args[:2] == ("tag", "--list"):
-            return "v1.0.0"
-        return ""
-
-    monkeypatch.setattr(next_prep, "_git", _fake_git)
+    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.0.0")
+    monkeypatch.setattr(next_prep, "_git", lambda *_a, **_kw: "")
     assert next_prep._maybe_tag_release(tmp_path) is None
 
 
@@ -169,10 +165,9 @@ def test_maybe_tag_release_creates_and_pushes_new_tag(
 
     def _fake_git(*args: str, **_kw: object) -> str:
         invoked.append(list(args))
-        if args[:2] == ("tag", "--list"):
-            return "v1.2.9"
         return ""
 
+    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.2.9")
     monkeypatch.setattr(next_prep, "_git", _fake_git)
     result = next_prep._maybe_tag_release(tmp_path)
     assert result == "v1.2.10"
