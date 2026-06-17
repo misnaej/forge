@@ -62,6 +62,46 @@ to see what, if anything, is worth adding for your repo.
 |---|---|---|---|
 | `enabled` | `false` | Opt into the `cli_wiring` pre-commit step: every `[project.scripts]` entry must be reachable from a wiring source (install bootstrap, pre-commit, audit, hooks, agents, skills…). | Your repo ships `[project.scripts]` and follows forge's layout and you want unreachable CLIs caught. |
 
+## `[tool.forge.precommit]` — turn steps on and off
+
+The uniform lever over the pre-commit sequence. Applied on top of each
+step's own self-skip (it never *weakens* a self-skip), and `disable` beats
+`enable` when a name appears in both. The same effect for a single run is
+available as `forge-precommit --only <names>` / `--skip <names>`.
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `disable` | `[]` | Force-skip these default steps by name (e.g. `["pip_audit"]`). | You want a default step off repo-wide. |
+| `enable` | `[]` | Opt into normally-off steps by name: `doctest`, `typecheck`, `doc_consistency`. | You want one of the opt-in steps below to run. |
+
+## `[tool.forge.doctest]` — opt-in doctest step
+
+Runs `pytest --doctest-modules` so docstring `>>>` examples are executed,
+not just present. Enable via `[tool.forge.precommit] enable = ["doctest"]`.
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `paths` | `["src"]` | Scan roots for `--doctest-modules`. | Your doctested code lives elsewhere. |
+| `blocking` | `false` | Fail the commit on a broken example (else non-blocking WARN). | You want doctest drift to refuse a commit. |
+
+## `[tool.forge.typecheck]` — opt-in type-check step
+
+Runs [pyrefly](https://github.com/facebook/pyrefly) (Rust, stable,
+pyproject-native, reads/migrates `[tool.mypy]`). Enable via
+`[tool.forge.precommit] enable = ["typecheck"]`. When enabled but
+`pyrefly` is absent, the step fails loudly (it does not silently pass).
+Non-blocking by default — a type-checker false positive that refuses a
+commit trains `--no-verify`.
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `paths` | `["src"]` | Scan roots passed to pyrefly. | Your source lives elsewhere. |
+| `blocking` | `false` | Fail the commit on a type error (else non-blocking WARN). | Your type baseline is clean and you want it enforced. |
+
+The `doc_consistency` step (`verify-forge-doc-consistency`, enabled the
+same way) has no config table — it checks that every `[project.scripts]`
+CLI is documented in `docs/cli-reference.md`, and is always non-blocking.
+
 ## `[tool.forge.docstring_coverage]`
 
 Forge-specific keys for the docstring-coverage reporter. (The coverage *gate*
