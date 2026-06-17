@@ -190,6 +190,7 @@ Forge's own bootstrap tooling (not a consumer pattern):
 - claude-code-plugin.md: optional Claude Code plugin install + extension
 - cli-reference.md: generated CLI reference (`forge-gen-cli-reference`)
 - configuration.md: complete `[tool.forge.*]` config reference + setup guide (written counterpart to `forge-config --list`)
+- release-process.md: forge-only single source of truth for versioning + dev→main promotion + the invariant→test contract
 - customizing-precommit.md: adding repo-specific steps to `.githooks/pre-commit`
 - security.md: security policy and review documentation
 - standalone-installers.md: per-installer reference for manual usage (sibling of `install-forge-bootstrap`)

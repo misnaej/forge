@@ -5,6 +5,10 @@ description: Forge-only — open a dev→main promotion PR when a MINOR or MAJOR
 
 # Promote dev → main (forge-only)
 
+> **Spec:** [`docs/release-process.md`](../../../docs/release-process.md) is the
+> source of truth for the versioning + promotion model and its invariant→test
+> contract. This skill is the *operational* runbook for that model.
+
 Opens a `dev → main` promotion PR after a MINOR (`Y+1, Z→0`) or
 MAJOR (`X+1, Y→0, Z→0`) bump to `.claude-plugin/plugin.json` lands on
 `dev`. PATCH-only bumps (`Z+1`) do NOT trigger promotion — `dev`
