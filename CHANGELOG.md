@@ -20,6 +20,41 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v1.23.0 — 2026-06-17
+
+### Features
+- `forge-config --list` advisor + repo-wide `[tool.forge].source_dirs` /
+  `test_dirs` layout keys + `docs/configuration.md`; `[tool.interrogate]`
+  stays native (no wrapper).
+- New `/forge:test` skill chaining the test agents (advisor → writer →
+  review → precommit-fixer).
+
+### Fixes
+- Rolling-next version guard now skips when `HEAD`'s tree reproduces
+  **any** published `v*` tag (not only the latest), unblocking staged
+  promotion of a minor that sits below the global-max tag.
+
+### Docs
+- `docs/release-process.md` — single source of truth for versioning,
+  `dev → main` promotion, and the invariant→test contract.
+
+## v1.22.0 — 2026-06-17
+
+### ⚠️ Upgrade notes
+- **`block_protected_branches` now also protects `dev` by default.**
+  Direct pushes to `[tool.forge].dev_branch` (default `dev`) are blocked
+  for agents — open a PR instead. Single-track repos are unaffected
+  (`dev_branch` defaults to the base branch).
+
+### Fixes
+- `forge-next-prep --promotion-status` lists pending **minors only**
+  (`X.Y.0`); interleaved patch tags fold into the next minor.
+
+### Refactor / Tooling
+- The version guard and the auto-tagger now resolve "latest release" the
+  same way (global semver-max `v*` tag), fixing dual-track disagreement
+  where a tag on `main` is absent from `dev`'s history.
+
 ## v1.21.0 — 2026-06-12
 
 ### Features

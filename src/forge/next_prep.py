@@ -133,6 +133,28 @@ def _check_promote_pending_message(
     )
 
 
+def _changelog_lacks_entry(changelog_text: str, minor_tag: str) -> bool:
+    """Return True when *changelog_text* has no ``## <minor_tag>`` heading.
+
+    Matches a heading whose version token equals ``minor_tag`` — either
+    ``## v1.6.0 — <date>`` (the Keep-a-Changelog form forge uses) or a
+    bare ``## v1.6.0`` — so the optional date suffix does not defeat the
+    lookup. Drives the non-blocking promotion advisory; see
+    ``docs/release-process.md`` §5.
+
+    Args:
+        changelog_text: Full ``CHANGELOG.md`` contents.
+        minor_tag: Release tag to look for, e.g. ``"v1.6.0"``.
+
+    Returns:
+        ``True`` when no heading for ``minor_tag`` is present.
+    """
+    return not any(
+        line.startswith(f"## {minor_tag} ") or line.strip() == f"## {minor_tag}"
+        for line in changelog_text.splitlines()
+    )
+
+
 def _promotion_status_lines(
     repo_root: Path,
     dev_branch: str,
@@ -199,6 +221,20 @@ def _promotion_status_lines(
         return lines
     lines.append(f"Promotion pending — promote these in order ({len(staged)}):")
     lines.extend(f"  {tag}" for _, tag in staged)
+    # Non-blocking CHANGELOG advisory (docs/release-process.md §5): each
+    # promoted minor should already carry its entry, authored on dev.
+    # Stays silent for repos that keep no CHANGELOG (git show → empty).
+    changelog = _git(
+        "show", f"origin/{dev_branch}:CHANGELOG.md", cwd=repo_root, check=False
+    )
+    if changelog:
+        missing = [tag for _, tag in staged if _changelog_lacks_entry(changelog, tag)]
+        if missing:
+            lines.append(
+                f"⚠️  CHANGELOG.md (origin/{dev_branch}) has no entry for "
+                f"{', '.join(missing)} — author it on {dev_branch} before "
+                "promoting (docs/release-process.md §5)."
+            )
     return lines
 
 
