@@ -256,7 +256,9 @@ def _docstring_node_findings(
         All claim findings from docstrings in this module.
     """
     findings: list[Finding] = []
-    targets: list[tuple[ast.AST, int]] = [(tree, 1)]
+    targets: list[
+        tuple[ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef, int]
+    ] = [(tree, 1)]
     targets.extend(
         (node, node.lineno)
         for node in ast.walk(tree)

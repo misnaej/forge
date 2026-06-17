@@ -32,7 +32,7 @@ import logging
 import sys
 import tomllib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from forge.audit.common import (
     Finding,
@@ -51,6 +51,7 @@ from forge.git_utils import configure_cli_logging
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Any
 
 try:
     import yaml as _yaml_mod
@@ -243,7 +244,10 @@ def _check_jsonschema(path: Path, data: object) -> list[Finding]:
     findings: list[Finding] = []
     validator_cls = _jsonschema_mod.validators.validator_for(schema)
     validator = validator_cls(schema)
-    for error in sorted(validator.iter_errors(data), key=lambda e: e.path):
+    # jsonschema validates arbitrary parsed JSON; its stub types the
+    # instance as a JSON union that `object` is not assignable to. The
+    # value really is dynamic JSON, so cast at this single boundary.
+    for error in sorted(validator.iter_errors(cast("Any", data)), key=lambda e: e.path):
         loc = ".".join(str(p) for p in error.absolute_path) or "<root>"
         findings.append(
             Finding(

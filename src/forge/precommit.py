@@ -563,16 +563,40 @@ def step_plugin_version(repo_root: Path) -> StepResult:
     )
 
 
-def _bad_scan_paths(paths: list[object], repo_root: Path) -> list[str]:
-    """Return config scan-path values that are option-like or escape the repo.
+def _cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]:
+    """Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 
-    Config-supplied scan roots (``[tool.forge.<step>] paths``) are spliced
-    into a subprocess argv. A value starting with ``-`` would be parsed as
-    a tool flag, and an absolute / ``..`` path would scan outside the repo.
-    Both are misconfiguration and are rejected rather than passed through.
+    TOML values arrive typed as ``object``; this coerces a list-valued key
+    to ``list[str]`` (stringifying items) and falls back to *default* when
+    the key is absent or not a list — so a scalar like ``paths = "src"`` is
+    ignored rather than iterated character-by-character.
 
     Args:
-        paths: The configured scan roots.
+        cfg: A ``[tool.forge.<step>]`` subsection.
+        key: The list-valued key to read.
+        default: Fallback when the key is absent or not a list.
+
+    Returns:
+        The key's items as strings, or a copy of *default*.
+    """
+    value = cfg.get(key)
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return list(default)
+
+
+def _bad_scan_paths(paths: list[str], repo_root: Path) -> list[str]:
+    """Return config scan-path values that are blank, option-like, or escape the repo.
+
+    Config-supplied scan roots (``[tool.forge.<step>] paths``) are spliced
+    into a subprocess argv. A blank value is a degenerate path, a value
+    starting with ``-`` would be parsed as a tool flag, and an absolute /
+    ``..`` path would scan outside the repo. All three are misconfiguration
+    and are rejected rather than passed through.
+
+    Args:
+        paths: The configured scan roots (already narrowed to ``list[str]``
+            by :func:`_cfg_str_list`).
         repo_root: Git repo root the paths must stay within.
 
     Returns:
@@ -580,8 +604,8 @@ def _bad_scan_paths(paths: list[object], repo_root: Path) -> list[str]:
     """
     bad: list[str] = []
     for raw in paths:
-        if not isinstance(raw, str) or not raw.strip() or raw.startswith("-"):
-            bad.append(str(raw))
+        if not raw.strip() or raw.startswith("-"):
+            bad.append(raw)
             continue
         try:
             (repo_root / raw).resolve().relative_to(repo_root.resolve())
@@ -617,7 +641,7 @@ def step_doctest(repo_root: Path) -> StepResult:
         SystemExit: If ``pytest`` is not on PATH.
     """
     cfg = _forge_step_config(repo_root, "doctest")
-    paths = cfg.get("paths") or ["src"]
+    paths = _cfg_str_list(cfg, "paths", ["src"])
     blocking = bool(cfg.get("blocking", False))
     bad = _bad_scan_paths(paths, repo_root)
     if bad:
@@ -667,7 +691,7 @@ def step_typecheck(repo_root: Path) -> StepResult:
         SystemExit: If ``pyrefly`` is not on PATH.
     """
     cfg = _forge_step_config(repo_root, "typecheck")
-    paths = cfg.get("paths") or ["src"]
+    paths = _cfg_str_list(cfg, "paths", ["src"])
     blocking = bool(cfg.get("blocking", False))
     bad = _bad_scan_paths(paths, repo_root)
     if bad:
@@ -817,8 +841,8 @@ def _resolve_steps(
         ValueError: When any referenced name is not a registered step.
     """
     precommit_cfg = _forge_step_config(repo_root, "precommit")
-    enable = list(precommit_cfg.get("enable") or [])
-    disable = list(precommit_cfg.get("disable") or [])
+    enable = _cfg_str_list(precommit_cfg, "enable", [])
+    disable = _cfg_str_list(precommit_cfg, "disable", [])
     _validate_step_names([*enable, *disable, *skip, *only])
     base = set(only) if only else (_DEFAULT_ON | set(enable)) - set(disable)
     chosen = base - set(skip)
