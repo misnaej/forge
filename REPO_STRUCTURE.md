@@ -204,6 +204,7 @@ Forge's own bootstrap tooling (not a consumer pattern):
 
 2. **Code Quality**
    - ruff.toml: ruff lint and format configuration (strict, ALL rules)
+   - pyrefly.toml: pyrefly type-checker config for the opt-in `typecheck` step (strict return-type checking; interrogate's attrs `__init__` silenced via `replace-imports-with-any`)
 
 3. **Documentation**
    - CLAUDE.md: project guidance for Claude Code and developers

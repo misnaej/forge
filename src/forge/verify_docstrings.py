@@ -225,6 +225,11 @@ class DocstringVerifier(ast.NodeVisitor):
         docstring = ast.get_docstring(node)
         if not self._has_required_docstring(node, full_name, docstring):
             return
+        # The guard above records the finding and returns False for a
+        # missing docstring; past it the docstring is present. Bind the
+        # non-optional narrowing so the param/return checks below type-check.
+        if docstring is None:
+            return
 
         is_method = self.current_class is not None
         is_classmethod, is_abstractmethod = self._decorator_flags(node)
@@ -936,7 +941,7 @@ class DocstringVerifier(ast.NodeVisitor):
         # last statement is return
         return (
             body_statements <= self.MAX_MULTI_STATEMENT_SIMPLE_FIXTURE
-            and actual_body
+            and bool(actual_body)
             and isinstance(actual_body[-1], ast.Return)
         )
 

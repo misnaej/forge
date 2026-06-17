@@ -108,7 +108,7 @@ def _check_gh() -> list[CheckResult]:
         check=False,
     )
     return [
-        CheckResult(name="gh:installed", passed=True, detail=shutil.which("gh")),
+        CheckResult(name="gh:installed", passed=True, detail=shutil.which("gh") or ""),
         CheckResult(
             name="gh:authenticated",
             passed=auth.returncode == 0,

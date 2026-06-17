@@ -1,0 +1,11 @@
+# Type checking for forge's source via the opt-in `typecheck` pre-commit
+# step. The default `basic` preset is too lenient — it missed a real bug
+# (tokenize.TokenError). This checks return types of every def.
+project-includes = ["src"]
+untyped-def-behavior = "check-and-infer-return-type"
+
+# interrogate's InterrogateConfig is an attrs-generated class; pyrefly
+# cannot see its dynamic __init__ kwargs and false-flags every one as
+# unexpected. Treat the module as untyped so those FPs disappear without
+# disabling the unexpected-keyword check everywhere else.
+replace-imports-with-any = ["interrogate", "interrogate.*"]
