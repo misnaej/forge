@@ -31,9 +31,8 @@ All additive and opt-in — no consumer action required to upgrade.
 - **Opt-in `doctest` step** — `pytest --doctest-modules` over
   `[tool.forge.doctest].paths` (default `["src"]`); non-blocking by
   default (#5).
-- **Opt-in `typecheck` step** — `[tool.forge.typecheck].checker`
-  (`pyrefly` default; `mypy` / `ty` / `pyright` / `none`); non-blocking by
-  default (#48).
+- **Opt-in `typecheck` step** — runs `pyrefly` over
+  `[tool.forge.typecheck].paths`; non-blocking by default (#48).
 - **Opt-in `doc_consistency` step** + `verify-forge-doc-consistency` CLI —
   checks CLI name-lists and agent counts asserted in docs against the
   actual repo state; non-blocking (#4).

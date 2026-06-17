@@ -14,9 +14,9 @@ but does not refuse a commit). Shipped to consumers via the
 after ``install-forge-githooks``.
 
 Three further steps are **opt-in** (off by default): ``doctest``
-(``pytest --doctest-modules``), ``typecheck`` (pyrefly / mypy / ty /
-pyright), and ``doc_consistency`` (doc claims vs repo state). Opt in by
-listing them in ``[tool.forge.precommit] enable``. The same table's
+(``pytest --doctest-modules``), ``typecheck`` (``pyrefly``), and
+``doc_consistency`` (doc claims vs repo state). Opt in by listing them in
+``[tool.forge.precommit] enable``. The same table's
 ``disable`` list force-skips any default step; ``--only`` / ``--skip``
 do the same for a single run. This override layer sits on top of each
 step's own self-skip — it never weakens one, and ``disable`` beats
@@ -137,7 +137,7 @@ class StepDef:
     default_on: bool = True
 
 
-def _forge_step_config(repo_root: Path, step: str) -> dict:
+def _forge_step_config(repo_root: Path, step: str) -> dict[str, object]:
     """Return the ``[tool.forge.<step>]`` table, or ``{}`` when absent.
 
     Single navigation point for the repeated ``tool → forge → <step>``
@@ -563,6 +563,33 @@ def step_plugin_version(repo_root: Path) -> StepResult:
     )
 
 
+def _bad_scan_paths(paths: list[str], repo_root: Path) -> list[str]:
+    """Return config scan-path values that are option-like or escape the repo.
+
+    Config-supplied scan roots (``[tool.forge.<step>] paths``) are spliced
+    into a subprocess argv. A value starting with ``-`` would be parsed as
+    a tool flag, and an absolute / ``..`` path would scan outside the repo.
+    Both are misconfiguration and are rejected rather than passed through.
+
+    Args:
+        paths: The configured scan roots.
+        repo_root: Git repo root the paths must stay within.
+
+    Returns:
+        The offending entries; empty when every path is a safe in-repo root.
+    """
+    bad: list[str] = []
+    for raw in paths:
+        if not isinstance(raw, str) or raw.startswith("-"):
+            bad.append(str(raw))
+            continue
+        try:
+            (repo_root / raw).resolve().relative_to(repo_root.resolve())
+        except ValueError:
+            bad.append(raw)
+    return bad
+
+
 def step_doctest(repo_root: Path) -> StepResult:
     """Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 
@@ -575,8 +602,9 @@ def step_doctest(repo_root: Path) -> StepResult:
     refuses a commit trains ``--no-verify``.
 
     Opt-in only — runs when listed in ``[tool.forge.precommit] enable``
-    (or ``--only``). ``pytest`` exiting 5 (no examples collected) is
-    treated as a skip, not a failure.
+    (or ``--only``). When pytest output contains ``"no tests ran"`` (no
+    docstring examples collected), the step is treated as a skip rather
+    than a failure.
 
     Args:
         repo_root: Git repo root.
@@ -591,75 +619,63 @@ def step_doctest(repo_root: Path) -> StepResult:
     cfg = _forge_step_config(repo_root, "doctest")
     paths = cfg.get("paths") or ["src"]
     blocking = bool(cfg.get("blocking", False))
+    bad = _bad_scan_paths(paths, repo_root)
+    if bad:
+        return StepResult(
+            name="doctest",
+            passed=False,
+            output=f"invalid [tool.forge.doctest] paths: {bad}",
+        )
     require_cli("pytest", caller="forge-precommit")
     passed, output = _run(
         ["pytest", "--doctest-modules", "--doctest-continue-on-failure", *paths],
         cwd=repo_root,
     )
-    if "no tests ran" in output:
+    if "no tests ran" in output or "no items ran" in output:
         return StepResult(name="doctest", passed=True, output=output, skipped=True)
     return StepResult(
         name="doctest", passed=passed, output=output, non_blocking=not blocking
     )
 
 
-# Type-checker → argv head. ``checker = "none"`` short-circuits before
-# this lookup. pyrefly/mypy read existing ``[tool.<checker>]`` config.
-_TYPECHECK_COMMANDS: dict[str, list[str]] = {
-    "pyrefly": ["pyrefly", "check"],
-    "mypy": ["mypy"],
-    "ty": ["ty", "check"],
-    "pyright": ["pyright"],
-}
-
-
 def step_typecheck(repo_root: Path) -> StepResult:
-    """Run a configurable static type checker (opt-in).
+    """Run pyrefly over the source tree (opt-in).
 
-    Dispatches on ``[tool.forge.typecheck] checker`` — ``pyrefly``
-    (default; Rust, stable, reads/migrates ``[tool.mypy]``), ``mypy``
-    (universal, reads ``[tool.mypy]``), ``ty``, ``pyright``, or ``none``
-    (skip). Scans ``paths`` (default ``["src"]``). Non-blocking unless
-    ``blocking = true``: a type-checker false positive that refuses a
-    commit trains ``--no-verify``, so the gate is advisory by default.
+    pyrefly is forge's type checker — same Astral model as ruff (single
+    Rust binary, pyproject-native, reads/migrates ``[tool.mypy]`` config),
+    so it slots into forge's existing toolchain with no Node runtime.
+    Scans ``[tool.forge.typecheck] paths`` (default ``["src"]``).
+    Non-blocking unless ``blocking = true``: a type-checker false positive
+    that refuses a commit trains ``--no-verify``, so the gate is advisory
+    by default.
 
     Opt-in only — runs when listed in ``[tool.forge.precommit] enable``.
-    When opted in but the chosen checker binary is absent, fails loudly
-    (the consumer configured it and must fix their environment) rather
-    than silently passing.
+    When opted in but ``pyrefly`` is absent, fails loudly (the consumer
+    opted in and must install it) rather than silently passing.
 
     Args:
         repo_root: Git repo root.
 
     Returns:
-        ``StepResult``; ``skipped`` when ``checker = "none"``,
-        ``non_blocking`` the inverse of ``blocking``.
+        ``StepResult`` mirroring pyrefly's exit code; ``non_blocking`` is
+        the inverse of ``blocking``. A blocking failure when the
+        configured ``paths`` are option-like or escape the repo.
 
     Raises:
-        SystemExit: If the configured checker binary is not on PATH.
+        SystemExit: If ``pyrefly`` is not on PATH.
     """
     cfg = _forge_step_config(repo_root, "typecheck")
-    checker = str(cfg.get("checker") or "pyrefly")
     paths = cfg.get("paths") or ["src"]
     blocking = bool(cfg.get("blocking", False))
-    if checker == "none":
-        return StepResult(
-            name="typecheck",
-            passed=True,
-            output="(checker = none — skipped)",
-            skipped=True,
-        )
-    command = _TYPECHECK_COMMANDS.get(checker)
-    if command is None:
-        valid = ", ".join([*_TYPECHECK_COMMANDS, "none"])
+    bad = _bad_scan_paths(paths, repo_root)
+    if bad:
         return StepResult(
             name="typecheck",
             passed=False,
-            output=f"unknown checker {checker!r} — valid: {valid}",
-            non_blocking=not blocking,
+            output=f"invalid [tool.forge.typecheck] paths: {bad}",
         )
-    require_cli(command[0], caller="forge-precommit")
-    passed, output = _run([*command, *paths], cwd=repo_root)
+    require_cli("pyrefly", caller="forge-precommit")
+    passed, output = _run(["pyrefly", "check", *paths], cwd=repo_root)
     return StepResult(
         name="typecheck", passed=passed, output=output, non_blocking=not blocking
     )

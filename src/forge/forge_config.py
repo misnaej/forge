@@ -125,15 +125,9 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "example (default: non-blocking WARN).",
     ),
     ConfigKey(
-        ("tool", "forge", "typecheck", "checker"),
-        "pyrefly",
-        "Type checker for the opt-in typecheck step: pyrefly | mypy | ty | "
-        "pyright | none.",
-    ),
-    ConfigKey(
         ("tool", "forge", "typecheck", "paths"),
         ["src"],
-        "Scan roots for the opt-in typecheck step.",
+        "Scan roots for the opt-in pyrefly typecheck step.",
     ),
     ConfigKey(
         ("tool", "forge", "typecheck", "blocking"),

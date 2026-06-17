@@ -118,7 +118,7 @@ def _check_agent_count(repo_root: Path) -> list[str]:
     """Return a finding when FOUNDATION's agent-count claim disagrees with disk.
 
     Counts ``agents/*.md`` files (excluding underscore-prefixed templates)
-    and compares against the highest ``"<N> foundation agents"`` claim in
+    and compares against the first ``"<N> foundation agents"`` claim in
     ``FOUNDATION.md``. Skips silently when the ``agents/`` directory or the
     claim is absent.
 

@@ -86,17 +86,17 @@ not just present. Enable via `[tool.forge.precommit] enable = ["doctest"]`.
 
 ## `[tool.forge.typecheck]` — opt-in type-check step
 
-Runs a configurable static type checker. Enable via
-`[tool.forge.precommit] enable = ["typecheck"]`. When enabled but the
-chosen checker binary is absent, the step fails loudly (it does not
-silently pass). Non-blocking by default — a type-checker false positive
-that refuses a commit trains `--no-verify`.
+Runs [pyrefly](https://github.com/facebook/pyrefly) (Rust, stable,
+pyproject-native, reads/migrates `[tool.mypy]`). Enable via
+`[tool.forge.precommit] enable = ["typecheck"]`. When enabled but
+`pyrefly` is absent, the step fails loudly (it does not silently pass).
+Non-blocking by default — a type-checker false positive that refuses a
+commit trains `--no-verify`.
 
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
-| `checker` | `pyrefly` | `pyrefly` (Rust, stable, reads/migrates `[tool.mypy]`), `mypy`, `ty`, `pyright`, or `none` (skip). | You prefer a specific checker. `pyrefly` is the recommended fast default. |
-| `paths` | `["src"]` | Scan roots passed to the checker. | Your source lives elsewhere. |
-| `blocking` | `false` | Fail the commit on a checker error (else non-blocking WARN). | Your type baseline is clean and you want it enforced. |
+| `paths` | `["src"]` | Scan roots passed to pyrefly. | Your source lives elsewhere. |
+| `blocking` | `false` | Fail the commit on a type error (else non-blocking WARN). | Your type baseline is clean and you want it enforced. |
 
 The `doc_consistency` step (`verify-forge-doc-consistency`, enabled the
 same way) has no config table — it checks CLI name-lists and agent counts

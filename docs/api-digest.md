@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_41 modules, 374 symbols._
+_41 modules, 375 symbols._
 
 ## `forge._hook_helpers`
 
@@ -371,7 +371,7 @@ _41 modules, 374 symbols._
 - `_color(code: str) -> str` _(internal)_ — Return *code* if stdout is a TTY, else an empty string.
 - `class StepResult` — Outcome of a single pre-commit step.
 - `class StepDef` — A registry entry: a step's name, its function, and whether it runs by default.
-- `_forge_step_config(repo_root: Path, step: str) -> dict` _(internal)_ — Return the ``[tool.forge.<step>]`` table, or ``{}`` when absent.
+- `_forge_step_config(repo_root: Path, step: str) -> dict[str, object]` _(internal)_ — Return the ``[tool.forge.<step>]`` table, or ``{}`` when absent.
 - `_run(cmd: list[str], cwd: Path) -> tuple[bool, str]` _(internal)_ — Run *cmd* and capture combined output.
 - `step_ruff(repo_root: Path) -> StepResult` — Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
 - `step_docstrings(repo_root: Path) -> StepResult` — Run ``verify-forge-docstrings`` over the current diff vs main.
@@ -385,8 +385,9 @@ _41 modules, 374 symbols._
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
 - `_cli_wiring_enabled(repo_root: Path) -> bool` _(internal)_ — Return True when the repo has opted into the cli_wiring check.
 - `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
+- `_bad_scan_paths(paths: list[str], repo_root: Path) -> list[str]` _(internal)_ — Return config scan-path values that are option-like or escape the repo.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
-- `step_typecheck(repo_root: Path) -> StepResult` — Run a configurable static type checker (opt-in).
+- `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the source tree (opt-in).
 - `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
 - `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).

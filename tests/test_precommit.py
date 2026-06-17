@@ -872,27 +872,11 @@ def test_step_typecheck_default_pyrefly(
     assert result.non_blocking
 
 
-def test_step_typecheck_none_skips(tmp_path: Path) -> None:
-    """`checker = "none"` skips the step without invoking any tool."""
-    _write_pyproject(tmp_path, '[tool.forge.typecheck]\nchecker = "none"\n')
-    result = precommit.step_typecheck(tmp_path)
-    assert result.skipped
-    assert result.passed
-
-
-def test_step_typecheck_unknown_checker_fails(tmp_path: Path) -> None:
-    """An unrecognized checker name fails with a message listing valid names."""
-    _write_pyproject(tmp_path, '[tool.forge.typecheck]\nchecker = "bogus"\n')
-    result = precommit.step_typecheck(tmp_path)
-    assert not result.passed
-    assert "pyrefly" in result.output
-
-
-def test_step_typecheck_missing_binary_exits(
+def test_step_typecheck_missing_pyrefly_exits(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A configured-but-absent checker binary fails loudly (SystemExit)."""
+    """An opted-in-but-absent pyrefly binary fails loudly (SystemExit)."""
     monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit):
         precommit.step_typecheck(tmp_path)
@@ -902,13 +886,28 @@ def test_step_typecheck_blocking_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`blocking = true` makes a checker error a blocking failure."""
+    """`blocking = true` makes a pyrefly error a blocking failure."""
     _present(monkeypatch)
-    _write_pyproject(
-        tmp_path, '[tool.forge.typecheck]\nchecker = "mypy"\nblocking = true\n'
-    )
+    _write_pyproject(tmp_path, "[tool.forge.typecheck]\nblocking = true\n")
     monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (False, "error: x"))
     result = precommit.step_typecheck(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+
+
+def test_step_typecheck_rejects_option_like_paths(tmp_path: Path) -> None:
+    """An option-like `paths` entry is rejected as a blocking misconfiguration."""
+    _write_pyproject(tmp_path, '[tool.forge.typecheck]\npaths = ["--output=x"]\n')
+    result = precommit.step_typecheck(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+    assert "--output=x" in result.output
+
+
+def test_step_doctest_rejects_paths_escaping_repo(tmp_path: Path) -> None:
+    """A `paths` entry resolving outside the repo is rejected (blocking)."""
+    _write_pyproject(tmp_path, '[tool.forge.doctest]\npaths = ["/etc"]\n')
+    result = precommit.step_doctest(tmp_path)
     assert not result.passed
     assert not result.non_blocking
 
