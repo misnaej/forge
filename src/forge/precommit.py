@@ -586,12 +586,13 @@ def _cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[
 
 
 def _bad_scan_paths(paths: list[str], repo_root: Path) -> list[str]:
-    """Return config scan-path values that are option-like or escape the repo.
+    """Return config scan-path values that are blank, option-like, or escape the repo.
 
     Config-supplied scan roots (``[tool.forge.<step>] paths``) are spliced
-    into a subprocess argv. A value starting with ``-`` would be parsed as
-    a tool flag, and an absolute / ``..`` path would scan outside the repo.
-    Both are misconfiguration and are rejected rather than passed through.
+    into a subprocess argv. A blank value is a degenerate path, a value
+    starting with ``-`` would be parsed as a tool flag, and an absolute /
+    ``..`` path would scan outside the repo. All three are misconfiguration
+    and are rejected rather than passed through.
 
     Args:
         paths: The configured scan roots (already narrowed to ``list[str]``

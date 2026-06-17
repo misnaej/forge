@@ -386,7 +386,7 @@ def _check_step_tools(repo_root: Path) -> list[CheckResult]:
                     f"{tool} on PATH"
                     if present
                     else f"step '{step}' is enabled but '{tool}' is not on "
-                    'PATH — install it (e.g. `pip install -e ".[dev]"`).'
+                    f"PATH — install it (`pip install {tool}`)."
                 ),
             ),
         )
