@@ -65,6 +65,34 @@ invariant that had no test).
 | Guard fails when a real content change leaves `plugin.json ≤ latest tag` | `verify_plugin_version.main` | `tests/test_verify_plugin_version.py::test_fail_when_version_not_strictly_greater` |
 | `--promotion-status` lists pending **minors only** (`X.Y.0`); interleaved patch tags fold into the next minor | `next_prep._promotion_status_lines` | `tests/test_next_prep.py::test_promotion_status_excludes_patch_tags` |
 | `forge-next-prep --tag` tags + pushes only when `plugin.json` is strictly newer than the latest tag (idempotent) | `next_prep._maybe_tag_release` | `tests/test_next_prep.py::test_maybe_tag_release_creates_and_pushes_new_tag` |
+| `--promotion-status` flags a pending minor that has no `## vX.Y.0` entry in `origin/<dev>`'s `CHANGELOG.md` (non-blocking advisory; silent when the repo keeps no CHANGELOG) | `next_prep._promotion_status_lines` | `tests/test_next_prep.py::test_promotion_status_flags_missing_changelog_entry` |
 
 When you add a versioning/promotion behavior, add a row here **and** its
 test. When you find an invariant with no test, that gap is a bug to close.
+
+## 5. CHANGELOG at release
+
+`CHANGELOG.md` records **one entry per promoted minor** (`vX.Y.0`) — the
+slow channel ships minors only, so patches do **not** get their own
+entry; they fold into the next minor's entry when it promotes.
+
+**Each entry is authored on `dev`, before the promotion** — written as
+the minor is finalized (a small docs PR on `dev`, or folded into the
+last feature PR of that minor). The promotion branch is cut from `dev`'s
+tree, so it carries the entry onto `main` automatically when it merges.
+
+- **`dev` is the single source.** Never hotfix a CHANGELOG entry directly
+  onto `main` after promoting, and never back-merge `main → dev` to
+  reconcile it — that makes `main` a second source and adds two PRs per
+  release. The entry flows one way: authored on `dev`, carried to `main`
+  by the release branch.
+- **Enforcement is a non-blocking advisory.** `forge-next-prep
+  --promotion-status` (run by `/promote`) appends a `⚠️` line when a
+  pending minor has no `## vX.Y.0` heading in `origin/<dev>`'s
+  `CHANGELOG.md`. It is advisory, not a gate: it never changes the exit
+  code, and it stays silent for repos that keep no `CHANGELOG.md`. A
+  blocking variant would be a new gate (MINOR) — tracked separately.
+- **One-time catch-up exception.** When `main` has *already* shipped a
+  minor whose entry was never written (a historical gap), repair it with
+  a one-off patch hotfix to `main` plus a back-merge to `dev`. This is a
+  repair, not the steady-state flow above.
