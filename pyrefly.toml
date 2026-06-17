@@ -1,0 +1,19 @@
+# Type checking for forge's source via the opt-in `typecheck` pre-commit
+# step. The default `basic` preset is too lenient — it missed a real bug
+# (tokenize.TokenError). This checks return types of every def.
+#
+# `src` only, deliberately: type-checking `tests/` is noise, not signal.
+# Test code trips a type checker on things that are not bugs — pytest's
+# conftest/fixture import resolution, and dict/list invariance when test
+# data is passed into source functions (a `dict[str, str]` literal is not
+# assignable to a `dict[str, object]` parameter). The valuable signal
+# lives in `src/`; the typecheck step's default scan root is `["src"]` to
+# match.
+project-includes = ["src"]
+untyped-def-behavior = "check-and-infer-return-type"
+
+# interrogate's InterrogateConfig is an attrs-generated class; pyrefly
+# cannot see its dynamic __init__ kwargs and false-flags every one as
+# unexpected. Treat the module as untyped so those FPs disappear without
+# disabling the unexpected-keyword check everywhere else.
+replace-imports-with-any = ["interrogate", "interrogate.*"]
