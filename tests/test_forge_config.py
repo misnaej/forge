@@ -2,15 +2,79 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from forge import forge_config
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import pytest
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _forge_source_files(*, exclude: str) -> dict[Path, str]:
+    """Return ``src/forge`` ``*.py`` sources keyed by path, minus *exclude*.
+
+    Args:
+        exclude: Filename to drop (e.g. the declaration site itself).
+
+    Returns:
+        Mapping of file path to its text for every other module.
+    """
+    return {
+        path: path.read_text(encoding="utf-8")
+        for path in (_REPO_ROOT / "src" / "forge").rglob("*.py")
+        if path.name != exclude
+    }
+
+
+def test_every_config_key_leaf_is_read_by_some_module() -> None:
+    """Every CONFIG_KEYS leaf appears in a reader module — no stale entries.
+
+    #46: CONFIG_KEYS is forge's single declared enumeration of the
+    ``[tool.forge.*]`` keys forge reads. This couples the registry to
+    reality — a key whose leaf no longer appears as a string literal in
+    any ``src/forge`` module (other than ``forge_config.py``, the
+    declaration site) is a stale entry that makes ``forge-config --list``
+    advertise a key nothing reads.
+    """
+    sources = _forge_source_files(exclude="forge_config.py")
+    for key in forge_config.CONFIG_KEYS:
+        leaf = key.path[-1]
+        read_somewhere = any(
+            f'"{leaf}"' in text or f"'{leaf}'" in text for text in sources.values()
+        )
+        assert read_somewhere, (
+            f"CONFIG_KEYS leaf {leaf!r} ({'.'.join(key.path)}) is referenced "
+            f"by no src/forge module — stale registry entry?"
+        )
+
+
+def test_forge_step_config_sections_are_declared() -> None:
+    """Every ``[tool.forge.<section>]`` read via ``_forge_step_config`` is declared.
+
+    #46 reverse direction: a new pre-commit step reading
+    ``[tool.forge.<newstep>]`` without a CONFIG_KEYS entry would make
+    ``forge-config --list`` silently incomplete. Extract the section names
+    passed to ``precommit._forge_step_config`` and assert each is a
+    declared third-level token under ``[tool.forge]``.
+    """
+    precommit_src = (_REPO_ROOT / "src" / "forge" / "precommit.py").read_text(
+        encoding="utf-8"
+    )
+    sections = set(
+        re.findall(r'_forge_step_config\([^,]+,\s*"([^"]+)"\)', precommit_src)
+    )
+    declared = {key.path[2] for key in forge_config.CONFIG_KEYS if len(key.path) >= 3}
+    undocumented = sections - declared
+    assert not undocumented, (
+        f"[tool.forge.{sorted(undocumented)}] read via _forge_step_config but "
+        f"absent from CONFIG_KEYS"
+    )
 
 
 def test_lookup_returns_value_and_unset() -> None:
