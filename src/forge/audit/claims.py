@@ -318,7 +318,7 @@ def _comment_findings(
                     evidence=(comment_body[:COMMENT_PREVIEW],),
                 ),
             )
-    except tokenize.TokenizeError as exc:
+    except tokenize.TokenError as exc:
         logger.debug("tokenize failed in %s: %s", rel, exc)
     return findings
 
