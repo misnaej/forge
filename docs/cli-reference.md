@@ -375,7 +375,8 @@ options:
 ## forge-precommit
 
 ```text
-usage: forge-precommit [-h] [--json]
+usage: forge-precommit [-h] [--json] [--skip STEP[,STEP...]]
+                       [--only STEP[,STEP...]]
 
 Run the forge pre-commit check sequence: ruff (format + check, self-healing
 with --unsafe-fixes on failure) + docstring verification (diff vs main) +
@@ -387,8 +388,14 @@ default sequence — run it in CI or wire it into .githooks/pre-commit
 explicitly. Used by any repo that adopts forge via install-forge-githooks.
 
 options:
-  -h, --help  show this help message and exit
-  --json      Emit a JSON summary on stdout instead of human output.
+  -h, --help            show this help message and exit
+  --json                Emit a JSON summary on stdout instead of human output.
+  --skip STEP[,STEP...]
+                        Force-skip these steps for this run (repeatable or
+                        comma-separated).
+  --only STEP[,STEP...]
+                        Run exactly these steps (repeatable or comma-
+                        separated).
 ```
 
 ## forge-slow-tests-report
@@ -522,6 +529,19 @@ Verify every [project.scripts] entry in pyproject.toml is reachable from at
 least one wiring source path (install-forge-bootstrap STEPS, forge.precommit
 steps, audit/, git hooks, claude-hooks, dev/, agents/, skills/) or is listed
 in cli_wiring_exempt.toml with a reason.
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## verify-forge-doc-consistency
+
+```text
+usage: verify-forge-doc-consistency [-h]
+
+Check machine-checkable documentation claims (CLI name-lists, agent counts)
+against the actual repo state. Non-blocking reporter for the doc_consistency
+pre-commit step.
 
 options:
   -h, --help  show this help message and exit

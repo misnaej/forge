@@ -37,6 +37,7 @@ Code.
      structure drift check
    - verify_test_naming.py: `verify-forge-test-naming` — test naming check
    - verify_manifest.py: `verify-forge-manifest` — `.claude-plugin/*.json` JSON validation
+   - verify_doc_consistency.py: `verify-forge-doc-consistency` — checks machine-checkable doc claims (CLI name-lists, agent counts) against repo state; backs the opt-in `doc_consistency` pre-commit step (non-blocking)
    - verify_plugin_version.py: `verify-forge-plugin-version` — rolling-next guard (plugin.json["version"] > latest git tag)
    - gen_cli_reference.py: `forge-gen-cli-reference` — CLI reference
      doc generator
@@ -159,6 +160,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_verify_docstrings.py: tests for verify_docstrings
    - test_verify_docstring_coverage.py: tests for verify_docstring_coverage
    - test_verify_manifest.py: tests for verify_manifest
+   - test_verify_doc_consistency.py: tests for verify_doc_consistency
    - test_verify_plugin_version.py: tests for verify_plugin_version
    - test_verify_repo_structure.py: tests for verify_repo_structure
    - test_verify_test_naming.py: tests for verify_test_naming

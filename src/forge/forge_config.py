@@ -101,6 +101,46 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "Per-tool override of the coverage scan roots; otherwise inherits "
         "the repo-wide [tool.forge].source_dirs + test_dirs.",
     ),
+    ConfigKey(
+        ("tool", "forge", "precommit", "disable"),
+        default=[],
+        description="Force-skip these pre-commit steps by name (over each "
+        "step's own self-skip).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "precommit", "enable"),
+        default=[],
+        description="Opt into normally-off pre-commit steps by name "
+        "(doctest, typecheck, doc_consistency).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "doctest", "paths"),
+        ["src"],
+        "Scan roots for the opt-in doctest step (pytest --doctest-modules).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "doctest", "blocking"),
+        default=False,
+        description="Make the doctest step fail the commit on a broken "
+        "example (default: non-blocking WARN).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "typecheck", "checker"),
+        "pyrefly",
+        "Type checker for the opt-in typecheck step: pyrefly | mypy | ty | "
+        "pyright | none.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "typecheck", "paths"),
+        ["src"],
+        "Scan roots for the opt-in typecheck step.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "typecheck", "blocking"),
+        default=False,
+        description="Make the typecheck step fail the commit on a checker "
+        "error (default: non-blocking WARN).",
+    ),
 )
 
 # Third-party tools forge reads from their OWN native section rather than

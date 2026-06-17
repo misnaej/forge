@@ -592,3 +592,344 @@ def test_main_lists_failed_steps_with_log_paths(
     # Each failed step listed with its log path
     assert "docstring_verification: see code_health/docstring_verification.log" in out
     assert "test_naming_check: see code_health/test_naming_check.log" in out
+
+
+# ---------------------------------------------------------------------------
+# Step framework: registry, resolution, CLI overrides (#6)
+# ---------------------------------------------------------------------------
+
+
+def _write_pyproject(tmp_path: Path, body: str) -> None:
+    """Write *body* as ``pyproject.toml`` in *tmp_path* (config-test helper).
+
+    Args:
+        tmp_path: Temporary directory path.
+        body: TOML content to write.
+    """
+    (tmp_path / "pyproject.toml").write_text(body, encoding="utf-8")
+
+
+def _names(step_defs: list[precommit.StepDef]) -> list[str]:
+    """Return the names of resolved ``StepDef`` entries (readability helper).
+
+    Args:
+        step_defs: List of step definitions.
+
+    Returns:
+        List of step names extracted from the definitions.
+    """
+    return [d.name for d in step_defs]
+
+
+def _present(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every binary resolve on PATH (so ``require_cli`` passes)."""
+    monkeypatch.setattr(precommit.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+
+def test_forge_step_config_reads_section(tmp_path: Path) -> None:
+    """`_forge_step_config` returns the `[tool.forge.<step>]` table."""
+    _write_pyproject(tmp_path, '[tool.forge.doctest]\npaths = ["lib"]\n')
+    assert precommit._forge_step_config(tmp_path, "doctest") == {"paths": ["lib"]}
+
+
+def test_forge_step_config_missing_returns_empty(tmp_path: Path) -> None:
+    """`_forge_step_config` returns `{}` when the section or pyproject is absent."""
+    assert precommit._forge_step_config(tmp_path, "doctest") == {}
+    _write_pyproject(tmp_path, "[tool.forge]\n")
+    assert precommit._forge_step_config(tmp_path, "doctest") == {}
+
+
+def test_validate_step_names_accepts_known() -> None:
+    """`_validate_step_names` is silent for registered step names."""
+    precommit._validate_step_names(["ruff", "doctest", "pip_audit"])
+
+
+def test_validate_step_names_rejects_unknown() -> None:
+    """`_validate_step_names` raises ValueError naming the offender and valid set."""
+    with pytest.raises(ValueError, match="unknown step name") as exc:
+        precommit._validate_step_names(["ruff", "nope"])
+    assert "nope" in str(exc.value)
+    assert "ruff" in str(exc.value)
+
+
+def test_resolve_steps_default_excludes_opt_in(tmp_path: Path) -> None:
+    """The default run set is the default-on steps; opt-in steps stay out."""
+    names = _names(precommit._resolve_steps(tmp_path))
+    assert "ruff" in names
+    assert "doctest" not in names
+    assert "typecheck" not in names
+    assert "doc_consistency" not in names
+
+
+def test_resolve_steps_enable_adds_opt_in(tmp_path: Path) -> None:
+    """`[tool.forge.precommit] enable` opts a normally-off step in."""
+    _write_pyproject(tmp_path, '[tool.forge.precommit]\nenable = ["doctest"]\n')
+    assert "doctest" in _names(precommit._resolve_steps(tmp_path))
+
+
+def test_resolve_steps_disable_removes_default(tmp_path: Path) -> None:
+    """`[tool.forge.precommit] disable` force-skips a default step."""
+    _write_pyproject(tmp_path, '[tool.forge.precommit]\ndisable = ["pip_audit"]\n')
+    assert "pip_audit" not in _names(precommit._resolve_steps(tmp_path))
+
+
+def test_resolve_steps_disable_beats_enable(tmp_path: Path) -> None:
+    """When a name is in both `enable` and `disable`, `disable` wins."""
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.precommit]\nenable = ["doctest"]\ndisable = ["doctest"]\n',
+    )
+    assert "doctest" not in _names(precommit._resolve_steps(tmp_path))
+
+
+def test_resolve_steps_skip_removes(tmp_path: Path) -> None:
+    """The `skip` argument removes a step for this run only."""
+    assert "ruff" not in _names(precommit._resolve_steps(tmp_path, skip=["ruff"]))
+
+
+def test_resolve_steps_only_overrides_in_registry_order(tmp_path: Path) -> None:
+    """`only=[...]` runs exactly those steps, ordered by the registry not the arg."""
+    resolved = _names(precommit._resolve_steps(tmp_path, only=["pip_audit", "ruff"]))
+    assert resolved == ["ruff", "pip_audit"]
+
+
+def test_resolve_steps_unknown_name_raises(tmp_path: Path) -> None:
+    """An unknown name in config / skip / only raises ValueError."""
+    with pytest.raises(ValueError, match="unknown step name"):
+        precommit._resolve_steps(tmp_path, only=["bogus"])
+
+
+def test_split_csv_flattens_repeats_and_commas() -> None:
+    """`_split_csv` flattens repeated and comma-separated values, dropping blanks."""
+    assert precommit._split_csv(["a,b", "c"]) == ["a", "b", "c"]
+    assert precommit._split_csv(["a, ,b"]) == ["a", "b"]
+    assert precommit._split_csv([]) == []
+
+
+def test_run_all_only_dispatches_monkeypatched_steps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_all(only=...) runs exactly the named steps via the module dispatch.
+
+    MOCK SETUP: ``step_ruff`` and ``step_pip_audit`` are replaced with
+    canned passing stubs; run_all is called with ``only`` those two.
+    EXPECTED BEHAVIOR: both stubs run (proving the registry resolves the
+    monkeypatched functions, not its captured references) and no other
+    step executes.
+    """
+
+    def _ruff(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="ruff", passed=True, output="x")
+
+    def _audit(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="pip_audit", passed=True, output="x")
+
+    monkeypatch.setattr(precommit, "step_ruff", _ruff)
+    monkeypatch.setattr(precommit, "step_pip_audit", _audit)
+    results = precommit.run_all(
+        tmp_path, print_progress=False, only=["ruff", "pip_audit"]
+    )
+    assert [r.name for r in results] == ["ruff", "pip_audit"]
+
+
+def test_main_only_flag_runs_subset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--only ruff --json` runs just ruff and emits a one-entry JSON list.
+
+    MOCK SETUP: get_repo_root pinned to tmp_path; ``step_ruff`` stubbed to
+    pass; argv drives main() with ``--only ruff --json``.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+
+    def _ruff(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="ruff", passed=True, output="x")
+
+    monkeypatch.setattr(precommit, "step_ruff", _ruff)
+    with patch.object(
+        precommit.sys, "argv", ["forge-precommit", "--only", "ruff", "--json"]
+    ):
+        rc = precommit.main()
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert [r["name"] for r in data] == ["ruff"]
+
+
+def test_main_unknown_step_name_exits_one(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unknown `--skip` name prints a clean error and exits 1 (no traceback)."""
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--skip", "bogus"]):
+        rc = precommit.main()
+    assert rc == 1
+    assert "unknown step name" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Opt-in steps: doctest (#5), typecheck (#48), doc_consistency (#4)
+# ---------------------------------------------------------------------------
+
+
+def test_step_doctest_passes_non_blocking_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Doctest passes as non-blocking when `blocking` is unset.
+
+    MOCK SETUP: pytest present on PATH; ``_run`` returns a passing canned
+    result; no ``[tool.forge.doctest]`` config so defaults apply.
+    """
+    _present(monkeypatch)
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, "3 passed"))
+    result = precommit.step_doctest(tmp_path)
+    assert result.passed
+    assert result.non_blocking
+    assert not result.skipped
+
+
+def test_step_doctest_uses_configured_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Doctest runs `pytest --doctest-modules` over `[tool.forge.doctest].paths`."""
+    _present(monkeypatch)
+    _write_pyproject(tmp_path, '[tool.forge.doctest]\npaths = ["lib", "app"]\n')
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return True, "1 passed"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    precommit.step_doctest(tmp_path)
+    assert "--doctest-modules" in captured["cmd"]
+    assert captured["cmd"][-2:] == ["lib", "app"]
+
+
+def test_step_doctest_no_examples_is_skipped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pytest 'no tests ran' (exit 5) counts as a skip, not a failure."""
+    _present(monkeypatch)
+    monkeypatch.setattr(
+        precommit, "_run", lambda _cmd, **_kw: (False, "no tests ran in 0.01s")
+    )
+    result = precommit.step_doctest(tmp_path)
+    assert result.skipped
+    assert result.passed
+
+
+def test_step_doctest_blocking_config_is_blocking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`blocking = true` makes a failing doctest a blocking failure."""
+    _present(monkeypatch)
+    _write_pyproject(tmp_path, "[tool.forge.doctest]\nblocking = true\n")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (False, "1 failed"))
+    result = precommit.step_doctest(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+
+
+def test_step_doctest_missing_pytest_exits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Doctest fails loudly (SystemExit) when pytest is not on PATH."""
+    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        precommit.step_doctest(tmp_path)
+
+
+def test_step_typecheck_default_pyrefly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Typecheck defaults to the `pyrefly check` command and is non-blocking.
+
+    MOCK SETUP: pyrefly present on PATH; ``_run`` captures the command and
+    returns a passing result; no config so the default checker applies.
+    """
+    _present(monkeypatch)
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return True, "0 errors"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    result = precommit.step_typecheck(tmp_path)
+    assert captured["cmd"][:2] == ["pyrefly", "check"]
+    assert result.passed
+    assert result.non_blocking
+
+
+def test_step_typecheck_none_skips(tmp_path: Path) -> None:
+    """`checker = "none"` skips the step without invoking any tool."""
+    _write_pyproject(tmp_path, '[tool.forge.typecheck]\nchecker = "none"\n')
+    result = precommit.step_typecheck(tmp_path)
+    assert result.skipped
+    assert result.passed
+
+
+def test_step_typecheck_unknown_checker_fails(tmp_path: Path) -> None:
+    """An unrecognized checker name fails with a message listing valid names."""
+    _write_pyproject(tmp_path, '[tool.forge.typecheck]\nchecker = "bogus"\n')
+    result = precommit.step_typecheck(tmp_path)
+    assert not result.passed
+    assert "pyrefly" in result.output
+
+
+def test_step_typecheck_missing_binary_exits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured-but-absent checker binary fails loudly (SystemExit)."""
+    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        precommit.step_typecheck(tmp_path)
+
+
+def test_step_typecheck_blocking_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`blocking = true` makes a checker error a blocking failure."""
+    _present(monkeypatch)
+    _write_pyproject(
+        tmp_path, '[tool.forge.typecheck]\nchecker = "mypy"\nblocking = true\n'
+    )
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (False, "error: x"))
+    result = precommit.step_typecheck(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+
+
+def test_step_doc_consistency_non_blocking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """doc_consistency mirrors the CLI exit and is always non-blocking."""
+    _present(monkeypatch)
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (False, "drift"))
+    result = precommit.step_doc_consistency(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+
+
+def test_step_doc_consistency_missing_cli_exits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """doc_consistency fails loudly when its CLI is not on PATH."""
+    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        precommit.step_doc_consistency(tmp_path)

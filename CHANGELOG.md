@@ -20,6 +20,30 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v1.24.0 — 2026-06-17
+
+All additive and opt-in — no consumer action required to upgrade.
+
+### Features
+- **Pluggable pre-commit step framework** — `[tool.forge.precommit]
+  enable` / `disable` (plus `forge-precommit --only` / `--skip`) turn any
+  step on or off uniformly, on top of each step's own self-skip (#6).
+- **Opt-in `doctest` step** — `pytest --doctest-modules` over
+  `[tool.forge.doctest].paths` (default `["src"]`); non-blocking by
+  default (#5).
+- **Opt-in `typecheck` step** — `[tool.forge.typecheck].checker`
+  (`pyrefly` default; `mypy` / `ty` / `pyright` / `none`); non-blocking by
+  default (#48).
+- **Opt-in `doc_consistency` step** + `verify-forge-doc-consistency` CLI —
+  checks CLI name-lists and agent counts asserted in docs against the
+  actual repo state; non-blocking (#4).
+
+### Tooling
+- `forge-config --list` now enumerates the new
+  `[tool.forge.precommit/doctest/typecheck]` keys, and a drift test
+  couples `CONFIG_KEYS` to its readers so the registry can't silently go
+  stale (#46).
+
 ## v1.23.0 — 2026-06-17
 
 ### Features
