@@ -365,6 +365,61 @@ def test_promotion_status_excludes_patch_tags(
     assert pending == ["v1.20.0", "v1.21.0"]
 
 
+def test_promotion_status_flags_missing_changelog_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pending minor with no CHANGELOG entry gets a non-blocking advisory.
+
+    Locks docs/release-process.md §5: each promoted minor's entry is
+    authored on dev; ``--promotion-status`` flags any that are missing
+    without changing the exit code. Here v1.21.0 has an entry, v1.20.0
+    does not → only v1.20.0 is flagged.
+    """
+
+    def _fake_git(*args: str, **_kw: object) -> str:
+        if args[:1] == ("tag",):
+            return "v1.19.0 v1.20.0 v1.21.0"
+        if args[:1] == ("show",):
+            return "## v1.21.0 — 2026-06-17\n\n### Features\n- thing\n"
+        return ""
+
+    monkeypatch.setattr(
+        next_prep,
+        "_read_plugin_version_at_ref",
+        lambda _root, ref: "1.21.0" if "dev" in ref else "1.19.0",
+    )
+    monkeypatch.setattr(next_prep, "_git", _fake_git)
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    advisory = [line for line in lines if "no entry" in line]
+    assert len(advisory) == 1
+    assert "v1.20.0" in advisory[0]
+    assert "v1.21.0" not in advisory[0]
+
+
+def test_promotion_status_silent_when_changelog_complete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No advisory when every pending minor already has a CHANGELOG entry."""
+
+    def _fake_git(*args: str, **_kw: object) -> str:
+        if args[:1] == ("tag",):
+            return "v1.19.0 v1.20.0 v1.21.0"
+        if args[:1] == ("show",):
+            return "## v1.21.0 — 2026-06-17\n\n## v1.20.0 — 2026-06-17\n"
+        return ""
+
+    monkeypatch.setattr(
+        next_prep,
+        "_read_plugin_version_at_ref",
+        lambda _root, ref: "1.21.0" if "dev" in ref else "1.19.0",
+    )
+    monkeypatch.setattr(next_prep, "_git", _fake_git)
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    assert not [line for line in lines if "no entry" in line]
+
+
 def test_promotion_status_includes_major_release(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
