@@ -385,7 +385,7 @@ _41 modules, 375 symbols._
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
 - `_cli_wiring_enabled(repo_root: Path) -> bool` _(internal)_ — Return True when the repo has opted into the cli_wiring check.
 - `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
-- `_bad_scan_paths(paths: list[str], repo_root: Path) -> list[str]` _(internal)_ — Return config scan-path values that are option-like or escape the repo.
+- `_bad_scan_paths(paths: list[object], repo_root: Path) -> list[str]` _(internal)_ — Return config scan-path values that are option-like or escape the repo.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the source tree (opt-in).
 - `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).

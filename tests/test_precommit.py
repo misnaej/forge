@@ -693,6 +693,16 @@ def test_resolve_steps_only_overrides_in_registry_order(tmp_path: Path) -> None:
     assert resolved == ["ruff", "pip_audit"]
 
 
+def test_resolve_steps_only_still_honors_skip(tmp_path: Path) -> None:
+    """`skip` subtracts from the `only` set too — it is never silently ignored."""
+    resolved = _names(
+        precommit._resolve_steps(
+            tmp_path, only=["ruff", "pip_audit"], skip=["pip_audit"]
+        )
+    )
+    assert resolved == ["ruff"]
+
+
 def test_resolve_steps_unknown_name_raises(tmp_path: Path) -> None:
     """An unknown name in config / skip / only raises ValueError."""
     with pytest.raises(ValueError, match="unknown step name"):

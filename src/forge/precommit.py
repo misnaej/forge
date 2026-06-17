@@ -563,7 +563,7 @@ def step_plugin_version(repo_root: Path) -> StepResult:
     )
 
 
-def _bad_scan_paths(paths: list[str], repo_root: Path) -> list[str]:
+def _bad_scan_paths(paths: list[object], repo_root: Path) -> list[str]:
     """Return config scan-path values that are option-like or escape the repo.
 
     Config-supplied scan roots (``[tool.forge.<step>] paths``) are spliced
@@ -580,7 +580,7 @@ def _bad_scan_paths(paths: list[str], repo_root: Path) -> list[str]:
     """
     bad: list[str] = []
     for raw in paths:
-        if not isinstance(raw, str) or raw.startswith("-"):
+        if not isinstance(raw, str) or not raw.strip() or raw.startswith("-"):
             bad.append(str(raw))
             continue
         try:
@@ -631,7 +631,9 @@ def step_doctest(repo_root: Path) -> StepResult:
         ["pytest", "--doctest-modules", "--doctest-continue-on-failure", *paths],
         cwd=repo_root,
     )
-    if "no tests ran" in output or "no items ran" in output:
+    # pytest>=8 prints "no tests ran" when zero examples were collected
+    # (exit 5) — a skip for an advisory doctest sweep, not a failure.
+    if "no tests ran" in output:
         return StepResult(name="doctest", passed=True, output=output, skipped=True)
     return StepResult(
         name="doctest", passed=passed, output=output, non_blocking=not blocking
@@ -684,11 +686,12 @@ def step_typecheck(repo_root: Path) -> StepResult:
 def step_doc_consistency(repo_root: Path) -> StepResult:
     """Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
 
-    Checks the machine-checkable subset of documentation claims: agent /
-    skill / CLI / hook name-lists and counts asserted in docs against the
-    actual files on disk and ``[project.scripts]`` / ``plugin.json``.
-    Opt-in via ``[tool.forge.precommit] enable``; non-blocking (doc drift
-    is a warning, not grounds to refuse a commit).
+    Checks the machine-checkable subset of documentation claims: every
+    ``[project.scripts]`` CLI name against ``docs/cli-reference.md``, and
+    the ``"<N> foundation agents"`` count in ``FOUNDATION.md`` against the
+    actual ``agents/*.md`` count on disk. Opt-in via
+    ``[tool.forge.precommit] enable``; non-blocking (doc drift is a
+    warning, not grounds to refuse a commit).
 
     Args:
         repo_root: Git repo root.
@@ -793,13 +796,16 @@ def _resolve_steps(
 ) -> list[StepDef]:
     """Resolve which steps to run, in registry order.
 
-    ``--only`` overrides everything (run exactly those). Otherwise the run
-    set is the default-on steps plus ``[tool.forge.precommit] enable``,
-    minus ``[tool.forge.precommit] disable`` and ``skip``. An explicit
-    exclusion wins: ``disable`` / ``skip`` beat ``enable`` when a name
-    appears in both. Every referenced name is validated against the
-    registry; an unknown name raises ``ValueError`` so the caller prints
-    one clean message instead of leaking a traceback on a config typo.
+    ``--only`` selects the base set (those steps instead of the defaults);
+    otherwise the base set is the default-on steps plus
+    ``[tool.forge.precommit] enable``, minus ``[tool.forge.precommit]
+    disable``. ``skip`` then subtracts from **either** base — so
+    ``--only X --skip X`` runs nothing, and ``--skip`` is never silently
+    ignored. An explicit exclusion wins: ``disable`` / ``skip`` beat
+    ``enable`` when a name appears in both. Every referenced name is
+    validated against the registry; an unknown name raises ``ValueError``
+    so the caller prints one clean message instead of leaking a traceback
+    on a config typo.
 
     Args:
         repo_root: Git repo root.
@@ -816,10 +822,8 @@ def _resolve_steps(
     enable = list(precommit_cfg.get("enable") or [])
     disable = list(precommit_cfg.get("disable") or [])
     _validate_step_names([*enable, *disable, *skip, *only])
-    if only:
-        chosen = set(only)
-    else:
-        chosen = (_DEFAULT_ON | set(enable)) - set(disable) - set(skip)
+    base = set(only) if only else (_DEFAULT_ON | set(enable)) - set(disable)
+    chosen = base - set(skip)
     return [d for d in _STEP_REGISTRY if d.name in chosen]
 
 
@@ -854,9 +858,12 @@ def run_all(
     results: list[StepResult] = []
     this_module = sys.modules[__name__]
     for step_def in _resolve_steps(root, skip=skip, only=only):
-        # Resolve the step function through the module namespace (not the
-        # registry's captured reference) so tests can monkeypatch a
-        # ``step_*`` function and have run_all pick up the stub.
+        # Resolve each step by name through the module namespace rather than
+        # calling ``step_def.fn`` directly. The registry captured the
+        # original function objects at import time, so a test that does
+        # ``monkeypatch.setattr(precommit, "step_ruff", stub)`` would be
+        # invisible to a direct ``step_def.fn`` call. Re-resolving by name is
+        # the load-bearing seam that keeps per-step monkeypatching working.
         fn = getattr(this_module, step_def.fn.__name__)
         result = fn(root)
         if print_progress:
