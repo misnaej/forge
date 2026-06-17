@@ -12,8 +12,8 @@ description: Forge-only — open a dev→main promotion PR when a MINOR or MAJOR
 Opens a `dev → main` promotion PR after a MINOR (`Y+1, Z→0`) or
 MAJOR (`X+1, Y→0, Z→0`) bump to `.claude-plugin/plugin.json` lands on
 `dev`. PATCH-only bumps (`Z+1`) do NOT trigger promotion — `dev`
-accumulates patches between minor releases per CLAUDE.md "plugin
-manifest version is rolling-next."
+accumulates patches between minor releases per
+`docs/release-process.md` §1 (rolling-next).
 
 **Scope: forge repo only.** Lives at
 `.claude/skills/promote/SKILL.md` (project-local, not shipped via the
@@ -66,7 +66,7 @@ Promotion pending — promote these in order (2):
 
 Skip entirely when it reports **"Up to date — nothing to promote"**
 (`main`'s minor ≥ `dev`'s minor; patch differences accumulate on `dev`
-between releases per CLAUDE.md "rolling-next"), or when a promotion PR
+between releases per `docs/release-process.md` §1), or when a promotion PR
 (base `main`) is already open (Step 2).
 
 Set `$NEW` to the **first** (lowest) listed release and promote that one.
@@ -116,7 +116,7 @@ gh pr create --base main --head "release/v$NEW" \
 $(git log --oneline origin/main..release/v$NEW)
 
 ## After merge
-- [ ] Tag handling per CLAUDE.md \"Dual-track tag cadence\": \`/next\` (\`forge-next-prep --tag\`) already created \`v$NEW\` on the dev commit. Confirm the tag exists; follow that section for any main-side tagging.
+- [ ] Tag handling per \`docs/release-process.md\` §2 (dual-track tag cadence): \`/next\` (\`forge-next-prep --tag\`) already created \`v$NEW\` on the dev commit. Confirm the tag exists; follow that section for any main-side tagging.
 - [ ] If more minors remain behind, promote the next one (repeat from Step 1).
 "
 ```

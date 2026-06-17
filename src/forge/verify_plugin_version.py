@@ -9,8 +9,9 @@ Skipped when:
 - ``.claude-plugin/plugin.json`` does not exist (consumer repo without
   a plugin manifest).
 - The repo has no git tags yet (pre-release repo).
-- ``HEAD`` is the release commit (the commit pointed to by the latest
-  tag). On that single commit, ``plugin.json`` may equal the tag.
+- ``HEAD``'s tree reproduces any published ``v*`` release tag — so a
+  staged ``release/vX.Y.Z`` branch promoting an older minor still passes
+  even when its ``plugin.json`` sits below the global-max tag.
 
 ``forge-precommit`` shells out to this CLI; agents may invoke it
 standalone to refresh just ``plugin_version.log``.
