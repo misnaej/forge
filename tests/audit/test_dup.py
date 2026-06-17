@@ -107,6 +107,18 @@ def test_tokenize_body_collapses_strings_and_numbers() -> None:
     assert "42" not in tokens
 
 
+def test_tokenize_body_returns_empty_on_token_error() -> None:
+    """Unterminated source is swallowed and yields ``[]``, not an exception.
+
+    Regression: the handler caught ``tokenize.TokenizeError`` — a name that
+    does not exist in the stdlib (the real exception is
+    ``tokenize.TokenError``) — so a tokenization failure raised
+    ``AttributeError`` instead of being caught. The unclosed parenthesis
+    below makes ``tokenize`` raise ``TokenError`` at EOF.
+    """
+    assert _tokenize_body("x = (1 +") == []
+
+
 def test_shingles_returns_empty_when_shorter_than_k() -> None:
     """A token sequence below ``k`` length yields no shingles."""
     assert _shingles(["a", "b"], k=5) == frozenset()
