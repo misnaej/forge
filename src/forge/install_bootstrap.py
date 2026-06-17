@@ -124,6 +124,7 @@ STEPS: tuple[Step, ...] = (
         gate=_gate_skip_in_ci,
     ),
     Step(slug="doctor", cli="forge-doctor", gate=_gate_skip_in_ci),
+    Step(slug="config", cli="forge-config", gate=_gate_skip_in_ci),
 )
 
 

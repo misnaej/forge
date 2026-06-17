@@ -26,6 +26,7 @@ def test_steps_in_expected_order() -> None:
         "cli-reference",
         "audit-deps",
         "doctor",
+        "config",
     ]
 
 
@@ -189,12 +190,12 @@ def test_main_continue_on_fail_runs_every_step(
     )
     # Skip labels (its gate runs subprocess for `git remote`, which would
     # tangle with the always-returncode-1 fake) so we exercise the
-    # remaining six steps cleanly.
+    # remaining seven steps cleanly.
     argv = ["install-forge-bootstrap", "--skip", "labels"]
     with patch.object(install_bootstrap.sys, "argv", argv):
         rc = install_bootstrap.main()
-    # Six non-gated steps, each fails with rc=1.
-    assert rc == 6
+    # Seven non-gated steps (incl. config), each fails with rc=1.
+    assert rc == 7
 
 
 def test_doctor_and_audit_deps_skip_in_ci(

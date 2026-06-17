@@ -9,8 +9,9 @@ Skipped when:
 - ``.claude-plugin/plugin.json`` does not exist (consumer repo without
   a plugin manifest).
 - The repo has no git tags yet (pre-release repo).
-- ``HEAD`` is the release commit (the commit pointed to by the latest
-  tag). On that single commit, ``plugin.json`` may equal the tag.
+- ``HEAD``'s tree reproduces any published ``v*`` release tag — so a
+  staged ``release/vX.Y.Z`` branch promoting an older minor still passes
+  even when its ``plugin.json`` sits below the global-max tag.
 
 ``forge-precommit`` shells out to this CLI; agents may invoke it
 standalone to refresh just ``plugin_version.log``.
@@ -25,7 +26,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from forge.git_utils import capturing_to_step_log, configure_cli_logging, parse_semver
+from forge.git_utils import (
+    capturing_to_step_log,
+    configure_cli_logging,
+    latest_v_tag,
+    parse_semver,
+)
 
 
 configure_cli_logging()
@@ -38,41 +44,41 @@ logger = logging.getLogger(__name__)
 _parse_semver = parse_semver
 
 
-def _is_release_commit(repo_root: Path, tag: str) -> bool:
-    """Return True when ``HEAD`` carries the same file content as *tag*.
+def _is_release_commit(repo_root: Path) -> bool:
+    """Return True when ``HEAD``'s tree reproduces ANY published ``v*`` tag.
 
-    Compares the git **tree** SHA of ``HEAD`` against the tag's tree
-    SHA — not the commit SHA. Tree equality means the working
-    file-state is identical; commit identity is irrelevant. This is
-    the right semantic for the rolling-next guard: the rule "you must
-    bump plugin.json past the latest tag" only applies when the
-    commit actually changes file content. Three cases that should
-    skip and do:
+    Compares the git **tree** SHA of ``HEAD`` against the tree of every
+    ``v*`` tag — not commit SHAs. Tree equality means the working
+    file-state reproduces an already-tagged release, so the rolling-next
+    rule ("bump plugin.json past the latest tag") must NOT fire.
 
-    1. The literal release commit (HEAD == tag commit). Same commit,
-       trivially same tree.
-    2. A ``-s ours``-style merge that absorbs another branch with
-       no file diff (e.g. dev → main promotion back-merges). The
-       merge commit has a new SHA + new parents but its tree equals
-       the pre-merge tree, which equals the tag's tree.
-    3. ``git commit --allow-empty`` or a revert that nets to zero
-       file change — same reasoning.
+    Checking **every** tag — not only the latest — is load-bearing for
+    the staged ``dev → main`` promotion (see the ``promote`` skill).
+    When ``main`` is two or more minors behind, a ``release/vX.Y.Z``
+    branch carries an *older* minor's tree, so its ``plugin.json`` sits
+    legitimately **below** the global-max tag; it is still a real release
+    commit and must pass the guard. A prior version compared HEAD only
+    against the *latest* tag, which made promoting any minor below the
+    global-max impossible — the release branch's tree never equals the
+    latest tag's tree (regression from the #43 ancestry→global tag
+    switch). **Do not narrow this back to a single tag** — the
+    ``test_main_skips_when_head_reproduces_older_tag`` test locks it.
+
+    Cases that correctly skip:
+
+    1. The literal release commit (HEAD == a tag commit) — same tree.
+    2. A staged ``release/vX.Y.Z`` promotion branch reproducing an older
+       tag's tree (``plugin.json`` below the global-max tag).
+    3. A ``-s ours`` merge / empty commit / net-zero revert — tree
+       unchanged from a tagged release.
 
     Args:
         repo_root: Git repo root.
-        tag: Tag name (e.g. ``"v1.1.2"``).
 
     Returns:
-        ``True`` when ``HEAD``'s tree SHA equals *tag*'s tree SHA;
-        ``False`` when either resolution fails or the trees differ.
+        ``True`` when ``HEAD``'s tree SHA equals the tree of some ``v*``
+        tag; ``False`` when HEAD's tree resolves emptily or matches none.
     """
-    tag_tree = subprocess.run(
-        ["git", "rev-parse", f"{tag}^{{tree}}"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.strip()
     head_tree = subprocess.run(
         ["git", "rev-parse", "HEAD^{tree}"],
         cwd=repo_root,
@@ -80,7 +86,26 @@ def _is_release_commit(repo_root: Path, tag: str) -> bool:
         text=True,
         check=False,
     ).stdout.strip()
-    return bool(tag_tree) and tag_tree == head_tree
+    if not head_tree:
+        return False
+    tags = subprocess.run(
+        ["git", "tag", "--list", "v*"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.split()
+    for tag in tags:
+        tag_tree = subprocess.run(
+            ["git", "rev-parse", f"{tag}^{{tree}}"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+        if tag_tree and tag_tree == head_tree:
+            return True
+    return False
 
 
 def main() -> int:
@@ -107,20 +132,18 @@ def main() -> int:
             logger.info("(no .claude-plugin/plugin.json — skipped)")
             return 0
 
-        tag_proc = subprocess.run(
-            ["git", "describe", "--tags", "--abbrev=0"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if tag_proc.returncode != 0:
+        # Global semver-max ``v*`` tag, NOT ancestry-scoped ``git
+        # describe`` — the guard and the auto-tagger (forge-next-prep)
+        # must resolve "latest release" the same way, or they disagree in
+        # the dual-track case (a release tagged on main is absent from
+        # dev's history). See forge.git_utils.latest_v_tag.
+        latest_tag = latest_v_tag(repo_root)
+        if latest_tag is None:
             logger.info("(no git tags yet — skipped)")
             return 0
 
-        latest_tag = tag_proc.stdout.strip()
-        if _is_release_commit(repo_root, latest_tag):
-            logger.info("(HEAD is the %s release commit — skipped)", latest_tag)
+        if _is_release_commit(repo_root):
+            logger.info("(HEAD reproduces a published v* release tag — skipped)")
             return 0
 
         plugin_data = json.loads(plugin.read_text())

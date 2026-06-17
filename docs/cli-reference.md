@@ -195,6 +195,20 @@ options:
                         code_health/audit_<name>.log.
 ```
 
+## forge-config
+
+```text
+usage: forge-config [-h] [--list]
+
+List the [tool.forge.*] config forge reads in this repo, with current values /
+defaults, the native tool sections forge reads, and advice on recommended-but-
+unset keys.
+
+options:
+  -h, --help  show this help message and exit
+  --list      List forge config + advice (the default action).
+```
+
 ## forge-continuation-append
 
 ```text
@@ -439,7 +453,8 @@ options:
   --check      Dry-run. Each step that supports --check runs in check mode;
                others just print their intent.
   --skip SLUG  Skip a step by slug. Repeatable. Known slugs: githooks, claude-
-               md, labels, api-digest, cli-reference, audit-deps, doctor.
+               md, labels, api-digest, cli-reference, audit-deps, doctor,
+               config.
   --strict     Abort on the first failed step. Default is continue-on-fail.
 ```
 

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import git_utils
+from tests.conftest import make_fake_run
 
 
 if TYPE_CHECKING:
@@ -133,11 +134,11 @@ def test_repo_root_returns_toplevel(
     fake_top = tmp_path / "repo"
     fake_top.mkdir()
 
-    def fake_run(cmd: list[str], **_kwargs: object) -> object:
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
         assert cmd[:3] == ["git", "rev-parse", "--show-toplevel"]
         return type("P", (), {"returncode": 0, "stdout": f"{fake_top}\n"})()
 
-    monkeypatch.setattr(git_utils.subprocess, "run", fake_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
     assert git_utils.repo_root() == fake_top
 
 
@@ -159,11 +160,11 @@ def test_repo_root_is_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     """Repeated calls hit subprocess only once (lru_cache)."""
     calls = {"count": 0}
 
-    def fake_run(*_args: object, **_kwargs: object) -> object:
+    def _fake_run(*_args: object, **_kwargs: object) -> object:
         calls["count"] += 1
         return type("P", (), {"returncode": 0, "stdout": f"{tmp_path}\n"})()
 
-    monkeypatch.setattr(git_utils.subprocess, "run", fake_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
     git_utils.repo_root()
     git_utils.repo_root()
     git_utils.repo_root()
@@ -180,12 +181,12 @@ def test_run_git_returns_stdout_on_success(
 ) -> None:
     """Success returns trimmed stdout."""
 
-    def fake_run(cmd: list[str], **_kwargs: object) -> object:
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return type("P", (), {"returncode": 0, "stdout": f"{tmp_path}\n"})()
         return type("P", (), {"returncode": 0, "stdout": "main\n"})()
 
-    monkeypatch.setattr(git_utils.subprocess, "run", fake_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
     assert git_utils._run_git("branch", "--show-current") == "main"
 
 
@@ -194,12 +195,12 @@ def test_run_git_returns_empty_on_failure(
 ) -> None:
     """Non-zero exit produces an empty string (not raise)."""
 
-    def fake_run(cmd: list[str], **_kwargs: object) -> object:
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return type("P", (), {"returncode": 0, "stdout": f"{tmp_path}\n"})()
         return type("P", (), {"returncode": 128, "stdout": "x\n", "stderr": "boom"})()
 
-    monkeypatch.setattr(git_utils.subprocess, "run", fake_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
     assert git_utils._run_git("nope") == ""
 
 
@@ -225,7 +226,7 @@ def _stub_branch_path(
             stdout (e.g., ``{"main...HEAD": "src/foo.py\\n"}``).
     """
 
-    def fake_run(cmd: list[str], **_kwargs: object) -> object:
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return type("P", (), {"returncode": 0, "stdout": f"{tmp_path}\n"})()
         if cmd[1:3] == ["branch", "--show-current"]:
@@ -238,7 +239,7 @@ def _stub_branch_path(
             return type("P", (), {"returncode": 0, "stdout": stdout})()
         return type("P", (), {"returncode": 0, "stdout": ""})()
 
-    monkeypatch.setattr(git_utils.subprocess, "run", fake_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
 
 
 def test_get_modified_files_feature_branch_aggregates_three_diffs(
@@ -283,7 +284,7 @@ def test_get_modified_files_main_falls_back_to_head_prev(
 ) -> None:
     """On main, the previous-commit diff is used."""
 
-    def fake_run(cmd: list[str], **_kwargs: object) -> object:
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return type("P", (), {"returncode": 0, "stdout": f"{tmp_path}\n"})()
         if cmd[1:3] == ["branch", "--show-current"]:
@@ -292,7 +293,7 @@ def test_get_modified_files_main_falls_back_to_head_prev(
             return type("P", (), {"returncode": 0, "stdout": "src/x.py\n"})()
         return type("P", (), {"returncode": 0, "stdout": ""})()
 
-    monkeypatch.setattr(git_utils.subprocess, "run", fake_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
     assert git_utils.get_modified_files() == ["src/x.py"]
 
 
@@ -329,3 +330,23 @@ def test_configure_cli_logging_is_idempotent() -> None:
     """Calling configure_cli_logging twice is safe (handlers already attached)."""
     git_utils.configure_cli_logging()
     git_utils.configure_cli_logging()  # second call must not raise
+
+
+def test_latest_v_tag_returns_highest_sorted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first line of the ``--sort=-v:refname`` output (highest) is returned."""
+    monkeypatch.setattr(
+        git_utils.subprocess,
+        "run",
+        make_fake_run(stdout="v1.21.0\nv1.20.2\nv1.20.0\n"),
+    )
+    assert git_utils.latest_v_tag(tmp_path) == "v1.21.0"
+
+
+def test_latest_v_tag_none_when_no_tags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No ``v*`` tags → ``None``."""
+    monkeypatch.setattr(git_utils.subprocess, "run", make_fake_run(stdout=""))
+    assert git_utils.latest_v_tag(tmp_path) is None

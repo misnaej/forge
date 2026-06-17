@@ -179,7 +179,7 @@ def test_skipped_on_release_commit(
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 0
     log = (tmp_path / "code_health" / "plugin_version.log").read_text()
-    assert "release commit" in log
+    assert "release tag" in log
 
 
 def test_skipped_when_tree_matches_tag_via_ours_merge(
@@ -226,4 +226,67 @@ def test_skipped_when_tree_matches_tag_via_ours_merge(
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 0
     log = (tmp_path / "code_health" / "plugin_version.log").read_text()
-    assert "release commit" in log
+    assert "release tag" in log
+
+
+def test_main_skips_when_head_reproduces_older_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Staged dev→main promotion of a minor BELOW the global-max tag skips.
+
+    Regression lock for the #43 ancestry→global tag switch: an earlier
+    guard compared HEAD only against the *latest* tag, which made
+    promoting any minor below the global-max impossible (the release
+    branch's tree never equals the latest tag's tree). Reproduces the
+    real ``v1.22.0`` (plugin.json 1.22.0) promoted while ``v1.23.0`` is
+    already tagged. Do not narrow ``_is_release_commit`` back to one tag.
+    """
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "PATH": os.environ.get("PATH", ""),
+    }
+    _init_git_repo(tmp_path)
+    # Older release v1.0.0.
+    _write_plugin(tmp_path, "1.0.0")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, env=env, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "v1.0.0"], cwd=tmp_path, env=env, check=True
+    )
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=env, check=True)
+    # Newer release v1.1.0 — becomes the global-max tag.
+    _write_plugin_overwrite(tmp_path, "1.1.0")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, env=env, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "v1.1.0"], cwd=tmp_path, env=env, check=True
+    )
+    subprocess.run(["git", "tag", "v1.1.0"], cwd=tmp_path, env=env, check=True)
+    # Release branch reproducing v1.0.0's tree (plugin.json 1.0.0, BELOW
+    # the global-max tag v1.1.0).
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "release/v1.0.0"],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "v1.0.0", "--", "."],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "promote v1.0.0"],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    # HEAD's tree == v1.0.0's tree (an older tag) → guard skips, even
+    # though plugin.json 1.0.0 < latest tag v1.1.0.
+    assert verify_plugin_version.main() == 0
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "release tag" in log
