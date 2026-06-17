@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_41 modules, 375 symbols._
+_41 modules, 374 symbols._
 
 ## `forge._hook_helpers`
 
@@ -445,7 +445,6 @@ _41 modules, 375 symbols._
 ## `forge.verify_doc_consistency`
 
 - `_check_cli_coverage(repo_root: Path) -> list[str]` _(internal)_ — Return findings for ``[project.scripts]`` names missing from the CLI reference.
-- `_check_agent_count(repo_root: Path) -> list[str]` _(internal)_ — Return a finding when FOUNDATION's agent-count claim disagrees with disk.
 - `main() -> int` — CLI entry point.
 
 ## `forge.verify_docstring_coverage`

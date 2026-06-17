@@ -34,8 +34,8 @@ All additive and opt-in — no consumer action required to upgrade.
 - **Opt-in `typecheck` step** — runs `pyrefly` over
   `[tool.forge.typecheck].paths`; non-blocking by default (#48).
 - **Opt-in `doc_consistency` step** + `verify-forge-doc-consistency` CLI —
-  checks CLI name-lists and agent counts asserted in docs against the
-  actual repo state; non-blocking (#4).
+  checks that every `[project.scripts]` CLI is documented in
+  `docs/cli-reference.md`; non-blocking (#4).
 
 ### Tooling
 - `forge-config --list` now enumerates the new

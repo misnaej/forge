@@ -687,11 +687,9 @@ def step_doc_consistency(repo_root: Path) -> StepResult:
     """Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
 
     Checks the machine-checkable subset of documentation claims: every
-    ``[project.scripts]`` CLI name against ``docs/cli-reference.md``, and
-    the ``"<N> foundation agents"`` count in ``FOUNDATION.md`` against the
-    actual ``agents/*.md`` count on disk. Opt-in via
-    ``[tool.forge.precommit] enable``; non-blocking (doc drift is a
-    warning, not grounds to refuse a commit).
+    ``[project.scripts]`` CLI name appears in ``docs/cli-reference.md``.
+    Opt-in via ``[tool.forge.precommit] enable``; non-blocking (doc drift
+    is a warning, not grounds to refuse a commit).
 
     Args:
         repo_root: Git repo root.

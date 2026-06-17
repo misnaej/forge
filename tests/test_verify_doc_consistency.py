@@ -30,20 +30,6 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _make_agents(tmp_path: Path, count: int) -> None:
-    """Create *count* agent files plus an excluded ``_TEMPLATE.md``.
-
-    Args:
-        tmp_path: Repo root to populate.
-        count: Number of real ``agents/*.md`` files to create.
-    """
-    agents = tmp_path / "agents"
-    agents.mkdir(parents=True, exist_ok=True)
-    for i in range(count):
-        (agents / f"agent{i}.md").write_text("x", encoding="utf-8")
-    (agents / "_TEMPLATE.md").write_text("template", encoding="utf-8")
-
-
 def test_cli_coverage_skips_without_inputs(tmp_path: Path) -> None:
     """No pyproject or no cli-reference → nothing to check."""
     assert vdc._check_cli_coverage(tmp_path) == []
@@ -75,40 +61,11 @@ def test_cli_coverage_malformed_pyproject_skips(tmp_path: Path) -> None:
     assert vdc._check_cli_coverage(tmp_path) == []
 
 
-def test_agent_count_skips_without_inputs(tmp_path: Path) -> None:
-    """No agents/ directory or no FOUNDATION.md → nothing to check."""
-    assert vdc._check_agent_count(tmp_path) == []
-
-
-def test_agent_count_clean_on_word_match(tmp_path: Path) -> None:
-    """A spelled-out count matching the file count passes."""
-    _make_agents(tmp_path, 3)
-    _write(tmp_path / "FOUNDATION.md", "The three foundation agents are: a, b, c.")
-    assert vdc._check_agent_count(tmp_path) == []
-
-
-def test_agent_count_clean_on_digit_match_excluding_template(tmp_path: Path) -> None:
-    """A digit count matching passes, and ``_TEMPLATE.md`` is not counted."""
-    _make_agents(tmp_path, 12)
-    _write(tmp_path / "FOUNDATION.md", "forge ships 12 foundation agents total.")
-    assert vdc._check_agent_count(tmp_path) == []
-
-
-def test_agent_count_flags_mismatch(tmp_path: Path) -> None:
-    """A claim that disagrees with the actual file count is reported."""
-    _make_agents(tmp_path, 5)
-    _write(tmp_path / "FOUNDATION.md", "the ten foundation agents are listed below")
-    findings = vdc._check_agent_count(tmp_path)
-    assert len(findings) == 1
-    assert "10" in findings[0]
-    assert "5" in findings[0]
-
-
 def test_main_returns_zero_when_consistent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """main() exits 0 on an empty repo — every check skips, nothing drifts.
+    """main() exits 0 on an empty repo — the check skips, nothing drifts.
 
     MOCK SETUP: get_repo_root pinned to an empty tmp_path; argv patched so
     argparse does not consume pytest's arguments.
@@ -122,13 +79,13 @@ def test_main_returns_one_on_drift(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """main() exits 1 when a check reports drift.
+    """main() exits 1 when CLI coverage drifts.
 
-    MOCK SETUP: a repo whose FOUNDATION claims nine agents but holds two;
-    get_repo_root pinned to it and argv patched.
+    MOCK SETUP: a repo with a [project.scripts] CLI absent from the
+    reference doc; get_repo_root pinned to it and argv patched.
     """
-    _make_agents(tmp_path, 2)
-    _write(tmp_path / "FOUNDATION.md", "the nine foundation agents are")
+    _write(tmp_path / "pyproject.toml", '[project.scripts]\nundocumented = "x:main"\n')
+    _write(tmp_path / "docs" / "cli-reference.md", "# CLIs\n")
     monkeypatch.setattr(vdc, "get_repo_root", lambda: tmp_path)
     monkeypatch.setattr(vdc.sys, "argv", ["verify-forge-doc-consistency"])
     assert vdc.main() == 1

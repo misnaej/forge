@@ -99,8 +99,8 @@ commit trains `--no-verify`.
 | `blocking` | `false` | Fail the commit on a type error (else non-blocking WARN). | Your type baseline is clean and you want it enforced. |
 
 The `doc_consistency` step (`verify-forge-doc-consistency`, enabled the
-same way) has no config table — it checks CLI name-lists and agent counts
-in docs against repo state, and is always non-blocking.
+same way) has no config table — it checks that every `[project.scripts]`
+CLI is documented in `docs/cli-reference.md`, and is always non-blocking.
 
 ## `[tool.forge.docstring_coverage]`
 
