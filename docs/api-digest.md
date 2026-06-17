@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_40 modules, 362 symbols._
+_41 modules, 374 symbols._
 
 ## `forge._hook_helpers`
 
@@ -158,7 +158,7 @@ _40 modules, 362 symbols._
 
 ## `forge.config`
 
-- `class ForgeConfig` — Branch-name configuration sourced from ``[tool.forge]``.
+- `class ForgeConfig` — Repo configuration sourced from ``[tool.forge]``.
   - `dual_track(self) -> bool` — Return ``True`` when base and dev are distinct branches.
 - `read_pyproject_raw(repo_root: Path) -> dict` — Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
 - `load_config(repo_root: Path) -> ForgeConfig` — Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.
@@ -326,6 +326,7 @@ _40 modules, 362 symbols._
 
 - `_read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` _(internal)_ — Return ``plugin.json["version"]`` at the given git ref, or ``None`` when absent.
 - `_check_promote_pending_message(repo_root: Path, dev_branch: str, base_branch: str) -> str | None` _(internal)_ — Return a one-line user-facing prompt when promotion is pending, else ``None``.
+- `_changelog_lacks_entry(changelog_text: str, minor_tag: str) -> bool` _(internal)_ — Return True when *changelog_text* has no ``## <minor_tag>`` heading.
 - `_promotion_status_lines(repo_root: Path, dev_branch: str, base_branch: str) -> list[str]` _(internal)_ — Build the read-only promotion-status report.
 - `_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` _(internal)_ — Run ``git`` with *args*, return stripped stdout.
 - `_read_plugin_version(repo_root: Path) -> str | None` _(internal)_ — Return ``.claude-plugin/plugin.json["version"]`` or ``None`` if absent.
@@ -369,6 +370,8 @@ _40 modules, 362 symbols._
 
 - `_color(code: str) -> str` _(internal)_ — Return *code* if stdout is a TTY, else an empty string.
 - `class StepResult` — Outcome of a single pre-commit step.
+- `class StepDef` — A registry entry: a step's name, its function, and whether it runs by default.
+- `_forge_step_config(repo_root: Path, step: str) -> dict[str, object]` _(internal)_ — Return the ``[tool.forge.<step>]`` table, or ``{}`` when absent.
 - `_run(cmd: list[str], cwd: Path) -> tuple[bool, str]` _(internal)_ — Run *cmd* and capture combined output.
 - `step_ruff(repo_root: Path) -> StepResult` — Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
 - `step_docstrings(repo_root: Path) -> StepResult` — Run ``verify-forge-docstrings`` over the current diff vs main.
@@ -382,9 +385,16 @@ _40 modules, 362 symbols._
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
 - `_cli_wiring_enabled(repo_root: Path) -> bool` _(internal)_ — Return True when the repo has opted into the cli_wiring check.
 - `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
+- `_bad_scan_paths(paths: list[object], repo_root: Path) -> list[str]` _(internal)_ — Return config scan-path values that are option-like or escape the repo.
+- `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
+- `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the source tree (opt-in).
+- `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
 - `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
-- `run_all(repo_root: Path | None = None, *, print_progress: bool = True) -> list[StepResult]` — Run every step in order and return their results.
+- `_validate_step_names(names: Sequence[str]) -> None` _(internal)_ — Raise ``ValueError`` listing any *names* that are not registered steps.
+- `_resolve_steps(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepDef]` _(internal)_ — Resolve which steps to run, in registry order.
+- `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
+- `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
 - `main() -> int` — CLI entry point.
 
 ## `forge.run_context`
@@ -432,6 +442,11 @@ _40 modules, 362 symbols._
 - `_check_wiring(root: Path) -> int` _(internal)_ — Run the reachability check and report findings.
 - `main() -> int` — Entry point for ``verify-forge-cli-wiring``.
 
+## `forge.verify_doc_consistency`
+
+- `_check_cli_coverage(repo_root: Path) -> list[str]` _(internal)_ — Return findings for ``[project.scripts]`` names missing from the CLI reference.
+- `main() -> int` — CLI entry point.
+
 ## `forge.verify_docstring_coverage`
 
 - `_interrogate_config(data: dict) -> tuple[InterrogateConfig, float, list[str]]` _(internal)_ — Build the interrogate config + threshold + excludes from TOML data.
@@ -464,7 +479,7 @@ _40 modules, 362 symbols._
 
 ## `forge.verify_plugin_version`
 
-- `_is_release_commit(repo_root: Path, tag: str) -> bool` _(internal)_ — Return True when ``HEAD`` carries the same file content as *tag*.
+- `_is_release_commit(repo_root: Path) -> bool` _(internal)_ — Return True when ``HEAD``'s tree reproduces ANY published ``v*`` tag.
 - `main() -> int` — Enforce plugin.json version > latest git tag.
 
 ## `forge.verify_repo_structure`

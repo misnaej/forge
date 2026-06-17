@@ -177,7 +177,7 @@ def _tokenize_body(source: str) -> list[str]:
                 tokens.append(tok.string if keyword.iskeyword(tok.string) else "ID")
             else:
                 tokens.append(tok.string)
-    except tokenize.TokenizeError:
+    except tokenize.TokenError:
         logger.debug("tokenize failed on a snippet — skipping")
         return []
     return tokens

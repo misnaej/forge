@@ -283,7 +283,7 @@ def _iter_comments(text: str) -> list[tuple[int, str]]:
             seen_lines.add(line_no)
             if 1 <= line_no <= len(source_lines):
                 pairs.append((line_no, source_lines[line_no - 1]))
-    except tokenize.TokenizeError as exc:
+    except tokenize.TokenError as exc:
         logger.debug("tokenize failed: %s", exc)
     return pairs
 

@@ -31,6 +31,7 @@ verify-forge-repo-structure = "forge.verify_repo_structure:main"
 install-forge-labels = "forge.install_labels:main"
 verify-forge-test-naming = "forge.verify_test_naming:main"
 verify-forge-cli-wiring = "forge.verify_cli_wiring:main"
+verify-forge-doc-consistency = "forge.verify_doc_consistency:main"
 forge-gen-cli-reference = "forge.gen_cli_reference:main"
 forge-gen-api-digest = "forge.gen_api_digest:main"
 forge-gen-commit-types = "forge.gen_commit_types:main"
@@ -60,12 +61,14 @@ forge-audit-all = "forge.audit.all:main"
 test = ["pytest>=8.0"]
 audit = ["vulture>=2.10", "jsonschema>=4.0", "PyYAML>=6.0"]
 audit-tach = ["tach>=0.30"]
+# Type checker for the opt-in `typecheck` pre-commit step (pyrefly only).
+typecheck = ["pyrefly>=1,<2"]
 # Contributor / dev-loop umbrella. Aggregates the targeted extras so
 # every reference to `pip install -e ".[dev]"` in forge's own source,
 # docs, hook error messages, and test assertions resolves to a real
 # install target inside forge's own repo. Consumer repos typically
 # carry their own `[dev]` extra; this one is for forge itself.
-dev = ["forge-scripts[test,audit]"]
+dev = ["forge-scripts[test,audit,typecheck]"]
 
 [project.urls]
 Homepage = "https://github.com/misnaej/forge"

@@ -1,21 +1,32 @@
 """forge-precommit — pre-commit dispatcher CLI.
 
 Generic Python pre-commit check dispatcher. Auto-detects source
-directories and runs a fixed sequence on every commit: ruff (always
-``ruff format`` + ``ruff check --fix --unsafe-fixes`` in-place, with
-modified tracked files re-staged via ``git add``), docstring
-verification (over the diff vs main), test-name verification (over the
-diff vs main), repo-structure verification (``REPO_STRUCTURE.md`` vs
-the actual tree), plugin manifest JSON validation, Claude Code
-plugin-version drift guard (when applicable), and ``pip-audit``
-dependency vulnerability scan (non-blocking — warns but does not refuse
-a commit). Shipped to consumers via the ``forge-scripts`` pip package
-and invoked by ``.githooks/pre-commit`` after ``install-forge-githooks``.
+directories and runs an ordered sequence on every commit. The default
+sequence: ruff (always ``ruff format`` + ``ruff check --fix
+--unsafe-fixes`` in-place, with modified tracked files re-staged via
+``git add``), docstring verification (over the diff vs main), test-name
+verification (over the diff vs main), repo-structure verification
+(``REPO_STRUCTURE.md`` vs the actual tree), plugin manifest JSON
+validation, Claude Code plugin-version drift guard (when applicable),
+and ``pip-audit`` dependency vulnerability scan (non-blocking — warns
+but does not refuse a commit). Shipped to consumers via the
+``forge-scripts`` pip package and invoked by ``.githooks/pre-commit``
+after ``install-forge-githooks``.
 
-Pytest is intentionally NOT part of the default sequence — it is too
-slow for pre-commit and belongs in CI. Consumers that want it on commit
-can call ``pytest`` directly in ``.githooks/pre-commit`` around the
-``forge-precommit`` invocation.
+Three further steps are **opt-in** (off by default): ``doctest``
+(``pytest --doctest-modules``), ``typecheck`` (``pyrefly``), and
+``doc_consistency`` (doc claims vs repo state). Opt in by listing them in
+``[tool.forge.precommit] enable``. The same table's
+``disable`` list force-skips any default step; ``--only`` / ``--skip``
+do the same for a single run. This override layer sits on top of each
+step's own self-skip — it never weakens one, and ``disable`` beats
+``enable`` when a name appears in both.
+
+Pytest is intentionally NOT in the default sequence — it is too slow for
+pre-commit and belongs in CI. The opt-in ``doctest`` step runs pytest
+only over docstring examples in configured paths, and is non-blocking by
+default for the same speed reason. Consumers that want the full suite on
+commit call ``pytest`` directly in ``.githooks/pre-commit``.
 
 Step outputs are written to ``code_health/<step>.log`` per FOUNDATION §13
 so downstream tooling can read the latest results without re-running.
@@ -24,6 +35,8 @@ Usage:
 
 - ``forge-precommit`` — run the default sequence
 - ``forge-precommit --json`` — machine-readable summary on stdout
+- ``forge-precommit --only ruff,doctest`` — run just these steps
+- ``forge-precommit --skip pip_audit`` — default sequence minus a step
 
 Consumers add repo-specific bash steps by editing ``.githooks/pre-commit``
 directly — lines before the ``forge-precommit`` call run first; lines
@@ -38,10 +51,10 @@ import re
 import shutil
 import subprocess
 import sys
-import tomllib
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
+from forge import config
 from forge.git_utils import (
     detect_existing_source_dirs,
     emit,
@@ -52,7 +65,10 @@ from forge.git_utils import repo_root as get_repo_root
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
     from pathlib import Path
+
+    StepFn = Callable[[Path], "StepResult"]
 
 
 # ANSI colors (suppressed if stdout isn't a TTY — keep machine-readable).
@@ -98,6 +114,46 @@ class StepResult:
     output: str
     skipped: bool = False
     non_blocking: bool = False
+
+
+@dataclass(frozen=True)
+class StepDef:
+    """A registry entry: a step's name, its function, and whether it runs by default.
+
+    Co-locating the three properties keeps the step registry a single
+    source of truth — a name can't drift between a separate ordered list
+    and a separate default-on set. ``default_on=False`` marks an opt-in
+    step that runs only when listed in ``[tool.forge.precommit] enable``
+    (or ``--only``).
+
+    Attributes:
+        name: Step identifier used in config, CLI flags, and the log slug.
+        fn: The ``step_*`` callable producing this step's ``StepResult``.
+        default_on: Whether the step is part of the default sequence.
+    """
+
+    name: str
+    fn: StepFn
+    default_on: bool = True
+
+
+def _forge_step_config(repo_root: Path, step: str) -> dict[str, object]:
+    """Return the ``[tool.forge.<step>]`` table, or ``{}`` when absent.
+
+    Single navigation point for the repeated ``tool → forge → <step>``
+    lookup every config-reading step performs. Uses the forgiving
+    :func:`config.read_pyproject_raw` loader, so a missing or malformed
+    ``pyproject.toml`` yields ``{}`` rather than raising.
+
+    Args:
+        repo_root: Git repo root.
+        step: The ``[tool.forge.<step>]`` subsection name (e.g. ``"doctest"``).
+
+    Returns:
+        The subsection dict, or ``{}`` when any level is missing.
+    """
+    data = config.read_pyproject_raw(repo_root)
+    return ((data.get("tool") or {}).get("forge") or {}).get(step) or {}
 
 
 def _run(
@@ -480,16 +536,7 @@ def _cli_wiring_enabled(repo_root: Path) -> bool:
         otherwise (including when ``pyproject.toml`` is missing or
         malformed).
     """
-    pyproject = repo_root / "pyproject.toml"
-    if not pyproject.is_file():
-        return False
-    try:
-        with pyproject.open("rb") as fh:
-            data = tomllib.load(fh)
-    except tomllib.TOMLDecodeError:
-        return False
-    section = ((data.get("tool") or {}).get("forge") or {}).get("cli_wiring") or {}
-    return bool(section.get("enabled"))
+    return bool(_forge_step_config(repo_root, "cli_wiring").get("enabled"))
 
 
 def step_plugin_version(repo_root: Path) -> StepResult:
@@ -513,6 +560,150 @@ def step_plugin_version(repo_root: Path) -> StepResult:
     skipped = "skipped" in output
     return StepResult(
         name="plugin_version", passed=passed, output=output, skipped=skipped
+    )
+
+
+def _bad_scan_paths(paths: list[object], repo_root: Path) -> list[str]:
+    """Return config scan-path values that are option-like or escape the repo.
+
+    Config-supplied scan roots (``[tool.forge.<step>] paths``) are spliced
+    into a subprocess argv. A value starting with ``-`` would be parsed as
+    a tool flag, and an absolute / ``..`` path would scan outside the repo.
+    Both are misconfiguration and are rejected rather than passed through.
+
+    Args:
+        paths: The configured scan roots.
+        repo_root: Git repo root the paths must stay within.
+
+    Returns:
+        The offending entries; empty when every path is a safe in-repo root.
+    """
+    bad: list[str] = []
+    for raw in paths:
+        if not isinstance(raw, str) or not raw.strip() or raw.startswith("-"):
+            bad.append(str(raw))
+            continue
+        try:
+            (repo_root / raw).resolve().relative_to(repo_root.resolve())
+        except ValueError:
+            bad.append(raw)
+    return bad
+
+
+def step_doctest(repo_root: Path) -> StepResult:
+    """Run ``pytest --doctest-modules`` over docstring examples (opt-in).
+
+    Executes the ``>>>`` examples embedded in docstrings so they cannot
+    rot silently — forge already enforces docstring presence (ruff D),
+    Args/Returns accuracy (``verify_docstrings``), and coverage
+    (``docstring_coverage``), but not example *execution*. Scans
+    ``[tool.forge.doctest] paths`` (default ``["src"]``). Non-blocking
+    unless ``blocking = true``: pytest is slow and a false failure that
+    refuses a commit trains ``--no-verify``.
+
+    Opt-in only — runs when listed in ``[tool.forge.precommit] enable``
+    (or ``--only``). When pytest output contains ``"no tests ran"`` (no
+    docstring examples collected), the step is treated as a skip rather
+    than a failure.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` for the doctest run; ``non_blocking`` is the
+        inverse of ``[tool.forge.doctest] blocking``.
+
+    Raises:
+        SystemExit: If ``pytest`` is not on PATH.
+    """
+    cfg = _forge_step_config(repo_root, "doctest")
+    paths = cfg.get("paths") or ["src"]
+    blocking = bool(cfg.get("blocking", False))
+    bad = _bad_scan_paths(paths, repo_root)
+    if bad:
+        return StepResult(
+            name="doctest",
+            passed=False,
+            output=f"invalid [tool.forge.doctest] paths: {bad}",
+        )
+    require_cli("pytest", caller="forge-precommit")
+    passed, output = _run(
+        ["pytest", "--doctest-modules", "--doctest-continue-on-failure", *paths],
+        cwd=repo_root,
+    )
+    # pytest>=8 prints "no tests ran" when zero examples were collected
+    # (exit 5) — a skip for an advisory doctest sweep, not a failure.
+    if "no tests ran" in output:
+        return StepResult(name="doctest", passed=True, output=output, skipped=True)
+    return StepResult(
+        name="doctest", passed=passed, output=output, non_blocking=not blocking
+    )
+
+
+def step_typecheck(repo_root: Path) -> StepResult:
+    """Run pyrefly over the source tree (opt-in).
+
+    pyrefly is forge's type checker — same Astral model as ruff (single
+    Rust binary, pyproject-native, reads/migrates ``[tool.mypy]`` config),
+    so it slots into forge's existing toolchain with no Node runtime.
+    Scans ``[tool.forge.typecheck] paths`` (default ``["src"]``).
+    Non-blocking unless ``blocking = true``: a type-checker false positive
+    that refuses a commit trains ``--no-verify``, so the gate is advisory
+    by default.
+
+    Opt-in only — runs when listed in ``[tool.forge.precommit] enable``.
+    When opted in but ``pyrefly`` is absent, fails loudly (the consumer
+    opted in and must install it) rather than silently passing.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` mirroring pyrefly's exit code; ``non_blocking`` is
+        the inverse of ``blocking``. A blocking failure when the
+        configured ``paths`` are option-like or escape the repo.
+
+    Raises:
+        SystemExit: If ``pyrefly`` is not on PATH.
+    """
+    cfg = _forge_step_config(repo_root, "typecheck")
+    paths = cfg.get("paths") or ["src"]
+    blocking = bool(cfg.get("blocking", False))
+    bad = _bad_scan_paths(paths, repo_root)
+    if bad:
+        return StepResult(
+            name="typecheck",
+            passed=False,
+            output=f"invalid [tool.forge.typecheck] paths: {bad}",
+        )
+    require_cli("pyrefly", caller="forge-precommit")
+    passed, output = _run(["pyrefly", "check", *paths], cwd=repo_root)
+    return StepResult(
+        name="typecheck", passed=passed, output=output, non_blocking=not blocking
+    )
+
+
+def step_doc_consistency(repo_root: Path) -> StepResult:
+    """Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
+
+    Checks the machine-checkable subset of documentation claims: every
+    ``[project.scripts]`` CLI name appears in ``docs/cli-reference.md``.
+    Opt-in via ``[tool.forge.precommit] enable``; non-blocking (doc drift
+    is a warning, not grounds to refuse a commit).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` mirroring the CLI exit code; always ``non_blocking``.
+
+    Raises:
+        SystemExit: If ``verify-forge-doc-consistency`` is not on PATH.
+    """
+    require_cli("verify-forge-doc-consistency", caller="forge-precommit")
+    passed, output = _run(["verify-forge-doc-consistency"], cwd=repo_root)
+    return StepResult(
+        name="doc_consistency", passed=passed, output=output, non_blocking=True
     )
 
 
@@ -555,49 +746,147 @@ def _print_step_line(result: StepResult) -> None:
     emit(f"{result.name:<24} {color}{marker}{NC}")
 
 
+# Ordered registry — the single source of truth for which steps exist,
+# their run order, and which are on by default. Opt-in steps
+# (default_on=False) run only when named in [tool.forge.precommit].enable
+# or --only. ruff is first because it mutates + re-stages files.
+_STEP_REGISTRY: tuple[StepDef, ...] = (
+    StepDef("ruff", step_ruff),
+    StepDef("docstring_verification", step_docstrings),
+    StepDef("docstring_coverage", step_docstring_coverage),
+    StepDef("test_naming_check", step_test_naming),
+    StepDef("repo_structure_check", step_repo_structure),
+    StepDef("manifest_json", step_manifest_json),
+    StepDef("cli_wiring", step_cli_wiring),
+    StepDef("commit_types_parity", step_commit_types_parity),
+    StepDef("plugin_version", step_plugin_version),
+    StepDef("pip_audit", step_pip_audit),
+    StepDef("doctest", step_doctest, default_on=False),
+    StepDef("typecheck", step_typecheck, default_on=False),
+    StepDef("doc_consistency", step_doc_consistency, default_on=False),
+)
+
+_DEFAULT_ON: frozenset[str] = frozenset(d.name for d in _STEP_REGISTRY if d.default_on)
+
+
+def _validate_step_names(names: Sequence[str]) -> None:
+    """Raise ``ValueError`` listing any *names* that are not registered steps.
+
+    Args:
+        names: Step names referenced by config or CLI flags.
+
+    Raises:
+        ValueError: When one or more names are unknown; the message names
+            the offenders and lists every valid step.
+    """
+    unknown = sorted(set(names) - {d.name for d in _STEP_REGISTRY})
+    if unknown:
+        valid = ", ".join(d.name for d in _STEP_REGISTRY)
+        msg = f"unknown step name(s): {unknown}. Valid names: {valid}"
+        raise ValueError(msg)
+
+
+def _resolve_steps(
+    repo_root: Path,
+    *,
+    skip: Sequence[str] = (),
+    only: Sequence[str] = (),
+) -> list[StepDef]:
+    """Resolve which steps to run, in registry order.
+
+    ``--only`` selects the base set (those steps instead of the defaults);
+    otherwise the base set is the default-on steps plus
+    ``[tool.forge.precommit] enable``, minus ``[tool.forge.precommit]
+    disable``. ``skip`` then subtracts from **either** base — so
+    ``--only X --skip X`` runs nothing, and ``--skip`` is never silently
+    ignored. An explicit exclusion wins: ``disable`` / ``skip`` beat
+    ``enable`` when a name appears in both. Every referenced name is
+    validated against the registry; an unknown name raises ``ValueError``
+    so the caller prints one clean message instead of leaking a traceback
+    on a config typo.
+
+    Args:
+        repo_root: Git repo root.
+        skip: Step names to force-skip for this run (CLI ``--skip``).
+        only: When non-empty, the exact set of steps to run (CLI ``--only``).
+
+    Returns:
+        The selected ``StepDef`` entries in registry order.
+
+    Raises:
+        ValueError: When any referenced name is not a registered step.
+    """
+    precommit_cfg = _forge_step_config(repo_root, "precommit")
+    enable = list(precommit_cfg.get("enable") or [])
+    disable = list(precommit_cfg.get("disable") or [])
+    _validate_step_names([*enable, *disable, *skip, *only])
+    base = set(only) if only else (_DEFAULT_ON | set(enable)) - set(disable)
+    chosen = base - set(skip)
+    return [d for d in _STEP_REGISTRY if d.name in chosen]
+
+
 def run_all(
     repo_root: Path | None = None,
     *,
     print_progress: bool = True,
+    skip: Sequence[str] = (),
+    only: Sequence[str] = (),
 ) -> list[StepResult]:
-    """Run every step in order and return their results.
+    """Run the resolved step sequence in order and return their results.
 
-    ``step_ruff`` shells out to ``fix-forge-ruff`` which applies ruff
-    fixes (``ruff format`` + ``ruff check --fix --unsafe-fixes``) and
-    re-stages modified tracked files. Other steps verify only.
+    The sequence is resolved from the registry via :func:`_resolve_steps`
+    (``[tool.forge.precommit] enable/disable`` plus ``skip`` / ``only``).
+    ``step_ruff`` runs first and shells out to ``fix-forge-ruff`` (applies
+    ruff fixes and re-stages modified tracked files); the rest verify only.
 
     Args:
         repo_root: Override the auto-detected git repo root. Useful in tests.
         print_progress: Print one-line PASS/FAIL/SKIP per step. Disable for
             JSON output to keep stdout machine-readable.
+        skip: Step names to force-skip for this run.
+        only: When non-empty, run exactly these steps.
 
     Returns:
-        List of ``StepResult``, one per step, in execution order.
+        List of ``StepResult``, one per executed step, in execution order.
+
+    Raises:
+        ValueError: When ``skip`` / ``only`` / config names an unknown step.
     """
     root = repo_root if repo_root is not None else get_repo_root()
     results: list[StepResult] = []
-    ruff_result = step_ruff(root)
-    if print_progress:
-        _print_step_line(ruff_result)
-    _write_log(root, ruff_result)
-    results.append(ruff_result)
-    for step in (
-        step_docstrings,
-        step_docstring_coverage,
-        step_test_naming,
-        step_repo_structure,
-        step_manifest_json,
-        step_cli_wiring,
-        step_commit_types_parity,
-        step_plugin_version,
-        step_pip_audit,
-    ):
-        result = step(root)
+    this_module = sys.modules[__name__]
+    for step_def in _resolve_steps(root, skip=skip, only=only):
+        # Resolve each step by name through the module namespace rather than
+        # calling ``step_def.fn`` directly. The registry captured the
+        # original function objects at import time, so a test that does
+        # ``monkeypatch.setattr(precommit, "step_ruff", stub)`` would be
+        # invisible to a direct ``step_def.fn`` call. Re-resolving by name is
+        # the load-bearing seam that keeps per-step monkeypatching working.
+        fn = getattr(this_module, step_def.fn.__name__)
+        result = fn(root)
         if print_progress:
             _print_step_line(result)
         _write_log(root, result)
         results.append(result)
     return results
+
+
+def _split_csv(values: Sequence[str]) -> list[str]:
+    """Flatten repeatable / comma-separated CLI values into a clean name list.
+
+    ``--skip a,b --skip c`` and ``--skip a --skip b --skip c`` both yield
+    ``["a", "b", "c"]``. Empty fragments (from stray commas) are dropped.
+
+    Args:
+        values: Raw ``append``-collected argument values.
+
+    Returns:
+        Flattened, stripped, non-empty tokens in order.
+    """
+    out: list[str] = []
+    for value in values:
+        out.extend(token.strip() for token in value.split(",") if token.strip())
+    return out
 
 
 def main() -> int:
@@ -626,9 +915,29 @@ def main() -> int:
         action="store_true",
         help="Emit a JSON summary on stdout instead of human output.",
     )
+    parser.add_argument(
+        "--skip",
+        action="append",
+        default=[],
+        metavar="STEP[,STEP...]",
+        help="Force-skip these steps for this run (repeatable or comma-separated).",
+    )
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        metavar="STEP[,STEP...]",
+        help="Run exactly these steps (repeatable or comma-separated).",
+    )
     args = parser.parse_args()
 
-    results = run_all(print_progress=not args.json)
+    skip = _split_csv(args.skip)
+    only = _split_csv(args.only)
+    try:
+        results = run_all(print_progress=not args.json, skip=skip, only=only)
+    except ValueError as exc:
+        emit(f"{RED}forge-precommit: {exc}{NC}")
+        return 1
 
     blocking_failures = [r for r in results if not r.passed and not r.non_blocking]
     non_blocking_warnings = [r for r in results if not r.passed and r.non_blocking]
