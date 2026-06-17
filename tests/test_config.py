@@ -9,6 +9,7 @@ from forge.config import (
     DEFAULT_DEV_BRANCH,
     ForgeConfig,
     load_config,
+    read_pyproject_raw,
 )
 
 
@@ -89,3 +90,37 @@ def test_load_config_partial_block_uses_defaults(tmp_path: Path) -> None:
     cfg = load_config(tmp_path)
     assert cfg.base_branch == DEFAULT_BASE_BRANCH
     assert cfg.dev_branch == "trunk"
+
+
+def test_load_config_default_layout_dirs(tmp_path: Path) -> None:
+    """No ``[tool.forge]`` → source_dirs ``["src"]`` / test_dirs ``["tests"]``."""
+    cfg = load_config(tmp_path)
+    assert cfg.source_dirs == ["src"]
+    assert cfg.test_dirs == ["tests"]
+
+
+def test_load_config_reads_layout_dirs(tmp_path: Path) -> None:
+    """``source_dirs`` / ``test_dirs`` override the repo-layout defaults."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src", "projects"]\ntest_dirs = ["t"]\n'
+    )
+    cfg = load_config(tmp_path)
+    assert cfg.source_dirs == ["src", "projects"]
+    assert cfg.test_dirs == ["t"]
+
+
+def test_read_pyproject_raw_returns_full_dict(tmp_path: Path) -> None:
+    """The shared raw reader returns the whole parsed TOML tree."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nbase_branch = "main"\n\n[tool.interrogate]\nfail-under = 90\n'
+    )
+    data = read_pyproject_raw(tmp_path)
+    assert data["tool"]["forge"]["base_branch"] == "main"
+    assert data["tool"]["interrogate"]["fail-under"] == 90
+
+
+def test_read_pyproject_raw_empty_on_missing_or_malformed(tmp_path: Path) -> None:
+    """Missing file and malformed TOML both degrade to ``{}`` (never raise)."""
+    assert read_pyproject_raw(tmp_path) == {}
+    (tmp_path / "pyproject.toml").write_text("not [ valid toml @@@")
+    assert read_pyproject_raw(tmp_path) == {}

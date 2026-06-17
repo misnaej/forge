@@ -148,12 +148,8 @@ def test_maybe_tag_release_skips_when_version_equals_latest_tag(
         json.dumps({"name": "x", "version": "1.0.0"})
     )
 
-    def _fake_git(*args: str, **_kw: object) -> str:
-        if args[:2] == ("tag", "--list"):
-            return "v1.0.0"
-        return ""
-
-    monkeypatch.setattr(next_prep, "_git", _fake_git)
+    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.0.0")
+    monkeypatch.setattr(next_prep, "_git", lambda *_a, **_kw: "")
     assert next_prep._maybe_tag_release(tmp_path) is None
 
 
@@ -169,10 +165,9 @@ def test_maybe_tag_release_creates_and_pushes_new_tag(
 
     def _fake_git(*args: str, **_kw: object) -> str:
         invoked.append(list(args))
-        if args[:2] == ("tag", "--list"):
-            return "v1.2.9"
         return ""
 
+    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.2.9")
     monkeypatch.setattr(next_prep, "_git", _fake_git)
     result = next_prep._maybe_tag_release(tmp_path)
     assert result == "v1.2.10"
@@ -340,6 +335,78 @@ def test_promotion_status_lists_pending_minors_in_order(
     assert "Promotion pending" in text
     pending = [line.strip() for line in lines if line.startswith("  ")]
     assert pending == ["v1.18.0", "v1.19.0"]
+
+
+def test_promotion_status_excludes_patch_tags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Patch tags fold into the next minor — never listed as separate promotions.
+
+    base is minor-only; v1.19.1 / v1.20.1 / v1.20.2 ride along when their
+    minor is promoted, so only the ``X.Y.0`` targets appear.
+    """
+    monkeypatch.setattr(
+        next_prep,
+        "_read_plugin_version_at_ref",
+        lambda _root, ref: "1.21.0" if "dev" in ref else "1.19.0",
+    )
+    monkeypatch.setattr(
+        next_prep,
+        "_git",
+        lambda *args, **_kw: (
+            "v1.19.0 v1.19.1 v1.20.0 v1.20.1 v1.20.2 v1.21.0"
+            if args[:1] == ("tag",)
+            else ""
+        ),
+    )
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    pending = [line.strip() for line in lines if line.startswith("  ")]
+    assert pending == ["v1.20.0", "v1.21.0"]
+
+
+def test_promotion_status_includes_major_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A major release ``X.0.0`` is a promotion target (patch component is 0)."""
+    monkeypatch.setattr(
+        next_prep,
+        "_read_plugin_version_at_ref",
+        lambda _root, ref: "2.0.0" if "dev" in ref else "1.20.0",
+    )
+    monkeypatch.setattr(
+        next_prep,
+        "_git",
+        lambda *args, **_kw: (
+            "v1.20.0 v1.20.1 v1.21.0 v2.0.0" if args[:1] == ("tag",) else ""
+        ),
+    )
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    pending = [line.strip() for line in lines if line.startswith("  ")]
+    assert pending == ["v1.21.0", "v2.0.0"]
+
+
+def test_promotion_status_when_dev_sits_on_patch_above_last_minor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dev on a patch (1.21.3) still targets the minors up to its minor line."""
+    monkeypatch.setattr(
+        next_prep,
+        "_read_plugin_version_at_ref",
+        lambda _root, ref: "1.21.3" if "dev" in ref else "1.19.0",
+    )
+    monkeypatch.setattr(
+        next_prep,
+        "_git",
+        lambda *args, **_kw: (
+            "v1.20.0 v1.20.1 v1.21.0 v1.21.3" if args[:1] == ("tag",) else ""
+        ),
+    )
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    pending = [line.strip() for line in lines if line.startswith("  ")]
+    assert pending == ["v1.20.0", "v1.21.0"]
 
 
 def test_main_promotion_status_early_exits(

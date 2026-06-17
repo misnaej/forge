@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_39 modules, 356 symbols._
+_40 modules, 362 symbols._
 
 ## `forge._hook_helpers`
 
@@ -160,6 +160,7 @@ _39 modules, 356 symbols._
 
 - `class ForgeConfig` — Branch-name configuration sourced from ``[tool.forge]``.
   - `dual_track(self) -> bool` — Return ``True`` when base and dev are distinct branches.
+- `read_pyproject_raw(repo_root: Path) -> dict` — Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
 - `load_config(repo_root: Path) -> ForgeConfig` — Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.
 
 ## `forge.continuation_append`
@@ -191,6 +192,14 @@ _39 modules, 356 symbols._
 - `_restage_modified(repo_root: Path, source_dirs: list[str]) -> list[str]` _(internal)_ — ``git add`` tracked files modified inside *source_dirs*.
 - `_validate_dirs(repo_root: Path, dirs: list[str]) -> list[str]` _(internal)_ — Ensure every entry in *dirs* resolves inside *repo_root*.
 - `main() -> int` — Apply ruff fixes and write ``code_health/ruff.log``.
+
+## `forge.forge_config`
+
+- `class ConfigKey` — One ``[tool.forge.*]`` key forge reads in a consumer repo.
+- `_lookup(data: dict, path: tuple[str, ...]) -> object` _(internal)_ — Return the value at *path* in nested *data*, or ``_UNSET`` if absent.
+- `_section_of(key: ConfigKey) -> str` _(internal)_ — Return the section header (path without the leaf key) for *key*.
+- `build_report(data: dict) -> list[str]` — Build the ``forge-config`` report lines from parsed pyproject data.
+- `main() -> int` — Entry point for ``forge-config``.
 
 ## `forge.gen_api_digest`
 
@@ -242,6 +251,7 @@ _39 modules, 356 symbols._
 - `configure_cli_logging() -> None` — Apply forge's canonical CLI logging setup.
 - `emit(msg: str) -> None` — Write *msg* to stdout with a trailing newline.
 - `parse_semver(version: str) -> tuple[int, int, int] | None` — Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
+- `latest_v_tag(root: Path) -> str | None` — Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
 - `require_cli(name: str, *, caller: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
 - `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.
@@ -319,7 +329,6 @@ _39 modules, 356 symbols._
 - `_promotion_status_lines(repo_root: Path, dev_branch: str, base_branch: str) -> list[str]` _(internal)_ — Build the read-only promotion-status report.
 - `_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` _(internal)_ — Run ``git`` with *args*, return stripped stdout.
 - `_read_plugin_version(repo_root: Path) -> str | None` _(internal)_ — Return ``.claude-plugin/plugin.json["version"]`` or ``None`` if absent.
-- `_latest_v_tag(repo_root: Path) -> str | None` _(internal)_ — Return the highest ``v*`` git tag by sort-V, or ``None`` if none.
 - `_is_newer(plugin_ver: str, latest_tag: str | None) -> bool` _(internal)_ — Return True when ``v<plugin_ver>`` would sort *after* ``latest_tag``.
 - `_maybe_tag_release(repo_root: Path) -> str | None` _(internal)_ — Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
 - `_gone_branches(repo_root: Path) -> list[str]` _(internal)_ — Return local branch names whose tracking remote is ``[origin/...: gone]``.
@@ -425,11 +434,11 @@ _39 modules, 356 symbols._
 
 ## `forge.verify_docstring_coverage`
 
-- `_read_pyproject(repo_root: Path) -> dict` _(internal)_ — Load ``pyproject.toml`` from *repo_root*, or ``{}`` when absent.
 - `_interrogate_config(data: dict) -> tuple[InterrogateConfig, float, list[str]]` _(internal)_ — Build the interrogate config + threshold + excludes from TOML data.
 - `_badge_enabled(data: dict) -> bool` _(internal)_ — Return True when the consumer opted into badge generation.
 - `_write_badge(repo_root: Path, results: object) -> Path` _(internal)_ — Write a coverage SVG badge under ``.badges/`` and return its path.
 - `_emit_missing_list(results: object) -> None` _(internal)_ — Print a parseable ``MISSING:`` section listing every undocumented symbol.
+- `_scan_paths(data: dict, repo_root: Path) -> list[str]` _(internal)_ — Resolve the docstring-coverage scan roots from config, safely.
 - `main() -> int` — CLI entry point for ``verify-forge-docstring-coverage``.
 
 ## `forge.verify_docstrings`
