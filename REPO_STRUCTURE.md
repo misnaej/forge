@@ -69,6 +69,7 @@ Code.
 
 3. **Package Data (`src/forge/data/`)**
    - FOUNDATION.md: shipped copy of the foundation document (symlink)
+   - CHANGELOG.md: shipped copy of the changelog (symlink) — read by `forge-upgrade` to surface consumer-action upgrade notes
 
 ## Agents Directory (`agents/`)
 
@@ -191,6 +192,7 @@ Forge's own bootstrap tooling (not a consumer pattern):
 - ci-access.md: how a consumer's CI runner pulls forge
 - claude-code-plugin.md: optional Claude Code plugin install + extension
 - cli-reference.md: generated CLI reference (`forge-gen-cli-reference`)
+- adopting.md: modular adoption guide — three independent install tracks (CLIs / + git hooks / + plugin) + "what lands on disk" table + drift/upgrade explainer
 - configuration.md: complete `[tool.forge.*]` config reference + setup guide (written counterpart to `forge-config --list`)
 - release-process.md: forge-only single source of truth for versioning + dev→main promotion + the invariant→test contract
 - customizing-precommit.md: adding repo-specific steps to `.githooks/pre-commit`

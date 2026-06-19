@@ -26,7 +26,9 @@ model.
 
 Adopting forge is three steps, roughly 1 minute of work. Step 3 is
 optional. The numbered [Quickstart](#quickstart-adopt-forge-in-your-repo)
-below has the full detail.
+below has the full detail; [`docs/adopting.md`](docs/adopting.md) breaks
+it into **three independent install tracks** (CLIs only / + git hooks / +
+plugin) so you can take exactly the layer(s) you want.
 
 1. **Install `forge-scripts`** — `pip install
    "git+https://github.com/misnaej/forge.git@main"` puts every forge CLI
@@ -520,6 +522,7 @@ Topic-specific docs (read what you need, skip what you don't):
 
 | Doc | When to read |
 |---|---|
+| [`docs/adopting.md`](docs/adopting.md) | You want to install forge one layer at a time (CLIs only / + git hooks / + plugin), with a "what lands on disk" table. |
 | [`docs/standalone-installers.md`](docs/standalone-installers.md) | You want to run a single installer manually instead of `install-forge-bootstrap`. |
 | [`docs/customizing-precommit.md`](docs/customizing-precommit.md) | You want to add a repo-specific step (mypy, secret scan, etc.) to the pre-commit hook. |
 | [`docs/claude-code-plugin.md`](docs/claude-code-plugin.md) | You use Claude Code and want the agents / skills / hooks. |

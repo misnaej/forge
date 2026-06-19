@@ -26,9 +26,11 @@ import logging
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from forge._hook_helpers import run_foundation_drift_check, run_hook_extensions
 from forge.git_utils import configure_cli_logging
+from forge.next_prep import tag_staleness_warning
 from forge.run_context import is_non_interactive
 
 
@@ -89,6 +91,13 @@ def main(argv: list[str] | None = None) -> int:
             stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
+
+    # Surface a rolling-next tag the integration branch owes — a merge
+    # bumped plugin.json but `forge-next-prep --tag` was never run, so the
+    # tag silently lags. Advisory only; the user runs the tag command.
+    staleness = tag_staleness_warning(Path.cwd())
+    if staleness:
+        logger.warning("%s", staleness)
 
     # Consumer extensions run in any interactive context, independent of
     # the forge drift check — symmetric with post-checkout. They are the

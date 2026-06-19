@@ -14,6 +14,7 @@ import json
 from typing import TYPE_CHECKING
 
 from forge import next_prep
+from forge.config import ForgeConfig
 from tests.conftest import FakeProc
 
 
@@ -578,3 +579,50 @@ def test_main_collapses_to_main_when_no_tool_forge(
         switches = [c for c in cap if c[:1] == ["switch"]]
         assert switches
         assert switches[0][-1] == "main"
+
+
+def test_tag_staleness_warning_fires_on_dev_when_tag_lags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Warn on the dev_branch when plugin.json is ahead of the latest tag.
+
+    MOCK SETUP: current branch = dev; config dev_branch = dev; plugin.json
+    1.25.0 with latest tag v1.24.1 (a bump that was never tagged).
+    """
+    monkeypatch.setattr(next_prep, "_git", lambda *_a, **_k: "dev")
+    monkeypatch.setattr(
+        next_prep, "load_config", lambda _r: ForgeConfig(dev_branch="dev")
+    )
+    monkeypatch.setattr(next_prep, "_read_plugin_version", lambda _r: "1.25.0")
+    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _r: "v1.24.1")
+    warning = next_prep.tag_staleness_warning(tmp_path)
+    assert warning is not None
+    assert "1.25.0" in warning
+    assert "v1.24.1" in warning
+
+
+def test_tag_staleness_warning_silent_off_dev_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No warning when the current branch is not the dev_branch."""
+    monkeypatch.setattr(next_prep, "_git", lambda *_a, **_k: "feature/x")
+    monkeypatch.setattr(
+        next_prep, "load_config", lambda _r: ForgeConfig(dev_branch="dev")
+    )
+    assert next_prep.tag_staleness_warning(tmp_path) is None
+
+
+def test_tag_staleness_warning_silent_when_tag_current(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No warning when the latest tag already matches plugin.json."""
+    monkeypatch.setattr(next_prep, "_git", lambda *_a, **_k: "dev")
+    monkeypatch.setattr(
+        next_prep, "load_config", lambda _r: ForgeConfig(dev_branch="dev")
+    )
+    monkeypatch.setattr(next_prep, "_read_plugin_version", lambda _r: "1.24.1")
+    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _r: "v1.24.1")
+    assert next_prep.tag_staleness_warning(tmp_path) is None
