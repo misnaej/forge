@@ -420,3 +420,37 @@ def get_modified_files(
             ),
         ),
     )
+
+
+SCOPE_ALL = "all"
+SCOPE_DIFF = "diff"
+# The two file-selection scopes shared by the scope-aware pre-commit steps and
+# their CLIs (ruff, docstrings, test-naming). Defined once here — co-located
+# with the two file-source functions the scopes pick between — so the resolver
+# and every `--scope` argparse choice reference one vocabulary.
+VALID_SCOPES = (SCOPE_ALL, SCOPE_DIFF)
+
+
+def get_tracked_files(
+    *,
+    suffix: str = ".py",
+    prefix: str | tuple[str, ...] | None = None,
+) -> list[str]:
+    """Get all git-tracked files matching the suffix/prefix filters.
+
+    The whole-repo counterpart to :func:`get_modified_files`: the file
+    source for precommit steps running in ``scope = "all"`` mode, which
+    check the entire tracked tree rather than the diff vs main.
+
+    Args:
+        suffix: File suffix to filter by. Defaults to '.py'.
+        prefix: Optional path prefix(es) to filter by. Either a single
+            string or a tuple of acceptable prefixes (e.g.,
+            ``("test/", "tests/")`` to accept either test-dir layout).
+
+    Returns:
+        Sorted, deduplicated list of tracked file paths matching the filters.
+    """
+    return sorted(
+        set(_parse_files(_run_git("ls-files"), suffix=suffix, prefix=prefix)),
+    )
