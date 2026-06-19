@@ -46,7 +46,7 @@ Code.
    - gen_common.py: shared drift-check helper for the `forge-gen-*`
      doc generators
    - doctor.py: `forge-doctor` — environment diagnostics
-   - install_githooks.py: `install-forge-githooks` — git hook installer (managed marker embeds forge version + body-sha; modified wrappers survive refresh)
+   - install_githooks.py: `install-forge-githooks` — git hook installer (managed marker carries `body-sha` only — never the forge version, so wrappers stay byte-stable across bumps; the version lives in the gitignored `.forge-hook-version` sidecar; modified wrappers survive refresh)
    - post_merge.py: `forge-post-merge` — managed post-merge git-hook entrypoint (foundation drift check + backgrounded self-refresh of hook wrappers)
    - post_checkout.py: `forge-post-checkout` — managed post-checkout git-hook entrypoint (branch-flag-guarded foundation drift check)
    - _hook_helpers.py: private shared helper used by `post_merge` and `post_checkout` (drift-check sequence)
@@ -69,6 +69,7 @@ Code.
 
 3. **Package Data (`src/forge/data/`)**
    - FOUNDATION.md: shipped copy of the foundation document (symlink)
+   - CHANGELOG.md: shipped copy of the changelog (symlink) — read by `forge-upgrade` to surface consumer-action upgrade notes
 
 ## Agents Directory (`agents/`)
 
@@ -191,6 +192,7 @@ Forge's own bootstrap tooling (not a consumer pattern):
 - ci-access.md: how a consumer's CI runner pulls forge
 - claude-code-plugin.md: optional Claude Code plugin install + extension
 - cli-reference.md: generated CLI reference (`forge-gen-cli-reference`)
+- adopting.md: modular adoption guide — three independent install tracks (CLIs / + git hooks / + plugin) + "what lands on disk" table + drift/upgrade explainer
 - configuration.md: complete `[tool.forge.*]` config reference + setup guide (written counterpart to `forge-config --list`)
 - release-process.md: forge-only single source of truth for versioning + dev→main promotion + the invariant→test contract
 - customizing-precommit.md: adding repo-specific steps to `.githooks/pre-commit`

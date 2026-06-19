@@ -2,7 +2,7 @@
 
 Invoked by the thin ``.githooks/post-merge`` wrapper. CI-aware:
 no-ops in non-interactive contexts per FOUNDATION §15. When the
-process runs interactively, performs two side effects:
+process runs interactively, performs the following actions:
 
 1. Foundation drift check via ``install-forge-claude-md --check
    --quiet`` (shared with post-checkout; see
@@ -13,7 +13,12 @@ process runs interactively, performs two side effects:
    not run this step; the installed forge-scripts version only
    changes via ``pip install``, which is most naturally chained
    off a ``git pull``.
-3. Consumer extension scripts in ``.githooks/post-merge.d/`` via
+3. Rolling-next tag staleness advisory via
+   :func:`forge.next_prep.tag_staleness_warning` — warns when
+   ``plugin.json``'s version is ahead of the latest ``v*`` tag
+   (a merge bumped the version but ``forge-next-prep --tag`` was
+   not yet run).
+4. Consumer extension scripts in ``.githooks/post-merge.d/`` via
    :func:`forge._hook_helpers.run_hook_extensions` — a sanctioned
    drop-in point that survives every refresh (the installer never
    touches the ``.d`` subdirectory).
@@ -26,9 +31,11 @@ import logging
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from forge._hook_helpers import run_foundation_drift_check, run_hook_extensions
 from forge.git_utils import configure_cli_logging
+from forge.next_prep import tag_staleness_warning
 from forge.run_context import is_non_interactive
 
 
@@ -89,6 +96,13 @@ def main(argv: list[str] | None = None) -> int:
             stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
+
+    # Surface a rolling-next tag the integration branch owes — a merge
+    # bumped plugin.json but `forge-next-prep --tag` was never run, so the
+    # tag silently lags. Advisory only; the user runs the tag command.
+    staleness = tag_staleness_warning(Path.cwd())
+    if staleness:
+        logger.warning("%s", staleness)
 
     # Consumer extensions run in any interactive context, independent of
     # the forge drift check — symmetric with post-checkout. They are the
