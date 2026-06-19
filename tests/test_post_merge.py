@@ -10,14 +10,22 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import pytest
 
 from forge import _hook_helpers, post_merge
 from tests.conftest import CapturedCalls, make_fake_run
 
 
-if TYPE_CHECKING:
-    import pytest
+@pytest.fixture(autouse=True)
+def _silence_tag_staleness(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default the post-merge tag advisory to a no-op for every test.
+
+    ``main()`` calls ``tag_staleness_warning(Path.cwd())``, which shells
+    out to ``git`` — without this, the interactive-path tests would make a
+    live git call whose result depends on the runner's branch. Tests that
+    exercise the advisory re-patch it.
+    """
+    monkeypatch.setattr(post_merge, "tag_staleness_warning", lambda _root: None)
 
 
 def test_no_op_in_non_interactive_context(
@@ -157,3 +165,25 @@ def test_runs_hook_extensions_even_when_drift_check_fails(
     monkeypatch.setattr(post_merge, "run_hook_extensions", calls.append)
     assert post_merge.main([]) == 1
     assert calls == ["post-merge"]
+
+
+def test_emits_tag_staleness_warning_when_owed(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The post-merge advisory is logged when a rolling-next tag is owed.
+
+    MOCK SETUP: interactive; drift check passes; githooks CLI absent (skip
+    self-refresh); hook extensions inert; tag_staleness_warning re-patched
+    to return a warning string (overriding the autouse no-op).
+    """
+    monkeypatch.setattr(post_merge, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(post_merge, "run_foundation_drift_check", lambda _h: 0)
+    monkeypatch.setattr(post_merge.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(post_merge, "run_hook_extensions", lambda _h: None)
+    monkeypatch.setattr(
+        post_merge, "tag_staleness_warning", lambda _root: "owed: tag v1.x"
+    )
+    with caplog.at_level("WARNING"):
+        post_merge.main([])
+    assert any("owed: tag v1.x" in r.getMessage() for r in caplog.records)

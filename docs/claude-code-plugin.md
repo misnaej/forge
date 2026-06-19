@@ -8,19 +8,16 @@ pre-commit hook to work.
 > marketplaces side-by-side; agents live in distinct namespaces
 > (`forge:<name>` for canonical, `<fork>:<name>` for the fork).
 
-## Install
+## Install — enable it **per repo** (recommended)
 
 If your team uses [Claude Code](https://claude.com/claude-code) and
 wants the agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, etc.)
 and slash commands (`/commit`, `/pr`, `/next`, …):
 
-```bash
-# In any Claude Code session at the consumer repo:
-/plugin marketplace add misnaej/forge
-/plugin install forge@forge
-```
-
-Or persist the registration in the consumer's `.claude/settings.json`:
+Commit the registration + enablement to the **consumer repo's**
+`.claude/settings.json`, so the plugin loads only in that repo. Its agents
+shell out to `forge-scripts`, so it is only useful where that's installed
+— a per-repo enable keeps it inactive (and error-free) everywhere else:
 
 ```jsonc
 {
@@ -32,6 +29,17 @@ Or persist the registration in the consumer's `.claude/settings.json`:
   "enabledPlugins": { "forge@forge": true }
 }
 ```
+
+Claude Code prompts to trust + install on first session in that repo. The
+one-liner `/plugin install forge@forge --scope project` writes the same
+block.
+
+> **Don't install globally.** `/plugin install forge@forge` without
+> `--scope project` installs into `~/.claude` and is active in **every**
+> repo (opt-out), so the agents then error in repos that lack
+> `forge-scripts`. Scope it per repo instead — [`adopting.md`](adopting.md)
+> Track 3 covers the rationale and how to keep it out of (or disabled in)
+> non-forge repos.
 
 To pin a specific plugin version (recommended):
 

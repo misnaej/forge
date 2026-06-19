@@ -639,6 +639,22 @@ def test_forge_step_config_missing_returns_empty(tmp_path: Path) -> None:
     assert precommit._forge_step_config(tmp_path, "doctest") == {}
 
 
+def test_cfg_str_list_narrows_list_values() -> None:
+    """`_cfg_str_list` returns a list value as `list[str]`, stringifying items."""
+    assert precommit._cfg_str_list({"paths": ["a", "b"]}, "paths", ["x"]) == ["a", "b"]
+    assert precommit._cfg_str_list({"paths": [1, 2]}, "paths", ["x"]) == ["1", "2"]
+
+
+def test_cfg_str_list_falls_back_on_missing_or_scalar() -> None:
+    """`_cfg_str_list` returns the default when the key is absent or not a list.
+
+    A scalar like ``paths = "src"`` falls back rather than being iterated
+    character-by-character into the subprocess argv.
+    """
+    assert precommit._cfg_str_list({}, "paths", ["src"]) == ["src"]
+    assert precommit._cfg_str_list({"paths": "src"}, "paths", ["src"]) == ["src"]
+
+
 def test_validate_step_names_accepts_known() -> None:
     """`_validate_step_names` is silent for registered step names."""
     precommit._validate_step_names(["ruff", "doctest", "pip_audit"])

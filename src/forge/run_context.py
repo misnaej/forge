@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Final, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+    from typing import TextIO
 
 
 # Environment markers commonly set by CI / automation runners.
@@ -186,7 +187,7 @@ def _ssh_agent_has_identity() -> bool:
 def progress_logger(
     step_name: str,
     *,
-    out: object = None,
+    out: TextIO | None = None,
 ) -> Iterator[Callable[[str], None]]:
     """Yield a flushed printer; emit start / end markers with elapsed time.
 

@@ -62,6 +62,15 @@ to see what, if anything, is worth adding for your repo.
 |---|---|---|---|
 | `enabled` | `false` | Opt into the `cli_wiring` pre-commit step: every `[project.scripts]` entry must be reachable from a wiring source (install bootstrap, pre-commit, audit, hooks, agents, skills…). | Your repo ships `[project.scripts]` and follows forge's layout and you want unreachable CLIs caught. |
 
+## `[tool.forge.hooks]` — Claude Code safety hooks
+
+Read by the **shell** safety hooks (not the Python config surface), so
+`forge-config --list` does not enumerate this key.
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `block_install_deps` | `true` | Controls the `block_install_deps` agent guard (FOUNDATION §2). `true` blocks every manager (pip / conda / pipenv / poetry / uv install/sync/lock/update + `<mgr> run pip install`); a **list** like `["pip", "conda"]` blocks only those managers; `false` disables it entirely. | A sandboxed/throwaway env legitimately wants agents to run setup, or you want to allow one manager (e.g. `pipenv`) while still blocking the rest. |
+
 ## `[tool.forge.precommit]` — turn steps on and off
 
 The uniform lever over the pre-commit sequence. Applied on top of each

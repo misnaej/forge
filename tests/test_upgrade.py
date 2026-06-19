@@ -692,3 +692,57 @@ def test_apply_returns_124_on_pip_timeout(
 
     assert rc == 124
     assert bootstrap_called["yes"] is False  # bootstrap skipped on pip failure
+
+
+_CHANGELOG_SAMPLE = """# Changelog
+
+## v2.0.0 — 2026-01-01
+
+### ⚠️ Upgrade notes
+- Breaking: do X before upgrading.
+
+### Features
+- a thing
+
+## v1.9.0 — 2025-12-01
+
+### Features
+- additive only, no action
+
+## v1.8.0 — 2025-11-01
+
+### ⚠️ Upgrade notes
+- Action: do Y.
+"""
+
+
+def test_consumer_upgrade_notes_extracts_lanes_skipping_versions_without() -> None:
+    """Only versions with an `⚠️ Upgrade notes` lane are surfaced, newest-first."""
+    notes = upgrade._consumer_upgrade_notes(_CHANGELOG_SAMPLE)
+    assert notes is not None
+    assert "v2.0.0:" in notes
+    assert "do X before upgrading" in notes
+    assert "v1.8.0:" in notes
+    assert "do Y" in notes
+    assert "v1.9.0" not in notes  # additive release, no lane → skipped
+
+
+def test_consumer_upgrade_notes_respects_max_versions() -> None:
+    """`max_versions` caps how many note-bearing versions are surfaced."""
+    notes = upgrade._consumer_upgrade_notes(_CHANGELOG_SAMPLE, max_versions=1)
+    assert notes is not None
+    assert "v2.0.0:" in notes
+    assert "v1.8.0:" not in notes
+
+
+def test_consumer_upgrade_notes_none_when_no_lanes() -> None:
+    """A changelog with no upgrade-notes lane yields None (nothing to surface)."""
+    text = "# Changelog\n\n## v1.0.0 — x\n\n### Features\n- y\n"
+    assert upgrade._consumer_upgrade_notes(text) is None
+
+
+def test_read_changelog_returns_packaged_text() -> None:
+    """The changelog ships as package data and reads back as the real file."""
+    text = upgrade._read_changelog()
+    assert text is not None
+    assert text.startswith("# Changelog")

@@ -300,7 +300,9 @@ def format_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     return f"{prefix}{node.name}({', '.join(parts)}){suffix}"
 
 
-def _summary_line(node: ast.AST) -> str:
+def _summary_line(
+    node: ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef,
+) -> str:
     """Return the first line of an AST node's docstring.
 
     Args:

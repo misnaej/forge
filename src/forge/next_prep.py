@@ -312,6 +312,41 @@ def _is_newer(plugin_ver: str, latest_tag: str | None) -> bool:
     return plugin_tuple > tag_tuple
 
 
+def tag_staleness_warning(repo_root: Path) -> str | None:
+    """Return a warning when the integration branch owes a rolling-next tag.
+
+    Fires only on the configured ``dev_branch`` and only when
+    ``plugin.json``'s version is strictly newer than the latest ``v*``
+    tag — i.e. a merge bumped the rolling-next version but
+    ``forge-next-prep --tag`` was never run, so the tag silently lags and
+    the pre-commit guard keeps passing without forcing the next bump. This
+    is the advisory the ``forge-post-merge`` hook surfaces on ``git pull``.
+    Detection only — it never tags or pushes (an irreversible release must
+    stay an explicit human action).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        A one-line warning string, or ``None`` when not on ``dev_branch``,
+        when there is no plugin manifest, or when the tag is already
+        current.
+    """
+    current = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo_root, check=False)
+    if not current or current != load_config(repo_root).dev_branch:
+        return None
+    plugin_ver = _read_plugin_version(repo_root)
+    if plugin_ver is None:
+        return None
+    latest = latest_v_tag(repo_root)
+    if not _is_newer(plugin_ver, latest):
+        return None
+    return (
+        f"plugin.json {plugin_ver} is ahead of the latest tag "
+        f"{latest or '(none)'} — run `forge-next-prep --tag` to tag this release."
+    )
+
+
 def _maybe_tag_release(repo_root: Path) -> str | None:
     """Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
 
