@@ -100,7 +100,18 @@ out to the layer-1 CLIs, so the plugin is only useful where
 `forge-scripts` is installed — **enable it per repo, not globally**, so it
 stays inactive everywhere else.
 
-Commit this to the repo's `.claude/settings.json`:
+Let forge write the per-repo enablement for you:
+
+```bash
+install-forge-claude-settings        # writes/merges .claude/settings.json
+# install-forge-claude-settings --ref dev   # pin the plugin to a channel
+```
+
+It's idempotent and **merge-preserving** (your other `.claude/settings.json`
+keys are untouched), and `install-forge-bootstrap` runs it automatically.
+The marketplace `ref` defaults to your `forge-scripts` pip-pin channel
+(so the plugin tracks the package), falling back to `main`; override with
+`--ref`. `--check` verifies it without writing (for CI). It writes:
 
 ```jsonc
 {
@@ -112,8 +123,7 @@ Commit this to the repo's `.claude/settings.json`:
 ```
 
 Claude Code prompts to trust + install on first session in that repo; the
-plugin then loads **only here**. (One-liner equivalent that writes the same
-block: `/plugin install forge@forge --scope project`.)
+plugin then loads **only here**.
 
 > **Avoid the global `/plugin install forge@forge`.** A global install is
 > active in **every** repo (opt-out), so its agents then error in repos

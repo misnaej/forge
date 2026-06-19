@@ -20,6 +20,58 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.0.0 — 2026-06-19
+
+### ⚠️ Upgrade notes
+- **Pre-commit steps now default to whole-tree scope (BREAKING).** The
+  three file-selecting steps — `ruff`, `docstring_verification`,
+  `test_naming_check` — now run over the **entire tracked source tree**
+  by default, not the diff vs main. `ruff` already did; the change affects
+  `docstring_verification` (blocking) and `test_naming_check` (warning).
+  **A consumer whose tree has pre-existing docstring/signature mismatches
+  outside the current diff will be newly blocked on the next commit.** To
+  restore the old diff-only behavior, set in `pyproject.toml`:
+  ```toml
+  [tool.forge.precommit]
+  scope = "diff"                       # global, or:
+  [tool.forge.precommit.scope_overrides]
+  docstring_verification = "diff"
+  ```
+  See [`docs/configuration.md`](docs/configuration.md) "Changing a step's
+  scope". Resolution: `scope_overrides.<step>` → `scope` → `all`.
+- **`install-forge-bootstrap` now writes `.claude/settings.json`.** A new
+  `claude-settings` step enables the forge Claude Code plugin **per repo**
+  (marketplace + `enabledPlugins`), so the plugin loads only where you
+  adopt forge — not globally, where its agents would error in repos without
+  `forge-scripts`. Idempotent + merge-preserving. Opt out with
+  `install-forge-bootstrap --skip claude-settings`.
+
+### Features
+- **Configurable per-step scope** — `[tool.forge.precommit].scope`
+  (`all` | `diff`, default `all`) plus `scope_overrides` for per-step
+  control, wired through a new `--scope` flag on `fix-forge-ruff`,
+  `verify-forge-docstrings`, and `verify-forge-test-naming`. New
+  `git_utils.get_tracked_files` is the whole-tree counterpart of
+  `get_modified_files` (#65).
+- **`install-forge-claude-settings`** — write / verify the per-repo plugin
+  enablement; the marketplace `ref` tracks your `forge-scripts` pip pin
+  (override `--ref`; `--check` verifies without writing). Wired into
+  `install-forge-bootstrap` (#63).
+
+### Fixes
+- **`block_claude_attribution` hook** now catches the canonical Claude Code
+  footer `Generated with [Claude Code](…)` (the markdown `[` defeated the
+  old adjacent-words regex) and the `🤖` emoji signature — the exact
+  attribution the harness emits by default no longer slips into history.
+
+### Refactor
+- **Shared `claude_settings_schema` module** — the `.claude/settings.json`
+  marketplace key path, `forge@forge` id, and empty-hook scaffold now live
+  in one place, consumed by both the write side
+  (`install-forge-claude-settings`) and the read side
+  (`install-forge-claude-md` channel detection). Fixes a standalone
+  fresh-repo path that dropped the hook scaffold.
+
 ## v1.25.0 — 2026-06-19
 
 ### ⚠️ Upgrade notes

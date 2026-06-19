@@ -47,6 +47,7 @@ from forge.git_utils import (
     capturing_to_step_log,
     configure_cli_logging,
     get_modified_files,
+    get_tracked_files,
     repo_root,
 )
 
@@ -537,13 +538,14 @@ def _check_duplicate_file_names(all_files: list[Path]) -> list[Issue]:
 SEPARATOR = "=" * 80
 
 
-def _resolve_test_files(repo_root: Path, target: str | None) -> list[str]:
-    """Return repo-relative test file paths from CLI arg or git-modified set.
+def _resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list[str]:
+    """Return repo-relative test file paths from CLI arg, scope, or git diff.
 
     Args:
         repo_root: Repository root path.
-        target: Optional file path from the CLI; ``None`` falls back to the
-            git-modified set under ``test/`` or ``tests/``.
+        target: Optional file path from the CLI. Overrides *scope*.
+        scope: ``"all"`` (every tracked test file) or ``"diff"`` (test files
+            modified vs main).
 
     Returns:
         List of repo-relative test file paths.
@@ -560,7 +562,10 @@ def _resolve_test_files(repo_root: Path, target: str | None) -> list[str]:
             return [str(test_file.relative_to(repo_root))]
         except ValueError:
             return [str(test_file)]
-    return get_modified_files(prefix=("test/", "tests/"))
+    prefix = ("test/", "tests/")
+    if scope == "all":
+        return get_tracked_files(prefix=prefix)
+    return get_modified_files(prefix=prefix)
 
 
 def _scan_files(
@@ -680,17 +685,21 @@ def main() -> int:
         "target",
         nargs="?",
         default=None,
-        help=(
-            "Optional test file to check. Defaults to modified files under "
-            "test/ or tests/."
-        ),
+        help="Optional test file to check. Overrides --scope.",
+    )
+    parser.add_argument(
+        "--scope",
+        choices=("all", "diff"),
+        default="all",
+        help="'all' (every tracked test file, the default) or 'diff' (test "
+        "files modified vs main). Ignored when a target is given.",
     )
     args = parser.parse_args()
 
     root = repo_root()
 
     with capturing_to_step_log(root, "test_naming_check"):
-        py_files = sorted(set(_resolve_test_files(root, args.target)))
+        py_files = sorted(set(_resolve_test_files(root, args.target, args.scope)))
 
         if not py_files:
             logger.info("No test files to check.")

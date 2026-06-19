@@ -204,6 +204,26 @@ def test_main_returns_zero_and_reports_clean_file(
     assert any("No test naming issues found" in r.getMessage() for r in caplog.records)
 
 
+def test_scope_all_uses_tracked_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--scope all` selects test files via get_tracked_files(prefix=...)."""
+    used: list[str] = []
+    monkeypatch.setattr("forge.verify_test_naming.repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "forge.verify_test_naming.get_tracked_files",
+        lambda **_kw: used.append("all") or [],
+    )
+    monkeypatch.setattr(
+        "forge.verify_test_naming.get_modified_files",
+        lambda **_kw: used.append("diff") or [],
+    )
+    monkeypatch.setattr(sys, "argv", ["verify-forge-test-naming", "--scope", "all"])
+    assert verify_test_naming.main() == 0
+    assert used == ["all"]
+
+
 def test_main_is_warning_only_returns_zero_on_violation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

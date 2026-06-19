@@ -14,25 +14,36 @@ If your team uses [Claude Code](https://claude.com/claude-code) and
 wants the agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, etc.)
 and slash commands (`/commit`, `/pr`, `/next`, …):
 
-Commit the registration + enablement to the **consumer repo's**
-`.claude/settings.json`, so the plugin loads only in that repo. Its agents
-shell out to `forge-scripts`, so it is only useful where that's installed
-— a per-repo enable keeps it inactive (and error-free) everywhere else:
+Enable it in the **consumer repo's** `.claude/settings.json`, so the plugin
+loads only in that repo. Its agents shell out to `forge-scripts`, so it is
+only useful where that's installed — a per-repo enable keeps it inactive
+(and error-free) everywhere else.
+
+The simplest way is to let forge write/verify the block (idempotent,
+merge-preserving; also run by `install-forge-bootstrap`):
+
+```bash
+install-forge-claude-settings        # marketplace ref tracks your pip pin, else main
+install-forge-claude-settings --ref dev    # or pin a channel explicitly
+install-forge-claude-settings --check      # verify only (CI / drift)
+```
+
+It writes:
 
 ```jsonc
 {
   "extraKnownMarketplaces": {
     "forge": {
-      "source": { "source": "github", "repo": "misnaej/forge" }
+      "source": { "source": "github", "repo": "misnaej/forge", "ref": "main" }
     }
   },
   "enabledPlugins": { "forge@forge": true }
 }
 ```
 
-Claude Code prompts to trust + install on first session in that repo. The
-one-liner `/plugin install forge@forge --scope project` writes the same
-block.
+Claude Code prompts to trust + install on first session in that repo. (The
+one-liner `/plugin install forge@forge --scope project` writes an
+equivalent block by hand.)
 
 > **Don't install globally.** `/plugin install forge@forge` without
 > `--scope project` installs into `~/.claude` and is active in **every**

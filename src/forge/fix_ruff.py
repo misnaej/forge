@@ -31,6 +31,7 @@ from pathlib import Path
 from forge.git_utils import (
     configure_cli_logging,
     detect_existing_source_dirs,
+    get_modified_files,
     require_cli,
     write_step_log,
 )
@@ -128,17 +129,31 @@ def main() -> int:
         nargs="*",
         help="Source dirs to fix. If empty, auto-detect from candidate list.",
     )
+    parser.add_argument(
+        "--scope",
+        choices=("all", "diff"),
+        default="all",
+        help="'all' (whole source tree, the default) or 'diff' (only files "
+        "modified vs main). 'diff' ignores positional dirs.",
+    )
     args = parser.parse_args()
 
     repo_root = Path.cwd()
-    source_dirs = _validate_dirs(
-        repo_root, args.dirs or detect_existing_source_dirs(repo_root)
-    )
-
-    if not source_dirs:
-        write_step_log(repo_root, "ruff", "(no source dirs detected — skipped)")
-        logger.info("No source directories found at %s", repo_root)
-        return 0
+    if args.scope == "diff":
+        modified = get_modified_files()
+        if not modified:
+            write_step_log(repo_root, "ruff", "(no modified files — skipped)")
+            logger.info("No modified files vs main at %s", repo_root)
+            return 0
+        source_dirs = _validate_dirs(repo_root, modified)
+    else:
+        source_dirs = _validate_dirs(
+            repo_root, args.dirs or detect_existing_source_dirs(repo_root)
+        )
+        if not source_dirs:
+            write_step_log(repo_root, "ruff", "(no source dirs detected — skipped)")
+            logger.info("No source directories found at %s", repo_root)
+            return 0
 
     require_cli("ruff", caller="fix-forge-ruff")
 

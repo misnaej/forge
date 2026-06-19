@@ -156,6 +156,38 @@ def _forge_step_config(repo_root: Path, step: str) -> dict[str, object]:
     return ((data.get("tool") or {}).get("forge") or {}).get(step) or {}
 
 
+SCOPE_ALL = "all"
+SCOPE_DIFF = "diff"
+_VALID_SCOPES = (SCOPE_ALL, SCOPE_DIFF)
+
+
+def _resolve_scope(repo_root: Path, step: str) -> str:
+    """Resolve a step's file-selection scope: per-step override → global → ``"all"``.
+
+    Reads ``[tool.forge.precommit]``: a ``scope_overrides.<step>`` entry wins,
+    else the global ``scope`` key, else the default ``"all"`` (the whole
+    tracked source tree — the strict floor per FOUNDATION §4). An unknown
+    value falls back to ``"all"`` rather than raising.
+
+    Args:
+        repo_root: Git repo root.
+        step: Registry step name (e.g. ``"ruff"``, ``"test_naming_check"``).
+
+    Returns:
+        ``"all"`` or ``"diff"``.
+    """
+    cfg = _forge_step_config(repo_root, "precommit")
+    overrides = cfg.get("scope_overrides")
+    if isinstance(overrides, dict):
+        per_step = overrides.get(step)
+        if isinstance(per_step, str) and per_step in _VALID_SCOPES:
+            return per_step
+    global_scope = cfg.get("scope")
+    if isinstance(global_scope, str) and global_scope in _VALID_SCOPES:
+        return global_scope
+    return SCOPE_ALL
+
+
 def _run(
     cmd: list[str],
     cwd: Path,
@@ -205,8 +237,8 @@ def step_ruff(repo_root: Path) -> StepResult:
     Raises:
         SystemExit: If ``fix-forge-ruff`` is not on PATH.
     """
-    dirs = detect_existing_source_dirs(repo_root)
-    if not dirs:
+    scope = _resolve_scope(repo_root, "ruff")
+    if scope == SCOPE_ALL and not detect_existing_source_dirs(repo_root):
         return StepResult(
             name="ruff",
             passed=True,
@@ -214,17 +246,17 @@ def step_ruff(repo_root: Path) -> StepResult:
             skipped=True,
         )
     require_cli("fix-forge-ruff", caller="forge-precommit")
-    passed, output = _run(["fix-forge-ruff", *dirs], cwd=repo_root)
+    passed, output = _run(["fix-forge-ruff", "--scope", scope], cwd=repo_root)
     return StepResult(name="ruff", passed=passed, output=output)
 
 
 def step_docstrings(repo_root: Path) -> StepResult:
-    """Run ``verify-forge-docstrings`` over the current diff vs main.
+    """Run ``verify-forge-docstrings`` over the resolved scope.
 
-    The underlying CLI picks files via ``get_modified_files()`` — staged
-    + unstaged + branch commits vs main, or HEAD~1 when on main. So this
-    step is meaningful both as a pre-commit hook (where modified files
-    include what's staged) and in CI (where the PR diff is picked up).
+    Scope is ``all`` by default (the whole tracked source tree) and is
+    switchable to ``diff`` (modified files vs main) per
+    ``[tool.forge.precommit]`` — see :func:`_resolve_scope`. The resolved
+    mode is forwarded as ``--scope``; the CLI owns file selection.
 
     Args:
         repo_root: Git repo root.
@@ -238,7 +270,8 @@ def step_docstrings(repo_root: Path) -> StepResult:
         SystemExit: If ``verify-forge-docstrings`` is not on PATH.
     """
     require_cli("verify-forge-docstrings", caller="forge-precommit")
-    passed, output = _run(["verify-forge-docstrings"], cwd=repo_root)
+    scope = _resolve_scope(repo_root, "docstring_verification")
+    passed, output = _run(["verify-forge-docstrings", "--scope", scope], cwd=repo_root)
     return StepResult(name="docstring_verification", passed=passed, output=output)
 
 
@@ -283,11 +316,11 @@ def step_docstring_coverage(repo_root: Path) -> StepResult:
 
 
 def step_test_naming(repo_root: Path) -> StepResult:
-    """Run ``verify-forge-test-naming`` over the current diff vs main.
+    """Run ``verify-forge-test-naming`` over the resolved scope.
 
-    Like ``step_docstrings``, the underlying CLI selects files via the git
-    diff vs main, so only modified test files are checked. The CLI is
-    warning-only by design — it surfaces naming issues in the
+    Scope is ``all`` by default (every tracked test file) and switchable to
+    ``diff`` per ``[tool.forge.precommit]`` — see :func:`_resolve_scope`. The
+    CLI is warning-only by design — it surfaces naming issues in the
     ``test_naming_check.log`` but always exits 0, so this step never
     refuses a commit.
 
@@ -301,7 +334,8 @@ def step_test_naming(repo_root: Path) -> StepResult:
         SystemExit: If ``verify-forge-test-naming`` is not on PATH.
     """
     require_cli("verify-forge-test-naming", caller="forge-precommit")
-    passed, output = _run(["verify-forge-test-naming"], cwd=repo_root)
+    scope = _resolve_scope(repo_root, "test_naming_check")
+    passed, output = _run(["verify-forge-test-naming", "--scope", scope], cwd=repo_root)
     return StepResult(name="test_naming_check", passed=passed, output=output)
 
 

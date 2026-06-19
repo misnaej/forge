@@ -114,6 +114,11 @@ def _gate_labels(_root: Path) -> str | None:
 STEPS: tuple[Step, ...] = (
     Step(slug="githooks", cli="install-forge-githooks", argv=("--refresh",)),
     Step(slug="claude-md", cli="install-forge-claude-md", supports_check=True),
+    Step(
+        slug="claude-settings",
+        cli="install-forge-claude-settings",
+        supports_check=True,
+    ),
     Step(slug="labels", cli="install-forge-labels", gate=_gate_labels),
     Step(slug="api-digest", cli="forge-gen-api-digest", supports_check=True),
     Step(slug="cli-reference", cli="forge-gen-cli-reference", supports_check=True),

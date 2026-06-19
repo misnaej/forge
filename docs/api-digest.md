@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_41 modules, 374 symbols._
+_43 modules, 390 symbols._
 
 ## `forge._hook_helpers`
 
@@ -156,6 +156,12 @@ _41 modules, 374 symbols._
 - `run(scope: Scope, roots: list[Path], config: SuppressionsConfig) -> int` — Execute the suppressions audit.
 - `main() -> int` — CLI entry point for ``forge-audit-suppressions``.
 
+## `forge.claude_settings_schema`
+
+- `scaffold() -> dict[str, object]` — Return a fresh deep copy of the empty-file settings scaffold.
+- `marketplace_entry(ref: str) -> dict[str, object]` — Return forge's ``extraKnownMarketplaces[forge]`` value for *ref*.
+- `read_marketplace_ref(settings: dict[str, object]) -> str | None` — Return ``extraKnownMarketplaces.forge.source.ref`` from *settings*.
+
 ## `forge.config`
 
 - `class ForgeConfig` — Repo configuration sourced from ``[tool.forge]``.
@@ -183,6 +189,7 @@ _41 modules, 374 symbols._
 - `_version_key(name: str) -> tuple[int, ...]` _(internal)_ — Return a sortable key for a version-shaped directory name.
 - `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
 - `_check_plugin_contents(plugin_root: Path | None) -> list[CheckResult]` _(internal)_ — Verify the expected plugin sub-directories contain files.
+- `_check_step_tools(repo_root: Path) -> list[CheckResult]` _(internal)_ — Verify the external tool for each enabled pre-commit step is on PATH.
 - `_check_under_used_capabilities(repo_root: Path) -> list[CheckResult]` _(internal)_ — Surface installed-but-never-run forge capabilities.
 - `_print_human(results: list[CheckResult]) -> None` _(internal)_ — Print a human-readable report, separating blocking and INFO results.
 - `main() -> int` — Run all forge-doctor checks and print the results.
@@ -213,7 +220,7 @@ _41 modules, 374 symbols._
 - `_positional_args(args: ast.arguments) -> list[str]` _(internal)_ — Render the positional (and positional-only) arguments.
 - `_keyword_only_args(args: ast.arguments) -> list[str]` _(internal)_ — Render the keyword-only arguments, including the ``*`` marker.
 - `format_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str` — Reconstruct a function's signature from its AST node.
-- `_summary_line(node: ast.AST) -> str` _(internal)_ — Return the first line of an AST node's docstring.
+- `_summary_line(node: ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) -> str` _(internal)_ — Return the first line of an AST node's docstring.
 - `_is_public(name: str) -> bool` _(internal)_ — Return whether a symbol name is public.
 - `_is_dunder(name: str) -> bool` _(internal)_ — Return whether a symbol name is a dunder name.
 - `_class_methods(node: ast.ClassDef) -> tuple[tuple[str, str], ...]` _(internal)_ — Extract the public methods of a class.
@@ -259,6 +266,7 @@ _41 modules, 374 symbols._
 - `_run_git(*args: str) -> str` _(internal)_ — Run a git command and return stdout.
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
 - `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get list of modified files from git.
+- `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
 
 ## `forge.install_bootstrap`
 
@@ -268,6 +276,14 @@ _41 modules, 374 symbols._
 - `_run_step(step: Step, *, check_mode: bool, root: Path) -> int` _(internal)_ — Execute one bootstrap step. Return its exit code.
 - `_resolve_steps(skip: Iterable[str]) -> list[Step]` _(internal)_ — Return the ordered step list with *skip* entries removed.
 - `main() -> int` — Run every install / generator step in order. Return non-zero on failure.
+
+## `forge.install_claude_settings`
+
+- `_resolve_ref(repo_root: Path, cli_ref: str | None) -> str` _(internal)_ — Resolve the marketplace ref: ``--ref`` → pip-pin ref → ``"main"``.
+- `_load_settings(path: Path) -> dict[str, object] | None` _(internal)_ — Return the parsed ``.claude/settings.json``.
+- `_is_current(settings: dict[str, object], ref: str) -> bool` _(internal)_ — Return True when the forge marketplace (at *ref*) and plugin enable are set.
+- `_merge(settings: dict[str, object], ref: str) -> dict[str, object]` _(internal)_ — Return *settings* with forge's marketplace + plugin enable merged in.
+- `main() -> int` — CLI entry point.
 
 ## `forge.install_claudemd`
 
@@ -331,6 +347,7 @@ _41 modules, 374 symbols._
 - `_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` _(internal)_ — Run ``git`` with *args*, return stripped stdout.
 - `_read_plugin_version(repo_root: Path) -> str | None` _(internal)_ — Return ``.claude-plugin/plugin.json["version"]`` or ``None`` if absent.
 - `_is_newer(plugin_ver: str, latest_tag: str | None) -> bool` _(internal)_ — Return True when ``v<plugin_ver>`` would sort *after* ``latest_tag``.
+- `tag_staleness_warning(repo_root: Path) -> str | None` — Return a warning when the integration branch owes a rolling-next tag.
 - `_maybe_tag_release(repo_root: Path) -> str | None` _(internal)_ — Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
 - `_gone_branches(repo_root: Path) -> list[str]` _(internal)_ — Return local branch names whose tracking remote is ``[origin/...: gone]``.
 - `_prune_gone_branches(repo_root: Path) -> tuple[list[str], list[str]]` _(internal)_ — ``git branch -d`` every branch whose remote is gone.
@@ -372,11 +389,12 @@ _41 modules, 374 symbols._
 - `class StepResult` — Outcome of a single pre-commit step.
 - `class StepDef` — A registry entry: a step's name, its function, and whether it runs by default.
 - `_forge_step_config(repo_root: Path, step: str) -> dict[str, object]` _(internal)_ — Return the ``[tool.forge.<step>]`` table, or ``{}`` when absent.
+- `_resolve_scope(repo_root: Path, step: str) -> str` _(internal)_ — Resolve a step's file-selection scope: per-step override → global → ``"all"``.
 - `_run(cmd: list[str], cwd: Path) -> tuple[bool, str]` _(internal)_ — Run *cmd* and capture combined output.
 - `step_ruff(repo_root: Path) -> StepResult` — Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
-- `step_docstrings(repo_root: Path) -> StepResult` — Run ``verify-forge-docstrings`` over the current diff vs main.
+- `step_docstrings(repo_root: Path) -> StepResult` — Run ``verify-forge-docstrings`` over the resolved scope.
 - `step_docstring_coverage(repo_root: Path) -> StepResult` — Run ``verify-forge-docstring-coverage`` — full-codebase % reporter.
-- `step_test_naming(repo_root: Path) -> StepResult` — Run ``verify-forge-test-naming`` over the current diff vs main.
+- `step_test_naming(repo_root: Path) -> StepResult` — Run ``verify-forge-test-naming`` over the resolved scope.
 - `step_repo_structure(repo_root: Path) -> StepResult` — Run ``verify-forge-repo-structure``; hard-fail if missing (FOUNDATION §2).
 - `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
@@ -385,7 +403,8 @@ _41 modules, 374 symbols._
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
 - `_cli_wiring_enabled(repo_root: Path) -> bool` _(internal)_ — Return True when the repo has opted into the cli_wiring check.
 - `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
-- `_bad_scan_paths(paths: list[object], repo_root: Path) -> list[str]` _(internal)_ — Return config scan-path values that are option-like or escape the repo.
+- `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
+- `_bad_scan_paths(paths: list[str], repo_root: Path) -> list[str]` _(internal)_ — Return config scan-path values that are blank, option-like, or escape the repo.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the source tree (opt-in).
 - `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
@@ -403,7 +422,7 @@ _41 modules, 374 symbols._
 - `_stdin_is_tty() -> bool` _(internal)_ — Return ``sys.stdin.isatty()`` defensively (handles closed stdin).
 - `git_auth_mode() -> AuthMode` — Detect the git / pip auth context the environment can actually use.
 - `_ssh_agent_has_identity() -> bool` _(internal)_ — Return True when ``ssh-add -l`` reports at least one loaded key.
-- `progress_logger(step_name: str, *, out: object = None) -> Iterator[Callable[[str], None]]` — Yield a flushed printer; emit start / end markers with elapsed time.
+- `progress_logger(step_name: str, *, out: TextIO | None = None) -> Iterator[Callable[[str], None]]` — Yield a flushed printer; emit start / end markers with elapsed time.
 
 ## `forge.slow_tests_report`
 
@@ -425,6 +444,9 @@ _41 modules, 374 symbols._
 - `_resolve_target_ref(args: argparse.Namespace, current_ref: str | None) -> str` _(internal)_ — Resolve the target ref or exit when undetermined.
 - `_write_pyproject_atomic(path: Path, content: str) -> None` _(internal)_ — Replace *path*'s contents with *content*, atomically.
 - `_run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]` _(internal)_ — Phase 1 — detect the pin, rewrite it, print the pip command.
+- `_read_changelog() -> str | None` _(internal)_ — Return forge's packaged ``CHANGELOG.md`` text, or ``None`` if unavailable.
+- `_consumer_upgrade_notes(changelog_text: str, *, max_versions: int = 3) -> str | None` _(internal)_ — Extract the most recent ``⚠️ Upgrade notes`` lanes from the changelog.
+- `_print_upgrade_notes() -> None` _(internal)_ — Surface consumer-action upgrade notes after a successful upgrade.
 - `_run_phase2() -> int` _(internal)_ — Phase 2 — run install-forge-bootstrap; print plugin reminder.
 - `_run_pip_install(ref: str, *, auth_mode: AuthMode, timeout_seconds: int | None) -> int` _(internal)_ — Run the force-reinstall pip command, wrapped in a progress logger.
 - `_run_apply(args: argparse.Namespace, root: Path) -> int` _(internal)_ — ``--apply``: do phase 1 + run pip + do phase 2, in one command.
@@ -506,7 +528,7 @@ _41 modules, 374 symbols._
 - `verify_file(filepath: Path) -> list[Issue]` — Verify test naming standards in a single file.
 - `_check_file_name_alignment(filepath: Path) -> list[Issue]` _(internal)_ — Verify the ``test_`` prefix on test file names (Rule 2).
 - `_check_duplicate_file_names(all_files: list[Path]) -> list[Issue]` _(internal)_ — Check for duplicate or ambiguous file names.
-- `_resolve_test_files(repo_root: Path, target: str | None) -> list[str]` _(internal)_ — Return repo-relative test file paths from CLI arg or git-modified set.
+- `_resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list[str]` _(internal)_ — Return repo-relative test file paths from CLI arg, scope, or git diff.
 - `_scan_files(py_files: list[str], repo_root: Path) -> tuple[list[Issue], list[str], int]` _(internal)_ — Verify each file, plus a cross-file duplicate-name check.
 - `_log_warnings(warnings: list[Issue]) -> None` _(internal)_ — Print warnings grouped by file.
 - `_report(files_scanned: int, all_issues: list[Issue], files_with_issues: list[str]) -> None` _(internal)_ — Print the verification summary.

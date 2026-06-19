@@ -51,6 +51,8 @@ Code.
    - post_checkout.py: `forge-post-checkout` — managed post-checkout git-hook entrypoint (branch-flag-guarded foundation drift check)
    - _hook_helpers.py: private shared helper used by `post_merge` and `post_checkout` (drift-check sequence)
    - install_claudemd.py: `install-forge-claude-md` — CLAUDE.md scaffolder
+   - install_claude_settings.py: `install-forge-claude-settings` — write/verify `.claude/settings.json` per-repo plugin enablement (marketplace + `enabledPlugins`); ref tracks the pip pin; idempotent + merge-preserving; `--check` mode
+   - claude_settings_schema.py: shared `.claude/settings.json` forge-block schema (marketplace key path, `forge@forge` id, scaffold) — single source of truth for the write side (install_claude_settings) and read side (install_claudemd channel detection)
    - install_labels.py: `install-forge-labels` — GitHub label installer
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
@@ -149,6 +151,9 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_git_utils.py: tests for git_utils (shared CLI helpers)
    - test_install_bootstrap.py: tests for install_bootstrap
    - test_install_claudemd.py: tests for install_claudemd
+   - test_install_claude_settings.py: tests for install_claude_settings
+   - test_claude_hooks.py: black-box tests for the `claude-hooks/*.sh` safety hooks (subprocess + JSON stdin)
+   - test_claude_settings_schema.py: tests for the shared claude_settings_schema module (scaffold copy, write/read round-trip)
    - test_upgrade.py: tests for upgrade (forge-upgrade CLI)
    - test_install_githooks.py: tests for install_githooks
    - test_hook_helpers.py: tests for _hook_helpers shared drift-check helper

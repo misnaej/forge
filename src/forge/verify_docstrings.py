@@ -83,6 +83,7 @@ from forge.git_utils import (
     capturing_to_step_log,
     configure_cli_logging,
     get_modified_files,
+    get_tracked_files,
 )
 
 
@@ -1159,7 +1160,14 @@ def main() -> int:
         "target",
         nargs="?",
         default=None,
-        help="Optional file path to check. Defaults to modified files vs main.",
+        help="Optional file path to check. Overrides --scope.",
+    )
+    parser.add_argument(
+        "--scope",
+        choices=("all", "diff"),
+        default="all",
+        help="'all' (every tracked .py file, the default) or 'diff' (files "
+        "modified vs main). Ignored when a target path is given.",
     )
     args = parser.parse_args()
 
@@ -1178,6 +1186,8 @@ def main() -> int:
                 py_files = [str(target.relative_to(repo_root))]
             except ValueError:
                 py_files = [str(target)]
+        elif args.scope == "all":
+            py_files = get_tracked_files()
         else:
             py_files = get_modified_files()
 

@@ -7,16 +7,19 @@ Forge's console-script CLIs are its real public surface. This page documents eac
 ## fix-forge-ruff
 
 ```text
-usage: fix-forge-ruff [-h] [dirs ...]
+usage: fix-forge-ruff [-h] [--scope {all,diff}] [dirs ...]
 
 Run `ruff format` + `ruff check --fix --unsafe-fixes` in-place, re-stage
 modified tracked files, and write code_health/ruff.log.
 
 positional arguments:
-  dirs        Source dirs to fix. If empty, auto-detect from candidate list.
+  dirs                Source dirs to fix. If empty, auto-detect from candidate
+                      list.
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help          show this help message and exit
+  --scope {all,diff}  'all' (whole source tree, the default) or 'diff' (only
+                      files modified vs main). 'diff' ignores positional dirs.
 ```
 
 ## forge-audit-agents
@@ -460,8 +463,8 @@ options:
   --check      Dry-run. Each step that supports --check runs in check mode;
                others just print their intent.
   --skip SLUG  Skip a step by slug. Repeatable. Known slugs: githooks, claude-
-               md, labels, api-digest, cli-reference, audit-deps, doctor,
-               config.
+               md, claude-settings, labels, api-digest, cli-reference, audit-
+               deps, doctor, config.
   --strict     Abort on the first failed step. Default is continue-on-fail.
 ```
 
@@ -539,9 +542,8 @@ options:
 ```text
 usage: verify-forge-doc-consistency [-h]
 
-Check machine-checkable documentation claims (CLI name-lists, agent counts)
-against the actual repo state. Non-blocking reporter for the doc_consistency
-pre-commit step.
+Check that every [project.scripts] CLI is documented in docs/cli-reference.md.
+Non-blocking reporter for the doc_consistency pre-commit step.
 
 options:
   -h, --help  show this help message and exit
@@ -563,15 +565,18 @@ options:
 ## verify-forge-docstrings
 
 ```text
-usage: verify-forge-docstrings [-h] [target]
+usage: verify-forge-docstrings [-h] [--scope {all,diff}] [target]
 
 Verify docstring accuracy against actual code signatures.
 
 positional arguments:
-  target      Optional file path to check. Defaults to modified files vs main.
+  target              Optional file path to check. Overrides --scope.
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help          show this help message and exit
+  --scope {all,diff}  'all' (every tracked .py file, the default) or 'diff'
+                      (files modified vs main). Ignored when a target path is
+                      given.
 ```
 
 ## verify-forge-manifest
@@ -613,14 +618,16 @@ options:
 ## verify-forge-test-naming
 
 ```text
-usage: verify-forge-test-naming [-h] [target]
+usage: verify-forge-test-naming [-h] [--scope {all,diff}] [target]
 
 Verify test naming standards on auto-detected or given files.
 
 positional arguments:
-  target      Optional test file to check. Defaults to modified files under
-              test/ or tests/.
+  target              Optional test file to check. Overrides --scope.
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help          show this help message and exit
+  --scope {all,diff}  'all' (every tracked test file, the default) or 'diff'
+                      (test files modified vs main). Ignored when a target is
+                      given.
 ```
