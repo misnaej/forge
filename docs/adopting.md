@@ -45,8 +45,10 @@ Add the pin to your repo's dependency table (so the version is tracked),
 then install it into your active environment with your repo's normal flow:
 
 ```toml
-# pyproject.toml — under [project.optional-dependencies] or your dev extra
-forge-scripts = "forge-scripts @ git+https://github.com/misnaej/forge.git@main"
+# pyproject.toml — add to [project.optional-dependencies] under your dev extra
+dev = [
+    "forge-scripts @ git+https://github.com/misnaej/forge.git@main",
+]
 ```
 
 ```bash

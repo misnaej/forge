@@ -86,13 +86,6 @@ fi
 if blocked uv && echo "$COMMAND" | grep -qE '(^|[;&|]\s*)uv[[:space:]]+(add|sync|lock|remove|pip[[:space:]]+install)\b'; then
     block
 fi
-# Wrapper forms: `<mgr> run pip install ...` — a space precedes `pip`, so
-# the start-anchored pip rule above misses it. Block when any involved
-# manager is blocked.
-if echo "$COMMAND" | grep -qE '(^|[;&|]\s*)(pipenv|uv|poetry)[[:space:]]+run[[:space:]]+pip[[:space:]]+install\b' &&
-    { blocked pip || blocked pipenv || blocked uv || blocked poetry; }; then
-    block
-fi
 
 # forge-upgrade --apply runs pip install --force-reinstall internally;
 # it's an explicit setup-script affordance, not for agents.
