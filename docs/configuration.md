@@ -82,6 +82,36 @@ available as `forge-precommit --only <names>` / `--skip <names>`.
 |---|---|---|---|
 | `disable` | `[]` | Force-skip these default steps by name (e.g. `["pip_audit"]`). | You want a default step off repo-wide. |
 | `enable` | `[]` | Opt into normally-off steps by name: `doctest`, `typecheck`, `doc_consistency`. | You want one of the opt-in steps below to run. |
+| `scope` | `"all"` | Default file scope for the scope-aware steps — `"all"` (whole tracked source tree) or `"diff"` (only files modified vs main). | You want a faster, diff-only gate repo-wide (trades completeness for speed). |
+| `scope_overrides` | `{}` | Per-step scope, overriding `scope`. Keys are step names; values are `"all"` / `"diff"`. | You want most steps full-repo but one (or vice-versa) on the diff. |
+
+### Changing a step's scope
+
+Three of forge's steps select files: **`ruff`**, **`docstring_verification`**,
+and **`test_naming_check`**. Each runs over the **whole tracked tree by
+default** (`scope = "all"`) — the strict floor. To scope one (or all) to the
+diff vs main instead:
+
+```toml
+[tool.forge.precommit]
+scope = "all"                 # global default (this is already the default)
+
+[tool.forge.precommit.scope_overrides]
+ruff = "diff"                 # lint only changed files
+docstring_verification = "diff"
+# test_naming_check stays "all" (inherits the global default)
+```
+
+Resolution order per step: `scope_overrides.<step>` → `scope` → `"all"`. An
+unrecognised value falls back to `"all"`. The other steps are either
+inherently whole-repo (`repo_structure_check`, `cli_wiring`, `manifest_json`,
+…) or scoped by their own `paths` key (`doctest`, `typecheck`) — `scope` does
+not apply to them. `forge-config --list` shows the resolved values.
+
+> **Why default `all`?** A `diff`-only gate passes a commit while leaving
+> violations elsewhere in the tree unchecked — the gate then reflects "what
+> you touched," not "what's clean." `all` is the honest floor (FOUNDATION §4).
+> Use `diff` deliberately when whole-tree runtime is the bottleneck.
 
 ## `[tool.forge.doctest]` — opt-in doctest step
 

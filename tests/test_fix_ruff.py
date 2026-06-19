@@ -68,6 +68,35 @@ def test_main_runs_format_and_check_fix(
     assert "--unsafe-fixes" in check_calls[0]
 
 
+def test_scope_diff_runs_ruff_on_modified_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--scope diff` targets the modified-file set, not the source dirs."""
+    monkeypatch.chdir(tmp_path)
+    calls = _stub_subprocess(monkeypatch)
+    monkeypatch.setattr(fix_ruff, "get_modified_files", lambda: ["src/changed.py"])
+    monkeypatch.setattr("sys.argv", ["fix-forge-ruff", "--scope", "diff"])
+    assert fix_ruff.main() == 0
+    format_calls = [c for c in calls if c[:2] == ["ruff", "format"]]
+    assert "src/changed.py" in format_calls[0]
+
+
+def test_scope_diff_skips_when_no_modified_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--scope diff` with an empty diff is a clean skip (no ruff run)."""
+    monkeypatch.chdir(tmp_path)
+    calls = _stub_subprocess(monkeypatch)
+    monkeypatch.setattr(fix_ruff, "get_modified_files", list)
+    monkeypatch.setattr("sys.argv", ["fix-forge-ruff", "--scope", "diff"])
+    assert fix_ruff.main() == 0
+    assert not [c for c in calls if c[:1] == ["ruff"]]
+    assert (
+        "(no modified files — skipped)"
+        in (tmp_path / "code_health" / "ruff.log").read_text()
+    )
+
+
 def test_main_writes_ruff_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """fix-forge-ruff writes ``code_health/ruff.log`` with the section header."""
     (tmp_path / "src").mkdir()

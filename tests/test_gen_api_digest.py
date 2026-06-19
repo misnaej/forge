@@ -75,6 +75,38 @@ def test_detect_roots_prefers_src(tmp_path: Path) -> None:
     assert roots == [tmp_path / "src"]
 
 
+def test_detect_roots_honors_configured_source_dirs(tmp_path: Path) -> None:
+    """An explicit [tool.forge].source_dirs is scanned in full (#67).
+
+    A multi-root repo must index every configured library root, matching
+    verify-forge-docstring-coverage — not just src/.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "projects" / "ADEPT" / "src").mkdir(parents=True)
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src", "projects/ADEPT/src", "tools"]\n',
+        encoding="utf-8",
+    )
+    roots = detect_roots(tmp_path, explicit=None)
+    assert roots == sorted(
+        [
+            tmp_path / "src",
+            tmp_path / "projects" / "ADEPT" / "src",
+            tmp_path / "tools",
+        ],
+        key=lambda p: p.name,
+    )
+
+
+def test_detect_roots_unset_source_dirs_keeps_single_root(tmp_path: Path) -> None:
+    """With source_dirs unset, auto-detect stays src/-only (#67 back-compat)."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "pyproject.toml").write_text("[tool.forge]\n", encoding="utf-8")
+    assert detect_roots(tmp_path, explicit=None) == [tmp_path / "src"]
+
+
 def test_detect_roots_falls_back_to_packages(tmp_path: Path) -> None:
     """Without src/, auto-detection finds top-level package directories."""
     pkg = tmp_path / "mypkg"

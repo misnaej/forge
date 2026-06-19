@@ -24,6 +24,66 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def _write_precommit_cfg(repo_root: Path, body: str) -> None:
+    """Write a ``[tool.forge.precommit]`` block to a tmp pyproject.toml.
+
+    Args:
+        repo_root: Directory to drop ``pyproject.toml`` in.
+        body: TOML lines placed under ``[tool.forge.precommit]``.
+    """
+    (repo_root / "pyproject.toml").write_text(
+        f"[tool.forge.precommit]\n{body}\n", encoding="utf-8"
+    )
+
+
+def test_resolve_scope_defaults_to_all(tmp_path: Path) -> None:
+    """With no config, every step resolves to whole-tree 'all' scope."""
+    assert precommit._resolve_scope(tmp_path, "ruff") == "all"
+    assert precommit._resolve_scope(tmp_path, "docstring_verification") == "all"
+
+
+def test_resolve_scope_global_key(tmp_path: Path) -> None:
+    """A global `scope = "diff"` applies to every scope-aware step."""
+    _write_precommit_cfg(tmp_path, 'scope = "diff"')
+    assert precommit._resolve_scope(tmp_path, "ruff") == "diff"
+    assert precommit._resolve_scope(tmp_path, "test_naming_check") == "diff"
+
+
+def test_resolve_scope_per_step_override_wins(tmp_path: Path) -> None:
+    """A per-step override beats the global default."""
+    _write_precommit_cfg(
+        tmp_path, 'scope = "all"\n[tool.forge.precommit.scope_overrides]\nruff = "diff"'
+    )
+    assert precommit._resolve_scope(tmp_path, "ruff") == "diff"
+    assert precommit._resolve_scope(tmp_path, "docstring_verification") == "all"
+
+
+def test_resolve_scope_invalid_falls_back_to_all(tmp_path: Path) -> None:
+    """An unrecognised scope value degrades to 'all', never raises."""
+    _write_precommit_cfg(tmp_path, 'scope = "nonsense"')
+    assert precommit._resolve_scope(tmp_path, "ruff") == "all"
+
+
+def test_scope_aware_steps_forward_resolved_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """docstring/test-naming steps forward `--scope diff` from config."""
+    _write_precommit_cfg(tmp_path, 'scope = "diff"')
+    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/usr/bin/x")
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> tuple[bool, str]:
+        calls.append(cmd)
+        return True, ""
+
+    monkeypatch.setattr(precommit, "_run", _fake_run)
+    precommit.step_docstrings(tmp_path)
+    precommit.step_test_naming(tmp_path)
+    assert calls[0] == ["verify-forge-docstrings", "--scope", "diff"]
+    assert calls[1] == ["verify-forge-test-naming", "--scope", "diff"]
+
+
 def test_step_ruff_skipped_when_no_source_dirs(tmp_path: Path) -> None:
     """step_ruff returns a skipped result when no candidate dirs exist."""
     result = precommit.step_ruff(tmp_path)
@@ -48,7 +108,7 @@ def test_step_ruff_shells_out_to_fix_forge_ruff(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """step_ruff delegates to the fix-forge-ruff CLI with source dirs."""
+    """step_ruff delegates to the fix-forge-ruff CLI with the resolved scope."""
     (tmp_path / "src").mkdir()
     monkeypatch.setattr(
         precommit.shutil, "which", lambda _name: "/usr/bin/fix-forge-ruff"
@@ -63,8 +123,7 @@ def test_step_ruff_shells_out_to_fix_forge_ruff(
     result = precommit.step_ruff(tmp_path)
     assert result.passed
     assert calls
-    assert calls[0][0] == "fix-forge-ruff"
-    assert "src" in calls[0]
+    assert calls[0] == ["fix-forge-ruff", "--scope", "all"]
 
 
 def test_step_ruff_propagates_nonzero_exit(
@@ -412,15 +471,22 @@ def test_main_emits_json(
     }
 
 
-def test_step_pip_audit_skipped_when_cli_missing(
+def test_step_pip_audit_loud_warn_when_cli_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """step_pip_audit is skipped when ``pip-audit`` is not on PATH."""
+    """A missing pip-audit is a loud non-blocking WARN, never a silent skip.
+
+    pip-audit ships as a core dependency (#71); a missing binary means a
+    broken install, and a security gate that quietly no-ops gives false
+    assurance — so the step surfaces it visibly without refusing the commit.
+    """
     monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
     result = precommit.step_pip_audit(tmp_path)
-    assert result.skipped
-    assert result.passed
+    assert not result.skipped
+    assert not result.passed
+    assert result.non_blocking
+    assert "did NOT run" in result.output
 
 
 def test_count_pip_audit_advisories_counts_pysec_and_ghsa_ids() -> None:

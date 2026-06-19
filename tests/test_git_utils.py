@@ -297,6 +297,24 @@ def test_get_modified_files_main_falls_back_to_head_prev(
     assert git_utils.get_modified_files() == ["src/x.py"]
 
 
+def test_get_tracked_files_filters_suffix_and_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """get_tracked_files lists `git ls-files` filtered by suffix/prefix."""
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            return type("P", (), {"returncode": 0, "stdout": f"{tmp_path}\n"})()
+        if cmd[1:2] == ["ls-files"]:
+            stdout = "src/a.py\ntests/b.py\nREADME.md\nsrc/c.txt\n"
+            return type("P", (), {"returncode": 0, "stdout": stdout})()
+        return type("P", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.get_tracked_files() == ["src/a.py", "tests/b.py"]
+    assert git_utils.get_tracked_files(prefix=("tests/",)) == ["tests/b.py"]
+
+
 # ---------------------------------------------------------------------------
 # emit + configure_cli_logging
 # ---------------------------------------------------------------------------

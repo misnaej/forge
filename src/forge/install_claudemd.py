@@ -49,6 +49,11 @@ from importlib import metadata, resources
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
+from forge.claude_settings_schema import (
+    PLUGIN_KEY,
+    read_marketplace_ref,
+    scaffold,
+)
 from forge.git_utils import (
     _FORGE_GITHUB_REPO,
     configure_cli_logging,
@@ -106,15 +111,6 @@ CLAUDEMD_SCAFFOLD = """# CLAUDE.md
 
 <!-- Add your repo-specific guidance below. install-forge-claude-md
      never touches this file beyond the initial scaffold. -->
-"""
-
-
-CLAUDE_SETTINGS_SCAFFOLD = """{
-  "hooks": {
-    "PreToolUse": [],
-    "PostToolUse": []
-  }
-}
 """
 
 
@@ -356,7 +352,7 @@ def scaffold_claude_settings(settings_path: Path) -> bool:
     if settings_path.exists():
         return False
     settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(CLAUDE_SETTINGS_SCAFFOLD)
+    settings_path.write_text(json.dumps(scaffold(), indent=2) + "\n")
     logger.info("✓ created %s (scaffold)", settings_path)
     return True
 
@@ -452,7 +448,7 @@ def _installed_plugin_version(plugins_file: Path) -> str | None:
         data = json.loads(plugins_file.read_text())
     except (OSError, json.JSONDecodeError):
         return None
-    forge_entries = data.get("plugins", {}).get("forge@forge")
+    forge_entries = data.get("plugins", {}).get(PLUGIN_KEY)
     # Two manifest shapes seen in the wild: a list of per-instance
     # install records, or a single dict for a single install. Walk both
     # and return the most recent version field found.
@@ -482,18 +478,10 @@ def _read_configured_channel(settings_path: Path) -> str | None:
     if not settings_path.is_file():
         return None
     try:
-        node: object = json.loads(settings_path.read_text())
+        data = json.loads(settings_path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
-    # Each step refuses to .get(...) on a non-dict, which catches null
-    # mid-chain (`{"extraKnownMarketplaces": null}`) and non-dict leaves
-    # without raising. Walk: root → extraKnownMarketplaces → forge →
-    # source → ref.
-    for key in ("extraKnownMarketplaces", "forge", "source", "ref"):
-        if not isinstance(node, dict):
-            return None
-        node = node.get(key)
-    return node if isinstance(node, str) and node else None
+    return read_marketplace_ref(data) if isinstance(data, dict) else None
 
 
 def _upstream_cache_path() -> Path:

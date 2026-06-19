@@ -18,9 +18,10 @@ Unlike full API documentation, the digest is deliberately terse — one
 line per symbol: a signature reconstructed from the AST plus the first
 line of the symbol's docstring. It is an index, not a reference manual.
 
-The generator is repo-agnostic. Source roots are auto-detected: ``src/``
-when present, otherwise every top-level directory containing an
-``__init__.py``. Pass ``--roots`` to override.
+The generator is repo-agnostic. Source roots come from
+``[tool.forge].source_dirs`` when set; otherwise they are auto-detected
+(``src/`` when present, else every top-level directory containing an
+``__init__.py``). Pass ``--roots`` to override both.
 
 Usage:
 
@@ -48,6 +49,7 @@ import logging
 import sys
 from typing import TYPE_CHECKING, NamedTuple
 
+from forge.config import read_pyproject_raw
 from forge.gen_common import check_doc_drift
 from forge.git_utils import configure_cli_logging, repo_root
 
@@ -110,9 +112,11 @@ def detect_roots(root: Path, explicit: list[str] | None) -> list[Path]:
     When *explicit* is given, each entry is resolved against the repo
     root; any root that escapes the repo (an absolute path or one using
     ``..``) is rejected with an error and excluded, so the scan never
-    reads files outside the repository. Otherwise ``src/`` is used when
-    it exists, falling back to every top-level directory containing an
-    ``__init__.py``.
+    reads files outside the repository. Otherwise the repo-wide
+    ``[tool.forge].source_dirs`` is honored when set (so a multi-root repo
+    indexes every library root, matching ``verify-forge-docstring-coverage``
+    — #67); when that key is unset, ``src/`` is used if it exists, falling
+    back to every top-level directory containing an ``__init__.py``.
 
     Args:
         root: Repository root directory.
@@ -135,6 +139,14 @@ def detect_roots(root: Path, explicit: list[str] | None) -> list[Path]:
                 continue
             inside.append(path)
         return sorted((p for p in inside if p.is_dir()), key=lambda p: p.name)
+
+    # Honor [tool.forge].source_dirs only when explicitly set — keeps the
+    # single-root auto-detect below as the default when the key is absent.
+    section = read_pyproject_raw(root).get("tool", {}).get("forge", {})
+    if "source_dirs" in section:
+        configured = [root / d for d in section["source_dirs"] if (root / d).is_dir()]
+        if configured:
+            return sorted(configured, key=lambda p: p.name)
 
     src = root / "src"
     if src.is_dir():
