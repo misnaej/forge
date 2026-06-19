@@ -418,8 +418,11 @@ def _consumer_upgrade_notes(
 
     Args:
         changelog_text: Full ``CHANGELOG.md`` contents.
-        max_versions: Cap on how many versions' notes to surface (the
-            consumer reads only those newer than their previous version).
+        max_versions: Hard cap on how many note-bearing versions to
+            surface, newest-first — keeps output bounded when many
+            versions accumulate. It is a blunt top-N, not a filter against
+            the consumer's prior version (the header tells the reader to
+            scan only entries newer than theirs).
 
     Returns:
         A formatted block (``vX.Y.Z:`` headers + their note lines), or

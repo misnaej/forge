@@ -47,15 +47,27 @@ blocked() {
     [ "$BLOCKED" = "ALL" ] || printf ',%s,' "$BLOCKED" | grep -q ",$1,"
 }
 
-# Read-only commands for every manager stay allowed (coarse fast-path).
-if echo "$COMMAND" | grep -qE '(pip show|pip list|pip audit|pip-audit|conda (list|info|search|run|activate)|pipenv (--version|graph)|poetry (show|--version)|uv (pip list|--version))'; then
-    exit 0
-fi
-
 block() {
     echo "BLOCKED: Agents must not install dependencies. Tell the user the exact command to run themselves with: ! $COMMAND" >&2
     exit 2
 }
+
+# Wrapper install forms (`<mgr> run pip install ...`) are checked FIRST so a
+# read-only `<mgr> run …` allowlist entry below can't shadow them — and so
+# `conda run pip install` is caught (its bare `conda` rule only matches
+# `conda install|create|update`).
+if echo "$COMMAND" | grep -qE '(^|[;&|]\s*)(conda|pipenv|uv|poetry)[[:space:]]+run[[:space:]]+pip[[:space:]]+install\b' &&
+    { blocked pip || blocked conda || blocked pipenv || blocked uv || blocked poetry; }; then
+    block
+fi
+
+# Read-only commands for every manager stay allowed (coarse fast-path). Note
+# `conda run` is intentionally absent — `conda run <non-install>` falls
+# through harmlessly (nothing below blocks it), while `conda run pip install`
+# is already handled above.
+if echo "$COMMAND" | grep -qE '(pip show|pip list|pip audit|pip-audit|conda (list|info|search|activate)|pipenv (--version|graph)|poetry (show|--version)|uv (pip list|--version))'; then
+    exit 0
+fi
 
 # pip / conda — anchored to command start or after a shell separator so a
 # substring inside a quoted body (e.g. an issue body mentioning `pip

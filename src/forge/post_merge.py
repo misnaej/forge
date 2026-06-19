@@ -2,7 +2,7 @@
 
 Invoked by the thin ``.githooks/post-merge`` wrapper. CI-aware:
 no-ops in non-interactive contexts per FOUNDATION §15. When the
-process runs interactively, performs two side effects:
+process runs interactively, performs the following actions:
 
 1. Foundation drift check via ``install-forge-claude-md --check
    --quiet`` (shared with post-checkout; see
@@ -13,7 +13,12 @@ process runs interactively, performs two side effects:
    not run this step; the installed forge-scripts version only
    changes via ``pip install``, which is most naturally chained
    off a ``git pull``.
-3. Consumer extension scripts in ``.githooks/post-merge.d/`` via
+3. Rolling-next tag staleness advisory via
+   :func:`forge.next_prep.tag_staleness_warning` — warns when
+   ``plugin.json``'s version is ahead of the latest ``v*`` tag
+   (a merge bumped the version but ``forge-next-prep --tag`` was
+   not yet run).
+4. Consumer extension scripts in ``.githooks/post-merge.d/`` via
    :func:`forge._hook_helpers.run_hook_extensions` — a sanctioned
    drop-in point that survives every refresh (the installer never
    touches the ``.d`` subdirectory).

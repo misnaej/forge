@@ -1,10 +1,11 @@
 # Adopting forge — install exactly the layer(s) you want
 
-Forge is **three separable layers**. Each is independently installable and
-useful on its own — you do not have to take all three, and the first two
-work with **no AI agent at all**. `install-forge-bootstrap` runs all three
-in order, but this page lets you follow only the track(s) you want, each
-ending in a verification step.
+Forge is **three separable layers**. You can take just layer 1, or 1+2, or
+all three — but **layer 1 is the floor**: the other two drive its CLIs, so
+neither does anything useful without it. The first two layers work with
+**no AI agent at all**. `install-forge-bootstrap` runs all three in order;
+this page lets you follow only the track(s) you want, each ending in a
+verification step.
 
 | Layer | What it is | Needs Claude Code? | Standalone installer |
 |---|---|---|---|
@@ -12,8 +13,27 @@ ending in a verification step.
 | **2 — git hooks** | `.githooks/*` (pre-commit + post-merge/checkout) | no | `install-forge-githooks` |
 | **3 — Claude Code plugin** | agents, slash-command skills, safety hooks | yes | `/plugin install` |
 
-Layer 2 builds on layer 1 (the hooks call the CLIs). Layer 3 is fully
-optional — forge's gate is the CLI, never the model.
+### Layer 1 is the prerequisite — and what breaks without it
+
+`forge-scripts` must be installed **in the Python environment active when
+the hook or agent runs**. Both higher layers shell out to its CLIs:
+
+- **Layer 2 (git hooks)** — the committed `.githooks/*` wrappers run
+  `forge-precommit` (and the foundation drift check) on commit / merge. If
+  the active env lacks `forge-scripts`, the hook **fails loudly**
+  (`forge-precommit: command not found`). *Downside:* a teammate who
+  clones the repo but hasn't installed the env has a broken commit gate
+  until they install layer 1.
+- **Layer 3 (plugin)** — the agents/skills orchestrate the CLIs
+  (`forge:precommit-fixer` → `forge-precommit`, `forge:git-commit-push` →
+  the gate, …). The plugin installs **once, globally** in Claude Code
+  (`~/.claude`), but it drives CLIs that must exist in **each repo's**
+  env. *Downside:* install the plugin, then open a repo whose env lacks
+  `forge-scripts`, and the agents fail the moment they invoke a CLI. The
+  plugin's pure **safety hooks** (`block_*`, `check_*`) are the exception —
+  bash + jq, they need neither layer 1 nor 2.
+
+In short: **1 alone is fine; 2 and 3 are inert (or broken) without 1.**
 
 ---
 
@@ -21,10 +41,17 @@ optional — forge's gate is the CLI, never the model.
 
 The deterministic checks, runnable locally or in CI, no hooks, no plugin.
 
+Add the pin to your repo's dependency table (so the version is tracked),
+then install it into your active environment with your repo's normal flow:
+
+```toml
+# pyproject.toml — under [project.optional-dependencies] or your dev extra
+forge-scripts = "forge-scripts @ git+https://github.com/misnaej/forge.git@main"
+```
+
 ```bash
-# Pin in your pyproject.toml [project.optional-dependencies] (or install directly):
-#   forge-scripts @ git+https://github.com/misnaej/forge.git@main
-pip install -e ".[dev]"     # your repo's equivalent — never run this from an agent
+# Install it yourself (FOUNDATION §2: never from an agent) — your env's flow, e.g.:
+pip install "git+https://github.com/misnaej/forge.git@main"
 ```
 
 **Verify:**
