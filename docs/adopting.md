@@ -93,20 +93,60 @@ edited this — leave it"). Add repo-specific steps in
 installer never touches) or by editing the wrapper directly — see
 [`customizing-precommit.md`](customizing-precommit.md).
 
-## Track 3 — add the Claude Code plugin
+## Track 3 — add the Claude Code plugin (enable it **per repo**)
 
-Agents, skills, and safety hooks, in Claude Code only.
+Agents, skills, and safety hooks, in Claude Code only. The agents shell
+out to the layer-1 CLIs, so the plugin is only useful where
+`forge-scripts` is installed — **enable it per repo, not globally**, so it
+stays inactive everywhere else.
 
-```text
-/plugin marketplace add misnaej/forge
-/plugin install forge@forge
-/reload-plugins
+Commit this to the repo's `.claude/settings.json`:
+
+```jsonc
+{
+  "extraKnownMarketplaces": {
+    "forge": { "source": { "source": "github", "repo": "misnaej/forge", "ref": "main" } }
+  },
+  "enabledPlugins": { "forge@forge": true }
+}
 ```
+
+Claude Code prompts to trust + install on first session in that repo; the
+plugin then loads **only here**. (One-liner equivalent that writes the same
+block: `/plugin install forge@forge --scope project`.)
+
+> **Avoid the global `/plugin install forge@forge`.** A global install is
+> active in **every** repo (opt-out), so its agents then error in repos
+> that lack `forge-scripts`. Per-repo enablement is opt-in — the model
+> below depends on it.
 
 **Verify:** `forge-doctor` reports `plugin:installed` + populated
 `agents/` / `skills/` / `claude-hooks/`. Consumer-specific Claude Code
 hooks live under `.claude/hooks/` with `${CLAUDE_PROJECT_DIR}`-rooted
 paths — see [`claude-code-plugin.md`](claude-code-plugin.md).
+
+### Repos that do NOT use forge
+
+With the per-repo model above you do **nothing** — the plugin was never
+installed globally, so it simply isn't present (no agents offered, no
+errors). The problem only arises from a **global** install. If forge was
+installed globally on your machine and you hit agent errors in a non-forge
+repo, pick one:
+
+- **Switch to the per-repo model** — uninstall the global plugin
+  (`/plugin uninstall forge@forge`); afterwards only repos that carry the
+  `enabledPlugins` block above load it.
+- **Disable it for that one repo** — commit to its `.claude/settings.json`:
+  ```jsonc
+  { "enabledPlugins": { "forge@forge": false } }
+  ```
+  Project settings override user settings, so this wins over a global
+  enable.
+
+Even when the plugin *is* active in a forge-less repo, nothing is silently
+broken: the **agents fail loudly** with a `forge-scripts not installed`
+message (FOUNDATION §2), and the **safety hooks** (`block_*` / `check_*`)
+are pure bash + jq — they need no env and are harmless everywhere.
 
 ## All three at once
 
