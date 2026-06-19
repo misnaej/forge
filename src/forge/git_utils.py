@@ -422,6 +422,15 @@ def get_modified_files(
     )
 
 
+SCOPE_ALL = "all"
+SCOPE_DIFF = "diff"
+# The two file-selection scopes shared by the scope-aware pre-commit steps and
+# their CLIs (ruff, docstrings, test-naming). Defined once here — co-located
+# with the two file-source functions the scopes pick between — so the resolver
+# and every `--scope` argparse choice reference one vocabulary.
+VALID_SCOPES = (SCOPE_ALL, SCOPE_DIFF)
+
+
 def get_tracked_files(
     *,
     suffix: str = ".py",

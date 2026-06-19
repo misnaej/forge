@@ -44,6 +44,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from forge.git_utils import (
+    SCOPE_ALL,
+    VALID_SCOPES,
     capturing_to_step_log,
     configure_cli_logging,
     get_modified_files,
@@ -563,7 +565,7 @@ def _resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list
         except ValueError:
             return [str(test_file)]
     prefix = ("test/", "tests/")
-    if scope == "all":
+    if scope == SCOPE_ALL:
         return get_tracked_files(prefix=prefix)
     return get_modified_files(prefix=prefix)
 
@@ -689,7 +691,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--scope",
-        choices=("all", "diff"),
+        choices=VALID_SCOPES,
         default="all",
         help="'all' (every tracked test file, the default) or 'diff' (test "
         "files modified vs main). Ignored when a target is given.",

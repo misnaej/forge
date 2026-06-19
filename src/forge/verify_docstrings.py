@@ -80,6 +80,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from forge.git_utils import (
+    SCOPE_ALL,
+    VALID_SCOPES,
     capturing_to_step_log,
     configure_cli_logging,
     get_modified_files,
@@ -1164,7 +1166,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--scope",
-        choices=("all", "diff"),
+        choices=VALID_SCOPES,
         default="all",
         help="'all' (every tracked .py file, the default) or 'diff' (files "
         "modified vs main). Ignored when a target path is given.",
@@ -1186,7 +1188,7 @@ def main() -> int:
                 py_files = [str(target.relative_to(repo_root))]
             except ValueError:
                 py_files = [str(target)]
-        elif args.scope == "all":
+        elif args.scope == SCOPE_ALL:
             py_files = get_tracked_files()
         else:
             py_files = get_modified_files()

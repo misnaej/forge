@@ -63,6 +63,10 @@ versions follow forge's rolling-next convention.
   footer `Generated with [Claude Code](…)` (the markdown `[` defeated the
   old adjacent-words regex) and the `🤖` emoji signature — the exact
   attribution the harness emits by default no longer slips into history.
+- **`forge-gen-api-digest` honors `[tool.forge].source_dirs`** when `--roots`
+  is omitted (falling back to `src/` auto-detect when unset), so a multi-root
+  repo gets a complete digest and agrees with `verify-forge-docstring-coverage`
+  on where the source roots are (#67).
 
 ### Refactor
 - **Shared `claude_settings_schema` module** — the `.claude/settings.json`

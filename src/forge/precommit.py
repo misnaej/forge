@@ -56,6 +56,8 @@ from typing import TYPE_CHECKING
 
 from forge import config
 from forge.git_utils import (
+    SCOPE_ALL,
+    VALID_SCOPES,
     detect_existing_source_dirs,
     emit,
     require_cli,
@@ -156,11 +158,6 @@ def _forge_step_config(repo_root: Path, step: str) -> dict[str, object]:
     return ((data.get("tool") or {}).get("forge") or {}).get(step) or {}
 
 
-SCOPE_ALL = "all"
-SCOPE_DIFF = "diff"
-_VALID_SCOPES = (SCOPE_ALL, SCOPE_DIFF)
-
-
 def _resolve_scope(repo_root: Path, step: str) -> str:
     """Resolve a step's file-selection scope: per-step override → global → ``"all"``.
 
@@ -180,10 +177,10 @@ def _resolve_scope(repo_root: Path, step: str) -> str:
     overrides = cfg.get("scope_overrides")
     if isinstance(overrides, dict):
         per_step = overrides.get(step)
-        if isinstance(per_step, str) and per_step in _VALID_SCOPES:
+        if isinstance(per_step, str) and per_step in VALID_SCOPES:
             return per_step
     global_scope = cfg.get("scope")
-    if isinstance(global_scope, str) and global_scope in _VALID_SCOPES:
+    if isinstance(global_scope, str) and global_scope in VALID_SCOPES:
         return global_scope
     return SCOPE_ALL
 

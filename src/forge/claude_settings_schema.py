@@ -59,8 +59,9 @@ def marketplace_entry(ref: str) -> dict[str, object]:
 def read_marketplace_ref(settings: dict[str, object]) -> str | None:
     """Return ``extraKnownMarketplaces.forge.source.ref`` from *settings*.
 
-    Each step refuses to ``.get`` on a non-dict, so a ``null`` mid-chain or
-    a wrong-typed leaf yields ``None`` rather than raising.
+    Walks the chain via per-step ``isinstance(node, dict)`` guards rather
+    than chained ``.get`` calls, so a null or wrong-typed intermediate value
+    does not raise.
 
     Args:
         settings: A parsed settings object.

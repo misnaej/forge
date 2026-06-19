@@ -197,7 +197,7 @@ _43 modules, 390 symbols._
 ## `forge.fix_ruff`
 
 - `_restage_modified(repo_root: Path, source_dirs: list[str]) -> list[str]` _(internal)_ — ``git add`` tracked files modified inside *source_dirs*.
-- `_validate_dirs(repo_root: Path, dirs: list[str]) -> list[str]` _(internal)_ — Ensure every entry in *dirs* resolves inside *repo_root*.
+- `_validate_paths(repo_root: Path, paths: list[str]) -> list[str]` _(internal)_ — Ensure every entry in *paths* resolves inside *repo_root*.
 - `main() -> int` — Apply ruff fixes and write ``code_health/ruff.log``.
 
 ## `forge.forge_config`
