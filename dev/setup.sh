@@ -78,8 +78,12 @@ pip install -e ".[dev]"
 # the source of FOUNDATION.md (root file is a symlink to
 # src/forge/data/FOUNDATION.md); install-forge-claude-md would wrap
 # the source with managed markers and corrupt it.
-echo -e "${YELLOW}→${NC} install-forge-bootstrap --skip claude-md"
-install-forge-bootstrap --skip claude-md || {
+# --skip claude-settings because forge's own .claude/settings.json is
+# hand-managed on the `dev` channel: forge has no forge-scripts pip pin
+# (it IS forge-scripts, editable-installed), so the ref resolver would
+# default to `main` and flip the tracked file every run.
+echo -e "${YELLOW}→${NC} install-forge-bootstrap --skip claude-md --skip claude-settings"
+install-forge-bootstrap --skip claude-md --skip claude-settings || {
     echo -e "${YELLOW}install-forge-bootstrap reported failures.${NC} Review output above."
 }
 

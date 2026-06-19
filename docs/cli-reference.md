@@ -492,6 +492,22 @@ options:
               markers. Use sparingly.
 ```
 
+## install-forge-claude-settings
+
+```text
+usage: install-forge-claude-settings [-h] [--ref REF] [--check]
+
+Enable the forge Claude Code plugin in this repo by writing the marketplace +
+enabledPlugins block to .claude/settings.json (per-repo, never global).
+Idempotent and merge-preserving.
+
+options:
+  -h, --help  show this help message and exit
+  --ref REF   Marketplace ref (branch/tag) to pin. Defaults to the forge-
+              scripts pip-pin ref in pyproject.toml, else 'main'.
+  --check     Verify the block is present without writing (exit 1 on drift).
+```
+
 ## install-forge-githooks
 
 ```text
