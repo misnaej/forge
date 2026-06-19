@@ -45,6 +45,14 @@ versions follow forge's rolling-next convention.
   adopt forge — not globally, where its agents would error in repos without
   `forge-scripts`. Idempotent + merge-preserving. Opt out with
   `install-forge-bootstrap --skip claude-settings`.
+- **The CVE scan now actually runs by default.** `pip-audit` ships as a
+  core dependency (it backs the default `pip_audit` step), so after
+  upgrading + reinstalling, the dependency-vulnerability scan runs where it
+  previously **silently no-op'd** if `pip-audit` wasn't separately installed
+  (#71). It is **non-blocking** (advisory `WARN`), but you may now see CVE
+  advisories on commit that were invisible before — review them, or
+  `disable = ["pip_audit"]` under `[tool.forge.precommit]` to turn the step
+  off deliberately.
 
 ### Features
 - **Configurable per-step scope** — `[tool.forge.precommit].scope`
@@ -67,6 +75,10 @@ versions follow forge's rolling-next convention.
   is omitted (falling back to `src/` auto-detect when unset), so a multi-root
   repo gets a complete digest and agrees with `verify-forge-docstring-coverage`
   on where the source roots are (#67).
+- **`pip_audit` no longer silently no-ops.** `pip-audit` is now a core
+  dependency, and a missing binary renders as a loud non-blocking `WARN`
+  instead of a silent skip — a security gate that quietly does nothing gave
+  false assurance (#71).
 
 ### Refactor
 - **Shared `claude_settings_schema` module** — the `.claude/settings.json`

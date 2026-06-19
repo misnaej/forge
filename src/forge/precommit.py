@@ -472,25 +472,33 @@ def step_pip_audit(repo_root: Path) -> StepResult:
     rendering changes. Below the threshold the original short WARN
     line is preserved.
 
-    Skipped when ``pip-audit`` is not on PATH. Non-blocking: a failing
-    audit (CVEs found) sets ``passed=False`` AND ``non_blocking=True``
-    so ``run_all`` reports ``WARN`` instead of ``FAIL`` and the overall
-    exit code is unaffected.
+    Non-blocking: a failing audit (CVEs found) sets ``passed=False`` AND
+    ``non_blocking=True`` so ``run_all`` reports ``WARN`` instead of
+    ``FAIL`` and the overall exit code is unaffected.
+
+    ``pip-audit`` ships as a core forge dependency (it backs this default
+    step — #71), so a missing binary signals a broken install rather than
+    an unconfigured optional tool. That case renders as a **loud
+    non-blocking WARN** — never a silent skip — because a security gate
+    that quietly does nothing gives false assurance.
 
     Args:
         repo_root: Git repo root (used as working directory).
 
     Returns:
-        ``StepResult`` for this step. ``non_blocking=True`` when the
-        step actually ran (skipped results inherit the dataclass default
-        of ``False``; a skipped step counts as passed anyway).
+        ``StepResult`` for this step, always ``non_blocking=True``.
     """
     if shutil.which("pip-audit") is None:
         return StepResult(
             name="pip_audit",
-            passed=True,
-            output="(pip-audit not on PATH — skipped)",
-            skipped=True,
+            passed=False,
+            output=(
+                "⚠️  pip-audit not on PATH — the CVE scan did NOT run. "
+                "pip-audit ships as a core forge dependency; reinstall "
+                "forge-scripts to restore it (`pip install -e '.[dev]'`, "
+                "or your repo's equivalent)."
+            ),
+            non_blocking=True,
         )
     passed, output = _run(
         ["pip-audit", "--skip-editable", "--desc"],

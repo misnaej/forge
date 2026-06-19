@@ -19,6 +19,12 @@ classifiers = [
 dependencies = [
     "ruff>=0.6",
     "interrogate>=1.5",
+    # pip-audit backs the default (non-opt-in) pip_audit pre-commit step, so
+    # it ships as a core dependency — same rule as ruff/interrogate. Without
+    # it the CVE scan would silently no-op while still appearing in the gate
+    # output, giving false assurance (#71). Opt-in step tools (pyrefly,
+    # vulture) stay in extras precisely because their steps are opt-in.
+    "pip-audit>=2.7",
 ]
 
 [project.scripts]

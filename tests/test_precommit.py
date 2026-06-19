@@ -471,15 +471,22 @@ def test_main_emits_json(
     }
 
 
-def test_step_pip_audit_skipped_when_cli_missing(
+def test_step_pip_audit_loud_warn_when_cli_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """step_pip_audit is skipped when ``pip-audit`` is not on PATH."""
+    """A missing pip-audit is a loud non-blocking WARN, never a silent skip.
+
+    pip-audit ships as a core dependency (#71); a missing binary means a
+    broken install, and a security gate that quietly no-ops gives false
+    assurance — so the step surfaces it visibly without refusing the commit.
+    """
     monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
     result = precommit.step_pip_audit(tmp_path)
-    assert result.skipped
-    assert result.passed
+    assert not result.skipped
+    assert not result.passed
+    assert result.non_blocking
+    assert "did NOT run" in result.output
 
 
 def test_count_pip_audit_advisories_counts_pysec_and_ghsa_ids() -> None:
