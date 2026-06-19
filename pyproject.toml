@@ -19,6 +19,12 @@ classifiers = [
 dependencies = [
     "ruff>=0.6",
     "interrogate>=1.5",
+    # pip-audit backs the default (non-opt-in) pip_audit pre-commit step, so
+    # it ships as a core dependency — same rule as ruff/interrogate. Without
+    # it the CVE scan would silently no-op while still appearing in the gate
+    # output, giving false assurance (#71). Opt-in step tools (pyrefly,
+    # vulture) stay in extras precisely because their steps are opt-in.
+    "pip-audit>=2.7",
 ]
 
 [project.scripts]
@@ -43,6 +49,7 @@ forge-post-merge = "forge.post_merge:main"
 forge-post-checkout = "forge.post_checkout:main"
 install-forge-githooks = "forge.install_githooks:main"
 install-forge-claude-md = "forge.install_claudemd:main"
+install-forge-claude-settings = "forge.install_claude_settings:main"
 install-forge-bootstrap = "forge.install_bootstrap:main"
 forge-upgrade = "forge.upgrade:main"
 forge-pr-squash-comment = "forge.pr_squash_comment:main"

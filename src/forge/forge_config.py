@@ -114,6 +114,19 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "(doctest, typecheck, doc_consistency).",
     ),
     ConfigKey(
+        ("tool", "forge", "precommit", "scope"),
+        default="all",
+        description="Default file scope for scope-aware steps (ruff, "
+        "docstring_verification, test_naming_check): 'all' (whole tracked "
+        "tree) or 'diff' (modified files vs main).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "precommit", "scope_overrides"),
+        default={},
+        description="Per-step scope overrides, e.g. {ruff = 'diff'}. Each "
+        "value is 'all' or 'diff'; wins over the global 'scope' key.",
+    ),
+    ConfigKey(
         ("tool", "forge", "doctest", "paths"),
         ["src"],
         "Scan roots for the opt-in doctest step (pytest --doctest-modules).",
