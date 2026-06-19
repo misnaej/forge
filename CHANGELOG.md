@@ -20,6 +20,30 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v1.25.0 — 2026-06-19
+
+### ⚠️ Upgrade notes
+- **`block_install_deps` now also blocks pipenv, poetry, and uv** (and the
+  `<mgr> run pip install` wrappers), closing a gap where an agent in a
+  pipenv/poetry/uv repo could re-resolve unpinned dependencies. If a
+  trusted flow legitimately needs an agent to run one, opt out — per
+  manager (`[tool.forge.hooks] block_install_deps = ["pip", "conda"]`) or
+  entirely (`= false`). The default stays block-all (FOUNDATION §2).
+
+### Features
+- **`docs/adopting.md`** — modular adoption guide: three independent
+  install tracks (CLIs only / + git hooks / + plugin), a "what lands on
+  disk" table, and a drift/refresh/upgrade explainer (#33).
+- **`forge-upgrade` surfaces upgrade notes** — after a successful upgrade
+  it prints the recent `⚠️ Upgrade notes` so you see the consumer-action
+  items; the CHANGELOG now ships as package data to make this work (#34).
+- **post-merge tag advisory** — `forge-post-merge` warns on the dev branch
+  when `plugin.json` is ahead of the latest tag (a rolling-next release
+  that was never tagged), advisory only (#21).
+- **`forge-doctor` checks enabled-step tools** — flags when a step in
+  `[tool.forge.precommit] enable` lacks its tool (typecheck→pyrefly,
+  doctest→pytest) before the commit-time failure (#57).
+
 ## v1.24.0 — 2026-06-17
 
 All additive and opt-in — no consumer action required to upgrade.
