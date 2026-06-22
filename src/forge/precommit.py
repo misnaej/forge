@@ -58,8 +58,9 @@ from forge import config
 from forge.git_utils import (
     SCOPE_ALL,
     VALID_SCOPES,
-    detect_existing_source_dirs,
     emit,
+    latest_v_tag,
+    parse_semver,
     require_cli,
     write_step_log,
 )
@@ -235,7 +236,9 @@ def step_ruff(repo_root: Path) -> StepResult:
         SystemExit: If ``fix-forge-ruff`` is not on PATH.
     """
     scope = _resolve_scope(repo_root, "ruff")
-    if scope == SCOPE_ALL and not detect_existing_source_dirs(repo_root):
+    if scope == SCOPE_ALL and not config.resolve_tool_roots(
+        repo_root, "ruff", include_tests=True
+    ):
         return StepResult(
             name="ruff",
             passed=True,
@@ -602,6 +605,107 @@ def step_plugin_version(repo_root: Path) -> StepResult:
     )
 
 
+def _plugin_version(repo_root: Path) -> str | None:
+    """Return ``.claude-plugin/plugin.json["version"]`` or ``None`` when absent.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        The version string, or ``None`` when the manifest is missing,
+        unreadable, malformed, or carries no ``version`` field.
+    """
+    manifest = repo_root / ".claude-plugin" / "plugin.json"
+    if not manifest.is_file():
+        return None
+    try:
+        version = json.loads(manifest.read_text()).get("version")
+    except (json.JSONDecodeError, OSError):
+        return None
+    return version if isinstance(version, str) else None
+
+
+def _one_step_successors(tag: tuple[int, int, int]) -> set[tuple[int, int, int]]:
+    """Return the three valid rolling-next successors of a tagged release.
+
+    Args:
+        tag: The latest tag's ``(major, minor, patch)``.
+
+    Returns:
+        The set of versions exactly one rolling-next step ahead — a patch
+        bump, a minor bump, or a major bump.
+    """
+    major, minor, patch = tag
+    return {(major, minor, patch + 1), (major, minor + 1, 0), (major + 1, 0, 0)}
+
+
+def step_release_tag_guard(repo_root: Path) -> StepResult:
+    """Block when an intermediate rolling-next release was never tagged (#66).
+
+    Forge tags **every** merge to its dev branch (``forge-next-prep --tag``),
+    so ``plugin.json`` — which names the *next* release — must always sit
+    **exactly one** rolling-next step (patch+1 / minor+1 / major+1) ahead of
+    the latest ``v*`` tag. A larger gap means a prior release's tag was
+    skipped and is about to be buried by a further bump (the failure mode of
+    #66, where v1.25.0 shipped untagged). This guard refuses that commit and
+    points at ``forge-next-prep --tag``.
+
+    Self-skips (passes) for any repo this cadence does not apply to: a
+    single-track repo, one without ``.claude-plugin/plugin.json``, one with
+    no tags yet, or when ``plugin.json`` is not strictly ahead of the latest
+    tag (the ``plugin_version`` step owns the "must be ahead" rule, and an
+    equal value is a reproduced-release tree).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` — blocking failure only on a genuine tag gap;
+        skipped/pass otherwise.
+    """
+    if not config.load_config(repo_root).dual_track:
+        return StepResult(
+            name="release_tag_guard",
+            passed=True,
+            output="(single-track repo — skipped)",
+            skipped=True,
+        )
+    plugin_ver = _plugin_version(repo_root)
+    latest = latest_v_tag(repo_root)
+    if plugin_ver is None or latest is None:
+        return StepResult(
+            name="release_tag_guard",
+            passed=True,
+            output="(no plugin.json or no v* tags — skipped)",
+            skipped=True,
+        )
+    pv = parse_semver(plugin_ver)
+    lv = parse_semver(latest)
+    if pv is None or lv is None or pv <= lv:
+        return StepResult(
+            name="release_tag_guard",
+            passed=True,
+            output="(plugin.json not strictly ahead of latest tag — skipped)",
+            skipped=True,
+        )
+    if pv in _one_step_successors(lv):
+        return StepResult(
+            name="release_tag_guard",
+            passed=True,
+            output=f"plugin.json {plugin_ver} is one step ahead of v{latest}.",
+        )
+    return StepResult(
+        name="release_tag_guard",
+        passed=False,
+        output=(
+            f"plugin.json {plugin_ver} is more than one release ahead of the "
+            f"latest tag v{latest} — an intermediate rolling-next release was "
+            f"never tagged and will be lost. Run `forge-next-prep --tag` to "
+            f"tag it before bumping further (FOUNDATION / docs/release-process)."
+        ),
+    )
+
+
 def _cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]:
     """Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 
@@ -624,45 +728,18 @@ def _cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[
     return list(default)
 
 
-def _bad_scan_paths(paths: list[str], repo_root: Path) -> list[str]:
-    """Return config scan-path values that are blank, option-like, or escape the repo.
-
-    Config-supplied scan roots (``[tool.forge.<step>] paths``) are spliced
-    into a subprocess argv. A blank value is a degenerate path, a value
-    starting with ``-`` would be parsed as a tool flag, and an absolute /
-    ``..`` path would scan outside the repo. All three are misconfiguration
-    and are rejected rather than passed through.
-
-    Args:
-        paths: The configured scan roots (already narrowed to ``list[str]``
-            by :func:`_cfg_str_list`).
-        repo_root: Git repo root the paths must stay within.
-
-    Returns:
-        The offending entries; empty when every path is a safe in-repo root.
-    """
-    bad: list[str] = []
-    for raw in paths:
-        if not raw.strip() or raw.startswith("-"):
-            bad.append(raw)
-            continue
-        try:
-            (repo_root / raw).resolve().relative_to(repo_root.resolve())
-        except ValueError:
-            bad.append(raw)
-    return bad
-
-
 def step_doctest(repo_root: Path) -> StepResult:
     """Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 
     Executes the ``>>>`` examples embedded in docstrings so they cannot
     rot silently — forge already enforces docstring presence (ruff D),
     Args/Returns accuracy (``verify_docstrings``), and coverage
-    (``docstring_coverage``), but not example *execution*. Scans
-    ``[tool.forge.doctest] paths`` (default ``["src"]``). Non-blocking
-    unless ``blocking = true``: pytest is slow and a false failure that
-    refuses a commit trains ``--no-verify``.
+    (``docstring_coverage``), but not example *execution*. Scans the roots
+    from :func:`forge.config.resolve_tool_roots` (granular
+    ``[tool.forge.doctest].paths`` → ``[tool.forge].source_dirs`` → smart
+    auto-detect), skipping when none resolve. Non-blocking unless
+    ``blocking = true``: pytest is slow and a false failure that refuses a
+    commit trains ``--no-verify``.
 
     Opt-in only — runs when listed in ``[tool.forge.precommit] enable``
     (or ``--only``). When pytest output contains ``"no tests ran"`` (no
@@ -679,15 +756,14 @@ def step_doctest(repo_root: Path) -> StepResult:
     Raises:
         SystemExit: If ``pytest`` is not on PATH.
     """
-    cfg = _forge_step_config(repo_root, "doctest")
-    paths = _cfg_str_list(cfg, "paths", ["src"])
-    blocking = bool(cfg.get("blocking", False))
-    bad = _bad_scan_paths(paths, repo_root)
-    if bad:
+    blocking = bool(_forge_step_config(repo_root, "doctest").get("blocking", False))
+    paths = config.resolve_tool_roots(repo_root, "doctest")
+    if not paths:
         return StepResult(
             name="doctest",
-            passed=False,
-            output=f"invalid [tool.forge.doctest] paths: {bad}",
+            passed=True,
+            output="(no source dirs detected — skipped)",
+            skipped=True,
         )
     require_cli("pytest", caller="forge-precommit")
     passed, output = _run(
@@ -709,10 +785,11 @@ def step_typecheck(repo_root: Path) -> StepResult:
     pyrefly is forge's type checker — same Astral model as ruff (single
     Rust binary, pyproject-native, reads/migrates ``[tool.mypy]`` config),
     so it slots into forge's existing toolchain with no Node runtime.
-    Scans ``[tool.forge.typecheck] paths`` (default ``["src"]``).
-    Non-blocking unless ``blocking = true``: a type-checker false positive
-    that refuses a commit trains ``--no-verify``, so the gate is advisory
-    by default.
+    Scans the roots from :func:`forge.config.resolve_tool_roots` (granular
+    ``[tool.forge.typecheck].paths`` → ``[tool.forge].source_dirs`` → smart
+    auto-detect), skipping when none resolve. Non-blocking unless
+    ``blocking = true``: a type-checker false positive that refuses a commit
+    trains ``--no-verify``, so the gate is advisory by default.
 
     Opt-in only — runs when listed in ``[tool.forge.precommit] enable``.
     When opted in but ``pyrefly`` is absent, fails loudly (the consumer
@@ -729,15 +806,14 @@ def step_typecheck(repo_root: Path) -> StepResult:
     Raises:
         SystemExit: If ``pyrefly`` is not on PATH.
     """
-    cfg = _forge_step_config(repo_root, "typecheck")
-    paths = _cfg_str_list(cfg, "paths", ["src"])
-    blocking = bool(cfg.get("blocking", False))
-    bad = _bad_scan_paths(paths, repo_root)
-    if bad:
+    blocking = bool(_forge_step_config(repo_root, "typecheck").get("blocking", False))
+    paths = config.resolve_tool_roots(repo_root, "typecheck")
+    if not paths:
         return StepResult(
             name="typecheck",
-            passed=False,
-            output=f"invalid [tool.forge.typecheck] paths: {bad}",
+            passed=True,
+            output="(no source dirs detected — skipped)",
+            skipped=True,
         )
     require_cli("pyrefly", caller="forge-precommit")
     passed, output = _run(["pyrefly", "check", *paths], cwd=repo_root)
@@ -823,6 +899,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("cli_wiring", step_cli_wiring),
     StepDef("commit_types_parity", step_commit_types_parity),
     StepDef("plugin_version", step_plugin_version),
+    StepDef("release_tag_guard", step_release_tag_guard),
     StepDef("pip_audit", step_pip_audit),
     StepDef("doctest", step_doctest, default_on=False),
     StepDef("typecheck", step_typecheck, default_on=False),

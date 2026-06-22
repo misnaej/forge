@@ -48,9 +48,8 @@ from interrogate.config import InterrogateConfig
 from interrogate.coverage import InterrogateCoverage
 
 from forge.config import (
-    DEFAULT_SOURCE_DIRS,
-    DEFAULT_TEST_DIRS,
     read_pyproject_raw,
+    resolve_tool_roots,
 )
 from forge.git_utils import capturing_to_step_log, configure_cli_logging
 
@@ -164,53 +163,26 @@ def _emit_missing_list(results: object) -> None:
         logger.info("MISSING: %s:%s:%s", path, lineno, name)
 
 
-def _scan_paths(data: dict, repo_root: Path) -> list[str]:
-    """Resolve the docstring-coverage scan roots from config, safely.
+def _scan_paths(repo_root: Path) -> list[str]:
+    """Resolve the docstring-coverage scan roots via the shared resolver.
 
-    A per-tool ``[tool.forge.docstring_coverage].paths`` override wins
-    when set (interrogate has no scan-root concept of its own). Otherwise
-    the default is the **repo-wide layout** —
-    ``[tool.forge].source_dirs + test_dirs`` (default ``src`` + ``tests``)
-    — so the project's roots live in one place. Each root resolves
-    against *repo_root*; any that escapes the repo (absolute path or
-    ``..`` traversal) is rejected so the reporter never reads files
-    outside the repository (mirrors ``gen_api_digest.detect_roots``).
-    Non-existent roots are dropped.
+    Delegates to :func:`forge.config.resolve_tool_roots` — granular
+    ``[tool.forge.docstring_coverage].paths`` → repo-wide
+    ``[tool.forge].source_dirs + test_dirs`` → smart auto-detect — so the
+    coverage reporter scans the same roots every other layout-aware forge
+    tool does. Coverage spans source *and* tests, so test roots are
+    included. The resolver already drops repo-escaping / non-existent
+    paths; this returns absolute path strings for interrogate.
 
     Args:
-        data: Parsed ``pyproject.toml`` data.
         repo_root: Repository root the configured paths resolve against.
 
     Returns:
-        Existing in-repo directory paths to scan, as strings. Empty when
-        none of the configured roots exist.
+        Existing in-repo directory paths to scan, as absolute strings.
+        Empty when none of the resolved roots exist.
     """
-    forge = data.get("tool", {}).get("forge", {})
-    configured = forge.get("docstring_coverage", {}).get("paths")
-    if isinstance(configured, list):
-        # Per-tool override.
-        raw_paths = list(configured)
-    else:
-        # Default to the repo-wide layout ([tool.forge].source_dirs +
-        # test_dirs). Read from the already-parsed dict here (mirrors
-        # forge.config.load_config's read of the same keys — keep in sync)
-        # to avoid re-reading the file.
-        raw_paths = list(forge.get("source_dirs", DEFAULT_SOURCE_DIRS)) + list(
-            forge.get("test_dirs", DEFAULT_TEST_DIRS)
-        )
-    root_resolved = repo_root.resolve()
-    scan: list[str] = []
-    for raw in raw_paths:
-        resolved = (repo_root / raw).resolve()
-        if not resolved.is_relative_to(root_resolved):
-            logger.error(
-                "Ignoring docstring_coverage path %r — outside repo root.",
-                raw,
-            )
-            continue
-        if resolved.is_dir():
-            scan.append(str(resolved))
-    return scan
+    roots = resolve_tool_roots(repo_root, "docstring_coverage", include_tests=True)
+    return [str((repo_root / d).resolve()) for d in roots]
 
 
 def main() -> int:
@@ -238,7 +210,7 @@ def main() -> int:
             return 0
 
         config, fail_under, excludes = _interrogate_config(data)
-        paths = _scan_paths(data, repo_root)
+        paths = _scan_paths(repo_root)
         if not paths:
             logger.info(
                 "(none of the configured docstring_coverage paths exist — skipped)"

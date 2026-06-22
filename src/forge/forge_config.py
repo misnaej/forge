@@ -74,14 +74,16 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ),
     ConfigKey(
         ("tool", "forge", "source_dirs"),
-        ["src"],
-        "Repo source roots (repo-wide layout). Consumed by layout-aware "
-        "tools, e.g. docstring-coverage scan roots.",
+        "smart-detect (src/ or top-level packages)",
+        "Repo source roots — the single definition every layout-aware tool "
+        "(ruff, api-digest, docstring-coverage, doctest, typecheck) scans. "
+        "Unset → smart auto-detect: src/ if present, else top-level packages.",
     ),
     ConfigKey(
         ("tool", "forge", "test_dirs"),
-        ["tests"],
-        "Repo test roots (repo-wide layout).",
+        "smart-detect (tests/ or test/)",
+        "Repo test roots (added for tools that scan tests too, e.g. ruff, "
+        "coverage). Unset → smart auto-detect of tests/ then test/.",
     ),
     ConfigKey(
         ("tool", "forge", "cli_wiring", "enabled"),
@@ -100,6 +102,18 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "source_dirs + test_dirs",
         "Per-tool override of the coverage scan roots; otherwise inherits "
         "the repo-wide [tool.forge].source_dirs + test_dirs.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "ruff", "paths"),
+        "source_dirs + test_dirs",
+        "Per-tool override of ruff's scan roots; otherwise inherits the "
+        "repo-wide [tool.forge].source_dirs + test_dirs.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "api_digest", "paths"),
+        "source_dirs",
+        "Per-tool override of api-digest's scan roots; otherwise inherits "
+        "the repo-wide [tool.forge].source_dirs (source only, no tests).",
     ),
     ConfigKey(
         ("tool", "forge", "precommit", "disable"),

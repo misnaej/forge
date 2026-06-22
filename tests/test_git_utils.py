@@ -96,30 +96,8 @@ def test_parse_semver_rejects_non_triple() -> None:
 
 
 # ---------------------------------------------------------------------------
-# detect_existing_source_dirs
-# ---------------------------------------------------------------------------
-
-
-def test_detect_existing_source_dirs_returns_existing_subset(
-    tmp_path: Path,
-) -> None:
-    """Only ``DEFAULT_SOURCE_DIRS`` entries that exist as dirs are returned."""
-    (tmp_path / "src").mkdir()
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "agents").mkdir()
-    result = git_utils.detect_existing_source_dirs(tmp_path)
-    assert result == ["src", "tests", "agents"]
-
-
-def test_detect_existing_source_dirs_empty_when_no_dirs(tmp_path: Path) -> None:
-    """No matching directories → empty list."""
-    assert git_utils.detect_existing_source_dirs(tmp_path) == []
-
-
-def test_detect_existing_source_dirs_ignores_files(tmp_path: Path) -> None:
-    """A regular file named like a candidate dir is ignored."""
-    (tmp_path / "src").write_text("not a dir")
-    assert git_utils.detect_existing_source_dirs(tmp_path) == []
+# Source-dir resolution moved to forge.config (smart-detect + resolver);
+# see test_config.py. git_utils no longer owns a source-dir helper.
 
 
 # ---------------------------------------------------------------------------

@@ -42,14 +42,59 @@ logger = logging.getLogger(__name__)
 DEFAULT_BASE_BRANCH = "main"
 DEFAULT_DEV_BRANCH = "main"
 
-# Repo-wide project layout. The single ground truth for "what are this
-# repo's source / test roots", shared by every layout-consuming tool
-# (docstring-coverage scan roots, etc.) so the answer lives in one place.
-# Split into source vs test (semantic) rather than a flat union, so a
-# tool that wants only source roots (e.g. api-digest) can take
-# ``source_dirs`` without test dirs leaking in.
+# Repo-wide project layout. ``[tool.forge].source_dirs`` / ``test_dirs`` are
+# the single ground truth for "what are this repo's source / test roots",
+# shared by every layout-consuming tool (ruff, api-digest, docstring-coverage,
+# doctest, typecheck) via :func:`resolve_tool_roots` so the answer lives in
+# one place. Split into source vs test (semantic) rather than a flat union, so
+# a tool that wants only source roots (e.g. api-digest) takes ``source_dirs``
+# without test dirs leaking in.
+#
+# These constants are the ``ForgeConfig`` field defaults (bare construction);
+# real reads against a repo with neither key set fall back to *smart detection*
+# (:func:`detect_source_dirs` / :func:`detect_test_dirs`) rather than a fixed
+# name list — forge used to guess from a broad 8-name tuple that scanned
+# phantom dirs and ignored the configured roots.
 DEFAULT_SOURCE_DIRS = ("src",)
 DEFAULT_TEST_DIRS = ("tests",)
+
+
+def detect_source_dirs(repo_root: Path) -> list[str]:
+    """Smart-detect the repo's source roots when ``source_dirs`` is unset.
+
+    Mirrors how a packaging tool locates code instead of guessing from a
+    fixed name list: ``src/`` when it exists (the src-layout), otherwise
+    every top-level directory that is an importable package (contains an
+    ``__init__.py``).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        Repo-relative source-root names. ``["src"]`` for a src-layout repo;
+        the sorted top-level package names for a flat layout; ``[]`` when
+        neither is found.
+    """
+    if (repo_root / "src").is_dir():
+        return ["src"]
+    return sorted(
+        p.name
+        for p in repo_root.iterdir()
+        if p.is_dir() and (p / "__init__.py").is_file()
+    )
+
+
+def detect_test_dirs(repo_root: Path) -> list[str]:
+    """Smart-detect the repo's test roots when ``test_dirs`` is unset.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        The existing subset of the conventional test roots ``("tests",
+        "test")``, in that preference order; ``[]`` when neither exists.
+    """
+    return [d for d in ("tests", "test") if (repo_root / d).is_dir()]
 
 
 @dataclass(frozen=True)
@@ -140,9 +185,92 @@ def load_config(repo_root: Path) -> ForgeConfig:
         ``[tool.forge]`` to opt in.
     """
     section = read_pyproject_raw(repo_root).get("tool", {}).get("forge", {})
+    source_dirs = (
+        list(section["source_dirs"])
+        if "source_dirs" in section
+        else detect_source_dirs(repo_root)
+    )
+    test_dirs = (
+        list(section["test_dirs"])
+        if "test_dirs" in section
+        else detect_test_dirs(repo_root)
+    )
     return ForgeConfig(
         base_branch=section.get("base_branch", DEFAULT_BASE_BRANCH),
         dev_branch=section.get("dev_branch", DEFAULT_DEV_BRANCH),
-        source_dirs=list(section.get("source_dirs", DEFAULT_SOURCE_DIRS)),
-        test_dirs=list(section.get("test_dirs", DEFAULT_TEST_DIRS)),
+        source_dirs=source_dirs,
+        test_dirs=test_dirs,
     )
+
+
+def _existing_dirs(repo_root: Path, dirs: list[str]) -> list[str]:
+    """Filter *dirs* to existing in-repo paths, de-duplicated, order-preserving.
+
+    Args:
+        repo_root: Git repo root the paths must stay within.
+        dirs: Candidate repo-relative paths.
+
+    Returns:
+        The subset that resolves inside *repo_root* and exists on disk, with
+        duplicates removed and original order kept. Paths escaping the repo
+        (absolute or ``..``) are dropped — the scan never reaches outside.
+    """
+    root = repo_root.resolve()
+    out: list[str] = []
+    for d in dict.fromkeys(dirs):
+        resolved = (repo_root / d).resolve()
+        if resolved.is_relative_to(root) and resolved.exists():
+            out.append(d)
+    return out
+
+
+def resolve_tool_roots(
+    repo_root: Path,
+    tool: str,
+    *,
+    include_tests: bool = False,
+) -> list[str]:
+    """Resolve the scan roots a layout-consuming *tool* should use.
+
+    The single resolution every path-scanning forge tool shares (ruff,
+    api-digest, docstring-coverage, doctest, typecheck), so "where is the
+    code" is answered in one place. Precedence, highest first:
+
+    1. ``[tool.forge.<tool>].paths`` — the tool's own granular override
+       (a full replacement; tests are the caller's to include in it).
+    2. ``[tool.forge].source_dirs`` (plus ``test_dirs`` when *include_tests*)
+       — the repo-wide definition every tool shares.
+    3. Smart auto-detect (:func:`detect_source_dirs` / :func:`detect_test_dirs`)
+       — used only when neither of the above is set.
+
+    Explicit CLI arguments (e.g. ``--roots``, ruff's positional dirs) are a
+    higher override still and are handled by each CLI before calling this.
+
+    Args:
+        repo_root: Git repo root.
+        tool: The ``[tool.forge.<tool>]`` subsection name (e.g. ``"ruff"``,
+            ``"api_digest"``, ``"docstring_coverage"``).
+        include_tests: When ``True``, append the resolved test roots to the
+            source roots (for tools that lint / scan tests too, e.g. ruff).
+
+    Returns:
+        Existing in-repo directory paths to scan, de-duplicated. ``[]`` when
+        nothing resolves (the caller decides whether that is a skip).
+    """
+    forge = read_pyproject_raw(repo_root).get("tool", {}).get("forge", {})
+    tool_section = forge.get(tool)
+    if isinstance(tool_section, dict):
+        granular = tool_section.get("paths")
+        if isinstance(granular, list):
+            return _existing_dirs(repo_root, [str(p) for p in granular])
+
+    if "source_dirs" in forge:
+        roots = [str(p) for p in forge["source_dirs"]]
+    else:
+        roots = detect_source_dirs(repo_root)
+    if include_tests:
+        if "test_dirs" in forge:
+            roots += [str(p) for p in forge["test_dirs"]]
+        else:
+            roots += detect_test_dirs(repo_root)
+    return _existing_dirs(repo_root, roots)
