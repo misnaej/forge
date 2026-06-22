@@ -3,8 +3,10 @@
 Owns the **ruff phase** of the forge pre-commit sequence (FOUNDATION §13,
 single responsibility):
 
-1. Auto-detect source dirs (``src``, ``tests``, ``forge`` — same set the
-   verify-forge-* CLIs use).
+1. Resolve scan roots via :func:`forge.config.resolve_tool_roots` —
+   granular ``[tool.forge.ruff].paths`` → repo-wide
+   ``[tool.forge].source_dirs + test_dirs`` → smart auto-detect (the same
+   roots every layout-aware forge tool uses).
 2. Run ``ruff format`` in-place.
 3. Run ``ruff check --fix --unsafe-fixes``. Unsafe fixes are on by
    default; forge always applies them.
@@ -28,11 +30,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from forge.config import resolve_tool_roots
 from forge.git_utils import (
     SCOPE_DIFF,
     VALID_SCOPES,
     configure_cli_logging,
-    detect_existing_source_dirs,
     get_modified_files,
     require_cli,
     write_step_log,
@@ -134,7 +136,8 @@ def main() -> int:
     parser.add_argument(
         "dirs",
         nargs="*",
-        help="Source dirs to fix. If empty, auto-detect from candidate list.",
+        help="Source dirs to fix. If empty, resolve from "
+        "[tool.forge].source_dirs / smart auto-detect.",
     )
     parser.add_argument(
         "--scope",
@@ -154,9 +157,8 @@ def main() -> int:
             return 0
         source_dirs = _validate_paths(repo_root, modified)
     else:
-        source_dirs = _validate_paths(
-            repo_root, args.dirs or detect_existing_source_dirs(repo_root)
-        )
+        roots = args.dirs or resolve_tool_roots(repo_root, "ruff", include_tests=True)
+        source_dirs = _validate_paths(repo_root, roots)
         if not source_dirs:
             write_step_log(repo_root, "ruff", "(no source dirs detected — skipped)")
             logger.info("No source directories found at %s", repo_root)

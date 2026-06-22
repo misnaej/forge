@@ -53,8 +53,30 @@ to see what, if anything, is worth adding for your repo.
 |---|---|---|---|
 | `base_branch` | `"main"` | Slow-channel / release branch. Protected from direct agent push; the `dev → main` promotion target. | Your release branch isn't `main`. |
 | `dev_branch` | `"main"` (= `base_branch`) | Fast-channel integration branch. Protected from direct agent push. **Defaults to `base_branch`** → single-track, only one branch protected. | You run dual-track — set e.g. `dev_branch = "dev"` to opt in. |
-| `source_dirs` | `["src"]` | Repo **source** roots — the single ground truth for your project layout, consumed by layout-aware tools (e.g. docstring-coverage scan roots). | Your source lives outside `src/` — e.g. `source_dirs = ["src", "projects"]`. |
-| `test_dirs` | `["tests"]` | Repo **test** roots. Kept separate from `source_dirs` so a source-only tool doesn't pull test dirs in. | Your tests aren't under `tests/`. |
+| `source_dirs` | smart-detect | Repo **source** roots — the single definition every layout-aware tool scans (see below). Unset → smart auto-detect: `src/` if present, else top-level packages. | Your source lives outside `src/` — e.g. `source_dirs = ["src", "projects/lib"]`. |
+| `test_dirs` | smart-detect | Repo **test** roots (added for tools that scan tests too). Unset → smart auto-detect of `tests/` then `test/`. | Your tests aren't under `tests/`. |
+
+### Source-dir resolution — one definition, every tool
+
+`source_dirs` / `test_dirs` are the **single definition of where your code
+is**. Every layout-aware forge tool — **ruff**, **api-digest**,
+**docstring-coverage**, **doctest**, **typecheck** — resolves its scan roots
+the same way, in this order:
+
+1. **Granular per-tool** — `[tool.forge.<tool>].paths` (e.g.
+   `[tool.forge.ruff].paths`, `[tool.forge.docstring_coverage].paths`).
+   A full override for that one tool.
+2. **Repo-wide** — `[tool.forge].source_dirs` (plus `test_dirs` for tools
+   that scan tests, like ruff and coverage). **Set this once and every tool
+   follows it.**
+3. **Smart auto-detect** — when neither is set: `src/` if it exists, else
+   top-level importable packages (dirs with `__init__.py`); tests from
+   `tests/` then `test/`. This replaced an older fixed name-list that
+   scanned phantom dirs and ignored your config.
+
+So to run all checks over a non-`src` layout, set `source_dirs` /
+`test_dirs` once; reach for a per-tool `.paths` only when one tool needs a
+different scope. `forge-config --list` shows the resolved keys.
 
 ## `[tool.forge.cli_wiring]`
 

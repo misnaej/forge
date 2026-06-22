@@ -205,11 +205,23 @@ def test_default_fail_under_matches_foundation(
     assert "fail-under 90" in log
 
 
+def _write_forge_toml(tmp_path: Path, body: str) -> None:
+    """Write a ``[tool.forge]`` block to tmp_path's pyproject.toml.
+
+    Args:
+        tmp_path: Repo root to write into.
+        body: TOML lines placed under ``[tool.forge]`` (may include subtables).
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        f"[tool.forge]\n{body}\n", encoding="utf-8"
+    )
+
+
 def test_scan_paths_defaults_to_src_and_tests(tmp_path: Path) -> None:
-    """No ``paths`` key → existing ``src`` / ``tests`` roots."""
+    """No config → smart-detected ``src`` / ``tests`` roots (source + tests)."""
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
-    result = verify_docstring_coverage._scan_paths({}, tmp_path)
+    result = verify_docstring_coverage._scan_paths(tmp_path)
     assert result == [
         str((tmp_path / "src").resolve()),
         str((tmp_path / "tests").resolve()),
@@ -220,8 +232,8 @@ def test_scan_paths_defaults_to_repo_layout(tmp_path: Path) -> None:
     """No per-tool paths → ``[tool.forge].source_dirs + test_dirs``."""
     (tmp_path / "lib").mkdir()
     (tmp_path / "t").mkdir()
-    data = {"tool": {"forge": {"source_dirs": ["lib"], "test_dirs": ["t"]}}}
-    result = verify_docstring_coverage._scan_paths(data, tmp_path)
+    _write_forge_toml(tmp_path, 'source_dirs = ["lib"]\ntest_dirs = ["t"]')
+    result = verify_docstring_coverage._scan_paths(tmp_path)
     assert result == [
         str((tmp_path / "lib").resolve()),
         str((tmp_path / "t").resolve()),
@@ -232,15 +244,11 @@ def test_scan_paths_per_tool_override_wins(tmp_path: Path) -> None:
     """``[tool.forge.docstring_coverage].paths`` overrides the repo layout."""
     (tmp_path / "src").mkdir()
     (tmp_path / "only").mkdir()
-    data = {
-        "tool": {
-            "forge": {
-                "source_dirs": ["src"],
-                "docstring_coverage": {"paths": ["only"]},
-            }
-        }
-    }
-    result = verify_docstring_coverage._scan_paths(data, tmp_path)
+    _write_forge_toml(
+        tmp_path,
+        'source_dirs = ["src"]\n[tool.forge.docstring_coverage]\npaths = ["only"]',
+    )
+    result = verify_docstring_coverage._scan_paths(tmp_path)
     assert result == [str((tmp_path / "only").resolve())]
 
 
@@ -248,8 +256,10 @@ def test_scan_paths_honors_configured_paths(tmp_path: Path) -> None:
     """``[tool.forge.docstring_coverage].paths`` overrides the default roots."""
     (tmp_path / "projects").mkdir()
     (tmp_path / "src").mkdir()
-    data = {"tool": {"forge": {"docstring_coverage": {"paths": ["projects", "src"]}}}}
-    result = verify_docstring_coverage._scan_paths(data, tmp_path)
+    _write_forge_toml(
+        tmp_path, '[tool.forge.docstring_coverage]\npaths = ["projects", "src"]'
+    )
+    result = verify_docstring_coverage._scan_paths(tmp_path)
     assert result == [
         str((tmp_path / "projects").resolve()),
         str((tmp_path / "src").resolve()),
@@ -260,20 +270,25 @@ def test_scan_paths_rejects_traversal_outside_repo(tmp_path: Path) -> None:
     """A ``..`` path escaping the repo is dropped (path-traversal guard)."""
     (tmp_path / "src").mkdir()
     (tmp_path.parent / "secret").mkdir(exist_ok=True)
-    data = {"tool": {"forge": {"docstring_coverage": {"paths": ["../secret", "src"]}}}}
-    result = verify_docstring_coverage._scan_paths(data, tmp_path)
+    _write_forge_toml(
+        tmp_path,
+        '[tool.forge.docstring_coverage]\npaths = ["../secret", "src"]',
+    )
+    result = verify_docstring_coverage._scan_paths(tmp_path)
     assert result == [str((tmp_path / "src").resolve())]
 
 
 def test_scan_paths_rejects_absolute_path_outside_repo(tmp_path: Path) -> None:
     """An absolute path outside the repo is dropped (path-traversal guard)."""
     (tmp_path / "src").mkdir()
-    data = {"tool": {"forge": {"docstring_coverage": {"paths": ["/etc", "src"]}}}}
-    result = verify_docstring_coverage._scan_paths(data, tmp_path)
+    _write_forge_toml(
+        tmp_path, '[tool.forge.docstring_coverage]\npaths = ["/etc", "src"]'
+    )
+    result = verify_docstring_coverage._scan_paths(tmp_path)
     assert result == [str((tmp_path / "src").resolve())]
 
 
 def test_scan_paths_empty_when_none_exist(tmp_path: Path) -> None:
     """Configured roots that don't exist → empty list (caller skips cleanly)."""
-    data = {"tool": {"forge": {"docstring_coverage": {"paths": ["nope"]}}}}
-    assert verify_docstring_coverage._scan_paths(data, tmp_path) == []
+    _write_forge_toml(tmp_path, '[tool.forge.docstring_coverage]\npaths = ["nope"]')
+    assert verify_docstring_coverage._scan_paths(tmp_path) == []

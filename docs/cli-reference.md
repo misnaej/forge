@@ -13,8 +13,8 @@ Run `ruff format` + `ruff check --fix --unsafe-fixes` in-place, re-stage
 modified tracked files, and write code_health/ruff.log.
 
 positional arguments:
-  dirs                Source dirs to fix. If empty, auto-detect from candidate
-                      list.
+  dirs                Source dirs to fix. If empty, resolve from
+                      [tool.forge].source_dirs / smart auto-detect.
 
 options:
   -h, --help          show this help message and exit

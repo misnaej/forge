@@ -38,6 +38,29 @@ def _run_hook(name: str, command: str) -> int:
     return proc.returncode
 
 
+_INSTALL_DEPS = "block_install_deps.sh"
+
+
+def test_install_deps_blocks_conda_run_conda_install() -> None:
+    """`conda run conda install` is blocked — the wrapper-of-a-manager gap (#62).
+
+    The bare-conda rule anchors the install verb to a command start/separator,
+    so the inner `conda install` (preceded only by whitespace after `run`)
+    would slip; the wrapper rule must catch it.
+    """
+    assert _run_hook(_INSTALL_DEPS, "conda run conda install numpy") == 2
+
+
+def test_install_deps_blocks_conda_run_pip_install() -> None:
+    """The pre-existing `conda run pip install` wrapper form still blocks."""
+    assert _run_hook(_INSTALL_DEPS, "conda run pip install numpy") == 2
+
+
+def test_install_deps_allows_conda_run_readonly() -> None:
+    """`conda run conda info` (read-only, no install verb) is not blocked."""
+    assert _run_hook(_INSTALL_DEPS, "conda run conda info") == 0
+
+
 _ATTRIBUTION = "block_claude_attribution.sh"
 
 
