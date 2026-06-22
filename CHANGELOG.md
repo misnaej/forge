@@ -31,9 +31,12 @@ versions follow forge's rolling-next convention.
   (`src, test, tests, scripts, tools, projects, agents, lib`) and **ignored
   `source_dirs`** (#70). If you set `source_dirs` *and* keep lintable Python
   in a dir outside it (e.g. `scripts/`), add that dir to `source_dirs` (or a
-  `[tool.forge.ruff].paths`) so ruff keeps linting it. Repos that don't set
-  `source_dirs` are unaffected — smart auto-detect covers `src/` (or
-  top-level packages) + `tests/`.
+  `[tool.forge.ruff].paths`) so ruff keeps linting it. **This also applies
+  when `source_dirs` is unset:** the old broad list scanned `scripts/`,
+  `tools/`, `agents/`, `lib/`, and `projects/` too, and smart auto-detect
+  does not — if you keep lintable Python in any of those, add it to
+  `source_dirs` / `[tool.forge.ruff].paths`. Repos whose Python lives only
+  under `src/` (or top-level packages) + `tests/` need no action.
 - **New `release_tag_guard` pre-commit step (dual-track repos only).** Blocks
   a commit when `plugin.json` is more than one rolling-next step ahead of the
   latest `v*` tag — i.e. an intermediate release was bumped past without
@@ -54,9 +57,18 @@ versions follow forge's rolling-next convention.
   cadence (#66).
 
 ### Fixes
+- **`block_protected_branches` now blocks pushes by their refspec
+  destination** — a push from an unprotected branch to a protected one
+  (`git push origin HEAD:dev`, `feature:dev`, `feature:refs/heads/dev`,
+  `+dev`) was previously missed (only the *current* branch was checked).
+  This destination guard has **no agent bypass**: not even
+  `forge:git-commit-push` may push directly to a protected branch (matching
+  `block_branch_deletion`). The agent bypass now covers only normal
+  feature-branch pushes (#74).
 - **`block_install_deps` now catches `conda run conda install`** (and the
-  general `<mgr> run <mgr> install` wrapper) — the manager-wrapping-a-manager
-  gap surfaced in the #61 review (#62).
+  general `<mgr> run <mgr> install` wrapper) plus `conda env update` (direct
+  and wrapped) — the manager-wrapping-a-manager gaps surfaced in review
+  (#62).
 
 ## v2.0.0 — 2026-06-19
 

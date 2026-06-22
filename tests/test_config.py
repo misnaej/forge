@@ -233,3 +233,15 @@ def test_resolve_tool_roots_drops_repo_escaping_paths(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     _forge_toml(tmp_path, '[tool.forge.ruff]\npaths = ["../evil", "/etc", "src"]')
     assert resolve_tool_roots(tmp_path, "ruff", include_tests=True) == ["src"]
+
+
+def test_resolve_tool_roots_drops_option_like_and_blank_paths(tmp_path: Path) -> None:
+    """Option-like / blank configured paths are dropped (flag-injection guard).
+
+    A value like ``--output=x`` would be parsed as a flag by the consuming
+    tool (ruff/pytest/pyrefly) and an empty string scans the cwd; both must
+    never reach the subprocess argv.
+    """
+    (tmp_path / "src").mkdir()
+    _forge_toml(tmp_path, '[tool.forge.ruff]\npaths = ["--output=x", "-rf", "", "src"]')
+    assert resolve_tool_roots(tmp_path, "ruff", include_tests=True) == ["src"]

@@ -401,6 +401,18 @@ def test_release_guard_skips_without_plugin_manifest(
     assert result.skipped
 
 
+def test_release_guard_skips_on_non_semver_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unparseable plugin.json version degrades to skip, never raises."""
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="rolling", latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert result.passed
+    assert result.skipped
+
+
 def _stub_docstrings_passing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub ``step_docstrings`` to skip ``verify-forge-docstrings`` check."""
 
