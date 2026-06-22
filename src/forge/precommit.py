@@ -800,8 +800,8 @@ def step_typecheck(repo_root: Path) -> StepResult:
 
     Returns:
         ``StepResult`` mirroring pyrefly's exit code; ``non_blocking`` is
-        the inverse of ``blocking``. A blocking failure when the
-        configured ``paths`` are option-like or escape the repo.
+        the inverse of ``blocking``. Skipped (passing) when no source dirs
+        resolve.
 
     Raises:
         SystemExit: If ``pyrefly`` is not on PATH.

@@ -58,7 +58,7 @@ block() {
 # command start or shell separator, so the inner manager of a `… run conda
 # install` (preceded only by whitespace after `run`) would otherwise slip
 # through — this catches it explicitly.
-if echo "$COMMAND" | grep -qE '(^|[;&|]\s*)(conda|pipenv|uv|poetry)[[:space:]]+run[[:space:]]+(pip[[:space:]]+install|conda[[:space:]]+(install|create|update|env[[:space:]]+create))\b' &&
+if echo "$COMMAND" | grep -qE '(^|[;&|]\s*)(conda|pipenv|uv|poetry)[[:space:]]+run[[:space:]]+(pip[[:space:]]+install|conda[[:space:]]+(install|create|update|env[[:space:]]+(create|update)))\b' &&
     { blocked pip || blocked conda || blocked pipenv || blocked uv || blocked poetry; }; then
     block
 fi
@@ -75,7 +75,7 @@ fi
 # substring inside a quoted body (e.g. an issue body mentioning `pip
 # install`) doesn't trigger. (Accepted slip-through: `xargs pip install`.)
 if blocked pip || blocked conda; then
-    if echo "$COMMAND" | grep -qE '(^|[;&|]\s*)((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*|conda) (install|create|env create|update)'; then
+    if echo "$COMMAND" | grep -qE '(^|[;&|]\s*)((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*|conda) (install|create|env (create|update)|update)'; then
         block
     fi
 fi
