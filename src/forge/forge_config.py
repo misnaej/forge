@@ -142,8 +142,9 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ),
     ConfigKey(
         ("tool", "forge", "doctest", "paths"),
-        ["src"],
-        "Scan roots for the opt-in doctest step (pytest --doctest-modules).",
+        "source_dirs (smart-detect)",
+        "Per-tool override of doctest's scan roots; otherwise inherits the "
+        "repo-wide [tool.forge].source_dirs (source only, no tests).",
     ),
     ConfigKey(
         ("tool", "forge", "doctest", "blocking"),
@@ -153,8 +154,9 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ),
     ConfigKey(
         ("tool", "forge", "typecheck", "paths"),
-        ["src"],
-        "Scan roots for the opt-in pyrefly typecheck step.",
+        "source_dirs (smart-detect)",
+        "Per-tool override of typecheck's scan roots; otherwise inherits the "
+        "repo-wide [tool.forge].source_dirs (source only, no tests).",
     ),
     ConfigKey(
         ("tool", "forge", "typecheck", "blocking"),

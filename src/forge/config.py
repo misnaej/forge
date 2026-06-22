@@ -110,8 +110,14 @@ class ForgeConfig:
         dev_branch: Name of the fast channel (typically ``"dev"``).
             Equal to ``base_branch`` when the consumer hasn't opted
             into dual-track.
-        source_dirs: Repo source roots (default ``["src"]``).
-        test_dirs: Repo test roots (default ``["tests"]``).
+        source_dirs: Repo source roots. ``load_config`` smart-detects these
+            when ``source_dirs`` is absent from ``pyproject.toml`` (``src/``
+            when present, otherwise top-level packages); the field default
+            ``["src"]`` applies only to bare dataclass construction.
+        test_dirs: Repo test roots. ``load_config`` smart-detects these when
+            ``test_dirs`` is absent from ``pyproject.toml`` (``tests/`` then
+            ``test/``); the field default ``["tests"]`` applies only to bare
+            dataclass construction.
     """
 
     base_branch: str = DEFAULT_BASE_BRANCH
@@ -212,15 +218,23 @@ def _existing_dirs(repo_root: Path, dirs: list[str]) -> list[str]:
 
     Returns:
         The subset that resolves inside *repo_root* and exists on disk, with
-        duplicates removed and original order kept. Paths escaping the repo
-        (absolute or ``..``) are dropped — the scan never reaches outside.
+        duplicates removed and original order kept. Dropped: blank entries,
+        option-like entries (leading ``-``, which would be parsed as a flag
+        by the consuming tool), and paths escaping the repo (absolute or
+        ``..``) — so the scan never reaches outside and no configured value
+        can inject a flag into a tool's argv.
     """
     root = repo_root.resolve()
     out: list[str] = []
     for d in dict.fromkeys(dirs):
+        if not d.strip() or d.lstrip().startswith("-"):
+            logger.debug("dropping scan root %r — blank or option-like", d)
+            continue
         resolved = (repo_root / d).resolve()
-        if resolved.is_relative_to(root) and resolved.exists():
-            out.append(d)
+        if not (resolved.is_relative_to(root) and resolved.exists()):
+            logger.debug("dropping scan root %r — outside repo or missing", d)
+            continue
+        out.append(d)
     return out
 
 
