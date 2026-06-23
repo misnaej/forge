@@ -23,6 +23,7 @@ def test_steps_in_expected_order() -> None:
         "claude-md",
         "claude-settings",
         "labels",
+        "readme-badges",
         "api-digest",
         "cli-reference",
         "audit-deps",
@@ -181,7 +182,7 @@ def test_main_continue_on_fail_runs_every_step(
     monkeypatch.setattr(install_bootstrap, "repo_root", lambda: tmp_path)
     # Force interactive context: the _gate_skip_in_ci gate (FOUNDATION
     # §15) self-skips `doctor` and `audit-deps` in non-TTY runs, which
-    # would drop the failure count to 5.
+    # would drop the failure count to 6.
     monkeypatch.setattr(install_bootstrap, "is_non_interactive", lambda: False)
     captured = CapturedCalls()
     monkeypatch.setattr(
@@ -195,8 +196,8 @@ def test_main_continue_on_fail_runs_every_step(
     argv = ["install-forge-bootstrap", "--skip", "labels"]
     with patch.object(install_bootstrap.sys, "argv", argv):
         rc = install_bootstrap.main()
-    # Eight non-gated steps (incl. config), each fails with rc=1.
-    assert rc == 8
+    # Nine non-gated steps (incl. config), each fails with rc=1.
+    assert rc == 9
 
 
 def test_doctor_and_audit_deps_skip_in_ci(
@@ -224,9 +225,9 @@ def test_doctor_and_audit_deps_skip_in_ci(
     argv = ["install-forge-bootstrap", "--skip", "labels"]
     with patch.object(install_bootstrap.sys, "argv", argv):
         rc = install_bootstrap.main()
-    # Five failing steps: githooks, claude-md, claude-settings, api-digest,
-    # cli-reference. `doctor` + `audit-deps` self-skipped via the CI gate.
-    assert rc == 5
+    # Six failing steps: githooks, claude-md, claude-settings, readme-badges,
+    # api-digest, cli-reference. `doctor` + `audit-deps` self-skip (CI gate).
+    assert rc == 6
     invoked_clis = {call[0] for call in captured.calls}
     assert "forge-doctor" not in invoked_clis
     assert "forge-audit-deps" not in invoked_clis

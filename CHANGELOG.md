@@ -20,6 +20,28 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.2.0 — 2026-06-22
+
+All additive and opt-in — no consumer action required to upgrade.
+
+### Features
+- **CVE-usage check** — a usage-scoped second stage on top of `pip_audit`.
+  Where `pip_audit` flags vulnerable *packages*, `verify-forge-cve-usage`
+  flags vulnerable *usage*: it intersects the CVE IDs pip-audit is currently
+  reporting with a consumer `cve_usage_patterns.toml` map and greps the
+  source for the patterns, surfacing only real matches with `file:line` +
+  risk + mitigation. Self-maintaining (a pattern is checked only while its
+  CVE is live), non-blocking, opt-in by presence of the map. New
+  `step_cve_usage` pre-commit step (#3).
+- **README status badges** — `install-forge-readme-badges` writes a
+  drift-aware managed block (`<!-- forge:badges:start/end -->`) of status
+  badges (CI, Python version, Ruff, license, forge channel, Claude Code, and
+  the local docstring-coverage SVG when present). shields.io URLs where a
+  hosted source exists; the existing `.badges/DocstringCoverage.svg` is
+  referenced rather than regenerated (DRY). Opt-in via
+  `[tool.forge.badges] enabled = true`; wired into `install-forge-bootstrap`
+  (#64).
+
 ## v2.1.0 — 2026-06-22
 
 ### ⚠️ Upgrade notes
