@@ -296,6 +296,123 @@ def test_step_plugin_version_marks_skipped_from_cli_output(
     assert result.skipped
 
 
+def _setup_release_guard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    plugin_version: str | None,
+    latest_tag: str | None,
+    dual_track: bool = True,
+) -> None:
+    """Stage a repo for step_release_tag_guard: dual-track + plugin.json + tag.
+
+    Args:
+        tmp_path: Repo root.
+        monkeypatch: pytest fixture.
+        plugin_version: Version to write into ``.claude-plugin/plugin.json``;
+            ``None`` writes no manifest.
+        latest_tag: Tag ``latest_v_tag`` is stubbed to return (e.g.
+            ``"v1.24.1"``); ``None`` stubs no tags.
+        dual_track: When ``True`` (default), writes ``dev_branch = "dev"`` so
+            the guard treats the repo as dual-track; ``False`` leaves it
+            single-track.
+    """
+    body = '[tool.forge]\ndev_branch = "dev"\n' if dual_track else "[tool.forge]\n"
+    (tmp_path / "pyproject.toml").write_text(body, encoding="utf-8")
+    if plugin_version is not None:
+        manifest = tmp_path / ".claude-plugin" / "plugin.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(f'{{"version": "{plugin_version}"}}', encoding="utf-8")
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _root: latest_tag)
+
+
+def test_release_guard_passes_when_one_minor_ahead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """plugin.json one minor ahead of the latest tag is the normal case."""
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="1.25.0", latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert result.passed
+    assert not result.skipped
+
+
+def test_release_guard_passes_when_one_patch_ahead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single patch bump ahead of the latest tag is allowed."""
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="1.24.2", latest_tag="v1.24.1"
+    )
+    assert precommit.step_release_tag_guard(tmp_path).passed
+
+
+def test_release_guard_blocks_on_skipped_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A two-minor gap (an intermediate release never tagged) is blocked (#66)."""
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="1.26.0", latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert not result.passed
+    assert not result.skipped
+    assert "forge-next-prep --tag" in result.output
+
+
+def test_release_guard_skips_single_track(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single-track repo never triggers the dev-tagging cadence guard."""
+    _setup_release_guard(
+        tmp_path,
+        monkeypatch,
+        plugin_version="1.26.0",
+        latest_tag="v1.24.1",
+        dual_track=False,
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert result.passed
+    assert result.skipped
+
+
+def test_release_guard_skips_when_not_ahead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """plugin.json equal to the latest tag (reproduced release) → skip."""
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="2.0.0", latest_tag="v2.0.0"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert result.passed
+    assert result.skipped
+
+
+def test_release_guard_skips_without_plugin_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No .claude-plugin/plugin.json → nothing to guard, skip."""
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version=None, latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert result.passed
+    assert result.skipped
+
+
+def test_release_guard_skips_on_non_semver_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unparseable plugin.json version degrades to skip, never raises."""
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="rolling", latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert result.passed
+    assert result.skipped
+
+
 def _stub_docstrings_passing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub ``step_docstrings`` to skip ``verify-forge-docstrings`` check."""
 
@@ -875,8 +992,9 @@ def test_step_doctest_passes_non_blocking_by_default(
     """Doctest passes as non-blocking when `blocking` is unset.
 
     MOCK SETUP: pytest present on PATH; ``_run`` returns a passing canned
-    result; no ``[tool.forge.doctest]`` config so defaults apply.
+    result; a ``src/`` dir so smart-detect resolves a scan root.
     """
+    (tmp_path / "src").mkdir()
     _present(monkeypatch)
     monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, "3 passed"))
     result = precommit.step_doctest(tmp_path)
@@ -891,6 +1009,8 @@ def test_step_doctest_uses_configured_paths(
 ) -> None:
     """Doctest runs `pytest --doctest-modules` over `[tool.forge.doctest].paths`."""
     _present(monkeypatch)
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "app").mkdir()
     _write_pyproject(tmp_path, '[tool.forge.doctest]\npaths = ["lib", "app"]\n')
     captured: dict[str, list[str]] = {}
 
@@ -909,6 +1029,7 @@ def test_step_doctest_no_examples_is_skipped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Pytest 'no tests ran' (exit 5) counts as a skip, not a failure."""
+    (tmp_path / "src").mkdir()
     _present(monkeypatch)
     monkeypatch.setattr(
         precommit, "_run", lambda _cmd, **_kw: (False, "no tests ran in 0.01s")
@@ -923,6 +1044,7 @@ def test_step_doctest_blocking_config_is_blocking(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`blocking = true` makes a failing doctest a blocking failure."""
+    (tmp_path / "src").mkdir()
     _present(monkeypatch)
     _write_pyproject(tmp_path, "[tool.forge.doctest]\nblocking = true\n")
     monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (False, "1 failed"))
@@ -936,6 +1058,7 @@ def test_step_doctest_missing_pytest_exits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Doctest fails loudly (SystemExit) when pytest is not on PATH."""
+    (tmp_path / "src").mkdir()
     monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit):
         precommit.step_doctest(tmp_path)
@@ -948,8 +1071,9 @@ def test_step_typecheck_default_pyrefly(
     """Typecheck defaults to the `pyrefly check` command and is non-blocking.
 
     MOCK SETUP: pyrefly present on PATH; ``_run`` captures the command and
-    returns a passing result; no config so the default checker applies.
+    returns a passing result; a ``src/`` dir so smart-detect resolves a root.
     """
+    (tmp_path / "src").mkdir()
     _present(monkeypatch)
     captured: dict[str, list[str]] = {}
 
@@ -969,6 +1093,7 @@ def test_step_typecheck_missing_pyrefly_exits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An opted-in-but-absent pyrefly binary fails loudly (SystemExit)."""
+    (tmp_path / "src").mkdir()
     monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit):
         precommit.step_typecheck(tmp_path)
@@ -979,6 +1104,7 @@ def test_step_typecheck_blocking_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`blocking = true` makes a pyrefly error a blocking failure."""
+    (tmp_path / "src").mkdir()
     _present(monkeypatch)
     _write_pyproject(tmp_path, "[tool.forge.typecheck]\nblocking = true\n")
     monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (False, "error: x"))
@@ -987,21 +1113,46 @@ def test_step_typecheck_blocking_config(
     assert not result.non_blocking
 
 
-def test_step_typecheck_rejects_option_like_paths(tmp_path: Path) -> None:
-    """An option-like `paths` entry is rejected as a blocking misconfiguration."""
+def test_step_typecheck_drops_option_like_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An option-like `paths` entry never reaches the pyrefly subprocess.
+
+    The shared resolver only returns existing in-repo dirs, so a value like
+    ``--output=x`` (no such dir) is dropped — preventing flag injection. With
+    nothing left to scan the step skips cleanly rather than running pyrefly
+    with an attacker-controlled flag.
+    """
+    ran: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit, "_run", lambda cmd, **_kw: ran.append(cmd) or (True, "")
+    )
     _write_pyproject(tmp_path, '[tool.forge.typecheck]\npaths = ["--output=x"]\n')
     result = precommit.step_typecheck(tmp_path)
-    assert not result.passed
-    assert not result.non_blocking
-    assert "--output=x" in result.output
+    assert result.skipped
+    assert result.passed
+    assert ran == []  # pyrefly never invoked with the injected flag
 
 
-def test_step_doctest_rejects_paths_escaping_repo(tmp_path: Path) -> None:
-    """A `paths` entry resolving outside the repo is rejected (blocking)."""
+def test_step_doctest_drops_paths_escaping_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `paths` entry resolving outside the repo never reaches pytest.
+
+    The resolver drops repo-escaping paths, so the step skips instead of
+    scanning ``/etc`` — the path-traversal guard, expressed as a clean skip.
+    """
+    ran: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit, "_run", lambda cmd, **_kw: ran.append(cmd) or (True, "")
+    )
     _write_pyproject(tmp_path, '[tool.forge.doctest]\npaths = ["/etc"]\n')
     result = precommit.step_doctest(tmp_path)
-    assert not result.passed
-    assert not result.non_blocking
+    assert result.skipped
+    assert result.passed
+    assert ran == []
 
 
 def test_step_doc_consistency_non_blocking(

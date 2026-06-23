@@ -27,35 +27,6 @@ logger = logging.getLogger(__name__)
 _FORGE_GITHUB_REPO = "misnaej/forge"
 
 
-DEFAULT_SOURCE_DIRS: tuple[str, ...] = (
-    "src",
-    "test",
-    "tests",
-    "scripts",
-    "tools",
-    "projects",
-    "agents",
-    "lib",
-)
-
-
-def detect_existing_source_dirs(repo_root: Path) -> list[str]:
-    """Return the subset of ``DEFAULT_SOURCE_DIRS`` that exist under *repo_root*.
-
-    Single source of truth for "which source dirs does this repo
-    contain?" — every CLI that scopes work to source dirs (precommit
-    sequence, ruff fixer, audit pack) should call this helper rather
-    than re-filtering ``DEFAULT_SOURCE_DIRS`` inline.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        Repo-relative directory names, in ``DEFAULT_SOURCE_DIRS`` order.
-    """
-    return [d for d in DEFAULT_SOURCE_DIRS if (repo_root / d).is_dir()]
-
-
 @lru_cache(maxsize=1)
 def repo_root() -> Path:
     """Return the git repo root for the current working directory.

@@ -20,6 +20,56 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.1.0 — 2026-06-22
+
+### ⚠️ Upgrade notes
+- **ruff now honors `[tool.forge].source_dirs` (scope change).** Source-dir
+  resolution is unified across every layout-aware tool (ruff, api-digest,
+  docstring-coverage, doctest, typecheck) behind one resolver:
+  `[tool.forge.<tool>].paths` → `[tool.forge].source_dirs` (+ `test_dirs`)
+  → smart auto-detect. ruff previously scanned a fixed broad name-list
+  (`src, test, tests, scripts, tools, projects, agents, lib`) and **ignored
+  `source_dirs`** (#70). If you set `source_dirs` *and* keep lintable Python
+  in a dir outside it (e.g. `scripts/`), add that dir to `source_dirs` (or a
+  `[tool.forge.ruff].paths`) so ruff keeps linting it. **This also applies
+  when `source_dirs` is unset:** the old broad list scanned `scripts/`,
+  `tools/`, `agents/`, `lib/`, and `projects/` too, and smart auto-detect
+  does not — if you keep lintable Python in any of those, add it to
+  `source_dirs` / `[tool.forge.ruff].paths`. Repos whose Python lives only
+  under `src/` (or top-level packages) + `tests/` need no action.
+- **New `release_tag_guard` pre-commit step (dual-track repos only).** Blocks
+  a commit when `plugin.json` is more than one rolling-next step ahead of the
+  latest `v*` tag — i.e. an intermediate release was bumped past without
+  being tagged (the failure that shipped v1.25.0 untagged, #66). **Self-skips
+  for single-track repos, repos without `.claude-plugin/plugin.json`, and
+  when `plugin.json` isn't strictly ahead** — so consumers see nothing. Fix a
+  trip by running `forge-next-prep --tag`.
+
+### Features
+- **Unified, granular source-dir resolution** — `[tool.forge].source_dirs` /
+  `test_dirs` are now the single definition every layout-aware tool scans,
+  with optional per-tool `[tool.forge.<tool>].paths` overrides (new for
+  `ruff` and `api_digest`; existing for coverage / doctest / typecheck). The
+  unset default is **smart auto-detect** (`src/` or top-level packages; then
+  `tests/` / `test/`), replacing a fixed name-list that scanned phantom dirs
+  (#68, #70).
+- **`release_tag_guard`** — pre-commit backstop enforcing the dev release-tag
+  cadence (#66).
+
+### Fixes
+- **`block_protected_branches` now blocks pushes by their refspec
+  destination** — a push from an unprotected branch to a protected one
+  (`git push origin HEAD:dev`, `feature:dev`, `feature:refs/heads/dev`,
+  `+dev`) was previously missed (only the *current* branch was checked).
+  This destination guard has **no agent bypass**: not even
+  `forge:git-commit-push` may push directly to a protected branch (matching
+  `block_branch_deletion`). The agent bypass now covers only normal
+  feature-branch pushes (#74).
+- **`block_install_deps` now catches `conda run conda install`** (and the
+  general `<mgr> run <mgr> install` wrapper) plus `conda env update` (direct
+  and wrapped) — the manager-wrapping-a-manager gaps surfaced in review
+  (#62).
+
 ## v2.0.0 — 2026-06-19
 
 ### ⚠️ Upgrade notes

@@ -18,10 +18,11 @@ Unlike full API documentation, the digest is deliberately terse — one
 line per symbol: a signature reconstructed from the AST plus the first
 line of the symbol's docstring. It is an index, not a reference manual.
 
-The generator is repo-agnostic. Source roots come from
-``[tool.forge].source_dirs`` when set; otherwise they are auto-detected
-(``src/`` when present, else every top-level directory containing an
-``__init__.py``). Pass ``--roots`` to override both.
+The generator is repo-agnostic. Source roots come from the shared
+``forge.config.resolve_tool_roots`` resolution — granular
+``[tool.forge.api_digest].paths`` → repo-wide ``[tool.forge].source_dirs``
+→ smart auto-detect (``src/`` when present, else top-level packages). Pass
+``--roots`` to override all of it.
 
 Usage:
 
@@ -49,7 +50,7 @@ import logging
 import sys
 from typing import TYPE_CHECKING, NamedTuple
 
-from forge.config import read_pyproject_raw
+from forge.config import resolve_tool_roots
 from forge.gen_common import check_doc_drift
 from forge.git_utils import configure_cli_logging, repo_root
 
@@ -109,14 +110,14 @@ class ModuleDigest(NamedTuple):
 def detect_roots(root: Path, explicit: list[str] | None) -> list[Path]:
     """Resolve the source roots to scan for Python modules.
 
-    When *explicit* is given, each entry is resolved against the repo
-    root; any root that escapes the repo (an absolute path or one using
-    ``..``) is rejected with an error and excluded, so the scan never
-    reads files outside the repository. Otherwise the repo-wide
-    ``[tool.forge].source_dirs`` is honored when set (so a multi-root repo
-    indexes every library root, matching ``verify-forge-docstring-coverage``
-    — #67); when that key is unset, ``src/`` is used if it exists, falling
-    back to every top-level directory containing an ``__init__.py``.
+    When *explicit* is given (``--roots``), each entry is resolved against
+    the repo root; any root that escapes the repo (an absolute path or one
+    using ``..``) is rejected with an error and excluded, so the scan never
+    reads files outside the repository. Otherwise the shared
+    :func:`forge.config.resolve_tool_roots` resolution applies (granular
+    ``[tool.forge.api_digest].paths`` → repo-wide ``[tool.forge].source_dirs``
+    → smart auto-detect), so api-digest indexes the same roots every other
+    layout-aware forge tool does. Source-only — test dirs are not indexed.
 
     Args:
         root: Repository root directory.
@@ -140,26 +141,8 @@ def detect_roots(root: Path, explicit: list[str] | None) -> list[Path]:
             inside.append(path)
         return sorted((p for p in inside if p.is_dir()), key=lambda p: p.name)
 
-    # Honor [tool.forge].source_dirs only when explicitly set — keeps the
-    # single-root auto-detect below as the default when the key is absent.
-    section = read_pyproject_raw(root).get("tool", {}).get("forge", {})
-    if "source_dirs" in section:
-        configured = [root / d for d in section["source_dirs"] if (root / d).is_dir()]
-        if configured:
-            return sorted(configured, key=lambda p: p.name)
-
-    src = root / "src"
-    if src.is_dir():
-        return [src]
-
-    return sorted(
-        (
-            item
-            for item in root.iterdir()
-            if item.is_dir() and (item / "__init__.py").is_file()
-        ),
-        key=lambda p: p.name,
-    )
+    roots = resolve_tool_roots(root, "api_digest")
+    return sorted((root / d for d in roots), key=lambda p: p.name)
 
 
 def _is_test_module(path: Path) -> bool:

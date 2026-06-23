@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_43 modules, 390 symbols._
+_43 modules, 395 symbols._
 
 ## `forge._hook_helpers`
 
@@ -164,10 +164,14 @@ _43 modules, 390 symbols._
 
 ## `forge.config`
 
+- `detect_source_dirs(repo_root: Path) -> list[str]` — Smart-detect the repo's source roots when ``source_dirs`` is unset.
+- `detect_test_dirs(repo_root: Path) -> list[str]` — Smart-detect the repo's test roots when ``test_dirs`` is unset.
 - `class ForgeConfig` — Repo configuration sourced from ``[tool.forge]``.
   - `dual_track(self) -> bool` — Return ``True`` when base and dev are distinct branches.
 - `read_pyproject_raw(repo_root: Path) -> dict` — Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
 - `load_config(repo_root: Path) -> ForgeConfig` — Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.
+- `_existing_dirs(repo_root: Path, dirs: list[str]) -> list[str]` _(internal)_ — Filter *dirs* to existing in-repo paths, de-duplicated, order-preserving.
+- `resolve_tool_roots(repo_root: Path, tool: str, *, include_tests: bool = False) -> list[str]` — Resolve the scan roots a layout-consuming *tool* should use.
 
 ## `forge.continuation_append`
 
@@ -253,7 +257,6 @@ _43 modules, 390 symbols._
 
 ## `forge.git_utils`
 
-- `detect_existing_source_dirs(repo_root: Path) -> list[str]` — Return the subset of ``DEFAULT_SOURCE_DIRS`` that exist under *repo_root*.
 - `repo_root() -> Path` — Return the git repo root for the current working directory.
 - `configure_cli_logging() -> None` — Apply forge's canonical CLI logging setup.
 - `emit(msg: str) -> None` — Write *msg* to stdout with a trailing newline.
@@ -403,8 +406,10 @@ _43 modules, 390 symbols._
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
 - `_cli_wiring_enabled(repo_root: Path) -> bool` _(internal)_ — Return True when the repo has opted into the cli_wiring check.
 - `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
+- `_plugin_version(repo_root: Path) -> str | None` _(internal)_ — Return ``.claude-plugin/plugin.json["version"]`` or ``None`` when absent.
+- `_one_step_successors(tag: tuple[int, int, int]) -> set[tuple[int, int, int]]` _(internal)_ — Return the three valid rolling-next successors of a tagged release.
+- `step_release_tag_guard(repo_root: Path) -> StepResult` — Block when an intermediate rolling-next release was never tagged (#66).
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
-- `_bad_scan_paths(paths: list[str], repo_root: Path) -> list[str]` _(internal)_ — Return config scan-path values that are blank, option-like, or escape the repo.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the source tree (opt-in).
 - `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
@@ -475,7 +480,7 @@ _43 modules, 390 symbols._
 - `_badge_enabled(data: dict) -> bool` _(internal)_ — Return True when the consumer opted into badge generation.
 - `_write_badge(repo_root: Path, results: object) -> Path` _(internal)_ — Write a coverage SVG badge under ``.badges/`` and return its path.
 - `_emit_missing_list(results: object) -> None` _(internal)_ — Print a parseable ``MISSING:`` section listing every undocumented symbol.
-- `_scan_paths(data: dict, repo_root: Path) -> list[str]` _(internal)_ — Resolve the docstring-coverage scan roots from config, safely.
+- `_scan_paths(repo_root: Path) -> list[str]` _(internal)_ — Resolve the docstring-coverage scan roots via the shared resolver.
 - `main() -> int` — CLI entry point for ``verify-forge-docstring-coverage``.
 
 ## `forge.verify_docstrings`

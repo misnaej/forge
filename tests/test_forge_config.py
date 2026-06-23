@@ -108,12 +108,15 @@ def test_report_shows_configured_values() -> None:
 
 
 def test_report_lists_layout_dirs() -> None:
-    """The report enumerates the repo-wide source_dirs / test_dirs keys."""
+    """The report enumerates the repo-wide source_dirs / test_dirs keys.
+
+    Their default is now the smart-detect description (not a fixed list),
+    since an unset key resolves against the actual on-disk layout.
+    """
     text = "\n".join(forge_config.build_report({}))
     assert "source_dirs" in text
     assert "test_dirs" in text
-    assert "<default: ['src']>" in text
-    assert "<default: ['tests']>" in text
+    assert "smart-detect" in text
 
 
 def test_report_omits_suggested_setup_when_nothing_recommended() -> None:
