@@ -34,7 +34,7 @@ def _stub_subprocess(
     """
     captured = calls if calls is not None else []
 
-    def fake_run(cmd: list[str], **_kwargs: object) -> object:
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
         captured.append(cmd)
         if cmd[:2] == ["git", "diff"]:
             return type("P", (), {"returncode": 0, "stdout": diff_stdout})()
@@ -46,7 +46,7 @@ def _stub_subprocess(
             )()
         return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
-    monkeypatch.setattr(fix_ruff.subprocess, "run", fake_run)
+    monkeypatch.setattr(fix_ruff.subprocess, "run", _fake_run)
     return captured
 
 
