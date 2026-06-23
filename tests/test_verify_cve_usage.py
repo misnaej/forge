@@ -87,12 +87,16 @@ def test_comment_lines_are_excluded(tmp_path: Path) -> None:
     assert cve.scan(tmp_path, cve.load_patterns(tmp_path), {"CVE-2024-0001"}) == []
 
 
-def test_pattern_file_excludes_itself(tmp_path: Path) -> None:
-    """The pattern map file itself is never scanned (it holds the patterns)."""
-    _write_map(tmp_path)
-    # No source files at all — only the pattern file, which must be skipped.
-    findings = cve.scan(tmp_path, cve.load_patterns(tmp_path), {"CVE-2024-0001"})
-    assert findings == []
+def test_pattern_file_is_not_scanned(tmp_path: Path) -> None:
+    """The ``.toml`` map (holding the patterns verbatim) is never scanned.
+
+    Only ``.py`` files are walked, so the pattern file can't self-match. With
+    a clean ``.py`` present (no usage), the patterns inside the ``.toml`` must
+    not surface as findings.
+    """
+    _write_map(tmp_path)  # contains 'lxml\.etree' verbatim
+    _write_src(tmp_path, "import json\n")  # no lxml usage
+    assert cve.scan(tmp_path, cve.load_patterns(tmp_path), {"CVE-2024-0001"}) == []
 
 
 def test_load_patterns_absent_is_none(tmp_path: Path) -> None:

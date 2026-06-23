@@ -346,7 +346,7 @@ _45 modules, 417 symbols._
 - `_shields_static(label: str, message: str, color: str) -> str` _(internal)_ — Build a static shields.io badge image URL.
 - `_md(alt: str, image: str, link: str | None = None) -> str` _(internal)_ — Render one markdown badge (optionally wrapped in a link).
 - `_git_remote_slug(root: Path) -> str | None` _(internal)_ — Return ``owner/repo`` from the ``origin`` remote, or ``None``.
-- `_ci_badge(root: Path, slug: str | None) -> str | None` _(internal)_ — Build the GitHub Actions CI badge for the first workflow, if any.
+- `_ci_badge(root: Path, slug: str | None, workflow: str | None) -> str | None` _(internal)_ — Build the GitHub Actions CI badge for the chosen workflow, if any.
 - `_python_badge(data: dict) -> str | None` _(internal)_ — Build the Python-version badge from ``requires-python``.
 - `_license_badge(data: dict) -> str | None` _(internal)_ — Build the License badge from ``[project].license``.
 - `_ruff_badge() -> str` _(internal)_ — Return the static Ruff endpoint badge.
@@ -459,7 +459,7 @@ _45 modules, 417 symbols._
 
 - `_ref_type(value: str) -> str` _(internal)_ — Argparse type validator for ``--to``.
 - `class Pin` — A forge-scripts pin parsed from a consumer's ``pyproject.toml``.
-- `_find_pin(repo_root: Path) -> Pin | None` _(internal)_ — Locate the ``forge-scripts`` pin in *repo_root*'s ``pyproject.toml``.
+- `find_pin(repo_root: Path) -> Pin | None` — Locate the ``forge-scripts`` pin in *repo_root*'s ``pyproject.toml``.
 - `_rewrite_pin(pin: Pin, new_ref: str) -> str` _(internal)_ — Return the file content with *pin*'s line rewritten to *new_ref*.
 - `_git_url_for(auth_mode: AuthMode, ref: str) -> str` _(internal)_ — Return the ``git+...`` URL pip should resolve for *ref* under *auth_mode*.
 - `_pip_command(ref: str, *, auth_mode: AuthMode = 'https-anonymous') -> str` _(internal)_ — Return the exact ``pip install`` line for a given pin ref.
@@ -492,7 +492,7 @@ _45 modules, 417 symbols._
 - `class Finding` — One matched vulnerable-usage occurrence.
 - `load_patterns(root: Path) -> dict[str, dict[str, object]] | None` — Load the consumer's ``cve_usage_patterns.toml`` map.
 - `active_cve_ids(root: Path) -> set[str] | None` — Return the advisory / CVE IDs pip-audit currently reports.
-- `_iter_source_lines(root: Path, exclude: str) -> Iterable[tuple[str, int, str]]` _(internal)_ — Yield ``(repo_relative_path, line_no, text)`` for every source line.
+- `_iter_source_lines(root: Path) -> Iterable[tuple[str, int, str]]` _(internal)_ — Yield ``(repo_relative_path, line_no, text)`` for every source line.
 - `scan(root: Path, patterns: dict[str, dict[str, object]], active: set[str]) -> list[Finding]` — Grep the source for the patterns of every active, mapped CVE.
 - `_render(findings: list[Finding]) -> str` _(internal)_ — Render findings as the ``code_health/cve_usage.log`` body.
 - `main() -> int` — CLI entry point.

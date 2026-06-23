@@ -131,7 +131,7 @@ class Pin:
     ref: str
 
 
-def _find_pin(repo_root: Path) -> Pin | None:
+def find_pin(repo_root: Path) -> Pin | None:
     """Locate the ``forge-scripts`` pin in *repo_root*'s ``pyproject.toml``.
 
     Args:
@@ -326,7 +326,7 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
         Raises ``SystemExit(2)`` via :func:`_resolve_target_ref` when
         the non-``--check`` path can't resolve a target.
     """
-    pin = _find_pin(root)
+    pin = find_pin(root)
     current_ref = pin.ref if pin else None
 
     if args.check:

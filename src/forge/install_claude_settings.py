@@ -40,7 +40,7 @@ from forge.claude_settings_schema import (
 )
 from forge.git_utils import configure_cli_logging
 from forge.git_utils import repo_root as get_repo_root
-from forge.upgrade import _find_pin
+from forge.upgrade import find_pin
 
 
 if TYPE_CHECKING:
@@ -70,7 +70,7 @@ def _resolve_ref(repo_root: Path, cli_ref: str | None) -> str:
     """
     if cli_ref:
         return cli_ref
-    pin = _find_pin(repo_root)
+    pin = find_pin(repo_root)
     if pin is not None:
         return pin.ref
     return _DEFAULT_REF

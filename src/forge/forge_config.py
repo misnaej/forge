@@ -181,6 +181,12 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "README.md",
         "README file the badge managed-block is written into.",
     ),
+    ConfigKey(
+        ("tool", "forge", "badges", "workflow"),
+        "first workflow alphabetically",
+        "GitHub Actions workflow filename for the CI badge (under "
+        ".github/workflows); otherwise the first one is used.",
+    ),
 )
 
 # Third-party tools forge reads from their OWN native section rather than

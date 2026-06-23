@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING
 from forge.config import read_pyproject_raw
 from forge.git_utils import configure_cli_logging
 from forge.git_utils import repo_root as get_repo_root
-from forge.upgrade import _find_pin
+from forge.upgrade import find_pin
 
 
 if TYPE_CHECKING:
@@ -72,11 +72,11 @@ def _shields_static(label: str, message: str, color: str) -> str:
         The badge image URL.
     """
 
-    def esc(part: str) -> str:
+    def _esc(part: str) -> str:
         shielded = part.replace("-", "--").replace("_", "__").replace(" ", "_")
         return urllib.parse.quote(shielded, safe="")
 
-    seg = "-".join(esc(p) for p in (label, message, color))
+    seg = "-".join(_esc(p) for p in (label, message, color))
     return f"{_SHIELDS}/badge/{seg}"
 
 
@@ -117,26 +117,40 @@ def _git_remote_slug(root: Path) -> str | None:
         return None
     url = proc.stdout.strip()
     match = re.search(r"github\.com[:/]+(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$", url)
-    return match.group("slug") if match else None
+    if match is None:
+        return None
+    slug = match.group("slug")
+    # Restrict to GitHub's own owner/repo charset before it flows into URL
+    # f-strings and markdown — a crafted remote can't inject markdown.
+    if not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", slug):
+        return None
+    return slug
 
 
-def _ci_badge(root: Path, slug: str | None) -> str | None:
-    """Build the GitHub Actions CI badge for the first workflow, if any.
+def _ci_badge(root: Path, slug: str | None, workflow: str | None) -> str | None:
+    """Build the GitHub Actions CI badge for the chosen workflow, if any.
 
     Args:
         root: Repo root.
         slug: ``owner/repo`` slug, or ``None``.
+        workflow: The ``[tool.forge.badges] workflow`` override (a filename
+            under ``.github/workflows``), or ``None`` to use the first
+            workflow alphabetically.
 
     Returns:
-        The markdown badge, or ``None`` when there is no slug or no workflow
-        file under ``.github/workflows``.
+        The markdown badge, or ``None`` when there is no slug, no workflow
+        directory, or the named override does not exist.
     """
     if slug is None:
         return None
-    workflows = sorted((root / ".github" / "workflows").glob("*.y*ml"))
-    if not workflows:
+    wf_dir = root / ".github" / "workflows"
+    if workflow:
+        wf = workflow if (wf_dir / workflow).is_file() else None
+    else:
+        found = sorted(wf_dir.glob("*.y*ml"))
+        wf = found[0].name if found else None
+    if wf is None:
         return None
-    wf = workflows[0].name
     img = f"https://github.com/{slug}/actions/workflows/{wf}/badge.svg"
     return _md("CI", img, f"https://github.com/{slug}/actions/workflows/{wf}")
 
@@ -209,7 +223,7 @@ def _forge_badge(root: Path) -> str:
         The markdown badge naming the pinned channel/ref (e.g. ``forge main``),
         falling back to a plain ``forge`` badge when no pin is found.
     """
-    pin = _find_pin(root)
+    pin = find_pin(root)
     ref = pin.ref if pin is not None else "enabled"
     return _md("forge", _shields_static("forge", ref, "blue"))
 
@@ -242,9 +256,11 @@ def build_badges(root: Path) -> list[str]:
         missing inputs (no remote, no license, …) are omitted.
     """
     data = read_pyproject_raw(root)
+    badges_cfg = data.get("tool", {}).get("forge", {}).get("badges", {})
+    workflow = badges_cfg.get("workflow") if isinstance(badges_cfg, dict) else None
     slug = _git_remote_slug(root)
     candidates = [
-        _ci_badge(root, slug),
+        _ci_badge(root, slug, str(workflow) if workflow else None),
         _python_badge(data),
         _ruff_badge(),
         _license_badge(data),
@@ -288,9 +304,44 @@ def inject(readme: str, block: str) -> str:
     lines = readme.splitlines()
     for i, line in enumerate(lines):
         if line.startswith("# "):
-            lines.insert(i + 1, f"\n{block}\n")
-            return "\n".join(lines) + ("\n" if readme.endswith("\n") else "")
+            rest = lines[i + 1 :]
+            if rest and rest[0] == "":
+                rest = rest[1:]  # don't double an existing blank line after the H1
+            new = [*lines[: i + 1], "", block, "", *rest]
+            return "\n".join(new) + ("\n" if readme.endswith("\n") else "")
     return f"{block}\n\n{readme}"
+
+
+def _get_readme_path(root: Path) -> tuple[Path | None, int]:
+    """Load and validate the README path from config.
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        A tuple (readme_path, exit_code). When exit_code is 0 and
+        readme_path is not None, the path is valid. When exit_code is
+        non-zero, the configuration check failed and the caller should
+        exit with that code.
+    """
+    cfg = read_pyproject_raw(root).get("tool", {}).get("forge", {}).get("badges", {})
+    if not (isinstance(cfg, dict) and cfg.get("enabled") is True):
+        logger.info("[tool.forge.badges] enabled is not true — skipped.")
+        return None, 0
+
+    rel_readme = str(cfg.get("readme", "README.md"))
+    readme = (root / rel_readme).resolve()
+    # Refuse a `readme` value that escapes the repo (absolute path or `..`) —
+    # an absolute string would replace `root` entirely under `/`.
+    if not readme.is_relative_to(root.resolve()):
+        logger.error(
+            "[tool.forge.badges] readme %r escapes the repo — refusing.", rel_readme
+        )
+        return None, 1
+    if not readme.is_file():
+        logger.error("%s not found — nothing to update.", readme.name)
+        return None, 1
+    return readme, 0
 
 
 def main() -> int:
@@ -316,15 +367,9 @@ def main() -> int:
     args = parser.parse_args()
 
     root = get_repo_root()
-    cfg = read_pyproject_raw(root).get("tool", {}).get("forge", {}).get("badges", {})
-    if not (isinstance(cfg, dict) and cfg.get("enabled") is True):
-        logger.info("[tool.forge.badges] enabled is not true — skipped.")
-        return 0
-
-    readme = root / str(cfg.get("readme", "README.md"))
-    if not readme.is_file():
-        logger.error("%s not found — nothing to update.", readme.name)
-        return 1
+    readme, exit_code = _get_readme_path(root)
+    if readme is None:
+        return exit_code
 
     current = readme.read_text(encoding="utf-8")
     updated = inject(current, render_block(build_badges(root)))

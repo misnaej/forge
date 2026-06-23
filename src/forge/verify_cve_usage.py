@@ -139,18 +139,17 @@ def active_cve_ids(root: Path) -> set[str] | None:
     return ids
 
 
-def _iter_source_lines(root: Path, exclude: str) -> Iterable[tuple[str, int, str]]:
+def _iter_source_lines(root: Path) -> Iterable[tuple[str, int, str]]:
     """Yield ``(repo_relative_path, line_no, text)`` for every source line.
 
     Walks the layout-aware scan roots (the shared
     :func:`forge.config.resolve_tool_roots`, so it honors
     ``[tool.forge].source_dirs`` / ``[tool.forge.cve_usage].paths``), reading
-    ``.py`` files. The pattern file itself is excluded — it contains the
-    patterns verbatim and would self-match.
+    only ``.py`` files — so the ``.toml`` pattern map is inherently never
+    scanned (it would otherwise self-match its own patterns).
 
     Args:
         root: Repo root.
-        exclude: Repo-relative path to skip (the pattern config file).
 
     Yields:
         One ``(path, 1-based line number, line text)`` per source line.
@@ -158,8 +157,6 @@ def _iter_source_lines(root: Path, exclude: str) -> Iterable[tuple[str, int, str
     for rel_root in resolve_tool_roots(root, "cve_usage", include_tests=True):
         for py in sorted((root / rel_root).rglob("*.py")):
             rel = str(py.relative_to(root))
-            if rel == exclude:
-                continue
             try:
                 text = py.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
@@ -195,13 +192,16 @@ def scan(
         raw_patterns = entry.get("patterns", [])
         if not isinstance(raw_patterns, list):
             continue
+        # Patterns come from the consumer's committed cve_usage_patterns.toml —
+        # same trust level as pyproject.toml. No runtime sanitization: a
+        # pathological regex would only slow the committer's own pre-commit.
         compiled.extend(
             (cve, entry, re.compile(raw))
             for raw in raw_patterns
             if isinstance(raw, str)
         )
     findings: list[Finding] = []
-    for rel, lineno, line in _iter_source_lines(root, PATTERN_FILE):
+    for rel, lineno, line in _iter_source_lines(root):
         if line.lstrip().startswith("#"):
             continue
         for cve, entry, rx in compiled:

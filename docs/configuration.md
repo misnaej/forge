@@ -189,6 +189,10 @@ pip-audit) is absent. It is **non-blocking** (advisory). Self-maintaining: a
 pattern is checked only while its CVE is live, so upgrading the package makes
 the warning disappear — no stale list to prune.
 
+Matching is line-based and skips **full-line comments** only — a pattern
+mentioned in a trailing `# …` comment on a code line can still match, so keep
+patterns specific to the genuinely vulnerable call.
+
 ```toml
 # cve_usage_patterns.toml (repo root)
 ["CVE-2024-0001"]
