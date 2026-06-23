@@ -118,6 +118,12 @@ enable = ["typecheck"]
 # (fail-under in [tool.interrogate]) is always enforced.
 badge = true
 
+[tool.forge.badges]
+# Dogfood install-forge-readme-badges: write the status-badge managed block
+# into README.md (between the forge:badges markers). Refreshed by the
+# bootstrap `readme-badges` step.
+enabled = true
+
 [tool.interrogate]
 # Docstring-coverage threshold consumed by the forge-precommit step
 # `docstring_coverage`. Nested functions / closures are EXEMPT
