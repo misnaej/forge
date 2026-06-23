@@ -201,9 +201,14 @@ Forge's own bootstrap tooling (not a consumer pattern):
 - configuration.md: complete `[tool.forge.*]` config reference + setup guide (written counterpart to `forge-config --list`)
 - release-process.md: forge-only single source of truth for versioning + dev→main promotion + the invariant→test contract
 - customizing-precommit.md: adding repo-specific steps to `.githooks/pre-commit`
-- rust-core-migration-plan.md: proposal/RFC for splitting forge into a Rust governance-core binary + optional Python analysis pack
 - security.md: security policy and review documentation
 - standalone-installers.md: per-installer reference for manual usage (sibling of `install-forge-bootstrap`)
+
+### Proposals (`docs/proposals/`)
+
+Architecture RFCs — aspirational, not descriptions of current behavior. Each carries its own accept/reject status.
+
+- rust-core.md: RFC for splitting forge into a Rust governance-core binary + optional Python analysis pack
 
 ## Configuration Files
 
