@@ -116,7 +116,8 @@ meaningful on a Python repo), so it stays in the Python pack initially.
 | Component (current CLI) | Lands in | Why |
 |---|---|---|
 | `forge-precommit` (dispatcher) | **Rust core** | Pure orchestration over the subprocess seam |
-| `install-forge-githooks` / `-claude-md` / `-labels` / `-bootstrap` | **Rust core** | File I/O, templating, body-sha markers, `gh` calls |
+| `install-forge-githooks` / `-claude-md` / `-claude-settings` / `-readme-badges` / `-labels` / `-bootstrap` | **Rust core** | File I/O, templating, body-sha markers, `gh` calls |
+| `forge-config` | **Rust core** | Reads `[tool.forge.*]` config — language-agnostic |
 | `forge-post-merge` / `-post-checkout` | **Rust core** | Drift check + backgrounded self-refresh |
 | `forge-doctor` | **Rust core** | Environment diagnostics |
 | `forge-next-prep` | **Rust core** | `git` orchestration (refresh, tag, prune) |
@@ -128,9 +129,12 @@ meaningful on a Python repo), so it stays in the Python pack initially.
 | `forge-gen-commit-types` / `forge-gen-cli-reference` | **Rust core** | Generation/parity checks |
 | `forge-continuation-append` | **Rust core** | Append-format string work |
 | `verify-forge-cli-wiring` | **Rust core** | Grep over wiring sources (forge-internal) |
-| `forge-audit-agents` / `-claims` / `-suppressions` / `-all` | **Rust core** | Markdown/grep; `suppressions` even generalizes across ecosystems (noqa, biome-ignore, eslint-disable, shellcheck-disable) |
+| `verify-forge-doc-consistency` / `verify-forge-cve-usage` | **Rust core** | Grep over source/text — CLI-doc parity; CVE-usage pattern match |
+| `forge-audit-data` | **Rust core** | CSV/JSON/TOML/YAML integrity — language-agnostic |
+| `forge-audit-agents` / `-suppressions` / `-all` | **Rust core** | Markdown/grep; `suppressions` even generalizes across ecosystems (noqa, biome-ignore, eslint-disable, shellcheck-disable) |
 | `fix-forge-ruff` | **Rust core** | Pure subprocess wrapper around `ruff` (itself a binary) |
 | `verify-forge-docstrings` | **Python pack** | Python AST: signature ↔ docstring matching |
+| `forge-audit-claims` | **Python pack** | Python AST/`tokenize`: claim extraction from docstrings + comments |
 | `verify-forge-docstring-coverage` | **Python pack** | Wraps `interrogate` |
 | `forge-gen-api-digest` | **Python pack** | Python AST symbol index |
 | `forge-audit-deps` | **Python pack** | Python import graph |
@@ -141,8 +145,8 @@ meaningful on a Python repo), so it stays in the Python pack initially.
 | `block_*` / `check_*` claude-hooks | **Unchanged (shell)** | Run in Claude Code's hook context |
 | `.githooks/*` wrappers | **Unchanged (shell)** | Now call `forge <sub>` instead of a console-script |
 
-Rough split: ~20 entry points to the Rust core, ~8 staying in the
-Python pack, the hook shells untouched.
+Rough split: ~28 entry points to the Rust core, ~9 staying in the
+Python pack (2 borderline), the hook shells untouched.
 
 ## 6. Distribution changes
 
@@ -312,8 +316,8 @@ runner + a conventional-commit linter + the repo's existing linters,
 porting only forge's *conventions*, not its code) — no fork, no dual
 codebase, no release pipeline.
 
-Recommended gate: **a documented count of ≥ N non-Python repos**
-(suggest N ≥ 3) committed to adopting forge's governance layer, before
+Recommended gate: **a documented count of ≥ 3 non-Python repos**
+committed to adopting forge's governance layer, before
 Phase 0 is funded. Phase 0 itself is cheap enough to run as a
 time-boxed spike to validate the pipeline regardless.
 
