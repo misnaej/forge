@@ -145,7 +145,11 @@ def _ci_badge(root: Path, slug: str | None, workflow: str | None) -> str | None:
         return None
     wf_dir = root / ".github" / "workflows"
     if workflow:
-        wf = workflow if (wf_dir / workflow).is_file() else None
+        # Restrict the override to a bare filename — reject any path separator
+        # (absolute paths, `..` traversal) so the `is_file` probe can't become
+        # a filesystem-existence oracle and the raw value can't reach the URL.
+        bare = "/" not in workflow and "\\" not in workflow
+        wf = workflow if bare and (wf_dir / workflow).is_file() else None
     else:
         found = sorted(wf_dir.glob("*.y*ml"))
         wf = found[0].name if found else None
@@ -319,10 +323,11 @@ def _get_readme_path(root: Path) -> tuple[Path | None, int]:
         root: Repo root.
 
     Returns:
-        A tuple (readme_path, exit_code). When exit_code is 0 and
-        readme_path is not None, the path is valid. When exit_code is
-        non-zero, the configuration check failed and the caller should
-        exit with that code.
+        A tuple (readme_path, exit_code). ``(Path, 0)`` when the path
+        is valid and ready to use; ``(None, 0)`` when badges are not
+        enabled (caller should skip silently); ``(None, 1)`` when a
+        configuration error prevents proceeding (caller should exit with
+        that code).
     """
     cfg = read_pyproject_raw(root).get("tool", {}).get("forge", {}).get("badges", {})
     if not (isinstance(cfg, dict) and cfg.get("enabled") is True):
@@ -348,9 +353,10 @@ def main() -> int:
     """CLI entry point.
 
     Returns:
-        ``0`` on success (written, already-current, or ``--check`` passing);
-        ``1`` when ``--check`` finds drift, when badges are not enabled in
-        ``[tool.forge.badges]``, or when no README is present.
+        ``0`` on success (written, already-current, ``--check`` passing, or
+        badges not enabled in ``[tool.forge.badges]`` — treated as a skip);
+        ``1`` when ``--check`` finds drift, when the configured README path
+        escapes the repo, or when the README file does not exist.
     """
     parser = argparse.ArgumentParser(
         prog="install-forge-readme-badges",

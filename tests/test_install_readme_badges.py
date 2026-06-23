@@ -129,3 +129,39 @@ def test_main_check_reports_drift(
     monkeypatch.setattr("sys.argv", ["install-forge-readme-badges", "--check"])
     assert rb.main() == 1
     assert rb._START not in (tmp_path / "README.md").read_text()
+
+
+def test_ci_badge_rejects_non_bare_workflow(tmp_path: Path) -> None:
+    """A workflow override with a path separator / traversal is ignored.
+
+    Prevents the `is_file` probe from becoming a filesystem-existence oracle
+    and a raw path from reaching the badge URL.
+    """
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text("on: push\n")
+    # A bare, existing filename works.
+    assert rb._ci_badge(tmp_path, "a/b", "ci.yml") is not None
+    # Path-separator / traversal forms are rejected (None), even if a file exists.
+    assert rb._ci_badge(tmp_path, "a/b", "../workflows/ci.yml") is None
+    assert rb._ci_badge(tmp_path, "a/b", "/etc/passwd") is None
+
+
+def test_main_refuses_readme_escaping_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `[tool.forge.badges] readme` that escapes the repo is refused (exit 1)."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.badges]\nenabled = true\nreadme = "../outside.md"\n'
+    )
+    (tmp_path.parent / "outside.md").write_text("# Outside\n")
+    monkeypatch.setattr(rb, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setattr("sys.argv", ["install-forge-readme-badges"])
+    assert rb.main() == 1
+    assert rb._START not in (tmp_path.parent / "outside.md").read_text()
+
+
+def test_inject_single_blank_when_h1_has_no_blank(tmp_path: Path) -> None:
+    """Inserting after an H1 with no following blank line doesn't double-blank."""
+    out = rb.inject("# Title\nbody\n", rb.render_block(["![x](y)"]))
+    assert out == f"# Title\n\n{rb._START}\n![x](y)\n{rb._END}\n\nbody\n"
