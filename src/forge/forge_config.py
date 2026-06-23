@@ -165,6 +165,13 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "error (default: non-blocking WARN).",
     ),
     ConfigKey(
+        ("tool", "forge", "pip_audit", "blocking"),
+        default=False,
+        description="Make the pip_audit step fail the commit on a CVE "
+        "finding (default: non-blocking WARN; a missing pip-audit binary "
+        "stays a WARN regardless).",
+    ),
+    ConfigKey(
         ("tool", "forge", "cve_usage", "paths"),
         "source_dirs + test_dirs",
         "Per-tool override of the CVE-usage scan roots; otherwise inherits "

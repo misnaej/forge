@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_45 modules, 417 symbols._
+_46 modules, 428 symbols._
 
 ## `forge._hook_helpers`
 
@@ -267,6 +267,10 @@ _45 modules, 417 symbols._
 - `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.
 - `gh_api(*args: str, timeout: int = 10) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
 - `_run_git(*args: str) -> str` _(internal)_ — Run a git command and return stdout.
+- `run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
+- `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
+- `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
+- `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
 - `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get list of modified files from git.
 - `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
@@ -356,16 +360,14 @@ _45 modules, 417 symbols._
 - `build_badges(root: Path) -> list[str]` — Assemble the ordered list of markdown badges for this repo.
 - `render_block(badges: list[str]) -> str` — Wrap *badges* in the forge-managed marker block.
 - `inject(readme: str, block: str) -> str` — Insert or replace the managed badge block in *readme* (drift-aware).
+- `_get_readme_path(root: Path) -> tuple[Path | None, int]` _(internal)_ — Load and validate the README path from config.
 - `main() -> int` — CLI entry point.
 
 ## `forge.next_prep`
 
-- `_read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` _(internal)_ — Return ``plugin.json["version"]`` at the given git ref, or ``None`` when absent.
 - `_check_promote_pending_message(repo_root: Path, dev_branch: str, base_branch: str) -> str | None` _(internal)_ — Return a one-line user-facing prompt when promotion is pending, else ``None``.
 - `_changelog_lacks_entry(changelog_text: str, minor_tag: str) -> bool` _(internal)_ — Return True when *changelog_text* has no ``## <minor_tag>`` heading.
 - `_promotion_status_lines(repo_root: Path, dev_branch: str, base_branch: str) -> list[str]` _(internal)_ — Build the read-only promotion-status report.
-- `_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` _(internal)_ — Run ``git`` with *args*, return stripped stdout.
-- `_read_plugin_version(repo_root: Path) -> str | None` _(internal)_ — Return ``.claude-plugin/plugin.json["version"]`` or ``None`` if absent.
 - `_is_newer(plugin_ver: str, latest_tag: str | None) -> bool` _(internal)_ — Return True when ``v<plugin_ver>`` would sort *after* ``latest_tag``.
 - `tag_staleness_warning(repo_root: Path) -> str | None` — Return a warning when the integration branch owes a rolling-next tag.
 - `_maybe_tag_release(repo_root: Path) -> str | None` _(internal)_ — Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
@@ -424,7 +426,6 @@ _45 modules, 417 symbols._
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
 - `_cli_wiring_enabled(repo_root: Path) -> bool` _(internal)_ — Return True when the repo has opted into the cli_wiring check.
 - `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
-- `_plugin_version(repo_root: Path) -> str | None` _(internal)_ — Return ``.claude-plugin/plugin.json["version"]`` or ``None`` when absent.
 - `_one_step_successors(tag: tuple[int, int, int]) -> set[tuple[int, int, int]]` _(internal)_ — Return the three valid rolling-next successors of a tagged release.
 - `step_release_tag_guard(repo_root: Path) -> StepResult` — Block when an intermediate rolling-next release was never tagged (#66).
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
@@ -526,6 +527,20 @@ _45 modules, 417 symbols._
 - `_log_warnings_grouped(warnings: list[Issue], repo_root_str: str) -> None` _(internal)_ — Log warnings grouped by file.
 - `_log_issues(errors: list[Issue], warnings: list[Issue], infos: list[Issue], repo_root: Path, *, file_count: int) -> None` _(internal)_ — Log categorized issues and print a summary line.
 - `main() -> int` — Main entry point for docstring verification.
+
+## `forge.verify_main_tags`
+
+- `class _TagState` _(internal)_ — Where a minor tag currently sits versus where it belongs.
+  - `needs_move(self) -> bool` — ``True`` when a base commit reproduces the tag but it sits elsewhere.
+- `_short(sha: str | None) -> str` _(internal)_ — Return a 9-char abbreviation of *sha*, or ``(none)`` when absent.
+- `_minor_tags(repo_root: Path) -> list[str]` _(internal)_ — Return every ``vX.Y.0`` tag (patch == 0), semver-sorted ascending.
+- `_base_tree_index(repo_root: Path, base_ref: str) -> dict[str, str]` _(internal)_ — Map each commit tree SHA on *base_ref* to its commit SHA.
+- `_tag_states(repo_root: Path, base_ref: str) -> list[_TagState]` _(internal)_ — Resolve every minor tag's current vs. target commit on *base_ref*.
+- `_force_move_tag(repo_root: Path, tag: str, commit_sha: str) -> None` _(internal)_ — Annotated-retag *tag* at *commit_sha* and force-push it.
+- `_report_unreproduced(states: list[_TagState], base_ref: str) -> None` _(internal)_ — Warn about minor tags whose tree no base commit reproduces.
+- `_verify(states: list[_TagState], base_ref: str) -> int` _(internal)_ — Report drift read-only and return the process exit code.
+- `_repair(repo_root: Path, states: list[_TagState], base_ref: str, *, dry_run: bool) -> int` _(internal)_ — Move every misplaced minor tag onto its base commit (or preview).
+- `main() -> int` — Verify or repair minor release tags on the base branch.
 
 ## `forge.verify_manifest`
 

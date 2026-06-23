@@ -6,6 +6,7 @@ that bypasses ruff's T201 (bare-print) ban.
 """
 
 import io
+import json
 import logging
 import re
 import shutil
@@ -292,6 +293,127 @@ def _run_git(*args: str) -> str:
         check=False,
     )
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
+    """Run ``git`` with *args* in *cwd* and return stripped stdout.
+
+    The explicit-``cwd`` git runner shared by the release CLIs
+    (``forge-next-prep``, ``forge-check-main-tags``). Distinct from
+    :func:`_run_git`, which always targets the cached process-wide
+    :func:`repo_root` and swallows errors — release tooling operates on
+    a caller-supplied root and needs ``check=True`` to surface push /
+    tag failures rather than silently continuing.
+
+    Args:
+        *args: Argv tail (without the leading ``git``).
+        cwd: Working directory for the git invocation; defaults to the
+            current directory.
+        check: When ``True``, raise on a non-zero exit.
+
+    Returns:
+        Trimmed stdout.
+
+    Raises:
+        subprocess.CalledProcessError: When ``check=True`` and git exits
+            non-zero.
+    """
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=check,
+    )
+    return proc.stdout.strip()
+
+
+def get_tree_sha(repo_root: Path, ref: str) -> str | None:
+    """Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
+
+    Tree (not commit) identity is forge's deterministic join between a
+    release tag and the squash commit that reproduces it on another
+    branch: a promotion squashes dev's history into a new commit whose
+    *tree* equals the tagged dev commit's tree even though the commit
+    SHA, parents, and message differ. Shared by the rolling-next guard
+    (:func:`forge.verify_plugin_version._is_release_commit`) and the
+    main-tag aligner (``forge-check-main-tags``).
+
+    Args:
+        repo_root: Working directory for the git invocation.
+        ref: Any commit-ish (``HEAD``, a tag, ``origin/main``, a SHA).
+
+    Returns:
+        The 40-char tree SHA, or ``None`` when *ref* does not resolve.
+    """
+    proc = subprocess.run(
+        ["git", "rev-parse", f"{ref}^{{tree}}"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    out = proc.stdout.strip()
+    return out or None
+
+
+def read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None:
+    """Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
+
+    Reads the manifest out of the git object store at an arbitrary ref
+    (``origin/dev``, a tag, a SHA) without a checkout. A missing manifest
+    is common in non-plugin repos, so callers treat ``None`` as "not a
+    plugin repo / nothing to compare".
+
+    Args:
+        repo_root: Working directory for the git invocation.
+        ref: Any git refspec.
+
+    Returns:
+        Bare version string when ``.claude-plugin/plugin.json`` exists at
+        *ref* and parses, ``None`` otherwise.
+    """
+    proc = subprocess.run(
+        ["git", "show", f"{ref}:.claude-plugin/plugin.json"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        return str(json.loads(proc.stdout)["version"])
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None
+
+
+def read_local_plugin_version(repo_root: Path) -> str | None:
+    """Return the working-tree ``.claude-plugin/plugin.json["version"]``.
+
+    The on-disk counterpart to :func:`read_plugin_version_at_ref`. Single
+    source for "read the local manifest version", shared by the
+    rolling-next guard and ``forge-next-prep``.
+
+    Args:
+        repo_root: Repo root.
+
+    Returns:
+        Bare semver string (e.g. ``"1.2.10"``), or ``None`` when the
+        manifest is missing, unparseable, or the version field is absent
+        / not semver-shaped.
+    """
+    plugin = repo_root / ".claude-plugin" / "plugin.json"
+    if not plugin.is_file():
+        return None
+    try:
+        data = json.loads(plugin.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    version = data.get("version")
+    if not isinstance(version, str) or parse_semver(version) is None:
+        return None
+    return version
 
 
 def _parse_files(

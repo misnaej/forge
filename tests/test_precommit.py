@@ -607,6 +607,44 @@ def test_step_pip_audit_loud_warn_when_cli_missing(
     assert "did NOT run" in result.output
 
 
+def test_step_pip_audit_non_blocking_by_default_on_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CVE findings render as a non-blocking WARN when no blocking opt-in.
+
+    SCENARIO: pip-audit present, finds a CVE (exit 1), repo has no
+        ``[tool.forge.pip_audit].blocking`` key.
+    MOCK SETUP: ``shutil.which`` → present; ``_run`` → ``(False, ...)``.
+    EXPECTED BEHAVIOR: ``passed=False`` but ``non_blocking=True`` (WARN).
+    """
+    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "1 CVE found"))
+    result = precommit.step_pip_audit(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+
+
+def test_step_pip_audit_blocking_when_opted_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``[tool.forge.pip_audit].blocking = true`` makes a CVE finding a hard FAIL.
+
+    SCENARIO: same finding as the default case, but the repo opts into
+        blocking via ``[tool.forge.pip_audit]``.
+    MOCK SETUP: ``shutil.which`` → present; ``_run`` → ``(False, ...)``;
+        a ``pyproject.toml`` carrying the blocking key in ``tmp_path``.
+    EXPECTED BEHAVIOR: ``passed=False`` AND ``non_blocking=False`` (FAIL).
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.pip_audit]\nblocking = true\n"
+    )
+    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "1 CVE found"))
+    result = precommit.step_pip_audit(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+
+
 def test_step_cve_usage_skips_without_pattern_file(tmp_path: Path) -> None:
     """cve_usage self-skips (opt-in by presence) when no pattern map exists."""
     result = precommit.step_cve_usage(tmp_path)

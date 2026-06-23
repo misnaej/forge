@@ -36,7 +36,6 @@ Exits 0 on success, 1 if the target branch can't fast-forward
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import re
 import subprocess
@@ -44,7 +43,14 @@ import sys
 from pathlib import Path
 
 from forge.config import load_config
-from forge.git_utils import configure_cli_logging, latest_v_tag, parse_semver
+from forge.git_utils import (
+    configure_cli_logging,
+    latest_v_tag,
+    parse_semver,
+    read_local_plugin_version,
+    read_plugin_version_at_ref,
+    run_git,
+)
 
 
 configure_cli_logging()
@@ -53,34 +59,6 @@ logger = logging.getLogger(__name__)
 
 _SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 _GONE_BRANCH_RE = re.compile(r"^\*?\s*(\S+)\s+[0-9a-f]+\s+\[origin/\S+: gone\]")
-
-
-def _read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None:
-    """Return ``plugin.json["version"]`` at the given git ref, or ``None`` when absent.
-
-    Args:
-        repo_root: Working directory for git operations.
-        ref: Any git refspec (``origin/dev``, a tag, a SHA).
-
-    Returns:
-        Bare version string when ``.claude-plugin/plugin.json`` exists at
-        *ref* and parses cleanly, ``None`` otherwise. Missing manifests
-        are common in non-plugin repos (the gate that uses this returns
-        no-promotion-pending in that case).
-    """
-    proc = subprocess.run(
-        ["git", "show", f"{ref}:.claude-plugin/plugin.json"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return None
-    try:
-        return str(json.loads(proc.stdout)["version"])
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return None
 
 
 def _check_promote_pending_message(
@@ -111,8 +89,8 @@ def _check_promote_pending_message(
     """
     if dev_branch == base_branch:
         return None
-    dev_ver = _read_plugin_version_at_ref(repo_root, f"origin/{dev_branch}")
-    base_ver = _read_plugin_version_at_ref(repo_root, f"origin/{base_branch}")
+    dev_ver = read_plugin_version_at_ref(repo_root, f"origin/{dev_branch}")
+    base_ver = read_plugin_version_at_ref(repo_root, f"origin/{base_branch}")
     if dev_ver is None or base_ver is None:
         return None
     if not (_SEMVER_RE.match(dev_ver) and _SEMVER_RE.match(base_ver)):
@@ -182,8 +160,8 @@ def _promotion_status_lines(
     """
     if dev_branch == base_branch:
         return ["Single-branch repo — no dev→base promotion model."]
-    base_ver = _read_plugin_version_at_ref(repo_root, f"origin/{base_branch}")
-    dev_ver = _read_plugin_version_at_ref(repo_root, f"origin/{dev_branch}")
+    base_ver = read_plugin_version_at_ref(repo_root, f"origin/{base_branch}")
+    dev_ver = read_plugin_version_at_ref(repo_root, f"origin/{dev_branch}")
     if base_ver is None or dev_ver is None:
         return [f"No plugin manifest on origin/{base_branch} or origin/{dev_branch}."]
     lines = [
@@ -205,7 +183,7 @@ def _promotion_status_lines(
     # version range would otherwise list as separate promotions.
     staged = sorted(
         (pv, tag)
-        for tag in _git("tag", "--list", "v*", cwd=repo_root, check=False).split()
+        for tag in run_git("tag", "--list", "v*", cwd=repo_root, check=False).split()
         if (pv := parse_semver(tag)) is not None
         and pv[2] == 0
         and base_tuple < pv <= dev_tuple
@@ -224,7 +202,7 @@ def _promotion_status_lines(
     # Non-blocking CHANGELOG advisory (docs/release-process.md §5): each
     # promoted minor should already carry its entry, authored on dev.
     # Stays silent for repos that keep no CHANGELOG (git show → empty).
-    changelog = _git(
+    changelog = run_git(
         "show", f"origin/{dev_branch}:CHANGELOG.md", cwd=repo_root, check=False
     )
     if changelog:
@@ -236,54 +214,6 @@ def _promotion_status_lines(
                 "promoting (docs/release-process.md §5)."
             )
     return lines
-
-
-def _git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
-    """Run ``git`` with *args*, return stripped stdout.
-
-    Args:
-        *args: Argv tail (without the leading ``git``).
-        cwd: Working directory; defaults to current.
-        check: When ``True``, raise ``CalledProcessError`` on non-zero exit.
-
-    Returns:
-        Trimmed stdout.
-
-    Raises:
-        subprocess.CalledProcessError: When ``check=True`` and git exits
-            non-zero.
-    """
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=check,
-    )
-    return proc.stdout.strip()
-
-
-def _read_plugin_version(repo_root: Path) -> str | None:
-    """Return ``.claude-plugin/plugin.json["version"]`` or ``None`` if absent.
-
-    Args:
-        repo_root: Repo root.
-
-    Returns:
-        Bare semver string (e.g. ``"1.2.10"``) or ``None`` when the
-        manifest is missing or the version field is absent / non-semver.
-    """
-    plugin = repo_root / ".claude-plugin" / "plugin.json"
-    if not plugin.is_file():
-        return None
-    try:
-        data = json.loads(plugin.read_text())
-    except json.JSONDecodeError:
-        return None
-    version = data.get("version")
-    if not isinstance(version, str) or not _SEMVER_RE.fullmatch(version):
-        return None
-    return version
 
 
 def _is_newer(plugin_ver: str, latest_tag: str | None) -> bool:
@@ -332,10 +262,10 @@ def tag_staleness_warning(repo_root: Path) -> str | None:
         when there is no plugin manifest, or when the tag is already
         current.
     """
-    current = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo_root, check=False)
+    current = run_git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo_root, check=False)
     if not current or current != load_config(repo_root).dev_branch:
         return None
-    plugin_ver = _read_plugin_version(repo_root)
+    plugin_ver = read_local_plugin_version(repo_root)
     if plugin_ver is None:
         return None
     latest = latest_v_tag(repo_root)
@@ -360,15 +290,15 @@ def _maybe_tag_release(repo_root: Path) -> str | None:
         The tag name on success (e.g. ``"v1.2.10"``), or ``None`` when
         no tagging was needed / possible.
     """
-    plugin_ver = _read_plugin_version(repo_root)
+    plugin_ver = read_local_plugin_version(repo_root)
     if plugin_ver is None:
         return None
     latest = latest_v_tag(repo_root)
     if not _is_newer(plugin_ver, latest):
         return None
     tag = f"v{plugin_ver}"
-    _git("tag", "-a", tag, "-m", tag, "HEAD", cwd=repo_root)
-    _git("push", "origin", tag, cwd=repo_root)
+    run_git("tag", "-a", tag, "-m", tag, "HEAD", cwd=repo_root)
+    run_git("push", "origin", tag, cwd=repo_root)
     return tag
 
 
@@ -382,7 +312,7 @@ def _gone_branches(repo_root: Path) -> list[str]:
         Branch names (no leading ``* `` star, no whitespace). Empty list
         when nothing is gone or no branches exist.
     """
-    raw = _git("branch", "-vv", cwd=repo_root, check=False)
+    raw = run_git("branch", "-vv", cwd=repo_root, check=False)
     out: list[str] = []
     for line in raw.splitlines():
         match = _GONE_BRANCH_RE.match(line)
@@ -435,7 +365,7 @@ def _emit_promotion_status(
     Returns:
         Always ``0`` — this is a pure read-only report.
     """
-    _git("fetch", "origin", "--tags", "--quiet", cwd=repo_root, check=False)
+    run_git("fetch", "origin", "--tags", "--quiet", cwd=repo_root, check=False)
     for line in _promotion_status_lines(repo_root, dev_branch, base_branch):
         logger.info("%s", line)
     return 0
@@ -523,7 +453,7 @@ def main() -> int:
     target_branch = cfg.dev_branch if args.target == "dev" else cfg.base_branch
 
     logger.info("Fetching from origin...")
-    _git("fetch", "--prune", cwd=repo_root)
+    run_git("fetch", "--prune", cwd=repo_root)
 
     logger.info("Checking out %s and pulling...", target_branch)
     # Prefer ``git switch``: it operates only on branches, so it's
@@ -546,7 +476,7 @@ def main() -> int:
         check=False,
     )
     if proc.returncode != 0:
-        _git("checkout", target_branch, cwd=repo_root)
+        run_git("checkout", target_branch, cwd=repo_root)
     proc = subprocess.run(
         ["git", "pull", "--ff-only"],
         cwd=repo_root,

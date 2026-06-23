@@ -1,7 +1,7 @@
 {
   "name": "forge",
-  "version": "2.2.0",
-  "description": "Automate Python CI/CD and code-quality standards \u2014 deterministic CLIs + a drop-in pre-commit hook, runnable with or without an AI agent. This optional Claude Code plugin orchestrates them; the gate is the CLI, never the model.",
+  "version": "2.3.0",
+  "description": "Automate Python CI/CD and code-quality standards — deterministic CLIs + a drop-in pre-commit hook, runnable with or without an AI agent. This optional Claude Code plugin orchestrates them; the gate is the CLI, never the model.",
   "author": {
     "name": "Jean Simonnet",
     "url": "https://github.com/misnaej/forge"
@@ -13,97 +13,37 @@
       {
         "matcher": "Bash",
         "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_branches.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_force_push.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_pr_merge.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_branch_deletion.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_no_verify.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_install_deps.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_claude_attribution.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_continuation_delete.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/check_commit_format.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/warn_pr_checks.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_raw_ruff.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_raw_git.sh",
-            "timeout": 5
-          }
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_branches.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_force_push.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_pr_merge.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_branch_deletion.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_no_verify.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_install_deps.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_claude_attribution.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_continuation_delete.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/check_commit_format.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/warn_pr_checks.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_raw_ruff.sh", "timeout": 5 },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_raw_git.sh", "timeout": 5 }
         ]
       },
       {
         "matcher": "Edit",
         "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_files.sh",
-            "timeout": 5
-          }
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_files.sh", "timeout": 5 }
         ]
       },
       {
         "matcher": "Write",
         "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_files.sh",
-            "timeout": 5
-          }
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_files.sh", "timeout": 5 }
         ]
       }
     ],
     "SessionStart": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/check_foundation_sync.sh",
-            "timeout": 5
-          }
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/check_foundation_sync.sh", "timeout": 5 }
         ]
       }
     ]

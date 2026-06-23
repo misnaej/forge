@@ -198,6 +198,21 @@ options:
                         code_health/audit_<name>.log.
 ```
 
+## forge-check-main-tags
+
+```text
+usage: forge-check-main-tags [-h] [--fix] [--dry-run]
+
+Verify (default) or repair (--fix) that every minor release tag vX.Y.0 sits on
+the base branch's squash commit, matched by tree equality. Self-skips single-
+branch repos.
+
+options:
+  -h, --help  show this help message and exit
+  --fix       Force-move every misplaced minor tag onto its base commit.
+  --dry-run   Print the moves --fix would make; mutate nothing.
+```
+
 ## forge-config
 
 ```text
@@ -539,19 +554,6 @@ options:
   --repo REPO  OWNER/REPO (defaults to current dir's remote)
 ```
 
-## install-forge-readme-badges
-
-```text
-usage: install-forge-readme-badges [-h] [--check]
-
-Write a drift-aware status-badge block into the README. Opt-in via
-[tool.forge.badges] enabled = true.
-
-options:
-  -h, --help  show this help message and exit
-  --check     Verify the block is current without writing (exit 1 on drift).
-```
-
 ## verify-forge-cli-wiring
 
 ```text
@@ -561,19 +563,6 @@ Verify every [project.scripts] entry in pyproject.toml is reachable from at
 least one wiring source path (install-forge-bootstrap STEPS, forge.precommit
 steps, audit/, git hooks, claude-hooks, dev/, agents/, skills/) or is listed
 in cli_wiring_exempt.toml with a reason.
-
-options:
-  -h, --help  show this help message and exit
-```
-
-## verify-forge-cve-usage
-
-```text
-usage: verify-forge-cve-usage [-h]
-
-Second-stage CVE filter: report only CVEs whose vulnerable code path is
-actually used. Reads cve_usage_patterns.toml; skips cleanly when absent or
-pip-audit is unavailable.
 
 options:
   -h, --help  show this help message and exit
