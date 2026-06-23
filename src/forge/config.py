@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 
@@ -42,24 +42,88 @@ logger = logging.getLogger(__name__)
 DEFAULT_BASE_BRANCH = "main"
 DEFAULT_DEV_BRANCH = "main"
 
+# Repo-wide project layout. ``[tool.forge].source_dirs`` / ``test_dirs`` are
+# the single ground truth for "what are this repo's source / test roots",
+# shared by every layout-consuming tool (ruff, api-digest, docstring-coverage,
+# doctest, typecheck) via :func:`resolve_tool_roots` so the answer lives in
+# one place. Split into source vs test (semantic) rather than a flat union, so
+# a tool that wants only source roots (e.g. api-digest) takes ``source_dirs``
+# without test dirs leaking in.
+#
+# These constants are the ``ForgeConfig`` field defaults (bare construction);
+# real reads against a repo with neither key set fall back to *smart detection*
+# (:func:`detect_source_dirs` / :func:`detect_test_dirs`) rather than a fixed
+# name list — forge used to guess from a broad 8-name tuple that scanned
+# phantom dirs and ignored the configured roots.
+DEFAULT_SOURCE_DIRS = ("src",)
+DEFAULT_TEST_DIRS = ("tests",)
+
+
+def detect_source_dirs(repo_root: Path) -> list[str]:
+    """Smart-detect the repo's source roots when ``source_dirs`` is unset.
+
+    Mirrors how a packaging tool locates code instead of guessing from a
+    fixed name list: ``src/`` when it exists (the src-layout), otherwise
+    every top-level directory that is an importable package (contains an
+    ``__init__.py``).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        Repo-relative source-root names. ``["src"]`` for a src-layout repo;
+        the sorted top-level package names for a flat layout; ``[]`` when
+        neither is found.
+    """
+    if (repo_root / "src").is_dir():
+        return ["src"]
+    return sorted(
+        p.name
+        for p in repo_root.iterdir()
+        if p.is_dir() and (p / "__init__.py").is_file()
+    )
+
+
+def detect_test_dirs(repo_root: Path) -> list[str]:
+    """Smart-detect the repo's test roots when ``test_dirs`` is unset.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        The existing subset of the conventional test roots ``("tests",
+        "test")``, in that preference order; ``[]`` when neither exists.
+    """
+    return [d for d in ("tests", "test") if (repo_root / d).is_dir()]
+
 
 @dataclass(frozen=True)
 class ForgeConfig:
-    """Branch-name configuration sourced from ``[tool.forge]``.
+    """Repo configuration sourced from ``[tool.forge]``.
 
-    The release-channel semantics (what each branch represents,
-    cadence trade-offs) live in FOUNDATION §6. This class just
-    carries the names.
+    Release-channel semantics live in FOUNDATION §6; the project-layout
+    rationale in §8 / `docs/configuration.md`. This class carries the
+    `[tool.forge]` values forge reads repo-wide.
 
     Attributes:
         base_branch: Name of the slow channel (typically ``"main"``).
         dev_branch: Name of the fast channel (typically ``"dev"``).
             Equal to ``base_branch`` when the consumer hasn't opted
             into dual-track.
+        source_dirs: Repo source roots. ``load_config`` smart-detects these
+            when ``source_dirs`` is absent from ``pyproject.toml`` (``src/``
+            when present, otherwise top-level packages); the field default
+            ``["src"]`` applies only to bare dataclass construction.
+        test_dirs: Repo test roots. ``load_config`` smart-detects these when
+            ``test_dirs`` is absent from ``pyproject.toml`` (``tests/`` then
+            ``test/``); the field default ``["tests"]`` applies only to bare
+            dataclass construction.
     """
 
     base_branch: str = DEFAULT_BASE_BRANCH
     dev_branch: str = DEFAULT_DEV_BRANCH
+    source_dirs: list[str] = field(default_factory=lambda: list(DEFAULT_SOURCE_DIRS))
+    test_dirs: list[str] = field(default_factory=lambda: list(DEFAULT_TEST_DIRS))
 
     @property
     def dual_track(self) -> bool:
@@ -73,6 +137,38 @@ class ForgeConfig:
             ``base_branch``; ``False`` otherwise (single-branch flow).
         """
         return self.base_branch != self.dev_branch
+
+
+def read_pyproject_raw(repo_root: Path) -> dict:
+    """Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
+
+    The canonical "load the whole TOML, degrade to empty on missing /
+    unreadable / unparseable" reader shared by every forge config
+    consumer (``load_config`` here, plus the docstring-coverage step and
+    the ``forge-config`` advisor). Deliberately forgiving — config reads
+    happen in hot paths and any failure should degrade to defaults, not
+    block the workflow.
+
+    Args:
+        repo_root: Git repo root containing ``pyproject.toml``.
+
+    Returns:
+        Parsed TOML data, or an empty dict when the file is missing,
+        unreadable, or not valid TOML.
+    """
+    pyproject = repo_root / "pyproject.toml"
+    if not pyproject.is_file():
+        return {}
+    try:
+        text = pyproject.read_text()
+    except OSError as exc:
+        logger.debug("forge.config: could not read %s (%s)", pyproject, exc)
+        return {}
+    try:
+        return tomllib.loads(text)
+    except ValueError as exc:
+        logger.debug("forge.config: could not parse %s (%s)", pyproject, exc)
+        return {}
 
 
 def load_config(repo_root: Path) -> ForgeConfig:
@@ -94,21 +190,101 @@ def load_config(repo_root: Path) -> ForgeConfig:
         single-branch flow. Override ``dev_branch`` in
         ``[tool.forge]`` to opt in.
     """
-    pyproject = repo_root / "pyproject.toml"
-    if not pyproject.is_file():
-        return ForgeConfig()
-    try:
-        text = pyproject.read_text()
-    except OSError as exc:
-        logger.debug("forge.config: could not read %s (%s)", pyproject, exc)
-        return ForgeConfig()
-    try:
-        data = tomllib.loads(text)
-    except ValueError as exc:
-        logger.debug("forge.config: could not parse %s (%s)", pyproject, exc)
-        return ForgeConfig()
-    section = data.get("tool", {}).get("forge", {})
+    section = read_pyproject_raw(repo_root).get("tool", {}).get("forge", {})
+    source_dirs = (
+        list(section["source_dirs"])
+        if "source_dirs" in section
+        else detect_source_dirs(repo_root)
+    )
+    test_dirs = (
+        list(section["test_dirs"])
+        if "test_dirs" in section
+        else detect_test_dirs(repo_root)
+    )
     return ForgeConfig(
         base_branch=section.get("base_branch", DEFAULT_BASE_BRANCH),
         dev_branch=section.get("dev_branch", DEFAULT_DEV_BRANCH),
+        source_dirs=source_dirs,
+        test_dirs=test_dirs,
     )
+
+
+def _existing_dirs(repo_root: Path, dirs: list[str]) -> list[str]:
+    """Filter *dirs* to existing in-repo paths, de-duplicated, order-preserving.
+
+    Args:
+        repo_root: Git repo root the paths must stay within.
+        dirs: Candidate repo-relative paths.
+
+    Returns:
+        The subset that resolves inside *repo_root* and exists on disk, with
+        duplicates removed and original order kept. Dropped: blank entries,
+        option-like entries (leading ``-``, which would be parsed as a flag
+        by the consuming tool), and paths escaping the repo (absolute or
+        ``..``) — so the scan never reaches outside and no configured value
+        can inject a flag into a tool's argv.
+    """
+    root = repo_root.resolve()
+    out: list[str] = []
+    for d in dict.fromkeys(dirs):
+        if not d.strip() or d.lstrip().startswith("-"):
+            logger.debug("dropping scan root %r — blank or option-like", d)
+            continue
+        resolved = (repo_root / d).resolve()
+        if not (resolved.is_relative_to(root) and resolved.exists()):
+            logger.debug("dropping scan root %r — outside repo or missing", d)
+            continue
+        out.append(d)
+    return out
+
+
+def resolve_tool_roots(
+    repo_root: Path,
+    tool: str,
+    *,
+    include_tests: bool = False,
+) -> list[str]:
+    """Resolve the scan roots a layout-consuming *tool* should use.
+
+    The single resolution every path-scanning forge tool shares (ruff,
+    api-digest, docstring-coverage, doctest, typecheck), so "where is the
+    code" is answered in one place. Precedence, highest first:
+
+    1. ``[tool.forge.<tool>].paths`` — the tool's own granular override
+       (a full replacement; tests are the caller's to include in it).
+    2. ``[tool.forge].source_dirs`` (plus ``test_dirs`` when *include_tests*)
+       — the repo-wide definition every tool shares.
+    3. Smart auto-detect (:func:`detect_source_dirs` / :func:`detect_test_dirs`)
+       — used only when neither of the above is set.
+
+    Explicit CLI arguments (e.g. ``--roots``, ruff's positional dirs) are a
+    higher override still and are handled by each CLI before calling this.
+
+    Args:
+        repo_root: Git repo root.
+        tool: The ``[tool.forge.<tool>]`` subsection name (e.g. ``"ruff"``,
+            ``"api_digest"``, ``"docstring_coverage"``).
+        include_tests: When ``True``, append the resolved test roots to the
+            source roots (for tools that lint / scan tests too, e.g. ruff).
+
+    Returns:
+        Existing in-repo directory paths to scan, de-duplicated. ``[]`` when
+        nothing resolves (the caller decides whether that is a skip).
+    """
+    forge = read_pyproject_raw(repo_root).get("tool", {}).get("forge", {})
+    tool_section = forge.get(tool)
+    if isinstance(tool_section, dict):
+        granular = tool_section.get("paths")
+        if isinstance(granular, list):
+            return _existing_dirs(repo_root, [str(p) for p in granular])
+
+    if "source_dirs" in forge:
+        roots = [str(p) for p in forge["source_dirs"]]
+    else:
+        roots = detect_source_dirs(repo_root)
+    if include_tests:
+        if "test_dirs" in forge:
+            roots += [str(p) for p in forge["test_dirs"]]
+        else:
+            roots += detect_test_dirs(repo_root)
+    return _existing_dirs(repo_root, roots)

@@ -44,7 +44,7 @@ import sys
 from pathlib import Path
 
 from forge.config import load_config
-from forge.git_utils import configure_cli_logging, parse_semver
+from forge.git_utils import configure_cli_logging, latest_v_tag, parse_semver
 
 
 configure_cli_logging()
@@ -133,6 +133,28 @@ def _check_promote_pending_message(
     )
 
 
+def _changelog_lacks_entry(changelog_text: str, minor_tag: str) -> bool:
+    """Return True when *changelog_text* has no ``## <minor_tag>`` heading.
+
+    Matches a heading whose version token equals ``minor_tag`` — either
+    ``## v1.6.0 — <date>`` (the Keep-a-Changelog form forge uses) or a
+    bare ``## v1.6.0`` — so the optional date suffix does not defeat the
+    lookup. Drives the non-blocking promotion advisory; see
+    ``docs/release-process.md`` §5.
+
+    Args:
+        changelog_text: Full ``CHANGELOG.md`` contents.
+        minor_tag: Release tag to look for, e.g. ``"v1.6.0"``.
+
+    Returns:
+        ``True`` when no heading for ``minor_tag`` is present.
+    """
+    return not any(
+        line.startswith(f"## {minor_tag} ") or line.strip() == f"## {minor_tag}"
+        for line in changelog_text.splitlines()
+    )
+
+
 def _promotion_status_lines(
     repo_root: Path,
     dev_branch: str,
@@ -141,8 +163,10 @@ def _promotion_status_lines(
     """Build the read-only promotion-status report.
 
     Reports the base/dev plugin versions and, when dev is a MINOR/MAJOR
-    ahead, the ordered list of ``v*`` tags that ``base`` must be promoted
-    up to — one release per line, ascending. Shares version-read and
+    ahead, the ordered list of ``X.Y.0`` releases that ``base`` must be
+    promoted up to — one minor per line, ascending. ``base`` is
+    minor-only: interleaved patch tags are excluded because they fold
+    into the next minor's promotion. Shares version-read and
     pending-detection helpers with the ``/next`` advisory, giving the
     ``/promote`` skill a single authoritative source for the git/version
     comparison.
@@ -174,13 +198,43 @@ def _promotion_status_lines(
     if base_tuple is None or dev_tuple is None or base_tuple[:2] >= dev_tuple[:2]:
         lines.append("Up to date — nothing to promote.")
         return lines
+    # Only MINOR/MAJOR releases (``X.Y.0``) are promotion targets — base
+    # is minor-only, and accumulated patches fold into the next minor's
+    # promotion (e.g. 1.5.1 / 1.5.2 ride along when 1.6.0 is promoted).
+    # Filtering on ``pv[2] == 0`` drops the interleaved patch tags the
+    # version range would otherwise list as separate promotions.
     staged = sorted(
         (pv, tag)
         for tag in _git("tag", "--list", "v*", cwd=repo_root, check=False).split()
-        if (pv := parse_semver(tag)) is not None and base_tuple < pv <= dev_tuple
+        if (pv := parse_semver(tag)) is not None
+        and pv[2] == 0
+        and base_tuple < pv <= dev_tuple
     )
+    if not staged:
+        # MINOR/MAJOR gap detected but no ``X.Y.0`` tag in range — the
+        # minor was never tagged (fresh or mid-flight repo). Don't print a
+        # misleading "promote these (0):" header with an empty list.
+        lines.append(
+            "Promotion pending, but no X.Y.0 release tag found in range "
+            "— check that the target minor was tagged."
+        )
+        return lines
     lines.append(f"Promotion pending — promote these in order ({len(staged)}):")
     lines.extend(f"  {tag}" for _, tag in staged)
+    # Non-blocking CHANGELOG advisory (docs/release-process.md §5): each
+    # promoted minor should already carry its entry, authored on dev.
+    # Stays silent for repos that keep no CHANGELOG (git show → empty).
+    changelog = _git(
+        "show", f"origin/{dev_branch}:CHANGELOG.md", cwd=repo_root, check=False
+    )
+    if changelog:
+        missing = [tag for _, tag in staged if _changelog_lacks_entry(changelog, tag)]
+        if missing:
+            lines.append(
+                f"⚠️  CHANGELOG.md (origin/{dev_branch}) has no entry for "
+                f"{', '.join(missing)} — author it on {dev_branch} before "
+                "promoting (docs/release-process.md §5)."
+            )
     return lines
 
 
@@ -232,21 +286,6 @@ def _read_plugin_version(repo_root: Path) -> str | None:
     return version
 
 
-def _latest_v_tag(repo_root: Path) -> str | None:
-    """Return the highest ``v*`` git tag by sort-V, or ``None`` if none.
-
-    Args:
-        repo_root: Repo root (cwd for git invocation).
-
-    Returns:
-        Tag name like ``"v1.2.9"`` or ``None`` when no ``v*`` tags exist.
-    """
-    out = _git("tag", "--list", "v*", "--sort=-v:refname", cwd=repo_root, check=False)
-    if not out:
-        return None
-    return out.splitlines()[0]
-
-
 def _is_newer(plugin_ver: str, latest_tag: str | None) -> bool:
     """Return True when ``v<plugin_ver>`` would sort *after* ``latest_tag``.
 
@@ -273,6 +312,41 @@ def _is_newer(plugin_ver: str, latest_tag: str | None) -> bool:
     return plugin_tuple > tag_tuple
 
 
+def tag_staleness_warning(repo_root: Path) -> str | None:
+    """Return a warning when the integration branch owes a rolling-next tag.
+
+    Fires only on the configured ``dev_branch`` and only when
+    ``plugin.json``'s version is strictly newer than the latest ``v*``
+    tag — i.e. a merge bumped the rolling-next version but
+    ``forge-next-prep --tag`` was never run, so the tag silently lags and
+    the pre-commit guard keeps passing without forcing the next bump. This
+    is the advisory the ``forge-post-merge`` hook surfaces on ``git pull``.
+    Detection only — it never tags or pushes (an irreversible release must
+    stay an explicit human action).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        A one-line warning string, or ``None`` when not on ``dev_branch``,
+        when there is no plugin manifest, or when the tag is already
+        current.
+    """
+    current = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo_root, check=False)
+    if not current or current != load_config(repo_root).dev_branch:
+        return None
+    plugin_ver = _read_plugin_version(repo_root)
+    if plugin_ver is None:
+        return None
+    latest = latest_v_tag(repo_root)
+    if not _is_newer(plugin_ver, latest):
+        return None
+    return (
+        f"plugin.json {plugin_ver} is ahead of the latest tag "
+        f"{latest or '(none)'} — run `forge-next-prep --tag` to tag this release."
+    )
+
+
 def _maybe_tag_release(repo_root: Path) -> str | None:
     """Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
 
@@ -289,7 +363,7 @@ def _maybe_tag_release(repo_root: Path) -> str | None:
     plugin_ver = _read_plugin_version(repo_root)
     if plugin_ver is None:
         return None
-    latest = _latest_v_tag(repo_root)
+    latest = latest_v_tag(repo_root)
     if not _is_newer(plugin_ver, latest):
         return None
     tag = f"v{plugin_ver}"

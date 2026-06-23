@@ -116,6 +116,46 @@ def test_main_returns_zero_for_clean_target(
     assert main() == 0
 
 
+def test_scope_all_uses_tracked_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--scope all` selects files via get_tracked_files, not the diff."""
+    used: list[str] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "forge.verify_docstrings.get_tracked_files",
+        lambda: used.append("all") or [],
+    )
+    monkeypatch.setattr(
+        "forge.verify_docstrings.get_modified_files",
+        lambda: used.append("diff") or [],
+    )
+    monkeypatch.setattr(sys, "argv", ["verify-forge-docstrings", "--scope", "all"])
+    assert main() == 0
+    assert used == ["all"]
+
+
+def test_scope_diff_uses_modified_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--scope diff` selects files via get_modified_files."""
+    used: list[str] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "forge.verify_docstrings.get_tracked_files",
+        lambda: used.append("all") or [],
+    )
+    monkeypatch.setattr(
+        "forge.verify_docstrings.get_modified_files",
+        lambda: used.append("diff") or [],
+    )
+    monkeypatch.setattr(sys, "argv", ["verify-forge-docstrings", "--scope", "diff"])
+    assert main() == 0
+    assert used == ["diff"]
+
+
 def test_main_returns_one_when_target_has_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

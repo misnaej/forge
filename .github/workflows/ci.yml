@@ -35,8 +35,11 @@ jobs:
           python-version: '3.13'
           cache: 'pip'
 
-      - name: Install forge-scripts (editable, with test deps)
-        run: pip install -e ".[test]"
+      - name: Install forge-scripts (editable, full dev umbrella)
+        # The [dev] umbrella (test + audit + typecheck) mirrors what
+        # dev/setup.sh installs locally, so CI's env matches the local
+        # pre-commit env — including pyrefly for the enabled typecheck step.
+        run: pip install -e ".[dev]"
 
       # Same sequence the local pre-commit hook runs: ruff lint + ruff
       # format + verify-forge-docstrings (diff vs main) + pytest + plugin

@@ -18,11 +18,14 @@ ruff already considers acceptable. The MISSING list in the log is
 the dispatch contract: ``forge:precommit-fixer`` reads it and adds
 docstrings per entry.
 
-Reads ``[tool.interrogate]`` for threshold + excludes
-(``fail-under`` default 90). When
-``[tool.forge.docstring_coverage].badge = true`` writes
-``.badges/DocstringCoverage.svg`` for README embedding. Writes
-``code_health/docstring_coverage.log``.
+Reads ``[tool.interrogate]`` (the tool's own native section — forge
+does not wrap it) for threshold + excludes (``fail-under`` default 90).
+Scan roots default to the repo-wide layout
+``[tool.forge].source_dirs + test_dirs`` (default ``src`` + ``tests``);
+a per-tool ``[tool.forge.docstring_coverage].paths`` overrides them
+(interrogate has no scan-root concept). ``[tool.forge.docstring_coverage]
+.badge = true`` writes ``.badges/DocstringCoverage.svg`` for README
+embedding. Writes ``code_health/docstring_coverage.log``.
 
 Exit codes:
 
@@ -38,13 +41,16 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import tomllib
 from pathlib import Path
 
 from interrogate.badge_gen import create as create_badge
 from interrogate.config import InterrogateConfig
 from interrogate.coverage import InterrogateCoverage
 
+from forge.config import (
+    read_pyproject_raw,
+    resolve_tool_roots,
+)
 from forge.git_utils import capturing_to_step_log, configure_cli_logging
 
 
@@ -53,29 +59,8 @@ logger = logging.getLogger(__name__)
 
 
 _DEFAULT_FAIL_UNDER = 90.0
-_DEFAULT_PATHS: tuple[str, ...] = ("src", "tests")
 _BADGE_DIR = ".badges"
 _BADGE_FILENAME = "DocstringCoverage.svg"
-
-
-def _read_pyproject(repo_root: Path) -> dict:
-    """Load ``pyproject.toml`` from *repo_root*, or ``{}`` when absent.
-
-    Args:
-        repo_root: Repository root containing ``pyproject.toml``.
-
-    Returns:
-        Parsed TOML data, or an empty dict when the file is missing /
-        unreadable. Caller treats either as "consumer has not opted
-        in" and skips cleanly.
-    """
-    pyproject = repo_root / "pyproject.toml"
-    if not pyproject.is_file():
-        return {}
-    try:
-        return tomllib.loads(pyproject.read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
 
 
 def _interrogate_config(data: dict) -> tuple[InterrogateConfig, float, list[str]]:
@@ -178,6 +163,28 @@ def _emit_missing_list(results: object) -> None:
         logger.info("MISSING: %s:%s:%s", path, lineno, name)
 
 
+def _scan_paths(repo_root: Path) -> list[str]:
+    """Resolve the docstring-coverage scan roots via the shared resolver.
+
+    Delegates to :func:`forge.config.resolve_tool_roots` — granular
+    ``[tool.forge.docstring_coverage].paths`` → repo-wide
+    ``[tool.forge].source_dirs + test_dirs`` → smart auto-detect — so the
+    coverage reporter scans the same roots every other layout-aware forge
+    tool does. Coverage spans source *and* tests, so test roots are
+    included. The resolver already drops repo-escaping / non-existent
+    paths; this returns absolute path strings for interrogate.
+
+    Args:
+        repo_root: Repository root the configured paths resolve against.
+
+    Returns:
+        Existing in-repo directory paths to scan, as absolute strings.
+        Empty when none of the resolved roots exist.
+    """
+    roots = resolve_tool_roots(repo_root, "docstring_coverage", include_tests=True)
+    return [str((repo_root / d).resolve()) for d in roots]
+
+
 def main() -> int:
     """CLI entry point for ``verify-forge-docstring-coverage``.
 
@@ -197,15 +204,17 @@ def main() -> int:
 
     repo_root = Path.cwd()
     with capturing_to_step_log(repo_root, "docstring_coverage"):
-        data = _read_pyproject(repo_root)
+        data = read_pyproject_raw(repo_root)
         if not data:
             logger.info("(no pyproject.toml — skipped)")
             return 0
 
         config, fail_under, excludes = _interrogate_config(data)
-        paths = [str(repo_root / p) for p in _DEFAULT_PATHS if (repo_root / p).is_dir()]
+        paths = _scan_paths(repo_root)
         if not paths:
-            logger.info("(no src/ directory — skipped)")
+            logger.info(
+                "(none of the configured docstring_coverage paths exist — skipped)"
+            )
             return 0
 
         cov = InterrogateCoverage(

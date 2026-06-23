@@ -21,11 +21,13 @@ def test_steps_in_expected_order() -> None:
     assert slugs == [
         "githooks",
         "claude-md",
+        "claude-settings",
         "labels",
         "api-digest",
         "cli-reference",
         "audit-deps",
         "doctor",
+        "config",
     ]
 
 
@@ -179,7 +181,7 @@ def test_main_continue_on_fail_runs_every_step(
     monkeypatch.setattr(install_bootstrap, "repo_root", lambda: tmp_path)
     # Force interactive context: the _gate_skip_in_ci gate (FOUNDATION
     # §15) self-skips `doctor` and `audit-deps` in non-TTY runs, which
-    # would drop the failure count to 4.
+    # would drop the failure count to 5.
     monkeypatch.setattr(install_bootstrap, "is_non_interactive", lambda: False)
     captured = CapturedCalls()
     monkeypatch.setattr(
@@ -189,12 +191,12 @@ def test_main_continue_on_fail_runs_every_step(
     )
     # Skip labels (its gate runs subprocess for `git remote`, which would
     # tangle with the always-returncode-1 fake) so we exercise the
-    # remaining six steps cleanly.
+    # remaining seven steps cleanly.
     argv = ["install-forge-bootstrap", "--skip", "labels"]
     with patch.object(install_bootstrap.sys, "argv", argv):
         rc = install_bootstrap.main()
-    # Six non-gated steps, each fails with rc=1.
-    assert rc == 6
+    # Eight non-gated steps (incl. config), each fails with rc=1.
+    assert rc == 8
 
 
 def test_doctor_and_audit_deps_skip_in_ci(
@@ -222,9 +224,9 @@ def test_doctor_and_audit_deps_skip_in_ci(
     argv = ["install-forge-bootstrap", "--skip", "labels"]
     with patch.object(install_bootstrap.sys, "argv", argv):
         rc = install_bootstrap.main()
-    # Four failing steps: githooks, claude-md, api-digest, cli-reference.
-    # `doctor` + `audit-deps` self-skipped via the CI gate.
-    assert rc == 4
+    # Five failing steps: githooks, claude-md, claude-settings, api-digest,
+    # cli-reference. `doctor` + `audit-deps` self-skipped via the CI gate.
+    assert rc == 5
     invoked_clis = {call[0] for call in captured.calls}
     assert "forge-doctor" not in invoked_clis
     assert "forge-audit-deps" not in invoked_clis

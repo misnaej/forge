@@ -14,6 +14,7 @@ import json
 from typing import TYPE_CHECKING
 
 from forge import next_prep
+from forge.config import ForgeConfig
 from tests.conftest import FakeProc
 
 
@@ -148,12 +149,8 @@ def test_maybe_tag_release_skips_when_version_equals_latest_tag(
         json.dumps({"name": "x", "version": "1.0.0"})
     )
 
-    def _fake_git(*args: str, **_kw: object) -> str:
-        if args[:2] == ("tag", "--list"):
-            return "v1.0.0"
-        return ""
-
-    monkeypatch.setattr(next_prep, "_git", _fake_git)
+    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.0.0")
+    monkeypatch.setattr(next_prep, "_git", lambda *_a, **_kw: "")
     assert next_prep._maybe_tag_release(tmp_path) is None
 
 
@@ -169,10 +166,9 @@ def test_maybe_tag_release_creates_and_pushes_new_tag(
 
     def _fake_git(*args: str, **_kw: object) -> str:
         invoked.append(list(args))
-        if args[:2] == ("tag", "--list"):
-            return "v1.2.9"
         return ""
 
+    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.2.9")
     monkeypatch.setattr(next_prep, "_git", _fake_git)
     result = next_prep._maybe_tag_release(tmp_path)
     assert result == "v1.2.10"
@@ -342,6 +338,133 @@ def test_promotion_status_lists_pending_minors_in_order(
     assert pending == ["v1.18.0", "v1.19.0"]
 
 
+def test_promotion_status_excludes_patch_tags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Patch tags fold into the next minor — never listed as separate promotions.
+
+    base is minor-only; v1.19.1 / v1.20.1 / v1.20.2 ride along when their
+    minor is promoted, so only the ``X.Y.0`` targets appear.
+    """
+    monkeypatch.setattr(
+        next_prep,
+        "_read_plugin_version_at_ref",
+        lambda _root, ref: "1.21.0" if "dev" in ref else "1.19.0",
+    )
+    monkeypatch.setattr(
+        next_prep,
+        "_git",
+        lambda *args, **_kw: (
+            "v1.19.0 v1.19.1 v1.20.0 v1.20.1 v1.20.2 v1.21.0"
+            if args[:1] == ("tag",)
+            else ""
+        ),
+    )
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    pending = [line.strip() for line in lines if line.startswith("  ")]
+    assert pending == ["v1.20.0", "v1.21.0"]
+
+
+def test_promotion_status_flags_missing_changelog_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pending minor with no CHANGELOG entry gets a non-blocking advisory.
+
+    Locks docs/release-process.md §5: each promoted minor's entry is
+    authored on dev; ``--promotion-status`` flags any that are missing
+    without changing the exit code. Here v1.21.0 has an entry, v1.20.0
+    does not → only v1.20.0 is flagged.
+    """
+
+    def _fake_git(*args: str, **_kw: object) -> str:
+        if args[:1] == ("tag",):
+            return "v1.19.0 v1.20.0 v1.21.0"
+        if args[:1] == ("show",):
+            return "## v1.21.0 — 2026-06-17\n\n### Features\n- thing\n"
+        return ""
+
+    monkeypatch.setattr(
+        next_prep,
+        "_read_plugin_version_at_ref",
+        lambda _root, ref: "1.21.0" if "dev" in ref else "1.19.0",
+    )
+    monkeypatch.setattr(next_prep, "_git", _fake_git)
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    advisory = [line for line in lines if "no entry" in line]
+    assert len(advisory) == 1
+    assert "v1.20.0" in advisory[0]
+    assert "v1.21.0" not in advisory[0]
+
+
+def test_promotion_status_silent_when_changelog_complete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No advisory when every pending minor already has a CHANGELOG entry."""
+
+    def _fake_git(*args: str, **_kw: object) -> str:
+        if args[:1] == ("tag",):
+            return "v1.19.0 v1.20.0 v1.21.0"
+        if args[:1] == ("show",):
+            return "## v1.21.0 — 2026-06-17\n\n## v1.20.0 — 2026-06-17\n"
+        return ""
+
+    monkeypatch.setattr(
+        next_prep,
+        "_read_plugin_version_at_ref",
+        lambda _root, ref: "1.21.0" if "dev" in ref else "1.19.0",
+    )
+    monkeypatch.setattr(next_prep, "_git", _fake_git)
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    assert not [line for line in lines if "no entry" in line]
+
+
+def test_promotion_status_includes_major_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A major release ``X.0.0`` is a promotion target (patch component is 0)."""
+    monkeypatch.setattr(
+        next_prep,
+        "_read_plugin_version_at_ref",
+        lambda _root, ref: "2.0.0" if "dev" in ref else "1.20.0",
+    )
+    monkeypatch.setattr(
+        next_prep,
+        "_git",
+        lambda *args, **_kw: (
+            "v1.20.0 v1.20.1 v1.21.0 v2.0.0" if args[:1] == ("tag",) else ""
+        ),
+    )
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    pending = [line.strip() for line in lines if line.startswith("  ")]
+    assert pending == ["v1.21.0", "v2.0.0"]
+
+
+def test_promotion_status_when_dev_sits_on_patch_above_last_minor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dev on a patch (1.21.3) still targets the minors up to its minor line."""
+    monkeypatch.setattr(
+        next_prep,
+        "_read_plugin_version_at_ref",
+        lambda _root, ref: "1.21.3" if "dev" in ref else "1.19.0",
+    )
+    monkeypatch.setattr(
+        next_prep,
+        "_git",
+        lambda *args, **_kw: (
+            "v1.20.0 v1.20.1 v1.21.0 v1.21.3" if args[:1] == ("tag",) else ""
+        ),
+    )
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    pending = [line.strip() for line in lines if line.startswith("  ")]
+    assert pending == ["v1.20.0", "v1.21.0"]
+
+
 def test_main_promotion_status_early_exits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -456,3 +579,50 @@ def test_main_collapses_to_main_when_no_tool_forge(
         switches = [c for c in cap if c[:1] == ["switch"]]
         assert switches
         assert switches[0][-1] == "main"
+
+
+def test_tag_staleness_warning_fires_on_dev_when_tag_lags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Warn on the dev_branch when plugin.json is ahead of the latest tag.
+
+    MOCK SETUP: current branch = dev; config dev_branch = dev; plugin.json
+    1.25.0 with latest tag v1.24.1 (a bump that was never tagged).
+    """
+    monkeypatch.setattr(next_prep, "_git", lambda *_a, **_k: "dev")
+    monkeypatch.setattr(
+        next_prep, "load_config", lambda _r: ForgeConfig(dev_branch="dev")
+    )
+    monkeypatch.setattr(next_prep, "_read_plugin_version", lambda _r: "1.25.0")
+    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _r: "v1.24.1")
+    warning = next_prep.tag_staleness_warning(tmp_path)
+    assert warning is not None
+    assert "1.25.0" in warning
+    assert "v1.24.1" in warning
+
+
+def test_tag_staleness_warning_silent_off_dev_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No warning when the current branch is not the dev_branch."""
+    monkeypatch.setattr(next_prep, "_git", lambda *_a, **_k: "feature/x")
+    monkeypatch.setattr(
+        next_prep, "load_config", lambda _r: ForgeConfig(dev_branch="dev")
+    )
+    assert next_prep.tag_staleness_warning(tmp_path) is None
+
+
+def test_tag_staleness_warning_silent_when_tag_current(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No warning when the latest tag already matches plugin.json."""
+    monkeypatch.setattr(next_prep, "_git", lambda *_a, **_k: "dev")
+    monkeypatch.setattr(
+        next_prep, "load_config", lambda _r: ForgeConfig(dev_branch="dev")
+    )
+    monkeypatch.setattr(next_prep, "_read_plugin_version", lambda _r: "1.24.1")
+    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _r: "v1.24.1")
+    assert next_prep.tag_staleness_warning(tmp_path) is None

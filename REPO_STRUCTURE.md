@@ -29,6 +29,7 @@ Code.
    - next_prep.py: `forge-next-prep` — refresh main, optional rolling-next tag bump, prune stale branches; used by `/next` skill
    - continuation_append.py: `forge-continuation-append` — single source of truth for `.plan/CONTINUATION.md` append format; called by `forge:git-commit-push` and `forge:pr-manager`
    - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; read-only CI/local reporter (exempt in `cli_wiring_exempt.toml`)
+   - forge_config.py: `forge-config` — lists every `[tool.forge.*]` key forge reads (value/default + description), names native sections like `[tool.interrogate]`, and advises on recommended-but-unset config; read-only, surfaced by `install-forge-bootstrap`
    - fix_ruff.py: `fix-forge-ruff` — runs `ruff format` + `ruff check --fix --unsafe-fixes`, re-stages modified tracked files, writes `code_health/ruff.log`
    - verify_docstrings.py: `verify-forge-docstrings` — docstring accuracy
    - verify_docstring_coverage.py: `verify-forge-docstring-coverage` — full-codebase docstring coverage % (interrogate wrapper) + optional `.badges/DocstringCoverage.svg`
@@ -36,6 +37,7 @@ Code.
      structure drift check
    - verify_test_naming.py: `verify-forge-test-naming` — test naming check
    - verify_manifest.py: `verify-forge-manifest` — `.claude-plugin/*.json` JSON validation
+   - verify_doc_consistency.py: `verify-forge-doc-consistency` — checks every `[project.scripts]` CLI is documented in `docs/cli-reference.md`; backs the opt-in `doc_consistency` pre-commit step (non-blocking)
    - verify_plugin_version.py: `verify-forge-plugin-version` — rolling-next guard (plugin.json["version"] > latest git tag)
    - gen_cli_reference.py: `forge-gen-cli-reference` — CLI reference
      doc generator
@@ -44,11 +46,13 @@ Code.
    - gen_common.py: shared drift-check helper for the `forge-gen-*`
      doc generators
    - doctor.py: `forge-doctor` — environment diagnostics
-   - install_githooks.py: `install-forge-githooks` — git hook installer (managed marker embeds forge version + body-sha; modified wrappers survive refresh)
+   - install_githooks.py: `install-forge-githooks` — git hook installer (managed marker carries `body-sha` only — never the forge version, so wrappers stay byte-stable across bumps; the version lives in the gitignored `.forge-hook-version` sidecar; modified wrappers survive refresh)
    - post_merge.py: `forge-post-merge` — managed post-merge git-hook entrypoint (foundation drift check + backgrounded self-refresh of hook wrappers)
    - post_checkout.py: `forge-post-checkout` — managed post-checkout git-hook entrypoint (branch-flag-guarded foundation drift check)
    - _hook_helpers.py: private shared helper used by `post_merge` and `post_checkout` (drift-check sequence)
    - install_claudemd.py: `install-forge-claude-md` — CLAUDE.md scaffolder
+   - install_claude_settings.py: `install-forge-claude-settings` — write/verify `.claude/settings.json` per-repo plugin enablement (marketplace + `enabledPlugins`); ref tracks the pip pin; idempotent + merge-preserving; `--check` mode
+   - claude_settings_schema.py: shared `.claude/settings.json` forge-block schema (marketplace key path, `forge@forge` id, scaffold) — single source of truth for the write side (install_claude_settings) and read side (install_claudemd channel detection)
    - install_labels.py: `install-forge-labels` — GitHub label installer
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
@@ -67,6 +71,7 @@ Code.
 
 3. **Package Data (`src/forge/data/`)**
    - FOUNDATION.md: shipped copy of the foundation document (symlink)
+   - CHANGELOG.md: shipped copy of the changelog (symlink) — read by `forge-upgrade` to surface consumer-action upgrade notes
 
 ## Agents Directory (`agents/`)
 
@@ -96,6 +101,7 @@ subdirectory holds a single `SKILL.md`:
 - next/: clean up state and pick next task
 - pr/: full PR finalization flow
 - review/: address PR review comments
+- test/: write tests via the test agents (advisor → writer → review → precommit-fixer)
 - triage/: issue backlog triage
 - weekly/: weekly summary report
 
@@ -145,6 +151,9 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_git_utils.py: tests for git_utils (shared CLI helpers)
    - test_install_bootstrap.py: tests for install_bootstrap
    - test_install_claudemd.py: tests for install_claudemd
+   - test_install_claude_settings.py: tests for install_claude_settings
+   - test_claude_hooks.py: black-box tests for the `claude-hooks/*.sh` safety hooks (subprocess + JSON stdin)
+   - test_claude_settings_schema.py: tests for the shared claude_settings_schema module (scaffold copy, write/read round-trip)
    - test_upgrade.py: tests for upgrade (forge-upgrade CLI)
    - test_install_githooks.py: tests for install_githooks
    - test_hook_helpers.py: tests for _hook_helpers shared drift-check helper
@@ -157,6 +166,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_verify_docstrings.py: tests for verify_docstrings
    - test_verify_docstring_coverage.py: tests for verify_docstring_coverage
    - test_verify_manifest.py: tests for verify_manifest
+   - test_verify_doc_consistency.py: tests for verify_doc_consistency
    - test_verify_plugin_version.py: tests for verify_plugin_version
    - test_verify_repo_structure.py: tests for verify_repo_structure
    - test_verify_test_naming.py: tests for verify_test_naming
@@ -187,6 +197,9 @@ Forge's own bootstrap tooling (not a consumer pattern):
 - ci-access.md: how a consumer's CI runner pulls forge
 - claude-code-plugin.md: optional Claude Code plugin install + extension
 - cli-reference.md: generated CLI reference (`forge-gen-cli-reference`)
+- adopting.md: modular adoption guide — three independent install tracks (CLIs / + git hooks / + plugin) + "what lands on disk" table + drift/upgrade explainer
+- configuration.md: complete `[tool.forge.*]` config reference + setup guide (written counterpart to `forge-config --list`)
+- release-process.md: forge-only single source of truth for versioning + dev→main promotion + the invariant→test contract
 - customizing-precommit.md: adding repo-specific steps to `.githooks/pre-commit`
 - rust-core-migration-plan.md: proposal/RFC for splitting forge into a Rust governance-core binary + optional Python analysis pack
 - security.md: security policy and review documentation
@@ -199,12 +212,14 @@ Forge's own bootstrap tooling (not a consumer pattern):
 
 2. **Code Quality**
    - ruff.toml: ruff lint and format configuration (strict, ALL rules)
+   - pyrefly.toml: pyrefly type-checker config for the opt-in `typecheck` step (strict return-type checking; interrogate's attrs `__init__` silenced via `replace-imports-with-any`)
 
 3. **Documentation**
    - CLAUDE.md: project guidance for Claude Code and developers
    - FOUNDATION.md: shared engineering principles (single source of truth)
    - README.md: main repository documentation
    - REPO_STRUCTURE.md: this file
+   - CHANGELOG.md: main-only release history (Keep a Changelog format)
    - CONTRIBUTING.md: contribution guidelines
    - LICENSE: MIT license
 

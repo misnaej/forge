@@ -3,8 +3,10 @@
 Owns the **ruff phase** of the forge pre-commit sequence (FOUNDATION §13,
 single responsibility):
 
-1. Auto-detect source dirs (``src``, ``tests``, ``forge`` — same set the
-   verify-forge-* CLIs use).
+1. Resolve scan roots via :func:`forge.config.resolve_tool_roots` —
+   granular ``[tool.forge.ruff].paths`` → repo-wide
+   ``[tool.forge].source_dirs + test_dirs`` → smart auto-detect (the same
+   roots every layout-aware forge tool uses).
 2. Run ``ruff format`` in-place.
 3. Run ``ruff check --fix --unsafe-fixes``. Unsafe fixes are on by
    default; forge always applies them.
@@ -28,9 +30,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from forge.config import resolve_tool_roots
 from forge.git_utils import (
+    SCOPE_DIFF,
+    VALID_SCOPES,
     configure_cli_logging,
-    detect_existing_source_dirs,
+    get_modified_files,
     require_cli,
     write_step_log,
 )
@@ -79,15 +84,19 @@ def _restage_modified(repo_root: Path, source_dirs: list[str]) -> list[str]:
     return files
 
 
-def _validate_dirs(repo_root: Path, dirs: list[str]) -> list[str]:
-    """Ensure every entry in *dirs* resolves inside *repo_root*.
+def _validate_paths(repo_root: Path, paths: list[str]) -> list[str]:
+    """Ensure every entry in *paths* resolves inside *repo_root*.
 
     Guards against directory-traversal arguments (e.g. ``../etc``) being
-    passed through into the ruff subprocess.
+    passed through into the ruff subprocess. Accepts both directories
+    (``scope=all`` / positional roots) and individual file paths
+    (``scope=diff`` modified-file set) — the containment check is
+    path-type agnostic.
 
     Args:
         repo_root: Git repo root the CLI was invoked from.
-        dirs: Candidate source directories from argv or auto-detection.
+        paths: Candidate source dirs or files from argv, auto-detection,
+            or the modified-file set.
 
     Returns:
         The validated list (unchanged on success).
@@ -97,14 +106,14 @@ def _validate_dirs(repo_root: Path, dirs: list[str]) -> list[str]:
             (config error).
     """
     repo_real = repo_root.resolve()
-    for raw in dirs:
+    for raw in paths:
         candidate = (repo_root / raw).resolve()
         if repo_real != candidate and repo_real not in candidate.parents:
             sys.stderr.write(
                 f"fix-forge-ruff: refusing path outside repo root: {raw}\n"
             )
             raise SystemExit(2)
-    return dirs
+    return paths
 
 
 def main() -> int:
@@ -113,7 +122,8 @@ def main() -> int:
     Returns:
         Exit code from ``ruff check --fix`` (0 if every violation was
         cleared, non-zero if residue remains). ``0`` when no source dirs
-        are present (the step is skipped).
+        are present or when ``--scope diff`` finds no modified files (the
+        step is skipped in both cases).
     """
     parser = argparse.ArgumentParser(
         prog="fix-forge-ruff",
@@ -126,19 +136,33 @@ def main() -> int:
     parser.add_argument(
         "dirs",
         nargs="*",
-        help="Source dirs to fix. If empty, auto-detect from candidate list.",
+        help="Source dirs to fix. If empty, resolve from "
+        "[tool.forge].source_dirs / smart auto-detect.",
+    )
+    parser.add_argument(
+        "--scope",
+        choices=VALID_SCOPES,
+        default="all",
+        help="'all' (whole source tree, the default) or 'diff' (only files "
+        "modified vs main). 'diff' ignores positional dirs.",
     )
     args = parser.parse_args()
 
     repo_root = Path.cwd()
-    source_dirs = _validate_dirs(
-        repo_root, args.dirs or detect_existing_source_dirs(repo_root)
-    )
-
-    if not source_dirs:
-        write_step_log(repo_root, "ruff", "(no source dirs detected — skipped)")
-        logger.info("No source directories found at %s", repo_root)
-        return 0
+    if args.scope == SCOPE_DIFF:
+        modified = get_modified_files()
+        if not modified:
+            write_step_log(repo_root, "ruff", "(no modified files — skipped)")
+            logger.info("No modified files vs main at %s", repo_root)
+            return 0
+        source_dirs = _validate_paths(repo_root, modified)
+    else:
+        roots = args.dirs or resolve_tool_roots(repo_root, "ruff", include_tests=True)
+        source_dirs = _validate_paths(repo_root, roots)
+        if not source_dirs:
+            write_step_log(repo_root, "ruff", "(no source dirs detected — skipped)")
+            logger.info("No source directories found at %s", repo_root)
+            return 0
 
     require_cli("ruff", caller="fix-forge-ruff")
 

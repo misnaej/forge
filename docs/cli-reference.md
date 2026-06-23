@@ -7,16 +7,19 @@ Forge's console-script CLIs are its real public surface. This page documents eac
 ## fix-forge-ruff
 
 ```text
-usage: fix-forge-ruff [-h] [dirs ...]
+usage: fix-forge-ruff [-h] [--scope {all,diff}] [dirs ...]
 
 Run `ruff format` + `ruff check --fix --unsafe-fixes` in-place, re-stage
 modified tracked files, and write code_health/ruff.log.
 
 positional arguments:
-  dirs        Source dirs to fix. If empty, auto-detect from candidate list.
+  dirs                Source dirs to fix. If empty, resolve from
+                      [tool.forge].source_dirs / smart auto-detect.
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help          show this help message and exit
+  --scope {all,diff}  'all' (whole source tree, the default) or 'diff' (only
+                      files modified vs main). 'diff' ignores positional dirs.
 ```
 
 ## forge-audit-agents
@@ -195,6 +198,20 @@ options:
                         code_health/audit_<name>.log.
 ```
 
+## forge-config
+
+```text
+usage: forge-config [-h] [--list]
+
+List the [tool.forge.*] config forge reads in this repo, with current values /
+defaults, the native tool sections forge reads, and advice on recommended-but-
+unset keys.
+
+options:
+  -h, --help  show this help message and exit
+  --list      List forge config + advice (the default action).
+```
+
 ## forge-continuation-append
 
 ```text
@@ -361,7 +378,8 @@ options:
 ## forge-precommit
 
 ```text
-usage: forge-precommit [-h] [--json]
+usage: forge-precommit [-h] [--json] [--skip STEP[,STEP...]]
+                       [--only STEP[,STEP...]]
 
 Run the forge pre-commit check sequence: ruff (format + check, self-healing
 with --unsafe-fixes on failure) + docstring verification (diff vs main) +
@@ -373,8 +391,14 @@ default sequence — run it in CI or wire it into .githooks/pre-commit
 explicitly. Used by any repo that adopts forge via install-forge-githooks.
 
 options:
-  -h, --help  show this help message and exit
-  --json      Emit a JSON summary on stdout instead of human output.
+  -h, --help            show this help message and exit
+  --json                Emit a JSON summary on stdout instead of human output.
+  --skip STEP[,STEP...]
+                        Force-skip these steps for this run (repeatable or
+                        comma-separated).
+  --only STEP[,STEP...]
+                        Run exactly these steps (repeatable or comma-
+                        separated).
 ```
 
 ## forge-slow-tests-report
@@ -439,7 +463,8 @@ options:
   --check      Dry-run. Each step that supports --check runs in check mode;
                others just print their intent.
   --skip SLUG  Skip a step by slug. Repeatable. Known slugs: githooks, claude-
-               md, labels, api-digest, cli-reference, audit-deps, doctor.
+               md, claude-settings, labels, api-digest, cli-reference, audit-
+               deps, doctor, config.
   --strict     Abort on the first failed step. Default is continue-on-fail.
 ```
 
@@ -465,6 +490,22 @@ options:
               layout (FOUNDATION.md + @FOUNDATION.md include).
   --force     Overwrite an existing FOUNDATION.md that lacks the forge-managed
               markers. Use sparingly.
+```
+
+## install-forge-claude-settings
+
+```text
+usage: install-forge-claude-settings [-h] [--ref REF] [--check]
+
+Enable the forge Claude Code plugin in this repo by writing the marketplace +
+enabledPlugins block to .claude/settings.json (per-repo, never global).
+Idempotent and merge-preserving.
+
+options:
+  -h, --help  show this help message and exit
+  --ref REF   Marketplace ref (branch/tag) to pin. Defaults to the forge-
+              scripts pip-pin ref in pyproject.toml, else 'main'.
+  --check     Verify the block is present without writing (exit 1 on drift).
 ```
 
 ## install-forge-githooks
@@ -512,6 +553,18 @@ options:
   -h, --help  show this help message and exit
 ```
 
+## verify-forge-doc-consistency
+
+```text
+usage: verify-forge-doc-consistency [-h]
+
+Check that every [project.scripts] CLI is documented in docs/cli-reference.md.
+Non-blocking reporter for the doc_consistency pre-commit step.
+
+options:
+  -h, --help  show this help message and exit
+```
+
 ## verify-forge-docstring-coverage
 
 ```text
@@ -528,15 +581,18 @@ options:
 ## verify-forge-docstrings
 
 ```text
-usage: verify-forge-docstrings [-h] [target]
+usage: verify-forge-docstrings [-h] [--scope {all,diff}] [target]
 
 Verify docstring accuracy against actual code signatures.
 
 positional arguments:
-  target      Optional file path to check. Defaults to modified files vs main.
+  target              Optional file path to check. Overrides --scope.
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help          show this help message and exit
+  --scope {all,diff}  'all' (every tracked .py file, the default) or 'diff'
+                      (files modified vs main). Ignored when a target path is
+                      given.
 ```
 
 ## verify-forge-manifest
@@ -578,14 +634,16 @@ options:
 ## verify-forge-test-naming
 
 ```text
-usage: verify-forge-test-naming [-h] [target]
+usage: verify-forge-test-naming [-h] [--scope {all,diff}] [target]
 
 Verify test naming standards on auto-detected or given files.
 
 positional arguments:
-  target      Optional test file to check. Defaults to modified files under
-              test/ or tests/.
+  target              Optional test file to check. Overrides --scope.
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help          show this help message and exit
+  --scope {all,diff}  'all' (every tracked test file, the default) or 'diff'
+                      (test files modified vs main). Ignored when a target is
+                      given.
 ```

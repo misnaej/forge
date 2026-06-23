@@ -18,9 +18,11 @@ Unlike full API documentation, the digest is deliberately terse — one
 line per symbol: a signature reconstructed from the AST plus the first
 line of the symbol's docstring. It is an index, not a reference manual.
 
-The generator is repo-agnostic. Source roots are auto-detected: ``src/``
-when present, otherwise every top-level directory containing an
-``__init__.py``. Pass ``--roots`` to override.
+The generator is repo-agnostic. Source roots come from the shared
+``forge.config.resolve_tool_roots`` resolution — granular
+``[tool.forge.api_digest].paths`` → repo-wide ``[tool.forge].source_dirs``
+→ smart auto-detect (``src/`` when present, else top-level packages). Pass
+``--roots`` to override all of it.
 
 Usage:
 
@@ -48,6 +50,7 @@ import logging
 import sys
 from typing import TYPE_CHECKING, NamedTuple
 
+from forge.config import resolve_tool_roots
 from forge.gen_common import check_doc_drift
 from forge.git_utils import configure_cli_logging, repo_root
 
@@ -107,12 +110,14 @@ class ModuleDigest(NamedTuple):
 def detect_roots(root: Path, explicit: list[str] | None) -> list[Path]:
     """Resolve the source roots to scan for Python modules.
 
-    When *explicit* is given, each entry is resolved against the repo
-    root; any root that escapes the repo (an absolute path or one using
-    ``..``) is rejected with an error and excluded, so the scan never
-    reads files outside the repository. Otherwise ``src/`` is used when
-    it exists, falling back to every top-level directory containing an
-    ``__init__.py``.
+    When *explicit* is given (``--roots``), each entry is resolved against
+    the repo root; any root that escapes the repo (an absolute path or one
+    using ``..``) is rejected with an error and excluded, so the scan never
+    reads files outside the repository. Otherwise the shared
+    :func:`forge.config.resolve_tool_roots` resolution applies (granular
+    ``[tool.forge.api_digest].paths`` → repo-wide ``[tool.forge].source_dirs``
+    → smart auto-detect), so api-digest indexes the same roots every other
+    layout-aware forge tool does. Source-only — test dirs are not indexed.
 
     Args:
         root: Repository root directory.
@@ -136,18 +141,8 @@ def detect_roots(root: Path, explicit: list[str] | None) -> list[Path]:
             inside.append(path)
         return sorted((p for p in inside if p.is_dir()), key=lambda p: p.name)
 
-    src = root / "src"
-    if src.is_dir():
-        return [src]
-
-    return sorted(
-        (
-            item
-            for item in root.iterdir()
-            if item.is_dir() and (item / "__init__.py").is_file()
-        ),
-        key=lambda p: p.name,
-    )
+    roots = resolve_tool_roots(root, "api_digest")
+    return sorted((root / d for d in roots), key=lambda p: p.name)
 
 
 def _is_test_module(path: Path) -> bool:
@@ -300,7 +295,9 @@ def format_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     return f"{prefix}{node.name}({', '.join(parts)}){suffix}"
 
 
-def _summary_line(node: ast.AST) -> str:
+def _summary_line(
+    node: ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef,
+) -> str:
     """Return the first line of an AST node's docstring.
 
     Args:

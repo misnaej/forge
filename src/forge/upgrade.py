@@ -42,6 +42,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 
 from forge.git_utils import _FORGE_GITHUB_REPO, configure_cli_logging, repo_root
@@ -379,6 +380,96 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
     return 0, target_ref
 
 
+# A ``## vX.Y.Z`` CHANGELOG version heading, and the ``### ⚠️ Upgrade
+# notes`` lane within a version's section (up to the next ``### `` or EOF).
+_CHANGELOG_VERSION_RE = re.compile(r"^## (v\d+\.\d+\.\d+)\b.*$", re.MULTILINE)
+_UPGRADE_NOTES_RE = re.compile(
+    r"^### ⚠️ Upgrade notes\s*?\n(.*?)(?=^### |\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def _read_changelog() -> str | None:
+    """Return forge's packaged ``CHANGELOG.md`` text, or ``None`` if unavailable.
+
+    The changelog ships as package data (``src/forge/data/CHANGELOG.md``,
+    a symlink to the repo root) so a consumer's ``forge-upgrade`` can read
+    it offline — mirroring how ``FOUNDATION.md`` is shipped.
+
+    Returns:
+        The changelog contents, or ``None`` when the package data is
+        missing (e.g. a partial install).
+    """
+    try:
+        return resources.files("forge").joinpath("data/CHANGELOG.md").read_text("utf-8")
+    except (OSError, ModuleNotFoundError):
+        return None
+
+
+def _consumer_upgrade_notes(
+    changelog_text: str, *, max_versions: int = 3
+) -> str | None:
+    """Extract the most recent ``⚠️ Upgrade notes`` lanes from the changelog.
+
+    Walks version sections newest-first and collects each one's
+    ``### ⚠️ Upgrade notes`` block, up to *max_versions* that have one.
+    Releases without the lane are additive/internal and carry no consumer
+    action, so they are skipped.
+
+    Args:
+        changelog_text: Full ``CHANGELOG.md`` contents.
+        max_versions: Hard cap on how many note-bearing versions to
+            surface, newest-first — keeps output bounded when many
+            versions accumulate. It is a blunt top-N, not a filter against
+            the consumer's prior version (the header tells the reader to
+            scan only entries newer than theirs).
+
+    Returns:
+        A formatted block (``vX.Y.Z:`` headers + their note lines), or
+        ``None`` when no version carries upgrade notes.
+    """
+    headings = list(_CHANGELOG_VERSION_RE.finditer(changelog_text))
+    chunks: list[str] = []
+    for index, heading in enumerate(headings):
+        if len(chunks) >= max_versions:
+            break
+        end = (
+            headings[index + 1].start()
+            if index + 1 < len(headings)
+            else len(changelog_text)
+        )
+        section = changelog_text[heading.end() : end]
+        note = _UPGRADE_NOTES_RE.search(section)
+        if note:
+            chunks.append(f"{heading.group(1)}:\n{note.group(1).strip()}")
+    return "\n\n".join(chunks) if chunks else None
+
+
+def _print_upgrade_notes() -> None:
+    """Surface consumer-action upgrade notes after a successful upgrade.
+
+    Reads the packaged changelog and prints the most recent
+    ``⚠️ Upgrade notes`` lanes so the consumer knows what — if anything —
+    they must change in their own repo. No-op when the changelog or its
+    notes are absent.
+    """
+    text = _read_changelog()
+    if text is None:
+        return
+    notes = _consumer_upgrade_notes(text)
+    if notes is None:
+        return
+    logger.info("")
+    logger.warning(
+        "Consumer action — review these upgrade notes "
+        "(any newer than your previous forge version):",
+    )
+    for line in notes.splitlines():
+        logger.info("  %s", line)
+    logger.info("")
+    logger.info("Full release history: CHANGELOG.md in the forge repo.")
+
+
 def _run_phase2() -> int:
     """Phase 2 — run install-forge-bootstrap; print plugin reminder.
 
@@ -406,6 +497,7 @@ def _run_phase2() -> int:
         logger.info("  /plugin update forge@forge")
         logger.info("  /reload-plugins")
         logger.info("Monitor changes still need a session restart.")
+        _print_upgrade_notes()
     return rc
 
 

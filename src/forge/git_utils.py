@@ -27,35 +27,6 @@ logger = logging.getLogger(__name__)
 _FORGE_GITHUB_REPO = "misnaej/forge"
 
 
-DEFAULT_SOURCE_DIRS: tuple[str, ...] = (
-    "src",
-    "test",
-    "tests",
-    "scripts",
-    "tools",
-    "projects",
-    "agents",
-    "lib",
-)
-
-
-def detect_existing_source_dirs(repo_root: Path) -> list[str]:
-    """Return the subset of ``DEFAULT_SOURCE_DIRS`` that exist under *repo_root*.
-
-    Single source of truth for "which source dirs does this repo
-    contain?" — every CLI that scopes work to source dirs (precommit
-    sequence, ruff fixer, audit pack) should call this helper rather
-    than re-filtering ``DEFAULT_SOURCE_DIRS`` inline.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        Repo-relative directory names, in ``DEFAULT_SOURCE_DIRS`` order.
-    """
-    return [d for d in DEFAULT_SOURCE_DIRS if (repo_root / d).is_dir()]
-
-
 @lru_cache(maxsize=1)
 def repo_root() -> Path:
     """Return the git repo root for the current working directory.
@@ -135,6 +106,38 @@ def parse_semver(version: str) -> tuple[int, int, int] | None:
     if not match:
         return None
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def latest_v_tag(root: Path) -> str | None:
+    """Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
+
+    Resolves the latest release **globally** — ``git tag --list "v*"
+    --sort=-v:refname`` — independent of ``HEAD``'s ancestry. This is the
+    single source of truth for "latest release tag", shared by the
+    rolling-next pre-commit guard (``verify-forge-plugin-version``) and
+    the auto-tagger (``forge-next-prep``). A branch-independent resolution
+    is required in the dual-track (dev/main) model: a release tagged on
+    one branch is not in the other's history, so an ancestry-scoped
+    ``git describe`` would disagree with the auto-tagger and let a stale
+    manifest slip past the guard.
+
+    Args:
+        root: Repo root (cwd for the git invocation).
+
+    Returns:
+        Tag name like ``"v1.2.9"``, or ``None`` when no ``v*`` tags exist.
+    """
+    proc = subprocess.run(
+        ["git", "tag", "--list", "v*", "--sort=-v:refname"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    out = proc.stdout.strip()
+    if not out:
+        return None
+    return out.splitlines()[0]
 
 
 def require_cli(name: str, *, caller: str | None = None) -> None:
@@ -387,4 +390,38 @@ def get_modified_files(
                 prefix=prefix,
             ),
         ),
+    )
+
+
+SCOPE_ALL = "all"
+SCOPE_DIFF = "diff"
+# The two file-selection scopes shared by the scope-aware pre-commit steps and
+# their CLIs (ruff, docstrings, test-naming). Defined once here — co-located
+# with the two file-source functions the scopes pick between — so the resolver
+# and every `--scope` argparse choice reference one vocabulary.
+VALID_SCOPES = (SCOPE_ALL, SCOPE_DIFF)
+
+
+def get_tracked_files(
+    *,
+    suffix: str = ".py",
+    prefix: str | tuple[str, ...] | None = None,
+) -> list[str]:
+    """Get all git-tracked files matching the suffix/prefix filters.
+
+    The whole-repo counterpart to :func:`get_modified_files`: the file
+    source for precommit steps running in ``scope = "all"`` mode, which
+    check the entire tracked tree rather than the diff vs main.
+
+    Args:
+        suffix: File suffix to filter by. Defaults to '.py'.
+        prefix: Optional path prefix(es) to filter by. Either a single
+            string or a tuple of acceptable prefixes (e.g.,
+            ``("test/", "tests/")`` to accept either test-dir layout).
+
+    Returns:
+        Sorted, deduplicated list of tracked file paths matching the filters.
+    """
+    return sorted(
+        set(_parse_files(_run_git("ls-files"), suffix=suffix, prefix=prefix)),
     )

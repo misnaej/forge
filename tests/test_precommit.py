@@ -24,6 +24,66 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def _write_precommit_cfg(repo_root: Path, body: str) -> None:
+    """Write a ``[tool.forge.precommit]`` block to a tmp pyproject.toml.
+
+    Args:
+        repo_root: Directory to drop ``pyproject.toml`` in.
+        body: TOML lines placed under ``[tool.forge.precommit]``.
+    """
+    (repo_root / "pyproject.toml").write_text(
+        f"[tool.forge.precommit]\n{body}\n", encoding="utf-8"
+    )
+
+
+def test_resolve_scope_defaults_to_all(tmp_path: Path) -> None:
+    """With no config, every step resolves to whole-tree 'all' scope."""
+    assert precommit._resolve_scope(tmp_path, "ruff") == "all"
+    assert precommit._resolve_scope(tmp_path, "docstring_verification") == "all"
+
+
+def test_resolve_scope_global_key(tmp_path: Path) -> None:
+    """A global `scope = "diff"` applies to every scope-aware step."""
+    _write_precommit_cfg(tmp_path, 'scope = "diff"')
+    assert precommit._resolve_scope(tmp_path, "ruff") == "diff"
+    assert precommit._resolve_scope(tmp_path, "test_naming_check") == "diff"
+
+
+def test_resolve_scope_per_step_override_wins(tmp_path: Path) -> None:
+    """A per-step override beats the global default."""
+    _write_precommit_cfg(
+        tmp_path, 'scope = "all"\n[tool.forge.precommit.scope_overrides]\nruff = "diff"'
+    )
+    assert precommit._resolve_scope(tmp_path, "ruff") == "diff"
+    assert precommit._resolve_scope(tmp_path, "docstring_verification") == "all"
+
+
+def test_resolve_scope_invalid_falls_back_to_all(tmp_path: Path) -> None:
+    """An unrecognised scope value degrades to 'all', never raises."""
+    _write_precommit_cfg(tmp_path, 'scope = "nonsense"')
+    assert precommit._resolve_scope(tmp_path, "ruff") == "all"
+
+
+def test_scope_aware_steps_forward_resolved_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """docstring/test-naming steps forward `--scope diff` from config."""
+    _write_precommit_cfg(tmp_path, 'scope = "diff"')
+    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/usr/bin/x")
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> tuple[bool, str]:
+        calls.append(cmd)
+        return True, ""
+
+    monkeypatch.setattr(precommit, "_run", _fake_run)
+    precommit.step_docstrings(tmp_path)
+    precommit.step_test_naming(tmp_path)
+    assert calls[0] == ["verify-forge-docstrings", "--scope", "diff"]
+    assert calls[1] == ["verify-forge-test-naming", "--scope", "diff"]
+
+
 def test_step_ruff_skipped_when_no_source_dirs(tmp_path: Path) -> None:
     """step_ruff returns a skipped result when no candidate dirs exist."""
     result = precommit.step_ruff(tmp_path)
@@ -48,7 +108,7 @@ def test_step_ruff_shells_out_to_fix_forge_ruff(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """step_ruff delegates to the fix-forge-ruff CLI with source dirs."""
+    """step_ruff delegates to the fix-forge-ruff CLI with the resolved scope."""
     (tmp_path / "src").mkdir()
     monkeypatch.setattr(
         precommit.shutil, "which", lambda _name: "/usr/bin/fix-forge-ruff"
@@ -63,8 +123,7 @@ def test_step_ruff_shells_out_to_fix_forge_ruff(
     result = precommit.step_ruff(tmp_path)
     assert result.passed
     assert calls
-    assert calls[0][0] == "fix-forge-ruff"
-    assert "src" in calls[0]
+    assert calls[0] == ["fix-forge-ruff", "--scope", "all"]
 
 
 def test_step_ruff_propagates_nonzero_exit(
@@ -233,6 +292,123 @@ def test_step_plugin_version_marks_skipped_from_cli_output(
         lambda *_a, **_kw: (True, "(no git tags yet — skipped)\n"),
     )
     result = precommit.step_plugin_version(tmp_path)
+    assert result.passed
+    assert result.skipped
+
+
+def _setup_release_guard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    plugin_version: str | None,
+    latest_tag: str | None,
+    dual_track: bool = True,
+) -> None:
+    """Stage a repo for step_release_tag_guard: dual-track + plugin.json + tag.
+
+    Args:
+        tmp_path: Repo root.
+        monkeypatch: pytest fixture.
+        plugin_version: Version to write into ``.claude-plugin/plugin.json``;
+            ``None`` writes no manifest.
+        latest_tag: Tag ``latest_v_tag`` is stubbed to return (e.g.
+            ``"v1.24.1"``); ``None`` stubs no tags.
+        dual_track: When ``True`` (default), writes ``dev_branch = "dev"`` so
+            the guard treats the repo as dual-track; ``False`` leaves it
+            single-track.
+    """
+    body = '[tool.forge]\ndev_branch = "dev"\n' if dual_track else "[tool.forge]\n"
+    (tmp_path / "pyproject.toml").write_text(body, encoding="utf-8")
+    if plugin_version is not None:
+        manifest = tmp_path / ".claude-plugin" / "plugin.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(f'{{"version": "{plugin_version}"}}', encoding="utf-8")
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _root: latest_tag)
+
+
+def test_release_guard_passes_when_one_minor_ahead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """plugin.json one minor ahead of the latest tag is the normal case."""
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="1.25.0", latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert result.passed
+    assert not result.skipped
+
+
+def test_release_guard_passes_when_one_patch_ahead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single patch bump ahead of the latest tag is allowed."""
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="1.24.2", latest_tag="v1.24.1"
+    )
+    assert precommit.step_release_tag_guard(tmp_path).passed
+
+
+def test_release_guard_blocks_on_skipped_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A two-minor gap (an intermediate release never tagged) is blocked (#66)."""
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="1.26.0", latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert not result.passed
+    assert not result.skipped
+    assert "forge-next-prep --tag" in result.output
+
+
+def test_release_guard_skips_single_track(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single-track repo never triggers the dev-tagging cadence guard."""
+    _setup_release_guard(
+        tmp_path,
+        monkeypatch,
+        plugin_version="1.26.0",
+        latest_tag="v1.24.1",
+        dual_track=False,
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert result.passed
+    assert result.skipped
+
+
+def test_release_guard_skips_when_not_ahead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """plugin.json equal to the latest tag (reproduced release) → skip."""
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="2.0.0", latest_tag="v2.0.0"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert result.passed
+    assert result.skipped
+
+
+def test_release_guard_skips_without_plugin_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No .claude-plugin/plugin.json → nothing to guard, skip."""
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version=None, latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert result.passed
+    assert result.skipped
+
+
+def test_release_guard_skips_on_non_semver_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unparseable plugin.json version degrades to skip, never raises."""
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="rolling", latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
     assert result.passed
     assert result.skipped
 
@@ -412,15 +588,22 @@ def test_main_emits_json(
     }
 
 
-def test_step_pip_audit_skipped_when_cli_missing(
+def test_step_pip_audit_loud_warn_when_cli_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """step_pip_audit is skipped when ``pip-audit`` is not on PATH."""
+    """A missing pip-audit is a loud non-blocking WARN, never a silent skip.
+
+    pip-audit ships as a core dependency (#71); a missing binary means a
+    broken install, and a security gate that quietly no-ops gives false
+    assurance — so the step surfaces it visibly without refusing the commit.
+    """
     monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
     result = precommit.step_pip_audit(tmp_path)
-    assert result.skipped
-    assert result.passed
+    assert not result.skipped
+    assert not result.passed
+    assert result.non_blocking
+    assert "did NOT run" in result.output
 
 
 def test_count_pip_audit_advisories_counts_pysec_and_ghsa_ids() -> None:
@@ -592,3 +775,403 @@ def test_main_lists_failed_steps_with_log_paths(
     # Each failed step listed with its log path
     assert "docstring_verification: see code_health/docstring_verification.log" in out
     assert "test_naming_check: see code_health/test_naming_check.log" in out
+
+
+# ---------------------------------------------------------------------------
+# Step framework: registry, resolution, CLI overrides (#6)
+# ---------------------------------------------------------------------------
+
+
+def _write_pyproject(tmp_path: Path, body: str) -> None:
+    """Write *body* as ``pyproject.toml`` in *tmp_path* (config-test helper).
+
+    Args:
+        tmp_path: Temporary directory path.
+        body: TOML content to write.
+    """
+    (tmp_path / "pyproject.toml").write_text(body, encoding="utf-8")
+
+
+def _names(step_defs: list[precommit.StepDef]) -> list[str]:
+    """Return the names of resolved ``StepDef`` entries (readability helper).
+
+    Args:
+        step_defs: List of step definitions.
+
+    Returns:
+        List of step names extracted from the definitions.
+    """
+    return [d.name for d in step_defs]
+
+
+def _present(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every binary resolve on PATH (so ``require_cli`` passes)."""
+    monkeypatch.setattr(precommit.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+
+def test_forge_step_config_reads_section(tmp_path: Path) -> None:
+    """`_forge_step_config` returns the `[tool.forge.<step>]` table."""
+    _write_pyproject(tmp_path, '[tool.forge.doctest]\npaths = ["lib"]\n')
+    assert precommit._forge_step_config(tmp_path, "doctest") == {"paths": ["lib"]}
+
+
+def test_forge_step_config_missing_returns_empty(tmp_path: Path) -> None:
+    """`_forge_step_config` returns `{}` when the section or pyproject is absent."""
+    assert precommit._forge_step_config(tmp_path, "doctest") == {}
+    _write_pyproject(tmp_path, "[tool.forge]\n")
+    assert precommit._forge_step_config(tmp_path, "doctest") == {}
+
+
+def test_cfg_str_list_narrows_list_values() -> None:
+    """`_cfg_str_list` returns a list value as `list[str]`, stringifying items."""
+    assert precommit._cfg_str_list({"paths": ["a", "b"]}, "paths", ["x"]) == ["a", "b"]
+    assert precommit._cfg_str_list({"paths": [1, 2]}, "paths", ["x"]) == ["1", "2"]
+
+
+def test_cfg_str_list_falls_back_on_missing_or_scalar() -> None:
+    """`_cfg_str_list` returns the default when the key is absent or not a list.
+
+    A scalar like ``paths = "src"`` falls back rather than being iterated
+    character-by-character into the subprocess argv.
+    """
+    assert precommit._cfg_str_list({}, "paths", ["src"]) == ["src"]
+    assert precommit._cfg_str_list({"paths": "src"}, "paths", ["src"]) == ["src"]
+
+
+def test_validate_step_names_accepts_known() -> None:
+    """`_validate_step_names` is silent for registered step names."""
+    precommit._validate_step_names(["ruff", "doctest", "pip_audit"])
+
+
+def test_validate_step_names_rejects_unknown() -> None:
+    """`_validate_step_names` raises ValueError naming the offender and valid set."""
+    with pytest.raises(ValueError, match="unknown step name") as exc:
+        precommit._validate_step_names(["ruff", "nope"])
+    assert "nope" in str(exc.value)
+    assert "ruff" in str(exc.value)
+
+
+def test_resolve_steps_default_excludes_opt_in(tmp_path: Path) -> None:
+    """The default run set is the default-on steps; opt-in steps stay out."""
+    names = _names(precommit._resolve_steps(tmp_path))
+    assert "ruff" in names
+    assert "doctest" not in names
+    assert "typecheck" not in names
+    assert "doc_consistency" not in names
+
+
+def test_resolve_steps_enable_adds_opt_in(tmp_path: Path) -> None:
+    """`[tool.forge.precommit] enable` opts a normally-off step in."""
+    _write_pyproject(tmp_path, '[tool.forge.precommit]\nenable = ["doctest"]\n')
+    assert "doctest" in _names(precommit._resolve_steps(tmp_path))
+
+
+def test_resolve_steps_disable_removes_default(tmp_path: Path) -> None:
+    """`[tool.forge.precommit] disable` force-skips a default step."""
+    _write_pyproject(tmp_path, '[tool.forge.precommit]\ndisable = ["pip_audit"]\n')
+    assert "pip_audit" not in _names(precommit._resolve_steps(tmp_path))
+
+
+def test_resolve_steps_disable_beats_enable(tmp_path: Path) -> None:
+    """When a name is in both `enable` and `disable`, `disable` wins."""
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.precommit]\nenable = ["doctest"]\ndisable = ["doctest"]\n',
+    )
+    assert "doctest" not in _names(precommit._resolve_steps(tmp_path))
+
+
+def test_resolve_steps_skip_removes(tmp_path: Path) -> None:
+    """The `skip` argument removes a step for this run only."""
+    assert "ruff" not in _names(precommit._resolve_steps(tmp_path, skip=["ruff"]))
+
+
+def test_resolve_steps_only_overrides_in_registry_order(tmp_path: Path) -> None:
+    """`only=[...]` runs exactly those steps, ordered by the registry not the arg."""
+    resolved = _names(precommit._resolve_steps(tmp_path, only=["pip_audit", "ruff"]))
+    assert resolved == ["ruff", "pip_audit"]
+
+
+def test_resolve_steps_only_still_honors_skip(tmp_path: Path) -> None:
+    """`skip` subtracts from the `only` set too — it is never silently ignored."""
+    resolved = _names(
+        precommit._resolve_steps(
+            tmp_path, only=["ruff", "pip_audit"], skip=["pip_audit"]
+        )
+    )
+    assert resolved == ["ruff"]
+
+
+def test_resolve_steps_unknown_name_raises(tmp_path: Path) -> None:
+    """An unknown name in config / skip / only raises ValueError."""
+    with pytest.raises(ValueError, match="unknown step name"):
+        precommit._resolve_steps(tmp_path, only=["bogus"])
+
+
+def test_split_csv_flattens_repeats_and_commas() -> None:
+    """`_split_csv` flattens repeated and comma-separated values, dropping blanks."""
+    assert precommit._split_csv(["a,b", "c"]) == ["a", "b", "c"]
+    assert precommit._split_csv(["a, ,b"]) == ["a", "b"]
+    assert precommit._split_csv([]) == []
+
+
+def test_run_all_only_dispatches_monkeypatched_steps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_all(only=...) runs exactly the named steps via the module dispatch.
+
+    MOCK SETUP: ``step_ruff`` and ``step_pip_audit`` are replaced with
+    canned passing stubs; run_all is called with ``only`` those two.
+    EXPECTED BEHAVIOR: both stubs run (proving the registry resolves the
+    monkeypatched functions, not its captured references) and no other
+    step executes.
+    """
+
+    def _ruff(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="ruff", passed=True, output="x")
+
+    def _audit(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="pip_audit", passed=True, output="x")
+
+    monkeypatch.setattr(precommit, "step_ruff", _ruff)
+    monkeypatch.setattr(precommit, "step_pip_audit", _audit)
+    results = precommit.run_all(
+        tmp_path, print_progress=False, only=["ruff", "pip_audit"]
+    )
+    assert [r.name for r in results] == ["ruff", "pip_audit"]
+
+
+def test_main_only_flag_runs_subset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--only ruff --json` runs just ruff and emits a one-entry JSON list.
+
+    MOCK SETUP: get_repo_root pinned to tmp_path; ``step_ruff`` stubbed to
+    pass; argv drives main() with ``--only ruff --json``.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+
+    def _ruff(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="ruff", passed=True, output="x")
+
+    monkeypatch.setattr(precommit, "step_ruff", _ruff)
+    with patch.object(
+        precommit.sys, "argv", ["forge-precommit", "--only", "ruff", "--json"]
+    ):
+        rc = precommit.main()
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert [r["name"] for r in data] == ["ruff"]
+
+
+def test_main_unknown_step_name_exits_one(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unknown `--skip` name prints a clean error and exits 1 (no traceback)."""
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--skip", "bogus"]):
+        rc = precommit.main()
+    assert rc == 1
+    assert "unknown step name" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Opt-in steps: doctest (#5), typecheck (#48), doc_consistency (#4)
+# ---------------------------------------------------------------------------
+
+
+def test_step_doctest_passes_non_blocking_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Doctest passes as non-blocking when `blocking` is unset.
+
+    MOCK SETUP: pytest present on PATH; ``_run`` returns a passing canned
+    result; a ``src/`` dir so smart-detect resolves a scan root.
+    """
+    (tmp_path / "src").mkdir()
+    _present(monkeypatch)
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, "3 passed"))
+    result = precommit.step_doctest(tmp_path)
+    assert result.passed
+    assert result.non_blocking
+    assert not result.skipped
+
+
+def test_step_doctest_uses_configured_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Doctest runs `pytest --doctest-modules` over `[tool.forge.doctest].paths`."""
+    _present(monkeypatch)
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "app").mkdir()
+    _write_pyproject(tmp_path, '[tool.forge.doctest]\npaths = ["lib", "app"]\n')
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return True, "1 passed"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    precommit.step_doctest(tmp_path)
+    assert "--doctest-modules" in captured["cmd"]
+    assert captured["cmd"][-2:] == ["lib", "app"]
+
+
+def test_step_doctest_no_examples_is_skipped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pytest 'no tests ran' (exit 5) counts as a skip, not a failure."""
+    (tmp_path / "src").mkdir()
+    _present(monkeypatch)
+    monkeypatch.setattr(
+        precommit, "_run", lambda _cmd, **_kw: (False, "no tests ran in 0.01s")
+    )
+    result = precommit.step_doctest(tmp_path)
+    assert result.skipped
+    assert result.passed
+
+
+def test_step_doctest_blocking_config_is_blocking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`blocking = true` makes a failing doctest a blocking failure."""
+    (tmp_path / "src").mkdir()
+    _present(monkeypatch)
+    _write_pyproject(tmp_path, "[tool.forge.doctest]\nblocking = true\n")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (False, "1 failed"))
+    result = precommit.step_doctest(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+
+
+def test_step_doctest_missing_pytest_exits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Doctest fails loudly (SystemExit) when pytest is not on PATH."""
+    (tmp_path / "src").mkdir()
+    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        precommit.step_doctest(tmp_path)
+
+
+def test_step_typecheck_default_pyrefly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Typecheck defaults to the `pyrefly check` command and is non-blocking.
+
+    MOCK SETUP: pyrefly present on PATH; ``_run`` captures the command and
+    returns a passing result; a ``src/`` dir so smart-detect resolves a root.
+    """
+    (tmp_path / "src").mkdir()
+    _present(monkeypatch)
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return True, "0 errors"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    result = precommit.step_typecheck(tmp_path)
+    assert captured["cmd"][:2] == ["pyrefly", "check"]
+    assert result.passed
+    assert result.non_blocking
+
+
+def test_step_typecheck_missing_pyrefly_exits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An opted-in-but-absent pyrefly binary fails loudly (SystemExit)."""
+    (tmp_path / "src").mkdir()
+    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        precommit.step_typecheck(tmp_path)
+
+
+def test_step_typecheck_blocking_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`blocking = true` makes a pyrefly error a blocking failure."""
+    (tmp_path / "src").mkdir()
+    _present(monkeypatch)
+    _write_pyproject(tmp_path, "[tool.forge.typecheck]\nblocking = true\n")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (False, "error: x"))
+    result = precommit.step_typecheck(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+
+
+def test_step_typecheck_drops_option_like_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An option-like `paths` entry never reaches the pyrefly subprocess.
+
+    The shared resolver only returns existing in-repo dirs, so a value like
+    ``--output=x`` (no such dir) is dropped — preventing flag injection. With
+    nothing left to scan the step skips cleanly rather than running pyrefly
+    with an attacker-controlled flag.
+    """
+    ran: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit, "_run", lambda cmd, **_kw: ran.append(cmd) or (True, "")
+    )
+    _write_pyproject(tmp_path, '[tool.forge.typecheck]\npaths = ["--output=x"]\n')
+    result = precommit.step_typecheck(tmp_path)
+    assert result.skipped
+    assert result.passed
+    assert ran == []  # pyrefly never invoked with the injected flag
+
+
+def test_step_doctest_drops_paths_escaping_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `paths` entry resolving outside the repo never reaches pytest.
+
+    The resolver drops repo-escaping paths, so the step skips instead of
+    scanning ``/etc`` — the path-traversal guard, expressed as a clean skip.
+    """
+    ran: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit, "_run", lambda cmd, **_kw: ran.append(cmd) or (True, "")
+    )
+    _write_pyproject(tmp_path, '[tool.forge.doctest]\npaths = ["/etc"]\n')
+    result = precommit.step_doctest(tmp_path)
+    assert result.skipped
+    assert result.passed
+    assert ran == []
+
+
+def test_step_doc_consistency_non_blocking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """doc_consistency mirrors the CLI exit and is always non-blocking."""
+    _present(monkeypatch)
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (False, "drift"))
+    result = precommit.step_doc_consistency(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+
+
+def test_step_doc_consistency_missing_cli_exits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """doc_consistency fails loudly when its CLI is not on PATH."""
+    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        precommit.step_doc_consistency(tmp_path)

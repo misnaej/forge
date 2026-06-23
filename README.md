@@ -26,7 +26,9 @@ model.
 
 Adopting forge is three steps, roughly 1 minute of work. Step 3 is
 optional. The numbered [Quickstart](#quickstart-adopt-forge-in-your-repo)
-below has the full detail.
+below has the full detail; [`docs/adopting.md`](docs/adopting.md) breaks
+it into **three independent install tracks** (CLIs only / + git hooks / +
+plugin) so you can take exactly the layer(s) you want.
 
 1. **Install `forge-scripts`** — `pip install
    "git+https://github.com/misnaej/forge.git@main"` puts every forge CLI
@@ -80,11 +82,11 @@ edit `.githooks/pre-commit` directly. No plugin system, no config file.
 
 | Category | Items |
 |---|---|
-| **CLIs** (pip package, no Claude required) | `install-forge-bootstrap` (one-shot umbrella), `forge-upgrade` (two-phase upgrade flow), `forge-precommit` (full sequence dispatcher), `fix-forge-ruff` (ruff phase), `verify-forge-docstrings`, `verify-forge-docstring-coverage`, `verify-forge-repo-structure`, `verify-forge-test-naming`, `verify-forge-manifest`, `verify-forge-plugin-version`, `verify-forge-cli-wiring`, `forge-continuation-append`, `forge-next-prep`, `install-forge-labels`, `forge-doctor`, `install-forge-githooks`, `install-forge-claude-md` |
+| **CLIs** (pip package, no Claude required) | `install-forge-bootstrap` (one-shot umbrella), `forge-upgrade` (two-phase upgrade flow), `forge-precommit` (full sequence dispatcher), `fix-forge-ruff` (ruff phase), `verify-forge-docstrings`, `verify-forge-docstring-coverage`, `verify-forge-repo-structure`, `verify-forge-test-naming`, `verify-forge-manifest`, `verify-forge-plugin-version`, `verify-forge-cli-wiring`, `forge-continuation-append`, `forge-next-prep`, `forge-config` (config reference + setup advisor — see [`docs/configuration.md`](docs/configuration.md)), `install-forge-labels`, `forge-doctor`, `install-forge-githooks`, `install-forge-claude-md` |
 | **Audit-pack CLIs** (pip package, optional `[audit]` extras) | `forge-audit-dup`, `forge-audit-deps`, `forge-audit-suppressions`, `forge-audit-orphans`, `forge-audit-data`, `forge-audit-claims`, `forge-audit-agents` (non-blocking template-conformance audit), `forge-audit-all` — see [`docs/audit-pack.md`](docs/audit-pack.md) |
 | **Git hooks** (drop-in, no Claude required) | `.githooks/pre-commit` (dispatcher), `.githooks/post-merge` + `.githooks/post-checkout` (auto-warn on FOUNDATION.md drift) |
 | **Process docs** | `docs/security.md`, `docs/audit-pack.md`, `docs/cli-reference.md` (generated CLI reference), `docs/api-digest.md` (generated index of all top-level functions/classes, public API + internal helpers); foundation engineering principles at `FOUNDATION.md` |
-| **Claude Code plugin** (optional) | Agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, `design-checker`, `docs-types-checker`, `security-checker`, `issue-triage`, `perf-optimizer`, `weekly-summary`, `knowledge-search`, `test-advisor`, `test-writer`); skills (`commit`, `pr`, `next`, `triage`, `weekly`, `fix`, `review`); Claude Code hooks (`block_protected_branches`, `block_force_push`, `block_pr_merge`, `block_branch_deletion`, `block_no_verify`, `block_install_deps`, `block_claude_attribution`, `block_continuation_delete`, `block_protected_files`, `check_commit_format`, `check_foundation_sync`, `warn_pr_checks`, `block_raw_ruff`, `block_raw_git`) |
+| **Claude Code plugin** (optional) | Agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, `design-checker`, `docs-types-checker`, `security-checker`, `issue-triage`, `perf-optimizer`, `weekly-summary`, `knowledge-search`, `test-advisor`, `test-writer`); skills (`commit`, `pr`, `next`, `triage`, `weekly`, `fix`, `review`, `test`); Claude Code hooks (`block_protected_branches`, `block_force_push`, `block_pr_merge`, `block_branch_deletion`, `block_no_verify`, `block_install_deps`, `block_claude_attribution`, `block_continuation_delete`, `block_protected_files`, `check_commit_format`, `check_foundation_sync`, `warn_pr_checks`, `block_raw_ruff`, `block_raw_git`) |
 
 Everything in the first three rows is **Claude-independent** — works
 from any shell, CI, or IDE.
@@ -164,10 +166,11 @@ order. Idempotent — re-run safely after every forge upgrade.
 | 5 | `forge-gen-cli-reference` | `docs/cli-reference.md` (generated from each CLI's `--help`) |
 | 6 | `forge-audit-deps --tree` | `code_health/audit_deps_tree.log` (dependency tree) |
 | 7 | `forge-doctor` | Verifies the install |
+| 8 | `forge-config` | Post-install nudge: what `[tool.forge.*]` config forge reads + what to set ([`docs/configuration.md`](docs/configuration.md)) |
 
 Flags: `--check` (dry-run), `--skip <slug>` (repeatable; slugs are
 `githooks`, `claude-md`, `labels`, `api-digest`, `cli-reference`,
-`audit-deps`, `doctor`), `--strict` (abort on first failure; default is
+`audit-deps`, `doctor`, `config`), `--strict` (abort on first failure; default is
 continue-on-fail).
 
 Want to run an installer on its own? Each step is also a standalone CLI
@@ -519,6 +522,7 @@ Topic-specific docs (read what you need, skip what you don't):
 
 | Doc | When to read |
 |---|---|
+| [`docs/adopting.md`](docs/adopting.md) | You want to install forge one layer at a time (CLIs only / + git hooks / + plugin), with a "what lands on disk" table. |
 | [`docs/standalone-installers.md`](docs/standalone-installers.md) | You want to run a single installer manually instead of `install-forge-bootstrap`. |
 | [`docs/customizing-precommit.md`](docs/customizing-precommit.md) | You want to add a repo-specific step (mypy, secret scan, etc.) to the pre-commit hook. |
 | [`docs/claude-code-plugin.md`](docs/claude-code-plugin.md) | You use Claude Code and want the agents / skills / hooks. |

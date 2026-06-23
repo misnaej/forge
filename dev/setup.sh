@@ -65,9 +65,12 @@ if [ "${CONDA_DEFAULT_ENV:-}" != "$ENV_NAME" ]; then
     exit 1
 fi
 
-# 4. Editable install with test deps.
-echo -e "${YELLOW}→${NC} pip install -e .[test]"
-pip install -e ".[test]"
+# 4. Editable install with the full contributor umbrella (test + audit +
+# typecheck). forge's own dev env should carry every tool it ships and
+# dogfoods — pytest, the audit deps (vulture / jsonschema / PyYAML), and
+# pyrefly for the opt-in typecheck step. `[dev]` is that umbrella.
+echo -e "${YELLOW}→${NC} pip install -e .[dev]"
+pip install -e ".[dev]"
 
 # 5. Run the consumer-facing umbrella installer. Dogfood: forge is the
 # source of install-forge-bootstrap, so running it here exercises the
@@ -75,8 +78,12 @@ pip install -e ".[test]"
 # the source of FOUNDATION.md (root file is a symlink to
 # src/forge/data/FOUNDATION.md); install-forge-claude-md would wrap
 # the source with managed markers and corrupt it.
-echo -e "${YELLOW}→${NC} install-forge-bootstrap --skip claude-md"
-install-forge-bootstrap --skip claude-md || {
+# --skip claude-settings because forge's own .claude/settings.json is
+# hand-managed on the `dev` channel: forge has no forge-scripts pip pin
+# (it IS forge-scripts, editable-installed), so the ref resolver would
+# default to `main` and flip the tracked file every run.
+echo -e "${YELLOW}→${NC} install-forge-bootstrap --skip claude-md --skip claude-settings"
+install-forge-bootstrap --skip claude-md --skip claude-settings || {
     echo -e "${YELLOW}install-forge-bootstrap reported failures.${NC} Review output above."
 }
 

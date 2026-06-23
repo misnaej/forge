@@ -12,7 +12,7 @@ import json
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from forge import doctor
+from forge import doctor, precommit
 from tests.conftest import make_fake_run
 
 
@@ -205,3 +205,54 @@ def test_info_results_do_not_affect_exit_code(
     captured = capsys.readouterr().out
     assert "[i]" in captured  # advisory marker rendered
     assert rc == 0
+
+
+def test_check_step_tools_flags_missing_tool(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An enabled step whose tool is absent produces a failing result.
+
+    MOCK SETUP: pyproject enables the typecheck step; shutil.which reports
+    pyrefly missing.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.precommit]\nenable = ["typecheck"]\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(doctor.shutil, "which", lambda _name: None)
+    results = doctor._check_step_tools(tmp_path)
+    assert len(results) == 1
+    assert results[0].name == "step-tool:typecheck"
+    assert not results[0].passed
+    assert "pyrefly" in results[0].detail
+
+
+def test_check_step_tools_passes_when_tool_present(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An enabled step whose tool is on PATH passes."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.precommit]\nenable = ["typecheck"]\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: f"/usr/bin/{name}")
+    results = doctor._check_step_tools(tmp_path)
+    assert len(results) == 1
+    assert results[0].passed
+
+
+def test_check_step_tools_empty_when_no_step_enabled(tmp_path: Path) -> None:
+    """No [tool.forge.precommit] enable list → nothing to check."""
+    (tmp_path / "pyproject.toml").write_text("[tool.forge]\n", encoding="utf-8")
+    assert doctor._check_step_tools(tmp_path) == []
+
+
+def test_step_tools_keys_are_opt_in_steps() -> None:
+    """Every _STEP_TOOLS key is a real opt-in (default-off) pre-commit step.
+
+    Drift guard: forge.precommit owns the step registry; doctor's
+    step→tool map must reference only steps that exist and are opt-in
+    (a default-on step always runs and is covered elsewhere).
+    """
+    opt_in = {d.name for d in precommit._STEP_REGISTRY if not d.default_on}
+    assert set(doctor._STEP_TOOLS).issubset(opt_in)

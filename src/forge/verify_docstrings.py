@@ -80,9 +80,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from forge.git_utils import (
+    SCOPE_ALL,
+    VALID_SCOPES,
     capturing_to_step_log,
     configure_cli_logging,
     get_modified_files,
+    get_tracked_files,
 )
 
 
@@ -224,6 +227,11 @@ class DocstringVerifier(ast.NodeVisitor):
 
         docstring = ast.get_docstring(node)
         if not self._has_required_docstring(node, full_name, docstring):
+            return
+        # The guard above records the finding and returns False for a
+        # missing docstring; past it the docstring is present. Bind the
+        # non-optional narrowing so the param/return checks below type-check.
+        if docstring is None:
             return
 
         is_method = self.current_class is not None
@@ -936,7 +944,7 @@ class DocstringVerifier(ast.NodeVisitor):
         # last statement is return
         return (
             body_statements <= self.MAX_MULTI_STATEMENT_SIMPLE_FIXTURE
-            and actual_body
+            and bool(actual_body)
             and isinstance(actual_body[-1], ast.Return)
         )
 
@@ -1154,7 +1162,14 @@ def main() -> int:
         "target",
         nargs="?",
         default=None,
-        help="Optional file path to check. Defaults to modified files vs main.",
+        help="Optional file path to check. Overrides --scope.",
+    )
+    parser.add_argument(
+        "--scope",
+        choices=VALID_SCOPES,
+        default="all",
+        help="'all' (every tracked .py file, the default) or 'diff' (files "
+        "modified vs main). Ignored when a target path is given.",
     )
     args = parser.parse_args()
 
@@ -1173,6 +1188,8 @@ def main() -> int:
                 py_files = [str(target.relative_to(repo_root))]
             except ValueError:
                 py_files = [str(target)]
+        elif args.scope == SCOPE_ALL:
+            py_files = get_tracked_files()
         else:
             py_files = get_modified_files()
 

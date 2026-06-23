@@ -28,6 +28,7 @@ from dataclasses import asdict, dataclass
 from importlib import metadata
 from pathlib import Path
 
+from forge import config
 from forge.git_utils import emit
 
 
@@ -108,7 +109,7 @@ def _check_gh() -> list[CheckResult]:
         check=False,
     )
     return [
-        CheckResult(name="gh:installed", passed=True, detail=shutil.which("gh")),
+        CheckResult(name="gh:installed", passed=True, detail=shutil.which("gh") or ""),
         CheckResult(
             name="gh:authenticated",
             passed=auth.returncode == 0,
@@ -338,6 +339,60 @@ _UNDERUSED_ARTIFACTS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+# External tool each opt-in pre-commit step shells out to. Mirrors the
+# steps in forge.precommit; a drift test
+# (test_doctor.py::test_step_tools_keys_are_opt_in_steps) asserts every key
+# is a real opt-in step so this map can't silently fall out of sync.
+_STEP_TOOLS: dict[str, str] = {
+    "typecheck": "pyrefly",
+    "doctest": "pytest",
+}
+
+
+def _check_step_tools(repo_root: Path) -> list[CheckResult]:
+    """Verify the external tool for each enabled pre-commit step is on PATH.
+
+    An opt-in step listed in ``[tool.forge.precommit] enable`` shells out
+    to an external tool (``typecheck`` → pyrefly, ``doctest`` → pytest).
+    When the step is enabled but its tool is absent, ``forge-precommit``
+    hard-fails at commit time; surfacing it here catches the gap before the
+    commit instead of after.
+
+    Args:
+        repo_root: Directory the doctor was invoked from (its
+            ``pyproject.toml`` is read for the enabled-step list).
+
+    Returns:
+        One ``CheckResult`` per enabled step that maps to a known tool —
+        failing when the tool is missing. Empty when no such step is
+        enabled.
+    """
+    raw = config.read_pyproject_raw(repo_root)
+    precommit = ((raw.get("tool") or {}).get("forge") or {}).get("precommit") or {}
+    enabled = precommit.get("enable")
+    if not isinstance(enabled, list):
+        return []
+    results: list[CheckResult] = []
+    for step in enabled:
+        tool = _STEP_TOOLS.get(str(step))
+        if tool is None:
+            continue
+        present = shutil.which(tool) is not None
+        results.append(
+            CheckResult(
+                name=f"step-tool:{step}",
+                passed=present,
+                detail=(
+                    f"{tool} on PATH"
+                    if present
+                    else f"step '{step}' is enabled but '{tool}' is not on "
+                    f"PATH — install it (`pip install {tool}`)."
+                ),
+            ),
+        )
+    return results
+
+
 def _check_under_used_capabilities(repo_root: Path) -> list[CheckResult]:
     """Surface installed-but-never-run forge capabilities.
 
@@ -442,6 +497,7 @@ def main() -> int:
     results: list[CheckResult] = []
     results.extend(_check_clis())
     results.extend(_check_gh())
+    results.extend(_check_step_tools(Path.cwd()))
 
     if not args.skip_plugin_checks:
         plugin_check = _check_plugin_install(args.plugin_name)
