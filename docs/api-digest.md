@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_43 modules, 395 symbols._
+_45 modules, 417 symbols._
 
 ## `forge._hook_helpers`
 
@@ -341,6 +341,23 @@ _43 modules, 395 symbols._
 - `_create_label(label: dict[str, str], repo: str | None) -> bool` _(internal)_ — Create one label. Returns True on success.
 - `main() -> int` — Install canonical foundation labels in the current GitHub repo.
 
+## `forge.install_readme_badges`
+
+- `_shields_static(label: str, message: str, color: str) -> str` _(internal)_ — Build a static shields.io badge image URL.
+- `_md(alt: str, image: str, link: str | None = None) -> str` _(internal)_ — Render one markdown badge (optionally wrapped in a link).
+- `_git_remote_slug(root: Path) -> str | None` _(internal)_ — Return ``owner/repo`` from the ``origin`` remote, or ``None``.
+- `_ci_badge(root: Path, slug: str | None) -> str | None` _(internal)_ — Build the GitHub Actions CI badge for the first workflow, if any.
+- `_python_badge(data: dict) -> str | None` _(internal)_ — Build the Python-version badge from ``requires-python``.
+- `_license_badge(data: dict) -> str | None` _(internal)_ — Build the License badge from ``[project].license``.
+- `_ruff_badge() -> str` _(internal)_ — Return the static Ruff endpoint badge.
+- `_claude_code_badge() -> str` _(internal)_ — Return the static Claude Code badge.
+- `_forge_badge(root: Path) -> str` _(internal)_ — Build a forge-channel badge from the ``forge-scripts`` pip pin.
+- `_coverage_badge(root: Path) -> str | None` _(internal)_ — Reference the local docstring-coverage SVG when forge has generated it.
+- `build_badges(root: Path) -> list[str]` — Assemble the ordered list of markdown badges for this repo.
+- `render_block(badges: list[str]) -> str` — Wrap *badges* in the forge-managed marker block.
+- `inject(readme: str, block: str) -> str` — Insert or replace the managed badge block in *readme* (drift-aware).
+- `main() -> int` — CLI entry point.
+
 ## `forge.next_prep`
 
 - `_read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` _(internal)_ — Return ``plugin.json["version"]`` at the given git ref, or ``None`` when absent.
@@ -403,6 +420,7 @@ _43 modules, 395 symbols._
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
 - `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.
+- `step_cve_usage(repo_root: Path) -> StepResult` — Run ``verify-forge-cve-usage`` — the usage-scoped second stage on pip_audit.
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
 - `_cli_wiring_enabled(repo_root: Path) -> bool` _(internal)_ — Return True when the repo has opted into the cli_wiring check.
 - `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
@@ -468,6 +486,16 @@ _43 modules, 395 symbols._
 - `_emit_report(unreachable: list[str], stale_exempt: list[str]) -> None` _(internal)_ — Log findings: unreachable scripts and stale exempt entries.
 - `_check_wiring(root: Path) -> int` _(internal)_ — Run the reachability check and report findings.
 - `main() -> int` — Entry point for ``verify-forge-cli-wiring``.
+
+## `forge.verify_cve_usage`
+
+- `class Finding` — One matched vulnerable-usage occurrence.
+- `load_patterns(root: Path) -> dict[str, dict[str, object]] | None` — Load the consumer's ``cve_usage_patterns.toml`` map.
+- `active_cve_ids(root: Path) -> set[str] | None` — Return the advisory / CVE IDs pip-audit currently reports.
+- `_iter_source_lines(root: Path, exclude: str) -> Iterable[tuple[str, int, str]]` _(internal)_ — Yield ``(repo_relative_path, line_no, text)`` for every source line.
+- `scan(root: Path, patterns: dict[str, dict[str, object]], active: set[str]) -> list[Finding]` — Grep the source for the patterns of every active, mapped CVE.
+- `_render(findings: list[Finding]) -> str` _(internal)_ — Render findings as the ``code_health/cve_usage.log`` body.
+- `main() -> int` — CLI entry point.
 
 ## `forge.verify_doc_consistency`
 

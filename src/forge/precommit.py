@@ -525,6 +525,48 @@ def step_pip_audit(repo_root: Path) -> StepResult:
     )
 
 
+def step_cve_usage(repo_root: Path) -> StepResult:
+    """Run ``verify-forge-cve-usage`` — the usage-scoped second stage on pip_audit.
+
+    Where ``pip_audit`` flags vulnerable *packages*, this flags vulnerable
+    *usage*: it greps the source for the patterns of CVEs that pip-audit is
+    *currently* reporting, surfacing only real matches with risk + mitigation
+    (see :mod:`forge.verify_cve_usage`). **Opt-in by presence** of a
+    ``cve_usage_patterns.toml`` map at the repo root — the CLI self-skips
+    cleanly when it (or pip-audit) is absent, so consumers who haven't opted
+    in never see it.
+
+    **Non-blocking** (advisory), mirroring ``pip_audit``: a finding sets
+    ``passed=False`` + ``non_blocking=True`` so ``run_all`` renders ``WARN``,
+    not ``FAIL``. ``forge:precommit-fixer`` escalates findings at PR
+    finalization (strict), same as ``pip_audit``.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` for this step; ``non_blocking=True`` whenever the
+        check actually ran, ``skipped`` when there is no pattern map.
+    """
+    if not (repo_root / "cve_usage_patterns.toml").is_file():
+        return StepResult(
+            name="cve_usage",
+            passed=True,
+            output="(no cve_usage_patterns.toml — skipped)",
+            skipped=True,
+        )
+    require_cli("verify-forge-cve-usage", caller="forge-precommit")
+    passed, output = _run(["verify-forge-cve-usage"], cwd=repo_root)
+    skipped = "skipped" in output
+    return StepResult(
+        name="cve_usage",
+        passed=passed,
+        output=output,
+        skipped=skipped,
+        non_blocking=True,
+    )
+
+
 def step_cli_wiring(repo_root: Path) -> StepResult:
     """Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
 
@@ -901,6 +943,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("plugin_version", step_plugin_version),
     StepDef("release_tag_guard", step_release_tag_guard),
     StepDef("pip_audit", step_pip_audit),
+    StepDef("cve_usage", step_cve_usage),
     StepDef("doctest", step_doctest, default_on=False),
     StepDef("typecheck", step_typecheck, default_on=False),
     StepDef("doc_consistency", step_doc_consistency, default_on=False),
