@@ -1,72 +1,90 @@
 ---
 name: c4
-description: Build or refresh a C4 architecture model for this repo — reason out the System Context, Containers, and Component groupings into c4.toml, then run forge-gen-c4 to emit Structurizr DSL. Use when the user wants an architecture diagram from their code.
+description: Build or refresh a C4 architecture model for this repo — interactively interview the user to define the System Context, Containers, and Components (the parts not in the code), write c4.toml, then run forge-gen-c4. Use when the user wants an architecture diagram from their code.
 ---
 
 # C4 Architecture Model
 
-Produce a [C4 model](https://c4model.com/) for this repo as Structurizr DSL.
-The work splits into a **reasoned** half (you) and a **deterministic** half
-(`forge-gen-c4`). See `docs/proposals/c4-generator.md` for the full design.
+Produce a C4 model as Structurizr DSL (+ an offline HTML view) via
+`forge-gen-c4`. The work splits in two: a **machine-derived** half (the CLI
+reads the import graph for component-to-component edges) and a
+**human-declared** half (everything the code does *not* encode). This skill
+owns the human half — and for a repo you have not modeled before, that means
+**interviewing the user**, not guessing.
 
-- **You reason** about what the import graph cannot encode: the System
-  Context (who uses the system, which external systems it talks to), the
-  Containers (deployable units), and which modules form which named
-  Component. You write these into the model file.
-- **`forge-gen-c4` derives** the component-to-component dependency edges
-  from the import graph and emits the DSL. It is deterministic — never
-  hand-write the `.dsl`.
+## Core principle: ask about what the code cannot tell you
+
+An import graph shows how modules reference each other. It does **not** reveal:
+
+- **Who/what uses the system** — human roles, other teams, upstream systems.
+- **External systems** — databases, third-party APIs, queues, object stores,
+  auth providers. An `import requests` does not say *which* service or *why*.
+- **Containers** — the deployable/runtime units. One repo can be a CLI **plus**
+  a web service **plus** a worker **plus** a DB; code structure alone cannot
+  partition them.
+- **Runtime edges** — subprocess calls, HTTP/RPC, message passing, a shared
+  database. All invisible to a static import graph.
+- **Component boundaries + intent** — which modules form one meaningful
+  component, and what each is *for*.
+
+So: **derive what you can, then interview the user for the rest.** When unsure,
+ask — a wrong guess produces a confidently misleading diagram.
 
 ## Steps
 
-1. **Orient.** Read `REPO_STRUCTURE.md`, `docs/api-digest.md`, and
-   `code_health/audit_deps_tree.log` (run `forge-audit-deps --tree` if
-   absent) to learn the module layout and import structure. For larger
-   repos, delegate the read to the `Explore` agent rather than skimming.
+1. **Detect mode.** If `c4.toml` (or `[tool.forge.c4]`) already exists → this is
+   a **refresh**: read it, re-derive, and ask only about gaps or changes. If
+   absent → this is a **first adoption**: run the full interview below.
 
-2. **Reason out the model.** Decide:
-   - **System + context** — one sentence on what the system *is*; the
-     people/roles that use it; the external systems it integrates with.
-   - **Containers** — the deployable units (a pip package, a service, a
-     CLI, a database). Most small repos have one.
-   - **Components** — group modules into a handful of cohesive,
-     named components. Prefer package/directory boundaries; aim for
-     5–10 components, not one-per-module. Every source module should
-     fall under exactly one component prefix.
+2. **Orient (machine side).** Read `REPO_STRUCTURE.md`, `docs/api-digest.md`,
+   and `code_health/audit_deps_tree.log` (run `forge-audit-deps --tree` if
+   absent). For large repos, delegate the read to the `Explore` agent. Form a
+   *draft* component grouping from package/directory boundaries — a proposal to
+   react to, not the answer.
 
-3. **Write the model file.** Create or update `c4.toml` at the repo root
-   (top-level tables: `system`, `[[person]]`, `[[external]]`,
-   `[[container]]`, `[[component]]`, `[[relationship]]`). Point
-   `[tool.forge.c4].config = "c4.toml"` in `pyproject.toml` if not already.
-   - Use the **rich `[[component]]`** form (`name` / `description` /
-     `technology` / `modules`) so each box carries meaning — C4 wants
-     described boxes, not bare names. (`[components]` name = [prefixes] is
-     a quick-start shorthand where the description defaults to the prefix
-     list.)
-   - Add `[[relationship]]` entries for **runtime/subprocess edges the
-     import graph can't see** (e.g. a dispatcher shelling out to workers).
-   - To embed the diagram in the README, add the
-     `<!-- forge:c4:start -->` / `<!-- forge:c4:end -->` markers where it
-     should appear and set `readme = "README.md"` in the model.
+3. **Interview (human side).** Ask in focused rounds — use `AskUserQuestion`
+   for structured choices, open questions where the answer is free-form. Cover:
+   - **System** — one sentence: what is this system, in plain terms?
+   - **People / actors** — who uses it (end users, developers, operators, other
+     teams)? For each: a one-line role + what they do with it.
+   - **External systems** — what does it integrate with? Probe explicitly:
+     "Does it talk to a database? a third-party API? GitHub? a message queue?
+     cloud storage? an auth provider?" The code will not reliably show these.
+   - **Containers** — "Is this one deployable unit, or several?" Offer
+     candidates (CLI, service, worker, DB, frontend). Confirm each container's
+     name + technology.
+   - **Components** — present your draft grouping; ask the user to confirm /
+     rename / merge / split. Get a one-line **description** and a **technology**
+     per component (C4 wants meaningful boxes, not bare names).
+   - **Runtime / subprocess edges** — "Do any parts call each other at runtime
+     in a way that is not a Python import — shelling out, HTTP, a queue, a
+     shared DB?" These become `[[relationship]]` entries.
 
-4. **Generate + review coverage.** Run `forge-gen-c4`. It warns about any
-   module matching no component prefix — fix the groupings until coverage
-   is complete (or deliberately exclude with a documented reason). Inspect
-   `docs/architecture.dsl` (and the refreshed README block).
+4. **Confirm coverage before writing.** Ensure every source module falls under
+   exactly one component prefix; flag leftovers and ask where they belong (or
+   whether to exclude them, with a documented reason).
 
-5. **View it.** `forge-gen-c4 --format html` emits a self-contained,
-   **offline** `docs/architecture.html` (Mermaid + a vendored
-   `mermaid.min.js` sidecar — no tools, no network). The canonical
-   `docs/architecture.dsl` also renders in
-   [Structurizr Lite](https://docs.structurizr.com/lite) (MIT) or via the
-   Structurizr CLI. Forge emits text/HTML and renders nothing itself.
+5. **Write `c4.toml`** at the repo root from the answers (top-level tables:
+   `system`, `[[person]]`, `[[external]]`, `[[container]]`, rich `[[component]]`
+   with `name` / `description` / `technology` / `modules`, and
+   `[[relationship]]`). Set `[tool.forge.c4].config = "c4.toml"` in
+   `pyproject.toml`. To embed the diagram in the README, add the
+   `<!-- forge:c4:start -->` / `<!-- forge:c4:end -->` markers where it should
+   appear and set `readme = "README.md"`.
+
+6. **Generate, view, iterate.** Run `forge-gen-c4` (fix any unmatched-module
+   warning), then `forge-gen-c4 --format html && open docs/architecture.html`
+   to view. Show the user and loop back to step 3 until the model reflects
+   reality.
 
 ## Rules
 
-- **Never hand-edit `docs/architecture.dsl`** — it is generated; edit
-  `c4.toml` and regenerate. `forge-gen-c4 --check` enforces drift.
-- **Component groupings are a judgement call** — propose a sensible
-  default from the package structure, but surface it for the user to
-  confirm; a bad grouping yields a misleading diagram.
-- Keep the model honest: if a relationship is real but invisible to the
-  import graph, declare it in `[[relationship]]`; don't omit it.
+- **Never invent context, external systems, or containers from the code alone**
+  — those are the user's to confirm. Ask.
+- **Never hand-edit `docs/architecture.dsl`** — it is generated; edit `c4.toml`
+  and regenerate (`forge-gen-c4 --check` enforces drift, and the `c4`
+  pre-commit step fails on it).
+- Component groupings and runtime edges are judgement calls — propose, then
+  confirm with the user.
+- Keep the model honest: a real relationship invisible to the import graph
+  belongs in `[[relationship]]`; do not omit it.
