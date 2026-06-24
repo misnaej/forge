@@ -606,6 +606,38 @@ def _write_tree_log(tree: str, *, output: Path | None) -> Path:
     return log_path
 
 
+def build_module_graph(
+    scope: Scope,
+    roots: list[Path],
+) -> tuple[dict[str, ModuleNode], dict[str, set[str]]]:
+    """Scan source roots into a module map + internal import graph.
+
+    The shared seam behind both ``forge-audit-deps`` and ``forge-gen-c4``:
+    walk the source files under *roots*, parse each into a
+    :class:`ModuleNode`, and project raw imports onto the known-module set
+    so only intra-codebase edges survive (external imports are dropped).
+
+    Args:
+        scope: ``FULL`` or ``CHANGED`` file selection.
+        roots: Package-root directories to scan.
+
+    Returns:
+        Tuple of (modules keyed by dotted name, adjacency map keyed by
+        module → set of imported internal module names).
+    """
+    package_roots = list(roots)
+    modules: dict[str, ModuleNode] = {}
+    raw_imports: dict[str, set[str]] = {}
+    for path in iter_files(scope, roots):
+        result = _scan_module(path, package_roots)
+        if result is None:
+            continue
+        name, node, imports = result
+        modules[name] = node
+        raw_imports[name] = imports
+    return modules, _build_internal_graph(modules, raw_imports)
+
+
 def run(scope: Scope, roots: list[Path], config: DepsConfig) -> int:
     """Execute the full dependency-analysis pipeline.
 
@@ -620,19 +652,7 @@ def run(scope: Scope, roots: list[Path], config: DepsConfig) -> int:
     Returns:
         Process exit code (0 = clean or only LOW findings, 1 otherwise).
     """
-    package_roots = list(roots)
-
-    modules: dict[str, ModuleNode] = {}
-    raw_imports: dict[str, set[str]] = {}
-    for path in iter_files(scope, roots):
-        result = _scan_module(path, package_roots)
-        if result is None:
-            continue
-        name, node, imports = result
-        modules[name] = node
-        raw_imports[name] = imports
-
-    graph = _build_internal_graph(modules, raw_imports)
+    modules, graph = build_module_graph(scope, roots)
     ca, ce = _compute_couplings(graph)
     sccs = _tarjan_scc(graph)
 

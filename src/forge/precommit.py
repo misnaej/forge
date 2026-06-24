@@ -13,9 +13,10 @@ but does not refuse a commit). Shipped to consumers via the
 ``forge-scripts`` pip package and invoked by ``.githooks/pre-commit``
 after ``install-forge-githooks``.
 
-Three further steps are **opt-in** (off by default): ``doctest``
-(``pytest --doctest-modules``), ``typecheck`` (``pyrefly``), and
-``doc_consistency`` (doc claims vs repo state). Opt in by listing them in
+Four further steps are **opt-in** (off by default): ``doctest``
+(``pytest --doctest-modules``), ``typecheck`` (``pyrefly``),
+``doc_consistency`` (doc claims vs repo state), and ``c4`` (C4 diagram
+drift; self-skips when no ``[tool.forge.c4]``). Opt in by listing them in
 ``[tool.forge.precommit] enable``. The same table's
 ``disable`` list force-skips any default step; ``--only`` / ``--skip``
 do the same for a single run. This override layer sits on top of each
@@ -54,6 +55,7 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
 from forge import config, pip_audit_json
+from forge.config import resolve_model_section
 from forge.git_utils import (
     SCOPE_ALL,
     VALID_SCOPES,
@@ -422,6 +424,36 @@ def step_commit_types_parity(repo_root: Path) -> StepResult:
     require_cli("forge-gen-commit-types", caller="forge-precommit")
     passed, output = _run(["forge-gen-commit-types", "--check"], cwd=repo_root)
     return StepResult(name="commit_types_parity", passed=passed, output=output)
+
+
+def step_c4(repo_root: Path) -> StepResult:
+    """Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
+
+    Keeps ``docs/architecture.dsl`` and the managed README C4 block in sync
+    with the actual import graph, so a structural change that is not
+    regenerated fails the commit (and thus the PR). Self-skips when the repo
+    has no ``[tool.forge.c4]`` model configured.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` mirroring the CLI exit code, or a skipped result when
+        no C4 model is configured.
+
+    Raises:
+        SystemExit: If ``forge-gen-c4`` is not on PATH.
+    """
+    if resolve_model_section(repo_root) is None:
+        return StepResult(
+            name="c4",
+            passed=True,
+            output="(no [tool.forge.c4] model — skipped)",
+            skipped=True,
+        )
+    require_cli("forge-gen-c4", caller="forge-precommit")
+    passed, output = _run(["forge-gen-c4", "--check"], cwd=repo_root)
+    return StepResult(name="c4", passed=passed, output=output)
 
 
 # Maximum residual ``pip-audit`` advisories allowed before the WARN
@@ -987,6 +1019,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("doctest", step_doctest, default_on=False),
     StepDef("typecheck", step_typecheck, default_on=False),
     StepDef("doc_consistency", step_doc_consistency, default_on=False),
+    StepDef("c4", step_c4, default_on=False),
 )
 
 _DEFAULT_ON: frozenset[str] = frozenset(d.name for d in _STEP_REGISTRY if d.default_on)

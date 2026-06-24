@@ -26,6 +26,7 @@ def test_steps_in_expected_order() -> None:
         "readme-badges",
         "api-digest",
         "cli-reference",
+        "c4",
         "audit-deps",
         "doctor",
         "config",

@@ -28,6 +28,8 @@ Code.
    - precommit.py: `forge-precommit` — pre-commit dispatcher; each step shells out to its own SRP CLI
    - next_prep.py: `forge-next-prep` — refresh main, optional rolling-next tag bump, prune stale branches; used by `/next` skill
    - continuation_append.py: `forge-continuation-append` — single source of truth for `.plan/CONTINUATION.md` append format; called by `forge:git-commit-push` and `forge:pr-manager`
+   - pr_squash_comment.py: `forge-pr-squash-comment` — validates + posts the squash-merge comment; canonical `CONVENTIONAL_COMMIT_TYPES` source
+   - pr_delta.py: shared delta-mode thresholds/regex for the pr-manager agent
    - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; read-only CI/local reporter (exempt in `cli_wiring_exempt.toml`)
    - forge_config.py: `forge-config` — lists every `[tool.forge.*]` key forge reads (value/default + description), names native sections like `[tool.interrogate]`, and advises on recommended-but-unset config; read-only, surfaced by `install-forge-bootstrap`
    - fix_ruff.py: `fix-forge-ruff` — runs `ruff format` + `ruff check --fix --unsafe-fixes`, re-stages modified tracked files, writes `code_health/ruff.log`
@@ -37,6 +39,7 @@ Code.
      structure drift check
    - verify_test_naming.py: `verify-forge-test-naming` — test naming check
    - verify_manifest.py: `verify-forge-manifest` — `.claude-plugin/*.json` JSON validation
+   - verify_cli_wiring.py: `verify-forge-cli-wiring` — checks every `[project.scripts]` CLI is reachable from a wiring source; backs the `cli_wiring` step
    - verify_doc_consistency.py: `verify-forge-doc-consistency` — checks every `[project.scripts]` CLI is documented in `docs/cli-reference.md`; backs the opt-in `doc_consistency` pre-commit step (non-blocking)
    - verify_cve_usage.py: `verify-forge-cve-usage` — usage-scoped second stage on `pip_audit`; intersects live pip-audit CVE IDs with a consumer `cve_usage_patterns.toml` map and greps source for the patterns; backs the opt-in `cve_usage` pre-commit step (non-blocking). `--audit-json` reuses the `pip_audit` step's scan (one pip-audit run/commit); `--list-inactive` reports dormant map entries (read-only)
    - pip_audit_json.py: shared single-invocation pip-audit JSON helper (`run_json` + `ids_from_data` / `has_vulns` / `render_report`); the neutral seam both `precommit.step_pip_audit` and `verify_cve_usage` depend on so pip-audit runs once per commit
@@ -47,6 +50,8 @@ Code.
      doc generator
    - gen_api_digest.py: `forge-gen-api-digest` — public-symbol API
      digest generator
+   - gen_c4.py: `forge-gen-c4` — emits a C4 architecture model from the import graph + a `[tool.forge.c4]` / `c4.toml` model skeleton; `--format dsl` (Structurizr + managed README block), `--format html` (self-contained offline Mermaid view, vendored `mermaid.min.js`), `--format mermaid` (raw); `--check` drift mode backs the opt-in `c4` pre-commit step; opt-in, self-skips when unconfigured
+   - gen_commit_types.py: `forge-gen-commit-types` — generates the conventional-commit type list managed block (parity with pr_squash_comment)
    - gen_common.py: shared drift-check helper for the `forge-gen-*`
      doc generators
    - doctor.py: `forge-doctor` — environment diagnostics
@@ -61,6 +66,7 @@ Code.
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
    - git_utils.py: shared git helpers and CLI logging setup
+   - run_context.py: `forge.run_context` — CI vs workstation detection (`is_non_interactive`, `git_auth_mode`, `progress_logger`) per FOUNDATION §15
 
 2. **Audit Subpackage (`src/forge/audit/`)**
    - common.py: shared helpers (scope enum, file iteration)
@@ -76,6 +82,8 @@ Code.
 3. **Package Data (`src/forge/data/`)**
    - FOUNDATION.md: shipped copy of the foundation document (symlink)
    - CHANGELOG.md: shipped copy of the changelog (symlink) — read by `forge-upgrade` to surface consumer-action upgrade notes
+   - mermaid.min.js: vendored Mermaid UMD bundle (MIT, pinned) — copied next to `forge-gen-c4 --format html` output so the diagram renders offline
+   - VENDORED.md: provenance record (URL, version, SHA-256) for vendored third-party assets under `data/`
 
 ## Agents Directory (`agents/`)
 
@@ -93,6 +101,8 @@ ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-proto
 - pr-manager.md: PR lifecycle agent
 - precommit-fixer.md: pre-commit report dispatcher (reads `code_health/*.log`, delegates per failure type)
 - security-checker.md: security review agent
+- test-advisor.md: test coverage planning + review agent
+- test-writer.md: test implementation agent
 - weekly-summary.md: weekly activity summary agent
 
 ## Skills Directory (`skills/`)
@@ -105,6 +115,7 @@ subdirectory holds a single `SKILL.md`:
 - next/: clean up state and pick next task
 - pr/: full PR finalization flow
 - review/: address PR review comments
+- c4/: build a C4 architecture model — reason out context/containers/components into c4.toml, then run forge-gen-c4
 - test/: write tests via the test agents (advisor → writer → review → precommit-fixer)
 - triage/: issue backlog triage
 - weekly/: weekly summary report
@@ -146,11 +157,14 @@ Pytest suite mirroring the `src/forge/` layout:
 
 1. **Package Tests**
    - conftest.py: shared pytest fixtures
+   - test_config.py: tests for config (model/tool-root resolution)
    - test_continuation_append.py: tests for continuation_append
    - test_doctor.py: tests for doctor
    - test_fix_ruff.py: tests for fix_ruff
    - test_gen_api_digest.py: tests for gen_api_digest
+   - test_gen_c4.py: tests for gen_c4 (C4 / Structurizr DSL generator)
    - test_gen_cli_reference.py: tests for gen_cli_reference
+   - test_gen_commit_types.py: tests for gen_commit_types
    - test_gen_common.py: tests for gen_common shared helpers
    - test_git_utils.py: tests for git_utils (shared CLI helpers)
    - test_install_bootstrap.py: tests for install_bootstrap
@@ -166,7 +180,10 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_install_labels.py: tests for install_labels
    - test_manifests.py: tests for plugin manifests
    - test_next_prep.py: tests for next_prep
+   - test_pr_delta.py: tests for pr_delta shared thresholds/regex
+   - test_pr_squash_comment.py: tests for pr_squash_comment
    - test_precommit.py: tests for precommit dispatcher
+   - test_run_context.py: tests for run_context (CI vs workstation detection)
    - test_verify_docstrings.py: tests for verify_docstrings
    - test_verify_docstring_coverage.py: tests for verify_docstring_coverage
    - test_verify_manifest.py: tests for verify_manifest
@@ -202,6 +219,7 @@ Forge's own bootstrap tooling (not a consumer pattern):
 
 - api-digest.md: generated public-symbol index (`forge-gen-api-digest`)
 - audit-pack.md: audit suite documentation
+- c4-architecture.md: design & rationale for forge-gen-c4 + the /c4 skill (the implemented C4 generator)
 - ci-access.md: how a consumer's CI runner pulls forge
 - claude-code-plugin.md: optional Claude Code plugin install + extension
 - cli-reference.md: generated CLI reference (`forge-gen-cli-reference`)
@@ -226,6 +244,7 @@ Architecture RFCs — aspirational, not descriptions of current behavior. Each c
 2. **Code Quality**
    - ruff.toml: ruff lint and format configuration (strict, ALL rules)
    - pyrefly.toml: pyrefly type-checker config for the opt-in `typecheck` step (strict return-type checking; interrogate's attrs `__init__` silenced via `replace-imports-with-any`)
+   - c4.toml: standalone C4 architecture-model skeleton consumed by `forge-gen-c4` (kept out of pyproject; pointed at by `[tool.forge.c4].config`)
 
 3. **Documentation**
    - CLAUDE.md: project guidance for Claude Code and developers
@@ -235,6 +254,7 @@ Architecture RFCs — aspirational, not descriptions of current behavior. Each c
    - CHANGELOG.md: main-only release history (Keep a Changelog format)
    - CONTRIBUTING.md: contribution guidelines
    - LICENSE: MIT license
+   - docs/architecture.dsl: generated C4 model (Structurizr DSL) — `forge-gen-c4` output
 
 ## Additional Directories
 
