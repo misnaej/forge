@@ -20,6 +20,26 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.3.0 — 2026-06-24
+
+Additive — no consumer action required (the new check self-skips
+single-branch repos).
+
+### Features
+- **`forge-check-main-tags`** (`verify-forge-main-tags`) — verifies, and
+  with `--fix` repairs, that every minor release tag `vX.Y.0` sits on the
+  base branch's squash commit, matched by **tree equality**. Enforces the
+  dev/main minor-boundary invariant so `git describe` on `@main` resolves
+  to the right minor. Wired as a pre-commit step that self-skips
+  single-branch repos (#84).
+
+### Refactor / Tooling
+- Consolidated git/tag plumbing into `forge.git_utils` (`run_git`,
+  `get_tree_sha`, `read_plugin_version_at_ref`, `read_local_plugin_version`),
+  reused by `verify-forge-plugin-version` and `forge-next-prep` (#84).
+- `pip_audit` blocking is now configurable via
+  `[tool.forge.pip_audit] blocking` (#84).
+
 ## v2.2.0 — 2026-06-22
 
 All additive and opt-in — no consumer action required to upgrade.
