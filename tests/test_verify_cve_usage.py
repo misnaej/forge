@@ -228,6 +228,23 @@ def test_active_cve_ids_unparseable_sidecar_returns_none(
     assert result is None
 
 
+def test_active_cve_ids_out_of_repo_audit_json_returns_none(
+    tmp_path: Path,
+) -> None:
+    """active_cve_ids skips an audit_json path that escapes the repo root.
+
+    SCENARIO: a ``..`` relative path resolves outside *root*. The read is
+        confined to the repo so the public --audit-json flag cannot become an
+        arbitrary-file-read oracle; an out-of-repo path skips cleanly (None).
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "secret.json"
+    outside.write_text(json.dumps({"dependencies": []}), encoding="utf-8")
+    result = cve.active_cve_ids(repo, audit_json=Path("../secret.json"))
+    assert result is None
+
+
 def test_active_cve_ids_relative_path_resolves_against_root_not_cwd(
     tmp_path: Path,
 ) -> None:

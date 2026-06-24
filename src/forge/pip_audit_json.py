@@ -75,35 +75,25 @@ def run_json(root: Path) -> AuditRun | None:
     return AuditRun(data=data, stderr=proc.stderr, returncode=proc.returncode)
 
 
-def _dependencies(data: dict) -> list[dict]:
-    """Return the well-formed dependency objects in parsed pip-audit JSON.
+def _dict_list(obj: dict, key: str) -> list[dict]:
+    """Return ``obj[key]`` filtered to ``dict`` entries, or ``[]``.
+
+    The shared shape-guard behind the ``dependencies`` and ``vulns`` walks:
+    a malformed or unexpected JSON shape yields an empty list rather than
+    raising, so the public functions stay total over any parsed input.
 
     Args:
-        data: Parsed pip-audit JSON.
+        obj: A parsed-JSON object (the report root or one dependency).
+        key: The list-valued key to extract (``"dependencies"`` / ``"vulns"``).
 
     Returns:
-        The ``dependencies`` list filtered to ``dict`` entries (a malformed
-        or unexpected shape yields an empty list rather than raising).
+        The value at *key* filtered to ``dict`` entries; ``[]`` when absent
+        or not a list.
     """
-    deps = data.get("dependencies", [])
-    if not isinstance(deps, list):
+    value = obj.get(key, [])
+    if not isinstance(value, list):
         return []
-    return [dep for dep in deps if isinstance(dep, dict)]
-
-
-def _vulns(dep: dict) -> list[dict]:
-    """Return the well-formed vulnerability objects of one dependency.
-
-    Args:
-        dep: One dependency object from parsed pip-audit JSON.
-
-    Returns:
-        The ``vulns`` list filtered to ``dict`` entries.
-    """
-    vulns = dep.get("vulns", [])
-    if not isinstance(vulns, list):
-        return []
-    return [vuln for vuln in vulns if isinstance(vuln, dict)]
+    return [item for item in value if isinstance(item, dict)]
 
 
 def ids_from_data(data: dict) -> set[str]:
@@ -119,8 +109,8 @@ def ids_from_data(data: dict) -> set[str]:
         The set of live advisory IDs across every scanned dependency.
     """
     ids: set[str] = set()
-    for dep in _dependencies(data):
-        for vuln in _vulns(dep):
+    for dep in _dict_list(data, "dependencies"):
+        for vuln in _dict_list(dep, "vulns"):
             vid = vuln.get("id")
             if isinstance(vid, str) and vid:
                 ids.add(vid)
@@ -139,7 +129,7 @@ def has_vulns(data: dict) -> bool:
     Returns:
         ``True`` if at least one dependency has a non-empty ``vulns`` list.
     """
-    return any(_vulns(dep) for dep in _dependencies(data))
+    return any(_dict_list(dep, "vulns") for dep in _dict_list(data, "dependencies"))
 
 
 def render_report(data: dict) -> str:
@@ -157,10 +147,10 @@ def render_report(data: dict) -> str:
         A multi-line report, or a clean one-liner when nothing was found.
     """
     lines: list[str] = []
-    for dep in _dependencies(data):
+    for dep in _dict_list(data, "dependencies"):
         name = dep.get("name", "?")
         version = dep.get("version", "?")
-        for vuln in _vulns(dep):
+        for vuln in _dict_list(dep, "vulns"):
             vid = vuln.get("id", "?")
             fix_versions = vuln.get("fix_versions", [])
             fixes = ", ".join(fix_versions) if isinstance(fix_versions, list) else ""

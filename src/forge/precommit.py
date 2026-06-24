@@ -554,15 +554,22 @@ def _write_audit_sidecar(repo_root: Path, data: dict) -> None:
     """Persist pip-audit's parsed JSON to the shared sidecar.
 
     Written by :func:`step_pip_audit` so :func:`step_cve_usage` can reuse the
-    same scan (#78) instead of invoking pip-audit a second time.
+    same scan (#78) instead of invoking pip-audit a second time. A write
+    failure is swallowed with a warning rather than propagated: the sidecar is
+    an optimization, and ``step_cve_usage`` already falls back to a standalone
+    pip-audit run when it is absent — a non-blocking step must not crash the
+    whole pre-commit run over an unwritable ``code_health/``.
 
     Args:
         repo_root: Git repo root.
         data: Parsed pip-audit JSON (``AuditRun.data``).
     """
     path = repo_root / PIP_AUDIT_SIDECAR
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data), encoding="utf-8")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+    except OSError as exc:
+        emit(f"pip_audit: sidecar write failed ({exc}); cve_usage runs standalone")
 
 
 def step_cve_usage(repo_root: Path) -> StepResult:
@@ -586,6 +593,10 @@ def step_cve_usage(repo_root: Path) -> StepResult:
     via ``--audit-json`` so pip-audit is invoked **once** per commit (#78). If
     the sidecar is absent (``pip_audit`` disabled or skipped), the CLI falls
     back to running pip-audit itself, so the check still works standalone.
+    The sidecar is trusted as current; ``pip_audit`` rewrites it every run and
+    sits immediately before this step, so the only stale case is an explicit
+    ``--skip pip_audit`` leaving a prior run's file — then this step reuses
+    that older scan rather than re-running.
 
     Args:
         repo_root: Git repo root.

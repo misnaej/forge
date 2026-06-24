@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -101,7 +102,7 @@ def test_scope_aware_steps_forward_resolved_scope(
 ) -> None:
     """docstring/test-naming steps forward `--scope diff` from config."""
     _write_precommit_cfg(tmp_path, 'scope = "diff"')
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
     calls: list[list[str]] = []
 
     def _fake_run(cmd: list[str], **_kwargs: object) -> tuple[bool, str]:
@@ -129,7 +130,7 @@ def test_step_ruff_hard_fails_when_fix_forge_ruff_missing(
 ) -> None:
     """step_ruff exits 2 when ``fix-forge-ruff`` is not on PATH."""
     (tmp_path / "src").mkdir()
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit) as exc_info:
         precommit.step_ruff(tmp_path)
     assert exc_info.value.code == 2
@@ -141,9 +142,7 @@ def test_step_ruff_shells_out_to_fix_forge_ruff(
 ) -> None:
     """step_ruff delegates to the fix-forge-ruff CLI with the resolved scope."""
     (tmp_path / "src").mkdir()
-    monkeypatch.setattr(
-        precommit.shutil, "which", lambda _name: "/usr/bin/fix-forge-ruff"
-    )
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/fix-forge-ruff")
     calls: list[list[str]] = []
 
     def _fake_run(cmd: list[str], **_kwargs: object) -> tuple[bool, str]:
@@ -163,9 +162,7 @@ def test_step_ruff_propagates_nonzero_exit(
 ) -> None:
     """When fix-forge-ruff exits non-zero, step_ruff fails."""
     (tmp_path / "src").mkdir()
-    monkeypatch.setattr(
-        precommit.shutil, "which", lambda _name: "/usr/bin/fix-forge-ruff"
-    )
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/fix-forge-ruff")
     monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "E501 ..."))
     result = precommit.step_ruff(tmp_path)
     assert not result.passed
@@ -177,7 +174,7 @@ def test_step_docstrings_hard_fails_when_cli_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """step_docstrings exits 2 when verify-forge-docstrings is missing."""
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit) as exc_info:
         precommit.step_docstrings(tmp_path)
     assert exc_info.value.code == 2
@@ -188,7 +185,7 @@ def test_step_test_naming_hard_fails_when_cli_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """step_test_naming exits 2 when verify-forge-test-naming is missing."""
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit) as exc_info:
         precommit.step_test_naming(tmp_path)
     assert exc_info.value.code == 2
@@ -199,7 +196,7 @@ def test_step_docstring_coverage_hard_fails_when_cli_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """step_docstring_coverage exits 2 when its CLI is missing from PATH."""
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit) as exc_info:
         precommit.step_docstring_coverage(tmp_path)
     assert exc_info.value.code == 2
@@ -220,7 +217,7 @@ def test_step_repo_structure_hard_fails_when_cli_missing(
 ) -> None:
     """step_repo_structure exits 2 when verify-forge-repo-structure is missing."""
     (tmp_path / "REPO_STRUCTURE.md").write_text("# Repo Structure\n")
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit) as exc_info:
         precommit.step_repo_structure(tmp_path)
     assert exc_info.value.code == 2
@@ -243,7 +240,7 @@ def test_step_commit_types_parity_hard_fails_when_cli_missing(
     hooks_dir = tmp_path / "claude-hooks"
     hooks_dir.mkdir()
     (hooks_dir / "check_commit_format.sh").write_text("#!/usr/bin/env bash\n")
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit) as exc_info:
         precommit.step_commit_types_parity(tmp_path)
     assert exc_info.value.code == 2
@@ -253,9 +250,7 @@ def test_step_manifest_json_shells_out_to_verify_forge_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """step_manifest_json always shells out; the CLI owns the skip decision."""
-    monkeypatch.setattr(
-        precommit.shutil, "which", lambda _name: "/usr/bin/verify-forge-manifest"
-    )
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/verify-forge-manifest")
     calls: list[list[str]] = []
 
     def _fake_run(cmd: list[str], **_kwargs: object) -> tuple[bool, str]:
@@ -273,9 +268,7 @@ def test_step_manifest_json_marks_skipped_from_cli_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """When the CLI reports it skipped, the StepResult mirrors that."""
-    monkeypatch.setattr(
-        precommit.shutil, "which", lambda _name: "/usr/bin/verify-forge-manifest"
-    )
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/verify-forge-manifest")
     monkeypatch.setattr(
         precommit,
         "_run",
@@ -291,7 +284,7 @@ def test_step_plugin_version_shells_out_to_verify_cli(
 ) -> None:
     """step_plugin_version always shells out; the CLI owns the skip decision."""
     monkeypatch.setattr(
-        precommit.shutil,
+        shutil,
         "which",
         lambda _name: "/usr/bin/verify-forge-plugin-version",
     )
@@ -313,7 +306,7 @@ def test_step_plugin_version_marks_skipped_from_cli_output(
 ) -> None:
     """When the CLI reports it skipped, the StepResult mirrors that."""
     monkeypatch.setattr(
-        precommit.shutil,
+        shutil,
         "which",
         lambda _name: "/usr/bin/verify-forge-plugin-version",
     )
@@ -696,7 +689,7 @@ def test_step_cve_usage_non_blocking_warn_on_findings(
 ) -> None:
     """A finding (CLI exit 1) is a non-blocking WARN, mirroring pip_audit."""
     (tmp_path / "cve_usage_patterns.toml").write_text("['CVE-1']\npackage='x'\n")
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
     monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "1 finding"))
     result = precommit.step_cve_usage(tmp_path)
     assert not result.passed
@@ -902,7 +895,7 @@ def _names(step_defs: list[precommit.StepDef]) -> list[str]:
 
 def _present(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make every binary resolve on PATH (so ``require_cli`` passes)."""
-    monkeypatch.setattr(precommit.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
 
 
 def test_forge_step_config_reads_section(tmp_path: Path) -> None:
@@ -1155,7 +1148,7 @@ def test_step_doctest_missing_pytest_exits(
 ) -> None:
     """Doctest fails loudly (SystemExit) when pytest is not on PATH."""
     (tmp_path / "src").mkdir()
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit):
         precommit.step_doctest(tmp_path)
 
@@ -1190,7 +1183,7 @@ def test_step_typecheck_missing_pyrefly_exits(
 ) -> None:
     """An opted-in-but-absent pyrefly binary fails loudly (SystemExit)."""
     (tmp_path / "src").mkdir()
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit):
         precommit.step_typecheck(tmp_path)
 
@@ -1268,7 +1261,7 @@ def test_step_doc_consistency_missing_cli_exits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """doc_consistency fails loudly when its CLI is not on PATH."""
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit):
         precommit.step_doc_consistency(tmp_path)
 
@@ -1336,7 +1329,7 @@ def test_step_cve_usage_passes_audit_json_when_sidecar_present(
     sidecar = tmp_path / "code_health" / "pip_audit.json"
     sidecar.parent.mkdir(parents=True)
     sidecar.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
     captured_argv: list[str] = []
 
     def _fake_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
@@ -1362,7 +1355,7 @@ def test_step_cve_usage_runs_bare_when_sidecar_absent(
     (tmp_path / "cve_usage_patterns.toml").write_text(
         '["CVE-1"]\npackage = "x"\n', encoding="utf-8"
     )
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
     captured_argv: list[str] = []
 
     def _fake_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:

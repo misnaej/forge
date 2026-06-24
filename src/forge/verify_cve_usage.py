@@ -117,16 +117,26 @@ def active_cve_ids(root: Path, audit_json: Path | None = None) -> set[str] | Non
         audit_json: Optional path to a pip-audit JSON sidecar written by the
             ``pip_audit`` pre-commit step. When given, its contents are read
             instead of invoking pip-audit, so the two steps share **one** scan
-            per commit (#78). A relative path resolves against *root*.
+            per commit (#78). A relative path resolves against *root*; a path
+            that resolves outside the repo is refused (skipped) so the public
+            flag cannot read arbitrary files.
 
     Returns:
         The set of live IDs (each ``id`` plus its ``aliases``, so a CVE-keyed
         map matches a PYSEC-keyed report and vice versa), or ``None`` when the
-        sidecar is absent / unparseable, or pip-audit is missing / unparseable
-        — the signal to skip cleanly (FOUNDATION §15).
+        sidecar is absent / unparseable / outside the repo, or pip-audit is
+        missing / unparseable — the signal to skip cleanly (FOUNDATION §15).
     """
     if audit_json is not None:
-        path = audit_json if audit_json.is_absolute() else root / audit_json
+        # Resolve (collapsing any ``..``) and confine the read to the repo:
+        # ``--audit-json`` is a public CLI flag, and the sidecar it names only
+        # ever lives under the repo. An out-of-repo path skips cleanly rather
+        # than turning the JSON read into an arbitrary-file-read oracle.
+        candidate = audit_json if audit_json.is_absolute() else root / audit_json
+        path = candidate.resolve()
+        if not path.is_relative_to(root.resolve()):
+            logger.info("(--audit-json %s is outside the repo — skipped)", audit_json)
+            return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
