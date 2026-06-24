@@ -10,10 +10,13 @@ on the dev commit and base described as a stale predecessor
 (``docs/release-process.md`` §2, the previously-unenforced invariant).
 
 This CLI is the enforcer. It joins a minor tag to its base commit by
-**tree equality**: a promotion squashes dev's history into a new commit
-whose *tree* equals the tagged dev commit's tree, even though the commit
-SHA, parents, and message differ. The matching base commit is therefore
-deterministic.
+**release fingerprint** (tree content minus ``CHANGELOG.md``, see
+:func:`forge.git_utils.release_tree_fingerprint`): a promotion squashes
+dev's history into a new commit whose tree equals the tagged dev commit's
+tree — except for the curated ``@main`` CHANGELOG entry the release
+branch finalizes (``docs/release-process.md`` §5). Ignoring that one file
+keeps the join deterministic while tolerating the per-release CHANGELOG
+divergence; any *other* difference leaves the tag unaligned.
 
 Modes:
 
@@ -38,8 +41,8 @@ from pathlib import Path
 from forge.config import load_config
 from forge.git_utils import (
     configure_cli_logging,
-    get_tree_sha,
     parse_semver,
+    release_tree_fingerprint,
     run_git,
 )
 from forge.run_context import git_auth_mode, is_non_interactive
@@ -55,9 +58,9 @@ class _TagState:
 
     Attributes:
         tag: The minor tag name (``vX.Y.0``).
-        target: Base-branch commit SHA whose tree reproduces the tag's
-            tree, or ``None`` when no base commit reproduces it (the
-            minor was never promoted).
+        target: Base-branch commit SHA whose release fingerprint
+            reproduces the tag's, or ``None`` when no base commit
+            reproduces it (the minor was never promoted).
         current: Commit SHA the tag currently points at, or ``None`` when
             the tag is unresolvable.
     """
@@ -103,26 +106,33 @@ def _minor_tags(repo_root: Path) -> list[str]:
 
 
 def _base_tree_index(repo_root: Path, base_ref: str) -> dict[str, str]:
-    """Map each commit tree SHA on *base_ref* to its commit SHA.
+    """Map each base commit's release fingerprint to its commit SHA.
 
-    Newest commit wins on a tree collision: ``git log`` lists commits
-    newest-first and only the first occurrence of a tree is recorded, so
-    the most recent base commit reproducing a tree is the move target.
+    Newest commit wins on a fingerprint collision: ``git log`` lists
+    commits newest-first and only the first occurrence is recorded, so the
+    most recent base commit reproducing a release is the move target. The
+    key is the release fingerprint (tree content minus ``CHANGELOG.md``,
+    see :func:`forge.git_utils.release_tree_fingerprint`), so a base squash
+    commit whose only difference from the tagged dev release is the curated
+    ``@main`` CHANGELOG still matches — while any other file difference
+    keeps the match release-exact and the tag unaligned.
 
     Args:
         repo_root: Repo root for the git invocation.
         base_ref: Branch ref to walk (e.g. ``origin/main``).
 
     Returns:
-        ``{tree_sha: commit_sha}`` for every commit reachable from
+        ``{fingerprint: commit_sha}`` for every commit reachable from
         *base_ref*; empty when the ref is unresolvable.
     """
-    raw = run_git("log", "--format=%H %T", base_ref, cwd=repo_root, check=False)
+    commits = run_git(
+        "log", "--format=%H", base_ref, cwd=repo_root, check=False
+    ).split()
     index: dict[str, str] = {}
-    for line in raw.splitlines():
-        commit, _, tree = line.partition(" ")
-        if tree and tree not in index:
-            index[tree] = commit
+    for commit in commits:
+        fingerprint = release_tree_fingerprint(repo_root, commit)
+        if fingerprint and fingerprint not in index:
+            index[fingerprint] = commit
     return index
 
 
@@ -139,12 +149,12 @@ def _tag_states(repo_root: Path, base_ref: str) -> list[_TagState]:
     index = _base_tree_index(repo_root, base_ref)
     states: list[_TagState] = []
     for tag in _minor_tags(repo_root):
-        tree = get_tree_sha(repo_root, tag)
+        fingerprint = release_tree_fingerprint(repo_root, tag)
         current = run_git("rev-list", "-n1", tag, cwd=repo_root, check=False)
         states.append(
             _TagState(
                 tag=tag,
-                target=index.get(tree) if tree else None,
+                target=index.get(fingerprint) if fingerprint else None,
                 current=current or None,
             )
         )
@@ -168,7 +178,7 @@ def _force_move_tag(repo_root: Path, tag: str, commit_sha: str) -> None:
 
 
 def _report_unreproduced(states: list[_TagState], base_ref: str) -> None:
-    """Warn about minor tags whose tree no base commit reproduces.
+    """Warn about minor tags whose release fingerprint no base commit reproduces.
 
     Such a tag names a minor that was never promoted to the base branch,
     so it cannot be aligned — that is a promotion gap, not a tag-placement
@@ -181,8 +191,8 @@ def _report_unreproduced(states: list[_TagState], base_ref: str) -> None:
     for state in states:
         if state.target is None:
             logger.warning(
-                "%s: no commit on %s reproduces its tree — promote that "
-                "minor before it can be aligned.",
+                "%s: no commit on %s reproduces its release fingerprint — "
+                "promote that minor before it can be aligned.",
                 state.tag,
                 base_ref,
             )
@@ -204,7 +214,7 @@ def _verify(states: list[_TagState], base_ref: str) -> int:
         return 0
     for state in misplaced:
         logger.error(
-            "%s points at %s but %s reproduces its tree at %s — run with --fix.",
+            "%s points at %s but %s reproduces its fingerprint at %s — run with --fix.",
             state.tag,
             _short(state.current),
             base_ref,
@@ -273,7 +283,8 @@ def main() -> int:
         description=(
             "Verify (default) or repair (--fix) that every minor release "
             "tag vX.Y.0 sits on the base branch's squash commit, matched by "
-            "tree equality. Self-skips single-branch repos."
+            "release fingerprint (tree content minus CHANGELOG.md). "
+            "Self-skips single-branch repos."
         ),
     )
     parser.add_argument(

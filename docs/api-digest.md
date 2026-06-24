@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_46 modules, 428 symbols._
+_46 modules, 429 symbols._
 
 ## `forge._hook_helpers`
 
@@ -269,6 +269,7 @@ _46 modules, 428 symbols._
 - `_run_git(*args: str) -> str` _(internal)_ — Run a git command and return stdout.
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
+- `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
 - `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
 - `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
@@ -534,7 +535,7 @@ _46 modules, 428 symbols._
   - `needs_move(self) -> bool` — ``True`` when a base commit reproduces the tag but it sits elsewhere.
 - `_short(sha: str | None) -> str` _(internal)_ — Return a 9-char abbreviation of *sha*, or ``(none)`` when absent.
 - `_minor_tags(repo_root: Path) -> list[str]` _(internal)_ — Return every ``vX.Y.0`` tag (patch == 0), semver-sorted ascending.
-- `_base_tree_index(repo_root: Path, base_ref: str) -> dict[str, str]` _(internal)_ — Map each commit tree SHA on *base_ref* to its commit SHA.
+- `_base_tree_index(repo_root: Path, base_ref: str) -> dict[str, str]` _(internal)_ — Map each base commit's release fingerprint to its commit SHA.
 - `_tag_states(repo_root: Path, base_ref: str) -> list[_TagState]` _(internal)_ — Resolve every minor tag's current vs. target commit on *base_ref*.
 - `_force_move_tag(repo_root: Path, tag: str, commit_sha: str) -> None` _(internal)_ — Annotated-retag *tag* at *commit_sha* and force-push it.
 - `_report_unreproduced(states: list[_TagState], base_ref: str) -> None` _(internal)_ — Warn about minor tags whose tree no base commit reproduces.
