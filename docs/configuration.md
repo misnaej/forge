@@ -174,6 +174,52 @@ these are the keys interrogate has no concept of.)
 | `paths` | `[tool.forge].source_dirs + test_dirs` | Per-tool **override** of the scan roots for the coverage report and badge. Defaults to the repo-wide layout above; set this only when docstring-coverage should scan something different. Paths resolving outside the repo are rejected. | You want coverage scoped differently from the rest of forge — otherwise prefer setting `[tool.forge].source_dirs` once. |
 | `badge` | `false` | Generate **interrogate's own** coverage badge (via `interrogate.badge_gen`) to `.badges/DocstringCoverage.svg` for README embedding. forge invokes interrogate as a library, so this opt-in triggers the badge programmatically. | You want a coverage badge in your README. |
 
+## `[tool.forge.cve_usage]` — usage-scoped CVE filter
+
+A **second stage** on top of `pip_audit`. `pip_audit` flags vulnerable
+*packages* (every CVE in your dependency tree); `verify-forge-cve-usage`
+flags vulnerable *usage* — it greps your source for the patterns of CVEs
+`pip-audit` is **currently** reporting, so you only see a warning when the
+vulnerable code path is actually present.
+
+**Opt in by presence** of a `cve_usage_patterns.toml` map at the repo root —
+a `CVE-ID → {package, patterns, risk, mitigation}` table (your config; every
+repo's vulnerable surface differs). The step self-skips when the map (or
+pip-audit) is absent. It is **non-blocking** (advisory). Self-maintaining: a
+pattern is checked only while its CVE is live, so upgrading the package makes
+the warning disappear — no stale list to prune.
+
+Matching is line-based and skips **full-line comments** only — a pattern
+mentioned in a trailing `# …` comment on a code line can still match, so keep
+patterns specific to the genuinely vulnerable call.
+
+```toml
+# cve_usage_patterns.toml (repo root)
+["CVE-2024-0001"]
+package = "lxml"
+patterns = ['lxml\.etree', 'from lxml import etree']
+risk = "only exploitable parsing untrusted XML"
+mitigation = "ensure XML sources are trusted"
+```
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `paths` | `source_dirs` + `test_dirs` | Per-tool override of the scan roots; otherwise the shared layout. | The vulnerable surface lives outside your normal source roots. |
+
+## `[tool.forge.badges]` — README status badges
+
+`install-forge-readme-badges` writes a **drift-aware managed block**
+(`<!-- forge:badges:start/end -->`) of status badges into your README;
+content outside the markers is preserved on re-run. shields.io URLs where a
+hosted source exists (CI, Python version, Ruff, license, forge channel,
+Claude Code) and the local `.badges/DocstringCoverage.svg` when present.
+Wired into `install-forge-bootstrap`.
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `enabled` | `false` | Opt into writing the badge block. | You want forge to maintain a badge row in your README. |
+| `readme` | `"README.md"` | README file the block is written into. | Your readme has a different name/path. |
+
 ## `[tool.interrogate]` — native section, read by forge
 
 This is **interrogate's own** config section (not forge's). forge reads it

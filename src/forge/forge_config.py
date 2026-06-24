@@ -164,6 +164,29 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         description="Make the typecheck step fail the commit on a checker "
         "error (default: non-blocking WARN).",
     ),
+    ConfigKey(
+        ("tool", "forge", "cve_usage", "paths"),
+        "source_dirs + test_dirs",
+        "Per-tool override of the CVE-usage scan roots; otherwise inherits "
+        "the repo-wide [tool.forge].source_dirs + test_dirs.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "badges", "enabled"),
+        default=False,
+        description="Opt into the README status-badge block written by "
+        "install-forge-readme-badges (and the bootstrap readme-badges step).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "badges", "readme"),
+        "README.md",
+        "README file the badge managed-block is written into.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "badges", "workflow"),
+        "first workflow alphabetically",
+        "GitHub Actions workflow filename for the CI badge (under "
+        ".github/workflows); otherwise the first one is used.",
+    ),
 )
 
 # Third-party tools forge reads from their OWN native section rather than

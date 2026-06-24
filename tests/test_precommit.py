@@ -517,6 +517,7 @@ def test_run_all_writes_code_health_logs(
         "manifest_json.log",
         "plugin_version.log",
         "pip_audit.log",
+        "cve_usage.log",
     }
     assert expected <= {p.name for p in log_dir.iterdir()}
 
@@ -604,6 +605,27 @@ def test_step_pip_audit_loud_warn_when_cli_missing(
     assert not result.passed
     assert result.non_blocking
     assert "did NOT run" in result.output
+
+
+def test_step_cve_usage_skips_without_pattern_file(tmp_path: Path) -> None:
+    """cve_usage self-skips (opt-in by presence) when no pattern map exists."""
+    result = precommit.step_cve_usage(tmp_path)
+    assert result.skipped
+    assert result.passed
+    assert "skipped" in result.output
+
+
+def test_step_cve_usage_non_blocking_warn_on_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A finding (CLI exit 1) is a non-blocking WARN, mirroring pip_audit."""
+    (tmp_path / "cve_usage_patterns.toml").write_text("['CVE-1']\npackage='x'\n")
+    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "1 finding"))
+    result = precommit.step_cve_usage(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+    assert not result.skipped
 
 
 def test_count_pip_audit_advisories_counts_pysec_and_ghsa_ids() -> None:

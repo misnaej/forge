@@ -1,5 +1,9 @@
 # Forge
 
+<!-- forge:badges:start -->
+[![CI](https://github.com/misnaej/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/misnaej/forge/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/) [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff) ![License](https://img.shields.io/badge/License-MIT-green) ![forge](https://img.shields.io/badge/forge-enabled-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-555?logo=claude) ![Docstring coverage](.badges/DocstringCoverage.svg)
+<!-- forge:badges:end -->
+
 AI agents write more code, faster — but without guardrails, quality
 drifts: lint rules silently disabled, docstrings half-written,
 standards left as prose nobody runs. Good output needs hard guardrails,
