@@ -49,13 +49,12 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import shutil
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
-from forge import config
+from forge import config, pip_audit_json
 from forge.config import resolve_model_section
 from forge.git_utils import (
     SCOPE_ALL,
@@ -465,6 +464,11 @@ def step_c4(repo_root: Path) -> StepResult:
 # to surface.
 _PIP_AUDIT_LOUDNESS_THRESHOLD = 10
 
+# Sidecar holding pip-audit's parsed JSON, written by ``step_pip_audit`` and
+# reused by ``step_cve_usage`` so the two steps share one pip-audit scan per
+# commit instead of each hitting the OSV network independently (#78).
+PIP_AUDIT_SIDECAR = "code_health/pip_audit.json"
+
 # Matches a full ``pip-audit`` advisory ID:
 # - ``PYSEC-YYYY-N`` (year + sequence number, both digit-only)
 # - ``GHSA-xxxx-yyyy-zzzz`` (three 4-char alphanumeric segments)
@@ -499,7 +503,10 @@ def step_pip_audit(repo_root: Path) -> StepResult:
     ``pip-audit`` scans the current Python environment against the OSV
     vulnerability database. Findings are advisory — a CVE in a dev
     dependency should not refuse a commit, but the contributor should
-    see it.
+    see it. Runs **once** in JSON mode (:func:`forge.pip_audit_json.run_json`),
+    writes the parsed findings to the ``code_health/pip_audit.json`` sidecar
+    that ``step_cve_usage`` reuses (#78), and renders the human log from the
+    same JSON.
 
     Loudness escalation: when the residual advisory count exceeds
     :data:`_PIP_AUDIT_LOUDNESS_THRESHOLD`, the output is prefixed with
@@ -531,7 +538,8 @@ def step_pip_audit(repo_root: Path) -> StepResult:
         ``True`` when the binary is missing.
     """
     blocking = bool(_forge_step_config(repo_root, "pip_audit").get("blocking", False))
-    if shutil.which("pip-audit") is None:
+    run = pip_audit_json.run_json(repo_root)
+    if run is None:
         return StepResult(
             name="pip_audit",
             passed=False,
@@ -543,10 +551,19 @@ def step_pip_audit(repo_root: Path) -> StepResult:
             ),
             non_blocking=True,
         )
-    passed, output = _run(
-        ["pip-audit", "--skip-editable", "--desc"],
-        cwd=repo_root,
-    )
+    if run.data is None:
+        return StepResult(
+            name="pip_audit",
+            passed=False,
+            output=(
+                "⚠️  pip-audit produced no parseable JSON — the CVE scan did "
+                "not complete:\n\n" + (run.stderr.strip() or "(no stderr)")
+            ),
+            non_blocking=True,
+        )
+    _write_audit_sidecar(repo_root, run.data)
+    output = pip_audit_json.render_report(run.data)
+    passed = not pip_audit_json.has_vulns(run.data)
     if not passed:
         count = _count_pip_audit_advisories(output)
         if count > _PIP_AUDIT_LOUDNESS_THRESHOLD:
@@ -565,6 +582,28 @@ def step_pip_audit(repo_root: Path) -> StepResult:
     )
 
 
+def _write_audit_sidecar(repo_root: Path, data: dict) -> None:
+    """Persist pip-audit's parsed JSON to the shared sidecar.
+
+    Written by :func:`step_pip_audit` so :func:`step_cve_usage` can reuse the
+    same scan (#78) instead of invoking pip-audit a second time. A write
+    failure is swallowed with a warning rather than propagated: the sidecar is
+    an optimization, and ``step_cve_usage`` already falls back to a standalone
+    pip-audit run when it is absent — a non-blocking step must not crash the
+    whole pre-commit run over an unwritable ``code_health/``.
+
+    Args:
+        repo_root: Git repo root.
+        data: Parsed pip-audit JSON (``AuditRun.data``).
+    """
+    path = repo_root / PIP_AUDIT_SIDECAR
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+    except OSError as exc:
+        emit(f"pip_audit: sidecar write failed ({exc}); cve_usage runs standalone")
+
+
 def step_cve_usage(repo_root: Path) -> StepResult:
     """Run ``verify-forge-cve-usage`` — the usage-scoped second stage on pip_audit.
 
@@ -581,6 +620,16 @@ def step_cve_usage(repo_root: Path) -> StepResult:
     not ``FAIL``. ``forge:precommit-fixer`` escalates findings at PR
     finalization (strict), same as ``pip_audit``.
 
+    Reuses ``step_pip_audit``'s scan: when the ``code_health/pip_audit.json``
+    sidecar exists (the normal case — ``pip_audit`` runs first), it is passed
+    via ``--audit-json`` so pip-audit is invoked **once** per commit (#78). If
+    the sidecar is absent (``pip_audit`` disabled or skipped), the CLI falls
+    back to running pip-audit itself, so the check still works standalone.
+    The sidecar is trusted as current; ``pip_audit`` rewrites it every run and
+    sits immediately before this step, so the only stale case is an explicit
+    ``--skip pip_audit`` leaving a prior run's file — then this step reuses
+    that older scan rather than re-running.
+
     Args:
         repo_root: Git repo root.
 
@@ -596,7 +645,10 @@ def step_cve_usage(repo_root: Path) -> StepResult:
             skipped=True,
         )
     require_cli("verify-forge-cve-usage", caller="forge-precommit")
-    passed, output = _run(["verify-forge-cve-usage"], cwd=repo_root)
+    cmd = ["verify-forge-cve-usage"]
+    if (repo_root / PIP_AUDIT_SIDECAR).is_file():
+        cmd += ["--audit-json", PIP_AUDIT_SIDECAR]
+    passed, output = _run(cmd, cwd=repo_root)
     skipped = "skipped" in output
     return StepResult(
         name="cve_usage",

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_47 modules, 476 symbols._
+_48 modules, 486 symbols._
 
 ## `forge._hook_helpers`
 
@@ -428,6 +428,15 @@ _47 modules, 476 symbols._
 - `_log_prune_result(repo_root: Path) -> None` _(internal)_ — Prune stale local branches and log the outcome.
 - `main() -> int` — Refresh main, optionally tag the release, prune stale local branches.
 
+## `forge.pip_audit_json`
+
+- `class AuditRun` — One completed pip-audit invocation.
+- `run_json(root: Path) -> AuditRun | None` — Run pip-audit once in JSON mode against *root*'s environment.
+- `_dict_list(obj: dict, key: str) -> list[dict]` _(internal)_ — Return ``obj[key]`` filtered to ``dict`` entries, or ``[]``.
+- `ids_from_data(data: dict) -> set[str]` — Collect the advisory / CVE IDs from parsed pip-audit JSON.
+- `has_vulns(data: dict) -> bool` — Report whether any scanned dependency carries a vulnerability.
+- `render_report(data: dict) -> str` — Render parsed pip-audit JSON as the human-readable step-log body.
+
 ## `forge.post_checkout`
 
 - `main(argv: list[str] | None = None) -> int` — Run the forge-managed post-checkout actions. Return an exit code.
@@ -474,6 +483,7 @@ _47 modules, 476 symbols._
 - `step_c4(repo_root: Path) -> StepResult` — Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
 - `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.
+- `_write_audit_sidecar(repo_root: Path, data: dict) -> None` _(internal)_ — Persist pip-audit's parsed JSON to the shared sidecar.
 - `step_cve_usage(repo_root: Path) -> StepResult` — Run ``verify-forge-cve-usage`` — the usage-scoped second stage on pip_audit.
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
 - `_cli_wiring_enabled(repo_root: Path) -> bool` _(internal)_ — Return True when the repo has opted into the cli_wiring check.
@@ -544,10 +554,13 @@ _47 modules, 476 symbols._
 
 - `class Finding` — One matched vulnerable-usage occurrence.
 - `load_patterns(root: Path) -> dict[str, dict[str, object]] | None` — Load the consumer's ``cve_usage_patterns.toml`` map.
-- `active_cve_ids(root: Path) -> set[str] | None` — Return the advisory / CVE IDs pip-audit currently reports.
+- `active_cve_ids(root: Path, audit_json: Path | None = None) -> set[str] | None` — Return the advisory / CVE IDs pip-audit currently reports.
 - `_iter_source_lines(root: Path) -> Iterable[tuple[str, int, str]]` _(internal)_ — Yield ``(repo_relative_path, line_no, text)`` for every source line.
 - `scan(root: Path, patterns: dict[str, dict[str, object]], active: set[str]) -> list[Finding]` — Grep the source for the patterns of every active, mapped CVE.
 - `_render(findings: list[Finding]) -> str` _(internal)_ — Render findings as the ``code_health/cve_usage.log`` body.
+- `inactive_cves(patterns: dict[str, dict[str, object]], active: set[str]) -> list[tuple[str, str]]` — Return mapped CVE IDs that pip-audit is *not* currently reporting.
+- `_render_inactive(dormant: list[tuple[str, str]]) -> str` _(internal)_ — Render the ``--list-inactive`` report body.
+- `_run_list_inactive(root: Path, audit_json: Path | None) -> int` _(internal)_ — Print dormant mapped CVEs; never mutates the map. Always exits 0.
 - `main() -> int` — CLI entry point.
 
 ## `forge.verify_doc_consistency`

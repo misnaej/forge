@@ -38,7 +38,8 @@ Code.
    - verify_test_naming.py: `verify-forge-test-naming` — test naming check
    - verify_manifest.py: `verify-forge-manifest` — `.claude-plugin/*.json` JSON validation
    - verify_doc_consistency.py: `verify-forge-doc-consistency` — checks every `[project.scripts]` CLI is documented in `docs/cli-reference.md`; backs the opt-in `doc_consistency` pre-commit step (non-blocking)
-   - verify_cve_usage.py: `verify-forge-cve-usage` — usage-scoped second stage on `pip_audit`; intersects live pip-audit CVE IDs with a consumer `cve_usage_patterns.toml` map and greps source for the patterns; backs the opt-in `cve_usage` pre-commit step (non-blocking)
+   - verify_cve_usage.py: `verify-forge-cve-usage` — usage-scoped second stage on `pip_audit`; intersects live pip-audit CVE IDs with a consumer `cve_usage_patterns.toml` map and greps source for the patterns; backs the opt-in `cve_usage` pre-commit step (non-blocking). `--audit-json` reuses the `pip_audit` step's scan (one pip-audit run/commit); `--list-inactive` reports dormant map entries (read-only)
+   - pip_audit_json.py: shared single-invocation pip-audit JSON helper (`run_json` + `ids_from_data` / `has_vulns` / `render_report`); the neutral seam both `precommit.step_pip_audit` and `verify_cve_usage` depend on so pip-audit runs once per commit
    - install_readme_badges.py: `install-forge-readme-badges` — write/verify a drift-aware README status-badge managed block (shields.io + local docstring-coverage SVG); opt-in via `[tool.forge.badges]`; `--check` mode
    - verify_plugin_version.py: `verify-forge-plugin-version` — rolling-next guard (plugin.json["version"] > latest git tag)
    - verify_main_tags.py: `forge-check-main-tags` — verify/repair minor-boundary (`vX.Y.0`) tag placement on the base branch
@@ -175,7 +176,8 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_verify_docstring_coverage.py: tests for verify_docstring_coverage
    - test_verify_manifest.py: tests for verify_manifest
    - test_verify_doc_consistency.py: tests for verify_doc_consistency
-   - test_verify_cve_usage.py: tests for verify_cve_usage (active/inactive CVE, usage/no-usage, comment + self exclusion, pip-audit-missing skip)
+   - test_verify_cve_usage.py: tests for verify_cve_usage (active/inactive CVE, usage/no-usage, comment + self exclusion, pip-audit-missing skip, `--audit-json` sidecar reuse, `--list-inactive` reporter)
+   - test_pip_audit_json.py: tests for pip_audit_json (run_json binary-missing/parse paths, ids_from_data alias collection + malformed-shape filtering, render_report primary-id-only, advisory-count invariant)
    - test_install_readme_badges.py: tests for install_readme_badges (badge sources, drift-aware injection, opt-in gating, --check)
    - test_verify_plugin_version.py: tests for verify_plugin_version
    - test_verify_main_tags.py: tests for verify_main_tags

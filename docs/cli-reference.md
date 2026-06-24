@@ -607,14 +607,20 @@ options:
 ## verify-forge-cve-usage
 
 ```text
-usage: verify-forge-cve-usage [-h]
+usage: verify-forge-cve-usage [-h] [--audit-json PATH] [--list-inactive]
 
 Second-stage CVE filter: report only CVEs whose vulnerable code path is
 actually used. Reads cve_usage_patterns.toml; skips cleanly when absent or
 pip-audit is unavailable.
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help         show this help message and exit
+  --audit-json PATH  Read pip-audit findings from this JSON sidecar instead of
+                     invoking pip-audit (shares one scan with the pip_audit
+                     step).
+  --list-inactive    Report mapped CVEs no longer in pip-audit's live report
+                     (prune candidates). Read-only, exits 0, never edits the
+                     map.
 ```
 
 ## verify-forge-doc-consistency
