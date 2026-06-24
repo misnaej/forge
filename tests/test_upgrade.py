@@ -38,7 +38,7 @@ dev = [
 def test_find_pin_in_pyproject(tmp_path: Path) -> None:
     """A standard pin under [project.optional-dependencies] is located."""
     (tmp_path / "pyproject.toml").write_text(_BASE_PYPROJECT)
-    pin = upgrade._find_pin(tmp_path)
+    pin = upgrade.find_pin(tmp_path)
     assert pin is not None
     assert pin.ref == "v1.2.0"
     assert pin.url == "https://github.com/misnaej/forge.git"
@@ -47,7 +47,7 @@ def test_find_pin_in_pyproject(tmp_path: Path) -> None:
 
 def test_find_pin_returns_none_when_no_pyproject(tmp_path: Path) -> None:
     """No pyproject.toml → no pin to find."""
-    assert upgrade._find_pin(tmp_path) is None
+    assert upgrade.find_pin(tmp_path) is None
 
 
 def test_find_pin_returns_none_when_no_pin_line(tmp_path: Path) -> None:
@@ -55,7 +55,7 @@ def test_find_pin_returns_none_when_no_pin_line(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "x"\nversion = "0"\n',
     )
-    assert upgrade._find_pin(tmp_path) is None
+    assert upgrade.find_pin(tmp_path) is None
 
 
 def test_find_pin_accepts_main_channel(tmp_path: Path) -> None:
@@ -64,7 +64,7 @@ def test_find_pin_accepts_main_channel(tmp_path: Path) -> None:
         "[project.optional-dependencies]\n"
         'dev = ["forge-scripts @ git+https://github.com/misnaej/forge.git@main"]\n',
     )
-    pin = upgrade._find_pin(tmp_path)
+    pin = upgrade.find_pin(tmp_path)
     assert pin is not None
     assert pin.ref == "main"
 
@@ -72,7 +72,7 @@ def test_find_pin_accepts_main_channel(tmp_path: Path) -> None:
 def test_rewrite_pin_changes_only_ref(tmp_path: Path) -> None:
     """Rewriting touches only the @ref portion of the pin line."""
     (tmp_path / "pyproject.toml").write_text(_BASE_PYPROJECT)
-    pin = upgrade._find_pin(tmp_path)
+    pin = upgrade.find_pin(tmp_path)
     assert pin is not None
     new_text = upgrade._rewrite_pin(pin, "v1.3.0")
     # Only the ref changed; everything else byte-identical.
@@ -94,7 +94,7 @@ def test_find_pin_accepts_ssh_format(tmp_path: Path) -> None:
         "[project.optional-dependencies]\n"
         'ci = ["forge-scripts @ git+ssh://git@github.com/misnaej/forge.git@dev"]\n',
     )
-    pin = upgrade._find_pin(tmp_path)
+    pin = upgrade.find_pin(tmp_path)
     assert pin is not None
     assert pin.url == "ssh://git@github.com/misnaej/forge.git"
     assert pin.ref == "dev"
@@ -113,7 +113,7 @@ def test_rewrite_pin_preserves_ssh_url(tmp_path: Path) -> None:
         "[project.optional-dependencies]\n"
         'ci = ["forge-scripts @ git+ssh://git@github.com/misnaej/forge.git@main"]\n',
     )
-    pin = upgrade._find_pin(tmp_path)
+    pin = upgrade.find_pin(tmp_path)
     assert pin is not None
     new_text = upgrade._rewrite_pin(pin, "v1.7.0")
     assert (
@@ -130,7 +130,7 @@ def test_rewrite_pin_preserves_quote_style(tmp_path: Path) -> None:
         "[project.optional-dependencies]\n"
         "dev = ['forge-scripts @ git+https://github.com/misnaej/forge.git@v1.0.0']\n",
     )
-    pin = upgrade._find_pin(tmp_path)
+    pin = upgrade.find_pin(tmp_path)
     assert pin is not None
     new_text = upgrade._rewrite_pin(pin, "v2.0.0")
     assert (
