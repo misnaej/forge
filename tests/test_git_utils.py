@@ -535,6 +535,18 @@ def test_release_fingerprint_none_for_unresolvable_ref(tmp_path: Path) -> None:
     assert git_utils.release_tree_fingerprint(tmp_path, "HEAD~999999") is None
 
 
+def test_release_fingerprint_none_when_tree_is_only_changelog(tmp_path: Path) -> None:
+    """A tree whose only file is CHANGELOG.md yields ``None``, not sha256("").
+
+    Excluding the sole file leaves nothing to fingerprint; returning a hash
+    of the empty string would make every such tree falsely release-equal.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    _commit_all(tmp_path, "changelog only")
+    assert git_utils.release_tree_fingerprint(tmp_path, "HEAD") is None
+
+
 # ---------------------------------------------------------------------------
 # read_plugin_version_at_ref
 # ---------------------------------------------------------------------------

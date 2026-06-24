@@ -392,7 +392,7 @@ def release_tree_fingerprint(repo_root: Path, ref: str) -> str | None:
 
     Returns:
         A 64-char hex fingerprint, or ``None`` when *ref* does not resolve
-        to a non-empty tree.
+        or its tree has no files outside ``CHANGELOG.md``.
     """
     raw = run_git("ls-tree", "-r", ref, cwd=repo_root, check=False)
     if not raw:
@@ -402,6 +402,11 @@ def release_tree_fingerprint(repo_root: Path, ref: str) -> str | None:
         for line in raw.splitlines()
         if line.partition("\t")[2] not in _RELEASE_EQUAL_IGNORE
     ]
+    if not kept:
+        # Tree resolves only to ignored paths (e.g. a repo tracking nothing
+        # but CHANGELOG.md). Returning a hash of "" would make every such
+        # tree falsely release-equal; treat it as no usable release tree.
+        return None
     return hashlib.sha256("\n".join(kept).encode()).hexdigest()
 
 

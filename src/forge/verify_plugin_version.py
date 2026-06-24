@@ -41,14 +41,13 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
-# Re-exported alias preserved for backwards compatibility with internal
-# imports (e.g. forge.next_prep) — the canonical implementation lives in
-# forge.git_utils.parse_semver.
+# Module-internal alias for the canonical forge.git_utils.parse_semver,
+# used by main() and referenced by this module's tests.
 _parse_semver = parse_semver
 
 
 def _is_release_commit(repo_root: Path) -> bool:
-    """Return True when ``HEAD``'s tree reproduces ANY published ``v*`` tag.
+    """Return True when ``HEAD``'s release fingerprint matches ANY published ``v*`` tag.
 
     Compares the **release fingerprint** (tree content minus
     ``CHANGELOG.md``, see :func:`forge.git_utils.release_tree_fingerprint`)
@@ -129,10 +128,6 @@ def main() -> int:
             logger.info("(no git tags yet — skipped)")
             return 0
 
-        if _is_release_commit(repo_root):
-            logger.info("(HEAD reproduces a published v* release tag — skipped)")
-            return 0
-
         plugin_version_str = read_local_plugin_version(repo_root)
         tag_ver = _parse_semver(latest_tag)
         plugin_ver = _parse_semver(plugin_version_str) if plugin_version_str else None
@@ -143,20 +138,28 @@ def main() -> int:
                 plugin_version_str,
             )
             return 1
-        if plugin_ver <= tag_ver:
-            logger.error(
-                "plugin.json version %s must be strictly greater than the latest "
-                "tag %s (%s). Bump .claude-plugin/plugin.json before the next "
-                "commit.",
-                plugin_ver,
-                latest_tag,
-                tag_ver,
+        # Cheap version check first: a rolling-next bump (plugin.json strictly
+        # ahead) is the common dev commit and passes immediately. Only when
+        # plugin.json is NOT ahead do we reach the release-commit check —
+        # which fingerprints every v* tag — so normal dev commits never pay
+        # that per-tag `git ls-tree` cost; it runs only on release branches.
+        if plugin_ver > tag_ver:
+            logger.info(
+                "plugin.json %s > latest tag %s (%s)", plugin_ver, latest_tag, tag_ver
             )
-            return 1
-        logger.info(
-            "plugin.json %s > latest tag %s (%s)", plugin_ver, latest_tag, tag_ver
+            return 0
+        if _is_release_commit(repo_root):
+            logger.info("(HEAD reproduces a published v* release tag — skipped)")
+            return 0
+        logger.error(
+            "plugin.json version %s must be strictly greater than the latest "
+            "tag %s (%s). Bump .claude-plugin/plugin.json before the next "
+            "commit.",
+            plugin_ver,
+            latest_tag,
+            tag_ver,
         )
-        return 0
+        return 1
 
 
 if __name__ == "__main__":

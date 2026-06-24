@@ -178,7 +178,7 @@ def _force_move_tag(repo_root: Path, tag: str, commit_sha: str) -> None:
 
 
 def _report_unreproduced(states: list[_TagState], base_ref: str) -> None:
-    """Warn about minor tags whose tree no base commit reproduces.
+    """Warn about minor tags whose release fingerprint no base commit reproduces.
 
     Such a tag names a minor that was never promoted to the base branch,
     so it cannot be aligned — that is a promotion gap, not a tag-placement
@@ -191,8 +191,8 @@ def _report_unreproduced(states: list[_TagState], base_ref: str) -> None:
     for state in states:
         if state.target is None:
             logger.warning(
-                "%s: no commit on %s reproduces its tree — promote that "
-                "minor before it can be aligned.",
+                "%s: no commit on %s reproduces its release fingerprint — "
+                "promote that minor before it can be aligned.",
                 state.tag,
                 base_ref,
             )
@@ -214,7 +214,7 @@ def _verify(states: list[_TagState], base_ref: str) -> int:
         return 0
     for state in misplaced:
         logger.error(
-            "%s points at %s but %s reproduces its tree at %s — run with --fix.",
+            "%s points at %s but %s reproduces its fingerprint at %s — run with --fix.",
             state.tag,
             _short(state.current),
             base_ref,
