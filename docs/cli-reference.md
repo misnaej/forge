@@ -283,6 +283,22 @@ options:
   --check              Verify docs/api-digest.md is in sync; do not write.
 ```
 
+## forge-gen-c4
+
+```text
+usage: forge-gen-c4 [-h] [--roots [ROOTS ...]] [--check] [--output OUTPUT]
+
+Generate a C4 architecture model (Structurizr DSL) from the import graph +
+[tool.forge.c4] config.
+
+options:
+  -h, --help           show this help message and exit
+  --roots [ROOTS ...]  Source dirs to scan. Defaults to the repo's configured
+                       source roots.
+  --check              Verify the committed DSL is in sync; do not write.
+  --output OUTPUT      Override the output path. Use '-' to write to stdout.
+```
+
 ## forge-gen-cli-reference
 
 ```text
@@ -479,7 +495,7 @@ options:
                others just print their intent.
   --skip SLUG  Skip a step by slug. Repeatable. Known slugs: githooks, claude-
                md, claude-settings, labels, readme-badges, api-digest, cli-
-               reference, audit-deps, doctor, config.
+               reference, c4, audit-deps, doctor, config.
   --strict     Abort on the first failed step. Default is continue-on-fail.
 ```
 

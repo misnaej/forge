@@ -46,6 +46,7 @@ Code.
      doc generator
    - gen_api_digest.py: `forge-gen-api-digest` — public-symbol API
      digest generator
+   - gen_c4.py: `forge-gen-c4` — emits a C4 architecture model (Structurizr DSL) from the import graph + a `[tool.forge.c4]` / `c4.toml` model skeleton; `--check` drift mode; opt-in, self-skips when unconfigured
    - gen_common.py: shared drift-check helper for the `forge-gen-*`
      doc generators
    - doctor.py: `forge-doctor` — environment diagnostics
@@ -104,6 +105,7 @@ subdirectory holds a single `SKILL.md`:
 - next/: clean up state and pick next task
 - pr/: full PR finalization flow
 - review/: address PR review comments
+- c4/: build a C4 architecture model — reason out context/containers/components into c4.toml, then run forge-gen-c4
 - test/: write tests via the test agents (advisor → writer → review → precommit-fixer)
 - triage/: issue backlog triage
 - weekly/: weekly summary report
@@ -215,6 +217,7 @@ Forge's own bootstrap tooling (not a consumer pattern):
 Architecture RFCs — aspirational, not descriptions of current behavior. Each carries its own accept/reject status.
 
 - rust-core.md: RFC for splitting forge into a Rust governance-core binary + optional Python analysis pack
+- c4-generator.md: RFC + v1 design for `forge-gen-c4` (emit a C4 Structurizr DSL model from the import graph + config) and the `c4` skill
 
 ## Configuration Files
 
@@ -224,6 +227,7 @@ Architecture RFCs — aspirational, not descriptions of current behavior. Each c
 2. **Code Quality**
    - ruff.toml: ruff lint and format configuration (strict, ALL rules)
    - pyrefly.toml: pyrefly type-checker config for the opt-in `typecheck` step (strict return-type checking; interrogate's attrs `__init__` silenced via `replace-imports-with-any`)
+   - c4.toml: standalone C4 architecture-model skeleton consumed by `forge-gen-c4` (kept out of pyproject; pointed at by `[tool.forge.c4].config`)
 
 3. **Documentation**
    - CLAUDE.md: project guidance for Claude Code and developers
@@ -233,6 +237,7 @@ Architecture RFCs — aspirational, not descriptions of current behavior. Each c
    - CHANGELOG.md: main-only release history (Keep a Changelog format)
    - CONTRIBUTING.md: contribution guidelines
    - LICENSE: MIT license
+   - docs/architecture.dsl: generated C4 model (Structurizr DSL) — `forge-gen-c4` output
 
 ## Additional Directories
 

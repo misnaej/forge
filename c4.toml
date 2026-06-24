@@ -1,0 +1,63 @@
+# C4 architecture model for forge — consumed by `forge-gen-c4`, which emits
+# docs/architecture.dsl (Structurizr DSL). Human-authored skeleton: the
+# System Context, Containers, and Component groupings. The component-to-
+# component edges are MACHINE-derived from the import graph; the
+# [[relationship]] entries below add the runtime/subprocess "uses" edges the
+# import graph cannot see (e.g. the dispatcher shelling out to each verifier).
+# See docs/proposals/c4-generator.md. Pointed at by [tool.forge.c4] in pyproject.toml.
+
+system = "Forge"
+description = "Python CI/CD & code-quality foundation: deterministic CLIs + pre-commit hook + optional Claude Code plugin"
+output = "docs/architecture.dsl"
+
+[[person]]
+name = "Forge developer"
+description = "Maintains forge and runs its pre-commit gate"
+uses = "develops, commits, runs CLIs"
+
+[[person]]
+name = "Consumer repo"
+description = "A repo that adopts forge's governance layer"
+uses = "installs + invokes forge CLIs/hooks"
+
+[[external]]
+name = "GitHub"
+description = "Hosts repos, PRs, issues, labels, releases"
+relationship = "reads/writes via gh"
+
+[[container]]
+name = "forge-scripts"
+technology = "Python pip package"
+description = "Every forge CLI + the pre-commit dispatcher"
+
+[components]
+"Pre-commit dispatcher" = ["forge.precommit"]
+"Audit suite" = ["forge.audit"]
+"Verifiers" = ["forge.verify_docstrings", "forge.verify_docstring_coverage", "forge.verify_manifest", "forge.verify_plugin_version", "forge.verify_repo_structure", "forge.verify_test_naming", "forge.verify_cli_wiring", "forge.verify_doc_consistency", "forge.verify_cve_usage", "forge.verify_main_tags"]
+"Installers" = ["forge.install_bootstrap", "forge.install_githooks", "forge.install_claudemd", "forge.install_claude_settings", "forge.install_labels", "forge.install_readme_badges", "forge.claude_settings_schema"]
+"Doc generators" = ["forge.gen_api_digest", "forge.gen_cli_reference", "forge.gen_c4", "forge.gen_commit_types", "forge.gen_common"]
+"Git-hook entrypoints" = ["forge.post_merge", "forge.post_checkout", "forge._hook_helpers"]
+"Release tooling" = ["forge.next_prep", "forge.upgrade", "forge.pr_squash_comment", "forge.pr_delta", "forge.continuation_append"]
+"Config + shared" = ["forge.config", "forge.forge_config", "forge.git_utils", "forge.run_context", "forge.fix_ruff", "forge.doctor", "forge.slow_tests_report"]
+
+# Runtime/subprocess edges the import graph can't derive (the dispatcher and
+# bootstrap orchestrate other components by shelling out, not importing).
+[[relationship]]
+source = "Pre-commit dispatcher"
+destination = "Verifiers"
+description = "runs each verifier via subprocess"
+
+[[relationship]]
+source = "Pre-commit dispatcher"
+destination = "Audit suite"
+description = "runs audit steps via subprocess"
+
+[[relationship]]
+source = "Pre-commit dispatcher"
+destination = "Doc generators"
+description = "runs --check drift steps"
+
+[[relationship]]
+source = "Installers"
+destination = "Doc generators"
+description = "bootstrap runs generators"

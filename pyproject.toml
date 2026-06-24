@@ -41,6 +41,7 @@ verify-forge-doc-consistency = "forge.verify_doc_consistency:main"
 verify-forge-cve-usage = "forge.verify_cve_usage:main"
 forge-gen-cli-reference = "forge.gen_cli_reference:main"
 forge-gen-api-digest = "forge.gen_api_digest:main"
+forge-gen-c4 = "forge.gen_c4:main"
 forge-gen-commit-types = "forge.gen_commit_types:main"
 forge-continuation-append = "forge.continuation_append:main"
 forge-doctor = "forge.doctor:main"
@@ -132,6 +133,13 @@ badge = true
 # into README.md (between the forge:badges markers). Refreshed by the
 # bootstrap `readme-badges` step.
 enabled = true
+
+[tool.forge.c4]
+# Dogfood forge-gen-c4. The verbose C4 model (people, containers, components,
+# relationships) is its own artifact — kept out of pyproject in a standalone
+# c4.toml, like ruff.toml / pyrefly.toml. This is just the opt-in pointer.
+# See docs/proposals/c4-generator.md. Render with Structurizr Lite (MIT).
+config = "c4.toml"
 
 [tool.interrogate]
 # Docstring-coverage threshold consumed by the forge-precommit step

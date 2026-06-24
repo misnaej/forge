@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_46 modules, 428 symbols._
+_47 modules, 455 symbols._
 
 ## `forge._hook_helpers`
 
@@ -108,6 +108,7 @@ _46 modules, 428 symbols._
 - `_build_internal_graph(modules: dict[str, ModuleNode], raw_imports: dict[str, set[str]]) -> dict[str, set[str]]` _(internal)_ — Project raw imports onto the known-module graph.
 - `render_dependency_tree(graph: dict[str, set[str]], sccs: list[list[str]]) -> str` — Render the internal dependency graph as a readable plain-text tree.
 - `_write_tree_log(tree: str, *, output: Path | None) -> Path` _(internal)_ — Write the rendered dependency tree to ``code_health/audit_deps_tree.log``.
+- `build_module_graph(scope: Scope, roots: list[Path]) -> tuple[dict[str, ModuleNode], dict[str, set[str]]]` — Scan source roots into a module map + internal import graph.
 - `run(scope: Scope, roots: list[Path], config: DepsConfig) -> int` — Execute the full dependency-analysis pipeline.
 - `main() -> int` — CLI entry point for ``forge-audit-deps``.
 
@@ -236,6 +237,35 @@ _46 modules, 428 symbols._
 - `render_digest(digests: list[ModuleDigest]) -> str` — Render the full API digest markdown document.
 - `main() -> int` — Generate or verify the API digest doc.
 
+## `forge.gen_c4`
+
+- `class Person` — A C4 actor — someone who uses the system (System Context level).
+- `class External` — An external software system the system depends on.
+- `class Container` — A deployable unit inside the system (Container level).
+- `class Component` — A named component and the module prefixes that constitute it.
+- `class Relationship` — A human-declared component-to-component relationship.
+- `class C4Config` — The human-authored ``[tool.forge.c4]`` model skeleton.
+- `class _IdAllocator` _(internal)_ — Allocates unique, DSL-safe identifiers from display names.
+  - `allocate(self, name: str, fallback: str) -> str` — Return a unique identifier derived from *name*.
+- `_slug(name: str) -> str` _(internal)_ — Slugify *name* into a DSL-safe identifier fragment.
+- `_q(text: str) -> str` _(internal)_ — Quote *text* as a Structurizr DSL string literal.
+- `_coerce_list(raw: object) -> list[dict]` _(internal)_ — Return *raw* as a list of dicts, tolerating a single table.
+- `_read_toml_file(path: Path) -> dict | None` _(internal)_ — Parse a standalone TOML file, degrading to ``None`` on any failure.
+- `resolve_model_section(root: Path) -> dict | None` — Locate the C4 model table — external file or inline pyproject.
+- `load_c4_config(root: Path) -> C4Config | None` — Load the C4 model skeleton for the repo.
+- `assign_components(modules: list[str], components: tuple[Component, ...]) -> tuple[dict[str, str], list[str]]` — Map each module to a component by longest-prefix match.
+- `_under_prefix(module: str, prefix: str) -> bool` _(internal)_ — Return whether *module* equals *prefix* or is a dotted child of it.
+- `derive_component_edges(graph: dict[str, set[str]], assigned: dict[str, str]) -> set[tuple[str, str]]` — Collapse module-level import edges to component-level edges.
+- `render_dsl(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the full Structurizr DSL workspace text.
+- `_render_model(config: C4Config, sys_id: str, person_ids: dict[str, str], external_ids: dict[str, str], container_ids: dict[str, str], component_ids: dict[str, str]) -> list[str]` _(internal)_ — Render the ``model`` block's element declarations.
+- `_component_summary(component: Component) -> str` _(internal)_ — Return a one-line description naming a component's module prefixes.
+- `_render_relationships(config: C4Config, sys_id: str, person_ids: dict[str, str], external_ids: dict[str, str], component_ids: dict[str, str], edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the relationship statements of the ``model`` block.
+- `_render_views(config: C4Config, sys_id: str, container_ids: dict[str, str]) -> list[str]` _(internal)_ — Render the ``views`` block.
+- `generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None` — Build the DSL text and unmatched-module list for the repo.
+- `_warn_unmatched(unmatched: list[str]) -> None` _(internal)_ — Log a coverage warning naming modules in no component.
+- `main() -> int` — Generate or verify the C4 Structurizr DSL artifact.
+- `_resolve_roots(root: Path, explicit: list[str] | None) -> list[Path]` _(internal)_ — Resolve the source roots to scan for the import graph.
+
 ## `forge.gen_cli_reference`
 
 - `class CliEntry` — A single forge console-script CLI.
@@ -280,6 +310,7 @@ _46 modules, 428 symbols._
 - `class Step` — One bootstrap step.
 - `_gate_skip_in_ci(_root: Path) -> str | None` _(internal)_ — Skip a step when running non-interactively per FOUNDATION §15.
 - `_gate_labels(_root: Path) -> str | None` _(internal)_ — Skip ``install-forge-labels`` when ``gh`` or the GitHub remote is missing.
+- `_gate_c4(root: Path) -> str | None` _(internal)_ — Skip ``forge-gen-c4`` when no C4 model is configured.
 - `_run_step(step: Step, *, check_mode: bool, root: Path) -> int` _(internal)_ — Execute one bootstrap step. Return its exit code.
 - `_resolve_steps(skip: Iterable[str]) -> list[Step]` _(internal)_ — Return the ordered step list with *skip* entries removed.
 - `main() -> int` — Run every install / generator step in order. Return non-zero on failure.

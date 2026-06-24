@@ -194,6 +194,19 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "GitHub Actions workflow filename for the CI badge (under "
         ".github/workflows); otherwise the first one is used.",
     ),
+    ConfigKey(
+        ("tool", "forge", "c4", "config"),
+        "c4.toml (if present)",
+        "Path to a standalone C4 model file (Structurizr DSL skeleton) read "
+        "by forge-gen-c4. Keeps the verbose model out of pyproject. The "
+        "section's presence (or a c4.toml) is the opt-in signal.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "output"),
+        "docs/architecture.dsl",
+        "Repo-relative path forge-gen-c4 writes the emitted Structurizr DSL "
+        "to (overridable inline or in the model file).",
+    ),
 )
 
 # Third-party tools forge reads from their OWN native section rather than
