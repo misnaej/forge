@@ -33,9 +33,19 @@ be released** — never the last-released version.
   `vX.Y.0` is (re-)tagged on main's squash commit.
 - Net: `@dev` consumers receive every version; `@main` receives **minors
   only**. Patches accumulate on `dev` and fold into the next minor.
-- Because promotion squashes, a minor re-tagged on main's squash commit is
-  not reachable from `dev`'s history — expected. `@dev` resolves the tag on
-  the dev commit; `@main` on the main commit.
+- **A tag is a single ref — it lives in exactly one place.** The minor
+  `vX.Y.0` is *created* on the dev commit by `forge-next-prep --tag` when
+  the bump lands, then *relocated* to main's squash commit at promotion.
+  Because promotion squashes, that commit is not in `dev`'s history; after
+  relocation `dev` resolves the minor by `git describe` distance (a
+  pre-release suffix), which is correct — `dev` is the pre-release channel.
+  `@main` checkouts describe the clean `vX.Y.0`; `@dev` checkouts track the
+  branch tip. A single ref cannot resolve to two commits simultaneously.
+- **`forge-check-main-tags` enforces the relocation.** It maps each minor
+  tag to its base squash commit by **tree equality** (a squash reproduces
+  the tagged tree even though the commit SHA differs) and reports drift
+  (default, read-only) or force-moves the tag (`--fix`). Run by `/promote`
+  after the squash merge. Self-skips single-branch repos. See §4.
 
 ## 3. Promotion: staged catch-up
 
@@ -65,6 +75,8 @@ invariant that had no test).
 | Guard fails when a real content change leaves `plugin.json ≤ latest tag` | `verify_plugin_version.main` | `tests/test_verify_plugin_version.py::test_fail_when_version_not_strictly_greater` |
 | `--promotion-status` lists pending **minors only** (`X.Y.0`); interleaved patch tags fold into the next minor | `next_prep._promotion_status_lines` | `tests/test_next_prep.py::test_promotion_status_excludes_patch_tags` |
 | `forge-next-prep --tag` tags + pushes only when `plugin.json` is strictly newer than the latest tag (idempotent) | `next_prep._maybe_tag_release` | `tests/test_next_prep.py::test_maybe_tag_release_creates_and_pushes_new_tag` |
+| A minor tag `vX.Y.0` belongs on the `origin/<base>` commit whose tree equals the tag's tree (the squash commit); verify mode exits non-zero on drift, `--fix` relocates it. A minor with no tree-matching base commit is reported, never invented | `verify_main_tags._tag_states` / `verify_main_tags._verify` | `tests/test_verify_main_tags.py::test_verify_exits_nonzero_when_minor_tag_off_base` |
+| Main-tag alignment self-skips single-branch repos (`base_branch == dev_branch`) so consumers on trunk-based flow no-op | `verify_main_tags.main` | `tests/test_verify_main_tags.py::test_main_skips_single_branch_repo` |
 | `--promotion-status` flags a pending minor that has no `## vX.Y.0` entry in `origin/<dev>`'s `CHANGELOG.md` (non-blocking advisory; silent when the repo keeps no CHANGELOG) | `next_prep._promotion_status_lines` | `tests/test_next_prep.py::test_promotion_status_flags_missing_changelog_entry` |
 
 When you add a versioning/promotion behavior, add a row here **and** its

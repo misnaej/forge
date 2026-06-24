@@ -61,6 +61,7 @@ from forge.git_utils import (
     emit,
     latest_v_tag,
     parse_semver,
+    read_local_plugin_version,
     require_cli,
     write_step_log,
 )
@@ -475,9 +476,13 @@ def step_pip_audit(repo_root: Path) -> StepResult:
     rendering changes. Below the threshold the original short WARN
     line is preserved.
 
-    Non-blocking: a failing audit (CVEs found) sets ``passed=False`` AND
-    ``non_blocking=True`` so ``run_all`` reports ``WARN`` instead of
-    ``FAIL`` and the overall exit code is unaffected.
+    Non-blocking by default: a failing audit (CVEs found) sets
+    ``passed=False`` AND ``non_blocking=True`` so ``run_all`` reports
+    ``WARN`` instead of ``FAIL`` and the overall exit code is unaffected.
+    Set ``[tool.forge.pip_audit].blocking = true`` to make CVE findings a
+    hard ``FAIL`` (same opt-in pattern as ``typecheck``/``doctest``). A
+    missing ``pip-audit`` binary always renders as a non-blocking WARN
+    regardless — that is a broken-install signal, not a CVE finding.
 
     ``pip-audit`` ships as a core forge dependency (it backs this default
     step — #71), so a missing binary signals a broken install rather than
@@ -489,8 +494,11 @@ def step_pip_audit(repo_root: Path) -> StepResult:
         repo_root: Git repo root (used as working directory).
 
     Returns:
-        ``StepResult`` for this step, always ``non_blocking=True``.
+        ``StepResult`` for this step; ``non_blocking`` is the inverse of
+        ``[tool.forge.pip_audit].blocking`` for CVE findings, always
+        ``True`` when the binary is missing.
     """
+    blocking = bool(_forge_step_config(repo_root, "pip_audit").get("blocking", False))
     if shutil.which("pip-audit") is None:
         return StepResult(
             name="pip_audit",
@@ -521,7 +529,7 @@ def step_pip_audit(repo_root: Path) -> StepResult:
         name="pip_audit",
         passed=passed,
         output=output,
-        non_blocking=True,
+        non_blocking=not blocking,
     )
 
 
@@ -647,26 +655,6 @@ def step_plugin_version(repo_root: Path) -> StepResult:
     )
 
 
-def _plugin_version(repo_root: Path) -> str | None:
-    """Return ``.claude-plugin/plugin.json["version"]`` or ``None`` when absent.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        The version string, or ``None`` when the manifest is missing,
-        unreadable, malformed, or carries no ``version`` field.
-    """
-    manifest = repo_root / ".claude-plugin" / "plugin.json"
-    if not manifest.is_file():
-        return None
-    try:
-        version = json.loads(manifest.read_text()).get("version")
-    except (json.JSONDecodeError, OSError):
-        return None
-    return version if isinstance(version, str) else None
-
-
 def _one_step_successors(tag: tuple[int, int, int]) -> set[tuple[int, int, int]]:
     """Return the three valid rolling-next successors of a tagged release.
 
@@ -712,7 +700,7 @@ def step_release_tag_guard(repo_root: Path) -> StepResult:
             output="(single-track repo — skipped)",
             skipped=True,
         )
-    plugin_ver = _plugin_version(repo_root)
+    plugin_ver = read_local_plugin_version(repo_root)
     latest = latest_v_tag(repo_root)
     if plugin_ver is None or latest is None:
         return StepResult(

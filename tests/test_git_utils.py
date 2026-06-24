@@ -6,7 +6,10 @@ modified-file detection, output filtering, and CLI logging setup.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
@@ -346,3 +349,209 @@ def test_latest_v_tag_none_when_no_tags(
     """No ``v*`` tags → ``None``."""
     monkeypatch.setattr(git_utils.subprocess, "run", make_fake_run(stdout=""))
     assert git_utils.latest_v_tag(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# read_local_plugin_version (moved from test_next_prep.py)
+# ---------------------------------------------------------------------------
+
+
+def test_read_plugin_version_returns_semver_string(tmp_path: Path) -> None:
+    """Valid plugin.json with a semver version returns the string."""
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "x", "version": "1.2.10"})
+    )
+    assert git_utils.read_local_plugin_version(tmp_path) == "1.2.10"
+
+
+def test_read_plugin_version_returns_none_when_file_missing(tmp_path: Path) -> None:
+    """No plugin.json → None."""
+    assert git_utils.read_local_plugin_version(tmp_path) is None
+
+
+def test_read_plugin_version_returns_none_on_non_semver(tmp_path: Path) -> None:
+    """Non-semver version field → None (defence against tag injection)."""
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "x", "version": "1.2"})
+    )
+    assert git_utils.read_local_plugin_version(tmp_path) is None
+
+
+def test_read_plugin_version_returns_none_on_malformed_json(tmp_path: Path) -> None:
+    """Malformed JSON → None (not raise)."""
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text("{not valid")
+    assert git_utils.read_local_plugin_version(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# Real-git helpers for run_git / get_tree_sha / read_plugin_version_at_ref
+# ---------------------------------------------------------------------------
+
+_GIT_ENV: dict[str, str] = {
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@t",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@t",
+    "PATH": os.environ.get("PATH", ""),
+}
+
+
+def _init_git_repo(repo: Path) -> None:
+    """Initialize a minimal git repo with one empty commit on ``main``.
+
+    Args:
+        repo: Directory to initialize. Must already exist.
+    """
+    for cmd in (
+        ["git", "init", "-q", "-b", "main"],
+        ["git", "commit", "-q", "--allow-empty", "-m", "initial"],
+    ):
+        subprocess.run(cmd, cwd=repo, env=_GIT_ENV, check=True)
+
+
+# ---------------------------------------------------------------------------
+# run_git
+# ---------------------------------------------------------------------------
+
+
+def test_run_git_check_true_success_returns_trimmed_stdout(tmp_path: Path) -> None:
+    """check=True on a valid command returns the trimmed 40-char commit SHA."""
+    _init_git_repo(tmp_path)
+    sha = git_utils.run_git("rev-parse", "HEAD", cwd=tmp_path)
+    assert len(sha) == 40
+    assert all(c in "0123456789abcdef" for c in sha)
+
+
+def test_run_git_check_true_failure_raises(tmp_path: Path) -> None:
+    """check=True and a failing git command raises CalledProcessError.
+
+    ``--verify`` is used to prevent git's passthrough mode (which echoes
+    bare unknown names to stdout with exit 0 instead of failing).
+    """
+    _init_git_repo(tmp_path)
+    with pytest.raises(subprocess.CalledProcessError):
+        git_utils.run_git(
+            "rev-parse", "--verify", "nonexistent_branch_xyz", cwd=tmp_path
+        )
+
+
+def test_run_git_check_false_failure_returns_empty(tmp_path: Path) -> None:
+    """check=False and a failing command returns '' without raising.
+
+    ``--verify`` is used to prevent git's passthrough mode (which echoes
+    bare unknown names to stdout with exit 0 instead of failing).
+    """
+    _init_git_repo(tmp_path)
+    result = git_utils.run_git(
+        "rev-parse", "--verify", "nonexistent_branch_xyz", cwd=tmp_path, check=False
+    )
+    assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# get_tree_sha
+# ---------------------------------------------------------------------------
+
+
+def test_get_tree_sha_valid_ref_returns_40_hex(tmp_path: Path) -> None:
+    """A valid ref resolves to a 40-character hex tree SHA."""
+    _init_git_repo(tmp_path)
+    tree_sha = git_utils.get_tree_sha(tmp_path, "HEAD")
+    assert tree_sha is not None
+    assert len(tree_sha) == 40
+    assert all(c in "0123456789abcdef" for c in tree_sha)
+
+
+def test_get_tree_sha_unresolvable_ref_not_a_valid_tree_sha(tmp_path: Path) -> None:
+    """An unresolvable ref never produces a 40-char hex tree SHA.
+
+    Some git builds use passthrough mode: a failed ``rev-parse`` still
+    echoes the argument to stdout (rc=128, non-empty stdout). The
+    function does not check the return code, so it may return the
+    passthrough string rather than ``None``.  Either way — ``None`` or a
+    passthrough string containing ``^{tree}`` — the result is not a valid
+    40-char hex SHA, so ``index.get(result)`` in callers correctly
+    returns ``None`` for all unresolvable refs.
+    """
+    _init_git_repo(tmp_path)
+    result = git_utils.get_tree_sha(tmp_path, "HEAD~999999")
+    is_valid_tree_sha = (
+        result is not None
+        and len(result) == 40
+        and all(c in "0123456789abcdef" for c in result)
+    )
+    assert not is_valid_tree_sha
+
+
+# ---------------------------------------------------------------------------
+# read_plugin_version_at_ref
+# ---------------------------------------------------------------------------
+
+
+def test_read_plugin_version_at_ref_returns_version_at_commit(
+    tmp_path: Path,
+) -> None:
+    """Committed plugin.json at a ref returns the version string."""
+    _init_git_repo(tmp_path)
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text(
+        json.dumps({"name": "x", "version": "1.2.3"})
+    )
+    subprocess.run(["git", "add", "."], cwd=tmp_path, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add plugin"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.read_plugin_version_at_ref(tmp_path, "HEAD") == "1.2.3"
+
+
+def test_read_plugin_version_at_ref_absent_file_returns_none(
+    tmp_path: Path,
+) -> None:
+    """No plugin.json committed at ref → None."""
+    _init_git_repo(tmp_path)
+    assert git_utils.read_plugin_version_at_ref(tmp_path, "HEAD") is None
+
+
+def test_read_plugin_version_at_ref_malformed_json_returns_none(
+    tmp_path: Path,
+) -> None:
+    """Malformed JSON committed at ref → None (not raise)."""
+    _init_git_repo(tmp_path)
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text("{not valid json")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "bad plugin"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.read_plugin_version_at_ref(tmp_path, "HEAD") is None
+
+
+def test_read_plugin_version_at_ref_missing_version_key_returns_none(
+    tmp_path: Path,
+) -> None:
+    """plugin.json without a ``"version"`` key → None."""
+    _init_git_repo(tmp_path)
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text(
+        json.dumps({"name": "x", "description": "no version key"})
+    )
+    subprocess.run(["git", "add", "."], cwd=tmp_path, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "no version"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.read_plugin_version_at_ref(tmp_path, "HEAD") is None

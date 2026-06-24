@@ -116,7 +116,7 @@ gh pr create --base main --head "release/v$NEW" \
 $(git log --oneline origin/main..release/v$NEW)
 
 ## After merge
-- [ ] Tag handling per \`docs/release-process.md\` §2 (dual-track tag cadence): \`/next\` (\`forge-next-prep --tag\`) already created \`v$NEW\` on the dev commit. Confirm the tag exists; follow that section for any main-side tagging.
+- [ ] Relocate the minor tag to main's squash commit: run \`forge-check-main-tags --dry-run\` to preview, then \`forge-check-main-tags --fix\` to move \`v$NEW\` from the dev commit onto \`origin/main\` (tree-matched). Verify with \`git describe --tags origin/main\` → \`v$NEW\`. See \`docs/release-process.md\` §2.
 - [ ] If more minors remain behind, promote the next one (repeat from Step 1).
 "
 ```

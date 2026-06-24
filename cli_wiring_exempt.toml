@@ -3,3 +3,6 @@
 
 [exempt."forge-slow-tests-report"]
 reason = "CI/local reporting convenience invoked from the CI recipe and ad-hoc after a pytest run; no pre-commit/hook/bootstrap caller by design."
+
+[exempt."forge-check-main-tags"]
+reason = "Forge-private release tooling invoked by the /promote skill (.claude/skills/promote/, not a grepped wiring source); run by a human at the minor-boundary promotion, not from a pre-commit/hook/bootstrap path."
