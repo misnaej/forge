@@ -20,17 +20,18 @@ standalone to refresh just ``plugin_version.log``.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import subprocess
 import sys
 from pathlib import Path
 
 from forge.git_utils import (
     capturing_to_step_log,
     configure_cli_logging,
+    get_tree_sha,
     latest_v_tag,
     parse_semver,
+    read_local_plugin_version,
+    run_git,
 )
 
 
@@ -57,11 +58,10 @@ def _is_release_commit(repo_root: Path) -> bool:
     When ``main`` is two or more minors behind, a ``release/vX.Y.Z``
     branch carries an *older* minor's tree, so its ``plugin.json`` sits
     legitimately **below** the global-max tag; it is still a real release
-    commit and must pass the guard. A prior version compared HEAD only
-    against the *latest* tag, which made promoting any minor below the
-    global-max impossible — the release branch's tree never equals the
-    latest tag's tree (regression from the #43 ancestry→global tag
-    switch). **Do not narrow this back to a single tag** — the
+    commit and must pass the guard. Narrowing to a single (global-max)
+    tag breaks staged catch-up: a release branch for an older minor
+    reproduces that minor's tree, which never equals the latest tag's
+    tree. **Do not narrow this back to a single tag** — the
     ``test_main_skips_when_head_reproduces_older_tag`` test locks it.
 
     Cases that correctly skip:
@@ -79,33 +79,11 @@ def _is_release_commit(repo_root: Path) -> bool:
         ``True`` when ``HEAD``'s tree SHA equals the tree of some ``v*``
         tag; ``False`` when HEAD's tree resolves emptily or matches none.
     """
-    head_tree = subprocess.run(
-        ["git", "rev-parse", "HEAD^{tree}"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.strip()
-    if not head_tree:
+    head_tree = get_tree_sha(repo_root, "HEAD")
+    if head_tree is None:
         return False
-    tags = subprocess.run(
-        ["git", "tag", "--list", "v*"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.split()
-    for tag in tags:
-        tag_tree = subprocess.run(
-            ["git", "rev-parse", f"{tag}^{{tree}}"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout.strip()
-        if tag_tree and tag_tree == head_tree:
-            return True
-    return False
+    tags = run_git("tag", "--list", "v*", cwd=repo_root, check=False).split()
+    return any(get_tree_sha(repo_root, tag) == head_tree for tag in tags)
 
 
 def main() -> int:
@@ -146,10 +124,9 @@ def main() -> int:
             logger.info("(HEAD reproduces a published v* release tag — skipped)")
             return 0
 
-        plugin_data = json.loads(plugin.read_text())
-        plugin_version_str = plugin_data.get("version", "")
+        plugin_version_str = read_local_plugin_version(repo_root)
         tag_ver = _parse_semver(latest_tag)
-        plugin_ver = _parse_semver(plugin_version_str)
+        plugin_ver = _parse_semver(plugin_version_str) if plugin_version_str else None
         if tag_ver is None or plugin_ver is None:
             logger.error(
                 "plugin_version: cannot compare. latest tag=%r, plugin.json version=%r",

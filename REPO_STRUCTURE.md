@@ -41,6 +41,7 @@ Code.
    - verify_cve_usage.py: `verify-forge-cve-usage` — usage-scoped second stage on `pip_audit`; intersects live pip-audit CVE IDs with a consumer `cve_usage_patterns.toml` map and greps source for the patterns; backs the opt-in `cve_usage` pre-commit step (non-blocking)
    - install_readme_badges.py: `install-forge-readme-badges` — write/verify a drift-aware README status-badge managed block (shields.io + local docstring-coverage SVG); opt-in via `[tool.forge.badges]`; `--check` mode
    - verify_plugin_version.py: `verify-forge-plugin-version` — rolling-next guard (plugin.json["version"] > latest git tag)
+   - verify_main_tags.py: `forge-check-main-tags` — verify/repair minor-boundary (`vX.Y.0`) tag placement on the base branch
    - gen_cli_reference.py: `forge-gen-cli-reference` — CLI reference
      doc generator
    - gen_api_digest.py: `forge-gen-api-digest` — public-symbol API
@@ -172,6 +173,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_verify_cve_usage.py: tests for verify_cve_usage (active/inactive CVE, usage/no-usage, comment + self exclusion, pip-audit-missing skip)
    - test_install_readme_badges.py: tests for install_readme_badges (badge sources, drift-aware injection, opt-in gating, --check)
    - test_verify_plugin_version.py: tests for verify_plugin_version
+   - test_verify_main_tags.py: tests for verify_main_tags
    - test_verify_repo_structure.py: tests for verify_repo_structure
    - test_verify_test_naming.py: tests for verify_test_naming
 
