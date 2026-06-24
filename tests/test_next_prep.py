@@ -171,7 +171,7 @@ def _run_main_capturing_git(
             ``checkout`` fallback.
 
     Returns:
-        Captured argv lists from BOTH ``_git`` and ``subprocess.run``,
+        Captured argv lists from BOTH ``run_git`` and ``subprocess.run``,
         in invocation order. Each entry is the argv after the leading
         ``git`` (e.g. ``["switch", "dev"]`` or ``["checkout", "main"]``).
     """

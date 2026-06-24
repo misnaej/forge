@@ -40,9 +40,7 @@ be released** — never the last-released version.
   relocation `dev` resolves the minor by `git describe` distance (a
   pre-release suffix), which is correct — `dev` is the pre-release channel.
   `@main` checkouts describe the clean `vX.Y.0`; `@dev` checkouts track the
-  branch tip. (An earlier version of this section claimed the tag resolves
-  "on the dev commit *and* the main commit" — impossible for one ref, and
-  the reason the relocation went unenforced and silently never happened.)
+  branch tip. A single ref cannot resolve to two commits simultaneously.
 - **`forge-check-main-tags` enforces the relocation.** It maps each minor
   tag to its base squash commit by **tree equality** (a squash reproduces
   the tagged tree even though the commit SHA differs) and reports drift

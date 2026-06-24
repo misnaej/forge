@@ -58,11 +58,10 @@ def _is_release_commit(repo_root: Path) -> bool:
     When ``main`` is two or more minors behind, a ``release/vX.Y.Z``
     branch carries an *older* minor's tree, so its ``plugin.json`` sits
     legitimately **below** the global-max tag; it is still a real release
-    commit and must pass the guard. A prior version compared HEAD only
-    against the *latest* tag, which made promoting any minor below the
-    global-max impossible — the release branch's tree never equals the
-    latest tag's tree (regression from the #43 ancestry→global tag
-    switch). **Do not narrow this back to a single tag** — the
+    commit and must pass the guard. Narrowing to a single (global-max)
+    tag breaks staged catch-up: a release branch for an older minor
+    reproduces that minor's tree, which never equals the latest tag's
+    tree. **Do not narrow this back to a single tag** — the
     ``test_main_skips_when_head_reproduces_older_tag`` test locks it.
 
     Cases that correctly skip:
