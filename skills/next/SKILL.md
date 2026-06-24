@@ -25,6 +25,16 @@ Stop immediately and report if any step fails.
    - With `--tag`: if `.claude-plugin/plugin.json["version"]` is strictly ahead of the latest `v*` tag, tag the merge commit and push (the rolling-next release pattern). No-op when plugin.json is absent, the version equals the latest tag, or the version is older. Drop `--tag` for repos that don't ship a plugin manifest or that don't follow the rolling-next pattern.
    - Deletes local branches with `[origin/...: gone]` tracking via safe `git branch -d`. Branches with unmerged commits are reported, not deleted by the CLI — the skill then `-D`s any whose PR is confirmed merged (the squash-merge case `-d` cannot detect; see Important Rules). Use `--no-prune-branches` to skip.
    - Exits non-zero (1) when main cannot fast-forward — stop and report.
+   - **Align base-branch release tags (dual-track):** then run
+     `forge-check-main-tags --fix`. This is the **one step that
+     distinguishes post-promotion cleanup from a normal merge** — when a
+     promotion PR has merged, it moves the minor tag `vX.Y.0` from its
+     `dev` commit onto `main`'s squash commit (else `git describe
+     origin/main` resolves to a stale predecessor). Safe on **every**
+     `/next`: idempotent (moves a tag only when a promotion actually
+     landed), **self-skips single-branch repos**, and leaves ancient
+     un-promoted minors quiet (INFO). So **post-promotion = a normal
+     `/next`** — nothing extra to remember. Report any moves.
 
 3. **Confirm clean state**
    Run `git branch` and `git status --porcelain`. Report.
@@ -63,8 +73,11 @@ otherwise accumulates a staged-catch-up backlog).
    Promotion opens a remote PR, so it is **confirm-first**, never
    automatic.
 3. On confirmation, invoke it (forge: `Skill(skill="promote")`). It
-   promotes **one minor at a time**, is idempotent (refuses a duplicate
-   open promotion PR), and owns its own post-merge tag relocation.
+   promotes **one minor at a time** and is idempotent (refuses a duplicate
+   open promotion PR). It opens the PR and stops — a human merges it later,
+   and the next `/next` relocates the minor tag onto `main` via Phase 1's
+   `forge-check-main-tags --fix` step. (That tag move is *not* done by
+   `/promote`, which cannot run after the async human merge.)
 4. If declined, note the pending promotion and continue.
 
 ## Phase 2: Documentation Hygiene (optional)
