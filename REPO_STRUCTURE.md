@@ -210,6 +210,12 @@ Forge's own bootstrap tooling (not a consumer pattern):
 - security.md: security policy and review documentation
 - standalone-installers.md: per-installer reference for manual usage (sibling of `install-forge-bootstrap`)
 
+### Proposals (`docs/proposals/`)
+
+Architecture RFCs — aspirational, not descriptions of current behavior. Each carries its own accept/reject status.
+
+- rust-core.md: RFC for splitting forge into a Rust governance-core binary + optional Python analysis pack
+
 ## Configuration Files
 
 1. **Python Package Configuration**
