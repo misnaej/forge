@@ -20,6 +20,24 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.5.0 — 2026-06-24
+
+Additive — no consumer action required.
+
+### Features
+- **`verify-forge-cve-usage --list-inactive`** — read-only reporter listing
+  mapped CVEs no longer in pip-audit's live report, i.e. dormant prune
+  candidates in `cve_usage_patterns.toml`. Exits 0, writes nothing, never edits
+  the map (transient drop-offs make auto-deletion unsafe) (#80).
+
+### Tooling
+- **pip-audit now runs once per commit.** The `pip_audit` step writes a
+  `code_health/pip_audit.json` sidecar that the `cve_usage` step reuses via a
+  new shared `forge.pip_audit_json` seam, instead of each step invoking
+  pip-audit independently — halving the OSV round-trips for CVE-usage
+  adopters. `verify-forge-cve-usage --audit-json` exposes the same reuse for
+  standalone runs (#78).
+
 ## v2.4.0 — 2026-06-24
 
 Additive — no consumer action required.

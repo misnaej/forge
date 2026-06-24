@@ -12,12 +12,14 @@
 from __future__ import annotations
 
 import json
+import shutil
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 from forge import precommit
+from forge.pip_audit_json import AuditRun
 
 
 if TYPE_CHECKING:
@@ -34,6 +36,36 @@ def _write_precommit_cfg(repo_root: Path, body: str) -> None:
     (repo_root / "pyproject.toml").write_text(
         f"[tool.forge.precommit]\n{body}\n", encoding="utf-8"
     )
+
+
+def _audit_run(n_vulns: int) -> AuditRun:
+    """Return a fake AuditRun with n_vulns PYSEC findings for pip_audit step tests.
+
+    Args:
+        n_vulns: Number of vulnerabilities to include.
+
+    Returns:
+        An AuditRun with parseable data containing n_vulns findings, empty
+        stderr, and returncode 1 when n_vulns > 0 or 0 when clean.
+    """
+    data: dict = {
+        "dependencies": [
+            {
+                "name": f"pkg{i}",
+                "version": "1.0",
+                "vulns": [
+                    {
+                        "id": f"PYSEC-2024-{i}",
+                        "aliases": [f"CVE-2024-{i}"],
+                        "fix_versions": ["1.1"],
+                        "description": "desc",
+                    }
+                ],
+            }
+            for i in range(n_vulns)
+        ]
+    }
+    return AuditRun(data=data, stderr="", returncode=1 if n_vulns else 0)
 
 
 def test_resolve_scope_defaults_to_all(tmp_path: Path) -> None:
@@ -70,7 +102,7 @@ def test_scope_aware_steps_forward_resolved_scope(
 ) -> None:
     """docstring/test-naming steps forward `--scope diff` from config."""
     _write_precommit_cfg(tmp_path, 'scope = "diff"')
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
     calls: list[list[str]] = []
 
     def _fake_run(cmd: list[str], **_kwargs: object) -> tuple[bool, str]:
@@ -98,7 +130,7 @@ def test_step_ruff_hard_fails_when_fix_forge_ruff_missing(
 ) -> None:
     """step_ruff exits 2 when ``fix-forge-ruff`` is not on PATH."""
     (tmp_path / "src").mkdir()
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit) as exc_info:
         precommit.step_ruff(tmp_path)
     assert exc_info.value.code == 2
@@ -110,9 +142,7 @@ def test_step_ruff_shells_out_to_fix_forge_ruff(
 ) -> None:
     """step_ruff delegates to the fix-forge-ruff CLI with the resolved scope."""
     (tmp_path / "src").mkdir()
-    monkeypatch.setattr(
-        precommit.shutil, "which", lambda _name: "/usr/bin/fix-forge-ruff"
-    )
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/fix-forge-ruff")
     calls: list[list[str]] = []
 
     def _fake_run(cmd: list[str], **_kwargs: object) -> tuple[bool, str]:
@@ -132,9 +162,7 @@ def test_step_ruff_propagates_nonzero_exit(
 ) -> None:
     """When fix-forge-ruff exits non-zero, step_ruff fails."""
     (tmp_path / "src").mkdir()
-    monkeypatch.setattr(
-        precommit.shutil, "which", lambda _name: "/usr/bin/fix-forge-ruff"
-    )
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/fix-forge-ruff")
     monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "E501 ..."))
     result = precommit.step_ruff(tmp_path)
     assert not result.passed
@@ -146,7 +174,7 @@ def test_step_docstrings_hard_fails_when_cli_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """step_docstrings exits 2 when verify-forge-docstrings is missing."""
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit) as exc_info:
         precommit.step_docstrings(tmp_path)
     assert exc_info.value.code == 2
@@ -157,7 +185,7 @@ def test_step_test_naming_hard_fails_when_cli_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """step_test_naming exits 2 when verify-forge-test-naming is missing."""
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit) as exc_info:
         precommit.step_test_naming(tmp_path)
     assert exc_info.value.code == 2
@@ -168,7 +196,7 @@ def test_step_docstring_coverage_hard_fails_when_cli_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """step_docstring_coverage exits 2 when its CLI is missing from PATH."""
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit) as exc_info:
         precommit.step_docstring_coverage(tmp_path)
     assert exc_info.value.code == 2
@@ -189,7 +217,7 @@ def test_step_repo_structure_hard_fails_when_cli_missing(
 ) -> None:
     """step_repo_structure exits 2 when verify-forge-repo-structure is missing."""
     (tmp_path / "REPO_STRUCTURE.md").write_text("# Repo Structure\n")
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit) as exc_info:
         precommit.step_repo_structure(tmp_path)
     assert exc_info.value.code == 2
@@ -212,7 +240,7 @@ def test_step_commit_types_parity_hard_fails_when_cli_missing(
     hooks_dir = tmp_path / "claude-hooks"
     hooks_dir.mkdir()
     (hooks_dir / "check_commit_format.sh").write_text("#!/usr/bin/env bash\n")
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit) as exc_info:
         precommit.step_commit_types_parity(tmp_path)
     assert exc_info.value.code == 2
@@ -222,9 +250,7 @@ def test_step_manifest_json_shells_out_to_verify_forge_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """step_manifest_json always shells out; the CLI owns the skip decision."""
-    monkeypatch.setattr(
-        precommit.shutil, "which", lambda _name: "/usr/bin/verify-forge-manifest"
-    )
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/verify-forge-manifest")
     calls: list[list[str]] = []
 
     def _fake_run(cmd: list[str], **_kwargs: object) -> tuple[bool, str]:
@@ -242,9 +268,7 @@ def test_step_manifest_json_marks_skipped_from_cli_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """When the CLI reports it skipped, the StepResult mirrors that."""
-    monkeypatch.setattr(
-        precommit.shutil, "which", lambda _name: "/usr/bin/verify-forge-manifest"
-    )
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/verify-forge-manifest")
     monkeypatch.setattr(
         precommit,
         "_run",
@@ -260,7 +284,7 @@ def test_step_plugin_version_shells_out_to_verify_cli(
 ) -> None:
     """step_plugin_version always shells out; the CLI owns the skip decision."""
     monkeypatch.setattr(
-        precommit.shutil,
+        shutil,
         "which",
         lambda _name: "/usr/bin/verify-forge-plugin-version",
     )
@@ -282,7 +306,7 @@ def test_step_plugin_version_marks_skipped_from_cli_output(
 ) -> None:
     """When the CLI reports it skipped, the StepResult mirrors that."""
     monkeypatch.setattr(
-        precommit.shutil,
+        shutil,
         "which",
         lambda _name: "/usr/bin/verify-forge-plugin-version",
     )
@@ -598,8 +622,12 @@ def test_step_pip_audit_loud_warn_when_cli_missing(
     pip-audit ships as a core dependency (#71); a missing binary means a
     broken install, and a security gate that quietly no-ops gives false
     assurance — so the step surfaces it visibly without refusing the commit.
+
+    SCENARIO: run_json returns None — the missing-binary sentinel.
+    MOCK SETUP: precommit.pip_audit_json.run_json → None.
+    EXPECTED BEHAVIOR: not skipped, not passed, non_blocking, "did NOT run" in output.
     """
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(precommit.pip_audit_json, "run_json", lambda _root: None)
     result = precommit.step_pip_audit(tmp_path)
     assert not result.skipped
     assert not result.passed
@@ -612,13 +640,15 @@ def test_step_pip_audit_non_blocking_by_default_on_findings(
 ) -> None:
     """CVE findings render as a non-blocking WARN when no blocking opt-in.
 
-    SCENARIO: pip-audit present, finds a CVE (exit 1), repo has no
+    SCENARIO: pip-audit present, finds 1 CVE, repo has no
         ``[tool.forge.pip_audit].blocking`` key.
-    MOCK SETUP: ``shutil.which`` → present; ``_run`` → ``(False, ...)``.
+    MOCK SETUP: precommit.pip_audit_json.run_json → _audit_run(1) (1 finding,
+        parseable data, returncode 1).
     EXPECTED BEHAVIOR: ``passed=False`` but ``non_blocking=True`` (WARN).
     """
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/usr/bin/x")
-    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "1 CVE found"))
+    monkeypatch.setattr(
+        precommit.pip_audit_json, "run_json", lambda _root: _audit_run(1)
+    )
     result = precommit.step_pip_audit(tmp_path)
     assert not result.passed
     assert result.non_blocking
@@ -631,15 +661,16 @@ def test_step_pip_audit_blocking_when_opted_in(
 
     SCENARIO: same finding as the default case, but the repo opts into
         blocking via ``[tool.forge.pip_audit]``.
-    MOCK SETUP: ``shutil.which`` → present; ``_run`` → ``(False, ...)``;
-        a ``pyproject.toml`` carrying the blocking key in ``tmp_path``.
+    MOCK SETUP: precommit.pip_audit_json.run_json → _audit_run(1); a
+        ``pyproject.toml`` carrying the blocking key in ``tmp_path``.
     EXPECTED BEHAVIOR: ``passed=False`` AND ``non_blocking=False`` (FAIL).
     """
     (tmp_path / "pyproject.toml").write_text(
         "[tool.forge.pip_audit]\nblocking = true\n"
     )
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/usr/bin/x")
-    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "1 CVE found"))
+    monkeypatch.setattr(
+        precommit.pip_audit_json, "run_json", lambda _root: _audit_run(1)
+    )
     result = precommit.step_pip_audit(tmp_path)
     assert not result.passed
     assert not result.non_blocking
@@ -658,7 +689,7 @@ def test_step_cve_usage_non_blocking_warn_on_findings(
 ) -> None:
     """A finding (CLI exit 1) is a non-blocking WARN, mirroring pip_audit."""
     (tmp_path / "cve_usage_patterns.toml").write_text("['CVE-1']\npackage='x'\n")
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
     monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "1 finding"))
     result = precommit.step_cve_usage(tmp_path)
     assert not result.passed
@@ -682,15 +713,14 @@ def test_step_pip_audit_below_threshold_emits_no_banner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Residual count at or under the threshold leaves the output unchanged."""
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/fake/pip-audit")
-    fake_output = "pkg-a 1.0.0 PYSEC-2024-1\npkg-b 2.0.0 PYSEC-2024-2\n"
-    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, fake_output))
+    """Residual count at or under the threshold leaves the output without a banner."""
+    monkeypatch.setattr(
+        precommit.pip_audit_json, "run_json", lambda _root: _audit_run(2)
+    )
     result = precommit.step_pip_audit(tmp_path)
     assert result.non_blocking
     assert not result.passed
     assert "⚠️" not in result.output
-    assert result.output == fake_output
 
 
 def test_step_pip_audit_at_threshold_boundary_emits_no_banner(
@@ -702,10 +732,10 @@ def test_step_pip_audit_at_threshold_boundary_emits_no_banner(
     Documents the strict-greater-than semantics of the escalation
     check; a regression to `>=` would surface here.
     """
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/fake/pip-audit")
     at = precommit._PIP_AUDIT_LOUDNESS_THRESHOLD
-    fake_output = "".join(f"pkg-{i} 1.0.0 PYSEC-2024-{i}\n" for i in range(at))
-    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, fake_output))
+    monkeypatch.setattr(
+        precommit.pip_audit_json, "run_json", lambda _root: _audit_run(at)
+    )
     result = precommit.step_pip_audit(tmp_path)
     assert "⚠️" not in result.output
 
@@ -720,10 +750,10 @@ def test_step_pip_audit_above_threshold_prepends_loud_banner(
     contributor reading the WARN line knows whether the count is in
     the "single-PR drift" range or the "accumulated tech-debt" range.
     """
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/fake/pip-audit")
     over = precommit._PIP_AUDIT_LOUDNESS_THRESHOLD + 5
-    fake_output = "".join(f"pkg-{i} 1.0.0 PYSEC-2024-{i}\n" for i in range(over))
-    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, fake_output))
+    monkeypatch.setattr(
+        precommit.pip_audit_json, "run_json", lambda _root: _audit_run(over)
+    )
     result = precommit.step_pip_audit(tmp_path)
     assert result.non_blocking
     assert "⚠️" in result.output
@@ -736,9 +766,8 @@ def test_step_pip_audit_passing_run_emits_no_banner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A clean pip-audit (no findings) does NOT trigger the banner code path."""
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: "/fake/pip-audit")
     monkeypatch.setattr(
-        precommit, "_run", lambda *_a, **_kw: (True, "No known vulnerabilities found")
+        precommit.pip_audit_json, "run_json", lambda _root: _audit_run(0)
     )
     result = precommit.step_pip_audit(tmp_path)
     assert result.passed
@@ -866,7 +895,7 @@ def _names(step_defs: list[precommit.StepDef]) -> list[str]:
 
 def _present(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make every binary resolve on PATH (so ``require_cli`` passes)."""
-    monkeypatch.setattr(precommit.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
 
 
 def test_forge_step_config_reads_section(tmp_path: Path) -> None:
@@ -1119,7 +1148,7 @@ def test_step_doctest_missing_pytest_exits(
 ) -> None:
     """Doctest fails loudly (SystemExit) when pytest is not on PATH."""
     (tmp_path / "src").mkdir()
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit):
         precommit.step_doctest(tmp_path)
 
@@ -1154,7 +1183,7 @@ def test_step_typecheck_missing_pyrefly_exits(
 ) -> None:
     """An opted-in-but-absent pyrefly binary fails loudly (SystemExit)."""
     (tmp_path / "src").mkdir()
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit):
         precommit.step_typecheck(tmp_path)
 
@@ -1232,6 +1261,108 @@ def test_step_doc_consistency_missing_cli_exits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """doc_consistency fails loudly when its CLI is not on PATH."""
-    monkeypatch.setattr(precommit.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit):
         precommit.step_doc_consistency(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# step_pip_audit — sidecar writing and parse-error handling
+# ---------------------------------------------------------------------------
+
+
+def test_step_pip_audit_writes_sidecar_when_data_parseable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """step_pip_audit writes the pip-audit JSON sidecar when data is parseable.
+
+    SCENARIO: pip-audit returns 1 finding (parseable data).
+    MOCK SETUP: precommit.pip_audit_json.run_json → _audit_run(1).
+    EXPECTED BEHAVIOR: code_health/pip_audit.json created and its contents
+        round-trip to the same data dict.
+    """
+    run = _audit_run(1)
+    monkeypatch.setattr(precommit.pip_audit_json, "run_json", lambda _root: run)
+    precommit.step_pip_audit(tmp_path)
+    sidecar = tmp_path / "code_health" / "pip_audit.json"
+    assert sidecar.exists()
+    assert json.loads(sidecar.read_text()) == run.data
+
+
+def test_step_pip_audit_does_not_write_sidecar_on_parse_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """step_pip_audit skips sidecar creation when pip-audit produces non-JSON output.
+
+    SCENARIO: pip-audit present but stdout is not parseable JSON.
+    MOCK SETUP: precommit.pip_audit_json.run_json → AuditRun(data=None, ...).
+    EXPECTED BEHAVIOR: sidecar not created; non_blocking True; "no parseable
+        JSON" in output; passed False.
+    """
+    bad_run = AuditRun(data=None, stderr="kaboom", returncode=1)
+    monkeypatch.setattr(precommit.pip_audit_json, "run_json", lambda _root: bad_run)
+    result = precommit.step_pip_audit(tmp_path)
+    assert not (tmp_path / "code_health" / "pip_audit.json").exists()
+    assert result.non_blocking
+    assert "no parseable JSON" in result.output
+    assert not result.passed
+
+
+# ---------------------------------------------------------------------------
+# step_cve_usage — sidecar forwarding
+# ---------------------------------------------------------------------------
+
+
+def test_step_cve_usage_passes_audit_json_when_sidecar_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """step_cve_usage forwards --audit-json to the CLI when the sidecar exists.
+
+    SCENARIO: pattern file and code_health/pip_audit.json both present.
+    MOCK SETUP: shutil.which → present; _run captures argv and returns clean.
+    EXPECTED BEHAVIOR: "--audit-json" and the sidecar path appear in the
+        subprocess argv, so the two steps share one pip-audit scan (#78).
+    """
+    (tmp_path / "cve_usage_patterns.toml").write_text(
+        '["CVE-1"]\npackage = "x"\n', encoding="utf-8"
+    )
+    sidecar = tmp_path / "code_health" / "pip_audit.json"
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    captured_argv: list[str] = []
+
+    def _fake_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured_argv.extend(cmd)
+        return True, "clean"
+
+    monkeypatch.setattr(precommit, "_run", _fake_run)
+    precommit.step_cve_usage(tmp_path)
+    assert "--audit-json" in captured_argv
+    assert precommit.PIP_AUDIT_SIDECAR in captured_argv
+
+
+def test_step_cve_usage_runs_bare_when_sidecar_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """step_cve_usage omits --audit-json from the CLI call when the sidecar is absent.
+
+    SCENARIO: pattern file present; code_health/pip_audit.json not present.
+    MOCK SETUP: shutil.which → present; _run captures argv.
+    EXPECTED BEHAVIOR: "--audit-json" NOT in argv — CLI falls back to its
+        own pip-audit invocation.
+    """
+    (tmp_path / "cve_usage_patterns.toml").write_text(
+        '["CVE-1"]\npackage = "x"\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    captured_argv: list[str] = []
+
+    def _fake_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured_argv.extend(cmd)
+        return True, "clean"
+
+    monkeypatch.setattr(precommit, "_run", _fake_run)
+    precommit.step_cve_usage(tmp_path)
+    assert "verify-forge-cve-usage" in captured_argv
+    assert "--audit-json" not in captured_argv
