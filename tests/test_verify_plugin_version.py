@@ -290,3 +290,104 @@ def test_main_skips_when_head_reproduces_older_tag(
     assert verify_plugin_version.main() == 0
     log = (tmp_path / "code_health" / "plugin_version.log").read_text()
     assert "release tag" in log
+
+
+def _make_two_releases(repo: Path, env: dict[str, str]) -> None:
+    """Tag v1.0.0 (plugin 1.0.0 + a.py) then v1.1.0 (global-max).
+
+    Shared setup for the CHANGELOG-insensitivity tests: leaves the repo on
+    a fresh ``release/v1.0.0`` branch whose tree reproduces the v1.0.0 tag,
+    with ``plugin.json`` at 1.0.0 (below the global-max tag v1.1.0).
+
+    Args:
+        repo: Repository directory (already git-init'd on ``main``).
+        env: Git author/committer environment for deterministic commits.
+    """
+    _write_plugin(repo, "1.0.0")
+    (repo / "a.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "."], cwd=repo, env=env, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "v1.0.0"], cwd=repo, env=env, check=True
+    )
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=repo, env=env, check=True)
+    _write_plugin_overwrite(repo, "1.1.0")
+    subprocess.run(["git", "add", "."], cwd=repo, env=env, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "v1.1.0"], cwd=repo, env=env, check=True
+    )
+    subprocess.run(["git", "tag", "v1.1.0"], cwd=repo, env=env, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "release/v1.0.0"], cwd=repo, env=env, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "v1.0.0", "--", "."], cwd=repo, env=env, check=True
+    )
+
+
+def test_skips_when_release_branch_only_adds_changelog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A release branch that finalizes the @main CHANGELOG still skips.
+
+    The exact CI break that motivated CHANGELOG-insensitive matching: a
+    ``release/v1.0.0`` branch reproduces the v1.0.0 tag's tree but adds a
+    curated ``CHANGELOG.md`` entry. Its ``plugin.json`` (1.0.0) sits below
+    the global-max tag v1.1.0, so without the CHANGELOG exclusion the guard
+    would fall back to version comparison and FAIL. The release fingerprint
+    ignores ``CHANGELOG.md``, so HEAD still reproduces v1.0.0 → skip.
+    """
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "PATH": os.environ.get("PATH", ""),
+    }
+    _init_git_repo(tmp_path)
+    _make_two_releases(tmp_path, env)
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0 — curated\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, env=env, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "promote v1.0.0 + changelog"],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 0
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "release tag" in log
+
+
+def test_fails_when_release_branch_changes_non_changelog_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Abuse guard: a non-CHANGELOG diff is NOT release-equal, so it fails.
+
+    Same setup as the skip case, but the release branch edits ``a.py``
+    (not ``CHANGELOG.md``). The release fingerprint then differs from every
+    tag, so HEAD is a real content change with ``plugin.json`` 1.0.0 ≤
+    latest tag v1.1.0 → the guard fails. Proves the exclusion is scoped to
+    ``CHANGELOG.md`` and does not blanket-skip modified release branches.
+    """
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "PATH": os.environ.get("PATH", ""),
+    }
+    _init_git_repo(tmp_path)
+    _make_two_releases(tmp_path, env)
+    (tmp_path / "a.py").write_text("x = 999\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, env=env, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "promote v1.0.0 + code change"],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 1

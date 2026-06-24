@@ -100,6 +100,16 @@ git switch -c "release/v$NEW" origin/dev
 git log origin/main..release/v$NEW --oneline   # SANITY: only this release's commits
 ```
 
+**Then author the curated `@main` CHANGELOG entry** for `v$NEW` in the
+release branch — one condensed `## v$NEW — <date>` block summarizing the
+minor (group `git log` by conventional-commit type; one bullet per theme,
+not per commit). This is the modified-release-branch pattern: the branch
+now diverges from the `v$NEW` tag by exactly `CHANGELOG.md`, which both
+release guards tolerate via the **release fingerprint** (tree minus
+`CHANGELOG.md`) — see `docs/release-process.md` §5. To also reconcile
+`dev`'s CHANGELOG without a later back-merge PR, **merge `main` into the
+release branch first** (§5 option b) and add the new entry on top.
+
 Push the branch via the `forge:git-commit-push` agent (direct `git push`
 is hook-blocked for agents).
 
@@ -116,7 +126,8 @@ gh pr create --base main --head "release/v$NEW" \
 $(git log --oneline origin/main..release/v$NEW)
 
 ## After merge
-- [ ] Relocate the minor tag to main's squash commit: run \`forge-check-main-tags --dry-run\` to preview, then \`forge-check-main-tags --fix\` to move \`v$NEW\` from the dev commit onto \`origin/main\` (tree-matched). Verify with \`git describe --tags origin/main\` → \`v$NEW\`. See \`docs/release-process.md\` §2.
+- [ ] Relocate the minor tag to main's squash commit: run \`forge-check-main-tags --dry-run\` to preview, then \`forge-check-main-tags --fix\` to move \`v$NEW\` onto \`origin/main\` (matched by release fingerprint, so the curated CHANGELOG divergence is tolerated). Verify with \`git describe --tags origin/main\` → \`v$NEW\`. See \`docs/release-process.md\` §2.
+- [ ] Reconcile \`dev\`'s CHANGELOG: if you did NOT merge \`main\` into the release branch (Step 3 option b), open a back-merge \`main → dev\` PR bringing this entry onto \`dev\` plus the rolling-next bump. Skip when \`dev\` is moving fast — the next release branch will carry it forward (§5 options a/b).
 - [ ] If more minors remain behind, promote the next one (repeat from Step 1).
 "
 ```

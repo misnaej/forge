@@ -199,9 +199,10 @@ def _promotion_status_lines(
         return lines
     lines.append(f"Promotion pending — promote these in order ({len(staged)}):")
     lines.extend(f"  {tag}" for _, tag in staged)
-    # Non-blocking CHANGELOG advisory (docs/release-process.md §5): each
-    # promoted minor should already carry its entry, authored on dev.
-    # Stays silent for repos that keep no CHANGELOG (git show → empty).
+    # Non-blocking CHANGELOG advisory (docs/release-process.md §5): a
+    # reminder that each pending minor needs a curated entry — authored in
+    # its release/vX.Y.Z branch during promotion. Stays silent for repos
+    # that keep no CHANGELOG (git show → empty).
     changelog = run_git(
         "show", f"origin/{dev_branch}:CHANGELOG.md", cwd=repo_root, check=False
     )
@@ -210,8 +211,8 @@ def _promotion_status_lines(
         if missing:
             lines.append(
                 f"⚠️  CHANGELOG.md (origin/{dev_branch}) has no entry for "
-                f"{', '.join(missing)} — author it on {dev_branch} before "
-                "promoting (docs/release-process.md §5)."
+                f"{', '.join(missing)} — author it in the release/vX.Y.Z "
+                "branch during promotion (docs/release-process.md §5)."
             )
     return lines
 

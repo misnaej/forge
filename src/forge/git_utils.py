@@ -5,6 +5,7 @@ detecting modified files relative to main, and emitting CLI output
 that bypasses ruff's T201 (bare-print) ban.
 """
 
+import hashlib
 import io
 import json
 import logging
@@ -355,6 +356,58 @@ def get_tree_sha(repo_root: Path, ref: str) -> str | None:
     )
     out = proc.stdout.strip()
     return out or None
+
+
+# Paths treated as release-channel curated content: excluded from the
+# release fingerprint so a release branch that finalizes them does not
+# break tree-equality with the tagged dev release. The @main CHANGELOG is
+# condensed per promotion (release-process.md §5), so it is the one file a
+# correct release branch always diverges on.
+_RELEASE_EQUAL_IGNORE = ("CHANGELOG.md",)
+
+
+def release_tree_fingerprint(repo_root: Path, ref: str) -> str | None:
+    """Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
+
+    Like :func:`get_tree_sha`, but two refs whose trees differ **only** in
+    ``CHANGELOG.md`` share a fingerprint. forge's ``@main`` CHANGELOG is
+    curated and condensed per promotion — authored in the
+    ``release/vX.Y.Z`` branch — so a release branch's tree never
+    byte-matches the tagged ``dev`` release's tree, yet it is the *same
+    release*. The rolling-next guard
+    (:func:`forge.verify_plugin_version._is_release_commit`) and the
+    main-tag aligner (``forge-check-main-tags``) compare on this
+    fingerprint so curated-CHANGELOG divergence is tolerated while any
+    other file difference still counts (the match stays release-exact).
+
+    The value is the SHA-256 of ``git ls-tree -r <ref>`` (mode, type, blob
+    SHA, path per file) with the ``CHANGELOG.md`` entry removed. Excluding
+    one path from a recursive blob listing — rather than diffing two refs —
+    keeps the result usable as a dict key, so callers can index many base
+    commits by fingerprint in a single pass.
+
+    Args:
+        repo_root: Working directory for the git invocation.
+        ref: Any commit-ish (``HEAD``, a tag, ``origin/main``, a SHA).
+
+    Returns:
+        A 64-char hex fingerprint, or ``None`` when *ref* does not resolve
+        or its tree has no files outside ``CHANGELOG.md``.
+    """
+    raw = run_git("ls-tree", "-r", ref, cwd=repo_root, check=False)
+    if not raw:
+        return None
+    kept = [
+        line
+        for line in raw.splitlines()
+        if line.partition("\t")[2] not in _RELEASE_EQUAL_IGNORE
+    ]
+    if not kept:
+        # Tree resolves only to ignored paths (e.g. a repo tracking nothing
+        # but CHANGELOG.md). Returning a hash of "" would make every such
+        # tree falsely release-equal; treat it as no usable release tree.
+        return None
+    return hashlib.sha256("\n".join(kept).encode()).hexdigest()
 
 
 def read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None:
