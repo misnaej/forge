@@ -127,7 +127,7 @@ graph LR
         doc_generators["<b>Doc generators</b><br/>[Python]<br/>Generate drift-checked docs: API digest, CLI reference, and this C4 model"]
         git_hook_entrypoints["<b>Git-hook entrypoints</b><br/>[Python]<br/>Managed post-merge / post-checkout hooks: foundation drift check + backgrounded self-refresh"]
         release_tooling["<b>Release tooling</b><br/>[Python + git/gh]<br/>Rolling-next versioning, dev→main promotion, PR squash messages, continuation log"]
-        config_shared["<b>Config + shared</b><br/>[Python]<br/>Shared foundation: pyproject/[tool.forge] config, git + logging utils, CI run-context, ruff/doctor"]
+        config_shared["<b>Config + shared</b><br/>[Python]<br/>Shared foundation: pyproject/[tool.forge] config, git + logging utils, CI run-context, ruff/doctor, single-scan pip-audit helper"]
     end
     forge_developer -->|"develops, commits, runs CLIs"| forge_scripts
     consumer_repo -->|"installs + invokes forge CLIs/hooks"| forge_scripts
