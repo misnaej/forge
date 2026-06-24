@@ -4,7 +4,7 @@
 # component edges are MACHINE-derived from the import graph; the
 # [[relationship]] entries below add the runtime/subprocess "uses" edges the
 # import graph cannot see (e.g. the dispatcher shelling out to each verifier).
-# See docs/proposals/c4-generator.md. Pointed at by [tool.forge.c4] in pyproject.toml.
+# See docs/c4-architecture.md. Pointed at by [tool.forge.c4] in pyproject.toml.
 
 system = "Forge"
 description = "Python CI/CD & code-quality foundation: deterministic CLIs + pre-commit hook + optional Claude Code plugin"

@@ -9,7 +9,7 @@ DSL and renders nothing itself, staying deterministic and lock-in-free —
 the Structurizr CLI re-exports the same model to PlantUML, Mermaid, etc.
 
 The deterministic / reasoned split (see
-``docs/proposals/c4-generator.md``): the *human* declares the System
+``docs/c4-architecture.md``): the *human* declares the System
 Context (people, external systems), Containers, and which modules form
 which Component — all in ``[tool.forge.c4]``. The *machine* (this CLI)
 derives the Component-to-Component relationships from the import graph:
@@ -25,6 +25,7 @@ Usage::
 
     forge-gen-c4                    # write Structurizr DSL
     forge-gen-c4 --format html      # write offline HTML view
+    forge-gen-c4 --format mermaid    # write raw Mermaid to stdout
     forge-gen-c4 --check            # verify committed artifact is in sync
     forge-gen-c4 --output -         # write to stdout
 
@@ -63,7 +64,7 @@ DEFAULT_HTML_OUTPUT = "docs/architecture.html"
 REGEN_CMD = "forge-gen-c4"
 # Vendored Mermaid UMD bundle (MIT), shipped as forge package data. The HTML
 # output references it by relative path so the diagram renders fully offline
-# with no external tool — see docs/proposals/c4-generator.md.
+# with no external tool — see docs/c4-architecture.md.
 MERMAID_JS_NAME = "mermaid.min.js"
 
 
@@ -1118,7 +1119,7 @@ def main() -> int:
     if built is None:
         logger.error(
             "No [tool.forge.c4] config found — add it to pyproject.toml (or a "
-            "c4.toml) to enable C4 generation (see docs/proposals/c4-generator.md).",
+            "c4.toml) to enable C4 generation (see docs/c4-architecture.md).",
         )
         return 1
     config, edges, unmatched = built
@@ -1141,8 +1142,8 @@ def _parse_args() -> argparse.Namespace:
         prog="forge-gen-c4",
         description=(
             "Generate a C4 architecture model from the import graph + a "
-            "[tool.forge.c4] / c4.toml model. Emits Structurizr DSL (default) "
-            "or a self-contained offline HTML view."
+            "[tool.forge.c4] / c4.toml model. Emits Structurizr DSL (default), "
+            "a self-contained offline HTML view, or raw Mermaid."
         ),
     )
     parser.add_argument(

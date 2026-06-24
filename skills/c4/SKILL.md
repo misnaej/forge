@@ -5,7 +5,7 @@ description: Build or refresh a C4 architecture model for this repo — interact
 
 # C4 Architecture Model
 
-Produce a C4 model as Structurizr DSL (+ an offline HTML view) via
+Produce a C4 model as Structurizr DSL (+ an offline HTML or raw Mermaid view) via
 `forge-gen-c4`. The work splits in two: a **machine-derived** half (the CLI
 reads the import graph for component-to-component edges) and a
 **human-declared** half (everything the code does *not* encode). This skill

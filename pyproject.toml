@@ -140,7 +140,7 @@ enabled = true
 # Dogfood forge-gen-c4. The verbose C4 model (people, containers, components,
 # relationships) is its own artifact — kept out of pyproject in a standalone
 # c4.toml, like ruff.toml / pyrefly.toml. This is just the opt-in pointer.
-# See docs/proposals/c4-generator.md. Render with Structurizr Lite (MIT).
+# See docs/c4-architecture.md. Render with Structurizr Lite (MIT).
 config = "c4.toml"
 
 [tool.interrogate]

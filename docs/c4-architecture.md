@@ -1,10 +1,12 @@
-# Proposal: C4 architecture-diagram generator
+# C4 architecture-diagram generator — design & rationale
 
-> **Status:** Proposal / RFC — partially implemented (v1 spike on this
-> branch). This document describes the design, the deterministic-vs-
-> reasoned split, and the open questions. It commits forge to nothing
-> beyond the experimental `forge-gen-c4` CLI + `/c4` skill shipped
-> alongside it; whether forge keeps and grows this is the decision in
+> **Status:** Implemented (shipped in #99). This is the design-rationale
+> doc for `forge-gen-c4` + the `/c4` skill — why it works the way it does,
+> what was deliberately left out, and the deferred future work in
+> [§9](#9-future-work). For *how to configure it* see
+> [`docs/configuration.md`](configuration.md) (`[tool.forge.c4]`); for the
+> interactive build flow see [`skills/c4/SKILL.md`](../skills/c4/SKILL.md).
+> Whether forge keeps growing it is the decision gate in
 > [§8](#8-decision-gate-is-this-worth-forges-while).
 
 ## 1. Problem & motivation
@@ -212,7 +214,9 @@ demand materialises, the honest call is to keep `forge-gen-c4` as a
 small, self-skipping opt-in and **not** invest in multi-container
 inference, Code-level views, or a sub-agent reasoning fleet.
 
-## 9. Open questions
+## 9. Future work
+
+Deferred enhancements (the feature shipped without these by design):
 
 1. Directory/package-boundary auto-clustering (cheap, from
    `REPO_STRUCTURE`) vs. fully explicit config groupings — how much
