@@ -18,7 +18,7 @@ import os
 import subprocess
 from typing import TYPE_CHECKING
 
-from forge import verify_main_tags
+from forge import git_utils, verify_main_tags
 from forge.config import ForgeConfig
 
 
@@ -215,6 +215,133 @@ def _dual_track_with_unpromoted_tag(base: Path) -> tuple[Path, Path, str, str]:
     )
 
     return work, bare, dev_sha, main_sha
+
+
+def _dual_track_promotion_with_extra(
+    base: Path, *, filename: str, content: str
+) -> tuple[Path, Path, str, str]:
+    """Dual-track repo whose main squash adds *filename* atop the tagged tree.
+
+    Like :func:`_dual_track_with_unpromoted_tag`, but the ``main`` squash
+    commit reproduces v1.0.0's tree AND writes an extra ``filename`` absent
+    from the tag. Exercises release-fingerprint matching: ``CHANGELOG.md``
+    is excluded (still a move target), any other path is not (no target,
+    reported as unreproduced).
+
+    Args:
+        base: Parent directory for the work / bare repos.
+        filename: Extra file written on the main squash commit only.
+        content: Contents for *filename*.
+
+    Returns:
+        A ``(work, bare, dev_sha, main_sha)`` tuple; ``main_sha`` is the
+        squash commit whose tree equals v1.0.0's plus *filename*.
+    """
+    work, bare = _init_dual_track_repo(base)
+    dev_sha = _write_file_commit(
+        work, "v1.py", "x = 1\n", "release v1.0.0", branch="dev"
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "dev"], cwd=work, env=_GIT_ENV, check=True
+    )
+    _push_tag(work, "v1.0.0", dev_sha, bare)
+
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "v1.0.0", "--", "."], cwd=work, env=_GIT_ENV, check=True
+    )
+    (work / filename).write_text(content)
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "promote v1.0.0 + extra"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    main_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=_GIT_ENV, check=True
+    )
+    return work, bare, dev_sha, main_sha
+
+
+def test_fix_relocates_when_base_diverges_only_by_changelog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCENARIO: main squash = v1.0.0 tree + a curated CHANGELOG entry.
+
+    MOCK SETUP: ``load_config`` → ``ForgeConfig(base="main", dev="dev")``;
+        git identity env set so ``git tag -a`` succeeds.
+    EXPECTED BEHAVIOR: the release fingerprint ignores ``CHANGELOG.md``, so
+        the main squash still reproduces v1.0.0 → ``--fix`` relocates the
+        tag onto it. This is the modified-release-branch pattern.
+    """
+    work, bare, _dev_sha, main_sha = _dual_track_promotion_with_extra(
+        tmp_path, filename="CHANGELOG.md", content="## v1.0.0 — curated\n"
+    )
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "t")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "t@t")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "t")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "t@t")
+    monkeypatch.setattr(
+        verify_main_tags,
+        "load_config",
+        lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
+    )
+    monkeypatch.setattr("sys.argv", ["forge-check-main-tags", "--fix"])
+    monkeypatch.chdir(work)
+    assert verify_main_tags.main() == 0
+    result = subprocess.run(
+        ["git", "rev-parse", "v1.0.0^{commit}"],
+        cwd=bare,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == main_sha
+
+
+def test_base_diverging_by_non_changelog_is_not_a_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCENARIO: main squash = v1.0.0 tree + an extra .py file (not CHANGELOG).
+
+    MOCK SETUP: ``load_config`` → ``ForgeConfig(base="main", dev="dev")``.
+    EXPECTED BEHAVIOR: the extra file changes the release fingerprint, so no
+        base commit reproduces the tag → it is reported as unreproduced, not
+        drift (verify returns 0), and the tag stays on the dev commit. Proves
+        the CHANGELOG exclusion is scoped and does not blanket-match.
+    """
+    work, bare, dev_sha, _main_sha = _dual_track_promotion_with_extra(
+        tmp_path, filename="extra.py", content="y = 2\n"
+    )
+    monkeypatch.setattr(
+        verify_main_tags,
+        "load_config",
+        lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
+    )
+    monkeypatch.setattr("sys.argv", ["forge-check-main-tags"])
+    monkeypatch.chdir(work)
+    assert verify_main_tags.main() == 0
+    result = subprocess.run(
+        ["git", "rev-parse", "v1.0.0^{commit}"],
+        cwd=bare,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == dev_sha
 
 
 # ---------------------------------------------------------------------------
@@ -494,15 +621,11 @@ def test_base_tree_index_newest_commit_wins_on_tree_collision(
 
     index = verify_main_tags._base_tree_index(tmp_path, "HEAD")
 
-    m1_tree = subprocess.run(
-        ["git", "rev-parse", f"{m1}^{{tree}}"],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    # Newest commit (M2) wins the tree collision.
-    assert index.get(m1_tree) == m2
+    # The index is keyed by release fingerprint (tree content minus
+    # CHANGELOG.md), not raw tree SHA. M1 and M2 share a tree → share a
+    # fingerprint; the newest commit (M2) wins the collision.
+    m1_fingerprint = git_utils.release_tree_fingerprint(tmp_path, m1)
+    assert index.get(m1_fingerprint) == m2
 
 
 # ---------------------------------------------------------------------------

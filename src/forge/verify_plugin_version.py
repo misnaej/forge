@@ -9,9 +9,11 @@ Skipped when:
 - ``.claude-plugin/plugin.json`` does not exist (consumer repo without
   a plugin manifest).
 - The repo has no git tags yet (pre-release repo).
-- ``HEAD``'s tree reproduces any published ``v*`` release tag — so a
-  staged ``release/vX.Y.Z`` branch promoting an older minor still passes
-  even when its ``plugin.json`` sits below the global-max tag.
+- ``HEAD``'s release fingerprint (tree content minus ``CHANGELOG.md``)
+  reproduces any published ``v*`` release tag — so a staged
+  ``release/vX.Y.Z`` branch promoting an older minor still passes even
+  when its ``plugin.json`` sits below the global-max tag, and even when it
+  finalizes the curated ``@main`` CHANGELOG entry.
 
 ``forge-precommit`` shells out to this CLI; agents may invoke it
 standalone to refresh just ``plugin_version.log``.
@@ -27,10 +29,10 @@ from pathlib import Path
 from forge.git_utils import (
     capturing_to_step_log,
     configure_cli_logging,
-    get_tree_sha,
     latest_v_tag,
     parse_semver,
     read_local_plugin_version,
+    release_tree_fingerprint,
     run_git,
 )
 
@@ -48,10 +50,16 @@ _parse_semver = parse_semver
 def _is_release_commit(repo_root: Path) -> bool:
     """Return True when ``HEAD``'s tree reproduces ANY published ``v*`` tag.
 
-    Compares the git **tree** SHA of ``HEAD`` against the tree of every
-    ``v*`` tag — not commit SHAs. Tree equality means the working
-    file-state reproduces an already-tagged release, so the rolling-next
-    rule ("bump plugin.json past the latest tag") must NOT fire.
+    Compares the **release fingerprint** (tree content minus
+    ``CHANGELOG.md``, see :func:`forge.git_utils.release_tree_fingerprint`)
+    of ``HEAD`` against every ``v*`` tag — not commit SHAs. Fingerprint
+    equality means the working file-state reproduces an already-tagged
+    release, so the rolling-next rule ("bump plugin.json past the latest
+    tag") must NOT fire. CHANGELOG.md is excluded because a promotion's
+    ``release/vX.Y.Z`` branch finalizes the curated ``@main`` CHANGELOG
+    entry (release-process.md §5), diverging that one file from the tagged
+    ``dev`` release while remaining the same release; any *other* file
+    difference still makes HEAD a non-release commit that must bump.
 
     Checking **every** tag — not only the latest — is load-bearing for
     the staged ``dev → main`` promotion (see the ``promote`` skill).
@@ -76,14 +84,15 @@ def _is_release_commit(repo_root: Path) -> bool:
         repo_root: Git repo root.
 
     Returns:
-        ``True`` when ``HEAD``'s tree SHA equals the tree of some ``v*``
-        tag; ``False`` when HEAD's tree resolves emptily or matches none.
+        ``True`` when ``HEAD``'s release fingerprint equals that of some
+        ``v*`` tag; ``False`` when HEAD's tree resolves emptily or matches
+        none.
     """
-    head_tree = get_tree_sha(repo_root, "HEAD")
-    if head_tree is None:
+    head_fp = release_tree_fingerprint(repo_root, "HEAD")
+    if head_fp is None:
         return False
     tags = run_git("tag", "--list", "v*", cwd=repo_root, check=False).split()
-    return any(get_tree_sha(repo_root, tag) == head_tree for tag in tags)
+    return any(release_tree_fingerprint(repo_root, tag) == head_fp for tag in tags)
 
 
 def main() -> int:

@@ -487,6 +487,55 @@ def test_get_tree_sha_unresolvable_ref_not_a_valid_tree_sha(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
+# release_tree_fingerprint
+# ---------------------------------------------------------------------------
+
+
+def _commit_all(repo: Path, message: str) -> None:
+    """Stage everything and commit with *message*.
+
+    Args:
+        repo: Repository directory.
+        message: Commit message.
+    """
+    subprocess.run(["git", "add", "-A"], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", message], cwd=repo, env=_GIT_ENV, check=True
+    )
+
+
+def test_release_fingerprint_equal_when_only_changelog_differs(tmp_path: Path) -> None:
+    """Two commits differing ONLY in CHANGELOG.md share a fingerprint."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "a.py").write_text("x = 1\n")
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    _commit_all(tmp_path, "base")
+    base_fp = git_utils.release_tree_fingerprint(tmp_path, "HEAD")
+    # Change ONLY the CHANGELOG.
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n## v1.1.0 — curated\n")
+    _commit_all(tmp_path, "changelog only")
+    assert git_utils.release_tree_fingerprint(tmp_path, "HEAD") == base_fp
+
+
+def test_release_fingerprint_differs_when_other_file_changes(tmp_path: Path) -> None:
+    """A change to any non-CHANGELOG file changes the fingerprint."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "a.py").write_text("x = 1\n")
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    _commit_all(tmp_path, "base")
+    base_fp = git_utils.release_tree_fingerprint(tmp_path, "HEAD")
+    (tmp_path / "a.py").write_text("x = 2\n")
+    _commit_all(tmp_path, "code change")
+    assert git_utils.release_tree_fingerprint(tmp_path, "HEAD") != base_fp
+
+
+def test_release_fingerprint_none_for_unresolvable_ref(tmp_path: Path) -> None:
+    """An unresolvable ref yields ``None`` (empty tree listing)."""
+    _init_git_repo(tmp_path)
+    assert git_utils.release_tree_fingerprint(tmp_path, "HEAD~999999") is None
+
+
+# ---------------------------------------------------------------------------
 # read_plugin_version_at_ref
 # ---------------------------------------------------------------------------
 
