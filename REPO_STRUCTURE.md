@@ -77,6 +77,7 @@ Code.
    - FOUNDATION.md: shipped copy of the foundation document (symlink)
    - CHANGELOG.md: shipped copy of the changelog (symlink) — read by `forge-upgrade` to surface consumer-action upgrade notes
    - mermaid.min.js: vendored Mermaid UMD bundle (MIT, pinned) — copied next to `forge-gen-c4 --format html` output so the diagram renders offline
+   - VENDORED.md: provenance record (URL, version, SHA-256) for vendored third-party assets under `data/`
 
 ## Agents Directory (`agents/`)
 
@@ -152,6 +153,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_doctor.py: tests for doctor
    - test_fix_ruff.py: tests for fix_ruff
    - test_gen_api_digest.py: tests for gen_api_digest
+   - test_gen_c4.py: tests for gen_c4 (C4 / Structurizr DSL generator)
    - test_gen_cli_reference.py: tests for gen_cli_reference
    - test_gen_common.py: tests for gen_common shared helpers
    - test_git_utils.py: tests for git_utils (shared CLI helpers)

@@ -25,7 +25,7 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from forge.gen_c4 import resolve_model_section
+from forge.config import resolve_model_section
 from forge.git_utils import configure_cli_logging, repo_root
 from forge.run_context import is_non_interactive
 

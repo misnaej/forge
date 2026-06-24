@@ -43,14 +43,13 @@ import argparse
 import html
 import logging
 import sys
-import tomllib
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 
 from forge.audit.common import Scope
 from forge.audit.deps import build_module_graph
-from forge.config import read_pyproject_raw, resolve_tool_roots
+from forge.config import resolve_model_section, resolve_tool_roots
 from forge.gen_common import check_doc_drift
 from forge.git_utils import configure_cli_logging, repo_root
 
@@ -165,6 +164,8 @@ class C4Config:
         components: Named components with their module prefixes.
         relationships: Human-declared component edges (runtime/subprocess
             "uses" the import graph cannot derive).
+        readme: Repo-relative path to a README that carries the managed
+            Mermaid C4 block; empty string when not configured.
     """
 
     system: str
@@ -227,6 +228,26 @@ class _IdAllocator:
         return candidate
 
 
+def _safe_out_path(root: Path, relpath: str) -> Path:
+    """Resolve *relpath* under *root*, rejecting paths that escape the repo.
+
+    Args:
+        root: Repository root directory.
+        relpath: Repository-relative path (may be relative or absolute).
+
+    Returns:
+        Absolute path inside the repository.
+
+    Raises:
+        ValueError: When the resolved path escapes the repository root.
+    """
+    candidate = (root / relpath).resolve()
+    if not candidate.is_relative_to(root.resolve()):
+        msg = f"output path {relpath!r} escapes the repository root"
+        raise ValueError(msg)
+    return candidate
+
+
 def _slug(name: str) -> str:
     """Slugify *name* into a DSL-safe identifier fragment.
 
@@ -271,58 +292,6 @@ def _coerce_list(raw: object) -> list[dict]:
     if isinstance(raw, dict):
         return [raw]
     return []
-
-
-DEFAULT_MODEL_FILE = "c4.toml"
-
-
-def _read_toml_file(path: Path) -> dict | None:
-    """Parse a standalone TOML file, degrading to ``None`` on any failure.
-
-    Args:
-        path: Path to the TOML model file.
-
-    Returns:
-        Parsed table, or ``None`` when the file is missing, unreadable, or
-        not valid TOML.
-    """
-    if not path.is_file():
-        return None
-    try:
-        return tomllib.loads(path.read_text())
-    except (OSError, ValueError):
-        logger.exception("Could not read C4 model file %s", path)
-        return None
-
-
-def resolve_model_section(root: Path) -> dict | None:
-    """Locate the C4 model table — external file or inline pyproject.
-
-    Resolution, highest precedence first:
-
-    1. ``[tool.forge.c4].config`` — an explicit path to a standalone TOML
-       model file (the model's tables live at that file's top level).
-    2. A conventional ``c4.toml`` at the repo root (used when present and
-       ``[tool.forge.c4]`` carries no inline ``system``).
-    3. The inline ``[tool.forge.c4]`` table itself.
-
-    Keeping the verbose model out of ``pyproject.toml`` is the point of
-    (1)/(2): a Structurizr model is its own artifact, like ``ruff.toml``.
-
-    Args:
-        root: Repository root directory.
-
-    Returns:
-        The model table dict, or ``None`` when C4 generation is not opted
-        into (no section, no file, and no inline ``system``).
-    """
-    section = read_pyproject_raw(root).get("tool", {}).get("forge", {}).get("c4", {})
-    configured = section.get("config")
-    if configured:
-        return _read_toml_file(root / configured)
-    if not section.get("system"):
-        return _read_toml_file(root / DEFAULT_MODEL_FILE)
-    return section
 
 
 def _parse_components(section: dict) -> tuple[Component, ...]:
@@ -485,6 +454,28 @@ def derive_component_edges(
     return edges
 
 
+def _warn_unknown_relationships(
+    config: C4Config, component_ids: dict[str, str]
+) -> None:
+    """Warn for [[relationship]] entries naming a component that doesn't exist.
+
+    Args:
+        config: The C4 model skeleton.
+        component_ids: Component name → DSL identifier mapping.
+    """
+    known = set(component_ids)
+    for r in config.relationships:
+        missing = {r.source, r.destination} - known
+        if missing:
+            logger.warning(
+                "Declared relationship %r -> %r references unknown component(s) %s "
+                "— edge skipped",
+                r.source,
+                r.destination,
+                ", ".join(sorted(missing)),
+            )
+
+
 def render_dsl(
     config: C4Config,
     edges: set[tuple[str, str]],
@@ -509,6 +500,7 @@ def render_dsl(
         c.name: alloc.allocate(c.name, "component") for c in config.components
     }
     ids = _IdMaps(sys_id, person_ids, external_ids, container_ids, component_ids)
+    _warn_unknown_relationships(config, component_ids)
 
     lines = [
         f"workspace {_q(config.system)} {_q(config.description)} {{",
@@ -974,7 +966,7 @@ def _readme_path(root: Path, config: C4Config) -> Path:
     Returns:
         Absolute path to the README the C4 block is managed in.
     """
-    return root / config.readme
+    return _safe_out_path(root, config.readme)
 
 
 def sync_readme(root: Path, config: C4Config, mermaid_text: str, *, check: bool) -> int:
@@ -1061,7 +1053,7 @@ def _emit_html(
     if out_relpath == "-":
         sys.stdout.write(content)
         return 0
-    out_path = root / out_relpath
+    out_path = _safe_out_path(root, out_relpath)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(content)
     _copy_vendored_mermaid(out_path.parent)
@@ -1099,12 +1091,12 @@ def _emit_dsl(
     if args.check:
         rc = check_doc_drift(root, out_relpath, dsl, REGEN_CMD)
         if config.readme:
-            rc = (
-                sync_readme(root, config, render_mermaid(config, edges), check=True)
-                or rc
+            rc = max(
+                rc,
+                sync_readme(root, config, render_mermaid(config, edges), check=True),
             )
         return rc
-    out_path = root / out_relpath
+    out_path = _safe_out_path(root, out_relpath)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(dsl)
     logger.info("Wrote %s (%d component edges).", out_relpath, dsl.count(" -> "))

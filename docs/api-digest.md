@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_47 modules, 474 symbols._
+_47 modules, 476 symbols._
 
 ## `forge._hook_helpers`
 
@@ -170,6 +170,8 @@ _47 modules, 474 symbols._
 - `class ForgeConfig` — Repo configuration sourced from ``[tool.forge]``.
   - `dual_track(self) -> bool` — Return ``True`` when base and dev are distinct branches.
 - `read_pyproject_raw(repo_root: Path) -> dict` — Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
+- `_read_toml_file(path: Path) -> dict | None` _(internal)_ — Parse a standalone TOML file, degrading to ``None`` on any failure.
+- `resolve_model_section(repo_root: Path) -> dict | None` — Locate the C4 model table — external file or inline pyproject.
 - `load_config(repo_root: Path) -> ForgeConfig` — Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.
 - `_existing_dirs(repo_root: Path, dirs: list[str]) -> list[str]` _(internal)_ — Filter *dirs* to existing in-repo paths, de-duplicated, order-preserving.
 - `resolve_tool_roots(repo_root: Path, tool: str, *, include_tests: bool = False) -> list[str]` — Resolve the scan roots a layout-consuming *tool* should use.
@@ -248,16 +250,16 @@ _47 modules, 474 symbols._
 - `class _IdMaps` _(internal)_ — Maps display names to unique DSL-safe identifiers.
 - `class _IdAllocator` _(internal)_ — Allocates unique, DSL-safe identifiers from display names.
   - `allocate(self, name: str, fallback: str) -> str` — Return a unique identifier derived from *name*.
+- `_safe_out_path(root: Path, relpath: str) -> Path` _(internal)_ — Resolve *relpath* under *root*, rejecting paths that escape the repo.
 - `_slug(name: str) -> str` _(internal)_ — Slugify *name* into a DSL-safe identifier fragment.
 - `_q(text: str) -> str` _(internal)_ — Quote *text* as a Structurizr DSL string literal.
 - `_coerce_list(raw: object) -> list[dict]` _(internal)_ — Return *raw* as a list of dicts, tolerating a single table.
-- `_read_toml_file(path: Path) -> dict | None` _(internal)_ — Parse a standalone TOML file, degrading to ``None`` on any failure.
-- `resolve_model_section(root: Path) -> dict | None` — Locate the C4 model table — external file or inline pyproject.
 - `_parse_components(section: dict) -> tuple[Component, ...]` _(internal)_ — Parse components from rich ``[[component]]`` tables + the simple map.
 - `load_c4_config(root: Path) -> C4Config | None` — Load the C4 model skeleton for the repo.
 - `assign_components(modules: list[str], components: tuple[Component, ...]) -> tuple[dict[str, str], list[str]]` — Map each module to a component by longest-prefix match.
 - `_under_prefix(module: str, prefix: str) -> bool` _(internal)_ — Return whether *module* equals *prefix* or is a dotted child of it.
 - `derive_component_edges(graph: dict[str, set[str]], assigned: dict[str, str]) -> set[tuple[str, str]]` — Collapse module-level import edges to component-level edges.
+- `_warn_unknown_relationships(config: C4Config, component_ids: dict[str, str]) -> None` _(internal)_ — Warn for [[relationship]] entries naming a component that doesn't exist.
 - `render_dsl(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the full Structurizr DSL workspace text.
 - `_render_model(config: C4Config, ids: _IdMaps) -> list[str]` _(internal)_ — Render the ``model`` block's element declarations.
 - `_component_description(component: Component) -> str` _(internal)_ — Return a component's box description for C4 rendering.

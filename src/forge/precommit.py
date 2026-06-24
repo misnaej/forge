@@ -13,9 +13,10 @@ but does not refuse a commit). Shipped to consumers via the
 ``forge-scripts`` pip package and invoked by ``.githooks/pre-commit``
 after ``install-forge-githooks``.
 
-Three further steps are **opt-in** (off by default): ``doctest``
-(``pytest --doctest-modules``), ``typecheck`` (``pyrefly``), and
-``doc_consistency`` (doc claims vs repo state). Opt in by listing them in
+Four further steps are **opt-in** (off by default): ``doctest``
+(``pytest --doctest-modules``), ``typecheck`` (``pyrefly``),
+``doc_consistency`` (doc claims vs repo state), and ``c4`` (C4 diagram
+drift; self-skips when no ``[tool.forge.c4]``). Opt in by listing them in
 ``[tool.forge.precommit] enable``. The same table's
 ``disable`` list force-skips any default step; ``--only`` / ``--skip``
 do the same for a single run. This override layer sits on top of each
@@ -55,7 +56,7 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
 from forge import config
-from forge.gen_c4 import resolve_model_section
+from forge.config import resolve_model_section
 from forge.git_utils import (
     SCOPE_ALL,
     VALID_SCOPES,

@@ -171,6 +171,67 @@ def read_pyproject_raw(repo_root: Path) -> dict:
         return {}
 
 
+DEFAULT_C4_MODEL_FILE = "c4.toml"
+
+
+def _read_toml_file(path: Path) -> dict | None:
+    """Parse a standalone TOML file, degrading to ``None`` on any failure.
+
+    Args:
+        path: Path to the TOML model file.
+
+    Returns:
+        Parsed table, or ``None`` when the file is missing, unreadable, or
+        not valid TOML.
+    """
+    if not path.is_file():
+        return None
+    try:
+        return tomllib.loads(path.read_text())
+    except (OSError, ValueError):
+        logger.exception("Could not read C4 model file %s", path)
+        return None
+
+
+def resolve_model_section(repo_root: Path) -> dict | None:
+    """Locate the C4 model table — external file or inline pyproject.
+
+    Resolution, highest precedence first:
+
+    1. ``[tool.forge.c4].config`` — an explicit path to a standalone TOML
+       model file (the model's tables live at that file's top level).
+    2. A conventional ``c4.toml`` at the repo root (used when present and
+       ``[tool.forge.c4]`` carries no inline ``system``).
+    3. The inline ``[tool.forge.c4]`` table itself.
+
+    Keeping the verbose model out of ``pyproject.toml`` is the point of
+    (1)/(2): a Structurizr model is its own artifact, like ``ruff.toml``.
+
+    Args:
+        repo_root: Repository root directory.
+
+    Returns:
+        The model table dict, or ``None`` when C4 generation is not opted
+        into (no section, no file, and no inline ``system``).
+    """
+    section = (
+        read_pyproject_raw(repo_root).get("tool", {}).get("forge", {}).get("c4", {})
+    )
+    configured = section.get("config")
+    if configured:
+        candidate = (repo_root / configured).resolve()
+        if not candidate.is_relative_to(repo_root.resolve()):
+            logger.error(
+                "C4 model path %r escapes the repository root — refusing to read.",
+                configured,
+            )
+            return None
+        return _read_toml_file(candidate)
+    if not section.get("system"):
+        return _read_toml_file(repo_root / DEFAULT_C4_MODEL_FILE)
+    return section
+
+
 def load_config(repo_root: Path) -> ForgeConfig:
     """Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.
 

@@ -67,8 +67,9 @@ ask — a wrong guess produces a confidently misleading diagram.
 5. **Write `c4.toml`** at the repo root from the answers (top-level tables:
    `system`, `[[person]]`, `[[external]]`, `[[container]]`, rich `[[component]]`
    with `name` / `description` / `technology` / `modules`, and
-   `[[relationship]]`). Set `[tool.forge.c4].config = "c4.toml"` in
-   `pyproject.toml`. To embed the diagram in the README, add the
+   `[[relationship]]`). A root `c4.toml` is auto-detected; set
+   `[tool.forge.c4].config = "<path>"` only if you put the model elsewhere.
+   To embed the diagram in the README, add the
    `<!-- forge:c4:start -->` / `<!-- forge:c4:end -->` markers where it should
    appear and set `readme = "README.md"`.
 
