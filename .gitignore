@@ -43,3 +43,7 @@ issue_*.md
 # Per-clone forge git-hook version stamp (written by install-forge-githooks).
 # Gitignored so refreshing the recorded version never dirties the tracked hooks.
 .githooks/.forge-hook-version
+
+# forge-gen-c4 on-demand offline HTML view (regenerate: forge-gen-c4 --format html)
+docs/architecture.html
+docs/mermaid.min.js

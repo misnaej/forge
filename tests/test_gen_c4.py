@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from forge.gen_c4 import (
+    README_C4_END,
+    README_C4_START,
     Component,
     Relationship,
     _slug,
@@ -15,7 +17,11 @@ from forge.gen_c4 import (
     load_c4_config,
     main,
     render_dsl,
+    render_html,
+    render_mermaid,
+    render_readme_block,
     resolve_model_section,
+    sync_readme,
 )
 
 
@@ -204,6 +210,99 @@ def test_main_writes_then_checks_in_sync(
 
     monkeypatch.setattr("sys.argv", ["forge-gen-c4", "--check"])
     assert main() == 0
+
+
+RICH_MODEL = """\
+system = "Demo"
+output = "docs/architecture.dsl"
+readme = "README.md"
+
+[[container]]
+name = "app"
+technology = "Python"
+description = "The app"
+
+[[component]]
+name = "Core"
+technology = "Python"
+description = "Does the core work"
+modules = ["demo.core"]
+
+[[component]]
+name = "IO"
+description = "Reads and writes"
+modules = ["demo.io"]
+"""
+
+
+def test_rich_component_carries_description_and_technology(tmp_path: Path) -> None:
+    """A [[component]] table populates description + technology on the box."""
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(RICH_MODEL)
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    core = next(c for c in config.components if c.name == "Core")
+    assert core.description == "Does the core work"
+    assert core.technology == "Python"
+    assert core.prefixes == ("demo.core",)
+
+
+def test_render_mermaid_is_canonical_with_labeled_edges(tmp_path: Path) -> None:
+    """Mermaid uses literal tags, bold boxes, and labels every edge."""
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(SAMPLE_MODEL)
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    mermaid = render_mermaid(config, {("IO", "Core")})
+    assert mermaid.startswith("graph LR")
+    assert "<b>Core</b>" in mermaid  # literal tag, not entity-escaped
+    assert '-->|"imports"|' in mermaid  # derived edge labeled
+    assert '-->|"writes via subprocess"|' in mermaid  # declared edge label
+
+
+def test_render_html_escapes_mermaid_for_pre_block(tmp_path: Path) -> None:
+    """The HTML <pre> double-escapes the Mermaid so textContent decodes back."""
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(SAMPLE_MODEL)
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    page = render_html(config, render_mermaid(config, set()))
+    assert '<pre class="mermaid">' in page
+    assert f'src="{"mermaid.min.js"}"' in page
+    assert "&lt;b&gt;" in page  # literal <b> escaped for the <pre>
+
+
+def test_render_readme_block_wraps_mermaid_in_markers() -> None:
+    """The README block is marker-delimited and fences the Mermaid."""
+    block = render_readme_block("graph LR\n")
+    assert block.startswith(README_C4_START)
+    assert block.endswith(README_C4_END)
+    assert "```mermaid" in block
+
+
+def test_sync_readme_writes_then_checks(tmp_path: Path) -> None:
+    """sync_readme splices the block in, and a re-check reports in sync."""
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(RICH_MODEL)
+    (tmp_path / "README.md").write_text(
+        f"# Demo\n\n{README_C4_START}\n{README_C4_END}\n\nrest\n",
+    )
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    mermaid = render_mermaid(config, set())
+    assert sync_readme(tmp_path, config, mermaid, check=False) == 0
+    assert "```mermaid" in (tmp_path / "README.md").read_text()
+    assert sync_readme(tmp_path, config, mermaid, check=True) == 0
+
+
+def test_sync_readme_check_fails_on_missing_markers(tmp_path: Path) -> None:
+    """A README without the markers is a configuration error (exit 1)."""
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(RICH_MODEL)
+    (tmp_path / "README.md").write_text("# Demo\nno markers here\n")
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    assert sync_readme(tmp_path, config, "graph LR\n", check=True) == 1
 
 
 def test_main_check_detects_drift(

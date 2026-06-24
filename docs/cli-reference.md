@@ -286,17 +286,24 @@ options:
 ## forge-gen-c4
 
 ```text
-usage: forge-gen-c4 [-h] [--roots [ROOTS ...]] [--check] [--output OUTPUT]
+usage: forge-gen-c4 [-h] [--format {dsl,html,mermaid}] [--roots [ROOTS ...]]
+                    [--check] [--output OUTPUT]
 
-Generate a C4 architecture model (Structurizr DSL) from the import graph +
-[tool.forge.c4] config.
+Generate a C4 architecture model from the import graph + a [tool.forge.c4] /
+c4.toml model. Emits Structurizr DSL (default) or a self-contained offline
+HTML view.
 
 options:
-  -h, --help           show this help message and exit
-  --roots [ROOTS ...]  Source dirs to scan. Defaults to the repo's configured
-                       source roots.
-  --check              Verify the committed DSL is in sync; do not write.
-  --output OUTPUT      Override the output path. Use '-' to write to stdout.
+  -h, --help            show this help message and exit
+  --format {dsl,html,mermaid}
+                        Output: 'dsl' (Structurizr + README block, default),
+                        'html' (offline view), or 'mermaid' (raw Mermaid to
+                        stdout).
+  --roots [ROOTS ...]   Source dirs to scan. Defaults to the repo's configured
+                        source roots.
+  --check               Verify the committed artifact is in sync; do not
+                        write.
+  --output OUTPUT       Override the output path. Use '-' to write to stdout.
 ```
 
 ## forge-gen-cli-reference

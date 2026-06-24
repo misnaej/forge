@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_47 modules, 455 symbols._
+_47 modules, 473 symbols._
 
 ## `forge._hook_helpers`
 
@@ -245,6 +245,7 @@ _47 modules, 455 symbols._
 - `class Component` — A named component and the module prefixes that constitute it.
 - `class Relationship` — A human-declared component-to-component relationship.
 - `class C4Config` — The human-authored ``[tool.forge.c4]`` model skeleton.
+- `class _IdMaps` _(internal)_ — Maps display names to unique DSL-safe identifiers.
 - `class _IdAllocator` _(internal)_ — Allocates unique, DSL-safe identifiers from display names.
   - `allocate(self, name: str, fallback: str) -> str` — Return a unique identifier derived from *name*.
 - `_slug(name: str) -> str` _(internal)_ — Slugify *name* into a DSL-safe identifier fragment.
@@ -252,18 +253,34 @@ _47 modules, 455 symbols._
 - `_coerce_list(raw: object) -> list[dict]` _(internal)_ — Return *raw* as a list of dicts, tolerating a single table.
 - `_read_toml_file(path: Path) -> dict | None` _(internal)_ — Parse a standalone TOML file, degrading to ``None`` on any failure.
 - `resolve_model_section(root: Path) -> dict | None` — Locate the C4 model table — external file or inline pyproject.
+- `_parse_components(section: dict) -> tuple[Component, ...]` _(internal)_ — Parse components from rich ``[[component]]`` tables + the simple map.
 - `load_c4_config(root: Path) -> C4Config | None` — Load the C4 model skeleton for the repo.
 - `assign_components(modules: list[str], components: tuple[Component, ...]) -> tuple[dict[str, str], list[str]]` — Map each module to a component by longest-prefix match.
 - `_under_prefix(module: str, prefix: str) -> bool` _(internal)_ — Return whether *module* equals *prefix* or is a dotted child of it.
 - `derive_component_edges(graph: dict[str, set[str]], assigned: dict[str, str]) -> set[tuple[str, str]]` — Collapse module-level import edges to component-level edges.
 - `render_dsl(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the full Structurizr DSL workspace text.
-- `_render_model(config: C4Config, sys_id: str, person_ids: dict[str, str], external_ids: dict[str, str], container_ids: dict[str, str], component_ids: dict[str, str]) -> list[str]` _(internal)_ — Render the ``model`` block's element declarations.
-- `_component_summary(component: Component) -> str` _(internal)_ — Return a one-line description naming a component's module prefixes.
-- `_render_relationships(config: C4Config, sys_id: str, person_ids: dict[str, str], external_ids: dict[str, str], component_ids: dict[str, str], edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the relationship statements of the ``model`` block.
+- `_render_model(config: C4Config, ids: _IdMaps) -> list[str]` _(internal)_ — Render the ``model`` block's element declarations.
+- `_component_description(component: Component) -> str` _(internal)_ — Return a component's box description for C4 rendering.
+- `_render_relationships(config: C4Config, ids: _IdMaps, edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the relationship statements of the ``model`` block.
 - `_render_views(config: C4Config, sys_id: str, container_ids: dict[str, str]) -> list[str]` _(internal)_ — Render the ``views`` block.
+- `build_model(root: Path, roots: list[Path]) -> tuple[C4Config, set[tuple[str, str]], list[str]] | None` — Assemble the C4 model: config, derived edges, and unmatched modules.
 - `generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None` — Build the DSL text and unmatched-module list for the repo.
+- `_m(text: str) -> str` _(internal)_ — Escape label *text* for safe embedding in a Mermaid node label.
+- `render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the model as a Mermaid flowchart (offline-renderable).
+- `_mermaid_box(name: str, technology: str, description: str) -> str` _(internal)_ — Build a multi-line Mermaid box label: bold name, technology, description.
+- `_mermaid_edges(config: C4Config, person_ids: dict[str, str], external_ids: dict[str, str], container_ids: dict[str, str], component_ids: dict[str, str], edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the Mermaid relationship lines.
+- `render_html(config: C4Config, mermaid_text: str) -> str` — Wrap a Mermaid diagram in a self-contained, offline HTML page.
+- `_copy_vendored_mermaid(dest_dir: Path) -> None` _(internal)_ — Write the vendored Mermaid bundle next to an emitted HTML file.
 - `_warn_unmatched(unmatched: list[str]) -> None` _(internal)_ — Log a coverage warning naming modules in no component.
-- `main() -> int` — Generate or verify the C4 Structurizr DSL artifact.
+- `render_readme_block(mermaid_text: str) -> str` — Render the managed README block embedding the Mermaid diagram.
+- `_splice_readme(readme_text: str, block: str) -> str | None` _(internal)_ — Replace the managed C4 block in *readme_text* with *block*.
+- `_readme_path(root: Path, config: C4Config) -> Path` _(internal)_ — Return the configured README path under *root*.
+- `sync_readme(root: Path, config: C4Config, mermaid_text: str, *, check: bool) -> int` — Write or verify the managed C4 block inside the configured README.
+- `_emit_mermaid(config: C4Config, edges: set[tuple[str, str]], output: str | None) -> int` _(internal)_ — Print or write the canonical Mermaid source.
+- `_emit_html(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the offline HTML view (+ vendored Mermaid sidecar).
+- `_emit_dsl(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the canonical DSL artifact and the README C4 block.
+- `main() -> int` — Generate or verify the C4 artifacts (DSL + README block, or HTML).
+- `_parse_args() -> argparse.Namespace` _(internal)_ — Parse the ``forge-gen-c4`` command-line arguments.
 - `_resolve_roots(root: Path, explicit: list[str] | None) -> list[Path]` _(internal)_ — Resolve the source roots to scan for the import graph.
 
 ## `forge.gen_cli_reference`
@@ -451,6 +468,7 @@ _47 modules, 455 symbols._
 - `step_repo_structure(repo_root: Path) -> StepResult` — Run ``verify-forge-repo-structure``; hard-fail if missing (FOUNDATION §2).
 - `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
+- `step_c4(repo_root: Path) -> StepResult` — Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
 - `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.
 - `step_cve_usage(repo_root: Path) -> StepResult` — Run ``verify-forge-cve-usage`` — the usage-scoped second stage on pip_audit.

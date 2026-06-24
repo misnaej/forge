@@ -149,6 +149,34 @@ Scope boundaries for v1:
 - Modules matching no component prefix are **reported, not silently
   dropped** (a coverage warning), so the picture can't quietly lie.
 
+### Output formats (v1, implemented)
+
+`forge-gen-c4 --format`:
+
+- **`dsl`** (default) — writes `docs/architecture.dsl` (canonical,
+  committed) and, when `[tool.forge.c4].readme` is set, keeps a managed
+  Mermaid block in the README (`<!-- forge:c4:start/end -->`) in sync.
+- **`html`** — a self-contained **offline** view: a Mermaid flowchart in
+  an HTML page that references a vendored `mermaid.min.js` (MIT, shipped
+  as forge package data, copied next to the HTML). Needs only
+  `pip install` — no Docker, Java, Graphviz, or network. The generated
+  HTML + sidecar are gitignored (on-demand).
+- **`mermaid`** — raw canonical Mermaid to stdout (for embedding).
+
+Every relationship line carries a label: derived import edges read
+**"imports"**; human-declared `[[relationship]]` edges carry their own
+phrase (the runtime/subprocess "uses" the import graph can't see). Boxes
+carry **description + technology** via the rich `[[component]]` config
+(the simple `[components]` map remains a quick-start shorthand).
+
+### Drift wiring (the diagram updates at each PR)
+
+The opt-in **`c4` pre-commit step** runs `forge-gen-c4 --check`,
+verifying both `docs/architecture.dsl` and the README block against the
+current import graph. A structural change that isn't regenerated fails
+the commit — so the diagram refreshes at each PR exactly when the
+architecture actually changed. Self-skips when no `[tool.forge.c4]`.
+
 ## 6. Why this fits forge's existing patterns
 
 - **Reuses `forge.audit.deps`** via a new public `build_module_graph`
@@ -195,3 +223,10 @@ inference, Code-level views, or a sub-agent reasoning fleet.
 3. Is "Structurizr vNext" fully free/OSS and DSL-compatible long-term?
 4. Should the `/c4` skill grow into a skill + sub-agent fleet (one
    agent per C4 level) or stay a single reasoning pass? (v1: single.)
+5. **Shape/style per element type** — C4's reference notation uses
+   distinct shapes/colors for person vs. system vs. container vs.
+   component vs. external. v1's Mermaid flowchart uses simple boxes
+   (persons as stadiums, externals as subroutine boxes) without the full
+   C4 visual vocabulary. A later pass could emit Mermaid `classDef`
+   styling or switch the HTML view to Mermaid's C4 diagram type (once its
+   experimental status settles) for shape fidelity.

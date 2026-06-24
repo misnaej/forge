@@ -207,6 +207,13 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "Repo-relative path forge-gen-c4 writes the emitted Structurizr DSL "
         "to (overridable inline or in the model file).",
     ),
+    ConfigKey(
+        ("tool", "forge", "c4", "readme"),
+        "unset (no README block)",
+        "When set to a README path, forge-gen-c4 also keeps a managed Mermaid "
+        "C4 block (between <!-- forge:c4:start/end --> markers) in sync, and "
+        "the c4 pre-commit step fails on drift.",
+    ),
 )
 
 # Third-party tools forge reads from their OWN native section rather than

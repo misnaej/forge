@@ -46,7 +46,7 @@ Code.
      doc generator
    - gen_api_digest.py: `forge-gen-api-digest` — public-symbol API
      digest generator
-   - gen_c4.py: `forge-gen-c4` — emits a C4 architecture model (Structurizr DSL) from the import graph + a `[tool.forge.c4]` / `c4.toml` model skeleton; `--check` drift mode; opt-in, self-skips when unconfigured
+   - gen_c4.py: `forge-gen-c4` — emits a C4 architecture model from the import graph + a `[tool.forge.c4]` / `c4.toml` model skeleton; `--format dsl` (Structurizr + managed README block), `--format html` (self-contained offline Mermaid view, vendored `mermaid.min.js`), `--format mermaid` (raw); `--check` drift mode backs the opt-in `c4` pre-commit step; opt-in, self-skips when unconfigured
    - gen_common.py: shared drift-check helper for the `forge-gen-*`
      doc generators
    - doctor.py: `forge-doctor` — environment diagnostics
@@ -76,6 +76,7 @@ Code.
 3. **Package Data (`src/forge/data/`)**
    - FOUNDATION.md: shipped copy of the foundation document (symlink)
    - CHANGELOG.md: shipped copy of the changelog (symlink) — read by `forge-upgrade` to surface consumer-action upgrade notes
+   - mermaid.min.js: vendored Mermaid UMD bundle (MIT, pinned) — copied next to `forge-gen-c4 --format html` output so the diagram renders offline
 
 ## Agents Directory (`agents/`)
 

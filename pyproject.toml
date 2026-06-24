@@ -108,8 +108,10 @@ dev_branch = "dev"
 enabled = true
 
 [tool.forge.precommit]
-# Forge dogfoods its own opt-in typecheck step (see [tool.forge.typecheck]).
-enable = ["typecheck"]
+# Forge dogfoods its own opt-in steps: typecheck (see [tool.forge.typecheck])
+# and c4 (architecture-diagram drift guard — keeps docs/architecture.dsl + the
+# README C4 block in sync with the import graph; self-skips without [tool.forge.c4]).
+enable = ["typecheck", "c4"]
 
 [tool.forge.typecheck]
 # Forge runs pyrefly as a BLOCKING gate: type errors are forge's own code,
@@ -161,7 +163,7 @@ where = ["src"]
 include = ["forge*"]
 
 [tool.setuptools.package-data]
-forge = ["data/*.md"]
+forge = ["data/*.md", "data/*.js"]
 
 [tool.setuptools_scm]
 # Version derived from the latest git tag (e.g. v1.1.0 → 1.1.0).

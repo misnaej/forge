@@ -36,20 +36,30 @@ The work splits into a **reasoned** half (you) and a **deterministic** half
 
 3. **Write the model file.** Create or update `c4.toml` at the repo root
    (top-level tables: `system`, `[[person]]`, `[[external]]`,
-   `[[container]]`, `[components]`, `[[relationship]]`). Point
+   `[[container]]`, `[[component]]`, `[[relationship]]`). Point
    `[tool.forge.c4].config = "c4.toml"` in `pyproject.toml` if not already.
-   Add `[[relationship]]` entries for **runtime/subprocess edges the import
-   graph can't see** (e.g. a dispatcher shelling out to workers).
+   - Use the **rich `[[component]]`** form (`name` / `description` /
+     `technology` / `modules`) so each box carries meaning — C4 wants
+     described boxes, not bare names. (`[components]` name = [prefixes] is
+     a quick-start shorthand where the description defaults to the prefix
+     list.)
+   - Add `[[relationship]]` entries for **runtime/subprocess edges the
+     import graph can't see** (e.g. a dispatcher shelling out to workers).
+   - To embed the diagram in the README, add the
+     `<!-- forge:c4:start -->` / `<!-- forge:c4:end -->` markers where it
+     should appear and set `readme = "README.md"` in the model.
 
 4. **Generate + review coverage.** Run `forge-gen-c4`. It warns about any
    module matching no component prefix — fix the groupings until coverage
    is complete (or deliberately exclude with a documented reason). Inspect
-   the emitted `docs/architecture.dsl`.
+   `docs/architecture.dsl` (and the refreshed README block).
 
-5. **Render (optional, the user's choice).** The DSL renders in
+5. **View it.** `forge-gen-c4 --format html` emits a self-contained,
+   **offline** `docs/architecture.html` (Mermaid + a vendored
+   `mermaid.min.js` sidecar — no tools, no network). The canonical
+   `docs/architecture.dsl` also renders in
    [Structurizr Lite](https://docs.structurizr.com/lite) (MIT) or via the
-   Structurizr CLI (which also exports PlantUML/Mermaid). Forge emits the
-   text and renders nothing itself.
+   Structurizr CLI. Forge emits text/HTML and renders nothing itself.
 
 ## Rules
 
