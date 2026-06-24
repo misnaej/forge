@@ -42,6 +42,31 @@ Stop immediately and report if any step fails.
    - Keep legitimate domain-specific WebFetch rules.
    - Write the cleaned file back.
 
+## Phase 1.5: Pending promotion (dual-track repos)
+
+`forge-next-prep --tag` (Phase 1) prints a `Pending promotion: dev at
+vX.Y.Z; <base> at vA.B.C (MINOR bump)` advisory when the repo is
+**dual-track** (`[tool.forge].dev_branch != base_branch`) and the slow
+channel is a minor or more behind. **Single-track repos never see this
+line — skip the whole phase.**
+
+When a promotion is pending, handle it **before** backlog task selection —
+a pending promotion is usually higher priority than starting new work: it
+ships completed minors to the slow channel and stops the base branch from
+silently drifting minors behind across sessions (the failure mode that
+otherwise accumulates a staged-catch-up backlog).
+
+1. **Surface it as the top recommendation**, above any Phase 4 backlog
+   item — name the pending minor(s) in ascending order.
+2. **Offer to run the repo's promotion flow now** — in forge, the
+   `/promote` skill; consumers substitute their own promotion command.
+   Promotion opens a remote PR, so it is **confirm-first**, never
+   automatic.
+3. On confirmation, invoke it (forge: `Skill(skill="promote")`). It
+   promotes **one minor at a time**, is idempotent (refuses a duplicate
+   open promotion PR), and owns its own post-merge tag relocation.
+4. If declined, note the pending promotion and continue.
+
 ## Phase 2: Documentation Hygiene (optional)
 
 5. **Check for stale docs**
@@ -115,6 +140,7 @@ Stop immediately and report if any step fails.
 
 - **Always fetch from remote** before assuming branch / PR state.
 - **Tag the merge before pruning branches** — version-tracked repos need the release tag at the merge commit, not at some later commit. The tag step (Step 2's `--tag` bullet) runs after `git pull`, before stale-branch cleanup, so the tag points at the canonical release commit.
+- **Surface a pending promotion before backlog selection** (Phase 1.5) — on dual-track repos, offer the promotion (confirm-first) ahead of picking new work, so the slow channel never drifts minors behind. Silent on single-track repos.
 - **Force-delete (`-D`) only `MERGED` branches.** `forge-next-prep` deletes merged branches with safe `-d` and reports any it skips for "unmerged commits." A squash-merge makes `-d` refuse (the squashed commits are not ancestors of the base), so for each skipped branch, confirm its PR state is `MERGED` (`gh pr view <n> --json state` → `MERGED`) and then `git branch -D <branch>`. A `CLOSED`-but-unmerged PR means the work never landed — **leave it for the user; never `-D` it.** Never `-D` a branch with no merged PR.
 - **Never proceed with dirty git state** — always stop and let the user decide.
 - **Never delete `.plan/CONTINUATION.md`** — carry it forward in place (Phase 6).

@@ -57,13 +57,23 @@ be released** — never the last-released version.
 - **One minor at a time, ascending.** When `main` is several minors behind,
   promote each minor as its own clean squash commit; never lump multiple
   minors into one PR.
-- The release branch's tree reproduces the target minor's release tree
-  (cut from `main`, bring the minor's tree) **except for the curated
-  `@main` CHANGELOG entry it adds** (§5) — so the diff against the tag is
-  limited to `CHANGELOG.md`, which the release fingerprint ignores. To
-  also reconcile `dev`'s CHANGELOG without a separate back-merge PR, merge
-  `main` into the release branch **first** (§5 option b) before adding the
-  new entry.
+- **Always build the release branch by tree-reconstruction from `main`** —
+  *never* branch at `dev`'s tip. Because every promotion is a squash,
+  `main`'s commits are not ancestors of `dev`, so a `dev`-tip branch
+  produces a PR whose three-dot diff re-shows every already-promoted minor
+  (merge-base falls back to an ancient commit). The correct, always-clean
+  recipe:
+  ```bash
+  git switch -c release/vX.Y.0 origin/main
+  git rm -r --cached . -q && git checkout vX.Y.0 -- . && git add -A  # tree = the tagged release
+  git checkout origin/main -- CHANGELOG.md                            # preserve main's curated CHANGELOG
+  # then author the new ## vX.Y.0 entry on top of main's CHANGELOG
+  ```
+  Parent = `main`, tree = the release + main's CHANGELOG + the new entry.
+  The PR diff is exactly the release's code delta plus the one new
+  CHANGELOG entry — two-dot == three-dot, no re-shown minors. Restoring
+  `CHANGELOG.md` from `main` (not the tag tree) is what keeps `main`'s
+  curated history from regressing (§5).
 - Run via the `/promote` skill, which uses `forge-next-prep
   --promotion-status` for the ordered pending list.
 
@@ -113,24 +123,23 @@ minus `CHANGELOG.md`). So the release branch passes CI and the minor tag
 still relocates onto `main`, while any *non*-CHANGELOG edit to a release
 branch is rejected exactly as before.
 
-**Keeping `dev`'s CHANGELOG in sync.** Because the entry lands on `main`
-first, `dev` lacks it until reconciled. Two ways — pick per cadence:
+**`main` is the CHANGELOG source of record.** The curated log lives on
+`main` and is carried forward at each promotion by restoring
+`CHANGELOG.md` from `origin/main` in the release branch (§3), *not* from
+the tagged `dev` tree. This is the key to never regressing the log: the
+release branch starts from `main`'s CHANGELOG and only appends the new
+entry, so no prior entry is lost — **no per-release back-merge is
+required**, and `dev`'s `CHANGELOG.md` is allowed to lag (it is the
+pre-release branch; consumers reading release notes pin `@main`).
 
-- **(a) Post-merge back-merge PR (`main → dev`).** After the promotion
-  merges, open a small PR that brings `main`'s new CHANGELOG entry onto
-  `dev` (plus the required rolling-next `plugin.json` bump). Clean and
-  immediate. **Not always worth it:** when `dev` is moving fast (heavy
-  merge traffic), a per-release back-merge PR is churn that goes stale
-  quickly — skip it and use (b).
-- **(b) Align at the next release PR.** When you cut the next
-  `release/vX.Y.Z` branch, the **first task** is to merge `main` into the
-  branch, carrying `main`'s curated CHANGELOG forward; *then* add the new
-  minor's entry on top. The channels reconcile at promotion time with no
-  extra PR. This is the default for busy repos.
-
-  Either way the entry flows `release branch → main`, then back to `dev`
-  by (a) or (b). `main` is the channel of record for CHANGELOG content;
-  `dev` mirrors it.
+- **Back-merging `main → dev` is optional**, not mandatory. Do it if you
+  want `dev`'s `CHANGELOG.md` to mirror `main` for local readability (a
+  small PR: the entry + the rolling-next `plugin.json` bump). Skip it
+  freely when `dev` is moving fast — the §3 recipe already prevents
+  regression by restoring the log from `main`, so a stale `dev` CHANGELOG
+  has no downstream effect. (Earlier guidance treated this back-merge as
+  required; it is not, once the release branch restores `CHANGELOG.md`
+  from `main` rather than overwriting it from the tag tree.)
 
 - **Enforcement is a non-blocking advisory.** `forge-next-prep
   --promotion-status` (run by `/promote`) appends a `⚠️` line when a
