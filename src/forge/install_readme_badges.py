@@ -32,12 +32,11 @@ from __future__ import annotations
 import argparse
 import logging
 import re
-import subprocess
 import urllib.parse
 from typing import TYPE_CHECKING
 
 from forge.config import read_pyproject_raw
-from forge.git_utils import configure_cli_logging
+from forge.git_utils import configure_cli_logging, run_git
 from forge.git_utils import repo_root as get_repo_root
 from forge.upgrade import find_pin
 
@@ -106,16 +105,9 @@ def _git_remote_slug(root: Path) -> str | None:
         HTTPS form), or ``None`` when there is no origin or it is not a
         recognizable GitHub URL.
     """
-    proc = subprocess.run(
-        ["git", "remote", "get-url", "origin"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
+    url = run_git("remote", "get-url", "origin", cwd=root, check=False)
+    if not url:
         return None
-    url = proc.stdout.strip()
     match = re.search(r"github\.com[:/]+(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$", url)
     if match is None:
         return None

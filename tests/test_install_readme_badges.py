@@ -50,16 +50,12 @@ def test_git_remote_slug_parses_ssh_and_https(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The owner/repo slug is parsed from SSH and HTTPS origin URLs."""
-
-    def _fake(url: str) -> object:
-        return type("P", (), {"returncode": 0, "stdout": url})()
-
     monkeypatch.setattr(
-        rb.subprocess, "run", lambda *_a, **_k: _fake("git@github.com:acme/widget.git")
+        rb, "run_git", lambda *_a, **_k: "git@github.com:acme/widget.git"
     )
     assert rb._git_remote_slug(tmp_path) == "acme/widget"
     monkeypatch.setattr(
-        rb.subprocess, "run", lambda *_a, **_k: _fake("https://github.com/acme/widget")
+        rb, "run_git", lambda *_a, **_k: "https://github.com/acme/widget"
     )
     assert rb._git_remote_slug(tmp_path) == "acme/widget"
 
