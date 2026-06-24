@@ -178,24 +178,47 @@ def _force_move_tag(repo_root: Path, tag: str, commit_sha: str) -> None:
 
 
 def _report_unreproduced(states: list[_TagState], base_ref: str) -> None:
-    """Warn about minor tags whose release fingerprint no base commit reproduces.
+    """Warn about un-reproduced minor tags, ignoring ancient (skipped) ones.
 
-    Such a tag names a minor that was never promoted to the base branch,
-    so it cannot be aligned — that is a promotion gap, not a tag-placement
-    bug.
+    A minor tag with no reproducing base commit either (a) is genuinely
+    **pending** promotion — newer than the highest minor already on the base
+    branch — and is worth a warning, or (b) is an **ancient gap**: a minor
+    *below* the base's current line that was never promoted and can never be
+    backfilled (you cannot insert it beneath already-promoted higher
+    minors). Ancient gaps are permanent historical footnotes, not
+    actionable, so they log at INFO instead of WARNING — otherwise every
+    run nags about long-dead dev-only tags (e.g. v1.22.0 once the base is on
+    v2.x).
+
+    "Ancient" is determined self-referentially: the highest minor the base
+    actually reproduces is its current line; anything un-reproduced below
+    that was skipped.
 
     Args:
         states: All resolved tag states.
         base_ref: Base branch ref, for the message.
     """
+    aligned = [v for s in states if s.target is not None and (v := parse_semver(s.tag))]
+    base_line = max(aligned) if aligned else None
     for state in states:
-        if state.target is None:
-            logger.warning(
-                "%s: no commit on %s reproduces its release fingerprint — "
-                "promote that minor before it can be aligned.",
+        if state.target is not None:
+            continue
+        version = parse_semver(state.tag)
+        if base_line is not None and version is not None and version < base_line:
+            logger.info(
+                "%s: never promoted and below %s's current line "
+                "v%d.%d.%d — ancient gap, ignoring.",
                 state.tag,
                 base_ref,
+                *base_line,
             )
+            continue
+        logger.warning(
+            "%s: no commit on %s reproduces its release fingerprint — "
+            "promote that minor before it can be aligned.",
+            state.tag,
+            base_ref,
+        )
 
 
 def _verify(states: list[_TagState], base_ref: str) -> int:

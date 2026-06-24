@@ -633,19 +633,30 @@ def test_base_tree_index_newest_commit_wins_on_tree_collision(
 # ---------------------------------------------------------------------------
 
 
-def test_report_unreproduced_warns_for_tags_with_no_target(
+def test_report_unreproduced_warns_pending_but_ignores_ancient(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Tags with ``target=None`` produce a WARNING; tags with a target do not."""
+    """Unreproduced tag ABOVE the aligned line WARNs; BELOW it is ancient → INFO only.
+
+    SCENARIO: v2.0.0 is aligned (on base); v1.0.0 is unreproduced and below
+    it (ancient gap — never promoted, can't backfill); v2.1.0 is
+    unreproduced and above it (genuinely pending promotion).
+    EXPECTED: v2.1.0 warns, v1.0.0 does NOT warn (logs INFO "ancient"),
+    v2.0.0 (aligned) produces nothing.
+    """
     states = [
         verify_main_tags._TagState(tag="v1.0.0", target=None, current="abc123"),
-        verify_main_tags._TagState(tag="v2.0.0", target="def456", current="ghi789"),
+        verify_main_tags._TagState(tag="v2.0.0", target="def456", current="def456"),
+        verify_main_tags._TagState(tag="v2.1.0", target=None, current="ghi789"),
     ]
-    with caplog.at_level(logging.WARNING, logger="forge.verify_main_tags"):
+    with caplog.at_level(logging.INFO, logger="forge.verify_main_tags"):
         verify_main_tags._report_unreproduced(states, "origin/main")
-    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("v1.0.0" in m for m in messages)
-    assert not any("v2.0.0" in m for m in messages)
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert any("v2.1.0" in m for m in warnings)
+    assert not any("v1.0.0" in m for m in warnings)
+    assert any("v1.0.0" in m and "ancient" in m for m in infos)
+    assert not any("v2.0.0" in m for m in warnings)
 
 
 # ---------------------------------------------------------------------------
