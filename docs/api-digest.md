@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_47 modules, 473 symbols._
+_47 modules, 474 symbols._
 
 ## `forge._hook_helpers`
 
@@ -268,7 +268,7 @@ _47 modules, 473 symbols._
 - `_m(text: str) -> str` _(internal)_ — Escape label *text* for safe embedding in a Mermaid node label.
 - `render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the model as a Mermaid flowchart (offline-renderable).
 - `_mermaid_box(name: str, technology: str, description: str) -> str` _(internal)_ — Build a multi-line Mermaid box label: bold name, technology, description.
-- `_mermaid_edges(config: C4Config, person_ids: dict[str, str], external_ids: dict[str, str], container_ids: dict[str, str], component_ids: dict[str, str], edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the Mermaid relationship lines.
+- `_mermaid_edges(config: C4Config, ids: dict[str, dict[str, str]], edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the Mermaid relationship lines.
 - `render_html(config: C4Config, mermaid_text: str) -> str` — Wrap a Mermaid diagram in a self-contained, offline HTML page.
 - `_copy_vendored_mermaid(dest_dir: Path) -> None` _(internal)_ — Write the vendored Mermaid bundle next to an emitted HTML file.
 - `_warn_unmatched(unmatched: list[str]) -> None` _(internal)_ — Log a coverage warning naming modules in no component.
@@ -316,6 +316,7 @@ _47 modules, 473 symbols._
 - `_run_git(*args: str) -> str` _(internal)_ — Run a git command and return stdout.
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
+- `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
 - `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
 - `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
@@ -583,10 +584,10 @@ _47 modules, 473 symbols._
   - `needs_move(self) -> bool` — ``True`` when a base commit reproduces the tag but it sits elsewhere.
 - `_short(sha: str | None) -> str` _(internal)_ — Return a 9-char abbreviation of *sha*, or ``(none)`` when absent.
 - `_minor_tags(repo_root: Path) -> list[str]` _(internal)_ — Return every ``vX.Y.0`` tag (patch == 0), semver-sorted ascending.
-- `_base_tree_index(repo_root: Path, base_ref: str) -> dict[str, str]` _(internal)_ — Map each commit tree SHA on *base_ref* to its commit SHA.
+- `_base_tree_index(repo_root: Path, base_ref: str) -> dict[str, str]` _(internal)_ — Map each base commit's release fingerprint to its commit SHA.
 - `_tag_states(repo_root: Path, base_ref: str) -> list[_TagState]` _(internal)_ — Resolve every minor tag's current vs. target commit on *base_ref*.
 - `_force_move_tag(repo_root: Path, tag: str, commit_sha: str) -> None` _(internal)_ — Annotated-retag *tag* at *commit_sha* and force-push it.
-- `_report_unreproduced(states: list[_TagState], base_ref: str) -> None` _(internal)_ — Warn about minor tags whose tree no base commit reproduces.
+- `_report_unreproduced(states: list[_TagState], base_ref: str) -> None` _(internal)_ — Warn about minor tags whose release fingerprint no base commit reproduces.
 - `_verify(states: list[_TagState], base_ref: str) -> int` _(internal)_ — Report drift read-only and return the process exit code.
 - `_repair(repo_root: Path, states: list[_TagState], base_ref: str, *, dry_run: bool) -> int` _(internal)_ — Move every misplaced minor tag onto its base commit (or preview).
 - `main() -> int` — Verify or repair minor release tags on the base branch.
@@ -598,7 +599,7 @@ _47 modules, 473 symbols._
 
 ## `forge.verify_plugin_version`
 
-- `_is_release_commit(repo_root: Path) -> bool` _(internal)_ — Return True when ``HEAD``'s tree reproduces ANY published ``v*`` tag.
+- `_is_release_commit(repo_root: Path) -> bool` _(internal)_ — Return True when ``HEAD``'s release fingerprint matches ANY published ``v*`` tag.
 - `main() -> int` — Enforce plugin.json version > latest git tag.
 
 ## `forge.verify_repo_structure`

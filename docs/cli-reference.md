@@ -204,8 +204,8 @@ options:
 usage: forge-check-main-tags [-h] [--fix] [--dry-run]
 
 Verify (default) or repair (--fix) that every minor release tag vX.Y.0 sits on
-the base branch's squash commit, matched by tree equality. Self-skips single-
-branch repos.
+the base branch's squash commit, matched by release fingerprint (tree content
+minus CHANGELOG.md). Self-skips single-branch repos.
 
 options:
   -h, --help  show this help message and exit
