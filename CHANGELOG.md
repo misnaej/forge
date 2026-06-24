@@ -20,6 +20,25 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.4.0 — 2026-06-24
+
+Additive — no consumer action required.
+
+### Fixes
+- **Release matching tolerates a curated `@main` CHANGELOG.**
+  `forge-check-main-tags` and the `plugin_version` pre-commit guard now
+  compare a **release fingerprint** (tree content minus `CHANGELOG.md`),
+  so a `release/vX.Y.Z` branch may finalize its condensed `@main`
+  CHANGELOG entry without breaking CI or blocking the minor-tag
+  relocation. Any non-`CHANGELOG.md` difference is still rejected. Fixes
+  the main-tag-alignment feature (v2.3.0) for repos that curate a `@main`
+  CHANGELOG (#88, #90).
+
+### Docs
+- Document the modified-release-branch pattern and the two `dev`-CHANGELOG
+  sync options in `docs/release-process.md` §2–§5 and the `/promote`
+  runbook; add the Rust governance-core split RFC under `proposals/` (#42).
+
 ## v2.3.0 — 2026-06-24
 
 Additive — no consumer action required (the new check self-skips
