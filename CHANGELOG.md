@@ -20,6 +20,23 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.6.0 — 2026-06-24
+
+Additive — no consumer action required. The C4 generator is opt-in and
+self-skips when `[tool.forge.c4]` (or a `c4.toml`) is absent.
+
+### Features
+- **`forge-gen-c4` + the `/c4` skill** — generate a
+  [C4](https://c4model.com/) architecture model from the import graph plus a
+  human-authored `c4.toml`: emits Structurizr DSL (default), a self-contained
+  **offline** HTML view (vendored Mermaid — no Docker/Java/Graphviz/network),
+  or raw Mermaid. Component dependencies are machine-derived; context,
+  containers, and runtime/subprocess edges are human-declared. Keeps a managed
+  diagram block in the README in sync, and adds an opt-in `c4` pre-commit step
+  that fails on architecture-diagram drift. `[tool.forge.c4]` config is
+  documented in `docs/configuration.md`; design rationale in
+  `docs/c4-architecture.md` (#99).
+
 ## v2.5.0 — 2026-06-24
 
 Additive — no consumer action required.

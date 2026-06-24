@@ -41,6 +41,7 @@ verify-forge-doc-consistency = "forge.verify_doc_consistency:main"
 verify-forge-cve-usage = "forge.verify_cve_usage:main"
 forge-gen-cli-reference = "forge.gen_cli_reference:main"
 forge-gen-api-digest = "forge.gen_api_digest:main"
+forge-gen-c4 = "forge.gen_c4:main"
 forge-gen-commit-types = "forge.gen_commit_types:main"
 forge-continuation-append = "forge.continuation_append:main"
 forge-doctor = "forge.doctor:main"
@@ -107,8 +108,10 @@ dev_branch = "dev"
 enabled = true
 
 [tool.forge.precommit]
-# Forge dogfoods its own opt-in typecheck step (see [tool.forge.typecheck]).
-enable = ["typecheck"]
+# Forge dogfoods its own opt-in steps: typecheck (see [tool.forge.typecheck])
+# and c4 (architecture-diagram drift guard — keeps docs/architecture.dsl + the
+# README C4 block in sync with the import graph; self-skips without [tool.forge.c4]).
+enable = ["typecheck", "c4"]
 
 [tool.forge.typecheck]
 # Forge runs pyrefly as a BLOCKING gate: type errors are forge's own code,
@@ -133,6 +136,13 @@ badge = true
 # bootstrap `readme-badges` step.
 enabled = true
 
+[tool.forge.c4]
+# Dogfood forge-gen-c4. The verbose C4 model (people, containers, components,
+# relationships) is its own artifact — kept out of pyproject in a standalone
+# c4.toml, like ruff.toml / pyrefly.toml. This is just the opt-in pointer.
+# See docs/c4-architecture.md. Render with Structurizr Lite (MIT).
+config = "c4.toml"
+
 [tool.interrogate]
 # Docstring-coverage threshold consumed by the forge-precommit step
 # `docstring_coverage`. Nested functions / closures are EXEMPT
@@ -153,7 +163,7 @@ where = ["src"]
 include = ["forge*"]
 
 [tool.setuptools.package-data]
-forge = ["data/*.md"]
+forge = ["data/*.md", "data/*.js"]
 
 [tool.setuptools_scm]
 # Version derived from the latest git tag (e.g. v1.1.0 → 1.1.0).

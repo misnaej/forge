@@ -25,6 +25,7 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from forge.config import resolve_model_section
 from forge.git_utils import configure_cli_logging, repo_root
 from forge.run_context import is_non_interactive
 
@@ -105,6 +106,23 @@ def _gate_labels(_root: Path) -> str | None:
     return None
 
 
+def _gate_c4(root: Path) -> str | None:
+    """Skip ``forge-gen-c4`` when no C4 model is configured.
+
+    C4 generation is opt-in: a repo enables it by adding ``[tool.forge.c4]``
+    (or a ``c4.toml``). Repos that haven't should not see the step fail.
+
+    Args:
+        root: Repo root, scanned for a C4 model section.
+
+    Returns:
+        A reason when no model is configured, or ``None`` when one exists.
+    """
+    if resolve_model_section(root) is None:
+        return "no [tool.forge.c4] config"
+    return None
+
+
 # `--refresh` is mandatory: install-forge-githooks is idempotent and
 # leaves managed hook files alone after the first install, so a forge
 # package upgrade leaves the hook content (and its version marker)
@@ -127,6 +145,7 @@ STEPS: tuple[Step, ...] = (
     ),
     Step(slug="api-digest", cli="forge-gen-api-digest", supports_check=True),
     Step(slug="cli-reference", cli="forge-gen-cli-reference", supports_check=True),
+    Step(slug="c4", cli="forge-gen-c4", supports_check=True, gate=_gate_c4),
     Step(
         slug="audit-deps",
         cli="forge-audit-deps",

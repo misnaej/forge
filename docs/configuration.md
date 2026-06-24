@@ -174,6 +174,28 @@ these are the keys interrogate has no concept of.)
 | `paths` | `[tool.forge].source_dirs + test_dirs` | Per-tool **override** of the scan roots for the coverage report and badge. Defaults to the repo-wide layout above; set this only when docstring-coverage should scan something different. Paths resolving outside the repo are rejected. | You want coverage scoped differently from the rest of forge — otherwise prefer setting `[tool.forge].source_dirs` once. |
 | `badge` | `false` | Generate **interrogate's own** coverage badge (via `interrogate.badge_gen`) to `.badges/DocstringCoverage.svg` for README embedding. forge invokes interrogate as a library, so this opt-in triggers the badge programmatically. | You want a coverage badge in your README. |
 
+## `[tool.forge.c4]` — C4 architecture model
+
+Configures `forge-gen-c4`, which emits a [C4](https://c4model.com) model
+(Structurizr DSL by default, plus an offline HTML or raw Mermaid view) from
+forge's import graph + a human-authored model. Opt into the `c4` pre-commit
+step (`forge-gen-c4 --check` — keeps the committed diagram in sync with the
+import graph) **by presence** of this table; it self-skips otherwise.
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `config` | _unset_ | Path to a standalone model file; a root `c4.toml` is auto-detected when present. | You keep the verbose model in its own file (like `ruff.toml`) rather than inline. |
+| `output` | `"docs/architecture.dsl"` | Where the generated Structurizr DSL is written. | You want the DSL artifact elsewhere. |
+| `readme` | _unset_ | README path for the managed Mermaid block; unset → no README block is written. | You want the diagram embedded in a README. |
+
+The model itself — the `system` / `person` / `external` / `container` /
+`component` / `relationship` tables — lives in the external `c4.toml` (pointed
+at by `config`) or inline under `[tool.forge.c4]`. The component-to-component
+edges are machine-derived from the import graph; everything else is
+human-declared. See [`docs/c4-architecture.md`](c4-architecture.md) for the
+design and rationale, and [`skills/c4/SKILL.md`](../skills/c4/SKILL.md) for
+building a model interactively.
+
 ## `[tool.forge.cve_usage]` — usage-scoped CVE filter
 
 A **second stage** on top of `pip_audit`. `pip_audit` flags vulnerable

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_46 modules, 429 symbols._
+_48 modules, 486 symbols._
 
 ## `forge._hook_helpers`
 
@@ -108,6 +108,7 @@ _46 modules, 429 symbols._
 - `_build_internal_graph(modules: dict[str, ModuleNode], raw_imports: dict[str, set[str]]) -> dict[str, set[str]]` _(internal)_ — Project raw imports onto the known-module graph.
 - `render_dependency_tree(graph: dict[str, set[str]], sccs: list[list[str]]) -> str` — Render the internal dependency graph as a readable plain-text tree.
 - `_write_tree_log(tree: str, *, output: Path | None) -> Path` _(internal)_ — Write the rendered dependency tree to ``code_health/audit_deps_tree.log``.
+- `build_module_graph(scope: Scope, roots: list[Path]) -> tuple[dict[str, ModuleNode], dict[str, set[str]]]` — Scan source roots into a module map + internal import graph.
 - `run(scope: Scope, roots: list[Path], config: DepsConfig) -> int` — Execute the full dependency-analysis pipeline.
 - `main() -> int` — CLI entry point for ``forge-audit-deps``.
 
@@ -169,6 +170,8 @@ _46 modules, 429 symbols._
 - `class ForgeConfig` — Repo configuration sourced from ``[tool.forge]``.
   - `dual_track(self) -> bool` — Return ``True`` when base and dev are distinct branches.
 - `read_pyproject_raw(repo_root: Path) -> dict` — Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
+- `_read_toml_file(path: Path) -> dict | None` _(internal)_ — Parse a standalone TOML file, degrading to ``None`` on any failure.
+- `resolve_model_section(repo_root: Path) -> dict | None` — Locate the C4 model table — external file or inline pyproject.
 - `load_config(repo_root: Path) -> ForgeConfig` — Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.
 - `_existing_dirs(repo_root: Path, dirs: list[str]) -> list[str]` _(internal)_ — Filter *dirs* to existing in-repo paths, de-duplicated, order-preserving.
 - `resolve_tool_roots(repo_root: Path, tool: str, *, include_tests: bool = False) -> list[str]` — Resolve the scan roots a layout-consuming *tool* should use.
@@ -236,6 +239,52 @@ _46 modules, 429 symbols._
 - `render_digest(digests: list[ModuleDigest]) -> str` — Render the full API digest markdown document.
 - `main() -> int` — Generate or verify the API digest doc.
 
+## `forge.gen_c4`
+
+- `class Person` — A C4 actor — someone who uses the system (System Context level).
+- `class External` — An external software system the system depends on.
+- `class Container` — A deployable unit inside the system (Container level).
+- `class Component` — A named component and the module prefixes that constitute it.
+- `class Relationship` — A human-declared component-to-component relationship.
+- `class C4Config` — The human-authored ``[tool.forge.c4]`` model skeleton.
+- `class _IdMaps` _(internal)_ — Maps display names to unique DSL-safe identifiers.
+- `class _IdAllocator` _(internal)_ — Allocates unique, DSL-safe identifiers from display names.
+  - `allocate(self, name: str, fallback: str) -> str` — Return a unique identifier derived from *name*.
+- `_safe_out_path(root: Path, relpath: str) -> Path` _(internal)_ — Resolve *relpath* under *root*, rejecting paths that escape the repo.
+- `_slug(name: str) -> str` _(internal)_ — Slugify *name* into a DSL-safe identifier fragment.
+- `_q(text: str) -> str` _(internal)_ — Quote *text* as a Structurizr DSL string literal.
+- `_coerce_list(raw: object) -> list[dict]` _(internal)_ — Return *raw* as a list of dicts, tolerating a single table.
+- `_parse_components(section: dict) -> tuple[Component, ...]` _(internal)_ — Parse components from rich ``[[component]]`` tables + the simple map.
+- `load_c4_config(root: Path) -> C4Config | None` — Load the C4 model skeleton for the repo.
+- `assign_components(modules: list[str], components: tuple[Component, ...]) -> tuple[dict[str, str], list[str]]` — Map each module to a component by longest-prefix match.
+- `_under_prefix(module: str, prefix: str) -> bool` _(internal)_ — Return whether *module* equals *prefix* or is a dotted child of it.
+- `derive_component_edges(graph: dict[str, set[str]], assigned: dict[str, str]) -> set[tuple[str, str]]` — Collapse module-level import edges to component-level edges.
+- `_warn_unknown_relationships(config: C4Config, component_ids: dict[str, str]) -> None` _(internal)_ — Warn for [[relationship]] entries naming a component that doesn't exist.
+- `render_dsl(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the full Structurizr DSL workspace text.
+- `_render_model(config: C4Config, ids: _IdMaps) -> list[str]` _(internal)_ — Render the ``model`` block's element declarations.
+- `_component_description(component: Component) -> str` _(internal)_ — Return a component's box description for C4 rendering.
+- `_render_relationships(config: C4Config, ids: _IdMaps, edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the relationship statements of the ``model`` block.
+- `_render_views(config: C4Config, sys_id: str, container_ids: dict[str, str]) -> list[str]` _(internal)_ — Render the ``views`` block.
+- `build_model(root: Path, roots: list[Path]) -> tuple[C4Config, set[tuple[str, str]], list[str]] | None` — Assemble the C4 model: config, derived edges, and unmatched modules.
+- `generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None` — Build the DSL text and unmatched-module list for the repo.
+- `_m(text: str) -> str` _(internal)_ — Escape label *text* for safe embedding in a Mermaid node label.
+- `render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the model as a Mermaid flowchart (offline-renderable).
+- `_mermaid_box(name: str, technology: str, description: str) -> str` _(internal)_ — Build a multi-line Mermaid box label: bold name, technology, description.
+- `_mermaid_edges(config: C4Config, ids: dict[str, dict[str, str]], edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the Mermaid relationship lines.
+- `render_html(config: C4Config, mermaid_text: str) -> str` — Wrap a Mermaid diagram in a self-contained, offline HTML page.
+- `_copy_vendored_mermaid(dest_dir: Path) -> None` _(internal)_ — Write the vendored Mermaid bundle next to an emitted HTML file.
+- `_warn_unmatched(unmatched: list[str]) -> None` _(internal)_ — Log a coverage warning naming modules in no component.
+- `render_readme_block(mermaid_text: str) -> str` — Render the managed README block embedding the Mermaid diagram.
+- `_splice_readme(readme_text: str, block: str) -> str | None` _(internal)_ — Replace the managed C4 block in *readme_text* with *block*.
+- `_readme_path(root: Path, config: C4Config) -> Path` _(internal)_ — Return the configured README path under *root*.
+- `sync_readme(root: Path, config: C4Config, mermaid_text: str, *, check: bool) -> int` — Write or verify the managed C4 block inside the configured README.
+- `_emit_mermaid(config: C4Config, edges: set[tuple[str, str]], output: str | None) -> int` _(internal)_ — Print or write the canonical Mermaid source.
+- `_emit_html(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the offline HTML view (+ vendored Mermaid sidecar).
+- `_emit_dsl(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the canonical DSL artifact and the README C4 block.
+- `main() -> int` — Generate or verify the C4 artifacts (DSL + README block, or HTML).
+- `_parse_args() -> argparse.Namespace` _(internal)_ — Parse the ``forge-gen-c4`` command-line arguments.
+- `_resolve_roots(root: Path, explicit: list[str] | None) -> list[Path]` _(internal)_ — Resolve the source roots to scan for the import graph.
+
 ## `forge.gen_cli_reference`
 
 - `class CliEntry` — A single forge console-script CLI.
@@ -281,6 +330,7 @@ _46 modules, 429 symbols._
 - `class Step` — One bootstrap step.
 - `_gate_skip_in_ci(_root: Path) -> str | None` _(internal)_ — Skip a step when running non-interactively per FOUNDATION §15.
 - `_gate_labels(_root: Path) -> str | None` _(internal)_ — Skip ``install-forge-labels`` when ``gh`` or the GitHub remote is missing.
+- `_gate_c4(root: Path) -> str | None` _(internal)_ — Skip ``forge-gen-c4`` when no C4 model is configured.
 - `_run_step(step: Step, *, check_mode: bool, root: Path) -> int` _(internal)_ — Execute one bootstrap step. Return its exit code.
 - `_resolve_steps(skip: Iterable[str]) -> list[Step]` _(internal)_ — Return the ordered step list with *skip* entries removed.
 - `main() -> int` — Run every install / generator step in order. Return non-zero on failure.
@@ -378,6 +428,15 @@ _46 modules, 429 symbols._
 - `_log_prune_result(repo_root: Path) -> None` _(internal)_ — Prune stale local branches and log the outcome.
 - `main() -> int` — Refresh main, optionally tag the release, prune stale local branches.
 
+## `forge.pip_audit_json`
+
+- `class AuditRun` — One completed pip-audit invocation.
+- `run_json(root: Path) -> AuditRun | None` — Run pip-audit once in JSON mode against *root*'s environment.
+- `_dict_list(obj: dict, key: str) -> list[dict]` _(internal)_ — Return ``obj[key]`` filtered to ``dict`` entries, or ``[]``.
+- `ids_from_data(data: dict) -> set[str]` — Collect the advisory / CVE IDs from parsed pip-audit JSON.
+- `has_vulns(data: dict) -> bool` — Report whether any scanned dependency carries a vulnerability.
+- `render_report(data: dict) -> str` — Render parsed pip-audit JSON as the human-readable step-log body.
+
 ## `forge.post_checkout`
 
 - `main(argv: list[str] | None = None) -> int` — Run the forge-managed post-checkout actions. Return an exit code.
@@ -421,8 +480,10 @@ _46 modules, 429 symbols._
 - `step_repo_structure(repo_root: Path) -> StepResult` — Run ``verify-forge-repo-structure``; hard-fail if missing (FOUNDATION §2).
 - `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
+- `step_c4(repo_root: Path) -> StepResult` — Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
 - `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.
+- `_write_audit_sidecar(repo_root: Path, data: dict) -> None` _(internal)_ — Persist pip-audit's parsed JSON to the shared sidecar.
 - `step_cve_usage(repo_root: Path) -> StepResult` — Run ``verify-forge-cve-usage`` — the usage-scoped second stage on pip_audit.
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
 - `_cli_wiring_enabled(repo_root: Path) -> bool` _(internal)_ — Return True when the repo has opted into the cli_wiring check.
@@ -493,10 +554,13 @@ _46 modules, 429 symbols._
 
 - `class Finding` — One matched vulnerable-usage occurrence.
 - `load_patterns(root: Path) -> dict[str, dict[str, object]] | None` — Load the consumer's ``cve_usage_patterns.toml`` map.
-- `active_cve_ids(root: Path) -> set[str] | None` — Return the advisory / CVE IDs pip-audit currently reports.
+- `active_cve_ids(root: Path, audit_json: Path | None = None) -> set[str] | None` — Return the advisory / CVE IDs pip-audit currently reports.
 - `_iter_source_lines(root: Path) -> Iterable[tuple[str, int, str]]` _(internal)_ — Yield ``(repo_relative_path, line_no, text)`` for every source line.
 - `scan(root: Path, patterns: dict[str, dict[str, object]], active: set[str]) -> list[Finding]` — Grep the source for the patterns of every active, mapped CVE.
 - `_render(findings: list[Finding]) -> str` _(internal)_ — Render findings as the ``code_health/cve_usage.log`` body.
+- `inactive_cves(patterns: dict[str, dict[str, object]], active: set[str]) -> list[tuple[str, str]]` — Return mapped CVE IDs that pip-audit is *not* currently reporting.
+- `_render_inactive(dormant: list[tuple[str, str]]) -> str` _(internal)_ — Render the ``--list-inactive`` report body.
+- `_run_list_inactive(root: Path, audit_json: Path | None) -> int` _(internal)_ — Print dormant mapped CVEs; never mutates the map. Always exits 0.
 - `main() -> int` — CLI entry point.
 
 ## `forge.verify_doc_consistency`
@@ -538,7 +602,7 @@ _46 modules, 429 symbols._
 - `_base_tree_index(repo_root: Path, base_ref: str) -> dict[str, str]` _(internal)_ — Map each base commit's release fingerprint to its commit SHA.
 - `_tag_states(repo_root: Path, base_ref: str) -> list[_TagState]` _(internal)_ — Resolve every minor tag's current vs. target commit on *base_ref*.
 - `_force_move_tag(repo_root: Path, tag: str, commit_sha: str) -> None` _(internal)_ — Annotated-retag *tag* at *commit_sha* and force-push it.
-- `_report_unreproduced(states: list[_TagState], base_ref: str) -> None` _(internal)_ — Warn about minor tags whose tree no base commit reproduces.
+- `_report_unreproduced(states: list[_TagState], base_ref: str) -> None` _(internal)_ — Warn about minor tags whose release fingerprint no base commit reproduces.
 - `_verify(states: list[_TagState], base_ref: str) -> int` _(internal)_ — Report drift read-only and return the process exit code.
 - `_repair(repo_root: Path, states: list[_TagState], base_ref: str, *, dry_run: bool) -> int` _(internal)_ — Move every misplaced minor tag onto its base commit (or preview).
 - `main() -> int` — Verify or repair minor release tags on the base branch.
@@ -550,7 +614,7 @@ _46 modules, 429 symbols._
 
 ## `forge.verify_plugin_version`
 
-- `_is_release_commit(repo_root: Path) -> bool` _(internal)_ — Return True when ``HEAD``'s tree reproduces ANY published ``v*`` tag.
+- `_is_release_commit(repo_root: Path) -> bool` _(internal)_ — Return True when ``HEAD``'s release fingerprint matches ANY published ``v*`` tag.
 - `main() -> int` — Enforce plugin.json version > latest git tag.
 
 ## `forge.verify_repo_structure`
