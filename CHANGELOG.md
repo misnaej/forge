@@ -20,6 +20,20 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.9.0 — 2026-06-25
+
+Additive — no consumer action required.
+
+### Features
+- **`forge-gen-c4` — per-component container assignment.** A rich
+  `[[component]]` may name its owning container via `container =
+  "<container name>"`; each declared container then renders with its own
+  components **and its own component view**. A component that omits
+  `container` attaches to the first declared container, so models with no
+  `container` keys render byte-identically. Unknown container names — and
+  duplicate container names — fail loudly; import-graph edges still render
+  across container boundaries (#106).
+
 ## v2.8.0 — 2026-06-25
 
 Additive — a new default-on pre-commit step that self-skips unless a
