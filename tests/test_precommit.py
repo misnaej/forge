@@ -1648,6 +1648,85 @@ def test_step_env_sync_warns_not_blocks_when_blocking_false(
 
 
 # ---------------------------------------------------------------------------
+# env_sync — forge-scripts version-pin drift (#107)
+# ---------------------------------------------------------------------------
+
+
+def _write_deps_pyproject(repo_root: Path, deps: list[str]) -> None:
+    """Write a ``[project]`` pyproject (no scripts) with given dependencies.
+
+    Args:
+        repo_root: Directory to drop ``pyproject.toml`` in.
+        deps: Requirement strings for ``[project.dependencies]``.
+    """
+    dep_lines = ", ".join(f'"{d}"' for d in deps)
+    (repo_root / "pyproject.toml").write_text(
+        f'[project]\nname = "consumer"\ndependencies = [{dep_lines}]\n',
+        encoding="utf-8",
+    )
+
+
+def test_step_env_sync_warns_on_forge_scripts_pin_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A forge-scripts == pin ahead of the install produces a non-blocking WARN.
+
+    SCENARIO: repo pins forge-scripts==2.9.0; installed is 2.8.0.
+    MOCK SETUP: is_non_interactive→False; importlib.metadata.version→"2.8.0".
+    EXPECTED BEHAVIOR: passed False, non_blocking True, names the pin.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    _write_deps_pyproject(tmp_path, ["forge-scripts==2.9.0"])
+    monkeypatch.setattr(precommit.importlib.metadata, "version", lambda _n: "2.8.0")
+    result = precommit.step_env_sync(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+    assert "forge-scripts==2.9.0" in result.output
+
+
+def test_step_env_sync_no_warn_when_pin_satisfied(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No WARN when the installed forge-scripts meets or exceeds the pin."""
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    _write_deps_pyproject(tmp_path, ["forge-scripts==2.8.0"])
+    monkeypatch.setattr(precommit.importlib.metadata, "version", lambda _n: "2.9.0")
+    result = precommit.step_env_sync(tmp_path)
+    assert result.passed
+    assert "behind the pin" not in result.output
+
+
+def test_step_env_sync_no_warn_on_non_exact_pin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-``==`` specifier (range / channel) is not treated as a pin."""
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    _write_deps_pyproject(tmp_path, ["forge-scripts>=2.8.0"])
+    monkeypatch.setattr(precommit.importlib.metadata, "version", lambda _n: "2.0.0")
+    result = precommit.step_env_sync(tmp_path)
+    assert result.passed
+    assert "behind the pin" not in result.output
+
+
+def test_step_env_sync_no_warn_on_editable_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An editable / setuptools-scm dev build is not compared against the pin."""
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    _write_deps_pyproject(tmp_path, ["forge-scripts==2.9.0"])
+    monkeypatch.setattr(
+        precommit.importlib.metadata, "version", lambda _n: "2.8.0.dev1+gabc1234"
+    )
+    result = precommit.step_env_sync(tmp_path)
+    assert result.passed
+    assert "behind the pin" not in result.output
+
+
+# ---------------------------------------------------------------------------
 # env_sync — registry position
 # ---------------------------------------------------------------------------
 

@@ -8,32 +8,13 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from forge import verify_plugin_version
+from tests.conftest import init_git_repo as _init_git_repo
 
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
-
-
-def _init_git_repo(repo: Path) -> None:
-    """Initialize a minimal git repo with one commit on ``main``.
-
-    Args:
-        repo: Directory to initialize. Must already exist.
-    """
-    env = {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@t",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@t",
-        "PATH": os.environ.get("PATH", ""),
-    }
-    for cmd in (
-        ["git", "init", "-q", "-b", "main"],
-        ["git", "commit", "-q", "--allow-empty", "-m", "initial"],
-    ):
-        subprocess.run(cmd, cwd=repo, env=env, check=True)
 
 
 def _write_plugin(repo: Path, version: str) -> None:

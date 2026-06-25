@@ -8,12 +8,44 @@ that captures call argvs — used by tests that monkeypatch
 
 from __future__ import annotations
 
+import os
+import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
+
+
+# Shared git author/committer identity for real-git tests, so commits and
+# annotated tags find an identity without a ~/.gitconfig. PATH is forwarded
+# so the git binary resolves.
+GIT_ENV: dict[str, str] = {
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@t",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@t",
+    "PATH": os.environ.get("PATH", ""),
+}
+
+
+def init_git_repo(repo: Path) -> None:
+    """Initialize a minimal git repo with one empty commit on ``main``.
+
+    Shared by the real-git suites (``git_utils``, ``verify_plugin_version``,
+    ``verify_main_tags``) so the ephemeral-repo boilerplate lives in one
+    place.
+
+    Args:
+        repo: Directory to initialize. Must already exist.
+    """
+    for cmd in (
+        ["git", "init", "-q", "-b", "main"],
+        ["git", "commit", "-q", "--allow-empty", "-m", "initial"],
+    ):
+        subprocess.run(cmd, cwd=repo, env=GIT_ENV, check=True)
 
 
 @dataclass

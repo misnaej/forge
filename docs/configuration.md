@@ -186,6 +186,19 @@ Forge-specific keys for the docstring-coverage reporter. (The coverage *gate*
 itself — threshold, excludes, ignores — lives in `[tool.interrogate]` below;
 these are the keys interrogate has no concept of.)
 
+> **Naming — one thing, three names.** The config section
+> `[tool.forge.docstring_coverage]`, the generated badge file
+> `.badges/DocstringCoverage.svg`, and what's colloquially called "the
+> interrogate badge" are all the **same single artifact**: forge's
+> docstring-coverage reporter, which is powered by
+> [interrogate](https://interrogate.readthedocs.io/). The **canonical name is
+> `docstring_coverage`** — forge names config sections by *responsibility*,
+> not by the tool that backs them (`[tool.forge.typecheck]` not `pyrefly`,
+> `[tool.forge.doctest]`, `[tool.forge.docstring_coverage]`), while reading
+> the tool's own native `[tool.interrogate]` section directly. The badge SVG
+> keeps its `DocstringCoverage` filename for back-compat (renaming it would
+> break consumers who reference it by path in their README).
+
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
 | `paths` | `[tool.forge].source_dirs + test_dirs` | Per-tool **override** of the scan roots for the coverage report and badge. Defaults to the repo-wide layout above; set this only when docstring-coverage should scan something different. Paths resolving outside the repo are rejected. | You want coverage scoped differently from the rest of forge — otherwise prefer setting `[tool.forge].source_dirs` once. |
