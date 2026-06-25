@@ -285,7 +285,10 @@ def step_env_sync(repo_root: Path) -> StepResult:
         repo_root: Git repo root.
 
     Returns:
-        ``StepResult`` for this step.
+        ``StepResult`` with ``passed=True`` for all self-skip paths.
+        When scripts are missing, ``passed=False`` and ``non_blocking``
+        is the inverse of ``[tool.forge.env_sync].blocking`` (default
+        blocking).
     """
     if is_non_interactive():
         return StepResult(
@@ -1118,7 +1121,8 @@ def _print_step_line(result: StepResult) -> None:
 # Ordered registry — the single source of truth for which steps exist,
 # their run order, and which are on by default. Opt-in steps
 # (default_on=False) run only when named in [tool.forge.precommit].enable
-# or --only. ruff is first because it mutates + re-stages files.
+# or --only. env_sync runs first (fast freshness gate); ruff runs second
+# because it mutates + re-stages files before any validators see the diff.
 _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("env_sync", step_env_sync),
     StepDef("ruff", step_ruff),
@@ -1209,8 +1213,9 @@ def run_all(
 
     The sequence is resolved from the registry via :func:`_resolve_steps`
     (``[tool.forge.precommit] enable/disable`` plus ``skip`` / ``only``).
-    ``step_ruff`` runs first and shells out to ``fix-forge-ruff`` (applies
-    ruff fixes and re-stages modified tracked files); the rest verify only.
+    ``step_env_sync`` runs first (a fast in-process install-freshness gate);
+    ``step_ruff`` follows and shells out to ``fix-forge-ruff`` (applies ruff
+    fixes and re-stages modified tracked files); the rest verify only.
 
     Args:
         repo_root: Override the auto-detected git repo root. Useful in tests.

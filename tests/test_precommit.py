@@ -1576,7 +1576,7 @@ def test_step_env_sync_passes_when_all_scripts_registered(
     as console_scripts — no gap between declared and installed.
     MOCK SETUP: is_non_interactive→False; pyproject written; distribution→
     FakeDist([FakeEP("mycli","console_scripts"), FakeEP("helper","console_scripts")]).
-    EXPECTED BEHAVIOR: passed True, skipped False, "fresh" in output,
+    EXPECTED BEHAVIOR: passed True, skipped False, "installed" in output,
     non_blocking False.
     """
     monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
