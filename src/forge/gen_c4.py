@@ -16,10 +16,12 @@ derives the Component-to-Component relationships from the import graph:
 an edge ``A -> B`` is drawn whenever any module in component ``A`` imports
 any module in component ``B``.
 
-Scope (v1): the Code level is intentionally skipped, and component
-dependencies are inferred within a single container (the first one
-declared). Modules matching no component prefix are reported as a
-coverage warning, never silently dropped.
+Scope: the Code level is intentionally skipped. Components are
+distributed across containers by each component's ``container`` field
+(defaulting to the first declared container), and import-graph edges are
+drawn between components regardless of which containers they live in.
+Modules matching no component prefix are reported as a coverage warning,
+never silently dropped.
 
 Usage::
 
@@ -124,12 +126,15 @@ class Component:
             (C4 wants every box to carry meaning). Empty when unspecified.
         technology: Technology tag shown in the box (e.g. ``"Python"``).
             Empty when unspecified.
+        container: Display name of the owning container. Empty string means
+            "attach to the first declared container" (back-compat default).
     """
 
     name: str
     prefixes: tuple[str, ...]
     description: str = ""
     technology: str = ""
+    container: str = ""
 
 
 @dataclass(frozen=True)
@@ -160,8 +165,9 @@ class C4Config:
         output: Repo-relative path for the emitted DSL.
         persons: External actors.
         externals: External software systems.
-        containers: Deployable units; v1 attaches all components to the
-            first one.
+        containers: Deployable units. Each component attaches to the
+            container its ``container`` field names, or the first declared
+            container when that field is empty.
         components: Named components with their module prefixes.
         relationships: Human-declared component edges (runtime/subprocess
             "uses" the import graph cannot derive).
@@ -317,6 +323,7 @@ def _parse_components(section: dict) -> tuple[Component, ...]:
             tuple(c.get("modules", [])),
             c.get("description", ""),
             c.get("technology", ""),
+            c.get("container", ""),
         )
         for c in _coerce_list(section.get("component"))
     ]
@@ -327,6 +334,39 @@ def _parse_components(section: dict) -> tuple[Component, ...]:
         if isinstance(prefixes, list) and name not in named
     ]
     return tuple(rich + simple)
+
+
+def _validate_component_containers(
+    components: tuple[Component, ...], containers: tuple[Container, ...]
+) -> None:
+    """Fail loudly on a duplicate container name or an undeclared reference.
+
+    Args:
+        components: Parsed components.
+        containers: Declared containers.
+
+    Raises:
+        ValueError: When two containers share a name (which would silently
+            merge in the name→id map and render a component into both), or
+            when a component's non-empty ``container`` is not among the
+            declared names. (An empty ``container`` is valid — it means the
+            first declared container.)
+    """
+    seen: set[str] = set()
+    for container in containers:
+        if container.name in seen:
+            msg = f"duplicate container name {container.name!r}"
+            raise ValueError(msg)
+        seen.add(container.name)
+    declared = seen
+    for comp in components:
+        if comp.container and comp.container not in declared:
+            names = ", ".join(sorted(declared)) or "(none)"
+            msg = (
+                f"component {comp.name!r} names unknown container "
+                f"{comp.container!r}; declared containers: {names}"
+            )
+            raise ValueError(msg)
 
 
 def load_c4_config(root: Path) -> C4Config | None:
@@ -341,6 +381,9 @@ def load_c4_config(root: Path) -> C4Config | None:
     Returns:
         A populated :class:`C4Config`, or ``None`` when C4 generation is
         not opted into or the model declares no ``system`` name.
+
+    Raises:
+        ValueError: When a component names a container that is not declared.
     """
     section = resolve_model_section(root)
     if not section or not section.get("system"):
@@ -360,6 +403,7 @@ def load_c4_config(root: Path) -> C4Config | None:
         for c in _coerce_list(section.get("container"))
     )
     components = _parse_components(section)
+    _validate_component_containers(components, containers)
     relationships = tuple(
         Relationship(
             r.get("source", "?"),
@@ -542,13 +586,11 @@ def _render_model(config: C4Config, ids: _IdMaps) -> list[str]:
             f"            {cid} = container {_q(container.name)} "
             f"{_q(container.description)} {_q(container.technology)} {{"
         )
-        # v1: all components attach to the first container.
-        if idx == 0:
-            lines += [
-                f"                {ids.component_ids[c.name]} = component "
-                f"{_q(c.name)} {_q(_component_description(c))} {_q(c.technology)}"
-                for c in config.components
-            ]
+        lines += [
+            f"                {ids.component_ids[c.name]} = component "
+            f"{_q(c.name)} {_q(_component_description(c))} {_q(c.technology)}"
+            for c in _components_for_container(config, container, idx)
+        ]
         lines.append("            }")
     lines.append("        }")
     lines += [
@@ -557,6 +599,33 @@ def _render_model(config: C4Config, ids: _IdMaps) -> list[str]:
         for e in config.externals
     ]
     return lines
+
+
+def _components_for_container(
+    config: C4Config, container: Container, idx: int
+) -> list[Component]:
+    """Return the components owned by *container*, in declaration order.
+
+    A component is owned by the container its ``container`` field names; an
+    empty field means the first declared container. So with no ``container``
+    keys anywhere, every component lands in the first container exactly as
+    before — byte-identical output.
+
+    Args:
+        config: The model skeleton.
+        container: The container being rendered.
+        idx: The container's index in ``config.containers`` (``0`` is the
+            default owner for components with no explicit ``container``).
+
+    Returns:
+        Components whose owning container is *container*, preserving
+        ``config.components`` order.
+    """
+    return [
+        c
+        for c in config.components
+        if c.container == container.name or (not c.container and idx == 0)
+    ]
 
 
 def _component_description(component: Component) -> str:
@@ -630,8 +699,9 @@ def _render_views(
         container_ids: Container name → DSL identifier.
 
     Returns:
-        DSL lines for the systemContext, container, and (when a container
-        exists) component views, plus the default theme.
+        DSL lines for the systemContext, container, and one component view
+        per declared container (each scoped to that container), plus the
+        default theme.
     """
     lines = [
         "    views {",
@@ -644,10 +714,10 @@ def _render_views(
         "            autolayout lr",
         "        }",
     ]
-    if config.containers:
-        primary = container_ids[config.containers[0].name]
+    for container in config.containers:
+        cid = container_ids[container.name]
         lines += [
-            f"        component {primary} {_q('Components')} {{",
+            f"        component {cid} {_q(f'{container.name} Components')} {{",
             "            include *",
             "            autolayout lr",
             "        }",
@@ -673,6 +743,11 @@ def build_model(
     Returns:
         Tuple of (config, derived component edges, sorted unmatched module
         names), or ``None`` when C4 generation is not opted into.
+
+    Raises:
+        ValueError: When the config is invalid (propagated from
+            :func:`load_c4_config`), e.g. a component naming an unknown
+            container.
     """
     config = load_c4_config(root)
     if config is None:
@@ -757,12 +832,11 @@ def render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str:
         lines.append(
             f'    subgraph {container_ids[container.name]}["{_m(container.name)}"]'
         )
-        if idx == 0:
-            lines += [
-                f'        {component_ids[c.name]}["'
-                f'{_mermaid_box(c.name, c.technology, _component_description(c))}"]'
-                for c in config.components
-            ]
+        lines += [
+            f'        {component_ids[c.name]}["'
+            f'{_mermaid_box(c.name, c.technology, _component_description(c))}"]'
+            for c in _components_for_container(config, container, idx)
+        ]
         lines.append("    end")
     ids = {
         "person": person_ids,
@@ -1111,11 +1185,16 @@ def main() -> int:
 
     Returns:
         Exit code: ``0`` on a successful write/print or in-sync check;
-        ``1`` on drift, a missing artifact, or absent ``[tool.forge.c4]``.
+        ``1`` on drift, a missing artifact, absent ``[tool.forge.c4]``,
+        or an invalid model configuration (e.g. an unknown container name).
     """
     args = _parse_args()
     root = repo_root()
-    built = build_model(root, _resolve_roots(root, args.roots))
+    try:
+        built = build_model(root, _resolve_roots(root, args.roots))
+    except ValueError:
+        logger.exception("Invalid C4 model")
+        return 1
     if built is None:
         logger.error(
             "No [tool.forge.c4] config found — add it to pyproject.toml (or a "

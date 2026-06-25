@@ -48,7 +48,7 @@ workspace "Forge" "Python CI/CD & code-quality foundation: deterministic CLIs + 
             include *
             autolayout lr
         }
-        component forge_scripts "Components" {
+        component forge_scripts "forge-scripts Components" {
             include *
             autolayout lr
         }

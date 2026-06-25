@@ -55,7 +55,10 @@ ask — a wrong guess produces a confidently misleading diagram.
      name + technology.
    - **Components** — present your draft grouping; ask the user to confirm /
      rename / merge / split. Get a one-line **description** and a **technology**
-     per component (C4 wants meaningful boxes, not bare names).
+     per component (C4 wants meaningful boxes, not bare names). When there is
+     more than one container, ask **which container each component belongs to**
+     (set `container = "<container name>"` on the component; omit it to default
+     to the first container).
    - **Runtime / subprocess edges** — "Do any parts call each other at runtime
      in a way that is not a Python import — shelling out, HTTP, a queue, a
      shared DB?" These become `[[relationship]]` entries.
@@ -66,8 +69,8 @@ ask — a wrong guess produces a confidently misleading diagram.
 
 5. **Write `c4.toml`** at the repo root from the answers (top-level tables:
    `system`, `[[person]]`, `[[external]]`, `[[container]]`, rich `[[component]]`
-   with `name` / `description` / `technology` / `modules`, and
-   `[[relationship]]`). A root `c4.toml` is auto-detected; set
+   with `name` / `description` / `technology` / `modules` / optional
+   `container`, and `[[relationship]]`). A root `c4.toml` is auto-detected; set
    `[tool.forge.c4].config = "<path>"` only if you put the model elsewhere.
    To embed the diagram in the README, add the
    `<!-- forge:c4:start -->` / `<!-- forge:c4:end -->` markers where it should
