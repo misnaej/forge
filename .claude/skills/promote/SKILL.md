@@ -80,38 +80,44 @@ gh pr list --base main --state open --json number,headRefName --jq '.[] | "\(.nu
 If a `release/*` promotion PR into `main` is already open, do NOT open
 a second — comment on it instead. Promote serially.
 
-## Step 3: Cut the release branch (never `--head dev`)
+## Step 3: Cut the release branch (branch from dev, merge main in)
 
-Build a `release/v$NEW` branch whose diff against `origin/main` is
-**exactly that one release**:
+Four standard-git steps — no special recipe:
 
 ```bash
-# main is exactly one minor behind → branch at dev's tip:
-git switch -c "release/v$NEW" origin/dev
+# 1. Branch from the dev version being promoted
+git switch -c "release/v$NEW" origin/dev        # (or the v$NEW dev commit)
 
-# main is several behind → branch from main and cherry-pick only that
-# minor's commit(s) (squash-merges of earlier promotions break ancestry,
-# so a plain dev→main diff would redundantly re-show already-promoted
-# minors). Resolve any cherry-pick conflicts — plugin.json is the most
-# likely point if the version was bumped again on dev:
-#   git switch -c "release/v$NEW" origin/main
-#   git cherry-pick -n <sha-of-that-minor>
+# 2. Merge main INTO it — REQUIRED. This makes `main` an ancestor, so the
+#    PR diff is exactly this release's delta. Omitting it is what makes a
+#    promotion PR re-show all of dev's history against an ancient merge-base.
+git merge origin/main
 
-git log origin/main..release/v$NEW --oneline   # SANITY: only this release's commits
+# 3. Fix merge conflicts — always resolve toward dev (dev is strictly
+#    ahead of main). The merge also brings main's prior curated CHANGELOG
+#    entries in, so nothing on main regresses.
+
+# 4. Rewrite CHANGELOG: add the curated `## v$NEW — <date>` @main entry
+#    (group the release's dev PRs by conventional-commit type, one bullet
+#    per theme), then commit the merge + CHANGELOG.
+
+git log origin/main..release/v$NEW --oneline    # SANITY: only this release's commits, not all of dev
 ```
 
-**Then author the curated `@main` CHANGELOG entry** for `v$NEW` in the
-release branch — one condensed `## v$NEW — <date>` block summarizing the
-minor (group `git log` by conventional-commit type; one bullet per theme,
-not per commit). This is the modified-release-branch pattern: the branch
-now diverges from the `v$NEW` tag by exactly `CHANGELOG.md`, which both
-release guards tolerate via the **release fingerprint** (tree minus
-`CHANGELOG.md`) — see `docs/release-process.md` §5. To also reconcile
-`dev`'s CHANGELOG without a later back-merge PR, **merge `main` into the
-release branch first** (§5 option b) and add the new entry on top.
+**Why step 2 is the whole game:** promotions are squash merges, so
+`main`'s commits are not ancestors of `dev`. Branching from `dev` *without*
+merging `main` leaves the merge-base at the pre-squash common ancestor, so
+GitHub's three-dot diff re-shows everything since then (a v2.4.0 attempt
+showed 98 files vs the true 15). Merging `main` in restores ancestry —
+plain git, no tree-reconstruction, no special logic.
+
+The release branch ends up diverging from the `v$NEW` tag only by the
+curated `CHANGELOG.md` entry, which the post-merge tag relocation tolerates
+via the **release fingerprint** (`docs/release-process.md` §2, §5).
 
 Push the branch via the `forge:git-commit-push` agent (direct `git push`
-is hook-blocked for agents).
+is hook-blocked for agents). Resolve conflicts + make the merge commit
+locally, then let the agent push.
 
 ## Step 4: Open the promotion PR (from the release branch)
 
@@ -123,14 +129,18 @@ gh pr create --base main --head "release/v$NEW" \
 **Merge strategy: squash-and-merge** — \`main\` keeps one release commit per minor. The squash message is posted as a separate comment below; copy it verbatim.
 
 ## Included
-$(git log --oneline origin/main..release/v$NEW)
+$(git log --oneline --no-merges origin/main..release/v$NEW)
 
 ## After merge
-- [ ] Relocate the minor tag to main's squash commit: run \`forge-check-main-tags --dry-run\` to preview, then \`forge-check-main-tags --fix\` to move \`v$NEW\` onto \`origin/main\` (matched by release fingerprint, so the curated CHANGELOG divergence is tolerated). Verify with \`git describe --tags origin/main\` → \`v$NEW\`. See \`docs/release-process.md\` §2.
-- [ ] Reconcile \`dev\`'s CHANGELOG: if you did NOT merge \`main\` into the release branch (Step 3 option b), open a back-merge \`main → dev\` PR bringing this entry onto \`dev\` plus the rolling-next bump. Skip when \`dev\` is moving fast — the next release branch will carry it forward (§5 options a/b).
+- [ ] Relocate the minor tag onto main's squash commit. **The next \`/next\` does this automatically** (Phase 1 runs \`forge-check-main-tags --fix\`, matched by release fingerprint so the curated CHANGELOG divergence is tolerated). To relocate immediately without waiting for a \`/next\`, run \`forge-check-main-tags --fix\` now. Verify \`git describe --tags origin/main\` → \`v$NEW\`. See \`docs/release-process.md\` §2.
+- [ ] (Optional) Mirror \`dev\`'s CHANGELOG to \`main\` via a back-merge PR — NOT required: the merge in Step 3 already brought main's curated log onto the release branch so nothing regresses. Do it only if you want dev's local copy current.
 - [ ] If more minors remain behind, promote the next one (repeat from Step 1).
 "
 ```
+
+Because Step 3 merges `main` into the release branch, `main` is an
+ancestor and `origin/main..release/v$NEW` is the real release delta — use
+it directly for the "Included" list and the Step 5 summary.
 
 ## Step 5: Post the release-summary squash-merge message
 
@@ -143,8 +153,8 @@ per-PR conventional-commit message — the per-PR rules (50-word cap,
 Authoring rules for the release summary:
 
 - **Title:** `release: v<NEW> — promote dev to main`.
-- **Body:** group `git log --oneline --no-merges origin/main..release/v$NEW` by
-  conventional-commit type (`feat`, `fix`, `refactor`, `docs`,
+- **Body:** group `git log --oneline --no-merges origin/main..release/v$NEW`
+  by conventional-commit type (`feat`, `fix`, `refactor`, `docs`,
   `chore`, `test`). Within each type, summarize related commits
   into one bullet per theme — not one bullet per commit. Reference
   issue numbers (`#NN`) where the commits already cite them.

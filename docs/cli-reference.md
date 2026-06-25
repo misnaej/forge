@@ -283,6 +283,29 @@ options:
   --check              Verify docs/api-digest.md is in sync; do not write.
 ```
 
+## forge-gen-c4
+
+```text
+usage: forge-gen-c4 [-h] [--format {dsl,html,mermaid}] [--roots [ROOTS ...]]
+                    [--check] [--output OUTPUT]
+
+Generate a C4 architecture model from the import graph + a [tool.forge.c4] /
+c4.toml model. Emits Structurizr DSL (default), a self-contained offline HTML
+view, or raw Mermaid.
+
+options:
+  -h, --help            show this help message and exit
+  --format {dsl,html,mermaid}
+                        Output: 'dsl' (Structurizr + README block, default),
+                        'html' (offline view), or 'mermaid' (raw Mermaid to
+                        stdout).
+  --roots [ROOTS ...]   Source dirs to scan. Defaults to the repo's configured
+                        source roots.
+  --check               Verify the committed artifact is in sync; do not
+                        write.
+  --output OUTPUT       Override the output path. Use '-' to write to stdout.
+```
+
 ## forge-gen-cli-reference
 
 ```text
@@ -479,7 +502,7 @@ options:
                others just print their intent.
   --skip SLUG  Skip a step by slug. Repeatable. Known slugs: githooks, claude-
                md, claude-settings, labels, readme-badges, api-digest, cli-
-               reference, audit-deps, doctor, config.
+               reference, c4, audit-deps, doctor, config.
   --strict     Abort on the first failed step. Default is continue-on-fail.
 ```
 
@@ -584,14 +607,20 @@ options:
 ## verify-forge-cve-usage
 
 ```text
-usage: verify-forge-cve-usage [-h]
+usage: verify-forge-cve-usage [-h] [--audit-json PATH] [--list-inactive]
 
 Second-stage CVE filter: report only CVEs whose vulnerable code path is
 actually used. Reads cve_usage_patterns.toml; skips cleanly when absent or
 pip-audit is unavailable.
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help         show this help message and exit
+  --audit-json PATH  Read pip-audit findings from this JSON sidecar instead of
+                     invoking pip-audit (shares one scan with the pip_audit
+                     step).
+  --list-inactive    Report mapped CVEs no longer in pip-audit's live report
+                     (prune candidates). Read-only, exits 0, never edits the
+                     map.
 ```
 
 ## verify-forge-doc-consistency
