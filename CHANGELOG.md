@@ -20,6 +20,50 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.10.0 — 2026-06-25
+
+Additive — a `/next` release-workflow change for dual-track repos;
+single-track repos are unaffected.
+
+### Changed
+- **`/next` auto-opens a pending promotion PR.** Phase 1.5 now runs the
+  promotion flow itself when a minor is pending (dual-track repos) instead of
+  offering it confirm-first. It only **opens** the `release/vX.Y.0` PR — never
+  merges, so the human merge stays the one manual step (FOUNDATION §2) — and
+  is idempotent (refuses a duplicate open promotion PR). Removes the manual
+  `/promote` step from the per-minor loop; declining is just not merging the
+  opened PR (#113).
+
+## v2.9.0 — 2026-06-25
+
+Additive — no consumer action required.
+
+### Features
+- **`forge-gen-c4` — per-component container assignment.** A rich
+  `[[component]]` may name its owning container via `container =
+  "<container name>"`; each declared container then renders with its own
+  components **and its own component view**. A component that omits
+  `container` attaches to the first declared container, so models with no
+  `container` keys render byte-identically. Unknown container names — and
+  duplicate container names — fail loudly; import-graph edges still render
+  across container boundaries (#106).
+
+## v2.8.0 — 2026-06-25
+
+Additive — a new default-on pre-commit step that self-skips unless a
+declared CLI is genuinely missing from your install.
+
+### Features
+- **`env_sync` pre-commit step** — a deadly-fast, in-process
+  install-freshness gate that runs **first**: every CLI declared in
+  `[project.scripts]` must be an installed console script, else the editable
+  install is stale (a new entry point was added but not reinstalled) and the
+  gate may run old code. Blocks by default with the exact reinstall command
+  (`./dev/setup.sh` / `pip install -e`); `[tool.forge.env_sync].blocking =
+  false` downgrades it to a non-blocking WARN. Self-skips when there is no
+  `[project.scripts]` table, the package isn't installed, or the run is
+  non-interactive / CI. Never auto-installs (#82).
+
 ## v2.7.0 — 2026-06-25
 
 Additive — release-tooling only; dual-track repos benefit, single-track
