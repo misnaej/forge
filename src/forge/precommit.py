@@ -2,7 +2,9 @@
 
 Generic Python pre-commit check dispatcher. Auto-detects source
 directories and runs an ordered sequence on every commit. The default
-sequence: ruff (always ``ruff format`` + ``ruff check --fix
+sequence: env-sync (a deadly-fast install-freshness gate that runs first —
+blocks when a declared ``[project.scripts]`` CLI is not installed, i.e. a
+stale editable install), ruff (always ``ruff format`` + ``ruff check --fix
 --unsafe-fixes`` in-place, with modified tracked files re-staged via
 ``git add``), docstring verification (over the diff vs main), test-name
 verification (over the diff vs main), repo-structure verification
@@ -47,6 +49,7 @@ after run only if the forge sequence passed.
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import re
 import subprocess
@@ -67,6 +70,7 @@ from forge.git_utils import (
     write_step_log,
 )
 from forge.git_utils import repo_root as get_repo_root
+from forge.run_context import is_non_interactive
 
 
 if TYPE_CHECKING:
@@ -216,6 +220,121 @@ def _run(
 # ---------------------------------------------------------------------------
 # Individual steps
 # ---------------------------------------------------------------------------
+
+
+def _declared_scripts(repo_root: Path) -> tuple[str, set[str]] | None:
+    """Return ``(package_name, declared [project.scripts] names)`` or ``None``.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        The repo package name and the set of its declared console-script
+        names, or ``None`` when there is no usable ``[project.name]`` +
+        ``[project.scripts]`` table to verify against.
+    """
+    project = config.read_pyproject_raw(repo_root).get("project") or {}
+    name = project.get("name")
+    scripts = project.get("scripts")
+    if not isinstance(name, str) or not isinstance(scripts, dict) or not scripts:
+        return None
+    return name, set(scripts)
+
+
+def _installed_console_scripts(name: str) -> set[str] | None:
+    """Return *name*'s installed ``console_scripts`` entry-point names.
+
+    Args:
+        name: Distribution name (``[project.name]``).
+
+    Returns:
+        The set of installed console-script names, or ``None`` when the
+        distribution is not installed at all (nothing to compare against).
+    """
+    try:
+        dist = importlib.metadata.distribution(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    return {ep.name for ep in dist.entry_points if ep.group == "console_scripts"}
+
+
+def step_env_sync(repo_root: Path) -> StepResult:
+    """Fail fast when the local install is stale vs the repo's declared CLIs.
+
+    Editable installs do **not** auto-register new ``[project.scripts]``
+    entry points — they are baked into the distribution's metadata at
+    install time. So when a PR adds a new CLI, every contributor who has
+    not reinstalled is silently missing it: the gate runs old code and a
+    later ``require_cli`` hard-fails deep in the sequence (the failure that
+    blocked a merge commit when ``forge-gen-c4`` landed, #82). This step
+    surfaces that **first**, with one in-process ``importlib.metadata``
+    lookup (no subprocess, no network — sub-millisecond):
+
+    - **Entry-point freshness (blocking):** every declared
+      ``[project.scripts]`` name must be an installed console script. A
+      missing one means the install is stale; the message names the exact
+      reinstall command. Block by default; ``[tool.forge.env_sync].blocking
+      = false`` downgrades it to a WARN (consumer escape hatch, same shape
+      as ``pip_audit``). It never auto-installs (FOUNDATION §2).
+
+    Self-skips when there is nothing to verify (no ``[project.scripts]``,
+    package not installed at all) or in CI / non-interactive contexts
+    (FOUNDATION §15 — a fresh runner checkout legitimately predates install).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` with ``passed=True`` for all self-skip paths.
+        When scripts are missing, ``passed=False`` and ``non_blocking``
+        is the inverse of ``[tool.forge.env_sync].blocking`` (default
+        blocking).
+    """
+    if is_non_interactive():
+        return StepResult(
+            name="env_sync",
+            passed=True,
+            output="(CI / non-interactive — skipped)",
+            skipped=True,
+        )
+    declared = _declared_scripts(repo_root)
+    if declared is None:
+        return StepResult(
+            name="env_sync",
+            passed=True,
+            output="(no [project.scripts] to verify — skipped)",
+            skipped=True,
+        )
+    name, scripts = declared
+    installed = _installed_console_scripts(name)
+    if installed is None:
+        return StepResult(
+            name="env_sync",
+            passed=True,
+            output=f"({name} not installed — skipped)",
+            skipped=True,
+        )
+    missing = sorted(scripts - installed)
+    if not missing:
+        return StepResult(
+            name="env_sync",
+            passed=True,
+            output=f"all {len(scripts)} declared console script(s) installed.",
+        )
+    blocking = bool(_forge_step_config(repo_root, "env_sync").get("blocking", True))
+    return StepResult(
+        name="env_sync",
+        passed=False,
+        output=(
+            f"⛔ Stale install of '{name}': {len(missing)} declared console "
+            f"script(s) not registered — {', '.join(missing)}.\n\n"
+            "A [project.scripts] entry was added since you last installed, so "
+            "the gate may run old code. Re-run `./dev/setup.sh` (or "
+            '`pip install -e ".[dev]"`, or your repo\'s equivalent) to register '
+            "the new entry point(s)."
+        ),
+        non_blocking=not blocking,
+    )
 
 
 def step_ruff(repo_root: Path) -> StepResult:
@@ -1002,8 +1121,10 @@ def _print_step_line(result: StepResult) -> None:
 # Ordered registry — the single source of truth for which steps exist,
 # their run order, and which are on by default. Opt-in steps
 # (default_on=False) run only when named in [tool.forge.precommit].enable
-# or --only. ruff is first because it mutates + re-stages files.
+# or --only. env_sync runs first (fast freshness gate); ruff runs second
+# because it mutates + re-stages files before any validators see the diff.
 _STEP_REGISTRY: tuple[StepDef, ...] = (
+    StepDef("env_sync", step_env_sync),
     StepDef("ruff", step_ruff),
     StepDef("docstring_verification", step_docstrings),
     StepDef("docstring_coverage", step_docstring_coverage),
@@ -1092,8 +1213,9 @@ def run_all(
 
     The sequence is resolved from the registry via :func:`_resolve_steps`
     (``[tool.forge.precommit] enable/disable`` plus ``skip`` / ``only``).
-    ``step_ruff`` runs first and shells out to ``fix-forge-ruff`` (applies
-    ruff fixes and re-stages modified tracked files); the rest verify only.
+    ``step_env_sync`` runs first (a fast in-process install-freshness gate);
+    ``step_ruff`` follows and shells out to ``fix-forge-ruff`` (applies ruff
+    fixes and re-stages modified tracked files); the rest verify only.
 
     Args:
         repo_root: Override the auto-detected git repo root. Useful in tests.

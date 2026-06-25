@@ -19,6 +19,9 @@ node_modules/
 # - .claude/skills/ — forge-private project-local skills (e.g.
 #   /promote — forge's dev→main release ceremony). Not exported via
 #   the plugin manifest.
+# - .claude/agents/ — forge-private project-local agent wrappers (e.g.
+#   issue-triage-forge — adds the forge-internal label rule on top of
+#   forge:issue-triage). Not exported via the plugin manifest.
 # - .claude/settings.json — project-shared Claude Code config:
 #   enables the forge plugin pinned to the dev channel so the
 #   marketplace + plugin config is identical for every contributor.
@@ -26,6 +29,8 @@ node_modules/
 !.claude/settings.json
 !.claude/skills/
 !.claude/skills/**
+!.claude/agents/
+!.claude/agents/**
 
 # Local scratch.
 tmp/

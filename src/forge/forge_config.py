@@ -178,6 +178,13 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "the repo-wide [tool.forge].source_dirs + test_dirs.",
     ),
     ConfigKey(
+        ("tool", "forge", "env_sync", "blocking"),
+        default=True,
+        description="Block the commit when env_sync finds a declared "
+        "[project.scripts] CLI missing from the install (stale editable "
+        "install). Set false to downgrade to a non-blocking WARN.",
+    ),
+    ConfigKey(
         ("tool", "forge", "badges", "enabled"),
         default=False,
         description="Opt into the README status-badge block written by "
