@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge.gen_c4 import (
     README_C4_END,
     README_C4_START,
+    C4Config,
     Component,
+    Container,
     Relationship,
     _slug,
     _under_prefix,
@@ -27,8 +31,6 @@ from forge.gen_c4 import (
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 # A minimal standalone c4.toml model used across the file-loading tests.
@@ -174,6 +176,103 @@ def test_render_dsl_suppresses_derived_edge_duplicating_declared(
     # Declared Core->IO; a derived Core->IO must not add a second arrow.
     dsl = render_dsl(config, {("Core", "IO")})
     assert dsl.count("-> io ") == 1 or dsl.count("core -> io") == 1
+
+
+# --- #106: per-component container assignment ---
+
+_TWO_CONTAINERS = (
+    Container("Applications", "Python", ""),
+    Container("Domain libraries", "Python", ""),
+)
+
+
+def _two_container_config(components: tuple[Component, ...]) -> C4Config:
+    """Build a 2-container C4Config with the given components.
+
+    Args:
+        components: Components to place in the model.
+
+    Returns:
+        A minimal two-container :class:`C4Config`.
+    """
+    return C4Config(
+        system="Demo",
+        description="",
+        output="docs/architecture.dsl",
+        containers=_TWO_CONTAINERS,
+        components=components,
+    )
+
+
+def test_components_render_in_their_named_container() -> None:
+    """Each component renders inside the container its ``container`` field names."""
+    config = _two_container_config(
+        (
+            Component("Leaderboards", ("demo.app",), container="Applications"),
+            Component("Core data", ("demo.core",), container="Domain libraries"),
+        )
+    )
+    dsl = render_dsl(config, set())
+    app = dsl.index('container "Applications"')
+    dom = dsl.index('container "Domain libraries"')
+    lead = dsl.index('component "Leaderboards"')
+    core = dsl.index('component "Core data"')
+    # Leaderboards nests under Applications (before Domain libraries opens);
+    # Core data nests under Domain libraries — N populated containers, not one.
+    assert app < lead < dom < core
+
+
+def test_component_without_container_defaults_to_first() -> None:
+    """A component with no ``container`` attaches to the first declared container."""
+    config = _two_container_config((Component("Orphan", ("demo.x",)),))
+    dsl = render_dsl(config, set())
+    app = dsl.index('container "Applications"')
+    dom = dsl.index('container "Domain libraries"')
+    orphan = dsl.index('component "Orphan"')
+    assert app < orphan < dom  # inside the first (Applications) block
+
+
+def test_empty_container_equals_explicit_first_byte_identical() -> None:
+    """Omitting ``container`` is byte-identical to naming the first container."""
+    omitted = _two_container_config(
+        (Component("A", ("demo.a",)), Component("B", ("demo.b",)))
+    )
+    explicit = _two_container_config(
+        (
+            Component("A", ("demo.a",), container="Applications"),
+            Component("B", ("demo.b",), container="Applications"),
+        )
+    )
+    assert render_dsl(omitted, set()) == render_dsl(explicit, set())
+
+
+def test_cross_container_edge_renders() -> None:
+    """An import edge between components in different containers still renders."""
+    config = _two_container_config(
+        (
+            Component("App", ("demo.app",), container="Applications"),
+            Component("Core", ("demo.core",), container="Domain libraries"),
+        )
+    )
+    dsl = render_dsl(config, {("App", "Core")})
+    assert "app -> core" in dsl
+
+
+def test_unknown_container_fails_loudly(tmp_path: Path) -> None:
+    """A component naming an undeclared container raises a clear ValueError."""
+    model = (
+        'system = "Demo"\n'
+        "[[container]]\n"
+        'name = "Applications"\n'
+        "[[component]]\n"
+        'name = "Stray"\n'
+        'container = "Nope"\n'
+        'modules = ["demo.x"]\n'
+    )
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(model)
+    with pytest.raises(ValueError, match=r"Stray.*Nope"):
+        load_c4_config(tmp_path)
 
 
 def test_generate_returns_none_without_config(tmp_path: Path) -> None:

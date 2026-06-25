@@ -145,9 +145,10 @@ Scope boundaries for v1:
 - **Code level is skipped** — C4 calls it optional, and verification
   showed Structurizr DSL does not cleanly cover it; leave it to
   `pyreverse` if ever wanted.
-- **One import graph → components within containers.** Multi-container
-  dependency inference (which container a component talks to across a
-  boundary) stays human-declared.
+- **One import graph → components across containers.** Components are
+  distributed across containers by each component's `container` key
+  (default: the first container); import edges are derived globally and
+  render across container boundaries.
 - Modules matching no component prefix are **reported, not silently
   dropped** (a coverage warning), so the picture can't quietly lie.
 
@@ -170,6 +171,31 @@ Every relationship line carries a label: derived import edges read
 phrase (the runtime/subprocess "uses" the import graph can't see). Boxes
 carry **description + technology** via the rich `[[component]]` config
 (the simple `[components]` map remains a quick-start shorthand).
+
+**Multiple containers.** A rich `[[component]]` may name its owning
+container with a `container = "<container display name>"` key; every
+declared container then renders with its own components. A component that
+omits `container` attaches to the **first** declared container (so models
+with no `container` keys render byte-identically). An unknown `container`
+fails loudly; import-graph edges still render across container boundaries.
+
+```toml
+[[tool.forge.c4.container]]
+name = "Applications"
+
+[[tool.forge.c4.container]]
+name = "Domain libraries"
+
+[[tool.forge.c4.component]]
+name = "Leaderboards"
+container = "Applications"
+modules = ["benchmarks"]
+
+[[tool.forge.c4.component]]
+name = "Core data"
+container = "Domain libraries"
+modules = ["pedata"]
+```
 
 ### Drift wiring (the diagram updates at each PR)
 
