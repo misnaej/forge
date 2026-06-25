@@ -72,7 +72,10 @@ otherwise accumulates a staged-catch-up backlog).
    **opens** a PR — it never merges, so the one irreducible manual step
    (the human merge, FOUNDATION §2) is untouched — and it is
    **idempotent**: it refuses to open a second promotion PR when one is
-   already open, so re-running across `/next` invocations is harmless.
+   already open, so re-running across `/next` invocations is harmless. If
+   the repo has no promotion skill/command configured, do **not** error —
+   fall back to surfacing the advisory and telling the user to run their
+   promotion manually.
 2. It promotes **one minor at a time** in ascending order: cuts the
    `release/vX.Y.0` branch, authors the curated CHANGELOG, opens the PR,
    then **stops**. Surface the opened PR as the top item (above any Phase 4

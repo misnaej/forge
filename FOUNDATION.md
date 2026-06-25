@@ -1058,8 +1058,9 @@ Example: forge's `forge-next-prep` emits a `Pending promotion: …`
 advisory after the prune step when `[tool.forge].dev_branch !=
 base_branch` (dual-track repos). The shipped `/forge:next` skill
 calls `forge-next-prep --tag` exactly as before; the new
-advisory rides along automatically. Single-branch consumers
-never see the line.
+advisory rides along automatically, and the skill's Phase 1.5 then
+acts on it by auto-invoking the repo's promotion flow. Single-branch
+consumers never see the line.
 
 Pattern C is the right choice when:
 
