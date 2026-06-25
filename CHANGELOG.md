@@ -20,6 +20,22 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.8.0 — 2026-06-25
+
+Additive — a new default-on pre-commit step that self-skips unless a
+declared CLI is genuinely missing from your install.
+
+### Features
+- **`env_sync` pre-commit step** — a deadly-fast, in-process
+  install-freshness gate that runs **first**: every CLI declared in
+  `[project.scripts]` must be an installed console script, else the editable
+  install is stale (a new entry point was added but not reinstalled) and the
+  gate may run old code. Blocks by default with the exact reinstall command
+  (`./dev/setup.sh` / `pip install -e`); `[tool.forge.env_sync].blocking =
+  false` downgrades it to a non-blocking WARN. Self-skips when there is no
+  `[project.scripts]` table, the package isn't installed, or the run is
+  non-interactive / CI. Never auto-installs (#82).
+
 ## v2.7.0 — 2026-06-25
 
 Additive — release-tooling only; dual-track repos benefit, single-track

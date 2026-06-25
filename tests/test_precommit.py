@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import shutil
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import patch
 
 import pytest
@@ -24,6 +24,39 @@ from forge.pip_audit_json import AuditRun
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Null Objects — reused across env_sync test groups
+# ---------------------------------------------------------------------------
+
+
+class FakeEP(NamedTuple):
+    """Null-object entry point for _installed_console_scripts tests.
+
+    Attributes:
+        name: Entry-point name (e.g. ``"mycli"``).
+        group: Entry-point group (e.g. ``"console_scripts"``).
+    """
+
+    name: str
+    group: str
+
+
+class FakeDist:
+    """Null-object distribution for _installed_console_scripts tests.
+
+    Attributes:
+        entry_points: Fake list of entry points supplied at construction.
+    """
+
+    def __init__(self, eps: list[FakeEP]) -> None:
+        """Store fake entry points.
+
+        Args:
+            eps: List of fake entry points to expose as ``entry_points``.
+        """
+        self.entry_points: list[FakeEP] = eps
 
 
 def _write_precommit_cfg(repo_root: Path, body: str) -> None:
@@ -66,6 +99,31 @@ def _audit_run(n_vulns: int) -> AuditRun:
         ]
     }
     return AuditRun(data=data, stderr="", returncode=1 if n_vulns else 0)
+
+
+def _write_project_scripts_pyproject(
+    repo_root: Path,
+    name: str,
+    scripts: dict[str, str],
+    *,
+    env_sync_blocking: bool | None = None,
+) -> None:
+    """Write a [project] + [project.scripts] pyproject.toml for env_sync tests.
+
+    Args:
+        repo_root: Directory to drop ``pyproject.toml`` in.
+        name: Package name for the ``[project] name`` key.
+        scripts: Dict whose keys become ``[project.scripts]`` entry names;
+            values are ignored (only the key set matters for _declared_scripts).
+        env_sync_blocking: When not None, appends
+            ``[tool.forge.env_sync] blocking = true/false``.
+    """
+    parts = [f'[project]\nname = "{name}"\n\n[project.scripts]\n']
+    parts.extend(f'{script_name} = "pkg:main"\n' for script_name in scripts)
+    if env_sync_blocking is not None:
+        val = "true" if env_sync_blocking else "false"
+        parts.append(f"\n[tool.forge.env_sync]\nblocking = {val}\n")
+    (repo_root / "pyproject.toml").write_text("".join(parts), encoding="utf-8")
 
 
 def test_resolve_scope_defaults_to_all(tmp_path: Path) -> None:
@@ -508,6 +566,20 @@ def _stub_docstring_coverage_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(precommit, "step_docstring_coverage", _stub)
 
 
+def _stub_env_sync_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub ``step_env_sync`` to skip in integration tests."""
+
+    def _stub(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(
+            name="env_sync",
+            passed=True,
+            output="(stubbed)",
+            skipped=True,
+        )
+
+    monkeypatch.setattr(precommit, "step_env_sync", _stub)
+
+
 def test_run_all_writes_code_health_logs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -516,7 +588,7 @@ def test_run_all_writes_code_health_logs(
 
     SCENARIO: run_all executes the full step sequence end-to-end and
     must persist each step's output to its own log file.
-    MOCK SETUP: swaps step_docstrings, step_test_naming,
+    MOCK SETUP: swaps step_env_sync, step_docstrings, step_test_naming,
     step_repo_structure, step_pip_audit, and step_docstring_coverage
     with `_stub_*` helpers so no real CLI / network call fires; ruff,
     manifest_json, and plugin_version run their real shell-out path
@@ -524,6 +596,7 @@ def test_run_all_writes_code_health_logs(
     EXPECTED BEHAVIOR: code_health/ exists and contains a log file for
     every step in the sequence.
     """
+    _stub_env_sync_skipped(monkeypatch)
     _stub_docstrings_passing(monkeypatch)
     _stub_test_naming_passing(monkeypatch)
     _stub_repo_structure_passing(monkeypatch)
@@ -533,6 +606,7 @@ def test_run_all_writes_code_health_logs(
     log_dir = tmp_path / "code_health"
     assert log_dir.is_dir()
     expected = {
+        "env_sync.log",
         "ruff.log",
         "docstring_verification.log",
         "docstring_coverage.log",
@@ -1366,3 +1440,219 @@ def test_step_cve_usage_runs_bare_when_sidecar_absent(
     precommit.step_cve_usage(tmp_path)
     assert "verify-forge-cve-usage" in captured_argv
     assert "--audit-json" not in captured_argv
+
+
+def test_declared_scripts_happy_path(tmp_path: Path) -> None:
+    """_declared_scripts returns (name, script_set) for a valid pyproject."""
+    _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": "", "another": ""})
+    result = precommit._declared_scripts(tmp_path)
+    assert result is not None
+    assert result[0] == "mypkg"
+    assert result[1] == {"mycli", "another"}
+
+
+def test_declared_scripts_returns_none_when_name_missing(tmp_path: Path) -> None:
+    """_declared_scripts returns None when [project] has no ``name`` key."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project.scripts]\nmycli = "pkg:main"\n', encoding="utf-8"
+    )
+    assert precommit._declared_scripts(tmp_path) is None
+
+
+def test_declared_scripts_returns_none_when_scripts_key_absent(
+    tmp_path: Path,
+) -> None:
+    """_declared_scripts returns None when [project.scripts] is absent."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "mypkg"\n', encoding="utf-8"
+    )
+    assert precommit._declared_scripts(tmp_path) is None
+
+
+def test_declared_scripts_returns_none_when_scripts_empty(tmp_path: Path) -> None:
+    """_declared_scripts returns None when [project.scripts] is an empty table."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "mypkg"\n\n[project.scripts]\n', encoding="utf-8"
+    )
+    assert precommit._declared_scripts(tmp_path) is None
+
+
+def test_installed_console_scripts_returns_console_script_names_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_installed_console_scripts returns only console_scripts group entries."""
+    eps = [FakeEP("mycli", "console_scripts"), FakeEP("myapp", "gui_scripts")]
+    monkeypatch.setattr(
+        precommit.importlib.metadata, "distribution", lambda _n: FakeDist(eps)
+    )
+    result = precommit._installed_console_scripts("mypkg")
+    assert result == {"mycli"}
+
+
+def test_installed_console_scripts_returns_none_when_package_not_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_installed_console_scripts returns None when the package is not installed."""
+
+    def _raise(_name: str) -> object:
+        raise precommit.importlib.metadata.PackageNotFoundError(_name)
+
+    monkeypatch.setattr(precommit.importlib.metadata, "distribution", _raise)
+    assert precommit._installed_console_scripts("missing-pkg") is None
+
+
+# ---------------------------------------------------------------------------
+# step_env_sync (integration — all patch is_non_interactive)
+# ---------------------------------------------------------------------------
+
+
+def test_step_env_sync_skips_in_ci_non_interactive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """step_env_sync skips in CI without touching distribution metadata.
+
+    SCENARIO: is_non_interactive returns True — the step must short-circuit
+    immediately without inspecting pyproject.toml or importlib.metadata.
+    MOCK SETUP: is_non_interactive stubbed to True.
+    EXPECTED BEHAVIOR: passed True, skipped True, "non-interactive" in output.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
+    result = precommit.step_env_sync(tmp_path)
+    assert result.passed
+    assert result.skipped
+    assert "non-interactive" in result.output
+
+
+def test_step_env_sync_skips_when_no_declared_scripts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """step_env_sync skips when pyproject has no usable [project.scripts].
+
+    SCENARIO: no pyproject.toml in tmp_path — _declared_scripts returns None.
+    MOCK SETUP: is_non_interactive stubbed to False; no pyproject written.
+    EXPECTED BEHAVIOR: passed True, skipped True, "[project.scripts]" in output.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    result = precommit.step_env_sync(tmp_path)
+    assert result.passed
+    assert result.skipped
+    assert "[project.scripts]" in result.output
+
+
+def test_step_env_sync_skips_when_package_not_installed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """step_env_sync skips when the package is declared but not installed.
+
+    SCENARIO: pyproject declares mypkg with one script, but distribution
+    raises PackageNotFoundError — nothing to compare against.
+    MOCK SETUP: is_non_interactive→False; pyproject written; distribution
+    stubbed to raise PackageNotFoundError.
+    EXPECTED BEHAVIOR: passed True, skipped True, "not installed" in output.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": ""})
+
+    def _raise(_name: str) -> object:
+        raise precommit.importlib.metadata.PackageNotFoundError(_name)
+
+    monkeypatch.setattr(precommit.importlib.metadata, "distribution", _raise)
+    result = precommit.step_env_sync(tmp_path)
+    assert result.passed
+    assert result.skipped
+    assert "not installed" in result.output
+
+
+def test_step_env_sync_passes_when_all_scripts_registered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """step_env_sync passes when every declared script is installed.
+
+    SCENARIO: pyproject declares {mycli, helper}; distribution reports both
+    as console_scripts — no gap between declared and installed.
+    MOCK SETUP: is_non_interactive→False; pyproject written; distribution→
+    FakeDist([FakeEP("mycli","console_scripts"), FakeEP("helper","console_scripts")]).
+    EXPECTED BEHAVIOR: passed True, skipped False, "installed" in output,
+    non_blocking False.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": "", "helper": ""})
+    eps = [FakeEP("mycli", "console_scripts"), FakeEP("helper", "console_scripts")]
+    monkeypatch.setattr(
+        precommit.importlib.metadata, "distribution", lambda _n: FakeDist(eps)
+    )
+    result = precommit.step_env_sync(tmp_path)
+    assert result.passed
+    assert not result.skipped
+    assert "installed" in result.output
+    assert not result.non_blocking
+
+
+def test_step_env_sync_blocks_by_default_when_script_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """step_env_sync blocks (non_blocking=False) when a script is missing and no config.
+
+    SCENARIO: pyproject declares {mycli, new-cli}; distribution has only mycli;
+    no [tool.forge.env_sync] written — blocking defaults to True.
+    MOCK SETUP: is_non_interactive→False; pyproject written without env_sync config;
+    distribution→FakeDist([FakeEP("mycli","console_scripts")]).
+    EXPECTED BEHAVIOR: passed False, skipped False, non_blocking False,
+    "new-cli" in output, "setup.sh" in output.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": "", "new-cli": ""})
+    eps = [FakeEP("mycli", "console_scripts")]
+    monkeypatch.setattr(
+        precommit.importlib.metadata, "distribution", lambda _n: FakeDist(eps)
+    )
+    result = precommit.step_env_sync(tmp_path)
+    assert not result.passed
+    assert not result.skipped
+    assert not result.non_blocking
+    assert "new-cli" in result.output
+    assert "setup.sh" in result.output
+
+
+def test_step_env_sync_warns_not_blocks_when_blocking_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """step_env_sync warns when [tool.forge.env_sync].blocking=false.
+
+    SCENARIO: same missing-script situation as blocks_by_default, but
+    [tool.forge.env_sync] blocking=false downgrades the result to WARN.
+    MOCK SETUP: is_non_interactive→False; pyproject written with blocking=false;
+    distribution→FakeDist([FakeEP("mycli","console_scripts")]).
+    EXPECTED BEHAVIOR: passed False, skipped False, non_blocking True,
+    "new-cli" in output.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    _write_project_scripts_pyproject(
+        tmp_path, "mypkg", {"mycli": "", "new-cli": ""}, env_sync_blocking=False
+    )
+    eps = [FakeEP("mycli", "console_scripts")]
+    monkeypatch.setattr(
+        precommit.importlib.metadata, "distribution", lambda _n: FakeDist(eps)
+    )
+    result = precommit.step_env_sync(tmp_path)
+    assert not result.passed
+    assert not result.skipped
+    assert result.non_blocking
+    assert "new-cli" in result.output
+
+
+# ---------------------------------------------------------------------------
+# env_sync — registry position
+# ---------------------------------------------------------------------------
+
+
+def test_step_env_sync_is_first_default_step(tmp_path: Path) -> None:
+    """env_sync is the first step in the default resolved sequence."""
+    resolved = precommit._resolve_steps(tmp_path)
+    assert resolved[0].name == "env_sync"
