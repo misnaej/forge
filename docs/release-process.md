@@ -47,8 +47,10 @@ be released** — never the last-released version.
   a squash reproduces the tagged release even when the release branch
   finalized the curated `@main` CHANGELOG entry (§5); any *other* file
   difference still leaves the tag unaligned. Reports drift (default,
-  read-only) or force-moves the tag (`--fix`). Run by `/promote` after the
-  squash merge. Self-skips single-branch repos. See §4.
+  read-only) or force-moves the tag (`--fix`). Run automatically by `/next`
+  Phase 1 on every run (idempotent — moves a tag only when a promotion
+  actually landed); also in the `/promote` post-merge checklist for
+  immediate relocation. Self-skips single-branch repos. See §4.
 
 ## 3. Promotion: staged catch-up
 
@@ -57,13 +59,24 @@ be released** — never the last-released version.
 - **One minor at a time, ascending.** When `main` is several minors behind,
   promote each minor as its own clean squash commit; never lump multiple
   minors into one PR.
-- The release branch's tree reproduces the target minor's release tree
-  (cut from `main`, bring the minor's tree) **except for the curated
-  `@main` CHANGELOG entry it adds** (§5) — so the diff against the tag is
-  limited to `CHANGELOG.md`, which the release fingerprint ignores. To
-  also reconcile `dev`'s CHANGELOG without a separate back-merge PR, merge
-  `main` into the release branch **first** (§5 option b) before adding the
-  new entry.
+- **Build the release branch from `dev`, then merge `main` into it.** Four
+  standard-git steps — no special recipe:
+  ```bash
+  git switch -c release/vX.Y.0 origin/dev   # 1. branch from the dev version
+  git merge origin/main                      # 2. merge main IN — REQUIRED
+  # 3. resolve conflicts toward dev (dev is ahead); the merge also brings
+  #    main's prior curated CHANGELOG entries in, so nothing on main regresses
+  # 4. rewrite CHANGELOG: add the curated ## vX.Y.0 @main entry; commit
+  ```
+  **Step 2 is the whole game.** Because every promotion is a squash,
+  `main`'s commits are not ancestors of `dev`; branching from `dev`
+  *without* merging `main` leaves the merge-base at the pre-squash common
+  ancestor, so the PR re-shows all of dev's history (a v2.4.0 attempt
+  showed 98 files vs the true 15). Merging `main` in makes it an ancestor →
+  the PR diff is exactly this release's delta. Plain git — no
+  tree-reconstruction. The branch diverges from the `vX.Y.0` tag only by
+  the curated `CHANGELOG.md`, which the tag relocation tolerates via the
+  release fingerprint (§2).
 - Run via the `/promote` skill, which uses `forge-next-prep
   --promotion-status` for the ordered pending list.
 
@@ -88,6 +101,7 @@ invariant that had no test).
 | Release-equality ignores `CHANGELOG.md` (the per-promotion curated `@main` entry) but **nothing else** — two trees differing only in `CHANGELOG.md` share a fingerprint; any other diff does not | `git_utils.release_tree_fingerprint` | `tests/test_git_utils.py::test_release_fingerprint_equal_when_only_changelog_differs` / `::test_release_fingerprint_differs_when_other_file_changes` |
 | The rolling-next guard skips a release branch that only finalized `CHANGELOG.md`, yet still fails when a non-CHANGELOG change leaves `plugin.json ≤ latest tag` | `verify_plugin_version._is_release_commit` | `tests/test_verify_plugin_version.py::test_skips_when_release_branch_only_adds_changelog` / `::test_fails_when_release_branch_changes_non_changelog_file` |
 | `forge-check-main-tags` relocates a minor tag when the base squash diverges from the tag only by `CHANGELOG.md`, but treats a non-CHANGELOG divergence as unreproduced (no move) | `verify_main_tags._base_tree_index` | `tests/test_verify_main_tags.py::test_fix_relocates_when_base_diverges_only_by_changelog` / `::test_base_diverging_by_non_changelog_is_not_a_target` |
+| `forge-check-main-tags` warns about un-reproduced minors **above** the base's current line (genuinely pending) but downgrades **ancient** ones below it (never promoted, can't backfill) to INFO — so long-dead dev-only tags don't nag every run | `verify_main_tags._report_unreproduced` | `tests/test_verify_main_tags.py::test_report_unreproduced_warns_pending_but_ignores_ancient` |
 | `--promotion-status` flags a pending minor that has no `## vX.Y.0` entry in `origin/<dev>`'s `CHANGELOG.md` (non-blocking advisory; silent when the repo keeps no CHANGELOG) | `next_prep._promotion_status_lines` | `tests/test_next_prep.py::test_promotion_status_flags_missing_changelog_entry` |
 
 When you add a versioning/promotion behavior, add a row here **and** its
@@ -113,24 +127,20 @@ minus `CHANGELOG.md`). So the release branch passes CI and the minor tag
 still relocates onto `main`, while any *non*-CHANGELOG edit to a release
 branch is rejected exactly as before.
 
-**Keeping `dev`'s CHANGELOG in sync.** Because the entry lands on `main`
-first, `dev` lacks it until reconciled. Two ways — pick per cadence:
+**`main` is the CHANGELOG source of record.** The curated log lives on
+`main` and is carried forward at each promotion by the **`git merge
+origin/main`** in the release branch (§3 step 2): the merge brings main's
+prior curated entries onto the branch, and you then append only the new
+`vX.Y.0` entry — so no prior entry is lost. **No per-release back-merge is
+required**, and `dev`'s `CHANGELOG.md` is allowed to lag (it is the
+pre-release branch; consumers reading release notes pin `@main`).
 
-- **(a) Post-merge back-merge PR (`main → dev`).** After the promotion
-  merges, open a small PR that brings `main`'s new CHANGELOG entry onto
-  `dev` (plus the required rolling-next `plugin.json` bump). Clean and
-  immediate. **Not always worth it:** when `dev` is moving fast (heavy
-  merge traffic), a per-release back-merge PR is churn that goes stale
-  quickly — skip it and use (b).
-- **(b) Align at the next release PR.** When you cut the next
-  `release/vX.Y.Z` branch, the **first task** is to merge `main` into the
-  branch, carrying `main`'s curated CHANGELOG forward; *then* add the new
-  minor's entry on top. The channels reconcile at promotion time with no
-  extra PR. This is the default for busy repos.
-
-  Either way the entry flows `release branch → main`, then back to `dev`
-  by (a) or (b). `main` is the channel of record for CHANGELOG content;
-  `dev` mirrors it.
+- **Back-merging `main → dev` is optional**, not mandatory. Do it if you
+  want `dev`'s `CHANGELOG.md` to mirror `main` for local readability (a
+  small PR: the entry + the rolling-next `plugin.json` bump). Skip it
+  freely when `dev` is moving fast — because §3 merges `main` into every
+  release branch, the curated log never regresses regardless of whether
+  `dev`'s copy is current.
 
 - **Enforcement is a non-blocking advisory.** `forge-next-prep
   --promotion-status` (run by `/promote`) appends a `⚠️` line when a

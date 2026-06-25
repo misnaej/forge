@@ -25,6 +25,16 @@ Stop immediately and report if any step fails.
    - With `--tag`: if `.claude-plugin/plugin.json["version"]` is strictly ahead of the latest `v*` tag, tag the merge commit and push (the rolling-next release pattern). No-op when plugin.json is absent, the version equals the latest tag, or the version is older. Drop `--tag` for repos that don't ship a plugin manifest or that don't follow the rolling-next pattern.
    - Deletes local branches with `[origin/...: gone]` tracking via safe `git branch -d`. Branches with unmerged commits are reported, not deleted by the CLI — the skill then `-D`s any whose PR is confirmed merged (the squash-merge case `-d` cannot detect; see Important Rules). Use `--no-prune-branches` to skip.
    - Exits non-zero (1) when main cannot fast-forward — stop and report.
+   - **Align base-branch release tags (dual-track):** then run
+     `forge-check-main-tags --fix`. This is the **one step that
+     distinguishes post-promotion cleanup from a normal merge** — when a
+     promotion PR has merged, it moves the minor tag `vX.Y.0` from its
+     `dev` commit onto `main`'s squash commit (else `git describe
+     origin/main` resolves to a stale predecessor). Safe on **every**
+     `/next`: idempotent (moves a tag only when a promotion actually
+     landed), **self-skips single-branch repos**, and leaves ancient
+     un-promoted minors quiet (INFO). So **post-promotion = a normal
+     `/next`** — nothing extra to remember. Report any moves.
 
 3. **Confirm clean state**
    Run `git branch` and `git status --porcelain`. Report.
@@ -41,6 +51,34 @@ Stop immediately and report if any step fails.
      multiple `Bash(ruff check ...)` lines → `Bash(ruff *)`).
    - Keep legitimate domain-specific WebFetch rules.
    - Write the cleaned file back.
+
+## Phase 1.5: Pending promotion (dual-track repos)
+
+`forge-next-prep --tag` (Phase 1) prints a `Pending promotion: dev at
+vX.Y.Z; <base> at vA.B.C (MINOR bump)` advisory when the repo is
+**dual-track** (`[tool.forge].dev_branch != base_branch`) and the slow
+channel is a minor or more behind. **Single-track repos never see this
+line — skip the whole phase.**
+
+When a promotion is pending, handle it **before** backlog task selection —
+a pending promotion is usually higher priority than starting new work: it
+ships completed minors to the slow channel and stops the base branch from
+silently drifting minors behind across sessions (the failure mode that
+otherwise accumulates a staged-catch-up backlog).
+
+1. **Surface it as the top recommendation**, above any Phase 4 backlog
+   item — name the pending minor(s) in ascending order.
+2. **Offer to run the repo's promotion flow now** — in forge, the
+   `/promote` skill; consumers substitute their own promotion command.
+   Promotion opens a remote PR, so it is **confirm-first**, never
+   automatic.
+3. On confirmation, invoke it (forge: `Skill(skill="promote")`). It
+   promotes **one minor at a time** and is idempotent (refuses a duplicate
+   open promotion PR). It opens the PR and stops — a human merges it later,
+   and the next `/next` relocates the minor tag onto `main` via Phase 1's
+   `forge-check-main-tags --fix` step. (That tag move is *not* done by
+   `/promote`, which cannot run after the async human merge.)
+4. If declined, note the pending promotion and continue.
 
 ## Phase 2: Documentation Hygiene (optional)
 
@@ -115,6 +153,7 @@ Stop immediately and report if any step fails.
 
 - **Always fetch from remote** before assuming branch / PR state.
 - **Tag the merge before pruning branches** — version-tracked repos need the release tag at the merge commit, not at some later commit. The tag step (Step 2's `--tag` bullet) runs after `git pull`, before stale-branch cleanup, so the tag points at the canonical release commit.
+- **Surface a pending promotion before backlog selection** (Phase 1.5) — on dual-track repos, offer the promotion (confirm-first) ahead of picking new work, so the slow channel never drifts minors behind. Silent on single-track repos.
 - **Force-delete (`-D`) only `MERGED` branches.** `forge-next-prep` deletes merged branches with safe `-d` and reports any it skips for "unmerged commits." A squash-merge makes `-d` refuse (the squashed commits are not ancestors of the base), so for each skipped branch, confirm its PR state is `MERGED` (`gh pr view <n> --json state` → `MERGED`) and then `git branch -D <branch>`. A `CLOSED`-but-unmerged PR means the work never landed — **leave it for the user; never `-D` it.** Never `-D` a branch with no merged PR.
 - **Never proceed with dirty git state** — always stop and let the user decide.
 - **Never delete `.plan/CONTINUATION.md`** — carry it forward in place (Phase 6).
