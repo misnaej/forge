@@ -339,18 +339,26 @@ def _parse_components(section: dict) -> tuple[Component, ...]:
 def _validate_component_containers(
     components: tuple[Component, ...], containers: tuple[Container, ...]
 ) -> None:
-    """Fail loudly when a component names a container that isn't declared.
+    """Fail loudly on a duplicate container name or an undeclared reference.
 
     Args:
         components: Parsed components.
         containers: Declared containers.
 
     Raises:
-        ValueError: When a component's non-empty ``container`` is not among
-            the declared container names. (An empty ``container`` is valid —
-            it means the first declared container.)
+        ValueError: When two containers share a name (which would silently
+            merge in the name→id map and render a component into both), or
+            when a component's non-empty ``container`` is not among the
+            declared names. (An empty ``container`` is valid — it means the
+            first declared container.)
     """
-    declared = {c.name for c in containers}
+    seen: set[str] = set()
+    for container in containers:
+        if container.name in seen:
+            msg = f"duplicate container name {container.name!r}"
+            raise ValueError(msg)
+        seen.add(container.name)
+    declared = seen
     for comp in components:
         if comp.container and comp.container not in declared:
             names = ", ".join(sorted(declared)) or "(none)"
@@ -373,6 +381,9 @@ def load_c4_config(root: Path) -> C4Config | None:
     Returns:
         A populated :class:`C4Config`, or ``None`` when C4 generation is
         not opted into or the model declares no ``system`` name.
+
+    Raises:
+        ValueError: When a component names a container that is not declared.
     """
     section = resolve_model_section(root)
     if not section or not section.get("system"):
@@ -688,8 +699,9 @@ def _render_views(
         container_ids: Container name → DSL identifier.
 
     Returns:
-        DSL lines for the systemContext, container, and (when a container
-        exists) component views, plus the default theme.
+        DSL lines for the systemContext, container, and one component view
+        per declared container (each scoped to that container), plus the
+        default theme.
     """
     lines = [
         "    views {",
@@ -702,10 +714,10 @@ def _render_views(
         "            autolayout lr",
         "        }",
     ]
-    if config.containers:
-        primary = container_ids[config.containers[0].name]
+    for container in config.containers:
+        cid = container_ids[container.name]
         lines += [
-            f"        component {primary} {_q('Components')} {{",
+            f"        component {cid} {_q(f'{container.name} Components')} {{",
             "            include *",
             "            autolayout lr",
             "        }",
@@ -731,6 +743,11 @@ def build_model(
     Returns:
         Tuple of (config, derived component edges, sorted unmatched module
         names), or ``None`` when C4 generation is not opted into.
+
+    Raises:
+        ValueError: When the config is invalid (propagated from
+            :func:`load_c4_config`), e.g. a component naming an unknown
+            container.
     """
     config = load_c4_config(root)
     if config is None:
@@ -1168,7 +1185,8 @@ def main() -> int:
 
     Returns:
         Exit code: ``0`` on a successful write/print or in-sync check;
-        ``1`` on drift, a missing artifact, or absent ``[tool.forge.c4]``.
+        ``1`` on drift, a missing artifact, absent ``[tool.forge.c4]``,
+        or an invalid model configuration (e.g. an unknown container name).
     """
     args = _parse_args()
     root = repo_root()

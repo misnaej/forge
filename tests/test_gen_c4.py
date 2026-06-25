@@ -275,6 +275,46 @@ def test_unknown_container_fails_loudly(tmp_path: Path) -> None:
         load_c4_config(tmp_path)
 
 
+def test_duplicate_container_name_fails_loudly(tmp_path: Path) -> None:
+    """Two containers sharing a name raise a clear ValueError (no silent merge)."""
+    model = (
+        'system = "Demo"\n[[container]]\nname = "Dup"\n[[container]]\nname = "Dup"\n'
+    )
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(model)
+    with pytest.raises(ValueError, match=r"duplicate container.*Dup"):
+        load_c4_config(tmp_path)
+
+
+def test_render_dsl_emits_a_component_view_per_container() -> None:
+    """Each declared container gets its own component view, not just the first."""
+    config = _two_container_config(
+        (
+            Component("App", ("demo.app",), container="Applications"),
+            Component("Lib", ("demo.lib",), container="Domain libraries"),
+        )
+    )
+    dsl = render_dsl(config, set())
+    assert "component applications " in dsl
+    assert "component domain_libraries " in dsl
+
+
+def test_render_mermaid_routes_components_to_correct_subgraph() -> None:
+    """Mermaid places each component inside its own container's subgraph."""
+    config = _two_container_config(
+        (
+            Component("App", ("demo.app",), container="Applications"),
+            Component("Lib", ("demo.lib",), container="Domain libraries"),
+        )
+    )
+    mermaid = render_mermaid(config, set())
+    apps = mermaid.index("subgraph applications")
+    dom = mermaid.index("subgraph domain_libraries")
+    app_node = mermaid.index('app["')
+    lib_node = mermaid.index('lib["')
+    assert apps < app_node < dom < lib_node
+
+
 def test_generate_returns_none_without_config(tmp_path: Path) -> None:
     """Generate signals opt-out by returning None when unconfigured."""
     _write_pyproject(tmp_path, "[tool.forge]\n")

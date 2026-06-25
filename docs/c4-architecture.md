@@ -194,7 +194,7 @@ modules = ["benchmarks"]
 [[tool.forge.c4.component]]
 name = "Core data"
 container = "Domain libraries"
-modules = ["pedata"]
+modules = ["mylib"]
 ```
 
 ### Drift wiring (the diagram updates at each PR)
