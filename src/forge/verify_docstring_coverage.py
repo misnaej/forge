@@ -24,7 +24,7 @@ Scan roots default to the repo-wide layout
 ``[tool.forge].source_dirs + test_dirs`` (default ``src`` + ``tests``);
 a per-tool ``[tool.forge.docstring_coverage].paths`` overrides them
 (interrogate has no scan-root concept). ``[tool.forge.docstring_coverage]
-.badge = true`` writes ``.badges/DocstringCoverage.svg`` for README
+.badge = true`` writes ``.badges/docstring-coverage.svg`` for README
 embedding. Writes ``code_health/docstring_coverage.log``.
 
 Exit codes:
@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_FAIL_UNDER = 90.0
 _BADGE_DIR = ".badges"
-_BADGE_FILENAME = "DocstringCoverage.svg"
+_BADGE_FILENAME = "docstring-coverage.svg"
 
 
 def _interrogate_config(data: dict) -> tuple[InterrogateConfig, float, list[str]]:
@@ -121,7 +121,7 @@ def _write_badge(repo_root: Path, results: object) -> Path:
 
     Args:
         repo_root: Repository root. Badge written to
-            ``<repo_root>/.badges/DocstringCoverage.svg``.
+            ``<repo_root>/.badges/docstring-coverage.svg``.
         results: :class:`interrogate.coverage.InterrogateResults` from
             the coverage run.
 

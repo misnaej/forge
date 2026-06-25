@@ -188,7 +188,7 @@ these are the keys interrogate has no concept of.)
 
 > **Naming — one thing, three names.** The config section
 > `[tool.forge.docstring_coverage]`, the generated badge file
-> `.badges/DocstringCoverage.svg`, and what's colloquially called "the
+> `.badges/docstring-coverage.svg`, and what's colloquially called "the
 > interrogate badge" are all the **same single artifact**: forge's
 > docstring-coverage reporter, which is powered by
 > [interrogate](https://interrogate.readthedocs.io/). The **canonical name is
@@ -196,13 +196,14 @@ these are the keys interrogate has no concept of.)
 > not by the tool that backs them (`[tool.forge.typecheck]` not `pyrefly`,
 > `[tool.forge.doctest]`, `[tool.forge.docstring_coverage]`), while reading
 > the tool's own native `[tool.interrogate]` section directly. The badge SVG
-> keeps its `DocstringCoverage` filename for back-compat (renaming it would
-> break consumers who reference it by path in their README).
+> follows the same name — `.badges/docstring-coverage.svg` (renamed from the
+> old PascalCase `DocstringCoverage.svg`; see the ⚠️ upgrade note in
+> `CHANGELOG.md`).
 
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
 | `paths` | `[tool.forge].source_dirs + test_dirs` | Per-tool **override** of the scan roots for the coverage report and badge. Defaults to the repo-wide layout above; set this only when docstring-coverage should scan something different. Paths resolving outside the repo are rejected. | You want coverage scoped differently from the rest of forge — otherwise prefer setting `[tool.forge].source_dirs` once. |
-| `badge` | `false` | Generate **interrogate's own** coverage badge (via `interrogate.badge_gen`) to `.badges/DocstringCoverage.svg` for README embedding. forge invokes interrogate as a library, so this opt-in triggers the badge programmatically. | You want a coverage badge in your README. |
+| `badge` | `false` | Generate **interrogate's own** coverage badge (via `interrogate.badge_gen`) to `.badges/docstring-coverage.svg` for README embedding. forge invokes interrogate as a library, so this opt-in triggers the badge programmatically. | You want a coverage badge in your README. |
 
 ## `[tool.forge.c4]` — C4 architecture model
 
@@ -264,7 +265,7 @@ mitigation = "ensure XML sources are trusted"
 (`<!-- forge:badges:start/end -->`) of status badges into your README;
 content outside the markers is preserved on re-run. shields.io URLs where a
 hosted source exists (CI, Python version, Ruff, license, forge channel,
-Claude Code) and the local `.badges/DocstringCoverage.svg` when present.
+Claude Code) and the local `.badges/docstring-coverage.svg` when present.
 Wired into `install-forge-bootstrap`.
 
 | Key | Default | What it does | Set it when |

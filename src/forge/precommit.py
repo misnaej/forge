@@ -493,7 +493,7 @@ def step_docstring_coverage(repo_root: Path) -> StepResult:
     and addresses listed missing-docstring entries.
 
     When ``[tool.forge.docstring_coverage].badge = true`` the CLI
-    also writes ``.badges/DocstringCoverage.svg``.
+    also writes ``.badges/docstring-coverage.svg``.
 
     The CLI self-skips with exit 0 when ``pyproject.toml`` or
     ``src/`` is missing, so consumer repos that haven't opted in
