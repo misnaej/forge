@@ -163,6 +163,23 @@ The `doc_consistency` step (`verify-forge-doc-consistency`, enabled the
 same way) has no config table — it checks that every `[project.scripts]`
 CLI is documented in `docs/cli-reference.md`, and is always non-blocking.
 
+## `[tool.forge.env_sync]` — install-freshness gate (default-on)
+
+Runs **first** in the default sequence. A deadly-fast, in-process
+`importlib.metadata` check (no subprocess, no network): every CLI declared
+in this repo's `[project.scripts]` must be an installed console script.
+Editable installs do **not** auto-register new entry points, so when a PR
+adds a CLI, a contributor who hasn't reinstalled is silently missing it and
+the gate runs old code. This catches that up front with the exact reinstall
+command — it never installs anything itself (FOUNDATION §2). Self-skips when
+there is no `[project.scripts]` table, the package isn't installed at all, or
+the run is non-interactive / CI (a fresh runner checkout legitimately
+predates install — FOUNDATION §15).
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `blocking` | `true` | Refuse the commit when a declared CLI is missing from the install (else non-blocking WARN). | You want stale-install drift surfaced without blocking — e.g. a repo where contributors don't editable-install their own package. |
+
 ## `[tool.forge.docstring_coverage]`
 
 Forge-specific keys for the docstring-coverage reporter. (The coverage *gate*
