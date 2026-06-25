@@ -921,42 +921,262 @@ def _mermaid_edges(
     return lines
 
 
-def render_html(config: C4Config, mermaid_text: str) -> str:
-    """Wrap a Mermaid diagram in a self-contained, offline HTML page.
+def _render_mermaid_system_context(config: C4Config) -> str:
+    """Render the System Context view: persons, the system, external systems.
 
-    The page references the vendored ``mermaid.min.js`` by relative path
-    (a sidecar written next to the HTML), so it renders with no network and
-    no external tool.
+    The top C4 level — no containers, no components. Persons (stadium nodes)
+    use the system (rounded node); the system relates out to external systems
+    (subroutine nodes).
 
     Args:
-        config: The model skeleton (for the page title/description).
-        mermaid_text: Rendered Mermaid source.
+        config: The human-authored model skeleton.
+
+    Returns:
+        Deterministic Mermaid source ending in a trailing newline.
+    """
+    alloc = _IdAllocator()
+    person_ids = {p.name: alloc.allocate(p.name, "person") for p in config.persons}
+    sys_id = alloc.allocate(config.system, "system")
+    external_ids = {e.name: alloc.allocate(e.name, "ext") for e in config.externals}
+    lines = ["graph LR"]
+    lines += [
+        f'    {person_ids[p.name]}(["{_mermaid_box(p.name, "Person", p.description)}"])'
+        for p in config.persons
+    ]
+    lines.append(
+        f'    {sys_id}("'
+        f'{_mermaid_box(config.system, "Software System", config.description)}")'
+    )
+    lines += [
+        f'    {external_ids[e.name]}[["'
+        f'{_mermaid_box(e.name, "External system", e.description)}"]]'
+        for e in config.externals
+    ]
+    lines += [
+        f'    {person_ids[p.name]} -->|"{_m(p.uses)}"| {sys_id}' for p in config.persons
+    ]
+    lines += [
+        f'    {sys_id} -->|"{_m(e.relationship)}"| {external_ids[e.name]}'
+        for e in config.externals
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _derive_container_edges(
+    config: C4Config, edges: set[tuple[str, str]]
+) -> set[tuple[str, str]]:
+    """Collapse component-level edges to cross-container pairs.
+
+    Maps every component relationship (derived imports + declared edges) to its
+    endpoints' owning containers, keeping only pairs that cross a container
+    boundary. This is the Container view's relationship summary — never the
+    union of component edges (#116).
+
+    Args:
+        config: The model skeleton.
+        edges: Derived component-to-component import relationships.
+
+    Returns:
+        ``(source container, destination container)`` pairs, cross-container
+        only (same-container pairs dropped).
+    """
+    owner: dict[str, str] = {}
+    for idx, container in enumerate(config.containers):
+        for component in _components_for_container(config, container, idx):
+            owner[component.name] = container.name
+    component_edges = set(edges) | {
+        (r.source, r.destination) for r in config.relationships
+    }
+    pairs: set[tuple[str, str]] = set()
+    for src, dst in component_edges:
+        src_owner, dst_owner = owner.get(src), owner.get(dst)
+        if src_owner and dst_owner and src_owner != dst_owner:
+            pairs.add((src_owner, dst_owner))
+    return pairs
+
+
+def _render_mermaid_containers(
+    config: C4Config, container_edges: set[tuple[str, str]]
+) -> str:
+    """Render the Container view: containers inside the system boundary.
+
+    Shows only the system's containers (plus persons, externals, and their
+    relationships) — no component-level boxes or edges. Cross-container
+    relationships come summarized in *container_edges* (#116).
+
+    Args:
+        config: The model skeleton.
+        container_edges: Cross-container pairs from
+            :func:`_derive_container_edges`.
+
+    Returns:
+        Deterministic Mermaid source ending in a trailing newline.
+    """
+    alloc = _IdAllocator()
+    person_ids = {p.name: alloc.allocate(p.name, "person") for p in config.persons}
+    external_ids = {e.name: alloc.allocate(e.name, "ext") for e in config.externals}
+    sys_id = alloc.allocate(config.system, "system")
+    container_ids = {
+        c.name: alloc.allocate(c.name, "container") for c in config.containers
+    }
+    lines = ["graph LR"]
+    lines += [
+        f'    {person_ids[p.name]}(["{_mermaid_box(p.name, "Person", p.description)}"])'
+        for p in config.persons
+    ]
+    lines += [
+        f'    {external_ids[e.name]}[["'
+        f'{_mermaid_box(e.name, "External system", e.description)}"]]'
+        for e in config.externals
+    ]
+    lines.append(f'    subgraph {sys_id}["{_m(config.system)}"]')
+    lines += [
+        f'        {container_ids[c.name]}["'
+        f'{_mermaid_box(c.name, c.technology, c.description)}"]'
+        for c in config.containers
+    ]
+    lines.append("    end")
+    primary = container_ids[config.containers[0].name] if config.containers else None
+    if primary is not None:
+        lines += [
+            f'    {person_ids[p.name]} -->|"{_m(p.uses)}"| {primary}'
+            for p in config.persons
+        ]
+        lines += [
+            f'    {primary} -->|"{_m(e.relationship)}"| {external_ids[e.name]}'
+            for e in config.externals
+        ]
+    lines += [
+        f'    {container_ids[src]} -->|"uses"| {container_ids[dst]}'
+        for src, dst in sorted(container_edges)
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _render_mermaid_components_for(
+    config: C4Config,
+    container: Container,
+    idx: int,
+    edges: set[tuple[str, str]],
+) -> str:
+    """Render one container's Component view: its components and their edges.
+
+    Shows only the components owned by *container* and the relationships whose
+    **both** endpoints sit in it (so no edge dangles to an unrendered node) —
+    declared relationships first, then derived imports (#116).
+
+    Args:
+        config: The model skeleton.
+        container: The container whose components are rendered.
+        idx: The container's index in ``config.containers``.
+        edges: Derived component-to-component import relationships.
+
+    Returns:
+        Deterministic Mermaid source ending in a trailing newline.
+    """
+    components = _components_for_container(config, container, idx)
+    names = {c.name for c in components}
+    alloc = _IdAllocator()
+    component_ids = {c.name: alloc.allocate(c.name, "component") for c in components}
+    container_id = alloc.allocate(container.name, "container")
+    lines = ["graph LR", f'    subgraph {container_id}["{_m(container.name)}"]']
+    lines += [
+        f'        {component_ids[c.name]}["'
+        f'{_mermaid_box(c.name, c.technology, _component_description(c))}"]'
+        for c in components
+    ]
+    lines.append("    end")
+    declared = {(r.source, r.destination) for r in config.relationships}
+    lines += [
+        f'    {component_ids[r.source]} -->|"{_m(r.description)}"| '
+        f"{component_ids[r.destination]}"
+        for r in config.relationships
+        if r.source in names and r.destination in names
+    ]
+    lines += [
+        f'    {component_ids[src]} -->|"imports"| {component_ids[dst]}'
+        for src, dst in sorted(edges)
+        if src in names and dst in names and (src, dst) not in declared
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
+    """Wrap the C4 views in a self-contained, offline, tabbed HTML page.
+
+    Each emitted view (System Context, Containers, one per container's
+    Components) becomes its own navigable tab mirroring the DSL views, so a
+    reader zooms in deliberately instead of facing one flattened diagram
+    (#116). References the vendored ``mermaid.min.js`` sidecar by relative
+    path, so it renders with no network.
+
+    Mermaid renders every pane while it is still visible, then the tab script
+    hides the inactive ones — rendering a Mermaid block inside a
+    ``display:none`` element would otherwise produce a zero-size diagram.
+
+    Args:
+        config: The model skeleton (page title/description).
+        views: ``(tab label, Mermaid source)`` pairs, in display order.
 
     Returns:
         A complete HTML document ending in a trailing newline.
     """
+    buttons = "\n".join(
+        f'  <button class="tab" data-pane="{i}">{html.escape(label)}</button>'
+        for i, (label, _text) in enumerate(views)
+    )
+    panes = "\n".join(
+        f'  <div class="pane" data-pane="{i}">\n'
+        f'<pre class="mermaid">\n{html.escape(text)}</pre>\n  </div>'
+        for i, (_label, text) in enumerate(views)
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>{html.escape(config.system)} — C4 component view</title>
+<title>{html.escape(config.system)} — C4 views</title>
 <style>
   body {{ font-family: system-ui, sans-serif; margin: 2rem; color: #1a1a1a; }}
   h1 {{ margin-bottom: 0.25rem; }}
   p.desc {{ color: #555; margin-top: 0; }}
-  .mermaid {{ margin-top: 1.5rem; }}
+  .tabbar {{ margin-top: 1.5rem; border-bottom: 1px solid #ccc; }}
+  button.tab {{ font: inherit; padding: 0.4rem 0.8rem; border: none;
+    background: none; cursor: pointer; color: #555;
+    border-bottom: 2px solid transparent; }}
+  button.tab.active {{ color: #1a1a1a; border-bottom-color: #1a1a1a; }}
+  .views.ready .pane {{ display: none; }}
+  .views.ready .pane.active {{ display: block; }}
+  .pane {{ margin-top: 1.5rem; }}
 </style>
 </head>
 <body>
 <h1>{html.escape(config.system)}</h1>
 <p class="desc">{html.escape(config.description)}</p>
-<pre class="mermaid">
-{html.escape(mermaid_text)}</pre>
+<div class="tabbar">
+{buttons}
+</div>
+<div class="views">
+{panes}
+</div>
 <script src="{MERMAID_JS_NAME}"></script>
 <script>
 // securityLevel 'loose' lets the bold/line-break HTML in box labels render;
 // safe here because the model is generated locally from the repo's own config.
-mermaid.initialize({{ startOnLoad: true, theme: "neutral", securityLevel: "loose" }});
+mermaid.initialize({{ startOnLoad: false, theme: "neutral", securityLevel: "loose" }});
+mermaid.run().then(function () {{
+  var views = document.querySelector(".views");
+  var tabs = document.querySelectorAll("button.tab");
+  var panes = document.querySelectorAll(".pane");
+  function show(i) {{
+    tabs.forEach(function (t, j) {{ t.classList.toggle("active", j === i); }});
+    panes.forEach(function (p, j) {{ p.classList.toggle("active", j === i); }});
+  }}
+  tabs.forEach(function (t) {{
+    t.addEventListener("click", function () {{ show(Number(t.dataset.pane)); }});
+  }});
+  views.classList.add("ready");
+  show(0);
+}});
 </script>
 </body>
 </html>
@@ -1121,7 +1341,19 @@ def _emit_html(
     Returns:
         Exit code from the write or the drift check.
     """
-    content = render_html(config, render_mermaid(config, edges))
+    container_edges = _derive_container_edges(config, edges)
+    views = [
+        ("System Context", _render_mermaid_system_context(config)),
+        ("Containers", _render_mermaid_containers(config, container_edges)),
+    ]
+    views += [
+        (
+            f"{container.name} Components",
+            _render_mermaid_components_for(config, container, idx, edges),
+        )
+        for idx, container in enumerate(config.containers)
+    ]
+    content = render_html(config, views)
     out_relpath = args.output or DEFAULT_HTML_OUTPUT
     if args.check:
         return check_doc_drift(root, out_relpath, content, f"{REGEN_CMD} --format html")

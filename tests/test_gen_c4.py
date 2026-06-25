@@ -13,6 +13,10 @@ from forge.gen_c4 import (
     Component,
     Container,
     Relationship,
+    _derive_container_edges,
+    _render_mermaid_components_for,
+    _render_mermaid_containers,
+    _render_mermaid_system_context,
     _slug,
     _under_prefix,
     assign_components,
@@ -374,6 +378,33 @@ modules = ["demo.io"]
 """
 
 
+TWO_CONTAINER_MODEL = """\
+system = "Demo"
+description = "A demo system"
+output = "docs/architecture.dsl"
+
+[[container]]
+name = "Applications"
+technology = "Python"
+description = "Application layer"
+
+[[container]]
+name = "Domain libraries"
+technology = "Python"
+description = "Library layer"
+
+[[component]]
+name = "App"
+modules = ["demo.app"]
+container = "Applications"
+
+[[component]]
+name = "Lib"
+modules = ["demo.lib"]
+container = "Domain libraries"
+"""
+
+
 def test_rich_component_carries_description_and_technology(tmp_path: Path) -> None:
     """A [[component]] table populates description + technology on the box."""
     _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
@@ -405,10 +436,142 @@ def test_render_html_escapes_mermaid_for_pre_block(tmp_path: Path) -> None:
     (tmp_path / "c4.toml").write_text(SAMPLE_MODEL)
     config = load_c4_config(tmp_path)
     assert config is not None
-    page = render_html(config, render_mermaid(config, set()))
+    page = render_html(config, [("System Context", render_mermaid(config, set()))])
     assert '<pre class="mermaid">' in page
-    assert f'src="{"mermaid.min.js"}"' in page
+    assert 'src="mermaid.min.js"' in page
     assert "&lt;b&gt;" in page  # literal <b> escaped for the <pre>
+
+
+def test_render_html_has_one_tab_per_view() -> None:
+    """render_html emits one button and one pane per view, indexed from 0."""
+    config = C4Config(system="Test", description="", output="")
+    page = render_html(config, [("A", "graph LR\n"), ("B", "graph LR\n")])
+    assert 'data-pane="0">A</button>' in page
+    assert 'data-pane="1">B</button>' in page
+    assert page.count('<pre class="mermaid">') == 2
+    assert page.count("data-pane=") == 4  # 2 buttons + 2 panes paired
+
+
+def test_render_mermaid_system_context_excludes_containers_and_components(
+    tmp_path: Path,
+) -> None:
+    """System Context: persons and externals; no subgraph or component nodes."""
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(SAMPLE_MODEL)
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    result = _render_mermaid_system_context(config)
+    assert "User" in result  # person name present
+    assert "GitHub" in result  # external name present
+    assert "subgraph" not in result
+    assert "Core" not in result  # component name must be absent
+    assert "IO" not in result  # component name must be absent
+
+
+def test_render_mermaid_containers_excludes_components() -> None:
+    """Container view renders containers; excludes components and nested subgraph."""
+    config = _two_container_config(
+        (
+            Component("CoreModule", ("demo.app",), container="Applications"),
+            Component("LibModule", ("demo.lib",), container="Domain libraries"),
+        )
+    )
+    mermaid = _render_mermaid_containers(config, set())
+    assert "Applications" in mermaid
+    assert "Domain libraries" in mermaid
+    assert "CoreModule" not in mermaid
+    assert "LibModule" not in mermaid
+    assert mermaid.count("subgraph") == 1  # only the system boundary
+
+
+def test_derive_container_edges_collapses_cross_container_component_edges() -> None:
+    """Component edges map to container pairs; same-container edges are dropped."""
+    components = (
+        Component("Alpha", ("demo.alpha",), container="Applications"),
+        Component("Beta", ("demo.beta",), container="Applications"),
+        Component("Gamma", ("demo.gamma",), container="Domain libraries"),
+    )
+    config = _two_container_config(components)
+    # Derived import edge crosses containers → mapped to container pair.
+    cross = _derive_container_edges(config, {("Alpha", "Gamma")})
+    assert cross == {("Applications", "Domain libraries")}
+    # Same-container derived edge is dropped.
+    same = _derive_container_edges(config, {("Alpha", "Beta")})
+    assert same == set()
+    # Declared Relationship spanning containers contributes the pair even when edges={}.
+    config_with_rel = C4Config(
+        system="Demo",
+        description="",
+        output="docs/architecture.dsl",
+        containers=_TWO_CONTAINERS,
+        components=components,
+        relationships=(Relationship("Alpha", "Gamma", "calls"),),
+    )
+    declared = _derive_container_edges(config_with_rel, set())
+    assert declared == {("Applications", "Domain libraries")}
+
+
+def test_render_mermaid_components_for_shows_only_container_scope() -> None:
+    """Component view for a container renders only that container's nodes and edges."""
+    config = _two_container_config(
+        (
+            Component("CoreModule", ("demo.app",), container="Applications"),
+            Component("CoreModule2", ("demo.app2",), container="Applications"),
+            Component("LibModule", ("demo.lib",), container="Domain libraries"),
+        )
+    )
+    # Nodes: container-0's own components appear; container-1's are absent.
+    result_base = _render_mermaid_components_for(config, config.containers[0], 0, set())
+    assert "CoreModule" in result_base
+    assert "LibModule" not in result_base
+    # Cross-container derived edge excluded; LibModule out of container scope.
+    result_cross = _render_mermaid_components_for(
+        config, config.containers[0], 0, {("CoreModule", "LibModule")}
+    )
+    assert "imports" not in result_cross
+    # Intra-container derived edge is included (both endpoints in Applications).
+    result_intra = _render_mermaid_components_for(
+        config, config.containers[0], 0, {("CoreModule", "CoreModule2")}
+    )
+    assert "imports" in result_intra
+
+
+def test_main_html_writes_multi_tab_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Main with --format html produces a tabbed HTML file with a pane per C4 view.
+
+    SCENARIO: two-container repo with one component in each container.
+    MOCK SETUP: repo_root patched to tmp_path; sys.argv set to --format html.
+    EXPECTED BEHAVIOR: main() exits 0, writes docs/architecture.html containing
+    tab labels for all four views and exactly four mermaid diagram blocks, plus
+    the vendored mermaid.min.js sidecar next to the HTML.
+    """
+    pkg = tmp_path / "src" / "demo"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "app.py").write_text("X = 1\n")
+    (pkg / "lib.py").write_text("X = 1\n")
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge]\nsource_dirs = ["src"]\n\n[tool.forge.c4]\nconfig = "c4.toml"\n',
+    )
+    (tmp_path / "c4.toml").write_text(TWO_CONTAINER_MODEL)
+    monkeypatch.setattr("forge.gen_c4.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4", "--format", "html"])
+
+    assert main() == 0
+
+    html_path = tmp_path / "docs" / "architecture.html"
+    assert html_path.is_file()
+    content = html_path.read_text()
+    assert "System Context" in content
+    assert "Containers" in content
+    assert "Applications Components" in content
+    assert "Domain libraries Components" in content
+    assert content.count('<pre class="mermaid">') == 4
+    assert (tmp_path / "docs" / "mermaid.min.js").is_file()
 
 
 def test_render_readme_block_wraps_mermaid_in_markers() -> None:
