@@ -61,24 +61,30 @@ channel is a minor or more behind. **Single-track repos never see this
 line — skip the whole phase.**
 
 When a promotion is pending, handle it **before** backlog task selection —
-a pending promotion is usually higher priority than starting new work: it
+a pending minor promotion is *always wanted* in the dual-track model: it
 ships completed minors to the slow channel and stops the base branch from
 silently drifting minors behind across sessions (the failure mode that
 otherwise accumulates a staged-catch-up backlog).
 
-1. **Surface it as the top recommendation**, above any Phase 4 backlog
-   item — name the pending minor(s) in ascending order.
-2. **Offer to run the repo's promotion flow now** — in forge, the
-   `/promote` skill; consumers substitute their own promotion command.
-   Promotion opens a remote PR, so it is **confirm-first**, never
-   automatic.
-3. On confirmation, invoke it (forge: `Skill(skill="promote")`). It
-   promotes **one minor at a time** and is idempotent (refuses a duplicate
-   open promotion PR). It opens the PR and stops — a human merges it later,
-   and the next `/next` relocates the minor tag onto `main` via Phase 1's
-   `forge-check-main-tags --fix` step. (That tag move is *not* done by
+1. **Auto-run the promotion flow — do NOT merely offer it.** In forge,
+   invoke `Skill(skill="promote")` directly (consumers substitute their own
+   promotion command). Running it unprompted is safe because it only
+   **opens** a PR — it never merges, so the one irreducible manual step
+   (the human merge, FOUNDATION §2) is untouched — and it is
+   **idempotent**: it refuses to open a second promotion PR when one is
+   already open, so re-running across `/next` invocations is harmless.
+2. It promotes **one minor at a time** in ascending order: cuts the
+   `release/vX.Y.0` branch, authors the curated CHANGELOG, opens the PR,
+   then **stops**. Surface the opened PR as the top item (above any Phase 4
+   backlog work) and tell the user to merge it when ready.
+3. The post-merge tag relocation is already automatic — the next `/next`
+   relocates the minor tag onto `<base>` via Phase 1's
+   `forge-check-main-tags --fix` step. (That move is *not* done by
    `/promote`, which cannot run after the async human merge.)
-4. If declined, note the pending promotion and continue.
+4. **Declining is merging-time, not run-time:** to skip a promotion the
+   user simply does not merge the opened PR (and may close it). `/next`
+   does not prompt first — an action that only opens a reviewable PR needs
+   no confirmation gate.
 
 ## Phase 2: Documentation Hygiene (optional)
 
@@ -153,7 +159,7 @@ otherwise accumulates a staged-catch-up backlog).
 
 - **Always fetch from remote** before assuming branch / PR state.
 - **Tag the merge before pruning branches** — version-tracked repos need the release tag at the merge commit, not at some later commit. The tag step (Step 2's `--tag` bullet) runs after `git pull`, before stale-branch cleanup, so the tag points at the canonical release commit.
-- **Surface a pending promotion before backlog selection** (Phase 1.5) — on dual-track repos, offer the promotion (confirm-first) ahead of picking new work, so the slow channel never drifts minors behind. Silent on single-track repos.
+- **Auto-open a pending promotion before backlog selection** (Phase 1.5) — on dual-track repos, run the promotion flow (which only opens a PR, never merges) ahead of picking new work, so the slow channel never drifts minors behind. No confirm prompt: declining is just not merging the opened PR. Silent on single-track repos.
 - **Force-delete (`-D`) only `MERGED` branches.** `forge-next-prep` deletes merged branches with safe `-d` and reports any it skips for "unmerged commits." A squash-merge makes `-d` refuse (the squashed commits are not ancestors of the base), so for each skipped branch, confirm its PR state is `MERGED` (`gh pr view <n> --json state` → `MERGED`) and then `git branch -D <branch>`. A `CLOSED`-but-unmerged PR means the work never landed — **leave it for the user; never `-D` it.** Never `-D` a branch with no merged PR.
 - **Never proceed with dirty git state** — always stop and let the user decide.
 - **Never delete `.plan/CONTINUATION.md`** — carry it forward in place (Phase 6).
