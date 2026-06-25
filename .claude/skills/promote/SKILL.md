@@ -132,7 +132,7 @@ gh pr create --base main --head "release/v$NEW" \
 $(git log --oneline --no-merges origin/main..release/v$NEW)
 
 ## After merge
-- [ ] Relocate the minor tag to main's squash commit: run \`forge-check-main-tags --dry-run\` to preview, then \`forge-check-main-tags --fix\` to move \`v$NEW\` onto \`origin/main\` (matched by release fingerprint, so the curated CHANGELOG divergence is tolerated). Verify with \`git describe --tags origin/main\` → \`v$NEW\`. See \`docs/release-process.md\` §2.
+- [ ] Relocate the minor tag onto main's squash commit. **The next \`/next\` does this automatically** (Phase 1 runs \`forge-check-main-tags --fix\`, matched by release fingerprint so the curated CHANGELOG divergence is tolerated). To relocate immediately without waiting for a \`/next\`, run \`forge-check-main-tags --fix\` now. Verify \`git describe --tags origin/main\` → \`v$NEW\`. See \`docs/release-process.md\` §2.
 - [ ] (Optional) Mirror \`dev\`'s CHANGELOG to \`main\` via a back-merge PR — NOT required: the merge in Step 3 already brought main's curated log onto the release branch so nothing regresses. Do it only if you want dev's local copy current.
 - [ ] If more minors remain behind, promote the next one (repeat from Step 1).
 "

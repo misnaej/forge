@@ -47,8 +47,10 @@ be released** — never the last-released version.
   a squash reproduces the tagged release even when the release branch
   finalized the curated `@main` CHANGELOG entry (§5); any *other* file
   difference still leaves the tag unaligned. Reports drift (default,
-  read-only) or force-moves the tag (`--fix`). Run by `/promote` after the
-  squash merge. Self-skips single-branch repos. See §4.
+  read-only) or force-moves the tag (`--fix`). Run automatically by `/next`
+  Phase 1 on every run (idempotent — moves a tag only when a promotion
+  actually landed); also in the `/promote` post-merge checklist for
+  immediate relocation. Self-skips single-branch repos. See §4.
 
 ## 3. Promotion: staged catch-up
 

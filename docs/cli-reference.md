@@ -290,8 +290,8 @@ usage: forge-gen-c4 [-h] [--format {dsl,html,mermaid}] [--roots [ROOTS ...]]
                     [--check] [--output OUTPUT]
 
 Generate a C4 architecture model from the import graph + a [tool.forge.c4] /
-c4.toml model. Emits Structurizr DSL (default) or a self-contained offline
-HTML view.
+c4.toml model. Emits Structurizr DSL (default), a self-contained offline HTML
+view, or raw Mermaid.
 
 options:
   -h, --help            show this help message and exit
