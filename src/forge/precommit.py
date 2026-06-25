@@ -258,6 +258,8 @@ def _installed_console_scripts(name: str) -> set[str] | None:
     return {ep.name for ep in dist.entry_points if ep.group == "console_scripts"}
 
 
+# Captures only a clean X.Y.Z, so a match always feeds parse_semver a valid
+# triple (the `pin_v is None` guard below is defensive, not reachable here).
 _FORGE_SCRIPTS_PIN_RE = re.compile(r"^forge-scripts\s*==\s*(\d+\.\d+\.\d+)\b")
 
 
@@ -341,8 +343,8 @@ def step_env_sync(repo_root: Path) -> StepResult:
     Returns:
         ``StepResult`` with ``passed=True`` for all self-skip paths. A
         missing entry point fails (``non_blocking`` = inverse of
-        ``[tool.forge.env_sync].blocking``, default blocking); otherwise a
-        forge-scripts pin behind the install fails non-blocking (WARN).
+        ``[tool.forge.env_sync].blocking``, default blocking); otherwise an
+        install behind the forge-scripts ``==`` pin fails non-blocking (WARN).
     """
     if is_non_interactive():
         return StepResult(

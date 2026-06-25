@@ -1726,6 +1726,36 @@ def test_step_env_sync_no_warn_on_editable_install(
     assert "behind the pin" not in result.output
 
 
+def test_step_env_sync_missing_script_beats_pin_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blocking missing entry point wins over a forge-scripts pin WARN.
+
+    SCENARIO: the repo both has a missing declared script AND pins
+    forge-scripts ahead of the install. The blocking entry-point failure
+    must take priority over the non-blocking pin advisory.
+    MOCK SETUP: is_non_interactive→False; pyproject declares mypkg with two
+    scripts + forge-scripts==2.9.0; only one script installed; forge-scripts
+    version→2.8.0.
+    EXPECTED BEHAVIOR: passed False, blocking (non_blocking False), the
+    ⛔ stale-install message — NOT the pin WARN.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "mypkg"\ndependencies = ["forge-scripts==2.9.0"]\n'
+        '\n[project.scripts]\nmycli = "pkg:main"\nnew-cli = "pkg:main"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(precommit, "_installed_console_scripts", lambda _n: {"mycli"})
+    monkeypatch.setattr(precommit.importlib.metadata, "version", lambda _n: "2.8.0")
+    result = precommit.step_env_sync(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+    assert "⛔ Stale install" in result.output
+    assert "behind the pin" not in result.output
+
+
 # ---------------------------------------------------------------------------
 # env_sync — registry position
 # ---------------------------------------------------------------------------
