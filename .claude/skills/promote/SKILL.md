@@ -118,25 +118,14 @@ via the **release fingerprint** (`docs/release-process.md` §2, §5).
 
 ### CHANGELOG.md conflicts — never resolve blindly (the one exception)
 
-`CHANGELOG.md` is the **single exception** to "resolve toward dev." It is
-the **`@main` source of record**: every `## vX.Y.0` heading on `main` is the
-curated release note for that minor, and `dev`'s copy is *allowed to lag*
-(`docs/release-process.md` §5). So a CHANGELOG merge conflict **must never**
-be resolved with a blind `git checkout --ours` / `--theirs` — that silently
-**erases main's curated history** when dev's copy is behind, or **drops a
-genuine dev-side addition** when dev's copy is ahead. It always needs a
-human read. Reconcile by hand:
-
-1. **Keep every `## vX.Y.0` entry that exists on `main`.** A more-recent
-   `dev` copy does **not** erase a curated main entry just because it is
-   ahead in history. Diff first when unsure:
-   `git show origin/main:CHANGELOG.md`.
-2. **Fold in any legitimate new content** dev's copy carries that main lacks.
-3. **Append the new `## v$NEW` curated entry** for the release being
-   promoted (step 4).
-
-Rule of thumb: for already-released versions the **main-side body wins**;
-the new minor's entry is authored fresh.
+`CHANGELOG.md` is the **single exception** to "resolve toward dev": `main`
+is its source of record and `dev`'s copy is allowed to lag, so a CHANGELOG
+merge conflict must **never** be settled with a blind `git checkout --ours`
+/ `--theirs` — it always needs a human read. **Reconcile it by hand
+following the full procedure and rationale in
+[`docs/release-process.md` §5](../../../docs/release-process.md#5-changelog-at-release)**
+(keep every `## vX.Y.0` heading on `main`, fold in real dev-side additions,
+append the new entry).
 
 Push the branch via the `forge:git-commit-push` agent (direct `git push`
 is hook-blocked for agents). Resolve conflicts + make the merge commit

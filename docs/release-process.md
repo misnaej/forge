@@ -135,8 +135,8 @@ prior curated entries onto the branch, and you then append only the new
 `CHANGELOG.md` is allowed to lag (it is the pre-release branch; consumers
 reading release notes pin `@main`).
 
-> **CHANGELOG.md is the one file exempt from "resolve conflicts toward
-> dev" (§3 step 3).** Precisely *because* `dev`'s copy may lag — or
+> **CHANGELOG.md is the one file exempt from the §3 step 3 "resolve toward
+> dev" rule.** Precisely *because* `dev`'s copy may lag — or
 > independently diverge from — `main`, a `CHANGELOG.md` merge conflict must
 > **never** be settled with a blind `git checkout --ours` / `--theirs`.
 > Resolving toward `dev` **erases main's curated history** when dev lags;
