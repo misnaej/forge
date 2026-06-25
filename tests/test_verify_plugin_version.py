@@ -3,37 +3,18 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from typing import TYPE_CHECKING
 
 from forge import verify_plugin_version
+from tests.conftest import GIT_ENV as _GIT_ENV
+from tests.conftest import init_git_repo as _init_git_repo
 
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
-
-
-def _init_git_repo(repo: Path) -> None:
-    """Initialize a minimal git repo with one commit on ``main``.
-
-    Args:
-        repo: Directory to initialize. Must already exist.
-    """
-    env = {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@t",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@t",
-        "PATH": os.environ.get("PATH", ""),
-    }
-    for cmd in (
-        ["git", "init", "-q", "-b", "main"],
-        ["git", "commit", "-q", "--allow-empty", "-m", "initial"],
-    ):
-        subprocess.run(cmd, cwd=repo, env=env, check=True)
 
 
 def _write_plugin(repo: Path, version: str) -> None:
@@ -192,13 +173,7 @@ def test_skipped_when_tree_matches_tag_via_ours_merge(
     file content. HEAD is a new commit SHA, but its tree equals the
     tag's tree — the guard must skip.
     """
-    env = {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@t",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@t",
-        "PATH": os.environ.get("PATH", ""),
-    }
+    env = _GIT_ENV
     _init_git_repo(tmp_path)
     _write_plugin(tmp_path, "1.0.0")
     subprocess.run(["git", "add", "."], cwd=tmp_path, env=env, check=True)
@@ -241,13 +216,7 @@ def test_main_skips_when_head_reproduces_older_tag(
     real ``v1.22.0`` (plugin.json 1.22.0) promoted while ``v1.23.0`` is
     already tagged. Do not narrow ``_is_release_commit`` back to one tag.
     """
-    env = {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@t",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@t",
-        "PATH": os.environ.get("PATH", ""),
-    }
+    env = _GIT_ENV
     _init_git_repo(tmp_path)
     # Older release v1.0.0.
     _write_plugin(tmp_path, "1.0.0")
@@ -336,13 +305,7 @@ def test_skips_when_release_branch_only_adds_changelog(
     would fall back to version comparison and FAIL. The release fingerprint
     ignores ``CHANGELOG.md``, so HEAD still reproduces v1.0.0 → skip.
     """
-    env = {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@t",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@t",
-        "PATH": os.environ.get("PATH", ""),
-    }
+    env = _GIT_ENV
     _init_git_repo(tmp_path)
     _make_two_releases(tmp_path, env)
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0 — curated\n")
@@ -371,13 +334,7 @@ def test_fails_when_release_branch_changes_non_changelog_file(
     latest tag v1.1.0 → the guard fails. Proves the exclusion is scoped to
     ``CHANGELOG.md`` and does not blanket-skip modified release branches.
     """
-    env = {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@t",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@t",
-        "PATH": os.environ.get("PATH", ""),
-    }
+    env = _GIT_ENV
     _init_git_repo(tmp_path)
     _make_two_releases(tmp_path, env)
     (tmp_path / "a.py").write_text("x = 999\n")

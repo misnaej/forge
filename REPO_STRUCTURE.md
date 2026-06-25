@@ -34,7 +34,7 @@ Code.
    - forge_config.py: `forge-config` — lists every `[tool.forge.*]` key forge reads (value/default + description), names native sections like `[tool.interrogate]`, and advises on recommended-but-unset config; read-only, surfaced by `install-forge-bootstrap`
    - fix_ruff.py: `fix-forge-ruff` — runs `ruff format` + `ruff check --fix --unsafe-fixes`, re-stages modified tracked files, writes `code_health/ruff.log`
    - verify_docstrings.py: `verify-forge-docstrings` — docstring accuracy
-   - verify_docstring_coverage.py: `verify-forge-docstring-coverage` — full-codebase docstring coverage % (interrogate wrapper) + optional `.badges/DocstringCoverage.svg`
+   - verify_docstring_coverage.py: `verify-forge-docstring-coverage` — full-codebase docstring coverage % (interrogate wrapper) + optional `.badges/docstring-coverage.svg`
    - verify_repo_structure.py: `verify-forge-repo-structure` — repo
      structure drift check
    - verify_test_naming.py: `verify-forge-test-naming` — test naming check

@@ -13,7 +13,7 @@ Badge sources, in preference order:
   License (from ``[project].license``), the ``forge-scripts`` channel, and a
   Claude Code badge.
 - **Local SVG** when there is no hosted equivalent: the docstring-coverage
-  badge ``.badges/DocstringCoverage.svg`` is *referenced* when present —
+  badge ``.badges/docstring-coverage.svg`` is *referenced* when present —
   forge already generates it (``verify-forge-docstring-coverage`` with
   ``[tool.forge.docstring_coverage] badge = true``), so this stays DRY
   rather than re-generating anything.
@@ -231,11 +231,11 @@ def _coverage_badge(root: Path) -> str | None:
         root: Repo root.
 
     Returns:
-        The markdown badge pointing at ``.badges/DocstringCoverage.svg``, or
+        The markdown badge pointing at ``.badges/docstring-coverage.svg``, or
         ``None`` when that file does not exist (the consumer hasn't opted into
         ``[tool.forge.docstring_coverage] badge = true``).
     """
-    rel = ".badges/DocstringCoverage.svg"
+    rel = ".badges/docstring-coverage.svg"
     if not (root / rel).is_file():
         return None
     return _md("Docstring coverage", rel)

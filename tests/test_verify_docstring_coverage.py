@@ -144,13 +144,13 @@ def test_skip_when_no_configured_paths_exist(
 def test_badge_written_when_opted_in(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``badge = true`` writes ``.badges/DocstringCoverage.svg``."""
+    """``badge = true`` writes ``.badges/docstring-coverage.svg``."""
     _write_pyproject(tmp_path, fail_under=90.0, badge=True)
     _write_src(tmp_path, _WELL_DOCUMENTED)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
     assert verify_docstring_coverage.main() == 0
-    badge = tmp_path / ".badges" / "DocstringCoverage.svg"
+    badge = tmp_path / ".badges" / "docstring-coverage.svg"
     assert badge.is_file()
     assert badge.read_text().lstrip().startswith(
         "<?xml"

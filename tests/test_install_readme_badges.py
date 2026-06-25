@@ -39,10 +39,10 @@ def test_coverage_badge_only_when_svg_present(tmp_path: Path) -> None:
     assert rb._coverage_badge(tmp_path) is None
     badges = tmp_path / ".badges"
     badges.mkdir()
-    (badges / "DocstringCoverage.svg").write_text("<svg/>")
+    (badges / "docstring-coverage.svg").write_text("<svg/>")
     assert (
         rb._coverage_badge(tmp_path)
-        == "![Docstring coverage](.badges/DocstringCoverage.svg)"
+        == "![Docstring coverage](.badges/docstring-coverage.svg)"
     )
 
 

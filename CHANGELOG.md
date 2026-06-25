@@ -20,6 +20,32 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.11.0 — 2026-06-25
+
+### ⚠️ Upgrade notes
+- **Docstring-coverage badge SVG renamed.** With
+  `[tool.forge.docstring_coverage] badge = true`, forge now writes
+  `.badges/docstring-coverage.svg` (was `.badges/DocstringCoverage.svg`) so
+  the filename matches the by-responsibility config name. **If you embed the
+  badge in a README by path, update the link** — the badge content is
+  unchanged. The old `.badges/DocstringCoverage.svg` is no longer written;
+  delete the stale file (#81).
+
+### Features
+- **`env_sync` forge-scripts version-pin WARN.** When a repo pins
+  `forge-scripts==X.Y.Z` in `[project.dependencies]` and the installed
+  version is older, the `env_sync` pre-commit step emits a **non-blocking**
+  WARN naming the reinstall command. Bounded to the exact `==` form;
+  self-skips channel pins, range specifiers, editable/dev builds, and no pin.
+  The blocking entry-point freshness check still takes priority (#107).
+
+### Docs / Refactor
+- Clarify the docstring-coverage naming — `[tool.forge.docstring_coverage]`,
+  the badge SVG, and "the interrogate badge" are one interrogate-powered
+  artifact; canonical name `docstring_coverage` (#81).
+- Dedup `_GIT_ENV` / `init_git_repo` shared git-test helpers into
+  `tests/conftest.py` (#85).
+
 ## v2.10.0 — 2026-06-25
 
 Additive — a `/next` release-workflow change for dual-track repos;

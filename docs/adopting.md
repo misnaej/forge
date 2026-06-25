@@ -179,7 +179,7 @@ Idempotent and re-run-safe — it's also the upgrade re-sync step (below).
 | `docs/api-digest.md`, `docs/cli-reference.md` | 1 | **commit** (generated; checked for drift) |
 | `code_health/*.log`, `audit_deps_tree.log` | 1 | **gitignore** (regenerated each run) |
 | `.plan/CONTINUATION.md` | — | **gitignore** (cross-session handoff) |
-| `.badges/DocstringCoverage.svg` | 1 | commit only if you embed it in a README |
+| `.badges/docstring-coverage.svg` | 1 | commit only if you embed it in a README |
 
 ---
 
