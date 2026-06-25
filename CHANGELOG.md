@@ -20,6 +20,62 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.7.0 — 2026-06-25
+
+Additive — release-tooling only; dual-track repos benefit, single-track
+repos are unaffected (every new step self-skips when `dev == base`).
+
+### Changed
+- **Simplified `dev → main` promotion.** `/promote` is now four
+  standard-git steps — branch from `dev`, `git merge origin/main`,
+  resolve toward `dev`, rewrite the curated CHANGELOG — replacing the
+  earlier tree-reconstruction recipe. The merge-in step is what keeps a
+  promotion PR's diff to the real release delta instead of re-showing all
+  of dev's history (#94).
+- **`/next` self-aligns base-branch tags on every run.** Phase 1 now runs
+  `forge-check-main-tags --fix`, so after a promotion PR merges the minor
+  tag relocates onto `main` automatically — post-promotion is just a
+  normal `/next`. Idempotent; self-skips single-branch repos.
+- **`forge-check-main-tags` quiets ancient gaps.** Un-promoted minor tags
+  *below* the base branch's current line (never promoted, can't backfill)
+  log at INFO instead of warning on every run; genuinely pending minors
+  above the line still warn (#94).
+
+## v2.6.0 — 2026-06-24
+
+Additive — no consumer action required. The C4 generator is opt-in and
+self-skips when `[tool.forge.c4]` (or a `c4.toml`) is absent.
+
+### Features
+- **`forge-gen-c4` + the `/c4` skill** — generate a
+  [C4](https://c4model.com/) architecture model from the import graph plus a
+  human-authored `c4.toml`: emits Structurizr DSL (default), a self-contained
+  **offline** HTML view (vendored Mermaid — no Docker/Java/Graphviz/network),
+  or raw Mermaid. Component dependencies are machine-derived; context,
+  containers, and runtime/subprocess edges are human-declared. Keeps a managed
+  diagram block in the README in sync, and adds an opt-in `c4` pre-commit step
+  that fails on architecture-diagram drift. `[tool.forge.c4]` config is
+  documented in `docs/configuration.md`; design rationale in
+  `docs/c4-architecture.md` (#99).
+
+## v2.5.0 — 2026-06-24
+
+Additive — no consumer action required.
+
+### Features
+- **`verify-forge-cve-usage --list-inactive`** — read-only reporter listing
+  mapped CVEs no longer in pip-audit's live report, i.e. dormant prune
+  candidates in `cve_usage_patterns.toml`. Exits 0, writes nothing, never edits
+  the map (transient drop-offs make auto-deletion unsafe) (#80).
+
+### Tooling
+- **pip-audit now runs once per commit.** The `pip_audit` step writes a
+  `code_health/pip_audit.json` sidecar that the `cve_usage` step reuses via a
+  new shared `forge.pip_audit_json` seam, instead of each step invoking
+  pip-audit independently — halving the OSV round-trips for CVE-usage
+  adopters. `verify-forge-cve-usage --audit-json` exposes the same reuse for
+  standalone runs (#78).
+
 ## v2.4.0 — 2026-06-24
 
 Additive — no consumer action required.
