@@ -14,12 +14,12 @@
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 from typing import TYPE_CHECKING
 
 from forge import git_utils, verify_main_tags
 from forge.config import ForgeConfig
+from tests.conftest import GIT_ENV as _GIT_ENV
 
 
 if TYPE_CHECKING:
@@ -28,18 +28,9 @@ if TYPE_CHECKING:
     import pytest
 
 
-# ---------------------------------------------------------------------------
-# Shared git identity — passed as env= to all subprocess helpers so that
-# annotated tags (git tag -a) find author/committer without a ~/.gitconfig.
-# ---------------------------------------------------------------------------
-
-_GIT_ENV: dict[str, str] = {
-    "GIT_AUTHOR_NAME": "t",
-    "GIT_AUTHOR_EMAIL": "t@t",
-    "GIT_COMMITTER_NAME": "t",
-    "GIT_COMMITTER_EMAIL": "t@t",
-    "PATH": os.environ.get("PATH", ""),
-}
+# Shared git identity (_GIT_ENV) + ephemeral-repo init live in tests.conftest
+# (#85) — passed as env= to all subprocess helpers so annotated tags
+# (git tag -a) find author/committer without a ~/.gitconfig.
 
 
 # ---------------------------------------------------------------------------

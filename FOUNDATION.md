@@ -492,7 +492,7 @@ forge namespace (plus a key-name mapping to maintain) is a needless
 wrapper — the tool's own section is the right home, exactly as forge
 reads `ruff.toml` rather than copying it. Only keys interrogate has no
 concept of live under `[tool.forge.docstring_coverage]`: `badge = true`
-(writes `.badges/DocstringCoverage.svg`) and `paths` (a per-tool scan-root
+(writes `.badges/docstring-coverage.svg`) and `paths` (a per-tool scan-root
 override that otherwise defaults to the repo-wide layout
 `[tool.forge].source_dirs + test_dirs`). **Project layout** is itself a
 `[tool.forge]` single-ground-truth: `source_dirs` (default `["src"]`) and
