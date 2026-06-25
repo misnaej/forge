@@ -93,13 +93,14 @@ git switch -c "release/v$NEW" origin/dev        # (or the v$NEW dev commit)
 #    promotion PR re-show all of dev's history against an ancient merge-base.
 git merge origin/main
 
-# 3. Fix merge conflicts — always resolve toward dev (dev is strictly
-#    ahead of main). The merge also brings main's prior curated CHANGELOG
-#    entries in, so nothing on main regresses.
+# 3. Fix merge conflicts — resolve CODE/test conflicts toward dev (dev is
+#    strictly ahead of main). EXCEPTION: CHANGELOG.md — never resolve it
+#    blindly toward either side; reconcile by hand (see "CHANGELOG.md
+#    conflicts" below).
 
-# 4. Rewrite CHANGELOG: add the curated `## v$NEW — <date>` @main entry
-#    (group the release's dev PRs by conventional-commit type, one bullet
-#    per theme), then commit the merge + CHANGELOG.
+# 4. Reconcile CHANGELOG.md per the rule below, then add the curated
+#    `## v$NEW — <date>` @main entry (group the release's dev PRs by
+#    conventional-commit type, one bullet per theme); commit the merge.
 
 git log origin/main..release/v$NEW --oneline    # SANITY: only this release's commits, not all of dev
 ```
@@ -114,6 +115,28 @@ plain git, no tree-reconstruction, no special logic.
 The release branch ends up diverging from the `v$NEW` tag only by the
 curated `CHANGELOG.md` entry, which the post-merge tag relocation tolerates
 via the **release fingerprint** (`docs/release-process.md` §2, §5).
+
+### CHANGELOG.md conflicts — never resolve blindly (the one exception)
+
+`CHANGELOG.md` is the **single exception** to "resolve toward dev." It is
+the **`@main` source of record**: every `## vX.Y.0` heading on `main` is the
+curated release note for that minor, and `dev`'s copy is *allowed to lag*
+(`docs/release-process.md` §5). So a CHANGELOG merge conflict **must never**
+be resolved with a blind `git checkout --ours` / `--theirs` — that silently
+**erases main's curated history** when dev's copy is behind, or **drops a
+genuine dev-side addition** when dev's copy is ahead. It always needs a
+human read. Reconcile by hand:
+
+1. **Keep every `## vX.Y.0` entry that exists on `main`.** A more-recent
+   `dev` copy does **not** erase a curated main entry just because it is
+   ahead in history. Diff first when unsure:
+   `git show origin/main:CHANGELOG.md`.
+2. **Fold in any legitimate new content** dev's copy carries that main lacks.
+3. **Append the new `## v$NEW` curated entry** for the release being
+   promoted (step 4).
+
+Rule of thumb: for already-released versions the **main-side body wins**;
+the new minor's entry is authored fresh.
 
 Push the branch via the `forge:git-commit-push` agent (direct `git push`
 is hook-blocked for agents). Resolve conflicts + make the merge commit
