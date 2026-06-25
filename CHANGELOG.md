@@ -20,6 +20,20 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.10.0 — 2026-06-25
+
+Additive — a `/next` release-workflow change for dual-track repos;
+single-track repos are unaffected.
+
+### Changed
+- **`/next` auto-opens a pending promotion PR.** Phase 1.5 now runs the
+  promotion flow itself when a minor is pending (dual-track repos) instead of
+  offering it confirm-first. It only **opens** the `release/vX.Y.0` PR — never
+  merges, so the human merge stays the one manual step (FOUNDATION §2) — and
+  is idempotent (refuses a duplicate open promotion PR). Removes the manual
+  `/promote` step from the per-minor loop; declining is just not merging the
+  opened PR (#113).
+
 ## v2.9.0 — 2026-06-25
 
 Additive — no consumer action required.
