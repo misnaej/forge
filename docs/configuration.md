@@ -196,9 +196,8 @@ these are the keys interrogate has no concept of.)
 > not by the tool that backs them (`[tool.forge.typecheck]` not `pyrefly`,
 > `[tool.forge.doctest]`, `[tool.forge.docstring_coverage]`), while reading
 > the tool's own native `[tool.interrogate]` section directly. The badge SVG
-> follows the same name — `.badges/docstring-coverage.svg` (renamed from the
-> old PascalCase `DocstringCoverage.svg`; see the ⚠️ upgrade note in
-> `CHANGELOG.md`).
+> follows the same name — `.badges/docstring-coverage.svg` (see the ⚠️ upgrade
+> note in `CHANGELOG.md`).
 
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
