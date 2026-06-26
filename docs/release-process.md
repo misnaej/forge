@@ -165,7 +165,7 @@ reading release notes pin `@main`).
   keep no `CHANGELOG.md`. A blocking variant would be a new gate (MINOR) —
   tracked separately.
 
-- **The dropped-entry guard *is* blocking.** `forge-check-changelog-history`
+- **The dropped-entry guard *is* blocking.** `verify-forge-changelog-history`
   (pre-commit step `changelog_history`) fails when a branch that has
   merged `origin/<base>` in — a promotion or any main-merge — drops a
   `## vX.Y.0` heading present on `origin/<base>`. It enforces the

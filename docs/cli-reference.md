@@ -593,7 +593,7 @@ options:
 ## verify-forge-changelog-history
 
 ```text
-usage: forge-check-changelog-history [-h]
+usage: verify-forge-changelog-history [-h]
 
 Fail when the working tree's CHANGELOG.md drops a `## vX.Y.0` heading present
 on origin/<base> — the dropped-curated-entry guard for dev→main promotions.

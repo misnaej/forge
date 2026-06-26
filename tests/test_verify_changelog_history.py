@@ -252,7 +252,7 @@ def test_skips_single_branch_repo(
         "load_config",
         lambda _root: ForgeConfig(base_branch="main", dev_branch="main"),
     )
-    monkeypatch.setattr("sys.argv", ["forge-check-changelog-history"])
+    monkeypatch.setattr("sys.argv", ["verify-forge-changelog-history"])
     monkeypatch.chdir(tmp_path)
     with caplog.at_level(logging.INFO, logger="forge.verify_changelog_history"):
         result = verify_changelog_history.main()
@@ -277,7 +277,7 @@ def test_skips_without_changelog(
         "load_config",
         lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
     )
-    monkeypatch.setattr("sys.argv", ["forge-check-changelog-history"])
+    monkeypatch.setattr("sys.argv", ["verify-forge-changelog-history"])
     monkeypatch.chdir(tmp_path)
     with caplog.at_level(logging.INFO, logger="forge.verify_changelog_history"):
         result = verify_changelog_history.main()
@@ -339,7 +339,7 @@ def test_skips_when_base_not_ancestor(
         "load_config",
         lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
     )
-    monkeypatch.setattr("sys.argv", ["forge-check-changelog-history"])
+    monkeypatch.setattr("sys.argv", ["verify-forge-changelog-history"])
     monkeypatch.chdir(work)
     with caplog.at_level(logging.INFO, logger="forge.verify_changelog_history"):
         result = verify_changelog_history.main()
@@ -369,7 +369,7 @@ def test_passes_when_all_base_headings_present(
         "load_config",
         lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
     )
-    monkeypatch.setattr("sys.argv", ["forge-check-changelog-history"])
+    monkeypatch.setattr("sys.argv", ["verify-forge-changelog-history"])
     monkeypatch.chdir(work)
     with caplog.at_level(logging.INFO, logger="forge.verify_changelog_history"):
         result = verify_changelog_history.main()
@@ -398,7 +398,7 @@ def test_fails_when_base_heading_dropped(
         "load_config",
         lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
     )
-    monkeypatch.setattr("sys.argv", ["forge-check-changelog-history"])
+    monkeypatch.setattr("sys.argv", ["verify-forge-changelog-history"])
     monkeypatch.chdir(work)
     with caplog.at_level(logging.INFO, logger="forge.verify_changelog_history"):
         result = verify_changelog_history.main()
@@ -461,7 +461,7 @@ def test_skips_when_no_changelog_on_base(
         "load_config",
         lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
     )
-    monkeypatch.setattr("sys.argv", ["forge-check-changelog-history"])
+    monkeypatch.setattr("sys.argv", ["verify-forge-changelog-history"])
     monkeypatch.chdir(work)
     with caplog.at_level(logging.INFO, logger="forge.verify_changelog_history"):
         result = verify_changelog_history.main()
@@ -490,7 +490,7 @@ def test_fails_when_multiple_headings_dropped(
         "load_config",
         lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
     )
-    monkeypatch.setattr("sys.argv", ["forge-check-changelog-history"])
+    monkeypatch.setattr("sys.argv", ["verify-forge-changelog-history"])
     monkeypatch.chdir(work)
     with caplog.at_level(logging.INFO, logger="forge.verify_changelog_history"):
         result = verify_changelog_history.main()
@@ -526,7 +526,7 @@ def test_passes_when_headings_reordered(
         "load_config",
         lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
     )
-    monkeypatch.setattr("sys.argv", ["forge-check-changelog-history"])
+    monkeypatch.setattr("sys.argv", ["verify-forge-changelog-history"])
     monkeypatch.chdir(work)
     with caplog.at_level(logging.INFO, logger="forge.verify_changelog_history"):
         result = verify_changelog_history.main()

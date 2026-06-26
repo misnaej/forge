@@ -1,4 +1,4 @@
-"""forge-check-changelog-history — guard main's curated CHANGELOG history.
+"""verify-forge-changelog-history — guard main's curated CHANGELOG history.
 
 During a ``dev → main`` promotion the release branch merges
 ``origin/<base>`` in, bringing main's curated ``## vX.Y.0`` CHANGELOG
@@ -41,7 +41,7 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 _CHANGELOG = "CHANGELOG.md"
-_HEADING_RE = re.compile(r"^##\s+(v\d+\.\d+\.\d+)", re.MULTILINE)
+_HEADING_RE = re.compile(r"^##\s+(v\d+\.\d+\.\d+)\b", re.MULTILINE)
 
 
 def _headings(text: str) -> set[str]:
@@ -87,7 +87,7 @@ def main() -> int:
         not an ancestor of HEAD, or no CHANGELOG on base).
     """
     argparse.ArgumentParser(
-        prog="forge-check-changelog-history",
+        prog="verify-forge-changelog-history",
         description=(
             "Fail when the working tree's CHANGELOG.md drops a `## vX.Y.0` "
             "heading present on origin/<base> — the dropped-curated-entry "
@@ -98,7 +98,7 @@ def main() -> int:
 
     repo_root = Path.cwd()
     cfg = load_config(repo_root)
-    if cfg.base_branch == cfg.dev_branch:
+    if not cfg.dual_track:
         logger.info("(single-branch repo: base == dev — skipped)")
         return 0
 
@@ -108,7 +108,9 @@ def main() -> int:
         return 0
 
     base_ref = f"origin/{cfg.base_branch}"
-    run_git("fetch", "origin", cfg.base_branch, "--quiet", cwd=repo_root, check=False)
+    run_git(
+        "fetch", "--quiet", "origin", "--", cfg.base_branch, cwd=repo_root, check=False
+    )
     if not _base_is_ancestor(repo_root, base_ref):
         logger.info(
             "(%s is not an ancestor of HEAD — not a promotion context, skipped)",
