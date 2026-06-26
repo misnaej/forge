@@ -590,6 +590,20 @@ options:
   --check     Verify the block is current without writing (exit 1 on drift).
 ```
 
+## verify-forge-changelog-history
+
+```text
+usage: forge-check-changelog-history [-h]
+
+Fail when the working tree's CHANGELOG.md drops a `## vX.Y.0` heading present
+on origin/<base> — the dropped-curated-entry guard for dev→main promotions.
+Self-skips unless origin/<base> is an ancestor of HEAD (a promotion / main-
+merge context).
+
+options:
+  -h, --help  show this help message and exit
+```
+
 ## verify-forge-cli-wiring
 
 ```text
