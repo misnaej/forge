@@ -64,9 +64,9 @@ be released** — never the last-released version.
   ```bash
   git switch -c release/vX.Y.0 origin/dev   # 1. branch from the dev version
   git merge origin/main                      # 2. merge main IN — REQUIRED
-  # 3. resolve conflicts toward dev (dev is ahead); the merge also brings
-  #    main's prior curated CHANGELOG entries in, so nothing on main regresses
-  # 4. rewrite CHANGELOG: add the curated ## vX.Y.0 @main entry; commit
+  # 3. resolve CODE/test conflicts toward dev (dev is ahead). EXCEPTION:
+  #    CHANGELOG.md is NEVER resolved blindly — reconcile by hand (§5)
+  # 4. reconcile CHANGELOG.md (§5) + append the curated ## vX.Y.0 entry; commit
   ```
   **Step 2 is the whole game.** Because every promotion is a squash,
   `main`'s commits are not ancestors of `dev`; branching from `dev`
@@ -103,6 +103,7 @@ invariant that had no test).
 | `forge-check-main-tags` relocates a minor tag when the base squash diverges from the tag only by `CHANGELOG.md`, but treats a non-CHANGELOG divergence as unreproduced (no move) | `verify_main_tags._base_tree_index` | `tests/test_verify_main_tags.py::test_fix_relocates_when_base_diverges_only_by_changelog` / `::test_base_diverging_by_non_changelog_is_not_a_target` |
 | `forge-check-main-tags` warns about un-reproduced minors **above** the base's current line (genuinely pending) but downgrades **ancient** ones below it (never promoted, can't backfill) to INFO — so long-dead dev-only tags don't nag every run | `verify_main_tags._report_unreproduced` | `tests/test_verify_main_tags.py::test_report_unreproduced_warns_pending_but_ignores_ancient` |
 | `--promotion-status` flags a pending minor that has no `## vX.Y.0` entry in `origin/<dev>`'s `CHANGELOG.md` (non-blocking advisory; silent when the repo keeps no CHANGELOG) | `next_prep._promotion_status_lines` | `tests/test_next_prep.py::test_promotion_status_flags_missing_changelog_entry` |
+| A branch that merged `origin/<base>` in (a promotion or any main-merge) must retain **every** `## vX.Y.0` heading present on `origin/<base>` — a CHANGELOG conflict resolved blindly toward dev that drops one fails the guard. Self-skips when `origin/<base>` is not an ancestor of `HEAD` (plain `dev` may lag, §5) and on single-branch repos | `verify_changelog_history.main` | `tests/test_verify_changelog_history.py::test_fails_when_base_heading_dropped` / `::test_skips_when_base_not_ancestor` |
 
 When you add a versioning/promotion behavior, add a row here **and** its
 test. When you find an invariant with no test, that gap is a bug to close.
@@ -131,9 +132,23 @@ branch is rejected exactly as before.
 `main` and is carried forward at each promotion by the **`git merge
 origin/main`** in the release branch (§3 step 2): the merge brings main's
 prior curated entries onto the branch, and you then append only the new
-`vX.Y.0` entry — so no prior entry is lost. **No per-release back-merge is
-required**, and `dev`'s `CHANGELOG.md` is allowed to lag (it is the
-pre-release branch; consumers reading release notes pin `@main`).
+`vX.Y.0` entry. **No per-release back-merge is required**, and `dev`'s
+`CHANGELOG.md` is allowed to lag (it is the pre-release branch; consumers
+reading release notes pin `@main`).
+
+> **CHANGELOG.md is the one file exempt from the §3 step 3 "resolve toward
+> dev" rule.** Precisely *because* `dev`'s copy may lag — or
+> independently diverge from — `main`, a `CHANGELOG.md` merge conflict must
+> **never** be settled with a blind `git checkout --ours` / `--theirs`.
+> Resolving toward `dev` **erases main's curated history** when dev lags;
+> resolving toward `main` **drops a genuine dev-side addition** when dev is
+> ahead. It always needs a human read. Reconcile by hand: **keep every
+> `## vX.Y.0` heading present on `main`** (a more-recent `dev` copy never
+> erases a curated main entry just because it is ahead in history), **fold
+> in any real dev-side additions**, then **append the new `vX.Y.0` entry**.
+> When unsure, diff `git show origin/main:CHANGELOG.md` against the branch
+> copy before resolving. For already-released versions, the main-side body
+> wins; the new minor's entry is authored fresh.
 
 - **Back-merging `main → dev` is optional**, not mandatory. Do it if you
   want `dev`'s `CHANGELOG.md` to mirror `main` for local readability (a
@@ -149,3 +164,13 @@ pre-release branch; consumers reading release notes pin `@main`).
   branch). It never changes the exit code and stays silent for repos that
   keep no `CHANGELOG.md`. A blocking variant would be a new gate (MINOR) —
   tracked separately.
+
+- **The dropped-entry guard *is* blocking.** `verify-forge-changelog-history`
+  (pre-commit step `changelog_history`) fails when a branch that has
+  merged `origin/<base>` in — a promotion or any main-merge — drops a
+  `## vX.Y.0` heading present on `origin/<base>`. It enforces the
+  CHANGELOG-conflict rule above: a conflict mistakenly resolved with
+  `--ours` that erases a curated main entry turns CI red instead of
+  shipping a regressed log. It self-skips on plain `dev` (base is not an
+  ancestor of `HEAD`, so dev's copy may still lag) and on single-branch
+  repos. This is the §4 invariant that makes the rule discipline-free.

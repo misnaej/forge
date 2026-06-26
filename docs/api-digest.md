@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_48 modules, 486 symbols._
+_49 modules, 496 symbols._
 
 ## `forge._hook_helpers`
 
@@ -255,6 +255,7 @@ _48 modules, 486 symbols._
 - `_q(text: str) -> str` _(internal)_ — Quote *text* as a Structurizr DSL string literal.
 - `_coerce_list(raw: object) -> list[dict]` _(internal)_ — Return *raw* as a list of dicts, tolerating a single table.
 - `_parse_components(section: dict) -> tuple[Component, ...]` _(internal)_ — Parse components from rich ``[[component]]`` tables + the simple map.
+- `_validate_component_containers(components: tuple[Component, ...], containers: tuple[Container, ...]) -> None` _(internal)_ — Fail loudly on a duplicate container name or an undeclared reference.
 - `load_c4_config(root: Path) -> C4Config | None` — Load the C4 model skeleton for the repo.
 - `assign_components(modules: list[str], components: tuple[Component, ...]) -> tuple[dict[str, str], list[str]]` — Map each module to a component by longest-prefix match.
 - `_under_prefix(module: str, prefix: str) -> bool` _(internal)_ — Return whether *module* equals *prefix* or is a dotted child of it.
@@ -262,6 +263,7 @@ _48 modules, 486 symbols._
 - `_warn_unknown_relationships(config: C4Config, component_ids: dict[str, str]) -> None` _(internal)_ — Warn for [[relationship]] entries naming a component that doesn't exist.
 - `render_dsl(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the full Structurizr DSL workspace text.
 - `_render_model(config: C4Config, ids: _IdMaps) -> list[str]` _(internal)_ — Render the ``model`` block's element declarations.
+- `_components_for_container(config: C4Config, container: Container, idx: int) -> list[Component]` _(internal)_ — Return the components owned by *container*, in declaration order.
 - `_component_description(component: Component) -> str` _(internal)_ — Return a component's box description for C4 rendering.
 - `_render_relationships(config: C4Config, ids: _IdMaps, edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the relationship statements of the ``model`` block.
 - `_render_views(config: C4Config, sys_id: str, container_ids: dict[str, str]) -> list[str]` _(internal)_ — Render the ``views`` block.
@@ -473,6 +475,10 @@ _48 modules, 486 symbols._
 - `_forge_step_config(repo_root: Path, step: str) -> dict[str, object]` _(internal)_ — Return the ``[tool.forge.<step>]`` table, or ``{}`` when absent.
 - `_resolve_scope(repo_root: Path, step: str) -> str` _(internal)_ — Resolve a step's file-selection scope: per-step override → global → ``"all"``.
 - `_run(cmd: list[str], cwd: Path) -> tuple[bool, str]` _(internal)_ — Run *cmd* and capture combined output.
+- `_declared_scripts(repo_root: Path) -> tuple[str, set[str]] | None` _(internal)_ — Return ``(package_name, declared [project.scripts] names)`` or ``None``.
+- `_installed_console_scripts(name: str) -> set[str] | None` _(internal)_ — Return *name*'s installed ``console_scripts`` entry-point names.
+- `_forge_scripts_pin_drift(repo_root: Path) -> tuple[str, str] | None` _(internal)_ — Return ``(pinned, installed)`` when forge-scripts is pinned ahead of install.
+- `step_env_sync(repo_root: Path) -> StepResult` — Fail fast when the local install is stale vs the repo's declared CLIs.
 - `step_ruff(repo_root: Path) -> StepResult` — Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
 - `step_docstrings(repo_root: Path) -> StepResult` — Run ``verify-forge-docstrings`` over the resolved scope.
 - `step_docstring_coverage(repo_root: Path) -> StepResult` — Run ``verify-forge-docstring-coverage`` — full-codebase % reporter.
@@ -490,6 +496,7 @@ _48 modules, 486 symbols._
 - `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
 - `_one_step_successors(tag: tuple[int, int, int]) -> set[tuple[int, int, int]]` _(internal)_ — Return the three valid rolling-next successors of a tagged release.
 - `step_release_tag_guard(repo_root: Path) -> StepResult` — Block when an intermediate rolling-next release was never tagged (#66).
+- `step_changelog_history(repo_root: Path) -> StepResult` — Run ``verify-forge-changelog-history`` — the dropped-``@base``-entry guard.
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the source tree (opt-in).
@@ -537,6 +544,12 @@ _48 modules, 486 symbols._
 - `_run_pip_install(ref: str, *, auth_mode: AuthMode, timeout_seconds: int | None) -> int` _(internal)_ — Run the force-reinstall pip command, wrapped in a progress logger.
 - `_run_apply(args: argparse.Namespace, root: Path) -> int` _(internal)_ — ``--apply``: do phase 1 + run pip + do phase 2, in one command.
 - `main() -> int` — One-command forge upgrade entry point.
+
+## `forge.verify_changelog_history`
+
+- `_headings(text: str) -> set[str]` _(internal)_ — Return the set of ``## v<semver>`` release headings in *text*.
+- `_base_is_ancestor(repo_root: Path, base_ref: str) -> bool` _(internal)_ — Return ``True`` when *base_ref* is an ancestor of ``HEAD``.
+- `main() -> int` — Fail when the working tree's CHANGELOG drops a curated ``@base`` entry.
 
 ## `forge.verify_cli_wiring`
 

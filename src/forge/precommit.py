@@ -9,7 +9,9 @@ stale editable install), ruff (always ``ruff format`` + ``ruff check --fix
 ``git add``), docstring verification (over the diff vs main), test-name
 verification (over the diff vs main), repo-structure verification
 (``REPO_STRUCTURE.md`` vs the actual tree), plugin manifest JSON
-validation, Claude Code plugin-version drift guard (when applicable),
+validation, Claude Code plugin-version drift guard (when applicable), a
+CHANGELOG-history guard (fires only on a branch that merged the base
+branch in — a promotion — so main's curated entries can't be dropped),
 and ``pip-audit`` dependency vulnerability scan (non-blocking — warns
 but does not refuse a commit). Shipped to consumers via the
 ``forge-scripts`` pip package and invoked by ``.githooks/pre-commit``
@@ -1023,6 +1025,32 @@ def step_release_tag_guard(repo_root: Path) -> StepResult:
     )
 
 
+def step_changelog_history(repo_root: Path) -> StepResult:
+    """Run ``verify-forge-changelog-history`` — the dropped-``@base``-entry guard.
+
+    Thin shell-out (matching ``step_plugin_version``). The CLI self-skips
+    unless ``origin/<base>`` is an ancestor of ``HEAD`` — a ``dev → main``
+    promotion or other main-merge — so it fires only when main's curated
+    CHANGELOG history could be regressed by a conflict resolved blindly
+    toward dev. See ``docs/release-process.md`` §5 and #120.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` mirroring the CLI exit code.
+
+    Raises:
+        SystemExit: If ``verify-forge-changelog-history`` is not on PATH.
+    """
+    require_cli("verify-forge-changelog-history", caller="forge-precommit")
+    passed, output = _run(["verify-forge-changelog-history"], cwd=repo_root)
+    skipped = "skipped" in output
+    return StepResult(
+        name="changelog_history", passed=passed, output=output, skipped=skipped
+    )
+
+
 def _cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]:
     """Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 
@@ -1219,6 +1247,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("commit_types_parity", step_commit_types_parity),
     StepDef("plugin_version", step_plugin_version),
     StepDef("release_tag_guard", step_release_tag_guard),
+    StepDef("changelog_history", step_changelog_history),
     StepDef("pip_audit", step_pip_audit),
     StepDef("cve_usage", step_cve_usage),
     StepDef("doctest", step_doctest, default_on=False),
