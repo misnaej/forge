@@ -71,6 +71,75 @@ diagrams are unchanged.
   clean curated flow while Component views keep real import coupling. Declared
   relationships always render; the `imports` default is byte-identical to
   before.
+## v2.11.0 — 2026-06-25
+
+### ⚠️ Upgrade notes
+- **Docstring-coverage badge SVG renamed.** With
+  `[tool.forge.docstring_coverage] badge = true`, forge now writes
+  `.badges/docstring-coverage.svg` (was `.badges/DocstringCoverage.svg`) so
+  the filename matches the by-responsibility config name. **If you embed the
+  badge in a README by path, update the link** — the badge content is
+  unchanged. The old `.badges/DocstringCoverage.svg` is no longer written;
+  delete the stale file (#81).
+
+### Features
+- **`env_sync` forge-scripts version-pin WARN.** When a repo pins
+  `forge-scripts==X.Y.Z` in `[project.dependencies]` and the installed
+  version is older, the `env_sync` pre-commit step emits a **non-blocking**
+  WARN naming the reinstall command. Bounded to the exact `==` form;
+  self-skips channel pins, range specifiers, editable/dev builds, and no pin.
+  The blocking entry-point freshness check still takes priority (#107).
+
+### Docs / Refactor
+- Clarify the docstring-coverage naming — `[tool.forge.docstring_coverage]`,
+  the badge SVG, and "the interrogate badge" are one interrogate-powered
+  artifact; canonical name `docstring_coverage` (#81).
+- Dedup `_GIT_ENV` / `init_git_repo` shared git-test helpers into
+  `tests/conftest.py` (#85).
+
+## v2.10.0 — 2026-06-25
+
+Additive — a `/next` release-workflow change for dual-track repos;
+single-track repos are unaffected.
+
+### Changed
+- **`/next` auto-opens a pending promotion PR.** Phase 1.5 now runs the
+  promotion flow itself when a minor is pending (dual-track repos) instead of
+  offering it confirm-first. It only **opens** the `release/vX.Y.0` PR — never
+  merges, so the human merge stays the one manual step (FOUNDATION §2) — and
+  is idempotent (refuses a duplicate open promotion PR). Removes the manual
+  `/promote` step from the per-minor loop; declining is just not merging the
+  opened PR (#113).
+
+## v2.9.0 — 2026-06-25
+
+Additive — no consumer action required.
+
+### Features
+- **`forge-gen-c4` — per-component container assignment.** A rich
+  `[[component]]` may name its owning container via `container =
+  "<container name>"`; each declared container then renders with its own
+  components **and its own component view**. A component that omits
+  `container` attaches to the first declared container, so models with no
+  `container` keys render byte-identically. Unknown container names — and
+  duplicate container names — fail loudly; import-graph edges still render
+  across container boundaries (#106).
+
+## v2.8.0 — 2026-06-25
+
+Additive — a new default-on pre-commit step that self-skips unless a
+declared CLI is genuinely missing from your install.
+
+### Features
+- **`env_sync` pre-commit step** — a deadly-fast, in-process
+  install-freshness gate that runs **first**: every CLI declared in
+  `[project.scripts]` must be an installed console script, else the editable
+  install is stale (a new entry point was added but not reinstalled) and the
+  gate may run old code. Blocks by default with the exact reinstall command
+  (`./dev/setup.sh` / `pip install -e`); `[tool.forge.env_sync].blocking =
+  false` downgrades it to a non-blocking WARN. Self-skips when there is no
+  `[project.scripts]` table, the package isn't installed, or the run is
+  non-interactive / CI. Never auto-installs (#82).
 
 ## v2.7.0 — 2026-06-25
 

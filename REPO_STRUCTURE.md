@@ -34,7 +34,7 @@ Code.
    - forge_config.py: `forge-config` — lists every `[tool.forge.*]` key forge reads (value/default + description), names native sections like `[tool.interrogate]`, and advises on recommended-but-unset config; read-only, surfaced by `install-forge-bootstrap`
    - fix_ruff.py: `fix-forge-ruff` — runs `ruff format` + `ruff check --fix --unsafe-fixes`, re-stages modified tracked files, writes `code_health/ruff.log`
    - verify_docstrings.py: `verify-forge-docstrings` — docstring accuracy
-   - verify_docstring_coverage.py: `verify-forge-docstring-coverage` — full-codebase docstring coverage % (interrogate wrapper) + optional `.badges/DocstringCoverage.svg`
+   - verify_docstring_coverage.py: `verify-forge-docstring-coverage` — full-codebase docstring coverage % (interrogate wrapper) + optional `.badges/docstring-coverage.svg`
    - verify_repo_structure.py: `verify-forge-repo-structure` — repo
      structure drift check
    - verify_test_naming.py: `verify-forge-test-naming` — test naming check
@@ -46,6 +46,7 @@ Code.
    - install_readme_badges.py: `install-forge-readme-badges` — write/verify a drift-aware README status-badge managed block (shields.io + local docstring-coverage SVG); opt-in via `[tool.forge.badges]`; `--check` mode
    - verify_plugin_version.py: `verify-forge-plugin-version` — rolling-next guard (plugin.json["version"] > latest git tag)
    - verify_main_tags.py: `forge-check-main-tags` — verify/repair minor-boundary (`vX.Y.0`) tag placement on the base branch
+   - verify_changelog_history.py: `verify-forge-changelog-history` — guard that a promotion branch (base merged in) retains every curated `## vX.Y.0` CHANGELOG heading on the base branch
    - gen_cli_reference.py: `forge-gen-cli-reference` — CLI reference
      doc generator
    - gen_api_digest.py: `forge-gen-api-digest` — public-symbol API
@@ -194,6 +195,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_install_readme_badges.py: tests for install_readme_badges (badge sources, drift-aware injection, opt-in gating, --check)
    - test_verify_plugin_version.py: tests for verify_plugin_version
    - test_verify_main_tags.py: tests for verify_main_tags
+   - test_verify_changelog_history.py: tests for verify_changelog_history
    - test_verify_repo_structure.py: tests for verify_repo_structure
    - test_verify_test_naming.py: tests for verify_test_naming
 

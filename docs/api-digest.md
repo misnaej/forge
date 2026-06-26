@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_48 modules, 486 symbols._
+_49 modules, 513 symbols._
 
 ## `forge._hook_helpers`
 
@@ -241,6 +241,9 @@ _48 modules, 486 symbols._
 
 ## `forge.gen_c4`
 
+- `_resolve_direction(value: str) -> str` _(internal)_ — Validate a graph-direction string, failing loudly on an unknown value.
+- `_includes_derived(mode: str) -> bool` _(internal)_ — Return whether *mode* includes the import-derived edges.
+- `_resolve_edge_mode(value: str) -> str` _(internal)_ — Validate an edge-mode string, failing loudly on an unknown value.
 - `class Person` — A C4 actor — someone who uses the system (System Context level).
 - `class External` — An external software system the system depends on.
 - `class Container` — A deployable unit inside the system (Container level).
@@ -255,13 +258,19 @@ _48 modules, 486 symbols._
 - `_q(text: str) -> str` _(internal)_ — Quote *text* as a Structurizr DSL string literal.
 - `_coerce_list(raw: object) -> list[dict]` _(internal)_ — Return *raw* as a list of dicts, tolerating a single table.
 - `_parse_components(section: dict) -> tuple[Component, ...]` _(internal)_ — Parse components from rich ``[[component]]`` tables + the simple map.
+- `_validate_component_containers(components: tuple[Component, ...], containers: tuple[Container, ...]) -> None` _(internal)_ — Fail loudly on a duplicate container name or an undeclared reference.
 - `load_c4_config(root: Path) -> C4Config | None` — Load the C4 model skeleton for the repo.
 - `assign_components(modules: list[str], components: tuple[Component, ...]) -> tuple[dict[str, str], list[str]]` — Map each module to a component by longest-prefix match.
 - `_under_prefix(module: str, prefix: str) -> bool` _(internal)_ — Return whether *module* equals *prefix* or is a dotted child of it.
 - `derive_component_edges(graph: dict[str, set[str]], assigned: dict[str, str]) -> set[tuple[str, str]]` — Collapse module-level import edges to component-level edges.
-- `_warn_unknown_relationships(config: C4Config, component_ids: dict[str, str]) -> None` _(internal)_ — Warn for [[relationship]] entries naming a component that doesn't exist.
+- `_resolve_endpoint(name: str, ids: _IdMaps, system: str) -> str | None` _(internal)_ — Resolve a relationship endpoint name to its DSL/Mermaid identifier.
+- `_externals_with_declared_incoming(config: C4Config) -> set[str]` _(internal)_ — Return external names that are the destination of a declared edge.
+- `_declared_edges(config: C4Config, ids: _IdMaps) -> list[tuple[str, str, str]]` _(internal)_ — Resolve each declared relationship to a rendered ``(src, dst, label)``.
+- `_person_node(target: str, ids: _IdMaps, *, fallback: str) -> str` _(internal)_ — Resolve a person's relationship target to a rendered node id.
+- `_warn_unknown_relationships(config: C4Config, ids: _IdMaps) -> None` _(internal)_ — Warn for [[relationship]] endpoints naming no declared element.
 - `render_dsl(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the full Structurizr DSL workspace text.
 - `_render_model(config: C4Config, ids: _IdMaps) -> list[str]` _(internal)_ — Render the ``model`` block's element declarations.
+- `_components_for_container(config: C4Config, container: Container, idx: int) -> list[Component]` _(internal)_ — Return the components owned by *container*, in declaration order.
 - `_component_description(component: Component) -> str` _(internal)_ — Return a component's box description for C4 rendering.
 - `_render_relationships(config: C4Config, ids: _IdMaps, edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the relationship statements of the ``model`` block.
 - `_render_views(config: C4Config, sys_id: str, container_ids: dict[str, str]) -> list[str]` _(internal)_ — Render the ``views`` block.
@@ -271,8 +280,18 @@ _48 modules, 486 symbols._
 - `render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the model as a Mermaid flowchart (offline-renderable).
 - `_mermaid_box(name: str, technology: str, description: str) -> str` _(internal)_ — Build a multi-line Mermaid box label: bold name, technology, description.
 - `_mermaid_edges(config: C4Config, ids: dict[str, dict[str, str]], edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the Mermaid relationship lines.
-- `render_html(config: C4Config, mermaid_text: str) -> str` — Wrap a Mermaid diagram in a self-contained, offline HTML page.
-- `_copy_vendored_mermaid(dest_dir: Path) -> None` _(internal)_ — Write the vendored Mermaid bundle next to an emitted HTML file.
+- `_actors_subgraph(config: C4Config, person_ids: dict[str, str], alloc: _IdAllocator) -> list[str]` _(internal)_ — Wrap the person nodes in a top-level ``Actors`` subgraph block.
+- `_render_mermaid_system_context(config: C4Config) -> str` _(internal)_ — Render the System Context view: persons, the system, external systems.
+- `_component_owner(config: C4Config) -> dict[str, str]` _(internal)_ — Map each component name to the display name of its owning container.
+- `_derive_container_edges(config: C4Config, edges: set[tuple[str, str]], *, include_derived: bool = True) -> set[tuple[str, str]]` _(internal)_ — Collapse component-level edges to cross-container pairs.
+- `_container_level_maps(config: C4Config, *, sys_id: str, person_ids: dict[str, str], external_ids: dict[str, str], container_ids: dict[str, str]) -> _IdMaps` _(internal)_ — Build id maps that resolve every endpoint to its Container-view node.
+- `_container_view_declared_edges(config: C4Config, ids: _IdMaps) -> list[str]` _(internal)_ — Render declared relationships at Container-view granularity.
+- `_container_view_external_targets(config: C4Config, ids: _IdMaps) -> set[str]` _(internal)_ — Return external names a declared edge actually targets in this view.
+- `_render_mermaid_containers(config: C4Config, container_edges: set[tuple[str, str]]) -> str` _(internal)_ — Render the Container view: containers inside the system boundary.
+- `_component_view_peripherals(config: C4Config, names: set[str], component_ids: dict[str, str], alloc: _IdAllocator) -> tuple[list[str], list[str]]` _(internal)_ — Render external/person peripherals + edges for one container's view.
+- `_render_mermaid_components_for(config: C4Config, container: Container, idx: int, edges: set[tuple[str, str]], *, include_derived: bool = True) -> str` _(internal)_ — Render one container's Component view: its components and their edges.
+- `render_html(config: C4Config, views: list[tuple[str, str]]) -> str` — Wrap the C4 views in a self-contained, offline, tabbed HTML page.
+- `_copy_vendored_mermaid(dest_dir: Path) -> None` _(internal)_ — Write the vendored Mermaid + ELK-layout bundles next to an emitted HTML.
 - `_warn_unmatched(unmatched: list[str]) -> None` _(internal)_ — Log a coverage warning naming modules in no component.
 - `render_readme_block(mermaid_text: str) -> str` — Render the managed README block embedding the Mermaid diagram.
 - `_splice_readme(readme_text: str, block: str) -> str | None` _(internal)_ — Replace the managed C4 block in *readme_text* with *block*.
@@ -473,6 +492,10 @@ _48 modules, 486 symbols._
 - `_forge_step_config(repo_root: Path, step: str) -> dict[str, object]` _(internal)_ — Return the ``[tool.forge.<step>]`` table, or ``{}`` when absent.
 - `_resolve_scope(repo_root: Path, step: str) -> str` _(internal)_ — Resolve a step's file-selection scope: per-step override → global → ``"all"``.
 - `_run(cmd: list[str], cwd: Path) -> tuple[bool, str]` _(internal)_ — Run *cmd* and capture combined output.
+- `_declared_scripts(repo_root: Path) -> tuple[str, set[str]] | None` _(internal)_ — Return ``(package_name, declared [project.scripts] names)`` or ``None``.
+- `_installed_console_scripts(name: str) -> set[str] | None` _(internal)_ — Return *name*'s installed ``console_scripts`` entry-point names.
+- `_forge_scripts_pin_drift(repo_root: Path) -> tuple[str, str] | None` _(internal)_ — Return ``(pinned, installed)`` when forge-scripts is pinned ahead of install.
+- `step_env_sync(repo_root: Path) -> StepResult` — Fail fast when the local install is stale vs the repo's declared CLIs.
 - `step_ruff(repo_root: Path) -> StepResult` — Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
 - `step_docstrings(repo_root: Path) -> StepResult` — Run ``verify-forge-docstrings`` over the resolved scope.
 - `step_docstring_coverage(repo_root: Path) -> StepResult` — Run ``verify-forge-docstring-coverage`` — full-codebase % reporter.
@@ -490,6 +513,7 @@ _48 modules, 486 symbols._
 - `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
 - `_one_step_successors(tag: tuple[int, int, int]) -> set[tuple[int, int, int]]` _(internal)_ — Return the three valid rolling-next successors of a tagged release.
 - `step_release_tag_guard(repo_root: Path) -> StepResult` — Block when an intermediate rolling-next release was never tagged (#66).
+- `step_changelog_history(repo_root: Path) -> StepResult` — Run ``verify-forge-changelog-history`` — the dropped-``@base``-entry guard.
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the source tree (opt-in).
@@ -537,6 +561,12 @@ _48 modules, 486 symbols._
 - `_run_pip_install(ref: str, *, auth_mode: AuthMode, timeout_seconds: int | None) -> int` _(internal)_ — Run the force-reinstall pip command, wrapped in a progress logger.
 - `_run_apply(args: argparse.Namespace, root: Path) -> int` _(internal)_ — ``--apply``: do phase 1 + run pip + do phase 2, in one command.
 - `main() -> int` — One-command forge upgrade entry point.
+
+## `forge.verify_changelog_history`
+
+- `_headings(text: str) -> set[str]` _(internal)_ — Return the set of ``## v<semver>`` release headings in *text*.
+- `_base_is_ancestor(repo_root: Path, base_ref: str) -> bool` _(internal)_ — Return ``True`` when *base_ref* is an ancestor of ``HEAD``.
+- `main() -> int` — Fail when the working tree's CHANGELOG drops a curated ``@base`` entry.
 
 ## `forge.verify_cli_wiring`
 

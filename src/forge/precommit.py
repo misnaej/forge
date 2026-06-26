@@ -9,7 +9,9 @@ stale editable install), ruff (always ``ruff format`` + ``ruff check --fix
 ``git add``), docstring verification (over the diff vs main), test-name
 verification (over the diff vs main), repo-structure verification
 (``REPO_STRUCTURE.md`` vs the actual tree), plugin manifest JSON
-validation, Claude Code plugin-version drift guard (when applicable),
+validation, Claude Code plugin-version drift guard (when applicable), a
+CHANGELOG-history guard (fires only on a branch that merged the base
+branch in — a promotion — so main's curated entries can't be dropped),
 and ``pip-audit`` dependency vulnerability scan (non-blocking — warns
 but does not refuse a commit). Shipped to consumers via the
 ``forge-scripts`` pip package and invoked by ``.githooks/pre-commit``
@@ -258,6 +260,55 @@ def _installed_console_scripts(name: str) -> set[str] | None:
     return {ep.name for ep in dist.entry_points if ep.group == "console_scripts"}
 
 
+# Captures only a clean X.Y.Z, so a match always feeds parse_semver a valid
+# triple (the `pin_v is None` guard below is defensive, not reachable here).
+_FORGE_SCRIPTS_PIN_RE = re.compile(r"^forge-scripts\s*==\s*(\d+\.\d+\.\d+)\b")
+
+
+def _forge_scripts_pin_drift(repo_root: Path) -> tuple[str, str] | None:
+    """Return ``(pinned, installed)`` when forge-scripts is pinned ahead of install.
+
+    Reads ``[project.dependencies]`` for an exact ``forge-scripts==X.Y.Z`` pin
+    and compares it to the installed ``forge-scripts`` version. Bounded to the
+    unambiguous ``==`` form: channel pins (``@main``/``@dev``), range
+    specifiers (``>=``/``~=``), and extras (``forge-scripts[dev]==``) are not
+    matched and produce no drift.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``(pinned_version, installed_version)`` only when the install is
+        strictly older than an ``==`` pin; ``None`` otherwise — no pin, a
+        non-``==`` form, forge-scripts not installed, an editable/setuptools-scm
+        dev build (no meaningful comparison), or already current.
+    """
+    project = config.read_pyproject_raw(repo_root).get("project") or {}
+    deps = project.get("dependencies")
+    if not isinstance(deps, list):
+        return None
+    pinned = next(
+        (
+            m.group(1)
+            for dep in deps
+            if isinstance(dep, str) and (m := _FORGE_SCRIPTS_PIN_RE.match(dep.strip()))
+        ),
+        None,
+    )
+    if pinned is None:
+        return None
+    try:
+        have = importlib.metadata.version("forge-scripts")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    if "dev" in have or "+" in have:  # editable / setuptools-scm build — can't compare
+        return None
+    pin_v, have_v = parse_semver(pinned), parse_semver(have)
+    if pin_v is None or have_v is None or have_v >= pin_v:
+        return None
+    return pinned, have
+
+
 def step_env_sync(repo_root: Path) -> StepResult:
     """Fail fast when the local install is stale vs the repo's declared CLIs.
 
@@ -276,19 +327,26 @@ def step_env_sync(repo_root: Path) -> StepResult:
       reinstall command. Block by default; ``[tool.forge.env_sync].blocking
       = false`` downgrades it to a WARN (consumer escape hatch, same shape
       as ``pip_audit``). It never auto-installs (FOUNDATION §2).
+    - **forge-scripts version-pin drift (non-blocking WARN):** when the repo
+      pins ``forge-scripts==X.Y.Z`` in ``[project.dependencies]`` and the
+      installed version is older, warn with the reinstall command. Always a
+      WARN (version comparison is fuzzier than the entry-point check), and
+      self-skips channel pins / range specs / editable installs / no pin
+      (see :func:`_forge_scripts_pin_drift`). The blocking entry-point
+      failure takes priority over this advisory.
 
-    Self-skips when there is nothing to verify (no ``[project.scripts]``,
-    package not installed at all) or in CI / non-interactive contexts
+    Self-skips when there is nothing to verify (no ``[project.scripts]`` and
+    no pin, package not installed at all) or in CI / non-interactive contexts
     (FOUNDATION §15 — a fresh runner checkout legitimately predates install).
 
     Args:
         repo_root: Git repo root.
 
     Returns:
-        ``StepResult`` with ``passed=True`` for all self-skip paths.
-        When scripts are missing, ``passed=False`` and ``non_blocking``
-        is the inverse of ``[tool.forge.env_sync].blocking`` (default
-        blocking).
+        ``StepResult`` with ``passed=True`` for all self-skip paths. A
+        missing entry point fails (``non_blocking`` = inverse of
+        ``[tool.forge.env_sync].blocking``, default blocking); otherwise an
+        install behind the forge-scripts ``==`` pin fails non-blocking (WARN).
     """
     if is_non_interactive():
         return StepResult(
@@ -297,7 +355,53 @@ def step_env_sync(repo_root: Path) -> StepResult:
             output="(CI / non-interactive — skipped)",
             skipped=True,
         )
+    pin_drift = _forge_scripts_pin_drift(repo_root)
     declared = _declared_scripts(repo_root)
+
+    missing: list[str] = []
+    installed_known = False
+    scripts_count = 0
+    if declared is not None:
+        name, scripts = declared
+        installed = _installed_console_scripts(name)
+        if installed is not None:
+            installed_known = True
+            scripts_count = len(scripts)
+            missing = sorted(scripts - installed)
+
+        # Blocking entry-point freshness takes priority over the pin advisory.
+        if missing:
+            blocking = bool(
+                _forge_step_config(repo_root, "env_sync").get("blocking", True)
+            )
+            return StepResult(
+                name="env_sync",
+                passed=False,
+                output=(
+                    f"⛔ Stale install of '{name}': {len(missing)} declared "
+                    f"console script(s) not registered — {', '.join(missing)}.\n\n"
+                    "A [project.scripts] entry was added since you last installed, so "
+                    "the gate may run old code. Re-run `./dev/setup.sh` (or "
+                    '`pip install -e ".[dev]"`, or your repo\'s equivalent) to '
+                    "register the new entry point(s)."
+                ),
+                non_blocking=not blocking,
+            )
+
+    # Secondary: forge-scripts pinned ahead of the install (always a WARN).
+    if pin_drift is not None:
+        pinned, have = pin_drift
+        return StepResult(
+            name="env_sync",
+            passed=False,
+            output=(
+                f"⚠️  Installed forge-scripts {have} is behind the pin "
+                f"forge-scripts=={pinned}. Re-run `./dev/setup.sh` (or your "
+                "repo's equivalent) to install the pinned version."
+            ),
+            non_blocking=True,
+        )
+
     if declared is None:
         return StepResult(
             name="env_sync",
@@ -305,35 +409,17 @@ def step_env_sync(repo_root: Path) -> StepResult:
             output="(no [project.scripts] to verify — skipped)",
             skipped=True,
         )
-    name, scripts = declared
-    installed = _installed_console_scripts(name)
-    if installed is None:
+    if not installed_known:
         return StepResult(
             name="env_sync",
             passed=True,
-            output=f"({name} not installed — skipped)",
+            output=f"({declared[0]} not installed — skipped)",
             skipped=True,
         )
-    missing = sorted(scripts - installed)
-    if not missing:
-        return StepResult(
-            name="env_sync",
-            passed=True,
-            output=f"all {len(scripts)} declared console script(s) installed.",
-        )
-    blocking = bool(_forge_step_config(repo_root, "env_sync").get("blocking", True))
     return StepResult(
         name="env_sync",
-        passed=False,
-        output=(
-            f"⛔ Stale install of '{name}': {len(missing)} declared console "
-            f"script(s) not registered — {', '.join(missing)}.\n\n"
-            "A [project.scripts] entry was added since you last installed, so "
-            "the gate may run old code. Re-run `./dev/setup.sh` (or "
-            '`pip install -e ".[dev]"`, or your repo\'s equivalent) to register '
-            "the new entry point(s)."
-        ),
-        non_blocking=not blocking,
+        passed=True,
+        output=f"all {scripts_count} declared console script(s) installed.",
     )
 
 
@@ -409,7 +495,7 @@ def step_docstring_coverage(repo_root: Path) -> StepResult:
     and addresses listed missing-docstring entries.
 
     When ``[tool.forge.docstring_coverage].badge = true`` the CLI
-    also writes ``.badges/DocstringCoverage.svg``.
+    also writes ``.badges/docstring-coverage.svg``.
 
     The CLI self-skips with exit 0 when ``pyproject.toml`` or
     ``src/`` is missing, so consumer repos that haven't opted in
@@ -939,6 +1025,32 @@ def step_release_tag_guard(repo_root: Path) -> StepResult:
     )
 
 
+def step_changelog_history(repo_root: Path) -> StepResult:
+    """Run ``verify-forge-changelog-history`` — the dropped-``@base``-entry guard.
+
+    Thin shell-out (matching ``step_plugin_version``). The CLI self-skips
+    unless ``origin/<base>`` is an ancestor of ``HEAD`` — a ``dev → main``
+    promotion or other main-merge — so it fires only when main's curated
+    CHANGELOG history could be regressed by a conflict resolved blindly
+    toward dev. See ``docs/release-process.md`` §5 and #120.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` mirroring the CLI exit code.
+
+    Raises:
+        SystemExit: If ``verify-forge-changelog-history`` is not on PATH.
+    """
+    require_cli("verify-forge-changelog-history", caller="forge-precommit")
+    passed, output = _run(["verify-forge-changelog-history"], cwd=repo_root)
+    skipped = "skipped" in output
+    return StepResult(
+        name="changelog_history", passed=passed, output=output, skipped=skipped
+    )
+
+
 def _cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]:
     """Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 
@@ -1135,6 +1247,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("commit_types_parity", step_commit_types_parity),
     StepDef("plugin_version", step_plugin_version),
     StepDef("release_tag_guard", step_release_tag_guard),
+    StepDef("changelog_history", step_changelog_history),
     StepDef("pip_audit", step_pip_audit),
     StepDef("cve_usage", step_cve_usage),
     StepDef("doctest", step_doctest, default_on=False),

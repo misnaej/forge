@@ -378,6 +378,59 @@ def test_step_plugin_version_marks_skipped_from_cli_output(
     assert result.skipped
 
 
+def test_step_changelog_history_shells_out_to_verify_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """step_changelog_history always shells out; the CLI owns the skip decision."""
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda _name: "/usr/bin/verify-forge-changelog-history",
+    )
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> tuple[bool, str]:
+        calls.append(cmd)
+        return True, "ok"
+
+    monkeypatch.setattr(precommit, "_run", _fake_run)
+    result = precommit.step_changelog_history(tmp_path)
+    assert result.passed
+    assert calls
+    assert calls[0] == ["verify-forge-changelog-history"]
+
+
+def test_step_changelog_history_marks_skipped_from_cli_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the CLI reports it skipped, the StepResult mirrors that."""
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda _name: "/usr/bin/verify-forge-changelog-history",
+    )
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        lambda *_a, **_kw: (
+            True,
+            "(origin/main is not an ancestor of HEAD — skipped)\n",
+        ),
+    )
+    result = precommit.step_changelog_history(tmp_path)
+    assert result.passed
+    assert result.skipped
+
+
+def test_step_changelog_history_hard_fails_when_cli_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing verify-forge-changelog-history is a loud SystemExit (FOUNDATION §2)."""
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        precommit.step_changelog_history(tmp_path)
+
+
 def _setup_release_guard(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1645,6 +1698,115 @@ def test_step_env_sync_warns_not_blocks_when_blocking_false(
     assert not result.skipped
     assert result.non_blocking
     assert "new-cli" in result.output
+
+
+# ---------------------------------------------------------------------------
+# env_sync — forge-scripts version-pin drift (#107)
+# ---------------------------------------------------------------------------
+
+
+def _write_deps_pyproject(repo_root: Path, deps: list[str]) -> None:
+    """Write a ``[project]`` pyproject (no scripts) with given dependencies.
+
+    Args:
+        repo_root: Directory to drop ``pyproject.toml`` in.
+        deps: Requirement strings for ``[project.dependencies]``.
+    """
+    dep_lines = ", ".join(f'"{d}"' for d in deps)
+    (repo_root / "pyproject.toml").write_text(
+        f'[project]\nname = "consumer"\ndependencies = [{dep_lines}]\n',
+        encoding="utf-8",
+    )
+
+
+def test_step_env_sync_warns_on_forge_scripts_pin_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A forge-scripts == pin ahead of the install produces a non-blocking WARN.
+
+    SCENARIO: repo pins forge-scripts==2.9.0; installed is 2.8.0.
+    MOCK SETUP: is_non_interactive→False; importlib.metadata.version→"2.8.0".
+    EXPECTED BEHAVIOR: passed False, non_blocking True, names the pin.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    _write_deps_pyproject(tmp_path, ["forge-scripts==2.9.0"])
+    monkeypatch.setattr(precommit.importlib.metadata, "version", lambda _n: "2.8.0")
+    result = precommit.step_env_sync(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+    assert "forge-scripts==2.9.0" in result.output
+
+
+def test_step_env_sync_no_warn_when_pin_satisfied(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No WARN when the installed forge-scripts meets or exceeds the pin."""
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    _write_deps_pyproject(tmp_path, ["forge-scripts==2.8.0"])
+    monkeypatch.setattr(precommit.importlib.metadata, "version", lambda _n: "2.9.0")
+    result = precommit.step_env_sync(tmp_path)
+    assert result.passed
+    assert "behind the pin" not in result.output
+
+
+def test_step_env_sync_no_warn_on_non_exact_pin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-``==`` specifier (range / channel) is not treated as a pin."""
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    _write_deps_pyproject(tmp_path, ["forge-scripts>=2.8.0"])
+    monkeypatch.setattr(precommit.importlib.metadata, "version", lambda _n: "2.0.0")
+    result = precommit.step_env_sync(tmp_path)
+    assert result.passed
+    assert "behind the pin" not in result.output
+
+
+def test_step_env_sync_no_warn_on_editable_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An editable / setuptools-scm dev build is not compared against the pin."""
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    _write_deps_pyproject(tmp_path, ["forge-scripts==2.9.0"])
+    monkeypatch.setattr(
+        precommit.importlib.metadata, "version", lambda _n: "2.8.0.dev1+gabc1234"
+    )
+    result = precommit.step_env_sync(tmp_path)
+    assert result.passed
+    assert "behind the pin" not in result.output
+
+
+def test_step_env_sync_missing_script_beats_pin_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blocking missing entry point wins over a forge-scripts pin WARN.
+
+    SCENARIO: the repo both has a missing declared script AND pins
+    forge-scripts ahead of the install. The blocking entry-point failure
+    must take priority over the non-blocking pin advisory.
+    MOCK SETUP: is_non_interactive→False; pyproject declares mypkg with two
+    scripts + forge-scripts==2.9.0; only one script installed; forge-scripts
+    version→2.8.0.
+    EXPECTED BEHAVIOR: passed False, blocking (non_blocking False), the
+    ⛔ stale-install message — NOT the pin WARN.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "mypkg"\ndependencies = ["forge-scripts==2.9.0"]\n'
+        '\n[project.scripts]\nmycli = "pkg:main"\nnew-cli = "pkg:main"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(precommit, "_installed_console_scripts", lambda _n: {"mycli"})
+    monkeypatch.setattr(precommit.importlib.metadata, "version", lambda _n: "2.8.0")
+    result = precommit.step_env_sync(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+    assert "⛔ Stale install" in result.output
+    assert "behind the pin" not in result.output
 
 
 # ---------------------------------------------------------------------------

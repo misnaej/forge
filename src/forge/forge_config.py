@@ -95,7 +95,7 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         ("tool", "forge", "docstring_coverage", "badge"),
         default=False,
         description="Generate interrogate's coverage badge to "
-        ".badges/DocstringCoverage.svg for README embedding.",
+        ".badges/docstring-coverage.svg for README embedding.",
     ),
     ConfigKey(
         ("tool", "forge", "docstring_coverage", "paths"),

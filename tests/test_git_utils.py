@@ -8,14 +8,21 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
 
 from forge import git_utils
-from tests.conftest import make_fake_run
+from tests.conftest import (
+    GIT_ENV as _GIT_ENV,
+)
+from tests.conftest import (
+    init_git_repo as _init_git_repo,
+)
+from tests.conftest import (
+    make_fake_run,
+)
 
 
 if TYPE_CHECKING:
@@ -388,28 +395,8 @@ def test_read_plugin_version_returns_none_on_malformed_json(tmp_path: Path) -> N
 
 # ---------------------------------------------------------------------------
 # Real-git helpers for run_git / get_tree_sha / read_plugin_version_at_ref
+# (_GIT_ENV + _init_git_repo are imported from tests.conftest — #85)
 # ---------------------------------------------------------------------------
-
-_GIT_ENV: dict[str, str] = {
-    "GIT_AUTHOR_NAME": "t",
-    "GIT_AUTHOR_EMAIL": "t@t",
-    "GIT_COMMITTER_NAME": "t",
-    "GIT_COMMITTER_EMAIL": "t@t",
-    "PATH": os.environ.get("PATH", ""),
-}
-
-
-def _init_git_repo(repo: Path) -> None:
-    """Initialize a minimal git repo with one empty commit on ``main``.
-
-    Args:
-        repo: Directory to initialize. Must already exist.
-    """
-    for cmd in (
-        ["git", "init", "-q", "-b", "main"],
-        ["git", "commit", "-q", "--allow-empty", "-m", "initial"],
-    ):
-        subprocess.run(cmd, cwd=repo, env=_GIT_ENV, check=True)
 
 
 # ---------------------------------------------------------------------------
