@@ -5,12 +5,13 @@ turning a ``.py`` path into a dotted module name, and extracting the set
 of import targets from a parsed module. Both are derived purely from the
 syntax tree — no runtime instrumentation, no import execution.
 
-These live here, not inside any one consumer, because more than one
-subsystem needs them: ``forge.audit.deps`` builds a module-coupling graph
-for architecture metrics, and ``forge.smart_test`` builds a reverse
-test→source reachability graph for change-driven test selection. Both
-start from the same primitive — "what does this module import?" — so it
-is a single source of truth (FOUNDATION §12), not copied per consumer.
+They live here rather than inside their first consumer because a second
+one is coming. ``forge.audit.deps`` uses them today to build a
+module-coupling graph for architecture metrics; a planned change-driven
+test-selection subsystem (#8) will build a reverse test→source
+reachability graph from the same primitive — "what does this module
+import?". Extracting them now keeps that primitive a single source of
+truth (FOUNDATION §12) instead of copied when the second consumer lands.
 """
 
 from __future__ import annotations
