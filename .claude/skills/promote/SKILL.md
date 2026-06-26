@@ -93,13 +93,14 @@ git switch -c "release/v$NEW" origin/dev        # (or the v$NEW dev commit)
 #    promotion PR re-show all of dev's history against an ancient merge-base.
 git merge origin/main
 
-# 3. Fix merge conflicts — always resolve toward dev (dev is strictly
-#    ahead of main). The merge also brings main's prior curated CHANGELOG
-#    entries in, so nothing on main regresses.
+# 3. Fix merge conflicts — resolve CODE/test conflicts toward dev (dev is
+#    strictly ahead of main). EXCEPTION: CHANGELOG.md — never resolve it
+#    blindly toward either side; reconcile by hand (see "CHANGELOG.md
+#    conflicts" below).
 
-# 4. Rewrite CHANGELOG: add the curated `## v$NEW — <date>` @main entry
-#    (group the release's dev PRs by conventional-commit type, one bullet
-#    per theme), then commit the merge + CHANGELOG.
+# 4. Reconcile CHANGELOG.md per the rule below, then add the curated
+#    `## v$NEW — <date>` @main entry (group the release's dev PRs by
+#    conventional-commit type, one bullet per theme); commit the merge.
 
 git log origin/main..release/v$NEW --oneline    # SANITY: only this release's commits, not all of dev
 ```
@@ -114,6 +115,17 @@ plain git, no tree-reconstruction, no special logic.
 The release branch ends up diverging from the `v$NEW` tag only by the
 curated `CHANGELOG.md` entry, which the post-merge tag relocation tolerates
 via the **release fingerprint** (`docs/release-process.md` §2, §5).
+
+### CHANGELOG.md conflicts — never resolve blindly (the one exception)
+
+`CHANGELOG.md` is the **single exception** to "resolve toward dev": `main`
+is its source of record and `dev`'s copy is allowed to lag, so a CHANGELOG
+merge conflict must **never** be settled with a blind `git checkout --ours`
+/ `--theirs` — it always needs a human read. **Reconcile it by hand
+following the full procedure and rationale in
+[`docs/release-process.md` §5](../../../docs/release-process.md#5-changelog-at-release)**
+(keep every `## vX.Y.0` heading on `main`, fold in real dev-side additions,
+append the new entry).
 
 Push the branch via the `forge:git-commit-push` agent (direct `git push`
 is hook-blocked for agents). Resolve conflicts + make the merge commit

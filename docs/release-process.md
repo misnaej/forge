@@ -64,9 +64,9 @@ be released** — never the last-released version.
   ```bash
   git switch -c release/vX.Y.0 origin/dev   # 1. branch from the dev version
   git merge origin/main                      # 2. merge main IN — REQUIRED
-  # 3. resolve conflicts toward dev (dev is ahead); the merge also brings
-  #    main's prior curated CHANGELOG entries in, so nothing on main regresses
-  # 4. rewrite CHANGELOG: add the curated ## vX.Y.0 @main entry; commit
+  # 3. resolve CODE/test conflicts toward dev (dev is ahead). EXCEPTION:
+  #    CHANGELOG.md is NEVER resolved blindly — reconcile by hand (§5)
+  # 4. reconcile CHANGELOG.md (§5) + append the curated ## vX.Y.0 entry; commit
   ```
   **Step 2 is the whole game.** Because every promotion is a squash,
   `main`'s commits are not ancestors of `dev`; branching from `dev`
@@ -131,9 +131,23 @@ branch is rejected exactly as before.
 `main` and is carried forward at each promotion by the **`git merge
 origin/main`** in the release branch (§3 step 2): the merge brings main's
 prior curated entries onto the branch, and you then append only the new
-`vX.Y.0` entry — so no prior entry is lost. **No per-release back-merge is
-required**, and `dev`'s `CHANGELOG.md` is allowed to lag (it is the
-pre-release branch; consumers reading release notes pin `@main`).
+`vX.Y.0` entry. **No per-release back-merge is required**, and `dev`'s
+`CHANGELOG.md` is allowed to lag (it is the pre-release branch; consumers
+reading release notes pin `@main`).
+
+> **CHANGELOG.md is the one file exempt from the §3 step 3 "resolve toward
+> dev" rule.** Precisely *because* `dev`'s copy may lag — or
+> independently diverge from — `main`, a `CHANGELOG.md` merge conflict must
+> **never** be settled with a blind `git checkout --ours` / `--theirs`.
+> Resolving toward `dev` **erases main's curated history** when dev lags;
+> resolving toward `main` **drops a genuine dev-side addition** when dev is
+> ahead. It always needs a human read. Reconcile by hand: **keep every
+> `## vX.Y.0` heading present on `main`** (a more-recent `dev` copy never
+> erases a curated main entry just because it is ahead in history), **fold
+> in any real dev-side additions**, then **append the new `vX.Y.0` entry**.
+> When unsure, diff `git show origin/main:CHANGELOG.md` against the branch
+> copy before resolving. For already-released versions, the main-side body
+> wins; the new minor's entry is authored fresh.
 
 - **Back-merging `main → dev` is optional**, not mandatory. Do it if you
   want `dev`'s `CHANGELOG.md` to mirror `main` for local readability (a
