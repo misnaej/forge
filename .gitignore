@@ -52,3 +52,4 @@ issue_*.md
 # forge-gen-c4 on-demand offline HTML view (regenerate: forge-gen-c4 --format html)
 docs/architecture.html
 docs/mermaid.min.js
+docs/mermaid-layout-elk.iife.min.js

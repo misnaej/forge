@@ -204,14 +204,42 @@ import graph) **by presence** of this table; it self-skips otherwise.
 | `config` | _unset_ | Path to a standalone model file; a root `c4.toml` is auto-detected when present. | You keep the verbose model in its own file (like `ruff.toml`) rather than inline. |
 | `output` | `"docs/architecture.dsl"` | Where the generated Structurizr DSL is written. | You want the DSL artifact elsewhere. |
 | `readme` | _unset_ | README path for the managed Mermaid block; unset → no README block is written. | You want the diagram embedded in a README. |
+| `direction` | `"LR"` | Graph direction for every generated diagram (`"LR"` or `"TB"`); threads into the Mermaid `graph` header and the DSL `autolayout`. | Layered container models read better top-to-bottom. |
+| `edges` | `"imports"` | Whether import-**derived** ("depends-on") edges are drawn: `"imports"` / `"both"` draw them, `"declared"` draws only hand-authored `[[relationship]]` edges. Declared edges always render. | You want a curated conceptual flow instead of the noisy import graph. |
+| `container_edges` / `component_edges` | inherit `edges` | Per-view override of `edges` for the Container view / the per-container Component views. | You want the Container view to show a clean curated flow while Component views keep real import coupling. |
 
 The model itself — the `system` / `person` / `external` / `container` /
 `component` / `relationship` tables — lives in the external `c4.toml` (pointed
 at by `config`) or inline under `[tool.forge.c4]`. The component-to-component
 edges are machine-derived from the import graph; everything else is
-human-declared. See [`docs/c4-architecture.md`](c4-architecture.md) for the
-design and rationale, and [`skills/c4/SKILL.md`](../skills/c4/SKILL.md) for
-building a model interactively.
+human-declared.
+
+**`--format html` renders each C4 view (System Context / Containers / one per
+container's Components) on its own scrollable tab**, at intrinsic size — large
+models pan rather than shrink. Actors are grouped into an "Actors" band. The
+diagrams are laid out by the **ELK engine** (vendored offline alongside Mermaid,
+with a dagre fallback), which routes the Container view's dense cross-cluster
+`container → external` edges far more cleanly than Mermaid's default dagre. The
+emitted HTML is **fully offline**: it sidecars `mermaid.min.js` and
+`mermaid-layout-elk.iife.min.js` next to itself, so keep all three files
+together if you move the page. `[tool.forge.c4].direction` (above) orients every
+diagram.
+
+**Modeling reach.** `[[person]]` accepts an optional `container = "<name>"`
+(now resolving to a container **or** a component) to target a subsystem rather
+than the system as a whole. A `[[relationship]]`'s `source` / `destination`
+may name **any** declared element — person, container, component, or external
+system — so you can express container↔container edges, an actor → a specific
+component, and produce/consume data flows (a component "publishes results to"
+an external store, another "reads results from" it). An endpoint matching no
+element warns and is skipped. When an external is the destination of a declared
+relationship, the generic `system → external` edge is suppressed in the views
+where the specific edge renders (Container / flat); the System Context view
+keeps its clean radial `system → external`.
+
+See [`docs/c4-architecture.md`](c4-architecture.md) for the design and
+rationale, and [`skills/c4/SKILL.md`](../skills/c4/SKILL.md) for building a
+model interactively.
 
 ## `[tool.forge.cve_usage]` — usage-scoped CVE filter
 
