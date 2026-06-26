@@ -277,6 +277,7 @@ _49 modules, 513 symbols._
 - `build_model(root: Path, roots: list[Path]) -> tuple[C4Config, set[tuple[str, str]], list[str]] | None` — Assemble the C4 model: config, derived edges, and unmatched modules.
 - `generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None` — Build the DSL text and unmatched-module list for the repo.
 - `_m(text: str) -> str` _(internal)_ — Escape label *text* for safe embedding in a Mermaid node label.
+- `_external_node_line(node_id: str, ext: External, *, indent: str = '    ') -> str` _(internal)_ — Render the flat ``[[...]]`` node line for one external system.
 - `render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the model as a Mermaid flowchart (offline-renderable).
 - `_mermaid_box(name: str, technology: str, description: str) -> str` _(internal)_ — Build a multi-line Mermaid box label: bold name, technology, description.
 - `_mermaid_edges(config: C4Config, ids: dict[str, dict[str, str]], edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the Mermaid relationship lines.
@@ -285,8 +286,7 @@ _49 modules, 513 symbols._
 - `_component_owner(config: C4Config) -> dict[str, str]` _(internal)_ — Map each component name to the display name of its owning container.
 - `_derive_container_edges(config: C4Config, edges: set[tuple[str, str]], *, include_derived: bool = True) -> set[tuple[str, str]]` _(internal)_ — Collapse component-level edges to cross-container pairs.
 - `_container_level_maps(config: C4Config, *, sys_id: str, person_ids: dict[str, str], external_ids: dict[str, str], container_ids: dict[str, str]) -> _IdMaps` _(internal)_ — Build id maps that resolve every endpoint to its Container-view node.
-- `_container_view_declared_edges(config: C4Config, ids: _IdMaps) -> list[str]` _(internal)_ — Render declared relationships at Container-view granularity.
-- `_container_view_external_targets(config: C4Config, ids: _IdMaps) -> set[str]` _(internal)_ — Return external names a declared edge actually targets in this view.
+- `_container_view_declared(config: C4Config, ids: _IdMaps) -> tuple[list[str], set[str]]` _(internal)_ — Render Container-view declared edges and the externals they target.
 - `_render_mermaid_containers(config: C4Config, container_edges: set[tuple[str, str]]) -> str` _(internal)_ — Render the Container view: containers inside the system boundary.
 - `_component_view_peripherals(config: C4Config, names: set[str], component_ids: dict[str, str], alloc: _IdAllocator) -> tuple[list[str], list[str]]` _(internal)_ — Render external/person peripherals + edges for one container's view.
 - `_render_mermaid_components_for(config: C4Config, container: Container, idx: int, edges: set[tuple[str, str]], *, include_derived: bool = True) -> str` _(internal)_ — Render one container's Component view: its components and their edges.
@@ -297,7 +297,7 @@ _49 modules, 513 symbols._
 - `_splice_readme(readme_text: str, block: str) -> str | None` _(internal)_ — Replace the managed C4 block in *readme_text* with *block*.
 - `_readme_path(root: Path, config: C4Config) -> Path` _(internal)_ — Return the configured README path under *root*.
 - `sync_readme(root: Path, config: C4Config, mermaid_text: str, *, check: bool) -> int` — Write or verify the managed C4 block inside the configured README.
-- `_emit_mermaid(config: C4Config, edges: set[tuple[str, str]], output: str | None) -> int` _(internal)_ — Print or write the canonical Mermaid source.
+- `_emit_mermaid(root: Path, config: C4Config, edges: set[tuple[str, str]], output: str | None) -> int` _(internal)_ — Print or write the canonical Mermaid source.
 - `_emit_html(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the offline HTML view (+ vendored Mermaid sidecar).
 - `_emit_dsl(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the canonical DSL artifact and the README C4 block.
 - `main() -> int` — Generate or verify the C4 artifacts (DSL + README block, or HTML).

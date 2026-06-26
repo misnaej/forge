@@ -264,6 +264,30 @@ def test_empty_container_equals_explicit_first_byte_identical() -> None:
     assert render_dsl(omitted, set()) == render_dsl(explicit, set())
 
 
+def test_empty_container_equals_explicit_first_mermaid_byte_identical() -> None:
+    """The Mermaid renderers default ``container`` exactly like the DSL path.
+
+    Guards the per-view + flat Mermaid output against a refactor that inlines
+    the first-container defaulting instead of routing through
+    ``_components_for_container`` — a divergence the DSL-only byte-identical
+    test would miss.
+    """
+    omitted = _two_container_config(
+        (Component("A", ("demo.a",)), Component("B", ("demo.b",)))
+    )
+    explicit = _two_container_config(
+        (
+            Component("A", ("demo.a",), container="Applications"),
+            Component("B", ("demo.b",), container="Applications"),
+        )
+    )
+    assert render_mermaid(omitted, set()) == render_mermaid(explicit, set())
+    first = explicit.containers[0]
+    assert _render_mermaid_components_for(
+        omitted, first, 0, set()
+    ) == _render_mermaid_components_for(explicit, first, 0, set())
+
+
 def test_cross_container_edge_renders() -> None:
     """An import edge between components in different containers still renders."""
     config = _two_container_config(
@@ -1220,7 +1244,7 @@ def test_container_view_renders_declared_container_edge_not_duplicate_component(
     result = _render_mermaid_containers(config, container_edges)
     # container→container declared rel renders with its label
     assert '"links"' in result
-    # component→component declared rel is skipped by _container_view_declared_edges
+    # component→component declared rel is skipped by _container_view_declared
     assert '"calls"' not in result
 
 
