@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_49 modules, 513 symbols._
+_50 modules, 513 symbols._
 
 ## `forge._hook_helpers`
 
@@ -91,8 +91,6 @@ _49 modules, 513 symbols._
 
 - `class ModuleNode` — One Python module after parsing.
 - `class DepsConfig` — Tunable knobs for the dependency-analysis pipeline.
-- `_resolve_module_name(path: Path, package_roots: list[Path]) -> str | None` _(internal)_ — Translate a ``.py`` path to a dotted module name.
-- `_extract_imports(tree: ast.Module, current_module: str) -> set[str]` _(internal)_ — Return the set of fully-qualified import-candidate targets.
 - `_closest_known(target: str, modules: dict[str, ModuleNode]) -> str | None` _(internal)_ — Walk up the dotted name until a known module is found.
 - `_abstractness(tree: ast.Module) -> tuple[int, int]` _(internal)_ — Count abstract vs total class definitions in a module.
 - `class _TarjanState` _(internal)_ — Mutable scratch space shared across Tarjan recursion frames.
@@ -343,6 +341,11 @@ _49 modules, 513 symbols._
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
 - `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get list of modified files from git.
 - `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
+
+## `forge.import_graph`
+
+- `resolve_module_name(path: Path, package_roots: list[Path]) -> str | None` — Translate a ``.py`` path to a dotted module name.
+- `extract_import_targets(tree: ast.Module, current_module: str) -> set[str]` — Return the set of fully-qualified import-candidate targets.
 
 ## `forge.install_bootstrap`
 

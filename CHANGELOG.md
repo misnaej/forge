@@ -71,6 +71,28 @@ diagrams are unchanged.
   clean curated flow while Component views keep real import coupling. Declared
   relationships always render; the `imports` default is byte-identical to
   before.
+
+## v2.12.0 — 2026-06-26
+
+Additive — a new default-on pre-commit step that self-skips outside a
+`dev → main` promotion; no consumer action required.
+
+### Features
+- **`verify-forge-changelog-history` + the `changelog_history` pre-commit
+  step** — guards `main`'s curated CHANGELOG history during promotion. Fails
+  when a branch that has merged `origin/<base>` in drops a `## vX.Y.0` heading
+  present on the base — catching a CHANGELOG merge conflict resolved blindly
+  toward dev. Structural trigger (fires only when the base is an ancestor of
+  `HEAD`), so it self-skips on plain `dev` (whose copy may lag) and on
+  single-branch repos (#120).
+
+### Docs
+- Resolve a contradiction in the release spec: `CHANGELOG.md` is the **one
+  exception** to the promotion "resolve toward dev" rule — never resolved
+  blindly (`--ours`/`--theirs`); `main`'s curated entries are the source of
+  record. Documented in `docs/release-process.md` §3/§5 and the `/promote`
+  runbook (#119).
+
 ## v2.11.0 — 2026-06-25
 
 ### ⚠️ Upgrade notes
