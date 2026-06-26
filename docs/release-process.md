@@ -103,6 +103,7 @@ invariant that had no test).
 | `forge-check-main-tags` relocates a minor tag when the base squash diverges from the tag only by `CHANGELOG.md`, but treats a non-CHANGELOG divergence as unreproduced (no move) | `verify_main_tags._base_tree_index` | `tests/test_verify_main_tags.py::test_fix_relocates_when_base_diverges_only_by_changelog` / `::test_base_diverging_by_non_changelog_is_not_a_target` |
 | `forge-check-main-tags` warns about un-reproduced minors **above** the base's current line (genuinely pending) but downgrades **ancient** ones below it (never promoted, can't backfill) to INFO — so long-dead dev-only tags don't nag every run | `verify_main_tags._report_unreproduced` | `tests/test_verify_main_tags.py::test_report_unreproduced_warns_pending_but_ignores_ancient` |
 | `--promotion-status` flags a pending minor that has no `## vX.Y.0` entry in `origin/<dev>`'s `CHANGELOG.md` (non-blocking advisory; silent when the repo keeps no CHANGELOG) | `next_prep._promotion_status_lines` | `tests/test_next_prep.py::test_promotion_status_flags_missing_changelog_entry` |
+| A branch that merged `origin/<base>` in (a promotion or any main-merge) must retain **every** `## vX.Y.0` heading present on `origin/<base>` — a CHANGELOG conflict resolved blindly toward dev that drops one fails the guard. Self-skips when `origin/<base>` is not an ancestor of `HEAD` (plain `dev` may lag, §5) and on single-branch repos | `verify_changelog_history.main` | `tests/test_verify_changelog_history.py::test_fails_when_base_heading_dropped` / `::test_skips_when_base_not_ancestor` |
 
 When you add a versioning/promotion behavior, add a row here **and** its
 test. When you find an invariant with no test, that gap is a bug to close.
@@ -163,3 +164,13 @@ reading release notes pin `@main`).
   branch). It never changes the exit code and stays silent for repos that
   keep no `CHANGELOG.md`. A blocking variant would be a new gate (MINOR) —
   tracked separately.
+
+- **The dropped-entry guard *is* blocking.** `verify-forge-changelog-history`
+  (pre-commit step `changelog_history`) fails when a branch that has
+  merged `origin/<base>` in — a promotion or any main-merge — drops a
+  `## vX.Y.0` heading present on `origin/<base>`. It enforces the
+  CHANGELOG-conflict rule above: a conflict mistakenly resolved with
+  `--ours` that erases a curated main entry turns CI red instead of
+  shipping a regressed log. It self-skips on plain `dev` (base is not an
+  ancestor of `HEAD`, so dev's copy may still lag) and on single-branch
+  repos. This is the §4 invariant that makes the rule discipline-free.

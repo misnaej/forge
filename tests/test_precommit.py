@@ -378,6 +378,59 @@ def test_step_plugin_version_marks_skipped_from_cli_output(
     assert result.skipped
 
 
+def test_step_changelog_history_shells_out_to_verify_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """step_changelog_history always shells out; the CLI owns the skip decision."""
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda _name: "/usr/bin/verify-forge-changelog-history",
+    )
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> tuple[bool, str]:
+        calls.append(cmd)
+        return True, "ok"
+
+    monkeypatch.setattr(precommit, "_run", _fake_run)
+    result = precommit.step_changelog_history(tmp_path)
+    assert result.passed
+    assert calls
+    assert calls[0] == ["verify-forge-changelog-history"]
+
+
+def test_step_changelog_history_marks_skipped_from_cli_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the CLI reports it skipped, the StepResult mirrors that."""
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda _name: "/usr/bin/verify-forge-changelog-history",
+    )
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        lambda *_a, **_kw: (
+            True,
+            "(origin/main is not an ancestor of HEAD — skipped)\n",
+        ),
+    )
+    result = precommit.step_changelog_history(tmp_path)
+    assert result.passed
+    assert result.skipped
+
+
+def test_step_changelog_history_hard_fails_when_cli_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing verify-forge-changelog-history is a loud SystemExit (FOUNDATION §2)."""
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        precommit.step_changelog_history(tmp_path)
+
+
 def _setup_release_guard(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

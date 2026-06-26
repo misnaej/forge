@@ -53,7 +53,7 @@ modules = ["forge.audit"]
 name = "Verifiers"
 technology = "Python (AST)"
 description = "Single-responsibility pre-commit checks: docstrings, naming, repo structure, manifest, wiring, CVE usage"
-modules = ["forge.verify_docstrings", "forge.verify_docstring_coverage", "forge.verify_manifest", "forge.verify_plugin_version", "forge.verify_repo_structure", "forge.verify_test_naming", "forge.verify_cli_wiring", "forge.verify_doc_consistency", "forge.verify_cve_usage", "forge.verify_main_tags"]
+modules = ["forge.verify_docstrings", "forge.verify_docstring_coverage", "forge.verify_manifest", "forge.verify_plugin_version", "forge.verify_repo_structure", "forge.verify_test_naming", "forge.verify_cli_wiring", "forge.verify_doc_consistency", "forge.verify_cve_usage", "forge.verify_main_tags", "forge.verify_changelog_history"]
 
 [[component]]
 name = "Installers"
