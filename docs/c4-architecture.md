@@ -159,11 +159,15 @@ Scope boundaries for v1:
 - **`dsl`** (default) — writes `docs/architecture.dsl` (canonical,
   committed) and, when `[tool.forge.c4].readme` is set, keeps a managed
   Mermaid block in the README (`<!-- forge:c4:start/end -->`) in sync.
-- **`html`** — a self-contained **offline** view: a Mermaid flowchart in
-  an HTML page that references a vendored `mermaid.min.js` (MIT, shipped
-  as forge package data, copied next to the HTML). Needs only
-  `pip install` — no Docker, Java, Graphviz, or network. The generated
-  HTML + sidecar are gitignored (on-demand).
+- **`html`** — a self-contained **offline** view: each C4 view (System
+  Context, Containers, one Component view per container) on its own
+  scrollable tab, mirroring the DSL views, so a reader zooms in
+  deliberately instead of facing one flattened diagram. References two
+  vendored classic-script bundles copied next to the HTML —
+  `mermaid.min.js` and `mermaid-layout-elk.iife.min.js` (both MIT, shipped
+  as forge package data). Needs only `pip install` — no Docker, Java,
+  Graphviz, or network. The generated HTML + sidecars are gitignored
+  (on-demand). See "Per-view HTML & the ELK layout engine" below.
 - **`mermaid`** — raw canonical Mermaid to stdout (for embedding).
 
 Every relationship line carries a label: derived import edges read
@@ -204,6 +208,58 @@ verifying both `docs/architecture.dsl` and the README block against the
 current import graph. A structural change that isn't regenerated fails
 the commit — so the diagram refreshes at each PR exactly when the
 architecture actually changed. Self-skips when no `[tool.forge.c4]`.
+
+### Per-view HTML & the ELK layout engine
+
+The DSL already declares **separate views** (systemContext, container, one
+component view per container). The HTML renderer mirrors that: each view is its
+own navigable tab, so legibility no longer degrades with model size. Within a
+view, the renderer keeps the **system-boundary subgraph** but emits persons in
+an "Actors" band and externals as **flat nodes**.
+
+**Why flat externals, and why ELK.** Mermaid's default **dagre** engine ranks by
+directed-edge paths and has *experimental, documented* trouble with edges that
+cross a subgraph/cluster boundary (dagrejs/dagre#13, #196): it mis-ranks the
+external "sink" nodes that many containers point at, stacking them below the
+boundary with crossing edges, and Mermaid exposes no rank/same-rank control to
+correct it (mermaid-js/mermaid#3723, #1736). The System Context view is clean
+only because it is effectively flat (no cross-boundary cluster edges). Wrapping
+externals in their *own* subgraph made it worse — a third sibling cluster for
+dagre to mis-place. The real fix is the **ELK** layout engine, which is built for
+hierarchical/clustered graphs and routes inter-cluster edges cleanly.
+
+**Offline ELK is non-trivial** and the reason is worth recording. In Mermaid
+v11, ELK is a separate package (`@mermaid-js/layout-elk`) that is **ESM-only**
+and uses dynamic `import()` for the heavy elkjs chunk — neither works from
+`file://` (browsers block module + dynamic imports there), so the upstream build
+can never load in an offline double-clicked page, and Mermaid then *silently*
+falls back to dagre. forge therefore **re-bundles it to a classic-script IIFE**
+(via esbuild, all chunks inlined, zero dynamic imports — see
+`src/forge/data/VENDORED.md`), loads it with a plain `<script>`, registers it the
+v11 way (`mermaid.registerLayoutLoaders` + top-level `layout: elk`), and **falls
+back to dagre** if the global is absent. The page logs `c4: layout engine = …`
+so the active engine is verifiable. Diagrams also render at intrinsic size
+(`useMaxWidth: false` + a CSS cap override) inside scrollable panes, so large
+graphs pan rather than shrink. `[tool.forge.c4].direction` (`LR` default / `TB`)
+threads into both the Mermaid `graph` header and the DSL `autolayout`.
+
+### Modeling reach (any-element relationships)
+
+`[[relationship]]` endpoints resolve against **every** element kind — person,
+container, component, external system, and the system itself — not only
+components, warning only when a name matches nothing. This unlocks
+container↔container edges, container/component → external-system edges
+(produce/consume data flows such as "publishes results to" / "reads results
+from" a shared store), and actor → component/container. `[[person]].container`
+likewise resolves to a container *or* component. `[tool.forge.c4].edges`
+(`imports` default / `declared` / `both`, with per-view `container_edges` /
+`component_edges` overrides) chooses whether import-**derived** edges are drawn
+or only the hand-authored flow — declared edges always render. The generic
+`system → external` edge is suppressed **per view** (only where a specific edge
+to that external actually renders), so the System Context view keeps its clean
+radial edges while detailed views show the specific flow. Every default — no new
+config, no non-component relationships, no person targets — is **byte-identical**
+to the prior output, locked by the existing DSL/flat tests.
 
 ## 6. Why this fits forge's existing patterns
 

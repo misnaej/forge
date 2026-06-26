@@ -51,7 +51,7 @@ Code.
      doc generator
    - gen_api_digest.py: `forge-gen-api-digest` — public-symbol API
      digest generator
-   - gen_c4.py: `forge-gen-c4` — emits a C4 architecture model from the import graph + a `[tool.forge.c4]` / `c4.toml` model skeleton; `--format dsl` (Structurizr + managed README block), `--format html` (self-contained offline Mermaid view, vendored `mermaid.min.js`), `--format mermaid` (raw); `--check` drift mode backs the opt-in `c4` pre-commit step; opt-in, self-skips when unconfigured
+   - gen_c4.py: `forge-gen-c4` — emits a C4 architecture model from the import graph + a `[tool.forge.c4]` / `c4.toml` model skeleton; `--format dsl` (Structurizr + managed README block), `--format html` (self-contained offline **per-view tabbed** Mermaid view laid out by the **ELK** engine, vendored `mermaid.min.js` + ELK loader, dagre fallback; `direction`/`edges` config; any-element `[[relationship]]` endpoints), `--format mermaid` (raw); `--check` drift mode backs the opt-in `c4` pre-commit step; opt-in, self-skips when unconfigured
    - gen_commit_types.py: `forge-gen-commit-types` — generates the conventional-commit type list managed block (parity with pr_squash_comment)
    - gen_common.py: shared drift-check helper for the `forge-gen-*`
      doc generators
@@ -85,7 +85,8 @@ Code.
    - FOUNDATION.md: shipped copy of the foundation document (symlink)
    - CHANGELOG.md: shipped copy of the changelog (symlink) — read by `forge-upgrade` to surface consumer-action upgrade notes
    - mermaid.min.js: vendored Mermaid UMD bundle (MIT, pinned) — copied next to `forge-gen-c4 --format html` output so the diagram renders offline
-   - VENDORED.md: provenance record (URL, version, SHA-256) for vendored third-party assets under `data/`
+   - mermaid-layout-elk.iife.min.js: vendored Mermaid v11 ELK layout loader, re-bundled to a classic-script IIFE (esbuild, chunks inlined) so it loads from `file://` where the upstream ESM build can't; the HTML registers it for clean cross-cluster layout with a dagre fallback (MIT, pinned)
+   - VENDORED.md: provenance record (URL, version, SHA-256, rebuild command) for vendored third-party assets under `data/`
 
 ## Agents Directory (`agents/`)
 

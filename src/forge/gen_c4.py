@@ -48,13 +48,17 @@ import logging
 import sys
 from dataclasses import dataclass, field
 from importlib import resources
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from forge.audit.common import Scope
 from forge.audit.deps import build_module_graph
 from forge.config import resolve_model_section, resolve_tool_roots
 from forge.gen_common import check_doc_drift
 from forge.git_utils import configure_cli_logging, repo_root
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 configure_cli_logging()
@@ -68,6 +72,67 @@ REGEN_CMD = "forge-gen-c4"
 # output references it by relative path so the diagram renders fully offline
 # with no external tool — see docs/c4-architecture.md.
 MERMAID_JS_NAME = "mermaid.min.js"
+# Pre-bundled (esbuild IIFE) mermaid v11 ELK layout loader — a classic-script
+# global, so it loads from file:// (the ESM build's dynamic import() does not).
+# ELK lays out the Container view's cross-cluster edges cleanly where dagre
+# tangles them; the HTML registers it and falls back to dagre if absent.
+MERMAID_ELK_JS_NAME = "mermaid-layout-elk.iife.min.js"
+# Edge-source modes for which relationships render. Declared [[relationship]]
+# edges always render (explicit authorship); the mode gates only the
+# import-derived edges: "imports"/"both" include them, "declared" excludes them.
+_EDGE_MODES = ("imports", "declared", "both")
+# Global Mermaid/DSL graph direction. "LR" (left-to-right) is the default and
+# keeps the byte-identical baseline; "TB" lays the diagram out top-to-bottom.
+_DIRECTIONS = ("LR", "TB")
+
+
+def _resolve_direction(value: str) -> str:
+    """Validate a graph-direction string, failing loudly on an unknown value.
+
+    Args:
+        value: Candidate direction from the config.
+
+    Returns:
+        *value* unchanged when it is a recognized direction.
+
+    Raises:
+        ValueError: When *value* is not one of :data:`_DIRECTIONS`.
+    """
+    if value not in _DIRECTIONS:
+        msg = f"unknown direction {value!r}; expected one of {_DIRECTIONS}"
+        raise ValueError(msg)
+    return value
+
+
+def _includes_derived(mode: str) -> bool:
+    """Return whether *mode* includes the import-derived edges.
+
+    Args:
+        mode: A validated edge mode from :data:`_EDGE_MODES`.
+
+    Returns:
+        True for ``"imports"`` / ``"both"``; False for ``"declared"`` (which
+        renders only the human-declared edges).
+    """
+    return mode != "declared"
+
+
+def _resolve_edge_mode(value: str) -> str:
+    """Validate an edge-mode string, failing loudly on an unknown value.
+
+    Args:
+        value: Candidate mode from the config.
+
+    Returns:
+        *value* unchanged when it is a recognized mode.
+
+    Raises:
+        ValueError: When *value* is not one of :data:`_EDGE_MODES`.
+    """
+    if value not in _EDGE_MODES:
+        msg = f"unknown edges mode {value!r}; expected one of {_EDGE_MODES}"
+        raise ValueError(msg)
+    return value
 
 
 @dataclass(frozen=True)
@@ -78,11 +143,15 @@ class Person:
         name: Display name (e.g. ``"Forge developer"``).
         description: One-line role description.
         uses: Label for this person's relationship to the system.
+        container: Display name of a specific container this person targets
+            in the Container view. Empty string anchors the person to the
+            system boundary instead (back-compat default).
     """
 
     name: str
     description: str
     uses: str
+    container: str = ""
 
 
 @dataclass(frozen=True)
@@ -173,6 +242,14 @@ class C4Config:
             "uses" the import graph cannot derive).
         readme: Repo-relative path to a README that carries the managed
             Mermaid C4 block; empty string when not configured.
+        edges: Global edge-source mode (:data:`_EDGE_MODES`) — whether
+            import-derived edges render. Declared edges always render.
+        container_edges: Per-view override of ``edges`` for the Container
+            view; empty string inherits ``edges``.
+        component_edges: Per-view override of ``edges`` for the Component
+            views; empty string inherits ``edges``.
+        direction: Global graph layout direction (:data:`_DIRECTIONS`) —
+            ``"LR"`` (left-to-right, default) or ``"TB"`` (top-to-bottom).
     """
 
     system: str
@@ -184,6 +261,10 @@ class C4Config:
     components: tuple[Component, ...] = ()
     relationships: tuple[Relationship, ...] = ()
     readme: str = ""
+    edges: str = "imports"
+    container_edges: str = ""
+    component_edges: str = ""
+    direction: str = "LR"
 
 
 @dataclass(frozen=True)
@@ -389,7 +470,12 @@ def load_c4_config(root: Path) -> C4Config | None:
     if not section or not section.get("system"):
         return None
     persons = tuple(
-        Person(p.get("name", "?"), p.get("description", ""), p.get("uses", "uses"))
+        Person(
+            p.get("name", "?"),
+            p.get("description", ""),
+            p.get("uses", "uses"),
+            p.get("container", ""),
+        )
         for p in _coerce_list(section.get("person"))
     )
     externals = tuple(
@@ -412,6 +498,8 @@ def load_c4_config(root: Path) -> C4Config | None:
         )
         for r in _coerce_list(section.get("relationship"))
     )
+    edges = _resolve_edge_mode(section.get("edges", "imports"))
+    direction = _resolve_direction(section.get("direction", "LR"))
     return C4Config(
         system=section["system"],
         description=section.get("description", ""),
@@ -422,6 +510,10 @@ def load_c4_config(root: Path) -> C4Config | None:
         components=components,
         relationships=relationships,
         readme=section.get("readme", ""),
+        edges=edges,
+        container_edges=_resolve_edge_mode(section.get("container_edges", edges)),
+        component_edges=_resolve_edge_mode(section.get("component_edges", edges)),
+        direction=direction,
     )
 
 
@@ -499,26 +591,136 @@ def derive_component_edges(
     return edges
 
 
-def _warn_unknown_relationships(
-    config: C4Config, component_ids: dict[str, str]
-) -> None:
-    """Warn for [[relationship]] entries naming a component that doesn't exist.
+def _resolve_endpoint(name: str, ids: _IdMaps, system: str) -> str | None:
+    """Resolve a relationship endpoint name to its DSL/Mermaid identifier.
+
+    An endpoint may name *any* declared element, not only a component. The id
+    maps are consulted in precedence order — component, container, external,
+    person — so a component wins a name collision; finally the in-scope system
+    itself matches by name.
+
+    Args:
+        name: Endpoint display name from a ``[[relationship]]`` or a person's
+            ``container`` target.
+        ids: All identifier mappings for the view.
+        system: The in-scope software system's display name.
+
+    Returns:
+        The matching element's identifier, or ``None`` when *name* names no
+        declared element.
+    """
+    for mapping in (
+        ids.component_ids,
+        ids.container_ids,
+        ids.external_ids,
+        ids.person_ids,
+    ):
+        if name in mapping:
+            return mapping[name]
+    if name == system:
+        return ids.sys_id
+    return None
+
+
+def _externals_with_declared_incoming(config: C4Config) -> set[str]:
+    """Return external names that are the destination of a declared edge.
+
+    The generic ``primary -> external`` ("uses") arrow is auto-emitted per
+    external. In the flat single diagram every declared edge renders in the
+    same picture, so when a ``[[relationship]]`` already targets that external
+    the generic arrow would double the specific one; this set marks which
+    externals to suppress it for. Per-view renderers that show only a subset of
+    declared edges (the Container view) compute their own narrower suppression
+    set instead — see :func:`_container_view_declared`.
+
+    Args:
+        config: The model skeleton.
+
+    Returns:
+        Display names of externals that appear as the ``destination`` of at
+        least one declared relationship.
+    """
+    return {
+        e.name
+        for e in config.externals
+        if any(r.destination == e.name for r in config.relationships)
+    }
+
+
+def _declared_edges(config: C4Config, ids: _IdMaps) -> list[tuple[str, str, str]]:
+    """Resolve each declared relationship to a rendered ``(src, dst, label)``.
+
+    Both endpoints are resolved against all element id maps via
+    :func:`_resolve_endpoint`; an edge is produced only when both resolve to a
+    rendered node (a falsy id — e.g. the system in a view with no system node —
+    counts as unresolved). The unresolved-name case is already reported by
+    :func:`_warn_unknown_relationships`.
+
+    Args:
+        config: The model skeleton.
+        ids: The view's identifier mappings.
+
+    Returns:
+        ``(source id, destination id, description)`` triples in relationship-
+        declaration order, skipping relationships whose endpoints don't both
+        resolve.
+    """
+    out: list[tuple[str, str, str]] = []
+    for r in config.relationships:
+        src = _resolve_endpoint(r.source, ids, config.system)
+        dst = _resolve_endpoint(r.destination, ids, config.system)
+        if src and dst:
+            out.append((src, dst, r.description))
+    return out
+
+
+def _person_node(target: str, ids: _IdMaps, *, fallback: str) -> str:
+    """Resolve a person's relationship target to a rendered node id.
+
+    A person points at the component or container named in their ``container``
+    field; an empty or otherwise-typed field falls back to *fallback* (the
+    system or its boundary, depending on the view). Components are tried before
+    containers, mirroring :func:`_resolve_endpoint`'s precedence.
+
+    Args:
+        target: The person's ``container`` field — a component or container
+            display name, or an empty string.
+        ids: The view's identifier mappings.
+        fallback: Node id to use when *target* is empty or names neither a
+            component nor a container in this view.
+
+    Returns:
+        The resolved component / container node id, or *fallback*.
+    """
+    if target in ids.component_ids:
+        return ids.component_ids[target]
+    if target in ids.container_ids:
+        return ids.container_ids[target]
+    return fallback
+
+
+def _warn_unknown_relationships(config: C4Config, ids: _IdMaps) -> None:
+    """Warn for [[relationship]] endpoints naming no declared element.
+
+    A relationship endpoint may name any declared element — a person,
+    container, component, external system, or the system itself. Each endpoint
+    that resolves against none of those is warned and its edge skipped at
+    render time.
 
     Args:
         config: The C4 model skeleton.
-        component_ids: Component name → DSL identifier mapping.
+        ids: All identifier mappings for the model.
     """
-    known = set(component_ids)
     for r in config.relationships:
-        missing = {r.source, r.destination} - known
-        if missing:
-            logger.warning(
-                "Declared relationship %r -> %r references unknown component(s) %s "
-                "— edge skipped",
-                r.source,
-                r.destination,
-                ", ".join(sorted(missing)),
-            )
+        for name in (r.source, r.destination):
+            if _resolve_endpoint(name, ids, config.system) is None:
+                logger.warning(
+                    "Declared relationship %r -> %r references unknown element "
+                    "%r — edge skipped",
+                    r.source,
+                    r.destination,
+                    name,
+                )
 
 
 def render_dsl(
@@ -545,7 +747,7 @@ def render_dsl(
         c.name: alloc.allocate(c.name, "component") for c in config.components
     }
     ids = _IdMaps(sys_id, person_ids, external_ids, container_ids, component_ids)
-    _warn_unknown_relationships(config, component_ids)
+    _warn_unknown_relationships(config, ids)
 
     lines = [
         f"workspace {_q(config.system)} {_q(config.description)} {{",
@@ -656,33 +858,42 @@ def _render_relationships(
         edges: Derived component-to-component relationships.
 
     Returns:
-        Indented DSL relationship lines (person→system, system→external,
-        component→component), each sorted for determinism.
+        Indented DSL relationship lines (person→component/container/system,
+        system→external, then any declared edge whose endpoints both resolve,
+        then derived component→component imports). The derived import edges are
+        omitted when ``config.edges`` is ``"declared"``.
     """
     lines = ["", "        # relationships"]
     lines += [
-        f"        {ids.person_ids[p.name]} -> {ids.sys_id} {_q(p.uses)}"
+        f"        {ids.person_ids[p.name]} -> "
+        f"{_person_node(p.container, ids, fallback=ids.sys_id)} {_q(p.uses)}"
         for p in config.persons
     ]
+    # The DSL is the full model, not a single view: the generic system ->
+    # external arrow and any specific declared edge to that external coexist
+    # here, and Structurizr scopes each to the views that render it. Emit the
+    # generic for every external; per-view suppression is a Mermaid concern.
     lines += [
         f"        {ids.sys_id} -> {ids.external_ids[e.name]} {_q(e.relationship)}"
         for e in config.externals
     ]
-    # Human-declared component edges (runtime/subprocess "uses"). Rendered
+    # Human-declared edges (runtime/subprocess "uses"). Each endpoint may name
+    # any declared element — component, container, external, person, or the
+    # system; only edges whose endpoints both resolve are emitted. Rendered
     # first; any derived import edge with the same (source, destination) is
     # suppressed so the diagram shows one arrow with the richer label.
     declared_pairs = {(r.source, r.destination) for r in config.relationships}
     lines += [
-        f"        {ids.component_ids[r.source]} -> "
-        f"{ids.component_ids[r.destination]} {_q(r.description)}"
-        for r in config.relationships
-        if r.source in ids.component_ids and r.destination in ids.component_ids
+        f"        {src} -> {dst} {_q(desc)}"
+        for src, dst, desc in _declared_edges(config, ids)
     ]
-    lines += [
-        f"        {ids.component_ids[src]} -> {ids.component_ids[dst]} {_q('imports')}"
-        for src, dst in sorted(edges)
-        if (src, dst) not in declared_pairs
-    ]
+    if _includes_derived(config.edges):
+        lines += [
+            f"        {ids.component_ids[src]} -> "
+            f"{ids.component_ids[dst]} {_q('imports')}"
+            for src, dst in sorted(edges)
+            if (src, dst) not in declared_pairs
+        ]
     return lines
 
 
@@ -703,15 +914,16 @@ def _render_views(
         per declared container (each scoped to that container), plus the
         default theme.
     """
+    layout = f"            autolayout {config.direction.lower()}"
     lines = [
         "    views {",
         f"        systemContext {sys_id} {_q('SystemContext')} {{",
         "            include *",
-        "            autolayout lr",
+        layout,
         "        }",
         f"        container {sys_id} {_q('Containers')} {{",
         "            include *",
-        "            autolayout lr",
+        layout,
         "        }",
     ]
     for container in config.containers:
@@ -719,7 +931,7 @@ def _render_views(
         lines += [
             f"        component {cid} {_q(f'{container.name} Components')} {{",
             "            include *",
-            "            autolayout lr",
+            layout,
             "        }",
         ]
     lines += ["        theme default", "    }"]
@@ -792,6 +1004,26 @@ def _m(text: str) -> str:
     return html.escape(text, quote=False)
 
 
+def _external_node_line(node_id: str, ext: External, *, indent: str = "    ") -> str:
+    """Render the flat ``[[...]]`` node line for one external system.
+
+    Single source of truth for the external-node representation — the doubled
+    bracket shape and the ``"External system"`` technology tag — shared by every
+    view that draws externals as flat nodes (System Context, the flat renderer,
+    Container, per-container Component peripherals).
+
+    Args:
+        node_id: The allocated Mermaid node id for the external.
+        ext: The external system to render.
+        indent: Leading whitespace for the view's nesting level.
+
+    Returns:
+        A single Mermaid node-declaration line (no trailing newline).
+    """
+    box = _mermaid_box(ext.name, "External system", ext.description)
+    return f'{indent}{node_id}[["{box}"]]'
+
+
 def render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str:
     """Render the model as a Mermaid flowchart (offline-renderable).
 
@@ -818,16 +1050,12 @@ def render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str:
         c.name: alloc.allocate(c.name, "component") for c in config.components
     }
 
-    lines = ["graph LR"]
+    lines = [f"graph {config.direction}"]
     lines += [
         f'    {person_ids[p.name]}(["{_mermaid_box(p.name, "Person", p.description)}"])'
         for p in config.persons
     ]
-    lines += [
-        f'    {external_ids[e.name]}[["'
-        f'{_mermaid_box(e.name, "External system", e.description)}"]]'
-        for e in config.externals
-    ]
+    lines += [_external_node_line(external_ids[e.name], e) for e in config.externals]
     for idx, container in enumerate(config.containers):
         lines.append(
             f'    subgraph {container_ids[container.name]}["{_m(container.name)}"]'
@@ -888,75 +1116,567 @@ def _mermaid_edges(
         edges: Derived component-to-component relationships.
 
     Returns:
-        Mermaid edge lines: person→container, container→external, and the
-        declared + derived component edges (declared suppress duplicates).
+        Mermaid edge lines: person→container/component, container→external, and
+        the declared (endpoints resolved against every element) + derived
+        component edges (declared suppress duplicates). The derived edges are
+        omitted when ``config.edges`` is ``"declared"``.
     """
     person_ids = ids["person"]
     external_ids = ids["external"]
     container_ids = ids["container"]
     component_ids = ids["component"]
     primary = container_ids[config.containers[0].name] if config.containers else None
+    # The flat diagram has no system node, so sys_id is empty: a relationship
+    # naming the system resolves to a falsy id and is skipped by _declared_edges.
+    maps = _IdMaps("", person_ids, external_ids, container_ids, component_ids)
     lines: list[str] = []
     if primary is not None:
         lines += [
-            f'    {person_ids[p.name]} -->|"{_m(p.uses)}"| {primary}'
+            f'    {person_ids[p.name]} -->|"{_m(p.uses)}"| '
+            f"{_person_node(p.container, maps, fallback=primary)}"
             for p in config.persons
         ]
+        declared_targets = _externals_with_declared_incoming(config)
         lines += [
             f'    {primary} -->|"{_m(e.relationship)}"| {external_ids[e.name]}'
             for e in config.externals
+            if e.name not in declared_targets
         ]
     declared = {(r.source, r.destination) for r in config.relationships}
+    lines += [
+        f'    {src} -->|"{_m(desc)}"| {dst}'
+        for src, dst, desc in _declared_edges(config, maps)
+    ]
+    if _includes_derived(config.edges):
+        lines += [
+            f'    {component_ids[src]} -->|"imports"| {component_ids[dst]}'
+            for src, dst in sorted(edges)
+            if (src, dst) not in declared
+        ]
+    return lines
+
+
+def _actors_subgraph(
+    config: C4Config, person_ids: dict[str, str], alloc: _IdAllocator
+) -> list[str]:
+    """Wrap the person nodes in a top-level ``Actors`` subgraph block.
+
+    Groups a view's actors into one labelled subgraph so they cluster
+    visually instead of scattering across the canvas (per-view HTML only).
+    The group id is allocated from the view's own allocator so it never
+    collides with a person or container id.
+
+    Args:
+        config: The model skeleton.
+        person_ids: Person name → node id for this view.
+        alloc: The view's id allocator, extended in place with the group id.
+
+    Returns:
+        Mermaid lines for the actors subgraph, or ``[]`` when there are no
+        persons. The person edge lines stay with their caller, outside this
+        block.
+    """
+    if not config.persons:
+        return []
+    actors_id = alloc.allocate("Actors", "actors")
+    lines = [f'    subgraph {actors_id}["Actors"]']
+    lines += [
+        f"        {person_ids[p.name]}"
+        f'(["{_mermaid_box(p.name, "Person", p.description)}"])'
+        for p in config.persons
+    ]
+    lines.append("    end")
+    return lines
+
+
+def _render_mermaid_system_context(config: C4Config) -> str:
+    """Render the System Context view: persons, the system, external systems.
+
+    The top C4 level — no containers, no components. Persons (stadium nodes)
+    use the system (rounded node); the system relates out to external systems
+    (subroutine nodes).
+
+    Args:
+        config: The human-authored model skeleton.
+
+    Returns:
+        Deterministic Mermaid source ending in a trailing newline.
+    """
+    alloc = _IdAllocator()
+    person_ids = {p.name: alloc.allocate(p.name, "person") for p in config.persons}
+    sys_id = alloc.allocate(config.system, "system")
+    external_ids = {e.name: alloc.allocate(e.name, "ext") for e in config.externals}
+    lines = [f"graph {config.direction}"]
+    lines += _actors_subgraph(config, person_ids, alloc)
+    lines.append(
+        f'    {sys_id}("'
+        f'{_mermaid_box(config.system, "Software System", config.description)}")'
+    )
+    lines += [_external_node_line(external_ids[e.name], e) for e in config.externals]
+    lines += [
+        f'    {person_ids[p.name]} -->|"{_m(p.uses)}"| {sys_id}' for p in config.persons
+    ]
+    # The System Context view renders no specific declared edges (no
+    # container/component nodes exist here), so the generic system -> external
+    # arrow is the only incoming edge an external can have — emit it for every
+    # external, even a declared destination. Per-view suppression lives in the
+    # views that actually render the specific edge (flat + Container).
+    lines += [
+        f'    {sys_id} -->|"{_m(e.relationship)}"| {external_ids[e.name]}'
+        for e in config.externals
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _component_owner(config: C4Config) -> dict[str, str]:
+    """Map each component name to the display name of its owning container.
+
+    A component is owned by the container its ``container`` field names, or the
+    first declared container when that field is empty (see
+    :func:`_components_for_container`).
+
+    Args:
+        config: The model skeleton.
+
+    Returns:
+        Component name → owning container name for every declared component.
+    """
+    owner: dict[str, str] = {}
+    for idx, container in enumerate(config.containers):
+        for component in _components_for_container(config, container, idx):
+            owner[component.name] = container.name
+    return owner
+
+
+def _derive_container_edges(
+    config: C4Config, edges: set[tuple[str, str]], *, include_derived: bool = True
+) -> set[tuple[str, str]]:
+    """Collapse component-level edges to cross-container pairs.
+
+    Maps each component relationship to its endpoints' owning containers,
+    keeping only pairs that cross a container boundary. Declared edges always
+    contribute; derived import edges contribute only when *include_derived* is
+    True. This is the Container view's relationship summary — never the union
+    of component edges (#116).
+
+    Args:
+        config: The model skeleton.
+        edges: Derived component-to-component import relationships.
+        include_derived: Whether to fold the derived import edges into the
+            summary; declared edges are always folded in.
+
+    Returns:
+        ``(source container, destination container)`` pairs, cross-container
+        only (same-container pairs dropped).
+    """
+    owner = _component_owner(config)
+    component_edges = {(r.source, r.destination) for r in config.relationships}
+    if include_derived:
+        component_edges |= set(edges)
+    pairs: set[tuple[str, str]] = set()
+    for src, dst in component_edges:
+        src_owner, dst_owner = owner.get(src), owner.get(dst)
+        if src_owner and dst_owner and src_owner != dst_owner:
+            pairs.add((src_owner, dst_owner))
+    return pairs
+
+
+def _container_level_maps(
+    config: C4Config,
+    *,
+    sys_id: str,
+    person_ids: dict[str, str],
+    external_ids: dict[str, str],
+    container_ids: dict[str, str],
+) -> _IdMaps:
+    """Build id maps that resolve every endpoint to its Container-view node.
+
+    The Container view has no component nodes, so a component endpoint must
+    anchor to its owning container. This is expressed by mapping each component
+    name to its owning container's node id under ``component_ids`` — letting
+    :func:`_resolve_endpoint` route components to containers transparently
+    while containers, externals, persons, and the system map to themselves.
+
+    Args:
+        config: The model skeleton.
+        sys_id: The system boundary's node id.
+        person_ids: Person name → node id.
+        external_ids: External-system name → node id.
+        container_ids: Container name → node id.
+
+    Returns:
+        An :class:`_IdMaps` whose ``component_ids`` point at owning containers.
+    """
+    owner = _component_owner(config)
+    component_to_container = {
+        name: container_ids[cont]
+        for name, cont in owner.items()
+        if cont in container_ids
+    }
+    return _IdMaps(
+        sys_id, person_ids, external_ids, container_ids, component_to_container
+    )
+
+
+def _container_view_declared(
+    config: C4Config, ids: _IdMaps
+) -> tuple[list[str], set[str]]:
+    """Render Container-view declared edges and the externals they target.
+
+    One pass over ``config.relationships`` yields both outputs the Container
+    view needs, so the relationship list is traversed once rather than twice.
+
+    Each endpoint maps to the node representing it here: a component to its
+    owning container, a container/external/person/system to itself. Pure
+    component→component pairs are skipped — those already summarize into the
+    Container view's ``uses`` arrows (:func:`_derive_container_edges`); their
+    same-container case would self-loop and their cross-container case would
+    double the summary. Self-loops are dropped. This surfaces the
+    container↔container, container/component↔external, and actor↔container/
+    component edges the summary cannot express. The second element drives
+    per-view suppression of the generic ``system -> external`` arrow: only
+    externals that receive a specific edge *here* are suppressed, so an external
+    whose specific edge lives in another view keeps its radial arrow.
+
+    Args:
+        config: The model skeleton.
+        ids: Container-view id maps from :func:`_container_level_maps`.
+
+    Returns:
+        A tuple of (Mermaid edge lines in relationship-declaration order,
+        display names of externals that are the resolved destination of a
+        rendered edge).
+    """
+    components = {c.name for c in config.components}
+    externals = {e.name for e in config.externals}
+    lines: list[str] = []
+    external_targets: set[str] = set()
+    for r in config.relationships:
+        if r.source in components and r.destination in components:
+            continue
+        src = _resolve_endpoint(r.source, ids, config.system)
+        dst = _resolve_endpoint(r.destination, ids, config.system)
+        if not (src and dst and src != dst):
+            continue
+        lines.append(f'    {src} -->|"{_m(r.description)}"| {dst}')
+        if r.destination in externals:
+            external_targets.add(r.destination)
+    return lines, external_targets
+
+
+def _render_mermaid_containers(
+    config: C4Config, container_edges: set[tuple[str, str]]
+) -> str:
+    """Render the Container view: containers inside the system boundary.
+
+    Shows only the system's containers (plus persons, externals, and their
+    relationships) — no component-level boxes or edges. Actor edges anchor at
+    container granularity: a person targeting a component routes to that
+    component's owning container, a person targeting a container routes there,
+    else the system boundary. The system relates out to each external.
+    Cross-container component summaries arrive in *container_edges*; richer
+    declared edges (container↔container, container/component↔external,
+    actor↔container/component) are rendered here at container granularity
+    (#116).
+
+    Args:
+        config: The model skeleton.
+        container_edges: Cross-container pairs from
+            :func:`_derive_container_edges`.
+
+    Returns:
+        Deterministic Mermaid source ending in a trailing newline.
+    """
+    alloc = _IdAllocator()
+    person_ids = {p.name: alloc.allocate(p.name, "person") for p in config.persons}
+    external_ids = {e.name: alloc.allocate(e.name, "ext") for e in config.externals}
+    sys_id = alloc.allocate(config.system, "system")
+    container_ids = {
+        c.name: alloc.allocate(c.name, "container") for c in config.containers
+    }
+    maps = _container_level_maps(
+        config,
+        sys_id=sys_id,
+        person_ids=person_ids,
+        external_ids=external_ids,
+        container_ids=container_ids,
+    )
+    lines = [f"graph {config.direction}"]
+    lines += _actors_subgraph(config, person_ids, alloc)
+    lines.append(f'    subgraph {sys_id}["{_m(config.system)}"]')
+    lines += [
+        f'        {container_ids[c.name]}["'
+        f'{_mermaid_box(c.name, c.technology, c.description)}"]'
+        for c in config.containers
+    ]
+    lines.append("    end")
+    # Externals as FLAT nodes (no subgraph), exactly as the System Context view
+    # emits them: wrapping them in a cluster gave dagre a third sibling subgraph
+    # to mis-rank, tangling the inter-cluster container→external edges. Flat
+    # nodes let dagre place them cleanly on the flow's far side; declared after
+    # the system so they rank to the right (LR) / below (TB).
+    lines += [_external_node_line(external_ids[e.name], e) for e in config.externals]
+    lines += [
+        f'    {person_ids[p.name]} -->|"{_m(p.uses)}"| '
+        f"{_person_node(p.container, maps, fallback=sys_id)}"
+        for p in config.persons
+    ]
+    # Suppress the generic arrow only for externals that get a specific edge in
+    # THIS view; keep it for externals targeted only in other views (or not at
+    # all) so they retain an incoming edge here.
+    declared_edges, declared_targets = _container_view_declared(config, maps)
+    lines += [
+        f'    {sys_id} -->|"{_m(e.relationship)}"| {external_ids[e.name]}'
+        for e in config.externals
+        if e.name not in declared_targets
+    ]
+    lines += [
+        f'    {container_ids[src]} -->|"uses"| {container_ids[dst]}'
+        for src, dst in sorted(container_edges)
+    ]
+    lines += declared_edges
+    return "\n".join(lines) + "\n"
+
+
+def _component_view_peripherals(
+    config: C4Config,
+    names: set[str],
+    component_ids: dict[str, str],
+    alloc: _IdAllocator,
+) -> tuple[list[str], list[str]]:
+    """Render external/person peripherals + edges for one container's view.
+
+    For a declared relationship with one endpoint a component owned by this
+    container and the other an external system or a person, the peripheral is
+    drawn as a node here and connected — the publish/consume-to-external-store
+    data flow and the actor→component flow that belong in this view. Pairs
+    where the other endpoint is a component in another container are excluded
+    (they summarize to the Container view). Peripheral nodes are allocated from
+    the view's own *alloc* and rendered once even when referenced repeatedly.
+
+    Args:
+        config: The model skeleton.
+        names: Display names of the components owned by this container.
+        component_ids: Component name → node id for this view.
+        alloc: The view's id allocator, extended in place with peripheral ids.
+
+    Returns:
+        Tuple of (peripheral node-declaration lines, edge lines), each in
+        relationship-declaration order and deduplicated by node.
+    """
+    externals = {e.name: e for e in config.externals}
+    persons = {p.name: p for p in config.persons}
+    node_lines: list[str] = []
+    edge_lines: list[str] = []
+    peripheral_ids: dict[str, str] = {}
+
+    def _peripheral(name: str) -> str | None:
+        """Return the node id for external/person *name*, allocating once.
+
+        Args:
+            name: The external or person name to allocate.
+
+        Returns:
+            The allocated node id, or None if name matches neither.
+        """
+        if name in peripheral_ids:
+            return peripheral_ids[name]
+        if name in externals:
+            pid = alloc.allocate(name, "ext")
+            node_lines.append(_external_node_line(pid, externals[name]))
+        elif name in persons:
+            pid = alloc.allocate(name, "person")
+            person = persons[name]
+            box = _mermaid_box(person.name, "Person", person.description)
+            node_lines.append(f'    {pid}(["{box}"])')
+        else:
+            return None
+        peripheral_ids[name] = pid
+        return pid
+
+    for r in config.relationships:
+        if r.source in names and r.destination not in names:
+            other = _peripheral(r.destination)
+            if other is not None:
+                edge_lines.append(
+                    f'    {component_ids[r.source]} -->|"{_m(r.description)}"| {other}'
+                )
+        elif r.destination in names and r.source not in names:
+            other = _peripheral(r.source)
+            if other is not None:
+                edge_lines.append(
+                    f'    {other} -->|"{_m(r.description)}"| '
+                    f"{component_ids[r.destination]}"
+                )
+    return node_lines, edge_lines
+
+
+def _render_mermaid_components_for(
+    config: C4Config,
+    container: Container,
+    idx: int,
+    edges: set[tuple[str, str]],
+    *,
+    include_derived: bool = True,
+) -> str:
+    """Render one container's Component view: its components and their edges.
+
+    Shows the components owned by *container* and the relationships whose
+    **both** endpoints sit in it — declared relationships first, then derived
+    imports when *include_derived* is True. A declared relationship between one
+    of these components and an external system or a person is also drawn, with
+    that external/person rendered as a peripheral node (the publish/consume-to-
+    external and actor→component flows); cross-container component→component
+    pairs are excluded — they summarize to the Container view (#116).
+
+    Args:
+        config: The model skeleton.
+        container: The container whose components are rendered.
+        idx: The container's index in ``config.containers``.
+        edges: Derived component-to-component import relationships.
+        include_derived: Whether to render the derived import edges; declared
+            relationships always render.
+
+    Returns:
+        Deterministic Mermaid source ending in a trailing newline.
+    """
+    components = _components_for_container(config, container, idx)
+    names = {c.name for c in components}
+    alloc = _IdAllocator()
+    component_ids = {c.name: alloc.allocate(c.name, "component") for c in components}
+    container_id = alloc.allocate(container.name, "container")
+    lines = [
+        f"graph {config.direction}",
+        f'    subgraph {container_id}["{_m(container.name)}"]',
+    ]
+    lines += [
+        f'        {component_ids[c.name]}["'
+        f'{_mermaid_box(c.name, c.technology, _component_description(c))}"]'
+        for c in components
+    ]
+    lines.append("    end")
+    peripheral_nodes, peripheral_edges = _component_view_peripherals(
+        config, names, component_ids, alloc
+    )
+    lines += peripheral_nodes
+    declared = {(r.source, r.destination) for r in config.relationships}
+    # Both endpoints are components of THIS container, so the id is a direct
+    # dict hit — no _resolve_endpoint/_declared_edges indirection needed here.
+    # `names` and `component_ids` are co-built from the same component list, so
+    # the membership test and the lookup cannot diverge.
     lines += [
         f'    {component_ids[r.source]} -->|"{_m(r.description)}"| '
         f"{component_ids[r.destination]}"
         for r in config.relationships
-        if r.source in component_ids and r.destination in component_ids
+        if r.source in names and r.destination in names
     ]
-    lines += [
-        f'    {component_ids[src]} -->|"imports"| {component_ids[dst]}'
-        for src, dst in sorted(edges)
-        if (src, dst) not in declared
-    ]
-    return lines
+    lines += peripheral_edges
+    if include_derived:
+        lines += [
+            f'    {component_ids[src]} -->|"imports"| {component_ids[dst]}'
+            for src, dst in sorted(edges)
+            if src in names and dst in names and (src, dst) not in declared
+        ]
+    return "\n".join(lines) + "\n"
 
 
-def render_html(config: C4Config, mermaid_text: str) -> str:
-    """Wrap a Mermaid diagram in a self-contained, offline HTML page.
+def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
+    """Wrap the C4 views in a self-contained, offline, tabbed HTML page.
 
-    The page references the vendored ``mermaid.min.js`` by relative path
-    (a sidecar written next to the HTML), so it renders with no network and
-    no external tool.
+    Each emitted view (System Context, Containers, one per container's
+    Components) becomes its own navigable tab mirroring the DSL views, so a
+    reader zooms in deliberately instead of facing one flattened diagram
+    (#116). References the vendored ``mermaid.min.js`` sidecar by relative
+    path, so it renders with no network.
+
+    Mermaid renders every pane while it is still visible, then the tab script
+    hides the inactive ones — rendering a Mermaid block inside a
+    ``display:none`` element would otherwise produce a zero-size diagram.
 
     Args:
-        config: The model skeleton (for the page title/description).
-        mermaid_text: Rendered Mermaid source.
+        config: The model skeleton (page title/description).
+        views: ``(tab label, Mermaid source)`` pairs, in display order.
 
     Returns:
         A complete HTML document ending in a trailing newline.
     """
+    buttons = "\n".join(
+        f'  <button class="tab" data-pane="{i}">{html.escape(label)}</button>'
+        for i, (label, _text) in enumerate(views)
+    )
+    panes = "\n".join(
+        f'  <div class="pane" data-pane="{i}">\n'
+        f'<div class="diagram-scroll"><pre class="mermaid">\n'
+        f"{html.escape(text)}</pre></div>\n  </div>"
+        for i, (_label, text) in enumerate(views)
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>{html.escape(config.system)} — C4 component view</title>
+<title>{html.escape(config.system)} — C4 views</title>
 <style>
   body {{ font-family: system-ui, sans-serif; margin: 2rem; color: #1a1a1a; }}
   h1 {{ margin-bottom: 0.25rem; }}
   p.desc {{ color: #555; margin-top: 0; }}
-  .mermaid {{ margin-top: 1.5rem; }}
+  .tabbar {{ margin-top: 1.5rem; border-bottom: 1px solid #ccc; }}
+  button.tab {{ font: inherit; padding: 0.4rem 0.8rem; border: none;
+    background: none; cursor: pointer; color: #555;
+    border-bottom: 2px solid transparent; }}
+  button.tab.active {{ color: #1a1a1a; border-bottom-color: #1a1a1a; }}
+  .views.ready .pane {{ display: none; }}
+  .views.ready .pane.active {{ display: block; }}
+  .pane {{ margin-top: 1.5rem; }}
+  .diagram-scroll {{ overflow: auto; max-height: 82vh;
+    border: 1px solid #eee; padding: 0.5rem; }}
+  .diagram-scroll svg {{ max-width: none !important; height: auto; }}
 </style>
 </head>
 <body>
 <h1>{html.escape(config.system)}</h1>
 <p class="desc">{html.escape(config.description)}</p>
-<pre class="mermaid">
-{html.escape(mermaid_text)}</pre>
+<div class="tabbar">
+{buttons}
+</div>
+<div class="views">
+{panes}
+</div>
 <script src="{MERMAID_JS_NAME}"></script>
+<script src="{MERMAID_ELK_JS_NAME}"></script>
 <script>
 // securityLevel 'loose' lets the bold/line-break HTML in box labels render;
 // safe here because the model is generated locally from the repo's own config.
-mermaid.initialize({{ startOnLoad: true, theme: "neutral", securityLevel: "loose" }});
+// Register the vendored ELK layout loader (a classic-script global, so it works
+// from file://). ELK untangles the Container view's cross-cluster edges that
+// dagre mis-ranks; if the loader is missing or errors, fall back to dagre.
+var c4layout = "dagre";
+try {{
+  if (window.elkLayouts) {{
+    mermaid.registerLayoutLoaders(window.elkLayouts.default || window.elkLayouts);
+    c4layout = "elk";
+  }}
+}} catch (err) {{
+  console.warn("c4: ELK layout unavailable — falling back to dagre:", err);
+}}
+console.log("c4: layout engine =", c4layout);
+mermaid.initialize({{ startOnLoad: false, theme: "neutral", securityLevel: "loose",
+  layout: c4layout, flowchart: {{ useMaxWidth: false }},
+  elk: {{ nodePlacementStrategy: "NETWORK_SIMPLEX", forceNodeModelOrder: true,
+    mergeEdges: false }} }});
+mermaid.run().then(function () {{
+  var views = document.querySelector(".views");
+  var tabs = document.querySelectorAll("button.tab");
+  var panes = document.querySelectorAll(".pane");
+  function show(i) {{
+    tabs.forEach(function (t, j) {{ t.classList.toggle("active", j === i); }});
+    panes.forEach(function (p, j) {{ p.classList.toggle("active", j === i); }});
+  }}
+  tabs.forEach(function (t) {{
+    t.addEventListener("click", function () {{ show(Number(t.dataset.pane)); }});
+  }});
+  views.classList.add("ready");
+  show(0);
+}});
 </script>
 </body>
 </html>
@@ -964,14 +1684,20 @@ mermaid.initialize({{ startOnLoad: true, theme: "neutral", securityLevel: "loose
 
 
 def _copy_vendored_mermaid(dest_dir: Path) -> None:
-    """Write the vendored Mermaid bundle next to an emitted HTML file.
+    """Write the vendored Mermaid + ELK-layout bundles next to an emitted HTML.
+
+    Both are classic-script globals copied as sidecars so the HTML renders
+    fully offline from ``file://`` — Mermaid for the diagrams and the
+    pre-bundled ELK layout loader the Container view uses (with a dagre
+    fallback baked into the page if the loader is absent).
 
     Args:
-        dest_dir: Directory the HTML was written to; the sidecar JS lands
-            here as ``mermaid.min.js``.
+        dest_dir: Directory the HTML was written to; the sidecar JS files land
+            here as ``mermaid.min.js`` and ``mermaid-layout-elk.iife.min.js``.
     """
-    src = resources.files("forge").joinpath(f"data/{MERMAID_JS_NAME}")
-    (dest_dir / MERMAID_JS_NAME).write_bytes(src.read_bytes())
+    for name in (MERMAID_JS_NAME, MERMAID_ELK_JS_NAME):
+        src = resources.files("forge").joinpath(f"data/{name}")
+        (dest_dir / name).write_bytes(src.read_bytes())
 
 
 def _warn_unmatched(unmatched: list[str]) -> None:
@@ -1087,11 +1813,12 @@ def sync_readme(root: Path, config: C4Config, mermaid_text: str, *, check: bool)
 
 
 def _emit_mermaid(
-    config: C4Config, edges: set[tuple[str, str]], output: str | None
+    root: Path, config: C4Config, edges: set[tuple[str, str]], output: str | None
 ) -> int:
     """Print or write the canonical Mermaid source.
 
     Args:
+        root: Repository root directory (bounds a file write).
         config: The model skeleton.
         edges: Derived component edges.
         output: Output path, ``"-"``/``None`` for stdout.
@@ -1103,7 +1830,7 @@ def _emit_mermaid(
     if not output or output == "-":
         sys.stdout.write(mermaid)
     else:
-        Path(output).write_text(mermaid)
+        _safe_out_path(root, output).write_text(mermaid)
     return 0
 
 
@@ -1121,7 +1848,29 @@ def _emit_html(
     Returns:
         Exit code from the write or the drift check.
     """
-    content = render_html(config, render_mermaid(config, edges))
+    container_mode = config.container_edges or config.edges
+    component_mode = config.component_edges or config.edges
+    container_edges = _derive_container_edges(
+        config, edges, include_derived=_includes_derived(container_mode)
+    )
+    views = [
+        ("System Context", _render_mermaid_system_context(config)),
+        ("Containers", _render_mermaid_containers(config, container_edges)),
+    ]
+    views += [
+        (
+            f"{container.name} Components",
+            _render_mermaid_components_for(
+                config,
+                container,
+                idx,
+                edges,
+                include_derived=_includes_derived(component_mode),
+            ),
+        )
+        for idx, container in enumerate(config.containers)
+    ]
+    content = render_html(config, views)
     out_relpath = args.output or DEFAULT_HTML_OUTPUT
     if args.check:
         return check_doc_drift(root, out_relpath, content, f"{REGEN_CMD} --format html")
@@ -1205,7 +1954,7 @@ def main() -> int:
     _warn_unmatched(unmatched)
 
     if args.format == "mermaid":
-        return _emit_mermaid(config, edges, args.output)
+        return _emit_mermaid(root, config, edges, args.output)
     if args.format == "html":
         return _emit_html(root, config, edges, args)
     return _emit_dsl(root, config, edges, args)
