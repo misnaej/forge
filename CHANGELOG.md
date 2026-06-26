@@ -20,6 +20,57 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.13.0 — 2026-06-26
+
+Additive — `forge-gen-c4` rendering + modeling improvements. All new
+behavior is opt-in via config; the default DSL **and** the default
+diagrams are unchanged.
+
+### Features
+- **`forge-gen-c4 --format html` renders each C4 view on its own tab.** The
+  offline HTML now mirrors the DSL views — System Context, Containers, and one
+  Component view per container — as navigable tabs, instead of flattening every
+  level into one unreadable diagram. The Container view anchors actors to the
+  **system boundary** (not an arbitrary first container) and summarizes
+  cross-container relationships at the container level rather than drawing the
+  union of component edges (#116).
+- **Actors can target a specific container.** `[[person]]` accepts an optional
+  `container = "<name>"`, so a role can point at a subsystem instead of always
+  the system as a whole; an empty value keeps the system-level relationship
+  (back-compatible).
+- **`[[relationship]]` endpoints can be any declared element.** Source and
+  destination now resolve against persons, containers, components, **and**
+  external systems (and the system itself), not only components — so you can
+  declare container↔container edges, a component that "publishes results to"
+  an external store and another that "reads results from" it (produce/consume
+  data flow), or an actor pointing at a specific component. Each endpoint is
+  resolved against every element kind and only warns when it matches none;
+  component→component behavior is unchanged. When an external is the
+  destination of a declared edge, the generic `system → external` edge is
+  suppressed **only in the views where the specific edge actually renders**
+  (Container / flat) — the System Context view keeps its clean radial
+  `system → external` edge.
+
+### Tooling
+- **`forge-gen-c4 --format html` is legible on large models.** Each view renders
+  on its own scrollable tab at **intrinsic size** (`useMaxWidth: false`, plus a
+  CSS override of Mermaid's SVG width cap) instead of being squished to the page
+  width, and actors are grouped into an "Actors" band. Crucially, the diagrams
+  are laid out by the **ELK engine** — vendored offline as a classic-script
+  bundle and registered the Mermaid v11 way (`registerLayoutLoaders` +
+  top-level `layout: elk`), with a dagre fallback if it can't load. ELK routes
+  the Container view's cross-cluster `container → external` edges cleanly, where
+  Mermaid's default dagre engine mis-ranks the external sinks and tangles the
+  crossings (a documented dagre clustering limitation). `[tool.forge.c4].direction
+  = "LR"` (default) `| "TB"` sets the graph orientation for every diagram.
+- **Edge-source control.** `[tool.forge.c4].edges = "imports"` (default) `|
+  "declared" | "both"` chooses whether import-derived ("depends-on") edges are
+  drawn, or only the hand-authored `[[relationship]]` flow — letting authors
+  curate a conceptual flow while keeping the model generated. Per-view
+  `container_edges` / `component_edges` overrides let the Container view show a
+  clean curated flow while Component views keep real import coupling. Declared
+  relationships always render; the `imports` default is byte-identical to
+  before.
 ## v2.11.0 — 2026-06-25
 
 ### ⚠️ Upgrade notes

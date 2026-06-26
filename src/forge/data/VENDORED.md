@@ -16,3 +16,31 @@ Provenance for non-forge files shipped under `src/forge/data/`.
 
 To update: download the new pinned version from the URL above, replace the
 file, and refresh the SHA-256 + version here (`shasum -a 256`).
+
+## mermaid-layout-elk.iife.min.js
+
+- **Library:** `@mermaid-js/layout-elk` (Mermaid v11 ELK layout loader, bundling
+  elkjs) — gives the Container view a layout engine that routes cross-cluster
+  (subgraph-boundary) edges cleanly, where Mermaid's default dagre tangles them.
+- **License:** MIT
+- **Version:** 0.1.8 (pinned; peer `mermaid@^11.0.2`, matches the 11.6.0 above)
+- **Source:** https://www.npmjs.com/package/@mermaid-js/layout-elk
+- **Bundle:** **Re-bundled to a classic-script IIFE** (global `elkLayouts`) so it
+  loads from `file://`. The published package is **ESM-only** and its entry
+  uses dynamic `import()` for the heavy elkjs chunk — neither works from
+  `file://` (browsers block module + dynamic imports there), so the offline
+  HTML could never load the upstream build. The IIFE inlines every chunk (0
+  dynamic imports). The page registers it via `mermaid.registerLayoutLoaders`
+  and selects `layout: elk`, falling back to dagre if the global is absent.
+- **SHA-256:** `64be3e0fd87f39939319071c16d505458757012585a82b628308dcc47b736249`
+- **Bytes:** 1534525
+
+To update: re-bundle with esbuild and refresh the SHA-256 + version above:
+
+```sh
+mkdir elk-build && cd elk-build && npm init -y
+npm install @mermaid-js/layout-elk@<version>
+printf 'export { default } from "@mermaid-js/layout-elk";\n' > entry.mjs
+npx esbuild entry.mjs --bundle --format=iife --global-name=elkLayouts \
+  --minify --legal-comments=none --outfile=mermaid-layout-elk.iife.min.js
+```
