@@ -196,6 +196,8 @@ When asked to verify/finalize a PR:
    EOF
    ```
 
+**Base-sync gate — run before the numbered steps below.** A PR behind or in conflict with its base is not finalizable: a green CI run on a stale base does not mean it merges now (parallel PRs take versions, edit the CHANGELOG, move the merge-base). `git fetch origin --quiet`, then `gh pr view <PR#> --json mergeable,baseRefName` and `git rev-list --left-right --count origin/<base>...HEAD` (left = behind). If `CONFLICTING`, **stop and report** — do not post a wrap-up for a non-mergeable PR; the caller resolves (CHANGELOG per `docs/release-process.md` §5) and re-invokes. If behind but clean, note it; merging the base is **confirm-first, never silent**. Otherwise proceed.
+
 1. **Call `design-checker`** via Task tool - get design compliance report (skip if pre-run report provided OR delta-mode applies)
 2. **Call `security-checker`** via Task tool - get security review report (skip if pre-run report provided OR delta-mode applies)
 3. **Call `docs-types-checker`** via Task tool - get documentation report (skip if pre-run report provided OR delta-mode applies)

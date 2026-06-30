@@ -1128,6 +1128,45 @@ def step_release_tag_guard(repo_root: Path) -> StepResult:
     )
 
 
+def step_smart_test(repo_root: Path) -> StepResult:
+    """Run smart-test depth-N selection when opted in (off by default).
+
+    Opt in by setting ``[tool.forge.smart_test].precommit_depth`` (``0``,
+    ``1``, ``2``, ``full``); the step then shells out to
+    ``forge-smart-test --depth <precommit_depth>`` so a commit runs only
+    the tests its change set affects. Self-skips entirely when the key is
+    absent, so the hook stays cheap for repos that haven't configured it.
+    Non-blocking by default (a test failure WARNs); set
+    ``[tool.forge.smart_test].blocking = true`` to make it refuse the
+    commit. See FOUNDATION §17 and #8.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` mirroring the CLI exit code, or a skip when not
+        opted in.
+
+    Raises:
+        SystemExit: If ``forge-smart-test`` is not on PATH.
+    """
+    cfg = _forge_step_config(repo_root, "smart_test")
+    if "precommit_depth" not in cfg:
+        return StepResult(
+            name="smart_test",
+            passed=True,
+            output="(no [tool.forge.smart_test].precommit_depth — skipped)",
+            skipped=True,
+        )
+    depth = str(cfg.get("precommit_depth"))
+    blocking = bool(cfg.get("blocking", False))
+    require_cli("forge-smart-test", caller="forge-precommit")
+    passed, output = _run(["forge-smart-test", "--depth", depth], cwd=repo_root)
+    return StepResult(
+        name="smart_test", passed=passed, output=output, non_blocking=not blocking
+    )
+
+
 def step_changelog_history(repo_root: Path) -> StepResult:
     """Run ``verify-forge-changelog-history`` — the dropped-``@base``-entry guard.
 
@@ -1525,6 +1564,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("typecheck", step_typecheck, default_on=False),
     StepDef("doc_consistency", step_doc_consistency, default_on=False),
     StepDef("c4", step_c4, default_on=False),
+    StepDef("smart_test", step_smart_test, default_on=False),
 )
 
 _DEFAULT_ON: frozenset[str] = frozenset(d.name for d in _STEP_REGISTRY if d.default_on)

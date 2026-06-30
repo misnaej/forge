@@ -2448,3 +2448,58 @@ def test_step_auto_rebuild_nonblocking_when_rebuild_fails(
     assert not result.passed
     assert result.non_blocking
     assert "FAILED" in result.output
+
+
+# ---------------------------------------------------------------------------
+# smart_test step
+# ---------------------------------------------------------------------------
+
+
+def test_step_smart_test_skips_without_config(tmp_path: Path) -> None:
+    """step_smart_test skips when smart_test config is absent."""
+    result = precommit.step_smart_test(tmp_path)
+    assert result.skipped
+    assert result.passed
+    assert "skipped" in result.output
+
+
+def test_step_smart_test_non_blocking_by_default_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing smart-test run is non-blocking (WARN) when blocking is not opted in.
+
+    SCENARIO: ``[tool.forge.smart_test] precommit_depth = 1``; forge-smart-test
+        exits non-zero; no ``blocking = true`` key.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → (False, "ERR").
+    EXPECTED BEHAVIOR: passed=False, non_blocking=True.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nprecommit_depth = 1\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "ERR"))
+    result = precommit.step_smart_test(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+
+
+def test_step_smart_test_blocking_when_opted_in(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``[tool.forge.smart_test].blocking = true`` makes a failure a hard FAIL.
+
+    SCENARIO: same failure as the default case but ``blocking = true`` is set.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → (False, "ERR").
+    EXPECTED BEHAVIOR: passed=False, non_blocking=False.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nprecommit_depth = 1\nblocking = true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "ERR"))
+    result = precommit.step_smart_test(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
