@@ -57,7 +57,7 @@ def _smart_test_config(repo_root: Path) -> dict[str, object]:
         repo_root: Git repo root.
 
     Returns:
-        The subsection dict (``follow_mock_patches`` etc.), or ``{}``.
+        The ``[tool.forge.smart_test]`` subsection dict, or ``{}`` when absent.
     """
     data = _config.read_pyproject_raw(repo_root)
     return ((data.get("tool") or {}).get("forge") or {}).get("smart_test") or {}

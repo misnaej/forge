@@ -50,10 +50,10 @@ git rev-list --left-right --count "origin/<base>...HEAD"   # left = behind
 - **`mergeable: CONFLICTING`** → **stop**. Do not finalize. Resolve by
   merging the base in (`git merge origin/<base>`, resolve conflicts —
   CHANGELOG per `docs/release-process.md` §5), then re-run from Step 0.5.
-- **Behind but clean** (left count > 0, not conflicting) → merge the
-  base in to refresh, so the wrap-up's "CI green" reflects the real
-  merge result; trivial/empty merges can proceed automatically, a
-  real merge is confirm-first.
+- **Behind but clean** (left count > 0, not conflicting) → merging the
+  base in is **confirm-first** (never silent): it refreshes the branch so
+  the wrap-up's "CI green" reflects the real merge result, but it mutates
+  history and re-triggers CI, so surface it and let the user decide.
 - **Up to date, `MERGEABLE`** → proceed to Step 1.
 
 Merging the base re-triggers CI — wait for it to go green again before

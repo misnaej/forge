@@ -91,7 +91,7 @@ def tests_covering(coverage_json: Path, changed_files: Iterable[str]) -> set[str
         return set()
     try:
         data = json.loads(coverage_json.read_text(encoding="utf-8"))
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         logger.warning("coverage: could not parse %s: %s", coverage_json, exc)
         return set()
     return _from_json(data, set(changed_files))
