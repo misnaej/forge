@@ -459,18 +459,17 @@ options:
 ## forge-smart-test
 
 ```text
-usage: forge-smart-test [-h] [--depth {0,1,2,full,infinity}] [--show-files]
+usage: forge-smart-test [-h] [--depth {0,1,2,full}] [--show-files]
                         [--coverage] [--base BASE] [--from-commit-message]
-                        [--coverage-db COVERAGE_DB]
+                        [--coverage-json COVERAGE_JSON]
 
 Run only the tests a change set affects, in escalating import-depth tiers with
 fail-fast. Depth full runs the whole suite with coverage.
 
 options:
   -h, --help            show this help message and exit
-  --depth {0,1,2,full,infinity}
-                        Selection depth: 0/1/2 import hops, or full/infinity
-                        (default: 1).
+  --depth {0,1,2,full}  Selection depth: 0/1/2 import hops, or full (default:
+                        1).
   --show-files          Print the selected-test plan and exit without running
                         pytest.
   --coverage            Enable coverage (always on for --depth full).
@@ -479,10 +478,10 @@ options:
   --from-commit-message
                         Override --depth from a [depth-N]/[full] directive in
                         HEAD's message.
-  --coverage-db COVERAGE_DB
-                        Coverage map (coverage json or .coverage DB) to union
-                        covering tests into the selection (Gap 2; enables
-                        coverage validation).
+  --coverage-json COVERAGE_JSON
+                        Path to a `coverage json --show-contexts` export;
+                        unions tests covering a changed line into the
+                        selection (enables coverage validation).
 ```
 
 ## forge-upgrade

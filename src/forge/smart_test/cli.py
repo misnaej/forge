@@ -13,7 +13,7 @@ Usage:
 - ``forge-smart-test`` — depth 1 (default)
 - ``forge-smart-test --depth 0`` — only directly-affected tests
 - ``forge-smart-test --depth 2`` — two-hop dependents
-- ``forge-smart-test --depth full`` (or ``infinity``) — whole suite + coverage
+- ``forge-smart-test --depth full`` — whole suite + coverage
 - ``forge-smart-test --show-files --depth N`` — print the plan, run nothing
 """
 
@@ -43,11 +43,11 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 _FULL = "full"
-_DEPTH_CHOICES = ("0", "1", "2", _FULL, "infinity")
+_DEPTH_CHOICES = ("0", "1", "2", _FULL)
 _LOG_RELPATH = Path("code_health") / "smart_test.log"
-# Default CI directive: [depth-N] or [full]/[infinity] anywhere in the commit
-# message. Override via [tool.forge.smart_test].commit_directive_re.
-_DEPTH_DIRECTIVE_RE = r"\[(?:depth-(?P<n>[0-2])|(?P<full>full|infinity))\]"
+# Default CI directive: [depth-N] or [full] anywhere in the commit message.
+# Override via [tool.forge.smart_test].commit_directive_re.
+_DEPTH_DIRECTIVE_RE = r"\[(?:depth-(?P<n>[0-2])|(?P<full>full))\]"
 
 
 def _smart_test_config(repo_root: Path) -> dict[str, object]:
@@ -93,12 +93,12 @@ def _parse_depth(raw: str) -> int | str:
     """Map a ``--depth`` token to an int tier or the ``full`` sentinel.
 
     Args:
-        raw: One of ``0``, ``1``, ``2``, ``full``, ``infinity``.
+        raw: One of ``0``, ``1``, ``2``, ``full``.
 
     Returns:
-        The integer tier, or :data:`_FULL` for ``full`` / ``infinity``.
+        The integer tier, or :data:`_FULL` for ``full``.
     """
-    if raw in (_FULL, "infinity"):
+    if raw == _FULL:
         return _FULL
     return int(raw)
 
@@ -152,7 +152,7 @@ def _run_tiers(
     """Run depth batches 0..*depth* with fail-fast between them.
 
     Each batch runs only the tests *newly* reachable at its depth (lower
-    depths already passed); coverage-validated extras (Gap 2) join the
+    depths already passed); coverage-validated extras join the
     depth-0 batch. The import cache is cleared between batches and the
     first failing batch short-circuits.
 
@@ -208,7 +208,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--depth",
         default="1",
         choices=_DEPTH_CHOICES,
-        help="Selection depth: 0/1/2 import hops, or full/infinity (default: 1).",
+        help="Selection depth: 0/1/2 import hops, or full (default: 1).",
     )
     parser.add_argument(
         "--show-files",
@@ -231,10 +231,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Override --depth from a [depth-N]/[full] directive in HEAD's message.",
     )
     parser.add_argument(
-        "--coverage-db",
+        "--coverage-json",
         default=None,
-        help="Coverage map (coverage json or .coverage DB) to union covering "
-        "tests into the selection (Gap 2; enables coverage validation).",
+        help="Path to a `coverage json --show-contexts` export; unions tests "
+        "covering a changed line into the selection (enables coverage validation).",
     )
     return parser
 
@@ -271,13 +271,13 @@ def main() -> int:
     changed = changed_python_files(repo_root, base_ref)
     plan = select_tests(repo_root, changed, depth, follow_mock_patches=follow)
 
-    coverage_db = args.coverage_db or cfg.get("coverage_db")
+    coverage_json = args.coverage_json or cfg.get("coverage_json")
     coverage_validate = bool(cfg.get("coverage_validate", False)) or bool(
-        args.coverage_db
+        args.coverage_json
     )
     extra_depth0: set[str] = set()
-    if coverage_validate and isinstance(coverage_db, str):
-        extra_depth0 = cov_stage.tests_covering(Path(coverage_db), changed, repo_root)
+    if coverage_validate and isinstance(coverage_json, str):
+        extra_depth0 = cov_stage.tests_covering(Path(coverage_json), changed)
 
     if args.show_files:
         logger.info("%s", render_plan(plan, depth))

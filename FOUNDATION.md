@@ -1099,7 +1099,7 @@ test files.
 | `0` | Tests importing a changed module **directly** | no | Pre-commit / tight loop |
 | `1` | Depth 0 + one import hop removed | no | First CI check on a PR push |
 | `2` | Depth 0/1 + two import hops removed | no | Pre-merge gate |
-| `full` / `infinity` | The **entire** suite | yes | Default-branch CI; release prep |
+| `full` | The **entire** suite | yes | Default-branch CI; release prep |
 
 Guarantees consumers can rely on:
 
@@ -1139,11 +1139,12 @@ for existing consumers):
   targets are added as graph edges (reduced to their importable module
   prefix); `patch.dict("sys.modules", …)` keys count too. `patch.object` is
   already covered by its import.
-- **Coverage validation** (`coverage_validate = true` + `coverage_db`). After
+- **Coverage validation** (`coverage_validate = true` + `coverage_json`). After
   the static pass, union the tests whose recorded per-test coverage
   **contexts** touch a changed line — catching runtime-only links (fixtures,
-  dynamic dispatch, `importlib`). Needs a fresh map (`pytest --cov-context=
-  test`); a stale one under-selects, so regenerate it on `full` runs.
+  dynamic dispatch, `importlib`). Needs a fresh `coverage json --show-contexts`
+  export (`pytest --cov-context=test`); a stale one under-selects, so
+  regenerate it on `full` runs.
 
 A **CI directive** (`--from-commit-message`) lets a job drive the tier from a
 `[depth-N]` / `[full]` tag in the commit message (regex configurable via

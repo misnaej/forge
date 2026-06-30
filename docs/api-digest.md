@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_55 modules, 553 symbols._
+_55 modules, 552 symbols._
 
 ## `forge._hook_helpers`
 
@@ -567,9 +567,8 @@ _55 modules, 553 symbols._
 ## `forge.smart_test.coverage`
 
 - `_context_to_test(context: str) -> str | None` _(internal)_ — Reduce a coverage context to a repo-relative test file path.
-- `_from_json(path: Path, changed: set[str]) -> set[str]` _(internal)_ — Extract covering tests from a ``coverage json --show-contexts`` export.
-- `_from_sqlite(path: Path, changed: set[str], repo_root: Path) -> set[str]` _(internal)_ — Extract covering tests from a ``.coverage`` SQLite DB.
-- `tests_covering(coverage_path: Path, changed_files: Iterable[str], repo_root: Path) -> set[str]` — Return repo-relative test files whose coverage touches a changed file.
+- `_from_json(data: dict[str, object], changed: set[str]) -> set[str]` _(internal)_ — Map a parsed coverage-JSON document to covering test files.
+- `tests_covering(coverage_json: Path, changed_files: Iterable[str]) -> set[str]` — Return repo-relative test files whose coverage touches a changed file.
 
 ## `forge.smart_test.dependencies`
 

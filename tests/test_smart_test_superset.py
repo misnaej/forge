@@ -8,15 +8,14 @@ Layout under test::
 
     src/pkg/a.py   — imported by tests/test_a.py (static edge)
     src/pkg/b.py   — ONLY patched via @patch("pkg.b.thing") in tests/test_b.py
-                     (no import; Gap 1 / follow_mock_patches)
+                     (no import; follow_mock_patches)
     src/pkg/c.py   — covered only via a coverage JSON context for test_c.py
-                     (no import, no patch; Gap 2 / coverage_db)
+                     (no import, no patch; coverage_json / coverage validation)
 
 PASS criterion: for each change ``{src/pkg/X.py}``, the combined selected set
-(follow_mock_patches=True, coverage_db=the fixture JSON) contains
-``tests/test_X.py``.  This is the regression guarantee introduced alongside
-the two opt-in alignment features; a regression in either feature causes this
-file to fail first.
+(follow_mock_patches=True, coverage_json=the fixture JSON) contains
+``tests/test_X.py``.  This is the regression guarantee for both opt-in
+alignment features; a regression in either causes this file to fail first.
 """
 
 from __future__ import annotations
@@ -120,7 +119,7 @@ def _selected(root: Path, changed: set[str], cov_file: Path) -> set[str]:
         Union of the static-graph selection and coverage-validated extras.
     """
     plan = select_tests(root, changed, max_depth=0, follow_mock_patches=True)
-    extra = cov_stage.tests_covering(cov_file, changed, root)
+    extra = cov_stage.tests_covering(cov_file, changed)
     return set(plan.tests_up_to(0)) | extra
 
 
@@ -174,7 +173,7 @@ def test_superset_b_absent_without_follow_mock_patches(
     )
 
 
-def test_superset_c_absent_without_coverage_db(
+def test_superset_c_absent_without_coverage_json(
     superset_repo: tuple[Path, Path],
 ) -> None:
     """Proves the coverage channel is necessary: test_c is absent without it.
@@ -186,10 +185,10 @@ def test_superset_c_absent_without_coverage_db(
     """
     root, _cov_file = superset_repo
     plan = select_tests(root, {"src/pkg/c.py"}, max_depth=0, follow_mock_patches=True)
-    # Static selection only — no coverage union.
+    # Static selection only — no coverage_json union.
     selected = set(plan.tests_up_to(0))
     assert not any("test_c" in t for t in selected), (
-        f"test_c should be absent without coverage db; got: {sorted(selected)}"
+        f"test_c should be absent without coverage_json; got: {sorted(selected)}"
     )
 
 

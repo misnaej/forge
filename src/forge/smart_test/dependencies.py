@@ -8,7 +8,7 @@ directly is **depth 0**; one import-level removed is **depth 1**; and so
 on. Changed test files always run at depth 0 regardless of their imports.
 
 The walk is conservative — it errs toward selecting an extra test rather
-than skipping one that a change could affect (#8 behavioral guarantee).
+than skipping one that a change could affect (a deliberate guarantee).
 Pure module-graph reachability; no runtime instrumentation.
 """
 
@@ -263,7 +263,7 @@ def build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph
     Args:
         repo_root: Git repo root.
         follow_mock_patches: When ``True``, a test file's ``mock.patch``
-            string targets (Gap-1 opt-in) are added as edges alongside its
+            string targets are added as edges alongside its (opt-in)
             imports — ``patch("pkg.mod.attr")`` becomes a dep on ``pkg.mod``
             even with no import statement. Off by default.
 
@@ -322,7 +322,7 @@ def select_tests(
         changed_files: Repo-relative ``.py`` paths that changed.
         max_depth: Highest depth to expand (0, 1, or 2).
         follow_mock_patches: Treat ``mock.patch`` string targets as edges
-            (Gap-1 opt-in); forwarded to :func:`build_graph`.
+            (opt-in); forwarded to :func:`build_graph`.
 
     Returns:
         A :class:`SelectionPlan` describing the selection.

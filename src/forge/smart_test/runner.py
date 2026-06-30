@@ -55,7 +55,7 @@ def run_pytest(
     """Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
 
     A deterministic sorted path order is passed so collection is
-    reproducible across runs (FOUNDATION-grade determinism, #8). An empty
+    reproducible across runs (deterministic by design). An empty
     *test_paths* with ``coverage`` runs the whole suite (the ``full``
     tier); an empty *test_paths* without coverage is a no-op success.
 

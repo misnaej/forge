@@ -115,9 +115,8 @@ def test_parse_depth_numeric_tiers() -> None:
 
 
 def test_parse_depth_full_sentinel() -> None:
-    """'full' and 'infinity' both map to the _FULL sentinel."""
+    """'full' maps to the _FULL sentinel."""
     assert cli._parse_depth("full") == cli._FULL
-    assert cli._parse_depth("infinity") == cli._FULL
 
 
 def test_write_log_creates_code_health_dir_and_writes(tmp_path: Path) -> None:
@@ -444,17 +443,6 @@ def test_depth_from_commit_depth_1_directive(
     assert cli._depth_from_commit(tmp_path, {}) == "1"
 
 
-def test_depth_from_commit_infinity_directive(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``[infinity]`` commit directive returns ``_FULL`` (full alias)."""
-    monkeypatch.setattr(
-        cli, "head_commit_message", lambda _root: "ci: nightly [infinity]"
-    )
-    assert cli._depth_from_commit(tmp_path, {}) == cli._FULL
-
-
 # ---------------------------------------------------------------------------
 # --from-commit-message integration
 # ---------------------------------------------------------------------------
@@ -501,7 +489,7 @@ def test_main_from_commit_message_overrides_depth(
 
 
 # ---------------------------------------------------------------------------
-# Coverage union (Gap 2 / --coverage-db)
+# Coverage union (--coverage-json)
 # ---------------------------------------------------------------------------
 
 
@@ -509,9 +497,9 @@ def test_main_coverage_union_in_depth0_batch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Coverage-validated tests from ``--coverage-db`` union into the depth-0 batch.
+    """Coverage-validated tests from ``--coverage-json`` union into the depth-0 batch.
 
-    SCENARIO: ``--depth 1 --coverage-db cov.json``; coverage stage returns one
+    SCENARIO: ``--depth 1 --coverage-json cov.json``; coverage stage returns one
         extra test not present in the static plan.
     MOCK SETUP: cli.cov_stage.tests_covering → ``{"tests/test_cov_only.py"}``
         (in the consuming namespace); cli.select_tests → plan with
@@ -523,13 +511,13 @@ def test_main_coverage_union_in_depth0_batch(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["forge-smart-test", "--depth", "1", "--coverage-db", "cov.json"],
+        ["forge-smart-test", "--depth", "1", "--coverage-json", "cov.json"],
     )
     plan = _make_plan(depth0=["tests/test_core.py"], max_depth=1)
     monkeypatch.setattr(
         cli.cov_stage,
         "tests_covering",
-        lambda _path, _changed, _root: {"tests/test_cov_only.py"},
+        lambda _path, _changed: {"tests/test_cov_only.py"},
     )
     captured = _stub_cli_deps(monkeypatch, plan=plan)
 
@@ -545,29 +533,29 @@ def test_main_coverage_validate_config_key_activates_union(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``coverage_validate=true`` activates coverage union without ``--coverage-db``.
+    """``coverage_validate=true`` activates coverage union without ``--coverage-json``.
 
-    SCENARIO: ``--depth 1`` with no ``--coverage-db`` CLI arg; the
+    SCENARIO: ``--depth 1`` with no ``--coverage-json`` CLI arg; the
         ``[tool.forge.smart_test]`` table has both ``coverage_validate = true``
-        and ``coverage_db = "cov.json"``.
+        and ``coverage_json = "cov.json"``.
     MOCK SETUP: cli._smart_test_config returns the config dict so no real
         ``pyproject.toml`` is needed; cli.cov_stage.tests_covering returns one
         extra test; cli.select_tests and run_pytest captured via _stub_cli_deps.
     EXPECTED BEHAVIOR: the extra config-driven test appears in the depth-0
-        batch even though ``--coverage-db`` was not passed on the CLI.
+        batch even though ``--coverage-json`` was not passed on the CLI.
     """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "1"])
     monkeypatch.setattr(
         cli,
         "_smart_test_config",
-        lambda _root: {"coverage_validate": True, "coverage_db": "cov.json"},
+        lambda _root: {"coverage_validate": True, "coverage_json": "cov.json"},
     )
     plan = _make_plan(depth0=["tests/test_core.py"], max_depth=1)
     monkeypatch.setattr(
         cli.cov_stage,
         "tests_covering",
-        lambda _path, _changed, _root: {"tests/test_from_config.py"},
+        lambda _path, _changed: {"tests/test_from_config.py"},
     )
     captured = _stub_cli_deps(monkeypatch, plan=plan)
 
@@ -628,9 +616,9 @@ def test_main_show_files_lists_coverage_additions(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """``--show-files`` logs coverage-validated additions when ``--coverage-db`` given.
+    """``--show-files`` logs coverage-validated additions with ``--coverage-json``.
 
-    SCENARIO: ``--show-files --depth 1 --coverage-db cov.json``; coverage
+    SCENARIO: ``--show-files --depth 1 --coverage-json cov.json``; coverage
         stage returns a test not in the static plan.
     MOCK SETUP: cli.cov_stage.tests_covering → ``{"tests/test_cov_extra.py"}``;
         cli.select_tests → plan with test_core.py.
@@ -645,7 +633,7 @@ def test_main_show_files_lists_coverage_additions(
             "--show-files",
             "--depth",
             "1",
-            "--coverage-db",
+            "--coverage-json",
             "cov.json",
         ],
     )
@@ -653,7 +641,7 @@ def test_main_show_files_lists_coverage_additions(
     monkeypatch.setattr(
         cli.cov_stage,
         "tests_covering",
-        lambda _path, _changed, _root: {"tests/test_cov_extra.py"},
+        lambda _path, _changed: {"tests/test_cov_extra.py"},
     )
     monkeypatch.setattr(cli, "resolve_base_ref", lambda _r, _b: "main")
     monkeypatch.setattr(cli, "changed_python_files", lambda _r, _ref: {"src/foo.py"})

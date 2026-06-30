@@ -98,7 +98,7 @@ def changed_python_files(repo_root: Path, base_ref: str) -> set[str]:
     merge-base with *base_ref* (the three-dot ``base...HEAD`` semantics,
     so unrelated base-branch commits don't inflate the set), unstaged and
     staged working-tree edits, and **untracked** files (a brand-new test
-    or module should still be selected). Conservative by design (#8).
+    or module should still be selected). Conservative by design.
 
     Args:
         repo_root: Git repo root.

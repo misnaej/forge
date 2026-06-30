@@ -16,7 +16,7 @@ pass before higher ones run (fail-fast).
 
 - empty → depth `1` (the default)
 - `0`, `1`, `2` → that depth
-- `full` or `infinity` → the whole suite + coverage
+- `full` → the whole suite + coverage
 - `files` (or `--show-files`) → print the selected-test plan and run nothing
 
 ## Steps
@@ -38,7 +38,7 @@ pass before higher ones run (fail-fast).
    - `--coverage` adds coverage to the smart tiers (it is always on for
      `full`).
    - `--base <ref>` overrides the diff base (e.g. a PR target branch in CI).
-   - `--coverage-db <path>` unions tests whose coverage **contexts** cover a
+   - `--coverage-json <path>` unions tests whose coverage **contexts** cover a
      changed line (runtime links static analysis misses); needs a per-test
      map (`pytest --cov-context=test`). Enables `coverage_validate`.
    - `--from-commit-message` reads a `[depth-N]` / `[full]` directive from
@@ -66,8 +66,8 @@ release/default branches and risky changes:
 
 For coverage validation, record a per-test map on the full run
 (`pytest --cov-context=test`, export `coverage json --show-contexts`) and
-pass it on PR runs: `forge-smart-test --depth 1 --coverage-db coverage.json`.
-The full-suite escape (`--depth full|infinity`) is the no-false-negatives
+pass it on PR runs: `forge-smart-test --depth 1 --coverage-json coverage.json`.
+The full-suite escape (`--depth full`) is the no-false-negatives
 tier — force it for broad refactors.
 
 ## Notes
