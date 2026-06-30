@@ -16,9 +16,7 @@ from forge.audit.deps import (
     _build_internal_graph,
     _closest_known,
     _compute_couplings,
-    _extract_imports,
     _instability,
-    _resolve_module_name,
     _tarjan_scc,
     render_dependency_tree,
     run,
@@ -50,48 +48,6 @@ def _write(path: Path, text: str) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text.lstrip(), encoding="utf-8")
-
-
-def test_resolve_module_name_strips_src_prefix(tmp_path: Path) -> None:
-    """A file under ``src/foo/bar/baz.py`` resolves to ``foo.bar.baz``."""
-    f = tmp_path / "src" / "foo" / "bar" / "baz.py"
-    f.parent.mkdir(parents=True)
-    f.write_text("", encoding="utf-8")
-    name = _resolve_module_name(f, [tmp_path / "src"])
-    assert name == "foo.bar.baz"
-
-
-def test_resolve_module_name_handles_init(tmp_path: Path) -> None:
-    """``__init__.py`` resolves to the parent package name."""
-    f = tmp_path / "src" / "pkg" / "__init__.py"
-    f.parent.mkdir(parents=True)
-    f.write_text("", encoding="utf-8")
-    name = _resolve_module_name(f, [tmp_path / "src"])
-    assert name == "pkg"
-
-
-def test_resolve_module_name_returns_none_for_outsider(tmp_path: Path) -> None:
-    """A file outside every package root resolves to ``None``."""
-    f = tmp_path / "elsewhere.py"
-    f.write_text("", encoding="utf-8")
-    name = _resolve_module_name(f, [tmp_path / "src"])
-    assert name is None
-
-
-def test_extract_imports_picks_up_absolute_imports() -> None:
-    """``import X.Y`` and ``from X.Y import Z`` both record ``X.Y``."""
-    tree = ast.parse("import a.b\nfrom a.c import d\n")
-    targets = _extract_imports(tree, "myself")
-    assert "a.b" in targets
-    assert "a.c" in targets
-
-
-def test_extract_imports_resolves_relative_imports() -> None:
-    """``from . import X`` resolves against the current module path."""
-    tree = ast.parse("from . import sib\nfrom .sub import thing\n")
-    targets = _extract_imports(tree, "pkg.mod")
-    assert "pkg" in targets
-    assert "pkg.sub" in targets
 
 
 def test_closest_known_walks_up_dotted_name() -> None:

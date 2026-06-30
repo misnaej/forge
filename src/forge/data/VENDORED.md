@@ -34,6 +34,12 @@ file, and refresh the SHA-256 + version here (`shasum -a 256`).
   and selects `layout: elk`, falling back to dagre if the global is absent.
 - **SHA-256:** `64be3e0fd87f39939319071c16d505458757012585a82b628308dcc47b736249`
 - **Bytes:** 1534525
+- **Bundled transitive deps:** `@mermaid-js/layout-elk@0.1.8` declares
+  `elkjs ^0.9.3` and `d3 ^7.9.0`; both are inlined into the IIFE (the whole
+  point of the re-bundle — zero runtime imports). The exact resolved patch
+  versions are whatever npm resolved at bundle time within those ranges; a
+  future re-bundle should commit the `elk-build/package-lock.json` to pin
+  them exactly (tracked in #127).
 
 To update: re-bundle with esbuild and refresh the SHA-256 + version above:
 

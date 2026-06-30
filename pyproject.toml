@@ -114,6 +114,15 @@ enabled = true
 # README C4 block in sync with the import graph; self-skips without [tool.forge.c4]).
 enable = ["typecheck", "c4"]
 
+[tool.forge.env_sync]
+# Dogfood step_auto_rebuild: when a pulled change adds a [project.scripts] CLI
+# and the editable install goes stale, the auto_rebuild pre-commit step runs
+# this command first so env_sync (and require_cli) see a fresh install instead
+# of blocking the commit. ./dev/setup.sh is forge's re-run-safe bootstrap (the
+# ONLY sanctioned install command, per CLAUDE.md — never a bare pip install).
+# Self-skips in CI / non-interactive and when FORGE_NO_AUTO_REBUILD is set.
+rebuild_command = "./dev/setup.sh"
+
 [tool.forge.typecheck]
 # Forge runs pyrefly as a BLOCKING gate: type errors are forge's own code,
 # not third-party noise, so a refused commit means a real defect to fix.

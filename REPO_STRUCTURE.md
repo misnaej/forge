@@ -67,6 +67,7 @@ Code.
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
    - git_utils.py: shared git helpers and CLI logging setup
+   - import_graph.py: `forge.import_graph` — shared AST import primitives (`extract_import_targets`, `resolve_module_name`) used by `audit.deps` (and the planned `smart_test`, #8)
    - run_context.py: `forge.run_context` — CI vs workstation detection (`is_non_interactive`, `git_auth_mode`, `progress_logger`) per FOUNDATION §15
 
 2. **Audit Subpackage (`src/forge/audit/`)**
@@ -169,6 +170,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_gen_commit_types.py: tests for gen_commit_types
    - test_gen_common.py: tests for gen_common shared helpers
    - test_git_utils.py: tests for git_utils (shared CLI helpers)
+   - test_import_graph.py: tests for import_graph (shared AST import primitives)
    - test_install_bootstrap.py: tests for install_bootstrap
    - test_install_claudemd.py: tests for install_claudemd
    - test_install_claude_settings.py: tests for install_claude_settings

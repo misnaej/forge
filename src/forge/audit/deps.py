@@ -51,6 +51,7 @@ from forge.audit.common import (
     write_log,
 )
 from forge.git_utils import configure_cli_logging, repo_root
+from forge.import_graph import extract_import_targets, resolve_module_name
 
 
 if TYPE_CHECKING:
@@ -97,73 +98,6 @@ class DepsConfig:
     distance_threshold: float = DEFAULT_DISTANCE_THRESHOLD
     output: Path | None = None
     print_tree: bool = False
-
-
-def _resolve_module_name(path: Path, package_roots: list[Path]) -> str | None:
-    """Translate a ``.py`` path to a dotted module name.
-
-    Args:
-        path: Absolute path to a Python source file.
-        package_roots: Candidate ancestor directories (``src``, ``lib``, …).
-
-    Returns:
-        Dotted module name (``"forge.audit.dup"``) or ``None`` if the path
-        is not under any known root.
-    """
-    for root in package_roots:
-        try:
-            rel = path.resolve().relative_to(root.resolve())
-        except ValueError:
-            continue
-        parts = list(rel.with_suffix("").parts)
-        if parts and parts[-1] == "__init__":
-            parts = parts[:-1]
-        if not parts:
-            return None
-        return ".".join(parts)
-    return None
-
-
-def _extract_imports(tree: ast.Module, current_module: str) -> set[str]:
-    """Return the set of fully-qualified import-candidate targets.
-
-    Relative imports are resolved against ``current_module``. For
-    ``from X import Y`` we emit BOTH ``X`` and ``X.Y`` as candidates —
-    at parse time we cannot know whether ``Y`` is a submodule (becomes
-    an edge to ``X.Y``) or an attribute of ``X`` (edge to ``X``).
-    Downstream, ``_closest_known`` picks the deepest match present in
-    the graph, so attribute imports collapse to ``X`` and submodule
-    imports resolve to ``X.Y``.
-
-    Args:
-        tree: Parsed module.
-        current_module: Dotted name of the importing module (for relative
-            import resolution).
-
-    Returns:
-        Set of dotted target candidates.
-    """
-    targets: set[str] = set()
-    parts = current_module.split(".")
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                targets.add(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            level = node.level or 0
-            base = ".".join(parts[: len(parts) - level]) if level else ""
-            base_module = (
-                (f"{base}.{node.module}" if base else node.module)
-                if node.module
-                else base
-            )
-            if not base_module:
-                continue
-            targets.add(base_module)
-            for alias in node.names:
-                if alias.name != "*":
-                    targets.add(f"{base_module}.{alias.name}")
-    return targets
 
 
 def _closest_known(target: str, modules: dict[str, ModuleNode]) -> str | None:
@@ -483,7 +417,7 @@ def _scan_module(
         Tuple of name, ``ModuleNode``, and the set of raw import targets.
         ``None`` on parse failure or when the path is outside all roots.
     """
-    name = _resolve_module_name(path, package_roots)
+    name = resolve_module_name(path, package_roots)
     if not name:
         return None
     try:
@@ -499,7 +433,7 @@ def _scan_module(
         abstract_classes=abstract_count,
         total_classes=total_count,
     )
-    return name, node, _extract_imports(tree, name)
+    return name, node, extract_import_targets(tree, name)
 
 
 def _build_internal_graph(
