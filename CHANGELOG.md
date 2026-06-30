@@ -58,6 +58,22 @@ The DSL / README / `--format mermaid` output is unchanged.
   edge DOM id), so prefix-overlapping node names never cross-highlight. Fully
   offline (`file://`), no new dependencies, per-tab, degrades gracefully (#124).
 
+- **Element activation / visibility + tag filtering.** Every `[[person]]` /
+  `[[external]]` / `[[container]]` / `[[component]]` accepts `active = false` (or
+  `hidden = true`) and `tags = [...]`. A deactivated element — and the components
+  an inactive container owns, plus every declared relationship and import-derived
+  edge that touches a removed element — is omitted from **all** outputs (DSL,
+  README, mermaid, HTML, PDF) while staying in `c4.toml`, so one full model
+  renders as slimmer views. `[tool.forge.c4.render].include_tags` /
+  `exclude_tags` bulk-filter the **rendered views** by tag (the DSL stays
+  canonical). With nothing flagged, output is byte-identical.
+
+### Fixes
+- **Empty containers no longer emit a blank Component view.** A container that
+  owns no components (e.g. an infrastructure unit) is skipped in the `--format
+  html`/`pdf` output, so it produces no empty tab or blank PDF page; containers
+  with components are unchanged.
+
 ## v2.14.0 — 2026-06-30
 
 Additive — three new pre-commit steps. Two self-skip unless their artifact

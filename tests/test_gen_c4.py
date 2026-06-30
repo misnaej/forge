@@ -53,6 +53,8 @@ from forge.gen_c4 import (
     _resolve_endpoint,
     _slug,
     _under_prefix,
+    _visibility_fields,
+    _visible_config,
     _warn_unknown_relationships,
     assign_components,
     derive_component_edges,
@@ -2400,7 +2402,12 @@ def test_render_html_emits_page_setup_and_print_config() -> None:
 
 def test_render_html_emits_tab_map_by_container_id() -> None:
     """render_html maps each container's node id (slug) to its Component pane."""
-    config = _two_container_config(())
+    config = _two_container_config(
+        (
+            Component("Leaderboards", ("demo.app",), container="Applications"),
+            Component("Core data", ("demo.core",), container="Domain libraries"),
+        )
+    )
     views = _build_views(config, set())
     page = render_html(config, views)
     # Containers occupy panes 2 and 3 (after System Context + Containers views).
@@ -2416,11 +2423,48 @@ def test_render_html_tab_map_prefix_names_get_distinct_ids() -> None:
         description="",
         output="",
         containers=(Container("Foo", "", ""), Container("Foo server", "", "")),
+        components=(
+            Component("A", ("a",), container="Foo"),
+            Component("B", ("b",), container="Foo server"),
+        ),
     )
     page = render_html(config, _build_views(config, set()))
     # Exact, distinct ids — never a substring/prefix match.
     assert '"id": "foo", "pane": 2' in page
     assert '"id": "foo_server", "pane": 3' in page
+
+
+def test_build_views_skips_container_with_no_components() -> None:
+    """A container that owns no components produces no Component view (no blank tab)."""
+    config = C4Config(
+        system="S",
+        description="",
+        output="",
+        containers=(Container("App", "", ""), Container("Infra", "", "")),
+        components=(Component("Core", ("demo.core",), container="App"),),
+    )
+    labels = [label for label, _text in _build_views(config, set())]
+    assert "App Components" in labels
+    assert "Infra Components" not in labels
+    # System Context + Containers + App Components only — Infra is dropped.
+    assert labels == ["System Context", "Containers", "App Components"]
+
+
+def test_build_views_keeps_populated_containers_unchanged() -> None:
+    """Containers that own components still each get their Component view."""
+    config = _two_container_config(
+        (
+            Component("One", ("a",), container="Applications"),
+            Component("Two", ("b",), container="Domain libraries"),
+        )
+    )
+    labels = [label for label, _text in _build_views(config, set())]
+    assert labels == [
+        "System Context",
+        "Containers",
+        "Applications Components",
+        "Domain libraries Components",
+    ]
 
 
 def test_edge_endpoints_extracts_exact_pairs() -> None:
@@ -2473,3 +2517,127 @@ def test_interaction_has_no_magnify_and_scopes_edge_labels() -> None:
     # The script maps labels to edges and toggles their highlight class.
     assert "g.edgeLabels g.edgeLabel" in script
     assert 'labels[i].classList.toggle("c4-on"' in script
+
+
+# --- element activation / visibility + tag filtering ---
+
+
+def test_visibility_fields_defaults_and_parsing() -> None:
+    """_visibility_fields reads active/hidden/tags, defaulting to shown + no tags."""
+    assert _visibility_fields({}) == {"active": True, "hidden": False, "tags": ()}
+    parsed = _visibility_fields(
+        {"active": False, "hidden": True, "tags": ["a", "b", 3]}
+    )
+    assert parsed == {"active": False, "hidden": True, "tags": ("a", "b")}
+
+
+def test_visible_config_default_is_unchanged() -> None:
+    """With nothing flagged, _visible_config returns the model + edges unchanged."""
+    config = _two_container_config(
+        (Component("Core", ("a",), container="Applications"),)
+    )
+    edges = {("Core", "Core")}
+    filtered, fedges = _visible_config(config, edges)
+    assert filtered.containers == config.containers
+    assert filtered.components == config.components
+    assert filtered.persons == config.persons
+    assert fedges == edges
+
+
+def test_visible_config_drops_inactive_element_and_dangling_edges() -> None:
+    """A hidden element, its owned components, and edges touching it are removed."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses"), Person("Ghost", "", "uses", hidden=True)),
+        externals=(
+            External("Live", "", "uses"),
+            External("Dead", "", "x", active=False),
+        ),
+        containers=(
+            Container("App", "", ""),
+            Container("Legacy", "", "", active=False),
+        ),
+        components=(
+            Component("Core", ("a",), container="App"),
+            Component("Old", ("b",), container="Legacy"),
+        ),
+        relationships=(
+            Relationship("Core", "Old", "calls"),
+            Relationship("Dev", "Live", "via"),
+        ),
+    )
+    filtered, fedges = _visible_config(config, {("Core", "Old")})
+    assert [p.name for p in filtered.persons] == ["Dev"]
+    assert [e.name for e in filtered.externals] == ["Live"]
+    assert [c.name for c in filtered.containers] == ["App"]
+    # Component owned by the inactive container is dropped with it.
+    assert [c.name for c in filtered.components] == ["Core"]
+    # The relationship and edge touching a removed element are pruned.
+    assert [(r.source, r.destination) for r in filtered.relationships] == [
+        ("Dev", "Live")
+    ]
+    assert fedges == set()
+
+
+def test_visible_config_tag_exclude_and_include() -> None:
+    """exclude_tags drops matches; a non-empty include_tags keeps only matches."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        containers=(
+            Container("A", "", "", tags=("keep",)),
+            Container("B", "", "", tags=("drop",)),
+            Container("C", "", ""),
+        ),
+    )
+    excluded, _ = _visible_config(config, set(), exclude_tags=("drop",))
+    assert [c.name for c in excluded.containers] == ["A", "C"]
+    included, _ = _visible_config(config, set(), include_tags=("keep",))
+    assert [c.name for c in included.containers] == ["A"]
+
+
+def test_inactive_element_omitted_from_dsl() -> None:
+    """An inactive external never reaches the rendered DSL (model-level filter)."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        externals=(
+            External("Shown", "", "uses"),
+            External("Gone", "", "uses", active=False),
+        ),
+    )
+    filtered, fedges = _visible_config(config, set())
+    dsl = render_dsl(filtered, fedges)
+    assert "Shown" in dsl
+    assert "Gone" not in dsl
+
+
+def test_load_c4_config_reads_visibility_and_tags(tmp_path: Path) -> None:
+    """load_c4_config parses active/hidden/tags on elements + render tag filters.
+
+    The standalone c4.toml carries both the model and the ``[render]`` table, so
+    the visibility flags and the view tag filter are read from one place.
+    """
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(
+        'system = "S"\n'
+        "[[container]]\n"
+        'name = "Infra"\n'
+        "active = false\n"
+        'tags = ["infrastructure"]\n'
+        "[[external]]\n"
+        'name = "X"\n'
+        "hidden = true\n"
+        "[render]\n"
+        'exclude_tags = ["infrastructure"]\n'
+    )
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    assert config.containers[0].active is False
+    assert config.containers[0].tags == ("infrastructure",)
+    assert config.externals[0].hidden is True
+    assert config.render.exclude_tags == ("infrastructure",)

@@ -281,6 +281,26 @@ relationship, the generic `system → external` edge is suppressed in the views
 where the specific edge renders (Container / flat); the System Context view
 keeps its clean radial `system → external`.
 
+**Activation & tags.** Every `[[person]]` / `[[external]]` / `[[container]]` /
+`[[component]]` accepts `active = false` (equivalently `hidden = true`) and
+`tags = ["..."]`. A deactivated element stays in `c4.toml` but is omitted from
+**all** generated outputs — along with the components an inactive container owns
+and any relationship or import-derived edge that would dangle — so you author one
+complete model and render slimmer views from it. `tags` drive the
+`[tool.forge.c4.render].include_tags` / `exclude_tags` view filters (above), which
+slim the rendered views by tag while leaving the committed DSL canonical. With
+nothing flagged, output is unchanged.
+
+```toml
+[[container]]
+name = "Legacy importer"
+active = false        # kept in c4.toml, dropped from every view + the DSL
+
+[[external]]
+name = "Datadog"
+tags = ["third-party"]   # exclude_tags = ["third-party"] slims it from views
+```
+
 **Interactive HTML.** Each `--format html` diagram is interactive: hover a
 node to reveal it, its incident edges, and their neighbours (the rest dim, while
 the connection labels stay readable); click a container to jump to its
@@ -341,6 +361,8 @@ you only set a key to deviate. Unknown keys are ignored. Lives under
 | `consider_model_order` | _unset_ | `elk.considerModelOrder` | ELK ordering hint (e.g. `NODES_AND_EDGES`). |
 | `merge_edges` | `false` | `elk.mergeEdges` | Merge parallel edges. |
 | `cycle_breaking_strategy` | _unset_ | `elk.cycleBreakingStrategy` | ELK cycle-breaking (e.g. `GREEDY_MODEL_ORDER`). |
+| `include_tags` | _unset_ | _(view filter)_ | When set, the rendered views keep only elements carrying one of these tags. The DSL is unaffected. |
+| `exclude_tags` | _unset_ | _(view filter)_ | The rendered views drop elements carrying any of these tags (applied after `include_tags`). The DSL is unaffected. |
 
 ```toml
 [tool.forge.c4.render]

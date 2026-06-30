@@ -52,7 +52,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from importlib import resources
 from pathlib import Path
 
@@ -196,12 +196,19 @@ class Person:
         container: Display name of a specific container this person targets
             in the Container view. Empty string anchors the person to the
             system boundary instead (back-compat default).
+        active: When False (or *hidden* True), the element and its dangling
+            edges are omitted from every generated output (default: shown).
+        hidden: Inverse spelling of ``active`` — ``hidden = true`` hides.
+        tags: Free-form labels for bulk include/exclude-by-tag view slimming.
     """
 
     name: str
     description: str
     uses: str
     container: str = ""
+    active: bool = True
+    hidden: bool = False
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -212,11 +219,18 @@ class External:
         name: Display name (e.g. ``"GitHub"``).
         description: One-line description.
         relationship: Label for the system → external relationship.
+        active: When False (or *hidden* True), the element and its dangling
+            edges are omitted from every generated output (default: shown).
+        hidden: Inverse spelling of ``active`` — ``hidden = true`` hides.
+        tags: Free-form labels for bulk include/exclude-by-tag view slimming.
     """
 
     name: str
     description: str
     relationship: str
+    active: bool = True
+    hidden: bool = False
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -227,11 +241,19 @@ class Container:
         name: Display name (e.g. ``"forge-scripts"``).
         technology: Technology tag (e.g. ``"Python pip package"``).
         description: One-line description.
+        active: When False (or *hidden* True), the container, the components it
+            owns, and their dangling edges are omitted from every output
+            (default: shown).
+        hidden: Inverse spelling of ``active`` — ``hidden = true`` hides.
+        tags: Free-form labels for bulk include/exclude-by-tag view slimming.
     """
 
     name: str
     technology: str
     description: str
+    active: bool = True
+    hidden: bool = False
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -247,6 +269,10 @@ class Component:
             Empty when unspecified.
         container: Display name of the owning container. Empty string means
             "attach to the first declared container" (back-compat default).
+        active: When False (or *hidden* True), the component and its dangling
+            edges are omitted from every generated output (default: shown).
+        hidden: Inverse spelling of ``active`` — ``hidden = true`` hides.
+        tags: Free-form labels for bulk include/exclude-by-tag view slimming.
     """
 
     name: str
@@ -254,6 +280,9 @@ class Component:
     description: str = ""
     technology: str = ""
     container: str = ""
+    active: bool = True
+    hidden: bool = False
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -317,6 +346,10 @@ class RenderConfig:
             page — width AND height, aspect ratio preserved; ``"width"`` fits
             width only, so a tall diagram can still exceed the page height.
         pdf_margin: page margin in millimetres (default 10).
+        include_tags: when non-empty, the rendered views keep only elements
+            carrying at least one of these tags (the DSL is unaffected).
+        exclude_tags: the rendered views drop elements carrying any of these
+            tags (applied after ``include_tags``; the DSL is unaffected).
     """
 
     wrapping_width: int = 220
@@ -340,6 +373,8 @@ class RenderConfig:
     pdf_orientation: str = "landscape"
     pdf_fit: str = "contain"
     pdf_margin: float = 10
+    include_tags: tuple[str, ...] = ()
+    exclude_tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -503,6 +538,29 @@ def _coerce_list(raw: object) -> list[dict]:
     return []
 
 
+def _visibility_fields(entry: dict) -> dict:
+    """Extract the shared ``active`` / ``hidden`` / ``tags`` element flags.
+
+    Args:
+        entry: One element's TOML table.
+
+    Returns:
+        Keyword args (``active``, ``hidden``, ``tags``) for an element
+        dataclass; defaults (shown, no tags) when the keys are absent.
+    """
+    raw_tags = entry.get("tags", [])
+    tags = (
+        tuple(t for t in raw_tags if isinstance(t, str))
+        if isinstance(raw_tags, list)
+        else ()
+    )
+    return {
+        "active": bool(entry.get("active", True)),
+        "hidden": bool(entry.get("hidden", False)),
+        "tags": tags,
+    }
+
+
 def _parse_components(section: dict) -> tuple[Component, ...]:
     """Parse components from rich ``[[component]]`` tables + the simple map.
 
@@ -526,6 +584,7 @@ def _parse_components(section: dict) -> tuple[Component, ...]:
             c.get("description", ""),
             c.get("technology", ""),
             c.get("container", ""),
+            **_visibility_fields(c),
         )
         for c in _coerce_list(section.get("component"))
     ]
@@ -595,6 +654,14 @@ def _parse_render_config(section: dict) -> RenderConfig:
     kwargs = {key: value for key, value in raw.items() if key in known}
     if not isinstance(kwargs.get("theme_colors"), dict):
         kwargs.pop("theme_colors", None)
+    for tag_key in ("include_tags", "exclude_tags"):
+        value = kwargs.get(tag_key)
+        if value is not None:
+            kwargs[tag_key] = (
+                tuple(t for t in value if isinstance(t, str))
+                if isinstance(value, list)
+                else ()
+            )
     return RenderConfig(**kwargs)
 
 
@@ -623,17 +690,26 @@ def load_c4_config(root: Path) -> C4Config | None:
             p.get("description", ""),
             p.get("uses", "uses"),
             p.get("container", ""),
+            **_visibility_fields(p),
         )
         for p in _coerce_list(section.get("person"))
     )
     externals = tuple(
         External(
-            e.get("name", "?"), e.get("description", ""), e.get("relationship", "uses")
+            e.get("name", "?"),
+            e.get("description", ""),
+            e.get("relationship", "uses"),
+            **_visibility_fields(e),
         )
         for e in _coerce_list(section.get("external"))
     )
     containers = tuple(
-        Container(c.get("name", "?"), c.get("technology", ""), c.get("description", ""))
+        Container(
+            c.get("name", "?"),
+            c.get("technology", ""),
+            c.get("description", ""),
+            **_visibility_fields(c),
+        )
         for c in _coerce_list(section.get("container"))
     )
     components = _parse_components(section)
@@ -664,6 +740,83 @@ def load_c4_config(root: Path) -> C4Config | None:
         direction=direction,
         render=_parse_render_config(section),
     )
+
+
+def _visible_config(
+    config: C4Config,
+    edges: set[tuple[str, str]],
+    *,
+    include_tags: tuple[str, ...] = (),
+    exclude_tags: tuple[str, ...] = (),
+) -> tuple[C4Config, set[tuple[str, str]]]:
+    """Drop deactivated / tag-filtered elements and their dangling edges.
+
+    An element is shown when it is ``active`` and not ``hidden`` and survives the
+    tag filter (``exclude_tags`` removes any match; a non-empty ``include_tags``
+    keeps only matches). Deactivating a container also drops the components it
+    owns (computed from the full model, so the default first-container ownership
+    is stable). Declared relationships and import-derived edges that reference a
+    removed element are pruned, so no view, the DSL, the README block, or the PDF
+    shows a dangling edge. With nothing flagged and no tag filter the model is
+    returned unchanged, keeping default output byte-identical.
+
+    Args:
+        config: The full authored model.
+        edges: Import-derived component-to-component edges.
+        include_tags: Keep only elements with at least one of these tags (when
+            non-empty).
+        exclude_tags: Drop elements carrying any of these tags.
+
+    Returns:
+        A ``(filtered config, filtered edges)`` pair.
+    """
+    inc, exc = set(include_tags), set(exclude_tags)
+
+    def shown(elem: Person | External | Container | Component) -> bool:
+        if not elem.active or elem.hidden:
+            return False
+        etags = set(elem.tags)
+        if exc and (etags & exc):
+            return False
+        return not (inc and not (etags & inc))
+
+    persons = tuple(p for p in config.persons if shown(p))
+    externals = tuple(e for e in config.externals if shown(e))
+    containers = tuple(c for c in config.containers if shown(c))
+    kept_containers = {c.name for c in containers}
+    owner = _component_owner(config)
+    components = tuple(
+        c
+        for c in config.components
+        if shown(c) and owner.get(c.name) in kept_containers
+    )
+    kept_components = {c.name for c in components}
+    kept_names = (
+        {config.system}
+        | {p.name for p in persons}
+        | {e.name for e in externals}
+        | kept_containers
+        | kept_components
+    )
+    relationships = tuple(
+        r
+        for r in config.relationships
+        if r.source in kept_names and r.destination in kept_names
+    )
+    visible_edges = {
+        (src, dst)
+        for src, dst in edges
+        if src in kept_components and dst in kept_components
+    }
+    filtered = replace(
+        config,
+        persons=persons,
+        externals=externals,
+        containers=containers,
+        components=components,
+        relationships=relationships,
+    )
+    return filtered, visible_edges
 
 
 def assign_components(
@@ -2350,6 +2503,13 @@ def _emit_mermaid(
     Returns:
         Always ``0`` (a pure render with no drift semantics).
     """
+    # Raw mermaid is a view — honour the same tag filter the HTML/PDF views use.
+    config, edges = _visible_config(
+        config,
+        edges,
+        include_tags=config.render.include_tags,
+        exclude_tags=config.render.exclude_tags,
+    )
     mermaid = render_mermaid(config, edges)
     if not output or output == "-":
         sys.stdout.write(mermaid)
@@ -2364,8 +2524,9 @@ def _build_views(
     """Build the ``(tab label, Mermaid source)`` pairs for the per-view artifacts.
 
     Single source of truth for the view set the HTML and PDF formats both render:
-    System Context, Containers, then one Component view per container, honouring
-    each view's edge-source mode.
+    System Context, Containers, then one Component view per container that *owns*
+    components — an empty container (e.g. an infrastructure unit) is skipped so it
+    produces no blank tab/page — honouring each view's edge-source mode.
 
     Args:
         config: The model skeleton.
@@ -2374,6 +2535,14 @@ def _build_views(
     Returns:
         Ordered ``(label, Mermaid source)`` pairs.
     """
+    # View-level tag filtering (the DSL is left canonical); active/hidden was
+    # already applied model-wide in main().
+    config, edges = _visible_config(
+        config,
+        edges,
+        include_tags=config.render.include_tags,
+        exclude_tags=config.render.exclude_tags,
+    )
     container_mode = config.container_edges or config.edges
     component_mode = config.component_edges or config.edges
     container_edges = _derive_container_edges(
@@ -2395,6 +2564,7 @@ def _build_views(
             ),
         )
         for idx, container in enumerate(config.containers)
+        if _components_for_container(config, container, idx)
     ]
     return views
 
@@ -2622,6 +2792,10 @@ def main() -> int:
         return 1
     config, edges, unmatched = built
     _warn_unmatched(unmatched)
+    # active/hidden filtering is model-level — it slims every output (DSL,
+    # README, mermaid, HTML, PDF). Tag filtering is view-level and applied per
+    # view emitter, so the committed DSL stays canonical.
+    config, edges = _visible_config(config, edges)
 
     if args.format == "mermaid":
         return _emit_mermaid(root, config, edges, args.output)

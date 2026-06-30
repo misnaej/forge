@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_50 modules, 531 symbols._
+_50 modules, 533 symbols._
 
 ## `forge._hook_helpers`
 
@@ -255,10 +255,12 @@ _50 modules, 531 symbols._
 - `_slug(name: str) -> str` _(internal)_ — Slugify *name* into a DSL-safe identifier fragment.
 - `_q(text: str) -> str` _(internal)_ — Quote *text* as a Structurizr DSL string literal.
 - `_coerce_list(raw: object) -> list[dict]` _(internal)_ — Return *raw* as a list of dicts, tolerating a single table.
+- `_visibility_fields(entry: dict) -> dict` _(internal)_ — Extract the shared ``active`` / ``hidden`` / ``tags`` element flags.
 - `_parse_components(section: dict) -> tuple[Component, ...]` _(internal)_ — Parse components from rich ``[[component]]`` tables + the simple map.
 - `_validate_component_containers(components: tuple[Component, ...], containers: tuple[Container, ...]) -> None` _(internal)_ — Fail loudly on a duplicate container name or an undeclared reference.
 - `_parse_render_config(section: dict) -> RenderConfig` _(internal)_ — Build the HTML :class:`RenderConfig` from the model's ``render`` table.
 - `load_c4_config(root: Path) -> C4Config | None` — Load the C4 model skeleton for the repo.
+- `_visible_config(config: C4Config, edges: set[tuple[str, str]], *, include_tags: tuple[str, ...] = (), exclude_tags: tuple[str, ...] = ()) -> tuple[C4Config, set[tuple[str, str]]]` _(internal)_ — Drop deactivated / tag-filtered elements and their dangling edges.
 - `assign_components(modules: list[str], components: tuple[Component, ...]) -> tuple[dict[str, str], list[str]]` — Map each module to a component by longest-prefix match.
 - `_under_prefix(module: str, prefix: str) -> bool` _(internal)_ — Return whether *module* equals *prefix* or is a dotted child of it.
 - `derive_component_edges(graph: dict[str, set[str]], assigned: dict[str, str]) -> set[tuple[str, str]]` — Collapse module-level import edges to component-level edges.
