@@ -20,6 +20,43 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.15.0 — 2026-06-30
+
+Additive — `forge-gen-c4` gains **vector PDF export**, and the offline HTML it
+builds on now wraps its labels, is consumer-configurable, and is interactive.
+The DSL / README / `--format mermaid` output is unchanged.
+
+### Features
+- **`forge-gen-c4 --format pdf` — vector PDF export (#137).** Renders every C4
+  view to a multi-page, landscape-by-default, **vector** PDF
+  (`docs/architecture.pdf` by default), one view per page. Mermaid is a JS
+  library, so forge reuses the same offline HTML and
+  drives an already-installed headless browser (Chrome / Chromium / Edge / Brave,
+  auto-detected; override with `FORGE_C4_BROWSER`) via `--print-to-pdf` — **no new
+  dependency, no network**. Each view is laid out one-per-page and scaled to fit
+  the whole page (width AND height, aspect ratio preserved) so nothing is
+  clipped. Page setup is tunable via `[tool.forge.c4.render]` — `pdf_page_size`,
+  `pdf_orientation`, `pdf_fit` (`contain` | `width`), `pdf_margin`. Fails loudly
+  with a Print → Save-as-PDF fallback when no browser is found.
+- **C4 HTML label-overflow fix (default).** `forge-gen-c4 --format html` now
+  emits node labels as Mermaid **markdown strings** and sets
+  `flowchart.wrappingWidth` with `markdownAutoWrap`, so the description wraps and
+  Mermaid auto-sizes the box — no more single-line overflow in any view or
+  orientation. Default behaviour, no config required. Supersedes #138 (#140).
+- **`[tool.forge.c4.render]` config.** Each key passes through to
+  `mermaid.initialize(...)` — `wrapping_width`, `html_labels`, `font_family`,
+  `font_size`, `node_spacing`, `rank_spacing`, `padding`, `custom_css`, `layout`,
+  `node_placement_strategy`, `force_node_model_order` (Step 1) plus `theme`,
+  `[render.theme_colors]`, `diagram_padding`, `consider_model_order`,
+  `merge_edges`, `cycle_breaking_strategy` (Step 2). Defaults reproduce the
+  bug-fixed look; unknown keys are tolerated. See `docs/configuration.md` (#140).
+- **Interactive C4 HTML — hover-reveal + click-to-open-tab.** Hovering a node
+  reveals it, its incident edges, and their neighbours while dimming the rest;
+  the connection (edge) labels stay readable. Clicking a container opens its
+  Components tab. Edge incidence is read from the ELK-rendered edge ids resolved
+  against the node set — fully offline (`file://`), no new dependencies, per-tab,
+  degrades gracefully (#124).
+
 ## v2.14.0 — 2026-06-30
 
 Additive — three new pre-commit steps. Two self-skip unless their artifact

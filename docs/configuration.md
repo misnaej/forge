@@ -281,9 +281,82 @@ relationship, the generic `system → external` edge is suppressed in the views
 where the specific edge renders (Container / flat); the System Context view
 keeps its clean radial `system → external`.
 
+**Interactive HTML.** Each `--format html` diagram is interactive: hover a
+node to reveal it, its incident edges, and their neighbours (the rest dim, while
+the connection labels stay readable); click a container to jump to its
+Components tab. Inline JS/CSS, fully offline, per-tab.
+
+**PDF export.** `forge-gen-c4 --format pdf` writes a single multi-page **vector**
+PDF (`docs/architecture.pdf` by default) — one C4 view per page, each scaled to
+fit the whole page (width AND height, aspect ratio preserved), nothing clipped.
+Mermaid renders client-side, so forge reuses the same offline HTML and drives an
+already-installed headless browser (Chrome / Chromium / Edge / Brave,
+auto-detected; set `FORGE_C4_BROWSER=/path/to/browser` to pin one) via
+`--print-to-pdf` — no extra dependency and no network. If no browser is found it
+says so and points at the manual route (open the `--format html` page, then
+Print → Save as PDF). The same `[tool.forge.c4.render]` knobs below apply, since
+the PDF is printed from the HTML. The page setup is tunable:
+
+| Key | Default | What it does |
+|---|---|---|
+| `pdf_page_size` | `"A4"` | Page size: `A4`, `A3`, `A5`, `Letter`, `Legal`, `Tabloid` (unknown → A4). |
+| `pdf_orientation` | `"landscape"` | `landscape` or `portrait`. |
+| `pdf_fit` | `"contain"` | `contain` fits the whole diagram on its page (width + height); `width` fits width only (a tall diagram may then exceed the page height). |
+| `pdf_margin` | `10` | Page margin in millimetres. |
+
 See [`docs/c4-architecture.md`](c4-architecture.md) for the design and
 rationale, and [`skills/c4/SKILL.md`](../skills/c4/SKILL.md) for building a
 model interactively.
+
+### `[tool.forge.c4.render]` — HTML rendering knobs
+
+Tunes the offline `--format html` view only — the DSL, README block, and
+`--format mermaid` output are unaffected. Every key passes straight through to
+the page's `mermaid.initialize(...)`. **All keys are optional; the defaults
+reproduce the shipped look** (wrapped, auto-sized labels + the ELK layout), so
+you only set a key to deviate. Unknown keys are ignored. Lives under
+`[tool.forge.c4.render]` (inline) or `[render]` in a standalone `c4.toml`.
+
+| Key | Default | → Mermaid (scope) | What it does |
+|---|---|---|---|
+| `wrapping_width` | `220` | `flowchart.wrappingWidth` | Px width the description wraps at; Mermaid auto-sizes the box. The label-overflow fix. |
+| `html_labels` | _unset_ | `htmlLabels` (root) | Render labels as HTML. Set `false` to dodge the Firefox empty-label bug (#5785). |
+| `font_family` | _unset_ | `fontFamily` (root) | Font stack (offline-safe stacks only — no web fonts). |
+| `font_size` | _unset_ | `fontSize` (root) | Base font size. |
+| `node_spacing` | _unset_ | `flowchart.nodeSpacing` | Gap between sibling nodes. **Honored under `layout = "dagre"` only** — the ELK engine ignores it (see the spacing note below). |
+| `rank_spacing` | _unset_ | `flowchart.rankSpacing` | Gap between ranks/layers. **Honored under `layout = "dagre"` only** — ELK ignores it. |
+| `padding` | _unset_ | `flowchart.padding` | Inner node padding. |
+| `custom_css` | _unset_ | `themeCSS` (root) | Raw-CSS escape hatch injected into the diagram. |
+| `layout` | `"elk"` | `layout` (root) | `elk` (any `elk.*`) attempts the vendored ELK loader with a dagre fallback; `dagre` forces dagre. ELK routes dense cross-cluster edges far more cleanly but uses fixed spacing; `dagre` lets you tune `node_spacing` / `rank_spacing`. |
+| `node_placement_strategy` | `"NETWORK_SIMPLEX"` | `elk.nodePlacementStrategy` | ELK node placement (`BRANDES_KOEPF`, `NETWORK_SIMPLEX`, …). |
+| `force_node_model_order` | `true` | `elk.forceNodeModelOrder` | Preserve declared node order. |
+
+**Step 2 — theming + advanced ELK** (optional):
+
+| Key | Default | → Mermaid (scope) | What it does |
+|---|---|---|---|
+| `theme` | `"neutral"` | `theme` (root) | Must be `"base"` for `theme_colors` to apply. |
+| `[render.theme_colors]` | _unset_ | `themeVariables` (theme vars) | Hex color overrides (e.g. `primaryColor`, `lineColor`, `tertiaryColor`); applied only under `theme = "base"`. |
+| `diagram_padding` | _unset_ | `flowchart.diagramPadding` | Padding around the whole diagram. |
+| `consider_model_order` | _unset_ | `elk.considerModelOrder` | ELK ordering hint (e.g. `NODES_AND_EDGES`). |
+| `merge_edges` | `false` | `elk.mergeEdges` | Merge parallel edges. |
+| `cycle_breaking_strategy` | _unset_ | `elk.cycleBreakingStrategy` | ELK cycle-breaking (e.g. `GREEDY_MODEL_ORDER`). |
+
+```toml
+[tool.forge.c4.render]
+wrapping_width = 260
+layout = "elk.layered"
+theme = "base"
+
+[tool.forge.c4.render.theme_colors]
+primaryColor = "#eef4ff"
+primaryBorderColor = "#3b6fb0"
+lineColor = "#5a7a9a"
+```
+
+**Caveats** (Mermaid limitations, not forge's): subgraph / boundary titles may
+ignore `wrapping_width` (Mermaid #6110); ELK sizes nodes from the **wrapped**
+label, so there is no separate node-size override.
 
 ## `[tool.forge.cve_usage]` — usage-scoped CVE filter
 

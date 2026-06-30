@@ -44,21 +44,23 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import logging
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from importlib import resources
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 from forge.audit.common import Scope
 from forge.audit.deps import build_module_graph
 from forge.config import resolve_model_section, resolve_tool_roots
 from forge.gen_common import check_doc_drift
 from forge.git_utils import configure_cli_logging, repo_root
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from forge.run_context import progress_logger
 
 
 configure_cli_logging()
@@ -67,7 +69,54 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_OUTPUT = "docs/architecture.dsl"
 DEFAULT_HTML_OUTPUT = "docs/architecture.html"
+DEFAULT_PDF_OUTPUT = "docs/architecture.pdf"
 REGEN_CMD = "forge-gen-c4"
+# Headless-browser print-to-PDF backend (#137). Mermaid is a JS library, so a
+# browser engine must execute it to produce a vector PDF; forge reuses the same
+# offline HTML the `html` format emits, then drives an already-installed Chrome/
+# Chromium/Edge/Brave with --headless --print-to-pdf. No new dependency, no
+# network: the page and its sidecars are written to a temp dir and loaded over
+# file://. FORGE_C4_BROWSER overrides the auto-detected executable.
+_BROWSER_ENV = "FORGE_C4_BROWSER"
+# macOS app-bundle binaries, tried before PATH commands.
+_BROWSER_APP_PATHS = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+)
+# Linux/Windows PATH command names for the same Chromium-family browsers.
+_BROWSER_COMMANDS = (
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+    "microsoft-edge",
+    "brave-browser",
+    "chrome",
+)
+# Mermaid's async run() needs wall-clock to finish before the page is printed;
+# Chrome's virtual-time budget (ms) advances time deterministically until the
+# render settles. Generous so large models complete.
+_PDF_VIRTUAL_TIME_BUDGET_MS = 15000
+# Hard ceiling (seconds) on the headless print so a wedged browser can't hang a
+# commit or CI run.
+_PDF_TIMEOUT_S = 120
+# Portrait (short_edge_mm, long_edge_mm) for the supported `pdf_page_size` keys
+# (uppercased on lookup). Landscape swaps the pair. Unknown sizes fall back to A4.
+_PAGE_SIZES_MM = {
+    "A4": (210, 297),
+    "A3": (297, 420),
+    "A5": (148, 210),
+    "LETTER": (216, 279),
+    "LEGAL": (216, 356),
+    "TABLOID": (279, 432),
+}
+# CSS px per millimetre at the 96-dpi reference resolution browsers print at.
+_PX_PER_MM = 96 / 25.4
+# Vertical px the per-page view title + its gap consume, reserved out of the
+# printable height so the fit-to-page scale leaves room for the heading.
+_PDF_TITLE_RESERVE_PX = 34
 # Vendored Mermaid UMD bundle (MIT), shipped as forge package data. The HTML
 # output references it by relative path so the diagram renders fully offline
 # with no external tool — see docs/c4-architecture.md.
@@ -225,6 +274,73 @@ class Relationship:
 
 
 @dataclass(frozen=True)
+class RenderConfig:
+    """Consumer-tunable knobs for the offline HTML view (``[tool.forge.c4.render]``).
+
+    Each field maps to a key the generated page feeds into
+    ``mermaid.initialize(...)`` — see :func:`_mermaid_init_options` for the
+    key→Mermaid-scope mapping. Defaults reproduce forge's shipped look (the
+    #125 ELK tuning) plus the label-wrap fix, so an absent section renders the
+    bug-fixed default with no configuration. Pass-through fields default to a
+    sentinel (``None`` / ``""`` / empty) that omits the key, leaving Mermaid's
+    own default untouched rather than pinning it.
+
+    Attributes:
+        wrapping_width: ``flowchart.wrappingWidth`` — px width the description
+            wraps at (the overflow fix). Mermaid auto-sizes the box to the
+            wrapped label.
+        html_labels: ``htmlLabels`` — render labels as HTML; ``None`` omits the
+            key. Set ``False`` to dodge the Firefox empty-label bug (#5785).
+        font_family: ``fontFamily`` — empty omits (keeps Mermaid's stack).
+        font_size: ``fontSize`` — ``None`` omits.
+        node_spacing: ``flowchart.nodeSpacing`` — ``None`` omits.
+        rank_spacing: ``flowchart.rankSpacing`` — ``None`` omits.
+        padding: ``flowchart.padding`` — ``None`` omits.
+        diagram_padding: ``flowchart.diagramPadding`` — ``None`` omits.
+        custom_css: ``themeCSS`` — raw-CSS escape hatch; empty omits.
+        layout: top-level ``layout`` — ``elk`` (any ``elk.*``) attempts the
+            vendored ELK loader with a dagre fallback; ``dagre`` uses dagre.
+        node_placement_strategy: ``elk.nodePlacementStrategy``.
+        force_node_model_order: ``elk.forceNodeModelOrder``.
+        merge_edges: ``elk.mergeEdges``.
+        consider_model_order: ``elk.considerModelOrder`` — empty omits.
+        cycle_breaking_strategy: ``elk.cycleBreakingStrategy`` — empty omits.
+        theme: ``theme`` — must be ``base`` for ``theme_colors`` to apply.
+        theme_colors: ``themeVariables`` (hex values) — applied only when
+            ``theme == "base"``; empty omits.
+        pdf_page_size: ``--format pdf`` page size — ``"A4"`` / ``"A3"`` /
+            ``"Letter"`` / ``"Legal"`` (unknown falls back to A4).
+        pdf_orientation: ``"landscape"`` (default) or ``"portrait"``.
+        pdf_fit: ``"contain"`` (default) scales each diagram to fit the whole
+            page — width AND height, aspect ratio preserved; ``"width"`` fits
+            width only, so a tall diagram can still exceed the page height.
+        pdf_margin: page margin in millimetres (default 10).
+    """
+
+    wrapping_width: int = 220
+    html_labels: bool | None = None
+    font_family: str = ""
+    font_size: int | None = None
+    node_spacing: int | None = None
+    rank_spacing: int | None = None
+    padding: int | None = None
+    diagram_padding: int | None = None
+    custom_css: str = ""
+    layout: str = "elk"
+    node_placement_strategy: str = "NETWORK_SIMPLEX"
+    force_node_model_order: bool = True
+    merge_edges: bool = False
+    consider_model_order: str = ""
+    cycle_breaking_strategy: str = ""
+    theme: str = "neutral"
+    theme_colors: dict[str, str] = field(default_factory=dict)
+    pdf_page_size: str = "A4"
+    pdf_orientation: str = "landscape"
+    pdf_fit: str = "contain"
+    pdf_margin: float = 10
+
+
+@dataclass(frozen=True)
 class C4Config:
     """The human-authored ``[tool.forge.c4]`` model skeleton.
 
@@ -250,6 +366,8 @@ class C4Config:
             views; empty string inherits ``edges``.
         direction: Global graph layout direction (:data:`_DIRECTIONS`) —
             ``"LR"`` (left-to-right, default) or ``"TB"`` (top-to-bottom).
+        render: Offline-HTML rendering knobs from ``[tool.forge.c4.render]``;
+            defaults reproduce the shipped look (see :class:`RenderConfig`).
     """
 
     system: str
@@ -265,6 +383,7 @@ class C4Config:
     container_edges: str = ""
     component_edges: str = ""
     direction: str = "LR"
+    render: RenderConfig = field(default_factory=RenderConfig)
 
 
 @dataclass(frozen=True)
@@ -450,6 +569,49 @@ def _validate_component_containers(
             raise ValueError(msg)
 
 
+def _parse_render_config(section: dict) -> RenderConfig:
+    """Build the HTML :class:`RenderConfig` from the model's ``render`` table.
+
+    Reads ``[tool.forge.c4.render]`` (``section["render"]``) field by field with
+    tolerant ``.get()`` calls, so an unknown key is ignored rather than fatal and
+    an absent table yields the all-default config (the bug-fixed shipped look).
+
+    Args:
+        section: The resolved ``[tool.forge.c4]`` model table.
+
+    Returns:
+        A populated :class:`RenderConfig`; defaults when ``render`` is absent or
+        not a table.
+    """
+    raw = section.get("render")
+    if not isinstance(raw, dict):
+        return RenderConfig()
+    colors = raw.get("theme_colors")
+    return RenderConfig(
+        wrapping_width=raw.get("wrapping_width", 220),
+        html_labels=raw.get("html_labels"),
+        font_family=raw.get("font_family", ""),
+        font_size=raw.get("font_size"),
+        node_spacing=raw.get("node_spacing"),
+        rank_spacing=raw.get("rank_spacing"),
+        padding=raw.get("padding"),
+        diagram_padding=raw.get("diagram_padding"),
+        custom_css=raw.get("custom_css", ""),
+        layout=raw.get("layout", "elk"),
+        node_placement_strategy=raw.get("node_placement_strategy", "NETWORK_SIMPLEX"),
+        force_node_model_order=raw.get("force_node_model_order", True),
+        merge_edges=raw.get("merge_edges", False),
+        consider_model_order=raw.get("consider_model_order", ""),
+        cycle_breaking_strategy=raw.get("cycle_breaking_strategy", ""),
+        theme=raw.get("theme", "neutral"),
+        theme_colors=dict(colors) if isinstance(colors, dict) else {},
+        pdf_page_size=raw.get("pdf_page_size", "A4"),
+        pdf_orientation=raw.get("pdf_orientation", "landscape"),
+        pdf_fit=raw.get("pdf_fit", "contain"),
+        pdf_margin=raw.get("pdf_margin", 10),
+    )
+
+
 def load_c4_config(root: Path) -> C4Config | None:
     """Load the C4 model skeleton for the repo.
 
@@ -514,6 +676,7 @@ def load_c4_config(root: Path) -> C4Config | None:
         container_edges=_resolve_edge_mode(section.get("container_edges", edges)),
         component_edges=_resolve_edge_mode(section.get("component_edges", edges)),
         direction=direction,
+        render=_parse_render_config(section),
     )
 
 
@@ -1004,7 +1167,9 @@ def _m(text: str) -> str:
     return html.escape(text, quote=False)
 
 
-def _external_node_line(node_id: str, ext: External, *, indent: str = "    ") -> str:
+def _external_node_line(
+    node_id: str, ext: External, *, indent: str = "    ", markdown: bool = False
+) -> str:
     """Render the flat ``[[...]]`` node line for one external system.
 
     Single source of truth for the external-node representation — the doubled
@@ -1016,11 +1181,13 @@ def _external_node_line(node_id: str, ext: External, *, indent: str = "    ") ->
         node_id: The allocated Mermaid node id for the external.
         ext: The external system to render.
         indent: Leading whitespace for the view's nesting level.
+        markdown: Forwarded to :func:`_mermaid_box` so HTML callers get
+            markdown-string labels; the flat renderer keeps HTML-tag labels.
 
     Returns:
         A single Mermaid node-declaration line (no trailing newline).
     """
-    box = _mermaid_box(ext.name, "External system", ext.description)
+    box = _mermaid_box(ext.name, "External system", ext.description, markdown=markdown)
     return f'{indent}{node_id}[["{box}"]]'
 
 
@@ -1076,24 +1243,40 @@ def render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _mermaid_box(name: str, technology: str, description: str) -> str:
+def _mermaid_box(
+    name: str, technology: str, description: str, *, markdown: bool = False
+) -> str:
     """Build a multi-line Mermaid box label: bold name, technology, description.
 
-    Produces *canonical* Mermaid: the structural tags (``<b>``, ``<br/>``)
-    are literal, while the user text is escaped to Mermaid HTML entities so
-    characters like ``<`` in "code_health/<step>.log" survive instead of
-    being parsed as tags. This canonical form drops straight into a GitHub
-    ```` ```mermaid ```` block; :func:`render_html` re-escapes it for the
-    HTML ``<pre>`` embedding case.
+    Two forms share one escaping primitive (:func:`_m`, which entity-escapes
+    ``<``/``>``/``&`` so text like "code_health/<step>.log" survives both the
+    Mermaid parse and :func:`render_html`'s ``<pre>`` re-escape):
+
+    * **HTML tags** (``markdown=False``, the default) — ``<b>``/``<br/>`` are
+      literal. This canonical form drops straight into a GitHub ```` ```mermaid
+      ```` block and feeds the README managed block + ``--format mermaid``.
+    * **Markdown string** (``markdown=True``) — a backtick-fenced label
+      (``**name**`` + newline-separated lines). Mermaid wraps the description
+      at ``flowchart.wrappingWidth`` and auto-sizes the box, fixing the
+      overflow the HTML form suffers; used only by the per-view HTML renderers.
 
     Args:
         name: Element display name (bolded).
         technology: Technology/type tag shown in brackets; omitted if empty.
         description: One-line description; omitted if empty.
+        markdown: Emit a Mermaid markdown-string label instead of HTML tags.
 
     Returns:
-        A ``<br/>``-separated label with literal tags and entity-escaped text.
+        The label: a ``<br/>``-separated HTML-tag string, or a backtick-fenced
+        newline-separated markdown string, both with entity-escaped text.
     """
+    if markdown:
+        parts = [f"**{_m(name)}**"]
+        if technology:
+            parts.append(f"[{_m(technology)}]")
+        if description:
+            parts.append(_m(description))
+        return "`" + "\n".join(parts) + "`"
     parts = [f"<b>{_m(name)}</b>"]
     if technology:
         parts.append(f"[{_m(technology)}]")
@@ -1182,7 +1365,7 @@ def _actors_subgraph(
     lines = [f'    subgraph {actors_id}["Actors"]']
     lines += [
         f"        {person_ids[p.name]}"
-        f'(["{_mermaid_box(p.name, "Person", p.description)}"])'
+        f'(["{_mermaid_box(p.name, "Person", p.description, markdown=True)}"])'
         for p in config.persons
     ]
     lines.append("    end")
@@ -1208,11 +1391,14 @@ def _render_mermaid_system_context(config: C4Config) -> str:
     external_ids = {e.name: alloc.allocate(e.name, "ext") for e in config.externals}
     lines = [f"graph {config.direction}"]
     lines += _actors_subgraph(config, person_ids, alloc)
-    lines.append(
-        f'    {sys_id}("'
-        f'{_mermaid_box(config.system, "Software System", config.description)}")'
+    box_label = _mermaid_box(
+        config.system, "Software System", config.description, markdown=True
     )
-    lines += [_external_node_line(external_ids[e.name], e) for e in config.externals]
+    lines.append(f'    {sys_id}("{box_label}")')
+    lines += [
+        _external_node_line(external_ids[e.name], e, markdown=True)
+        for e in config.externals
+    ]
     lines += [
         f'    {person_ids[p.name]} -->|"{_m(p.uses)}"| {sys_id}' for p in config.persons
     ]
@@ -1406,7 +1592,7 @@ def _render_mermaid_containers(
     lines.append(f'    subgraph {sys_id}["{_m(config.system)}"]')
     lines += [
         f'        {container_ids[c.name]}["'
-        f'{_mermaid_box(c.name, c.technology, c.description)}"]'
+        f'{_mermaid_box(c.name, c.technology, c.description, markdown=True)}"]'
         for c in config.containers
     ]
     lines.append("    end")
@@ -1415,7 +1601,10 @@ def _render_mermaid_containers(
     # to mis-rank, tangling the inter-cluster container→external edges. Flat
     # nodes let dagre place them cleanly on the flow's far side; declared after
     # the system so they rank to the right (LR) / below (TB).
-    lines += [_external_node_line(external_ids[e.name], e) for e in config.externals]
+    lines += [
+        _external_node_line(external_ids[e.name], e, markdown=True)
+        for e in config.externals
+    ]
     lines += [
         f'    {person_ids[p.name]} -->|"{_m(p.uses)}"| '
         f"{_person_node(p.container, maps, fallback=sys_id)}"
@@ -1483,11 +1672,11 @@ def _component_view_peripherals(
             return peripheral_ids[name]
         if name in externals:
             pid = alloc.allocate(name, "ext")
-            node_lines.append(_external_node_line(pid, externals[name]))
+            node_lines.append(_external_node_line(pid, externals[name], markdown=True))
         elif name in persons:
             pid = alloc.allocate(name, "person")
             person = persons[name]
-            box = _mermaid_box(person.name, "Person", person.description)
+            box = _mermaid_box(person.name, "Person", person.description, markdown=True)
             node_lines.append(f'    {pid}(["{box}"])')
         else:
             return None
@@ -1549,11 +1738,14 @@ def _render_mermaid_components_for(
         f"graph {config.direction}",
         f'    subgraph {container_id}["{_m(container.name)}"]',
     ]
-    lines += [
-        f'        {component_ids[c.name]}["'
-        f'{_mermaid_box(c.name, c.technology, _component_description(c))}"]'
-        for c in components
-    ]
+
+    def _component_line(c: Component) -> str:
+        box_label = _mermaid_box(
+            c.name, c.technology, _component_description(c), markdown=True
+        )
+        return f'        {component_ids[c.name]}["{box_label}"]'
+
+    lines += [_component_line(c) for c in components]
     lines.append("    end")
     peripheral_nodes, peripheral_edges = _component_view_peripherals(
         config, names, component_ids, alloc
@@ -1580,6 +1772,281 @@ def _render_mermaid_components_for(
     return "\n".join(lines) + "\n"
 
 
+def _mermaid_init_options(render: RenderConfig, *, layout_var: str) -> str:
+    """Build the ``mermaid.initialize(...)`` options object for the HTML view.
+
+    Single source of truth for the ``[tool.forge.c4.render]`` key → Mermaid-scope
+    mapping (root / ``flowchart`` / ``elk`` / ``themeVariables``). Always-emitted
+    keys reproduce forge's shipped look plus the wrap fix (``securityLevel``,
+    ``theme``, ``useMaxWidth:false``, ``wrappingWidth``, ``markdownAutoWrap``, and
+    the #125 ELK tuning); pass-through keys are emitted only when set, leaving
+    Mermaid's own default in place otherwise. ``themeVariables`` apply only under
+    ``theme:"base"`` (Mermaid ignores them otherwise).
+
+    Args:
+        render: The resolved render config.
+        layout_var: Name of the in-page JS variable holding the resolved layout
+            (a variable reference, not a string literal, so the dagre fallback
+            the page computes at runtime wins).
+
+    Returns:
+        A JS object literal (braces included) ready to drop into
+        ``mermaid.initialize(...)``.
+    """
+    flowchart: dict[str, object] = {
+        "useMaxWidth": False,
+        "wrappingWidth": render.wrapping_width,
+        **{
+            key: value
+            for key, value in (
+                ("nodeSpacing", render.node_spacing),
+                ("rankSpacing", render.rank_spacing),
+                ("padding", render.padding),
+                ("diagramPadding", render.diagram_padding),
+            )
+            if value is not None
+        },
+    }
+    elk: dict[str, object] = {
+        "nodePlacementStrategy": render.node_placement_strategy,
+        "forceNodeModelOrder": render.force_node_model_order,
+        "mergeEdges": render.merge_edges,
+    }
+    if render.consider_model_order:
+        elk["considerModelOrder"] = render.consider_model_order
+    if render.cycle_breaking_strategy:
+        elk["cycleBreakingStrategy"] = render.cycle_breaking_strategy
+    root: dict[str, object] = {
+        "startOnLoad": False,
+        "securityLevel": "loose",
+        "theme": render.theme,
+        "markdownAutoWrap": True,
+        "flowchart": flowchart,
+        "elk": elk,
+    }
+    if render.html_labels is not None:
+        root["htmlLabels"] = render.html_labels
+    if render.font_family:
+        root["fontFamily"] = render.font_family
+    if render.font_size is not None:
+        root["fontSize"] = render.font_size
+    if render.custom_css:
+        root["themeCSS"] = render.custom_css
+    if render.theme == "base" and render.theme_colors:
+        root["themeVariables"] = render.theme_colors
+    inner = json.dumps(root)[1:-1]
+    return f'{{{inner}, "layout": {layout_var}}}'
+
+
+def _pdf_page_geometry(render: RenderConfig) -> tuple[int, int, float, int, int]:
+    """Resolve the print page box + printable pixel area from the PDF config.
+
+    Validates ``pdf_page_size`` / ``pdf_orientation`` / ``pdf_margin`` (unknown
+    size → A4, unknown orientation → landscape) and converts the printable area
+    to CSS px at the 96-dpi print reference, reserving room for the per-page
+    title. The px area feeds the in-page fit-to-page scale (the browser maps the
+    ``@page`` mm box to those px when printing).
+
+    Args:
+        render: The resolved render config.
+
+    Returns:
+        ``(page_w_mm, page_h_mm, margin_mm, printable_w_px, printable_h_px)``.
+    """
+    short, long_ = _PAGE_SIZES_MM.get(
+        render.pdf_page_size.upper(), _PAGE_SIZES_MM["A4"]
+    )
+    if render.pdf_orientation == "portrait":
+        page_w, page_h = short, long_
+    else:
+        page_w, page_h = long_, short
+    margin = render.pdf_margin if render.pdf_margin >= 0 else 10
+    printable_w_px = round((page_w - 2 * margin) * _PX_PER_MM)
+    printable_h_px = round((page_h - 2 * margin) * _PX_PER_MM) - _PDF_TITLE_RESERVE_PX
+    return page_w, page_h, margin, max(printable_w_px, 1), max(printable_h_px, 1)
+
+
+def _print_page_css(render: RenderConfig) -> str:
+    """Build the ``@page`` + ``@media print`` rules for the PDF layout.
+
+    Lays every view out one-per-page at the configured size/orientation/margin.
+    In ``contain`` fit each diagram is scaled by the JS-measured
+    ``--c4-print-scale`` (set per SVG so the whole diagram fits width AND
+    height); in ``width`` fit the SVG is capped to the page width only.
+
+    Args:
+        render: The resolved render config.
+
+    Returns:
+        A CSS fragment (single-brace literal) for the page's ``<style>``.
+    """
+    page_w, page_h, margin, _pw, _ph = _pdf_page_geometry(render)
+    if render.pdf_fit == "width":
+        diagram_rule = (
+            "    .diagram-scroll svg { max-width: 100% !important;\n"
+            "      width: auto !important; height: auto !important; }"
+        )
+    else:
+        # `zoom` (not `transform: scale`) so the layout box reflows to the scaled
+        # size — otherwise the unscaled box keeps its full height and the page
+        # break lands mid-pane, pushing the next view's title onto this page.
+        diagram_rule = (
+            "    .diagram-scroll svg {\n"
+            "      zoom: var(--c4-print-scale, 1); max-width: none !important;\n"
+            "      width: auto !important; height: auto !important; }"
+        )
+    msg = (
+        "Print / PDF: drop the interactive chrome, show every view "
+        "(Mermaid renders all panes before the tab script hides them), "
+        "one per page, scaled to fit."
+    )
+    return f"""  /* {msg} */
+  @page {{ size: {page_w}mm {page_h}mm; margin: {margin}mm; }}
+  @media print {{
+    body {{ margin: 0; }}
+    .tabbar, h1, p.desc {{ display: none; }}
+    .views.ready .pane,
+    .views.ready .pane.active {{ display: block; }}
+    .pane {{ margin: 0; page-break-after: always; break-after: page; }}
+    .pane:last-child {{ page-break-after: auto; break-after: auto; }}
+    .view-title {{ display: block; margin: 0 0 0.5rem; font-size: 1rem; }}
+    .diagram-scroll {{ overflow: visible; max-height: none; border: none;
+      padding: 0; }}
+{diagram_rule}
+    svg.c4-focus-mode g.node, svg.c4-focus-mode path.flowchart-link,
+    svg.c4-focus-mode g.edgeLabel {{ opacity: 1 !important; }}
+  }}"""
+
+
+def _html_interaction_css() -> str:
+    """Return the inline CSS for the #124 hover-highlight state.
+
+    While a node is hovered (``c4-focus-mode``) every node, edge path, and edge
+    *label* dims except those marked ``c4-on`` — so only the hovered node's
+    connections, their neighbours, and *their* relationship text stay readable.
+
+    Returns:
+        CSS rules (no ``<style>`` wrapper) for the ``c4-focus-mode`` state.
+    """
+    return """
+  .diagram-scroll svg g.node, .diagram-scroll svg path.flowchart-link,
+  .diagram-scroll svg g.edgeLabel { transition: opacity .15s ease; }
+  svg.c4-focus-mode g.node { opacity: 0.18; }
+  svg.c4-focus-mode path.flowchart-link { opacity: 0.08; }
+  svg.c4-focus-mode g.edgeLabel { opacity: 0.1; }
+  svg.c4-focus-mode g.node.c4-on { opacity: 1; }
+  svg.c4-focus-mode path.flowchart-link.c4-on { opacity: 1; }
+  svg.c4-focus-mode g.edgeLabel.c4-on { opacity: 1; }"""
+
+
+def _html_interaction_script() -> str:
+    """Return the inline JS wiring hover-highlight + click-to-open-tab (#124).
+
+    Operates on Mermaid's post-``run()`` SVG DOM. Edge incidence is read from the
+    ELK-rendered edge ids (``L_<source>_<target>_<n>_<m>``) resolved against the
+    set of ``g.node`` logical ids — node slugs contain underscores, so each id is
+    split at every boundary and accepted only when both halves are known nodes
+    (class-based ``LS-``/``LE-`` hooks are not emitted under the ELK layout).
+    Hovering a node reveals it, its incident edges, those edges' relationship
+    labels, and their neighbours while dimming everything else (edge labels carry
+    no id, so they map to edges by document order). Clicking a node that has a
+    drill-down view switches to that tab (``window.c4Tabs`` →
+    ``window.c4ShowPane``); other nodes have no click action. Every selector is
+    guarded, so a missing node/edge degrades to a no-op.
+
+    Returns:
+        A JS snippet defining ``window.c4WireView(svg)`` for embedding in a
+        classic ``<script>``.
+    """
+    return r"""
+window.c4WireView = (function () {
+  "use strict";
+  function logicalId(node) {
+    return (node.id || "").replace(/^flowchart-/, "").replace(/-\d+$/, "");
+  }
+  function edgeEnds(edge, nodeSet) {
+    // id is L_<source>_<target>_<counter...>; node ids contain underscores, so
+    // try every split and accept the first where both halves are known nodes.
+    var parts = (edge.id || "").replace(/^L_/, "").split("_");
+    for (var i = 1; i < parts.length; i++) {
+      var src = parts.slice(0, i).join("_");
+      if (!nodeSet[src]) { continue; }
+      for (var j = i + 1; j <= parts.length; j++) {
+        var tgt = parts.slice(i, j).join("_");
+        if (nodeSet[tgt]) { return [src, tgt]; }
+      }
+    }
+    return null;
+  }
+  function tabFor(node) {
+    var tabs = window.c4Tabs || [];
+    var text = (node.textContent || "").replace(/\s+/g, " ").trim();
+    for (var i = 0; i < tabs.length; i++) {
+      if (text.indexOf(tabs[i].name) === 0) { return tabs[i].pane; }
+    }
+    return null;
+  }
+  return function wire(svg) {
+    if (!svg) { return; }
+    var nodes = svg.querySelectorAll("g.node");
+    var edges = svg.querySelectorAll("path.flowchart-link");
+    if (!nodes.length) { return; }
+    // Edge labels carry no id; Mermaid emits them in the same order as the
+    // edge paths, so the i-th label belongs to the i-th edge.
+    var labels = svg.querySelectorAll("g.edgeLabels g.edgeLabel");
+    var nodeSet = {};
+    nodes.forEach(function (g) { nodeSet[logicalId(g)] = true; });
+    function focus(id) {
+      svg.classList.add("c4-focus-mode");
+      var keepNodes = {}; keepNodes[id] = true;
+      edges.forEach(function (edge, i) {
+        var ends = edgeEnds(edge, nodeSet);
+        var on = !!ends && (ends[0] === id || ends[1] === id);
+        edge.classList.toggle("c4-on", on);
+        if (labels[i]) { labels[i].classList.toggle("c4-on", on); }
+        if (on) { keepNodes[ends[0]] = true; keepNodes[ends[1]] = true; }
+      });
+      nodes.forEach(function (g) {
+        g.classList.toggle("c4-on", keepNodes[logicalId(g)] === true);
+      });
+    }
+    function clear() {
+      svg.classList.remove("c4-focus-mode");
+      nodes.forEach(function (g) { g.classList.remove("c4-on"); });
+      edges.forEach(function (edge) { edge.classList.remove("c4-on"); });
+      labels.forEach(function (label) { label.classList.remove("c4-on"); });
+    }
+    nodes.forEach(function (g) {
+      var id = logicalId(g);
+      g.addEventListener("mouseenter", function () { focus(id); });
+      g.addEventListener("mouseleave", function () { clear(); });
+      var target = tabFor(g);
+      if (target !== null) {
+        g.style.cursor = "pointer";
+        g.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          if (typeof window.c4ShowPane === "function") { window.c4ShowPane(target); }
+        });
+      }
+    });
+    // Fit-to-page: uniformly scale the diagram so it fits the printable area in
+    // both dimensions. Measured here (pane still visible) and applied only under
+    // @media print via the --c4-print-scale custom property.
+    if (window.c4Print && window.c4Print.fit === "contain") {
+      var rect = svg.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        var scale = Math.min(
+          window.c4Print.w / rect.width,
+          window.c4Print.h / rect.height
+        );
+        svg.style.setProperty("--c4-print-scale", String(scale));
+      }
+    }
+  };
+})();
+"""
+
+
 def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
     """Wrap the C4 views in a self-contained, offline, tabbed HTML page.
 
@@ -1593,8 +2060,14 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
     hides the inactive ones — rendering a Mermaid block inside a
     ``display:none`` element would otherwise produce a zero-size diagram.
 
+    The Mermaid setup is driven by ``[tool.forge.c4.render]``
+    (:func:`_mermaid_init_options`); its defaults wrap box labels and fix the
+    overflow (#140). Hover-highlight and click-to-open-tab interactivity
+    (:func:`_html_interaction_script`) is wired onto each pane's SVG after
+    render (#124).
+
     Args:
-        config: The model skeleton (page title/description).
+        config: The model skeleton (page title/description + render config).
         views: ``(tab label, Mermaid source)`` pairs, in display order.
 
     Returns:
@@ -1606,10 +2079,34 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
     )
     panes = "\n".join(
         f'  <div class="pane" data-pane="{i}">\n'
+        f'<h2 class="view-title">{html.escape(label)}</h2>\n'
         f'<div class="diagram-scroll"><pre class="mermaid">\n'
         f"{html.escape(text)}</pre></div>\n  </div>"
-        for i, (_label, text) in enumerate(views)
+        for i, (label, text) in enumerate(views)
     )
+    init_options = _mermaid_init_options(config.render, layout_var="c4layout")
+    requested_layout = json.dumps(config.render.layout)
+    interaction_css = _html_interaction_css()
+    interaction_script = _html_interaction_script()
+    print_css = _print_page_css(config.render)
+    _w, _h, _m, print_w_px, print_h_px = _pdf_page_geometry(config.render)
+    print_config = json.dumps(
+        {"w": print_w_px, "h": print_h_px, "fit": config.render.pdf_fit}
+    )
+    # Click-to-open-tab map: each container's Component view, keyed by the
+    # container name its node label starts with. Longest name first so a name
+    # that prefixes another (e.g. "forge" vs "forge-scripts") never mis-routes.
+    suffix = " Components"
+    tab_targets = sorted(
+        (
+            {"name": label[: -len(suffix)], "pane": i}
+            for i, (label, _t) in enumerate(views)
+            if label.endswith(suffix)
+        ),
+        key=lambda t: len(t["name"]),
+        reverse=True,
+    )
+    tab_config = json.dumps(tab_targets)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1627,9 +2124,12 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
   .views.ready .pane {{ display: none; }}
   .views.ready .pane.active {{ display: block; }}
   .pane {{ margin-top: 1.5rem; }}
+  .view-title {{ display: none; }}
   .diagram-scroll {{ overflow: auto; max-height: 82vh;
     border: 1px solid #eee; padding: 0.5rem; }}
   .diagram-scroll svg {{ max-width: none !important; height: auto; }}
+{interaction_css}
+{print_css}
 </style>
 </head>
 <body>
@@ -1643,26 +2143,34 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
 </div>
 <script src="{MERMAID_JS_NAME}"></script>
 <script src="{MERMAID_ELK_JS_NAME}"></script>
+<script>{interaction_script}</script>
 <script>
-// securityLevel 'loose' lets the bold/line-break HTML in box labels render;
-// safe here because the model is generated locally from the repo's own config.
-// Register the vendored ELK layout loader (a classic-script global, so it works
-// from file://). ELK untangles the Container view's cross-cluster edges that
-// dagre mis-ranks; if the loader is missing or errors, fall back to dagre.
-var c4layout = "dagre";
-try {{
-  if (window.elkLayouts) {{
-    mermaid.registerLayoutLoaders(window.elkLayouts.default || window.elkLayouts);
-    c4layout = "elk";
+// securityLevel 'loose' lets the markdown box labels (and the ELK layout
+// loader) run; safe here because the model is generated locally from the
+// repo's own config. The requested layout (default "elk") attempts the
+// vendored ELK loader — a classic-script global, so it works from file:// —
+// which untangles the Container view's cross-cluster edges that dagre
+// mis-ranks; if the loader is missing or errors, it falls back to dagre.
+var requestedLayout = {requested_layout};
+var c4layout = requestedLayout;
+if (requestedLayout.indexOf("elk") === 0) {{
+  c4layout = "dagre";
+  try {{
+    if (window.elkLayouts) {{
+      mermaid.registerLayoutLoaders(window.elkLayouts.default || window.elkLayouts);
+      c4layout = requestedLayout;
+    }}
+  }} catch (err) {{
+    console.warn("c4: ELK layout unavailable — falling back to dagre:", err);
   }}
-}} catch (err) {{
-  console.warn("c4: ELK layout unavailable — falling back to dagre:", err);
 }}
 console.log("c4: layout engine =", c4layout);
-mermaid.initialize({{ startOnLoad: false, theme: "neutral", securityLevel: "loose",
-  layout: c4layout, flowchart: {{ useMaxWidth: false }},
-  elk: {{ nodePlacementStrategy: "NETWORK_SIMPLEX", forceNodeModelOrder: true,
-    mergeEdges: false }} }});
+// Printable page area (px @96dpi) + fit mode, consumed by c4WireView to set each
+// SVG's --c4-print-scale so the diagram fits its page when printed to PDF.
+window.c4Print = {print_config};
+// Container name -> Component-view pane index, for click-to-open-tab.
+window.c4Tabs = {tab_config};
+mermaid.initialize({init_options});
 mermaid.run().then(function () {{
   var views = document.querySelector(".views");
   var tabs = document.querySelectorAll("button.tab");
@@ -1673,6 +2181,13 @@ mermaid.run().then(function () {{
   }}
   tabs.forEach(function (t) {{
     t.addEventListener("click", function () {{ show(Number(t.dataset.pane)); }});
+  }});
+  window.c4ShowPane = show;  // let a node click open its drill-down tab
+  // Wire + measure every pane's SVG while all panes are still visible — a
+  // display:none pane reports a zero box, which would break the print scale.
+  document.querySelectorAll(".views .pane svg").forEach(function (svg) {{
+    try {{ if (window.c4WireView) {{ window.c4WireView(svg); }} }}
+    catch (err) {{ console.warn("c4: interactivity wiring failed:", err); }}
   }});
   views.classList.add("ready");
   show(0);
@@ -1834,19 +2349,21 @@ def _emit_mermaid(
     return 0
 
 
-def _emit_html(
-    root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace
-) -> int:
-    """Write or verify the offline HTML view (+ vendored Mermaid sidecar).
+def _build_views(
+    config: C4Config, edges: set[tuple[str, str]]
+) -> list[tuple[str, str]]:
+    """Build the ``(tab label, Mermaid source)`` pairs for the per-view artifacts.
+
+    Single source of truth for the view set the HTML and PDF formats both render:
+    System Context, Containers, then one Component view per container, honouring
+    each view's edge-source mode.
 
     Args:
-        root: Repository root directory.
         config: The model skeleton.
         edges: Derived component edges.
-        args: Parsed CLI args (``check``, ``output``).
 
     Returns:
-        Exit code from the write or the drift check.
+        Ordered ``(label, Mermaid source)`` pairs.
     """
     container_mode = config.container_edges or config.edges
     component_mode = config.component_edges or config.edges
@@ -1870,7 +2387,24 @@ def _emit_html(
         )
         for idx, container in enumerate(config.containers)
     ]
-    content = render_html(config, views)
+    return views
+
+
+def _emit_html(
+    root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace
+) -> int:
+    """Write or verify the offline HTML view (+ vendored Mermaid sidecar).
+
+    Args:
+        root: Repository root directory.
+        config: The model skeleton.
+        edges: Derived component edges.
+        args: Parsed CLI args (``check``, ``output``).
+
+    Returns:
+        Exit code from the write or the drift check.
+    """
+    content = render_html(config, _build_views(config, edges))
     out_relpath = args.output or DEFAULT_HTML_OUTPUT
     if args.check:
         return check_doc_drift(root, out_relpath, content, f"{REGEN_CMD} --format html")
@@ -1884,6 +2418,121 @@ def _emit_html(
     logger.info(
         "Wrote %s + %s sidecar (renders offline).", out_relpath, MERMAID_JS_NAME
     )
+    return 0
+
+
+def _find_headless_browser() -> str | None:
+    """Locate an installed Chromium-family browser for headless PDF printing.
+
+    Resolution order: the ``FORGE_C4_BROWSER`` override, then the known macOS
+    app-bundle paths, then PATH command names (Linux/Windows). Any of Chrome,
+    Chromium, Edge, or Brave works — they share the ``--headless
+    --print-to-pdf`` interface.
+
+    Returns:
+        An executable path, or ``None`` when no supported browser is found.
+    """
+    override = os.environ.get(_BROWSER_ENV)
+    if override:
+        return override if Path(override).exists() else None
+    for path in _BROWSER_APP_PATHS:
+        if Path(path).exists():
+            return path
+    for command in _BROWSER_COMMANDS:
+        found = shutil.which(command)
+        if found:
+            return found
+    return None
+
+
+def _print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
+    """Drive *browser* headlessly to print *html_path* to *pdf_path*.
+
+    Mermaid renders the diagrams client-side, so the browser engine — not forge
+    — produces the vector PDF; the ``@media print`` rules in the page lay every
+    view out one-per-page. Flags keep the run offline and non-interactive (no
+    sandbox prompt, no background networking, no first-run UI).
+
+    Args:
+        browser: Path to the Chromium-family executable.
+        html_path: The offline HTML to render (loaded over ``file://``).
+        pdf_path: Destination PDF path.
+
+    Raises:
+        subprocess.CalledProcessError: If the browser exits non-zero.
+        subprocess.TimeoutExpired: If the print exceeds the hard timeout.
+    """
+    cmd = [
+        browser,
+        "--headless",
+        "--no-sandbox",
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-networking",
+        "--disable-extensions",
+        "--no-pdf-header-footer",
+        f"--virtual-time-budget={_PDF_VIRTUAL_TIME_BUDGET_MS}",
+        f"--print-to-pdf={os.fspath(pdf_path)}",
+        html_path.as_uri(),
+    ]
+    with progress_logger("c4: headless print-to-PDF"):
+        subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            timeout=_PDF_TIMEOUT_S,
+        )
+
+
+def _emit_pdf(
+    root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace
+) -> int:
+    """Render the C4 views to a vector PDF via a headless browser (#137).
+
+    Writes the same offline HTML the ``html`` format emits (plus the vendored
+    Mermaid + ELK sidecars) into a temp dir, then prints it to PDF with a
+    detected Chromium-family browser. The PDF is a binary, non-deterministic
+    artifact, so ``--check`` does not apply; it is always (re)generated.
+
+    Args:
+        root: Repository root directory.
+        config: The model skeleton.
+        edges: Derived component edges.
+        args: Parsed CLI args (``output``).
+
+    Returns:
+        ``0`` on a successful write; ``1`` when no browser is found or the
+        headless print fails.
+    """
+    browser = _find_headless_browser()
+    if browser is None:
+        logger.error(
+            "No headless-capable browser found for PDF export. Install Chrome / "
+            "Chromium / Edge / Brave, set %s=/path/to/browser, or open the "
+            "`--format html` page and Print → Save as PDF.",
+            _BROWSER_ENV,
+        )
+        return 1
+    out_relpath = args.output or DEFAULT_PDF_OUTPUT
+    out_path = _safe_out_path(root, out_relpath)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    content = render_html(config, _build_views(config, edges))
+    with tempfile.TemporaryDirectory(prefix="forge-c4-") as workdir:
+        work = Path(workdir)
+        html_path = work / "architecture.html"
+        html_path.write_text(content)
+        _copy_vendored_mermaid(work)
+        try:
+            _print_html_to_pdf(browser, html_path, out_path)
+        except subprocess.TimeoutExpired:
+            logger.exception("PDF render timed out after %ss.", _PDF_TIMEOUT_S)
+            return 1
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or b"").decode(errors="replace").strip()
+            logger.exception("Headless browser failed to render the PDF: %s", detail)
+            return 1
+    logger.info("Wrote %s (via %s).", out_relpath, Path(browser).name)
     return 0
 
 
@@ -1957,6 +2606,8 @@ def main() -> int:
         return _emit_mermaid(root, config, edges, args.output)
     if args.format == "html":
         return _emit_html(root, config, edges, args)
+    if args.format == "pdf":
+        return _emit_pdf(root, config, edges, args)
     return _emit_dsl(root, config, edges, args)
 
 
@@ -1971,16 +2622,17 @@ def _parse_args() -> argparse.Namespace:
         description=(
             "Generate a C4 architecture model from the import graph + a "
             "[tool.forge.c4] / c4.toml model. Emits Structurizr DSL (default), "
-            "a self-contained offline HTML view, or raw Mermaid."
+            "a self-contained offline HTML view, a vector PDF, or raw Mermaid."
         ),
     )
     parser.add_argument(
         "--format",
-        choices=("dsl", "html", "mermaid"),
+        choices=("dsl", "html", "pdf", "mermaid"),
         default="dsl",
         help=(
             "Output: 'dsl' (Structurizr + README block, default), "
-            "'html' (offline view), or 'mermaid' (raw Mermaid to stdout)."
+            "'html' (offline view), 'pdf' (vector PDF via a headless browser), "
+            "or 'mermaid' (raw Mermaid to stdout)."
         ),
     )
     parser.add_argument(

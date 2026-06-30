@@ -168,6 +168,14 @@ Scope boundaries for v1:
   as forge package data). Needs only `pip install` — no Docker, Java,
   Graphviz, or network. The generated HTML + sidecars are gitignored
   (on-demand). See "Per-view HTML & the ELK layout engine" below.
+- **`pdf`** — a multi-page, landscape **vector** PDF (one view per page),
+  printed from the offline HTML by an auto-detected headless browser
+  (Chrome / Chromium / Edge / Brave; `FORGE_C4_BROWSER` overrides). No new
+  dependency and no network — Mermaid is a JS library, so a browser engine
+  produces the vector output; forge supplies the page and a `@media print`
+  layout that fits each view to the page. Fails loudly (with a manual
+  Print → Save-as-PDF fallback) when no browser is present. See "Legible
+  labels & interactivity" below.
 - **`mermaid`** — raw canonical Mermaid to stdout (for embedding).
 
 Every relationship line carries a label: derived import edges read
@@ -242,6 +250,34 @@ so the active engine is verifiable. Diagrams also render at intrinsic size
 (`useMaxWidth: false` + a CSS cap override) inside scrollable panes, so large
 graphs pan rather than shrink. `[tool.forge.c4].direction` (`LR` default / `TB`)
 threads into both the Mermaid `graph` header and the DSL `autolayout`.
+
+### Legible labels & interactivity
+
+**Wrapped, auto-sized labels.** Node labels are emitted as Mermaid **markdown
+strings** (``` `**Name**`/`[Type]`/description ```) rather than the HTML
+`<b>…</b><br/>` form, and the page sets `flowchart.wrappingWidth` with
+`markdownAutoWrap`. Mermaid then wraps the description and sizes the box to fit —
+fixing the single-line overflow the HTML form suffered, and dodging the Firefox
+v11 empty-HTML-label bug (mermaid-js/mermaid#5785). The markdown form is
+HTML-only: the flat `render_mermaid` (README block, `--format mermaid`, DSL
+`--check`) keeps the canonical HTML-tag labels, so that output stays
+byte-identical.
+
+**Consumer-configurable rendering.** The whole `mermaid.initialize(...)` setup is
+driven by `[tool.forge.c4.render]` (see
+[`docs/configuration.md`](configuration.md)); defaults reproduce the look above,
+so a repo only sets a key to deviate (fonts, spacing, colors, ELK tuning).
+
+**Hover + click interactivity.** Inline JS wires onto Mermaid's post-render SVG.
+Edge incidence is read from the ELK-rendered edge ids (`L_<source>_<target>_…`)
+resolved against the set of node ids — node slugs contain underscores, so each id
+is split at every boundary and accepted only when both halves are known nodes
+(the ELK layout does not emit the `LS-`/`LE-` edge classes the dagre layout does).
+Hovering a node reveals it, its incident edges, and their neighbours while dimming
+the rest — the connection (edge) labels stay at full opacity so the relationship
+text remains readable; clicking a container jumps to its Components tab. It is
+additive, per-tab, fully offline (no network, no deps), and degrades to a no-op if
+a selector is missing.
 
 ### Modeling reach (any-element relationships)
 
