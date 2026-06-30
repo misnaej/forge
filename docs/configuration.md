@@ -163,6 +163,22 @@ The `doc_consistency` step (`verify-forge-doc-consistency`, enabled the
 same way) has no config table — it checks that every `[project.scripts]`
 CLI is documented in `docs/cli-reference.md`, and is always non-blocking.
 
+## `[tool.forge.smart_test]` — opt-in change-scoped test gate
+
+Drives the optional `smart_test` pre-commit step, which runs
+[`forge-smart-test`](cli-reference.md#forge-smart-test) at a fixed depth on
+every commit so only the tests your change set affects run. **Off by
+default** — the step self-skips entirely unless `precommit_depth` is set.
+The CLI itself (and the `/forge:smart-test` skill) work without any config;
+this table only governs the pre-commit integration. Depth model and the
+speed/coverage trade-off: FOUNDATION §17.
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `precommit_depth` | _(unset → step skipped)_ | Depth the `smart_test` step runs on commit: `0` / `1` / `2` / `full`. Setting it opts the step in. | You want a change-scoped test gate on every commit (e.g. `0` for the fastest loop). |
+| `blocking` | `false` | Fail the commit on a test failure (else non-blocking WARN). | You want the gate to actually block, not just warn. |
+| `paths` | repo `source_dirs` + `test_dirs` | Scan roots for the import graph (per-tool override of the repo layout). | Your code/tests live outside the configured `source_dirs`/`test_dirs`. |
+
 ## `[tool.forge.env_sync]` — install-freshness gate (default-on)
 
 Runs **first** in the default sequence. A deadly-fast, in-process

@@ -28,6 +28,7 @@ this document at the top, then add repo-specific rules below.
 14. [Issue Tracking & Triage](#14-issue-tracking--triage)
 15. [Runtime Context Awareness (CI vs. workstation)](#15-runtime-context-awareness)
 16. [Extending shipped agents, skills, and CLIs](#16-extending-shipped-agents-skills-and-clis)
+17. [Smart-test depth model](#17-smart-test-depth-model)
 
 ---
 
@@ -1081,6 +1082,48 @@ Pattern C is the right choice when:
 When in doubt, prefer C over B over A: the smaller the surface
 that diverges from the foundation, the less maintenance burden
 the consumer carries on every foundation upgrade.
+
+---
+
+## 17. Smart-test depth model
+
+`forge-smart-test` (skill: `/forge:smart-test`) selects the tests a change
+set affects via the static import graph and runs them in escalating
+**depth tiers**, so a slow suite gives fast feedback locally and a CI
+ladder before a full pass. Selection is the `forge.import_graph` reverse
+reachability from changed source modules, unioned with directly-changed
+test files.
+
+| Depth | Runs | Coverage | Typical use |
+|---|---|---|---|
+| `0` | Tests importing a changed module **directly** | no | Pre-commit / tight loop |
+| `1` | Depth 0 + one import hop removed | no | First CI check on a PR push |
+| `2` | Depth 0/1 + two import hops removed | no | Pre-merge gate |
+| `full` / `infinity` | The **entire** suite | yes | Default-branch CI; release prep |
+
+Guarantees consumers can rely on:
+
+- **Conservative selection.** The graph walk errs toward including an
+  extra test over skipping one a change could affect — a brand-new or
+  directly-changed test always runs at depth 0.
+- **No false negatives only at `full`.** The smart tiers (`0`/`1`/`2`)
+  are deliberately approximate; `full` runs everything.
+- **Speed/coverage trade-off.** Coverage instrumentation (~3-5× slower)
+  is reserved for `full`; the smart tiers skip it. This is the dominant
+  speed difference between tiers.
+- **Fail-fast.** A failing depth short-circuits the higher depths and
+  exits non-zero, and the import cache is cleared between depths so a
+  stale `__pycache__` can't mask a failure.
+- **Determinism.** Same `git diff` + same tree → same selection; the
+  file order handed to pytest is sorted.
+
+It writes `code_health/smart_test.log` (FOUNDATION §13) for
+`forge:precommit-fixer`. The optional `smart_test` pre-commit step is
+**off by default** and self-skips unless a repo sets
+`[tool.forge.smart_test].precommit_depth`; it is **non-blocking** unless
+`[tool.forge.smart_test].blocking = true`. Pytest stays out of the
+default pre-commit sequence (too slow); smart-test is the opt-in bridge
+for repos that want a change-scoped gate.
 
 ---
 

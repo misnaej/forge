@@ -456,6 +456,27 @@ options:
               code_health/slow_tests.log).
 ```
 
+## forge-smart-test
+
+```text
+usage: forge-smart-test [-h] [--depth {0,1,2,full,infinity}] [--show-files]
+                        [--coverage] [--base BASE]
+
+Run only the tests a change set affects, in escalating import-depth tiers with
+fail-fast. Depth full runs the whole suite with coverage.
+
+options:
+  -h, --help            show this help message and exit
+  --depth {0,1,2,full,infinity}
+                        Selection depth: 0/1/2 import hops, or full/infinity
+                        (default: 1).
+  --show-files          Print the selected-test plan and exit without running
+                        pytest.
+  --coverage            Enable coverage (always on for --depth full).
+  --base BASE           Ref to diff against for change detection (default:
+                        auto-detect).
+```
+
 ## forge-upgrade
 
 ```text
