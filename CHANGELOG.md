@@ -20,6 +20,31 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.15.0 — 2026-06-30
+
+Additive — a new opt-in `forge-smart-test` CLI + `/forge:smart-test` skill +
+a self-skipping pre-commit step; no consumer action required.
+
+### Features
+- **`forge-smart-test` — change-driven test selection by import depth.**
+  Selects only the tests a change set affects (via the `forge.import_graph`
+  reverse import graph) and runs them in escalating depth tiers
+  (`0`/`1`/`2`/`full`) with fail-fast, writing `code_health/smart_test.log`.
+  Ships the `/forge:smart-test` skill and an **opt-in**, self-skipping
+  `smart_test` pre-commit step (`[tool.forge.smart_test].precommit_depth`).
+  Opt-in extensions widen selection to a safe superset for mock- and
+  runtime-coupled suites: `follow_mock_patches` (treat `mock.patch` string
+  targets as edges) and `coverage_validate` + `--coverage-json` (union tests
+  whose coverage contexts touch a changed line). `--from-commit-message`
+  drives the tier from a `[depth-N]`/`[full]` commit directive. Depth model
+  and trade-offs in FOUNDATION §17 (#8).
+
+### Tooling
+- **`/pr` + `pr-manager` base-sync gate.** PR finalization now refuses a PR
+  that is behind or conflicting with its base (mergeable / behind-count
+  check) — a green CI run on a stale base no longer reads as ready. Surfaces
+  the state; never silently merges.
+
 ## v2.14.0 — 2026-06-30
 
 Additive — three new pre-commit steps. Two self-skip unless their artifact

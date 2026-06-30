@@ -32,6 +32,33 @@ If none, create one:
 
 If `$ARGUMENTS` contains a PR number, use that instead of auto-detecting.
 
+## Step 0.5: Base-sync gate
+
+A PR that is behind — or in conflict with — its base branch is not
+ready to finalize: a green CI run on a stale base does not mean the PR
+merges cleanly now (parallel PRs may have taken the version, edited the
+CHANGELOG, or moved the merge-base). **Check before reviewing, never
+silently merge:**
+
+```bash
+git fetch origin --quiet
+gh pr view <PR#> --json baseRefName,mergeable,mergeStateStatus \
+  --jq '{base: .baseRefName, mergeable, state: .mergeStateStatus}'
+git rev-list --left-right --count "origin/<base>...HEAD"   # left = behind
+```
+
+- **`mergeable: CONFLICTING`** → **stop**. Do not finalize. Resolve by
+  merging the base in (`git merge origin/<base>`, resolve conflicts —
+  CHANGELOG per `docs/release-process.md` §5), then re-run from Step 0.5.
+- **Behind but clean** (left count > 0, not conflicting) → merging the
+  base in is **confirm-first** (never silent): it refreshes the branch so
+  the wrap-up's "CI green" reflects the real merge result, but it mutates
+  history and re-triggers CI, so surface it and let the user decide.
+- **Up to date, `MERGEABLE`** → proceed to Step 1.
+
+Merging the base re-triggers CI — wait for it to go green again before
+finalizing (a finalize on a now-stale CI run is misleading).
+
 ## Step 1: Run verification agents (1–3 in parallel)
 
 Before invoking the three reporters, check if the PR is eligible for
