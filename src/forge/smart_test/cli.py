@@ -65,18 +65,20 @@ def _write_log(repo_root: Path, body: str) -> None:
     log_path.write_text(body, encoding="utf-8")
 
 
-def _run_full(repo_root: Path, *, coverage: bool) -> tuple[int, str]:
+def _run_full(repo_root: Path) -> tuple[int, str]:
     """Run the entire suite (the ``full`` tier), always with coverage.
+
+    Coverage is unconditionally enabled for ``full`` — it is the tier's
+    defining cost/coverage trade-off — so there is no opt-out parameter.
 
     Args:
         repo_root: Git repo root.
-        coverage: Caller's ``--coverage`` flag (full always enables it).
 
     Returns:
         ``(exit_code, output)`` from the single pytest run.
     """
     logger.info("Running the full suite (depth=full) with coverage.")
-    return run_pytest(repo_root, [], coverage=coverage or True)
+    return run_pytest(repo_root, [], coverage=True)
 
 
 def _run_tiers(
@@ -177,7 +179,7 @@ def main() -> int:
         return 0
 
     if depth_raw == _FULL:
-        code, body = _run_full(repo_root, coverage=args.coverage)
+        code, body = _run_full(repo_root)
     else:
         depth = cast("int", depth_raw)
         code, body = _run_tiers(

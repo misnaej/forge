@@ -1,9 +1,10 @@
 """Shared test fixtures for forge.
 
-Lives at ``tests/conftest.py`` so pytest auto-discovers it. Exposes a
-canonical ``FakeProc`` stand-in and a ``fake_subprocess_run`` factory
-that captures call argvs — used by tests that monkeypatch
-``subprocess.run`` in any of the forge CLIs.
+Lives at ``tests/conftest.py`` so pytest auto-discovers it. Exposes the
+real-git helpers ``GIT_ENV``, ``init_git_repo`` and ``init_dual_track_repo``
+(ephemeral repos for the git-touching suites), plus the subprocess fakes
+``FakeProc``, ``CapturedCalls`` and the ``make_fake_run`` factory — used by
+tests that monkeypatch ``subprocess.run`` in any of the forge CLIs.
 """
 
 from __future__ import annotations
