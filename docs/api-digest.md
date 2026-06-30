@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_55 modules, 544 symbols._
+_55 modules, 553 symbols._
 
 ## `forge._hook_helpers`
 
@@ -201,7 +201,6 @@ _55 modules, 544 symbols._
 
 ## `forge.fix_ruff`
 
-- `_restage_modified(repo_root: Path, source_dirs: list[str]) -> list[str]` _(internal)_ — ``git add`` tracked files modified inside *source_dirs*.
 - `_validate_paths(repo_root: Path, paths: list[str]) -> list[str]` _(internal)_ — Ensure every entry in *paths* resolves inside *repo_root*.
 - `main() -> int` — Apply ruff fixes and write ``code_health/ruff.log``.
 
@@ -341,6 +340,7 @@ _55 modules, 544 symbols._
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
 - `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get list of modified files from git.
 - `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
+- `stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]` — ``git add`` tracked files modified within *pathspecs*.
 
 ## `forge.import_graph`
 
@@ -497,7 +497,9 @@ _55 modules, 544 symbols._
 - `_run(cmd: list[str], cwd: Path) -> tuple[bool, str]` _(internal)_ — Run *cmd* and capture combined output.
 - `_declared_scripts(repo_root: Path) -> tuple[str, set[str]] | None` _(internal)_ — Return ``(package_name, declared [project.scripts] names)`` or ``None``.
 - `_installed_console_scripts(name: str) -> set[str] | None` _(internal)_ — Return *name*'s installed ``console_scripts`` entry-point names.
+- `missing_console_scripts(repo_root: Path) -> list[str]` — Declared ``[project.scripts]`` names not registered as console scripts.
 - `_forge_scripts_pin_drift(repo_root: Path) -> tuple[str, str] | None` _(internal)_ — Return ``(pinned, installed)`` when forge-scripts is pinned ahead of install.
+- `step_auto_rebuild(repo_root: Path) -> StepResult` — Reinstall a stale editable install before ``env_sync`` blocks the commit.
 - `step_env_sync(repo_root: Path) -> StepResult` — Fail fast when the local install is stale vs the repo's declared CLIs.
 - `step_ruff(repo_root: Path) -> StepResult` — Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
 - `step_docstrings(repo_root: Path) -> StepResult` — Run ``verify-forge-docstrings`` over the resolved scope.
@@ -522,6 +524,10 @@ _55 modules, 544 symbols._
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the source tree (opt-in).
 - `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
+- `step_regen_docs(repo_root: Path) -> StepResult` — Regenerate the otherwise-unwired generated docs and re-stage them.
+- `_vendored_documented_hashes(repo_root: Path) -> dict[str, str]` _(internal)_ — Parse ``VENDORED.md`` into a ``{filename: sha256}`` map.
+- `_sha256_file(path: Path) -> str` _(internal)_ — Return *path*'s SHA-256 hex digest, read in 64 KiB chunks.
+- `step_vendored_integrity(repo_root: Path) -> StepResult` — Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
 - `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
 - `_validate_step_names(names: Sequence[str]) -> None` _(internal)_ — Raise ``ValueError`` listing any *names* that are not registered steps.
@@ -553,7 +559,8 @@ _55 modules, 544 symbols._
 - `_parse_depth(raw: str) -> int | str` _(internal)_ — Map a ``--depth`` token to an int tier or the ``full`` sentinel.
 - `_write_log(repo_root: Path, body: str) -> None` _(internal)_ — Write *body* to ``code_health/smart_test.log``.
 - `_run_full(repo_root: Path) -> tuple[int, str]` _(internal)_ — Run the entire suite (the ``full`` tier), always with coverage.
-- `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, *, coverage: bool, extra_depth0: set[str], header: str) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
+- `class _RunConfig` _(internal)_ — Configuration for a tiered test run.
+- `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
 - `main() -> int` — Select and run change-affected tests by depth; write the log.
 
@@ -573,6 +580,8 @@ _55 modules, 544 symbols._
 - `_closest_known(target: str, modules: set[str]) -> str | None` _(internal)_ — Resolve an import *target* to the deepest known module that covers it.
 - `_dotted(node: ast.expr) -> str | None` _(internal)_ — Return the dotted name of an attribute/name chain, or ``None``.
 - `_string_literals(args: list[ast.expr]) -> list[str]` _(internal)_ — Return the string-constant values among *args*, in order.
+- `_classify_patch_call(node: ast.Call) -> str | None` _(internal)_ — Classify a call node as a patch variant: ``"patch"``, ``"dict"``, or ``None``.
+- `_collect_sys_modules_targets(node: ast.Call, targets: set[str]) -> None` _(internal)_ — Extract module names from a ``patch.dict("sys.modules", {…})`` call.
 - `_patch_targets(tree: ast.Module) -> set[str]` _(internal)_ — Return the dotted module-attribute targets of ``mock.patch`` calls.
 - `class _Graph` _(internal)_ — The internal import graph plus the name↔path mapping.
 - `build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph` — Parse the repo into an internal import graph.

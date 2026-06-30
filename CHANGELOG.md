@@ -20,6 +20,39 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.14.0 — 2026-06-30
+
+Additive — three new pre-commit steps. Two self-skip unless their artifact
+is present; the third is bounded by an explicit opt-out and a configured
+command, so no consumer action is required.
+
+### Features
+- **`vendored_integrity` pre-commit step (blocking).** Verifies every vendored
+  `src/forge/data/*.js` bundle (Mermaid, the ELK layout) against the SHA-256
+  documented in `VENDORED.md`. A swapped/corrupted blob, or a `*.js` with no
+  documented hash, now fails the commit instead of slipping through; an
+  orphaned entry (documented but absent) is a non-fatal note. In-process
+  (stdlib `hashlib`), self-skips when there is no `VENDORED.md` or no vendored
+  `*.js` (#127).
+- **`regen_docs` pre-commit step (non-blocking).** Auto-regenerates the two
+  generated docs that previously had no drift gate — `docs/api-digest.md` and
+  `docs/cli-reference.md` — and re-stages them, the way the ruff step keeps
+  formatting fresh. Only refreshes a doc that already exists (never bootstraps
+  a surprise file); self-skips when neither is present (#129).
+- **`auto_rebuild` pre-commit step.** Heals a stale editable install *before*
+  `env_sync` blocks the commit: when a pulled change adds a `[project.scripts]`
+  CLI and the install goes stale, it runs the configured
+  `[tool.forge.env_sync].rebuild_command` so the gate sees a fresh install.
+  Bounded for FOUNDATION §2 — acts only with an explicitly configured command
+  (never a defaulted `pip install`), only interactively (skips CI), only when
+  a script is actually missing, and never when `FORGE_NO_AUTO_REBUILD` is set
+  (#128).
+
+### Refactor
+- Relocate the git re-stage helper from `fix_ruff` to
+  `git_utils.stage_modified_paths` (public) so both the ruff step and the new
+  `regen_docs` step share one git-add-back implementation.
+
 ## v2.13.0 — 2026-06-26
 
 Additive — `forge-gen-c4` rendering + modeling improvements. All new
