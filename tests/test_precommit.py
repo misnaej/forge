@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from typing import TYPE_CHECKING, NamedTuple
@@ -646,6 +647,10 @@ def test_run_all_writes_code_health_logs(
     with `_stub_*` helpers so no real CLI / network call fires; ruff,
     manifest_json, and plugin_version run their real shell-out path
     against the empty tmp_path repo (which short-circuits to skip).
+    The three new default-on steps self-skip in tmp_path (auto_rebuild:
+    no rebuild_command configured; regen_docs: no docs dir present;
+    vendored_integrity: no data dir with *.js + VENDORED.md) but still
+    write their log files before returning.
     EXPECTED BEHAVIOR: code_health/ exists and contains a log file for
     every step in the sequence.
     """
@@ -659,7 +664,9 @@ def test_run_all_writes_code_health_logs(
     log_dir = tmp_path / "code_health"
     assert log_dir.is_dir()
     expected = {
+        "auto_rebuild.log",
         "env_sync.log",
+        "regen_docs.log",
         "ruff.log",
         "docstring_verification.log",
         "docstring_coverage.log",
@@ -667,6 +674,7 @@ def test_run_all_writes_code_health_logs(
         "repo_structure_check.log",
         "manifest_json.log",
         "plugin_version.log",
+        "vendored_integrity.log",
         "pip_audit.log",
         "cve_usage.log",
     }
@@ -730,12 +738,15 @@ def test_main_emits_json(
     parsed = json.loads(capsys.readouterr().out)
     assert isinstance(parsed, list)
     assert {r["name"] for r in parsed} >= {
+        "auto_rebuild",
+        "regen_docs",
         "ruff",
         "docstring_verification",
         "test_naming_check",
         "repo_structure_check",
         "manifest_json",
         "plugin_version",
+        "vendored_integrity",
         "pip_audit",
     }
 
@@ -1814,7 +1825,626 @@ def test_step_env_sync_missing_script_beats_pin_drift(
 # ---------------------------------------------------------------------------
 
 
-def test_step_env_sync_is_first_default_step(tmp_path: Path) -> None:
-    """env_sync is the first step in the default resolved sequence."""
+def test_step_auto_rebuild_precedes_env_sync_in_registry(tmp_path: Path) -> None:
+    """auto_rebuild is first and env_sync is second in the default resolved sequence.
+
+    auto_rebuild heals a stale editable install before env_sync can block on
+    it — the ordering is the design contract, not an implementation detail.
+    """
     resolved = precommit._resolve_steps(tmp_path)
-    assert resolved[0].name == "env_sync"
+    names = [d.name for d in resolved]
+    assert names[0] == "auto_rebuild"
+    assert names[1] == "env_sync"
+
+
+# ---------------------------------------------------------------------------
+# Helpers for vendored-integrity + regen-docs test groups
+# ---------------------------------------------------------------------------
+
+
+def _write_vendored_md(repo_root: Path, entries: dict[str, str]) -> None:
+    """Write ``src/forge/data/VENDORED.md`` with ``## <name>`` + SHA-256 sections.
+
+    Creates ``src/forge/data/`` when absent. Each entry becomes a ``## <name>``
+    header followed by a ``- **SHA-256:** `<hash>``` line as the parser expects.
+
+    Args:
+        repo_root: Git repo root; ``src/forge/data/`` is created under it.
+        entries: Mapping of vendored filename to 64-char lowercase SHA-256 hex string.
+    """
+    data_dir = repo_root / "src" / "forge" / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    for name, sha in entries.items():
+        lines.append(f"## {name}")
+        lines.append(f"- **SHA-256:** `{sha}`")
+        lines.append("")
+    (data_dir / "VENDORED.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def _write_data_js(
+    repo_root: Path,
+    filename: str,
+    content: bytes = b"fake js",
+) -> Path:
+    """Create ``src/forge/data/<filename>`` with *content* and return its path.
+
+    Creates ``src/forge/data/`` when absent so callers need not mkdir first.
+
+    Args:
+        repo_root: Git repo root; ``src/forge/data/`` is created under it.
+        filename: Basename of the vendored asset (e.g. ``"mermaid.min.js"``).
+        content: Raw bytes to write. Defaults to ``b"fake js"``.
+
+    Returns:
+        Absolute path to the written file.
+    """
+    data_dir = repo_root / "src" / "forge" / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    path = data_dir / filename
+    path.write_bytes(content)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Group 2: step_regen_docs
+# MOCKING STRATEGY: shutil.which → controls require_cli (FOUNDATION §2 loud
+# fail vs. pass); precommit._run → controls generator success/failure without
+# invoking real CLIs; precommit.stage_modified_paths → controls restaged-files
+# list without touching a real git index. No real generators or git ops fire.
+# ---------------------------------------------------------------------------
+
+
+def test_step_regen_docs_skips_when_no_docs_exist(tmp_path: Path) -> None:
+    """No docs present → skipped=True, passed=True, 'skipped' in output."""
+    result = precommit.step_regen_docs(tmp_path)
+    assert result.skipped
+    assert result.passed
+    assert "skipped" in result.output
+
+
+def test_step_regen_docs_runs_generator_for_present_doc(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """api-digest.md present → generator is invoked; step is non-blocking and passed.
+
+    SCENARIO: only docs/api-digest.md exists; forge-gen-api-digest exits 0.
+    MOCK SETUP: shutil.which → returns a valid path so require_cli passes;
+        precommit._run → (True, "generated"); stage_modified_paths → [].
+    EXPECTED BEHAVIOR: passed=True, non_blocking=True, skipped=False;
+        "forge-gen-api-digest" appears in output.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api-digest.md").write_text("old\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, "generated"))
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+    result = precommit.step_regen_docs(tmp_path)
+    assert result.passed
+    assert result.non_blocking
+    assert not result.skipped
+    assert "forge-gen-api-digest" in result.output
+
+
+def test_step_regen_docs_is_non_blocking_on_generator_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Generator error → passed=False, non_blocking (warn, don't block commit).
+
+    SCENARIO: docs/api-digest.md present; forge-gen-api-digest exits non-zero.
+    MOCK SETUP: shutil.which → valid path; precommit._run → (False, "crash");
+        stage_modified_paths → [].
+    EXPECTED BEHAVIOR: passed=False, non_blocking=True, skipped=False.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api-digest.md").write_text("old\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (False, "crash"))
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+    result = precommit.step_regen_docs(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+    assert not result.skipped
+
+
+def test_step_regen_docs_includes_restaged_files_in_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-staged paths from stage_modified_paths appear in the step output.
+
+    SCENARIO: api-digest.md present; stage_modified_paths returns the doc path.
+    MOCK SETUP: shutil.which → valid path; precommit._run → (True, "");
+        stage_modified_paths → ["docs/api-digest.md"].
+    EXPECTED BEHAVIOR: "Re-staged:" and "docs/api-digest.md" both in output.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api-digest.md").write_text("old\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, ""))
+    monkeypatch.setattr(
+        precommit, "stage_modified_paths", lambda *_a: ["docs/api-digest.md"]
+    )
+    result = precommit.step_regen_docs(tmp_path)
+    assert "Re-staged:" in result.output
+    assert "docs/api-digest.md" in result.output
+
+
+def test_step_regen_docs_runs_both_generators_when_both_docs_exist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both generated docs present → both CLI names appear in captured _run calls.
+
+    SCENARIO: docs/api-digest.md and docs/cli-reference.md both exist.
+    MOCK SETUP: shutil.which → valid path; precommit._run captures each argv
+        and returns (True, ""); stage_modified_paths → [].
+    EXPECTED BEHAVIOR: "forge-gen-api-digest" and "forge-gen-cli-reference"
+        both appear as the first token of a captured _run invocation.
+    """
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "api-digest.md").write_text("old\n")
+    (docs_dir / "cli-reference.md").write_text("old\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    run_cmds: list[list[str]] = []
+
+    def _capture_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        run_cmds.append(cmd)
+        return True, ""
+
+    monkeypatch.setattr(precommit, "_run", _capture_run)
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+    precommit.step_regen_docs(tmp_path)
+    invoked_clis = [cmd[0] for cmd in run_cmds]
+    assert "forge-gen-api-digest" in invoked_clis
+    assert "forge-gen-cli-reference" in invoked_clis
+
+
+def test_step_regen_docs_cli_missing_exits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing forge-gen-* CLI raises SystemExit(2) (FOUNDATION §2 loud-fail)."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api-digest.md").write_text("old\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit) as exc_info:
+        precommit.step_regen_docs(tmp_path)
+    assert exc_info.value.code == 2
+
+
+def test_step_regen_docs_partial_failure_when_second_generator_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Loop continues past a first-generator success when the second generator fails.
+
+    SCENARIO: both docs/api-digest.md and docs/cli-reference.md exist; the
+    first generator (forge-gen-api-digest) exits 0 but the second
+    (forge-gen-cli-reference) exits non-zero. The loop must not abort after
+    the success — it accumulates the failure flag and continues, so both
+    generator names appear in output and the caller can see the full picture.
+    MOCK SETUP: shutil.which → valid path so require_cli passes for both
+    CLIs; precommit._run dispatches on cmd[0] — "forge-gen-api-digest"
+    returns (True, "ok") and "forge-gen-cli-reference" returns (False,
+    "crash"); precommit.stage_modified_paths → [].
+    EXPECTED BEHAVIOR: passed=False, non_blocking=True, skipped=False;
+    "forge-gen-api-digest" and "forge-gen-cli-reference" both in output.
+    """
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "api-digest.md").write_text("old\n")
+    (docs_dir / "cli-reference.md").write_text("old\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+
+    def _partial_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        if cmd[0] == "forge-gen-api-digest":
+            return True, "ok"
+        return False, "crash"
+
+    monkeypatch.setattr(precommit, "_run", _partial_run)
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+    result = precommit.step_regen_docs(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+    assert not result.skipped
+    assert "forge-gen-api-digest" in result.output
+    assert "forge-gen-cli-reference" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Group 3: _vendored_documented_hashes + _sha256_file
+# ---------------------------------------------------------------------------
+
+
+def test_vendored_documented_hashes_returns_empty_when_md_absent(
+    tmp_path: Path,
+) -> None:
+    """No VENDORED.md at src/forge/data/ → empty dict."""
+    assert precommit._vendored_documented_hashes(tmp_path) == {}
+
+
+def test_vendored_documented_hashes_parses_single_entry(tmp_path: Path) -> None:
+    """A single ## header + SHA-256 line is parsed into {filename: hash}."""
+    _write_vendored_md(tmp_path, {"mermaid.min.js": "a" * 64})
+    result = precommit._vendored_documented_hashes(tmp_path)
+    assert result == {"mermaid.min.js": "a" * 64}
+
+
+def test_vendored_documented_hashes_parses_multiple_entries(tmp_path: Path) -> None:
+    """Multiple ## sections are all parsed and returned in the dict."""
+    entries = {"mermaid.min.js": "a" * 64, "elk.bundled.js": "b" * 64}
+    _write_vendored_md(tmp_path, entries)
+    result = precommit._vendored_documented_hashes(tmp_path)
+    assert result == entries
+
+
+def test_vendored_documented_hashes_skips_header_without_hash_line(
+    tmp_path: Path,
+) -> None:
+    """A ## header with no SHA-256 line beneath it is absent from the result."""
+    data_dir = tmp_path / "src" / "forge" / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "VENDORED.md").write_text(
+        "## mermaid.min.js\n\nNo hash documented here.\n",
+        encoding="utf-8",
+    )
+    result = precommit._vendored_documented_hashes(tmp_path)
+    assert "mermaid.min.js" not in result
+
+
+def test_sha256_file_returns_correct_digest(tmp_path: Path) -> None:
+    """_sha256_file output matches hashlib.sha256 computed over the same bytes."""
+    content = b"test content for sha256"
+    target = tmp_path / "blob.js"
+    target.write_bytes(content)
+    expected = hashlib.sha256(content).hexdigest()
+    assert precommit._sha256_file(target) == expected
+
+
+# ---------------------------------------------------------------------------
+# Group 4: step_vendored_integrity (pure FS — no subprocess mocking)
+# ---------------------------------------------------------------------------
+
+
+def test_step_vendored_integrity_skips_when_data_dir_absent(tmp_path: Path) -> None:
+    """No src/forge/data/ directory → skipped, passed."""
+    result = precommit.step_vendored_integrity(tmp_path)
+    assert result.skipped
+    assert result.passed
+
+
+def test_step_vendored_integrity_skips_when_no_js_files(tmp_path: Path) -> None:
+    """VENDORED.md present but no *.js in data dir → skipped, passed."""
+    _write_vendored_md(tmp_path, {"mermaid.min.js": "a" * 64})
+    result = precommit.step_vendored_integrity(tmp_path)
+    assert result.skipped
+    assert result.passed
+
+
+def test_step_vendored_integrity_skips_when_no_vendored_md(tmp_path: Path) -> None:
+    """A *.js present but no VENDORED.md → skipped, passed."""
+    _write_data_js(tmp_path, "mermaid.min.js")
+    result = precommit.step_vendored_integrity(tmp_path)
+    assert result.skipped
+    assert result.passed
+
+
+def test_step_vendored_integrity_passes_when_all_hashes_match(
+    tmp_path: Path,
+) -> None:
+    """Digest matches VENDORED.md → passed=True, skipped=False, count in output."""
+    content = b"fake js"
+    real_sha = hashlib.sha256(content).hexdigest()
+    _write_data_js(tmp_path, "mermaid.min.js", content)
+    _write_vendored_md(tmp_path, {"mermaid.min.js": real_sha})
+    result = precommit.step_vendored_integrity(tmp_path)
+    assert result.passed
+    assert not result.skipped
+    assert "Verified 1 vendored asset(s)" in result.output
+
+
+def test_step_vendored_integrity_fails_blocking_on_hash_mismatch(
+    tmp_path: Path,
+) -> None:
+    """Documented hash differs from actual digest → passed=False, non_blocking=False."""
+    _write_data_js(tmp_path, "mermaid.min.js", b"real content")
+    _write_vendored_md(tmp_path, {"mermaid.min.js": "0" * 64})
+    result = precommit.step_vendored_integrity(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+    assert "mismatch" in result.output
+    assert "mermaid.min.js" in result.output
+
+
+def test_step_vendored_integrity_fails_blocking_on_undocumented_blob(
+    tmp_path: Path,
+) -> None:
+    """A *.js file with no entry in VENDORED.md → passed=False, non_blocking=False."""
+    _write_data_js(tmp_path, "mermaid.min.js", b"content")
+    # VENDORED.md documents only an absent file — not the actual blob present.
+    _write_vendored_md(tmp_path, {"other.js": "a" * 64})
+    result = precommit.step_vendored_integrity(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+    assert "no SHA-256 entry" in result.output
+    assert "mermaid.min.js" in result.output
+
+
+def test_step_vendored_integrity_notes_orphan_nonfatally(tmp_path: Path) -> None:
+    """Documented-but-absent file is noted in output without failing the step.
+
+    ghost.js appears in VENDORED.md but has no corresponding file on disk;
+    mermaid.min.js is present with its correct hash. The step passes overall
+    (correct blob verified) but surfaces ghost.js as "documented but absent".
+    """
+    content = b"real blob"
+    real_sha = hashlib.sha256(content).hexdigest()
+    _write_data_js(tmp_path, "mermaid.min.js", content)
+    _write_vendored_md(tmp_path, {"mermaid.min.js": real_sha, "ghost.js": "c" * 64})
+    result = precommit.step_vendored_integrity(tmp_path)
+    assert result.passed
+    assert "documented but absent" in result.output
+    assert "ghost.js" in result.output
+
+
+def test_step_vendored_integrity_fails_with_orphan_and_mismatch_combined(
+    tmp_path: Path,
+) -> None:
+    """Orphaned VENDORED.md entry plus a hash mismatch both surface in one result.
+
+    Two blobs on disk: mermaid.min.js has a correct documented hash;
+    elk.bundled.js has a wrong documented hash (FAIL branch). VENDORED.md also
+    documents ghost.js which has no file on disk (orphan branch). Confirms
+    that neither branch silences the other — both are present in the output
+    and the step fails blocking.
+    """
+    good_content = b"good blob"
+    good_sha = hashlib.sha256(good_content).hexdigest()
+    _write_data_js(tmp_path, "mermaid.min.js", good_content)
+    _write_data_js(tmp_path, "elk.bundled.js", b"real elk content")
+    _write_vendored_md(
+        tmp_path,
+        {
+            "mermaid.min.js": good_sha,
+            "elk.bundled.js": "0" * 64,  # documented hash is wrong
+            "ghost.js": "c" * 64,  # documented but no file on disk
+        },
+    )
+    result = precommit.step_vendored_integrity(tmp_path)
+    assert result.passed is False
+    assert result.non_blocking is False
+    assert "Note (documented but absent):" in result.output
+    assert "FAIL:" in result.output
+    assert "mismatch" in result.output
+
+
+# ---------------------------------------------------------------------------
+# missing_console_scripts — shared staleness signal for env_sync + auto_rebuild
+# ---------------------------------------------------------------------------
+
+
+def test_missing_console_scripts_empty_when_no_scripts_declared(
+    tmp_path: Path,
+) -> None:
+    """Returns [] when pyproject has no [project.scripts] table."""
+    result = precommit.missing_console_scripts(tmp_path)
+    assert result == []
+
+
+def test_missing_console_scripts_empty_when_dist_not_installed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Return [] when [project.scripts] declared but distribution is not installed.
+
+    SCENARIO: pyproject declares mypkg with one script; _installed_console_scripts
+        returns None (distribution absent from the environment).
+    MOCK SETUP: _installed_console_scripts patched to always return None.
+    EXPECTED BEHAVIOR: [] — nothing to compare against; a fresh checkout that
+        predates install is not reported as stale.
+    """
+    _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": ""})
+    monkeypatch.setattr(precommit, "_installed_console_scripts", lambda _n: None)
+    assert precommit.missing_console_scripts(tmp_path) == []
+
+
+def test_missing_console_scripts_lists_missing_sorted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Returns a sorted list of declared scripts absent from the installed set.
+
+    SCENARIO: pyproject declares {a, b, c}; installed reports only {b}.
+    MOCK SETUP: _installed_console_scripts patched to return {"b"}.
+    EXPECTED BEHAVIOR: ["a", "c"] — only the two missing names, sorted.
+    """
+    _write_project_scripts_pyproject(tmp_path, "mypkg", {"a": "", "b": "", "c": ""})
+    monkeypatch.setattr(precommit, "_installed_console_scripts", lambda _n: {"b"})
+    assert precommit.missing_console_scripts(tmp_path) == ["a", "c"]
+
+
+def test_missing_console_scripts_empty_when_all_installed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Returns [] when every declared script is present in the installed set."""
+    _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": "", "helper": ""})
+    monkeypatch.setattr(
+        precommit,
+        "_installed_console_scripts",
+        lambda _n: {"mycli", "helper", "extra"},
+    )
+    assert precommit.missing_console_scripts(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# step_auto_rebuild (#128) — heal stale install before env_sync blocks
+# MOCKING STRATEGY: precommit.is_non_interactive controls the CI short-circuit;
+#   FORGE_NO_AUTO_REBUILD (monkeypatch.setenv/delenv) controls the opt-out path;
+#   [tool.forge.env_sync].rebuild_command in a tmp pyproject.toml drives the
+#   _forge_step_config lookup; precommit.missing_console_scripts controls the
+#   staleness signal; precommit._run captures or stubs the subprocess without
+#   spawning a real process. All tests except test_step_auto_rebuild_skips_in_ci
+#   force the interactive path via is_non_interactive → lambda: False and
+#   delete FORGE_NO_AUTO_REBUILD from the environment.
+# ---------------------------------------------------------------------------
+
+
+def test_step_auto_rebuild_skips_in_ci(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """step_auto_rebuild skips immediately when is_non_interactive returns True.
+
+    SCENARIO: CI environment — is_non_interactive signals non-interactive.
+    MOCK SETUP: precommit.is_non_interactive → lambda: True;
+        FORGE_NO_AUTO_REBUILD removed to ensure the CI short-circuit is the
+        sole reason for the skip (not the env opt-out).
+    EXPECTED BEHAVIOR: passed True, skipped True.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
+    monkeypatch.delenv("FORGE_NO_AUTO_REBUILD", raising=False)
+    result = precommit.step_auto_rebuild(tmp_path)
+    assert result.passed
+    assert result.skipped
+
+
+def test_step_auto_rebuild_skips_when_opted_out(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """step_auto_rebuild skips when FORGE_NO_AUTO_REBUILD is set.
+
+    SCENARIO: interactive session but the env opt-out is active.
+    MOCK SETUP: precommit.is_non_interactive → lambda: False;
+        FORGE_NO_AUTO_REBUILD set to "1".
+    EXPECTED BEHAVIOR: passed True, skipped True.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setenv("FORGE_NO_AUTO_REBUILD", "1")
+    result = precommit.step_auto_rebuild(tmp_path)
+    assert result.passed
+    assert result.skipped
+
+
+def test_step_auto_rebuild_skips_when_no_rebuild_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """step_auto_rebuild skips when [tool.forge.env_sync].rebuild_command is absent.
+
+    SCENARIO: interactive; no FORGE_NO_AUTO_REBUILD; no rebuild_command in
+        pyproject — the step never auto-installs without an explicit command.
+    MOCK SETUP: precommit.is_non_interactive → lambda: False;
+        FORGE_NO_AUTO_REBUILD removed; no pyproject.toml written (no config).
+    EXPECTED BEHAVIOR: passed True, skipped True; "rebuild_command configured"
+        in output (specific phrase rather than bare "no", to catch message
+        drift); "env_sync" in output (confirms the config path is named).
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.delenv("FORGE_NO_AUTO_REBUILD", raising=False)
+    result = precommit.step_auto_rebuild(tmp_path)
+    assert result.passed
+    assert result.skipped
+    assert "rebuild_command configured" in result.output
+    assert "env_sync" in result.output
+
+
+def test_step_auto_rebuild_skips_when_install_fresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """step_auto_rebuild skips when no console scripts are missing.
+
+    SCENARIO: interactive; rebuild_command configured; missing_console_scripts
+        returns [] — install is current, nothing to do.
+    MOCK SETUP: precommit.is_non_interactive → lambda: False;
+        FORGE_NO_AUTO_REBUILD removed; pyproject carries rebuild_command;
+        precommit.missing_console_scripts → lambda _: [].
+    EXPECTED BEHAVIOR: passed True, skipped True; "nothing to rebuild" in output.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.delenv("FORGE_NO_AUTO_REBUILD", raising=False)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.env_sync]\nrebuild_command = "./dev/setup.sh"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(precommit, "missing_console_scripts", lambda _root: [])
+    result = precommit.step_auto_rebuild(tmp_path)
+    assert result.passed
+    assert result.skipped
+    assert "nothing to rebuild" in result.output
+
+
+def test_step_auto_rebuild_runs_command_when_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """step_auto_rebuild runs the rebuild command when a declared script is missing.
+
+    SCENARIO: interactive; rebuild_command="./dev/setup.sh"; missing_console_scripts
+        returns ["forge-foo"] — one stale script triggers the rebuild.
+    MOCK SETUP: precommit.is_non_interactive → lambda: False;
+        FORGE_NO_AUTO_REBUILD removed; pyproject carries rebuild_command;
+        precommit.missing_console_scripts → lambda _: ["forge-foo"];
+        precommit._run captures argv and returns (True, "ok").
+    EXPECTED BEHAVIOR: passed True, non_blocking True, skipped False;
+        _run called with ["./dev/setup.sh"] (shlex.split of the command);
+        "rebuilt" in output.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.delenv("FORGE_NO_AUTO_REBUILD", raising=False)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.env_sync]\nrebuild_command = "./dev/setup.sh"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        precommit, "missing_console_scripts", lambda _root: ["forge-foo"]
+    )
+    captured_argv: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured_argv.append(cmd)
+        return True, "ok"
+
+    monkeypatch.setattr(precommit, "_run", _fake_run)
+    result = precommit.step_auto_rebuild(tmp_path)
+    assert result.passed
+    assert result.non_blocking
+    assert not result.skipped
+    assert captured_argv == [["./dev/setup.sh"]]
+    assert "rebuilt" in result.output
+
+
+def test_step_auto_rebuild_nonblocking_when_rebuild_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """step_auto_rebuild is non-blocking when the rebuild command exits non-zero.
+
+    SCENARIO: same stale setup as test_step_auto_rebuild_runs_command_when_stale
+        but _run returns (False, "boom") — the rebuild command failed.
+    MOCK SETUP: precommit.is_non_interactive → lambda: False;
+        FORGE_NO_AUTO_REBUILD removed; pyproject carries rebuild_command;
+        precommit.missing_console_scripts → lambda _: ["forge-foo"];
+        precommit._run → lambda _cmd, **_kw: (False, "boom").
+    EXPECTED BEHAVIOR: passed False, non_blocking True; "FAILED" in output.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.delenv("FORGE_NO_AUTO_REBUILD", raising=False)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.env_sync]\nrebuild_command = "./dev/setup.sh"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        precommit, "missing_console_scripts", lambda _root: ["forge-foo"]
+    )
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (False, "boom"))
+    result = precommit.step_auto_rebuild(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+    assert "FAILED" in result.output

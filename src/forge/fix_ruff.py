@@ -37,51 +37,13 @@ from forge.git_utils import (
     configure_cli_logging,
     get_modified_files,
     require_cli,
+    stage_modified_paths,
     write_step_log,
 )
 
 
 configure_cli_logging()
 logger = logging.getLogger(__name__)
-
-
-def _restage_modified(repo_root: Path, source_dirs: list[str]) -> list[str]:
-    """``git add`` tracked files modified inside *source_dirs*.
-
-    Scoped on purpose: only files under the ruff-managed source dirs are
-    re-staged. Unrelated in-progress edits the developer left unstaged
-    elsewhere in the working tree are not silently folded into the
-    commit. Pathspec-scoped ``git diff`` keeps the contract explicit.
-
-    Args:
-        repo_root: Git repo root.
-        source_dirs: Pathspecs (relative to *repo_root*) limiting which
-            modifications are eligible for re-staging.
-
-    Returns:
-        Newly-staged file paths (relative to repo root). Empty when no
-        in-scope files changed or not in a git repo.
-    """
-    if not (repo_root / ".git").exists():
-        return []
-    proc = subprocess.run(
-        ["git", "diff", "--name-only", "--", *source_dirs],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return []
-    files = [line for line in proc.stdout.splitlines() if line.strip()]
-    if not files:
-        return []
-    subprocess.run(
-        ["git", "add", "--", *files],
-        cwd=repo_root,
-        check=False,
-    )
-    return files
 
 
 def _validate_paths(repo_root: Path, paths: list[str]) -> list[str]:
@@ -182,7 +144,7 @@ def main() -> int:
     chk_proc = subprocess.run(
         check_cmd, cwd=repo_root, capture_output=True, text=True, check=False
     )
-    restaged = _restage_modified(repo_root, source_dirs)
+    restaged = stage_modified_paths(repo_root, source_dirs)
 
     sections = [
         "$ " + " ".join(format_cmd),

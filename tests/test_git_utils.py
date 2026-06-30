@@ -603,3 +603,159 @@ def test_read_plugin_version_at_ref_missing_version_key_returns_none(
         check=True,
     )
     assert git_utils.read_plugin_version_at_ref(tmp_path, "HEAD") is None
+
+
+# ---------------------------------------------------------------------------
+# stage_modified_paths
+# ---------------------------------------------------------------------------
+
+
+def test_stage_modified_paths_returns_empty_without_git_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No .git directory → returns [] without firing subprocess.
+
+    The early-exit guard avoids git calls on paths that aren't repos —
+    important when this helper is called from a generated-doc step that may
+    run in a checkout without a .git dir.
+    """
+    fired: list[bool] = []
+
+    def _spy(cmd: list[str], **_kw: object) -> object:
+        fired.append(True)
+        return type("P", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _spy)
+    result = git_utils.stage_modified_paths(tmp_path, ["docs/api-digest.md"])
+    assert result == []
+    assert fired == []
+
+
+def test_stage_modified_paths_returns_empty_on_diff_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Git diff returns non-zero (e.g. bad repo state) → [] without calling git add."""
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(
+        git_utils.subprocess,
+        "run",
+        lambda *_a, **_kw: type("P", (), {"returncode": 1, "stdout": ""})(),
+    )
+    result = git_utils.stage_modified_paths(tmp_path, ["docs/api-digest.md"])
+    assert result == []
+
+
+def test_stage_modified_paths_returns_empty_when_nothing_changed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Git diff rc=0 empty stdout → [] and git add is NOT called.
+
+    The pathspec scoping means only tracked modifications under the given paths
+    are staged; zero-output diff means nothing to stage.
+    """
+    (tmp_path / ".git").mkdir()
+    cmds: list[list[str]] = []
+
+    def _fake(cmd: list[str], **_kw: object) -> object:
+        cmds.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake)
+    result = git_utils.stage_modified_paths(tmp_path, ["docs/api-digest.md"])
+    assert result == []
+    add_calls = [c for c in cmds if len(c) >= 2 and c[1] == "add"]
+    assert add_calls == []
+
+
+def test_stage_modified_paths_stages_changed_files_and_returns_list(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Diff returns one changed file → that file is passed to git add and returned.
+
+    SCENARIO: git diff outputs "docs/api-digest.md" under the pathspec; git add
+        succeeds.
+    MOCK SETUP: subprocess.run dispatches on cmd[1]: "diff" returns rc=0 with
+        one changed path; "add" returns rc=0.
+    EXPECTED BEHAVIOR: returns ["docs/api-digest.md"]; diff argv contains "--"
+        and the pathspec; add argv contains "--" and the changed path.
+    """
+    (tmp_path / ".git").mkdir()
+    cmds: list[list[str]] = []
+
+    def _fake(cmd: list[str], **_kw: object) -> object:
+        cmds.append(cmd)
+        if cmd[1] == "diff":
+            return type("P", (), {"returncode": 0, "stdout": "docs/api-digest.md\n"})()
+        return type("P", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake)
+    result = git_utils.stage_modified_paths(tmp_path, ["docs/api-digest.md"])
+    assert result == ["docs/api-digest.md"]
+    diff_cmd = next(c for c in cmds if c[1] == "diff")
+    assert "--" in diff_cmd
+    assert "docs/api-digest.md" in diff_cmd
+    add_cmd = next(c for c in cmds if c[1] == "add")
+    assert "--" in add_cmd
+    assert "docs/api-digest.md" in add_cmd
+
+
+def test_stage_modified_paths_passes_multiple_pathspecs_to_diff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r"""Two pathspecs both appear after \"--\" in the diff subprocess argv."""
+    (tmp_path / ".git").mkdir()
+    captured: list[list[str]] = []
+
+    def _fake(cmd: list[str], **_kw: object) -> object:
+        captured.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake)
+    git_utils.stage_modified_paths(
+        tmp_path, ["docs/api-digest.md", "docs/cli-reference.md"]
+    )
+    diff_cmd = next(c for c in captured if c[1] == "diff")
+    sep_idx = diff_cmd.index("--")
+    specs_after = diff_cmd[sep_idx + 1 :]
+    assert "docs/api-digest.md" in specs_after
+    assert "docs/cli-reference.md" in specs_after
+
+
+def test_stage_modified_paths_real_git_stages_modified_tracked_file(
+    tmp_path: Path,
+) -> None:
+    """Integration: a committed-then-modified file is staged and returned.
+
+    Commits ``docs/api-digest.md`` ("v1"), modifies it to "v2", calls the
+    helper, then verifies the path is returned and appears in
+    ``git diff --cached --name-only``.
+    """
+    _init_git_repo(tmp_path)
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    target = docs_dir / "api-digest.md"
+    target.write_text("v1\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add doc"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    target.write_text("v2\n")
+    result = git_utils.stage_modified_paths(tmp_path, ["docs/api-digest.md"])
+    assert result == ["docs/api-digest.md"]
+    proc = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "docs/api-digest.md" in proc.stdout

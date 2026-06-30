@@ -179,6 +179,29 @@ predates install — FOUNDATION §15).
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
 | `blocking` | `true` | Refuse the commit when a declared CLI is missing from the install (else non-blocking WARN). | You want stale-install drift surfaced without blocking — e.g. a repo where contributors don't editable-install their own package. |
+| `rebuild_command` | _(none)_ | The command the `auto_rebuild` step runs to heal a stale install (see below). With no command set, nothing auto-runs — `env_sync` stays detect-only. | You want a stale install fixed automatically instead of blocking the commit. Forge sets `"./dev/setup.sh"`. **Never set a bare `pip install`** — FOUNDATION §2. |
+
+### `auto_rebuild` — heal before `env_sync` blocks (default-on, opt-out)
+
+The `auto_rebuild` step runs **before** `env_sync`. When a pulled change adds a
+`[project.scripts]` CLI and the editable install goes stale, `env_sync` would
+block the very next commit. `auto_rebuild` heals it first: if a declared
+console script is missing **and** `[tool.forge.env_sync].rebuild_command` is
+set, it runs that command so `env_sync` (and every `require_cli` in the run)
+see a fresh install.
+
+It is bounded so it never installs unprompted (FOUNDATION §2): it acts only
+when a script is actually missing, only with an **explicitly configured**
+`rebuild_command` (a repo that sets none is untouched — the step self-skips),
+only interactively (skips CI / non-interactive), and never when the
+**`FORGE_NO_AUTO_REBUILD`** environment variable is set — the per-contributor
+opt-out. Non-blocking: a failed rebuild warns and `env_sync` still renders its
+actionable block.
+
+```bash
+# Disable auto-rebuild for your shell / this commit:
+export FORGE_NO_AUTO_REBUILD=1
+```
 
 ## `[tool.forge.docstring_coverage]`
 
