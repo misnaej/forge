@@ -52,6 +52,9 @@ command, so no consumer action is required.
 - Relocate the git re-stage helper from `fix_ruff` to
   `git_utils.stage_modified_paths` (public) so both the ruff step and the new
   `regen_docs` step share one git-add-back implementation.
+- Extract the shared AST import-scanning primitives into `forge.import_graph`,
+  reused by `forge-gen-c4` and `forge-audit-deps` — internal; folds the
+  v2.13.1 patch into this release (#126).
 
 ## v2.13.0 — 2026-06-26
 
