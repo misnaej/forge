@@ -2007,16 +2007,34 @@ def test_find_headless_browser_env_existing_path_returns_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """_find_headless_browser returns the FORGE_C4_BROWSER value when the path exists.
+    """_find_headless_browser returns FORGE_C4_BROWSER when it is an executable file.
 
-    SCENARIO: FORGE_C4_BROWSER points to a file that exists on disk.
-    MOCK SETUP: a real stub file is created under tmp_path; env var set to its path.
+    SCENARIO: FORGE_C4_BROWSER points to an executable file on disk.
+    MOCK SETUP: a real stub file (chmod +x) is created under tmp_path; env var set.
     EXPECTED BEHAVIOR: _find_headless_browser returns that exact path string.
     """
     fake_browser = tmp_path / "my_browser"
     fake_browser.write_text("")
+    fake_browser.chmod(0o755)
     monkeypatch.setenv(_BROWSER_ENV, str(fake_browser))
     assert _find_headless_browser() == str(fake_browser)
+
+
+def test_find_headless_browser_env_non_executable_returns_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_find_headless_browser rejects a FORGE_C4_BROWSER that is not executable.
+
+    SCENARIO: the override names a real file that lacks the execute bit.
+    MOCK SETUP: a stub file is created (mode 0o644) and pointed at by the env var.
+    EXPECTED BEHAVIOR: returns None — a non-executable path is not a browser.
+    """
+    fake_browser = tmp_path / "not_exec"
+    fake_browser.write_text("")
+    fake_browser.chmod(0o644)
+    monkeypatch.setenv(_BROWSER_ENV, str(fake_browser))
+    assert _find_headless_browser() is None
 
 
 def test_find_headless_browser_env_missing_path_returns_none(
@@ -2098,7 +2116,7 @@ def test_emit_pdf_no_browser_returns_1_with_actionable_message(
     """
     monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: None)
     config = C4Config(system="Test", description="", output="")
-    args = argparse.Namespace(output=None)
+    args = argparse.Namespace(output=None, check=False)
     with caplog.at_level(logging.ERROR, logger="forge.gen_c4"):
         result = _emit_pdf(tmp_path, config, set(), args)
     assert result == 1
@@ -2124,7 +2142,7 @@ def test_emit_pdf_success_writes_pdf_and_returns_0(
     monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: "/fake/chrome")
     monkeypatch.setattr("forge.gen_c4._print_html_to_pdf", _fake_print)
     config = C4Config(system="Test", description="", output="")
-    args = argparse.Namespace(output=None)
+    args = argparse.Namespace(output=None, check=False)
     result = _emit_pdf(tmp_path, config, set(), args)
     assert result == 0
     assert (tmp_path / DEFAULT_PDF_OUTPUT).is_file()
@@ -2150,11 +2168,34 @@ def test_emit_pdf_subprocess_error_returns_1_and_logs_failure(
     monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: "/fake/chrome")
     monkeypatch.setattr("forge.gen_c4._print_html_to_pdf", _raise_cpe)
     config = C4Config(system="Test", description="", output="")
-    args = argparse.Namespace(output=None)
+    args = argparse.Namespace(output=None, check=False)
     with caplog.at_level(logging.ERROR, logger="forge.gen_c4"):
         result = _emit_pdf(tmp_path, config, set(), args)
     assert result == 1
     assert "Headless browser" in caplog.text
+
+
+def test_emit_pdf_check_mode_is_noop_and_writes_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_emit_pdf with --check writes nothing and never invokes the browser.
+
+    SCENARIO: --check requested for the binary, non-deterministic PDF artifact.
+    MOCK SETUP: _find_headless_browser patched to raise if called, proving the
+        check path returns before any browser discovery or write.
+    EXPECTED BEHAVIOR: returns 0; no PDF is written at DEFAULT_PDF_OUTPUT.
+    """
+
+    def _boom() -> str:
+        msg = "browser discovery must not run in --check mode"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", _boom)
+    config = C4Config(system="Test", description="", output="")
+    args = argparse.Namespace(output=None, check=True)
+    assert _emit_pdf(tmp_path, config, set(), args) == 0
+    assert not (tmp_path / DEFAULT_PDF_OUTPUT).exists()
 
 
 # --- #137: _print_html_to_pdf ---

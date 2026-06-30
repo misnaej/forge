@@ -292,8 +292,8 @@ _50 modules, 530 symbols._
 - `_mermaid_init_options(render: RenderConfig, *, layout_var: str) -> str` _(internal)_ — Build the ``mermaid.initialize(...)`` options object for the HTML view.
 - `_pdf_page_geometry(render: RenderConfig) -> tuple[int, int, float, int, int]` _(internal)_ — Resolve the print page box + printable pixel area from the PDF config.
 - `_print_page_css(render: RenderConfig) -> str` _(internal)_ — Build the ``@page`` + ``@media print`` rules for the PDF layout.
-- `_html_interaction_css() -> str` _(internal)_ — Return the inline CSS for the #124 hover-highlight state.
-- `_html_interaction_script() -> str` _(internal)_ — Return the inline JS wiring hover-highlight + click-to-open-tab (#124).
+- `_html_interaction_css() -> str` _(internal)_ — Return the inline CSS for the hover-highlight focus state.
+- `_html_interaction_script() -> str` _(internal)_ — Return the inline JS wiring hover-highlight + click-to-open-tab interactivity.
 - `render_html(config: C4Config, views: list[tuple[str, str]]) -> str` — Wrap the C4 views in a self-contained, offline, tabbed HTML page.
 - `_copy_vendored_mermaid(dest_dir: Path) -> None` _(internal)_ — Write the vendored Mermaid + ELK-layout bundles next to an emitted HTML.
 - `_warn_unmatched(unmatched: list[str]) -> None` _(internal)_ — Log a coverage warning naming modules in no component.
@@ -306,7 +306,7 @@ _50 modules, 530 symbols._
 - `_emit_html(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the offline HTML view (+ vendored Mermaid sidecar).
 - `_find_headless_browser() -> str | None` _(internal)_ — Locate an installed Chromium-family browser for headless PDF printing.
 - `_print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None` _(internal)_ — Drive *browser* headlessly to print *html_path* to *pdf_path*.
-- `_emit_pdf(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Render the C4 views to a vector PDF via a headless browser (#137).
+- `_emit_pdf(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Render the C4 views to a vector PDF via a headless browser.
 - `_emit_dsl(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the canonical DSL artifact and the README C4 block.
 - `main() -> int` — Generate or verify the C4 artifacts (DSL + README block, or HTML).
 - `_parse_args() -> argparse.Namespace` _(internal)_ — Parse the ``forge-gen-c4`` command-line arguments.

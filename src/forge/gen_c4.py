@@ -51,7 +51,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from importlib import resources
 from pathlib import Path
 
@@ -71,7 +71,7 @@ DEFAULT_OUTPUT = "docs/architecture.dsl"
 DEFAULT_HTML_OUTPUT = "docs/architecture.html"
 DEFAULT_PDF_OUTPUT = "docs/architecture.pdf"
 REGEN_CMD = "forge-gen-c4"
-# Headless-browser print-to-PDF backend (#137). Mermaid is a JS library, so a
+# Headless-browser print-to-PDF backend. Mermaid is a JS library, so a
 # browser engine must execute it to produce a vector PDF; forge reuses the same
 # offline HTML the `html` format emits, then drives an already-installed Chrome/
 # Chromium/Edge/Brave with --headless --print-to-pdf. No new dependency, no
@@ -279,8 +279,8 @@ class RenderConfig:
 
     Each field maps to a key the generated page feeds into
     ``mermaid.initialize(...)`` — see :func:`_mermaid_init_options` for the
-    key→Mermaid-scope mapping. Defaults reproduce forge's shipped look (the
-    #125 ELK tuning) plus the label-wrap fix, so an absent section renders the
+    key→Mermaid-scope mapping. Defaults reproduce forge's shipped look (ELK
+    layout tuning plus the label-wrap fix), so an absent section renders the
     bug-fixed default with no configuration. Pass-through fields default to a
     sentinel (``None`` / ``""`` / empty) that omits the key, leaving Mermaid's
     own default untouched rather than pinning it.
@@ -290,7 +290,8 @@ class RenderConfig:
             wraps at (the overflow fix). Mermaid auto-sizes the box to the
             wrapped label.
         html_labels: ``htmlLabels`` — render labels as HTML; ``None`` omits the
-            key. Set ``False`` to dodge the Firefox empty-label bug (#5785).
+            key. Set ``False`` to avoid a Firefox rendering bug where certain
+            nodes show empty labels.
         font_family: ``fontFamily`` — empty omits (keeps Mermaid's stack).
         font_size: ``fontSize`` — ``None`` omits.
         node_spacing: ``flowchart.nodeSpacing`` — ``None`` omits.
@@ -572,9 +573,12 @@ def _validate_component_containers(
 def _parse_render_config(section: dict) -> RenderConfig:
     """Build the HTML :class:`RenderConfig` from the model's ``render`` table.
 
-    Reads ``[tool.forge.c4.render]`` (``section["render"]``) field by field with
-    tolerant ``.get()`` calls, so an unknown key is ignored rather than fatal and
-    an absent table yields the all-default config (the bug-fixed shipped look).
+    The ``[tool.forge.c4.render]`` keys are named identically to the
+    :class:`RenderConfig` fields, so each matching key is passed straight through
+    and the **dataclass field defaults are the single source of defaults** (no
+    second copy to drift). Unknown keys are dropped (tolerant); a ``render`` that
+    is absent or not a table yields the all-default config; a malformed
+    (non-table) ``theme_colors`` is dropped so its ``{}`` default stands.
 
     Args:
         section: The resolved ``[tool.forge.c4]`` model table.
@@ -586,30 +590,11 @@ def _parse_render_config(section: dict) -> RenderConfig:
     raw = section.get("render")
     if not isinstance(raw, dict):
         return RenderConfig()
-    colors = raw.get("theme_colors")
-    return RenderConfig(
-        wrapping_width=raw.get("wrapping_width", 220),
-        html_labels=raw.get("html_labels"),
-        font_family=raw.get("font_family", ""),
-        font_size=raw.get("font_size"),
-        node_spacing=raw.get("node_spacing"),
-        rank_spacing=raw.get("rank_spacing"),
-        padding=raw.get("padding"),
-        diagram_padding=raw.get("diagram_padding"),
-        custom_css=raw.get("custom_css", ""),
-        layout=raw.get("layout", "elk"),
-        node_placement_strategy=raw.get("node_placement_strategy", "NETWORK_SIMPLEX"),
-        force_node_model_order=raw.get("force_node_model_order", True),
-        merge_edges=raw.get("merge_edges", False),
-        consider_model_order=raw.get("consider_model_order", ""),
-        cycle_breaking_strategy=raw.get("cycle_breaking_strategy", ""),
-        theme=raw.get("theme", "neutral"),
-        theme_colors=dict(colors) if isinstance(colors, dict) else {},
-        pdf_page_size=raw.get("pdf_page_size", "A4"),
-        pdf_orientation=raw.get("pdf_orientation", "landscape"),
-        pdf_fit=raw.get("pdf_fit", "contain"),
-        pdf_margin=raw.get("pdf_margin", 10),
-    )
+    known = {f.name for f in fields(RenderConfig)}
+    kwargs = {key: value for key, value in raw.items() if key in known}
+    if not isinstance(kwargs.get("theme_colors"), dict):
+        kwargs.pop("theme_colors", None)
+    return RenderConfig(**kwargs)
 
 
 def load_c4_config(root: Path) -> C4Config | None:
@@ -1779,7 +1764,7 @@ def _mermaid_init_options(render: RenderConfig, *, layout_var: str) -> str:
     mapping (root / ``flowchart`` / ``elk`` / ``themeVariables``). Always-emitted
     keys reproduce forge's shipped look plus the wrap fix (``securityLevel``,
     ``theme``, ``useMaxWidth:false``, ``wrappingWidth``, ``markdownAutoWrap``, and
-    the #125 ELK tuning); pass-through keys are emitted only when set, leaving
+    the ELK layout tuning); pass-through keys are emitted only when set, leaving
     Mermaid's own default in place otherwise. ``themeVariables`` apply only under
     ``theme:"base"`` (Mermaid ignores them otherwise).
 
@@ -1919,7 +1904,7 @@ def _print_page_css(render: RenderConfig) -> str:
 
 
 def _html_interaction_css() -> str:
-    """Return the inline CSS for the #124 hover-highlight state.
+    """Return the inline CSS for the hover-highlight focus state.
 
     While a node is hovered (``c4-focus-mode``) every node, edge path, and edge
     *label* dims except those marked ``c4-on`` — so only the hovered node's
@@ -1940,7 +1925,7 @@ def _html_interaction_css() -> str:
 
 
 def _html_interaction_script() -> str:
-    """Return the inline JS wiring hover-highlight + click-to-open-tab (#124).
+    """Return the inline JS wiring hover-highlight + click-to-open-tab interactivity.
 
     Operates on Mermaid's post-``run()`` SVG DOM. Edge incidence is read from the
     ELK-rendered edge ids (``L_<source>_<target>_<n>_<m>``) resolved against the
@@ -2052,19 +2037,19 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
 
     Each emitted view (System Context, Containers, one per container's
     Components) becomes its own navigable tab mirroring the DSL views, so a
-    reader zooms in deliberately instead of facing one flattened diagram
-    (#116). References the vendored ``mermaid.min.js`` sidecar by relative
-    path, so it renders with no network.
+    reader zooms in deliberately instead of facing one flattened diagram.
+    References the vendored ``mermaid.min.js`` sidecar by relative path, so it
+    renders with no network.
 
     Mermaid renders every pane while it is still visible, then the tab script
     hides the inactive ones — rendering a Mermaid block inside a
     ``display:none`` element would otherwise produce a zero-size diagram.
 
     The Mermaid setup is driven by ``[tool.forge.c4.render]``
-    (:func:`_mermaid_init_options`); its defaults wrap box labels and fix the
-    overflow (#140). Hover-highlight and click-to-open-tab interactivity
+    (:func:`_mermaid_init_options`); its defaults wrap box labels, fixing the
+    node-label overflow. Hover-highlight and click-to-open-tab interactivity
     (:func:`_html_interaction_script`) is wired onto each pane's SVG after
-    render (#124).
+    render.
 
     Args:
         config: The model skeleton (page title/description + render config).
@@ -2434,7 +2419,8 @@ def _find_headless_browser() -> str | None:
     """
     override = os.environ.get(_BROWSER_ENV)
     if override:
-        return override if Path(override).exists() else None
+        ok = Path(override).is_file() and os.access(override, os.X_OK)
+        return override if ok else None
     for path in _BROWSER_APP_PATHS:
         if Path(path).exists():
             return path
@@ -2465,6 +2451,9 @@ def _print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
     cmd = [
         browser,
         "--headless",
+        # --no-sandbox: the Chromium sandbox needs a writable user-data dir /
+        # namespaces forge can't assume in CI containers, and the only input is
+        # forge's own locally generated file:// page — no untrusted web content.
         "--no-sandbox",
         "--disable-gpu",
         "--no-first-run",
@@ -2488,23 +2477,31 @@ def _print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
 def _emit_pdf(
     root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace
 ) -> int:
-    """Render the C4 views to a vector PDF via a headless browser (#137).
+    """Render the C4 views to a vector PDF via a headless browser.
 
     Writes the same offline HTML the ``html`` format emits (plus the vendored
     Mermaid + ELK sidecars) into a temp dir, then prints it to PDF with a
     detected Chromium-family browser. The PDF is a binary, non-deterministic
-    artifact, so ``--check`` does not apply; it is always (re)generated.
+    artifact, so ``--check`` has nothing to verify — it is a no-op (never writes)
+    rather than silently regenerating.
 
     Args:
         root: Repository root directory.
         config: The model skeleton.
         edges: Derived component edges.
-        args: Parsed CLI args (``output``).
+        args: Parsed CLI args (``check``, ``output``).
 
     Returns:
-        ``0`` on a successful write; ``1`` when no browser is found or the
-        headless print fails.
+        ``0`` on a successful write (or a skipped ``--check``); ``1`` when no
+        browser is found or the headless print fails.
     """
+    if args.check:
+        logger.info(
+            "PDF output has no drift check (binary, non-deterministic); "
+            "--check skips it. Regenerate with `%s --format pdf`.",
+            REGEN_CMD,
+        )
+        return 0
     browser = _find_headless_browser()
     if browser is None:
         logger.error(
