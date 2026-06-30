@@ -47,6 +47,7 @@ import html
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -1927,17 +1928,18 @@ def _html_interaction_css() -> str:
 def _html_interaction_script() -> str:
     """Return the inline JS wiring hover-highlight + click-to-open-tab interactivity.
 
-    Operates on Mermaid's post-``run()`` SVG DOM. Edge incidence is read from the
-    ELK-rendered edge ids (``L_<source>_<target>_<n>_<m>``) resolved against the
-    set of ``g.node`` logical ids — node slugs contain underscores, so each id is
-    split at every boundary and accepted only when both halves are known nodes
-    (class-based ``LS-``/``LE-`` hooks are not emitted under the ELK layout).
-    Hovering a node reveals it, its incident edges, those edges' relationship
-    labels, and their neighbours while dimming everything else (edge labels carry
-    no id, so they map to edges by document order). Clicking a node that has a
-    drill-down view switches to that tab (``window.c4Tabs`` →
-    ``window.c4ShowPane``); other nodes have no click action. Every selector is
-    guarded, so a missing node/edge degrades to a no-op.
+    Operates on Mermaid's post-``run()`` SVG DOM. Edge incidence is resolved by
+    **exact node id**, never by name: ``window.c4Edges`` carries the precise
+    ``[srcId, tgtId]`` pairs per pane (emitted by Python in edge-render order),
+    so the i-th ``path.flowchart-link`` maps to the i-th pair — the rendered edge
+    DOM id (``L_<src>_<tgt>_…``) is ambiguous because node slugs contain the same
+    ``_`` separator. Hovering a node reveals it, its incident edges, those edges'
+    relationship labels, and their neighbours while dimming everything else (edge
+    labels carry no id, so they map to edges by document order). Clicking a node
+    whose **id** matches a container view (``window.c4Tabs`` →
+    ``window.c4ShowPane``) switches to that tab; other nodes have no click
+    action. Every selector is guarded, so a missing node/edge degrades to a
+    no-op.
 
     Returns:
         A JS snippet defining ``window.c4WireView(svg)`` for embedding in a
@@ -1949,25 +1951,18 @@ window.c4WireView = (function () {
   function logicalId(node) {
     return (node.id || "").replace(/^flowchart-/, "").replace(/-\d+$/, "");
   }
-  function edgeEnds(edge, nodeSet) {
-    // id is L_<source>_<target>_<counter...>; node ids contain underscores, so
-    // try every split and accept the first where both halves are known nodes.
-    var parts = (edge.id || "").replace(/^L_/, "").split("_");
-    for (var i = 1; i < parts.length; i++) {
-      var src = parts.slice(0, i).join("_");
-      if (!nodeSet[src]) { continue; }
-      for (var j = i + 1; j <= parts.length; j++) {
-        var tgt = parts.slice(i, j).join("_");
-        if (nodeSet[tgt]) { return [src, tgt]; }
-      }
-    }
-    return null;
+  function paneEdges(svg) {
+    // Exact [srcId, tgtId] pairs for this pane, emitted by Python in the same
+    // order Mermaid renders the edge paths — keyed by id, never by name.
+    var pane = svg.closest(".pane");
+    var idx = pane ? Number(pane.getAttribute("data-pane")) : -1;
+    return (window.c4Edges || [])[idx] || [];
   }
   function tabFor(node) {
     var tabs = window.c4Tabs || [];
-    var text = (node.textContent || "").replace(/\s+/g, " ").trim();
+    var id = logicalId(node);
     for (var i = 0; i < tabs.length; i++) {
-      if (text.indexOf(tabs[i].name) === 0) { return tabs[i].pane; }
+      if (tabs[i].id === id) { return tabs[i].pane; }
     }
     return null;
   }
@@ -1979,13 +1974,12 @@ window.c4WireView = (function () {
     // Edge labels carry no id; Mermaid emits them in the same order as the
     // edge paths, so the i-th label belongs to the i-th edge.
     var labels = svg.querySelectorAll("g.edgeLabels g.edgeLabel");
-    var nodeSet = {};
-    nodes.forEach(function (g) { nodeSet[logicalId(g)] = true; });
+    var endpoints = paneEdges(svg);
     function focus(id) {
       svg.classList.add("c4-focus-mode");
       var keepNodes = {}; keepNodes[id] = true;
       edges.forEach(function (edge, i) {
-        var ends = edgeEnds(edge, nodeSet);
+        var ends = endpoints[i];
         var on = !!ends && (ends[0] === id || ends[1] === id);
         edge.classList.toggle("c4-on", on);
         if (labels[i]) { labels[i].classList.toggle("c4-on", on); }
@@ -2030,6 +2024,35 @@ window.c4WireView = (function () {
   };
 })();
 """
+
+
+_EDGE_LINE = re.compile(
+    r'^\s*([A-Za-z0-9_]+)\s+-->(?:\|"[^"]*"\|)?\s+([A-Za-z0-9_]+)\s*$'
+)
+
+
+def _edge_endpoints(mermaid_text: str) -> list[list[str]]:
+    """Extract the ordered ``[source_id, target_id]`` pairs from a view's source.
+
+    Each edge line is ``<src> -->|"label"| <dst>`` with the *exact* allocated
+    node ids as separate tokens, so the endpoints are unambiguous here — unlike
+    the rendered edge DOM id (``L_<src>_<tgt>_…``), which concatenates the ids
+    with the same ``_`` that appears inside them. Mermaid emits edge paths in
+    source order, so the i-th pair maps to the i-th ``path.flowchart-link`` and
+    the interaction script can resolve incidence by exact id, never by name.
+
+    Args:
+        mermaid_text: One view's Mermaid source.
+
+    Returns:
+        ``[source_id, target_id]`` pairs in edge-declaration order.
+    """
+    pairs: list[list[str]] = []
+    for line in mermaid_text.splitlines():
+        match = _EDGE_LINE.match(line)
+        if match:
+            pairs.append([match.group(1), match.group(2)])
+    return pairs
 
 
 def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
@@ -2078,19 +2101,18 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
     print_config = json.dumps(
         {"w": print_w_px, "h": print_h_px, "fit": config.render.pdf_fit}
     )
-    # Click-to-open-tab map: each container's Component view, keyed by the
-    # container name its node label starts with. Longest name first so a name
-    # that prefixes another (e.g. "forge" vs "forge-scripts") never mis-routes.
+    # Exact per-pane edge endpoints (allocated ids), so hover incidence is keyed
+    # by id, never by parsing the ambiguous edge DOM id or matching names.
+    edge_config = json.dumps([_edge_endpoints(text) for _label, text in views])
+    # Click-to-open-tab map: each container's Component view, keyed by the exact
+    # node id (slug) of the container — an id equality test, immune to one
+    # container name being a prefix/substring of another.
     suffix = " Components"
-    tab_targets = sorted(
-        (
-            {"name": label[: -len(suffix)], "pane": i}
-            for i, (label, _t) in enumerate(views)
-            if label.endswith(suffix)
-        ),
-        key=lambda t: len(t["name"]),
-        reverse=True,
-    )
+    tab_targets = [
+        {"id": _slug(label[: -len(suffix)]), "pane": i}
+        for i, (label, _t) in enumerate(views)
+        if label.endswith(suffix)
+    ]
     tab_config = json.dumps(tab_targets)
     return f"""<!doctype html>
 <html lang="en">
@@ -2153,7 +2175,9 @@ console.log("c4: layout engine =", c4layout);
 // Printable page area (px @96dpi) + fit mode, consumed by c4WireView to set each
 // SVG's --c4-print-scale so the diagram fits its page when printed to PDF.
 window.c4Print = {print_config};
-// Container name -> Component-view pane index, for click-to-open-tab.
+// Per-pane exact edge endpoints [[srcId, tgtId], ...] in edge-render order.
+window.c4Edges = {edge_config};
+// Container node id -> Component-view pane index, for click-to-open-tab.
 window.c4Tabs = {tab_config};
 mermaid.initialize({init_options});
 mermaid.run().then(function () {{

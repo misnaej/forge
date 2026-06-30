@@ -269,15 +269,17 @@ driven by `[tool.forge.c4.render]` (see
 so a repo only sets a key to deviate (fonts, spacing, colors, ELK tuning).
 
 **Hover + click interactivity.** Inline JS wires onto Mermaid's post-render SVG.
-Edge incidence is read from the ELK-rendered edge ids (`L_<source>_<target>_…`)
-resolved against the set of node ids — node slugs contain underscores, so each id
-is split at every boundary and accepted only when both halves are known nodes
-(the ELK layout does not emit the `LS-`/`LE-` edge classes the dagre layout does).
-Hovering a node reveals it, its incident edges, and their neighbours while dimming
-the rest — the connection (edge) labels stay at full opacity so the relationship
-text remains readable; clicking a container jumps to its Components tab. It is
-additive, per-tab, fully offline (no network, no deps), and degrades to a no-op if
-a selector is missing.
+Edge incidence is resolved by **exact node id**: the renderer emits each pane's
+precise `[sourceId, targetId]` pairs (in edge-render order) as `window.c4Edges`,
+so the i-th edge path maps to the i-th pair. This deliberately avoids parsing the
+rendered edge DOM id (`L_<source>_<target>_…`), which is ambiguous because node
+slugs contain the same `_` separator — a node whose id is a prefix of another's
+would otherwise cross-highlight. Hovering a node reveals it, its incident edges
+and *their* relationship labels (labels carry no id, so they map to edges by
+document order), and the neighbour nodes, dimming everything else; clicking a node
+whose id matches a container jumps to its Components tab. It is additive, per-tab,
+fully offline (no network, no deps), and degrades to a no-op if a selector is
+missing.
 
 ### Modeling reach (any-element relationships)
 

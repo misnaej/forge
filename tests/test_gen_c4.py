@@ -30,6 +30,7 @@ from forge.gen_c4 import (
     _build_views,
     _copy_vendored_mermaid,
     _derive_container_edges,
+    _edge_endpoints,
     _emit_pdf,
     _external_node_line,
     _externals_with_declared_incoming,
@@ -2397,40 +2398,63 @@ def test_render_html_emits_page_setup_and_print_config() -> None:
 # --- #124: click-to-open-tab map + edge-id-based hover incidence ---
 
 
-def test_render_html_emits_tab_map_for_containers() -> None:
-    """render_html maps each container's name to its Component-view pane index."""
+def test_render_html_emits_tab_map_by_container_id() -> None:
+    """render_html maps each container's node id (slug) to its Component pane."""
     config = _two_container_config(())
     views = _build_views(config, set())
     page = render_html(config, views)
     # Containers occupy panes 2 and 3 (after System Context + Containers views).
-    assert '"name": "Applications", "pane": 2' in page
-    assert '"name": "Domain libraries", "pane": 3' in page
+    assert '"id": "applications", "pane": 2' in page
+    assert '"id": "domain_libraries", "pane": 3' in page
     assert "window.c4ShowPane = show;" in page
 
 
-def test_render_html_tab_map_longest_name_first() -> None:
-    """The tab map is ordered longest name first so a name prefix never wins."""
+def test_render_html_tab_map_prefix_names_get_distinct_ids() -> None:
+    """A container whose name prefixes another's still maps to its own exact id."""
     config = C4Config(
         system="S",
         description="",
         output="",
-        containers=(
-            Container("forge", "", ""),
-            Container("forge-scripts", "", ""),
-        ),
+        containers=(Container("Foo", "", ""), Container("Foo server", "", "")),
     )
     page = render_html(config, _build_views(config, set()))
-    tabs_line = next(line for line in page.splitlines() if "window.c4Tabs =" in line)
-    assert tabs_line.index("forge-scripts") < tabs_line.index('"forge"')
+    # Exact, distinct ids — never a substring/prefix match.
+    assert '"id": "foo", "pane": 2' in page
+    assert '"id": "foo_server", "pane": 3' in page
 
 
-def test_html_interaction_script_resolves_edges_by_id_not_class() -> None:
-    """Hover incidence parses ELK edge ids (no LS-/LE- classes exist under ELK)."""
+def test_edge_endpoints_extracts_exact_pairs() -> None:
+    """_edge_endpoints reads exact [src, tgt] ids from the edge lines, in order."""
+    text = (
+        "graph LR\n"
+        '    foo -->|"uses"| bar\n'
+        '    foo_server -->|"reads"| foo\n'
+        '    bar["label with --> arrow inside"]\n'
+    )
+    assert _edge_endpoints(text) == [["foo", "bar"], ["foo_server", "foo"]]
+
+
+def test_edge_endpoints_prefix_ids_not_confused() -> None:
+    """An edge between prefix-overlapping ids resolves to the exact endpoints.
+
+    `foo` is a prefix of `foo_server`; parsing the rendered edge DOM id
+    `L_foo_foo_server_0_0` would ambiguously split to foo->foo, but the source
+    line carries the ids as separate tokens, so the endpoints are exact.
+    """
+    text = 'graph LR\n    foo -->|"calls"| foo_server\n'
+    assert _edge_endpoints(text) == [["foo", "foo_server"]]
+
+
+def test_html_interaction_script_resolves_edges_by_exact_id() -> None:
+    """Hover incidence uses the Python-emitted exact endpoints, not id/name parsing."""
     script = _html_interaction_script()
-    assert "function edgeEnds" in script
-    assert "replace(/^L_/" in script
-    assert "function tabFor" in script
-    # The stale class-based hooks must be gone.
+    # Exact per-pane endpoints, keyed by id.
+    assert "window.c4Edges" in script
+    assert "endpoints[i]" in script
+    assert "tabs[i].id === id" in script
+    # The ambiguous edge-id parser and class hooks must be gone.
+    assert "edgeEnds" not in script
+    assert "replace(/^L_/" not in script
     assert "LS-" not in script
 
 

@@ -51,11 +51,12 @@ The DSL / README / `--format mermaid` output is unchanged.
   `merge_edges`, `cycle_breaking_strategy` (Step 2). Defaults reproduce the
   bug-fixed look; unknown keys are tolerated. See `docs/configuration.md` (#140).
 - **Interactive C4 HTML — hover-reveal + click-to-open-tab.** Hovering a node
-  reveals it, its incident edges, and their neighbours while dimming the rest;
-  the connection (edge) labels stay readable. Clicking a container opens its
-  Components tab. Edge incidence is read from the ELK-rendered edge ids resolved
-  against the node set — fully offline (`file://`), no new dependencies, per-tab,
-  degrades gracefully (#124).
+  reveals it, its incident edges and *their* relationship labels, and the
+  neighbour nodes while dimming everything else. Clicking a container opens its
+  Components tab. Incidence is resolved by **exact node id** (the precise
+  endpoints are emitted per pane from the model, not parsed from the ambiguous
+  edge DOM id), so prefix-overlapping node names never cross-highlight. Fully
+  offline (`file://`), no new dependencies, per-tab, degrades gracefully (#124).
 
 ## v2.14.0 — 2026-06-30
 

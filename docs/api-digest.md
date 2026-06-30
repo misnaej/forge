@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_50 modules, 530 symbols._
+_50 modules, 531 symbols._
 
 ## `forge._hook_helpers`
 
@@ -294,6 +294,7 @@ _50 modules, 530 symbols._
 - `_print_page_css(render: RenderConfig) -> str` _(internal)_ — Build the ``@page`` + ``@media print`` rules for the PDF layout.
 - `_html_interaction_css() -> str` _(internal)_ — Return the inline CSS for the hover-highlight focus state.
 - `_html_interaction_script() -> str` _(internal)_ — Return the inline JS wiring hover-highlight + click-to-open-tab interactivity.
+- `_edge_endpoints(mermaid_text: str) -> list[list[str]]` _(internal)_ — Extract the ordered ``[source_id, target_id]`` pairs from a view's source.
 - `render_html(config: C4Config, views: list[tuple[str, str]]) -> str` — Wrap the C4 views in a self-contained, offline, tabbed HTML page.
 - `_copy_vendored_mermaid(dest_dir: Path) -> None` _(internal)_ — Write the vendored Mermaid + ELK-layout bundles next to an emitted HTML.
 - `_warn_unmatched(unmatched: list[str]) -> None` _(internal)_ — Log a coverage warning naming modules in no component.
