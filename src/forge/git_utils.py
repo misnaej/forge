@@ -600,3 +600,40 @@ def get_tracked_files(
     return sorted(
         set(_parse_files(_run_git("ls-files"), suffix=suffix, prefix=prefix)),
     )
+
+
+def stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]:
+    """``git add`` tracked files modified within *pathspecs*.
+
+    Pathspec-scoped on purpose: only modifications under the given pathspecs
+    are re-staged, so a step that mutates a file (ruff reformat, a doc
+    regenerator) folds *its own* change into the commit without sweeping in
+    unrelated unstaged edits elsewhere in the working tree. Both
+    :mod:`forge.fix_ruff` (source dirs) and the doc-regen pre-commit step
+    (specific doc paths) share this one git-add-back helper.
+
+    Args:
+        repo_root: Git repo root (the subprocess ``cwd``).
+        pathspecs: Paths relative to *repo_root* limiting which modifications
+            are eligible for re-staging.
+
+    Returns:
+        Newly-staged file paths (relative to repo root). Empty when no
+        in-scope file changed or *repo_root* is not a git repo.
+    """
+    if not (repo_root / ".git").exists():
+        return []
+    proc = subprocess.run(
+        ["git", "diff", "--name-only", "--", *pathspecs],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    files = [line for line in proc.stdout.splitlines() if line.strip()]
+    if not files:
+        return []
+    subprocess.run(["git", "add", "--", *files], cwd=repo_root, check=False)
+    return files

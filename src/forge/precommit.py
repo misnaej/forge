@@ -2,9 +2,13 @@
 
 Generic Python pre-commit check dispatcher. Auto-detects source
 directories and runs an ordered sequence on every commit. The default
-sequence: env-sync (a deadly-fast install-freshness gate that runs first —
-blocks when a declared ``[project.scripts]`` CLI is not installed, i.e. a
-stale editable install), ruff (always ``ruff format`` + ``ruff check --fix
+sequence: auto-rebuild (runs first — heals a stale editable install via a
+configured ``rebuild_command`` before env-sync would block on it; opt-out
+via ``FORGE_NO_AUTO_REBUILD``), env-sync (a deadly-fast install-freshness
+gate — blocks when a declared ``[project.scripts]`` CLI is not installed,
+i.e. a stale editable install), regen-docs (regenerates + re-stages the
+otherwise-unwired generated docs — ``api-digest`` / ``cli-reference`` —
+non-blocking), ruff (always ``ruff format`` + ``ruff check --fix
 --unsafe-fixes`` in-place, with modified tracked files re-staged via
 ``git add``), docstring verification (over the diff vs main), test-name
 verification (over the diff vs main), repo-structure verification
@@ -12,8 +16,9 @@ verification (over the diff vs main), repo-structure verification
 validation, Claude Code plugin-version drift guard (when applicable), a
 CHANGELOG-history guard (fires only on a branch that merged the base
 branch in — a promotion — so main's curated entries can't be dropped),
-and ``pip-audit`` dependency vulnerability scan (non-blocking — warns
-but does not refuse a commit). Shipped to consumers via the
+a vendored-integrity gate (vendored ``data/*.js`` blobs must match their
+``VENDORED.md`` SHA-256), and ``pip-audit`` dependency vulnerability scan
+(non-blocking — warns but does not refuse a commit). Shipped to consumers via the
 ``forge-scripts`` pip package and invoked by ``.githooks/pre-commit``
 after ``install-forge-githooks``.
 
@@ -51,9 +56,12 @@ after run only if the forge sequence passed.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import json
+import os
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -69,6 +77,7 @@ from forge.git_utils import (
     parse_semver,
     read_local_plugin_version,
     require_cli,
+    stage_modified_paths,
     write_step_log,
 )
 from forge.git_utils import repo_root as get_repo_root
@@ -260,6 +269,31 @@ def _installed_console_scripts(name: str) -> set[str] | None:
     return {ep.name for ep in dist.entry_points if ep.group == "console_scripts"}
 
 
+def missing_console_scripts(repo_root: Path) -> list[str]:
+    """Declared ``[project.scripts]`` names not registered as console scripts.
+
+    The shared staleness signal: ``step_env_sync`` blocks on it,
+    ``step_auto_rebuild`` heals on it. Empty when there is nothing to compare
+    — no ``[project.scripts]`` table, or the distribution is not installed at
+    all (a fresh checkout that legitimately predates install, which neither
+    step treats as stale).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        Sorted declared console-script names absent from the install.
+    """
+    declared = _declared_scripts(repo_root)
+    if declared is None:
+        return []
+    name, scripts = declared
+    installed = _installed_console_scripts(name)
+    if installed is None:
+        return []
+    return sorted(scripts - installed)
+
+
 # Captures only a clean X.Y.Z, so a match always feeds parse_semver a valid
 # triple (the `pin_v is None` guard below is defensive, not reachable here).
 _FORGE_SCRIPTS_PIN_RE = re.compile(r"^forge-scripts\s*==\s*(\d+\.\d+\.\d+)\b")
@@ -307,6 +341,75 @@ def _forge_scripts_pin_drift(repo_root: Path) -> tuple[str, str] | None:
     if pin_v is None or have_v is None or have_v >= pin_v:
         return None
     return pinned, have
+
+
+def step_auto_rebuild(repo_root: Path) -> StepResult:
+    """Reinstall a stale editable install before ``env_sync`` blocks the commit.
+
+    When a pulled change adds a ``[project.scripts]`` CLI, the editable
+    install goes stale and ``env_sync`` blocks the very next commit (the
+    papercut that forced a manual ``./dev/setup.sh`` mid-merge). This heals it
+    first: when a declared console script is missing, it runs the configured
+    ``[tool.forge.env_sync].rebuild_command`` so the later ``env_sync`` — and
+    every ``require_cli`` in the same run — see a fresh install.
+
+    Bounded so it never surprises (FOUNDATION §2): it acts only when something
+    is actually missing, only with an **explicitly configured** rebuild
+    command (never a defaulted ``pip install`` — a repo that sets no command is
+    untouched), only interactively (self-skips CI / non-interactive per §15),
+    and never when ``FORGE_NO_AUTO_REBUILD`` is set (the opt-out). A failed
+    rebuild warns rather than blocking — ``env_sync`` still renders the
+    actionable block.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` (``non_blocking=True`` when it acts); skipped when
+        disabled, in CI, opted out, nothing is missing, or no rebuild command
+        is configured.
+    """
+    if is_non_interactive() or os.environ.get("FORGE_NO_AUTO_REBUILD"):
+        return StepResult(
+            name="auto_rebuild",
+            passed=True,
+            output="(CI / non-interactive or FORGE_NO_AUTO_REBUILD — skipped)",
+            skipped=True,
+        )
+    command = _forge_step_config(repo_root, "env_sync").get("rebuild_command")
+    if not isinstance(command, str) or not command.strip():
+        return StepResult(
+            name="auto_rebuild",
+            passed=True,
+            output="(no [tool.forge.env_sync].rebuild_command configured — skipped)",
+            skipped=True,
+        )
+    missing = missing_console_scripts(repo_root)
+    if not missing:
+        return StepResult(
+            name="auto_rebuild",
+            passed=True,
+            output="(install fresh — nothing to rebuild)",
+            skipped=True,
+        )
+    emit(
+        f"auto_rebuild: {len(missing)} stale console script(s) — running "
+        f"`{command}` (set FORGE_NO_AUTO_REBUILD=1 to disable)…"
+    )
+    # shell=True is intentionally absent: the command is split with shlex and
+    # run as argv, so shell metacharacters in it are literal args. Its trust
+    # boundary is the repo's tracked pyproject.toml — the same level as every
+    # other pre-commit step that runs repo code; review a rebuild_command change
+    # with the scrutiny of a .githooks/pre-commit change (it runs at commit
+    # time on whoever's branch it lands on).
+    passed, output = _run(shlex.split(command), cwd=repo_root)
+    note = "rebuilt" if passed else "rebuild FAILED — env_sync will block below"
+    return StepResult(
+        name="auto_rebuild",
+        passed=passed,
+        output=f"$ {command}\n{output.strip() or '(no output)'}\n\n{note}",
+        non_blocking=True,
+    )
 
 
 def step_env_sync(repo_root: Path) -> StepResult:
@@ -367,7 +470,7 @@ def step_env_sync(repo_root: Path) -> StepResult:
         if installed is not None:
             installed_known = True
             scripts_count = len(scripts)
-            missing = sorted(scripts - installed)
+            missing = missing_console_scripts(repo_root)
 
         # Blocking entry-point freshness takes priority over the pin advisory.
         if missing:
@@ -1191,6 +1294,169 @@ def step_doc_consistency(repo_root: Path) -> StepResult:
     )
 
 
+# Generators that write a tracked doc but have no drift gate of their own —
+# step_regen_docs keeps each fresh (regenerate + re-stage) when it exists.
+_REGEN_DOCS: tuple[tuple[str, str], ...] = (
+    ("forge-gen-api-digest", "docs/api-digest.md"),
+    ("forge-gen-cli-reference", "docs/cli-reference.md"),
+)
+
+
+def step_regen_docs(repo_root: Path) -> StepResult:
+    """Regenerate the otherwise-unwired generated docs and re-stage them.
+
+    ``docs/api-digest.md`` and ``docs/cli-reference.md`` come from
+    deterministic generators but — unlike the C4 model and the commit-types
+    hook — have no drift gate, so they silently rot. This refreshes them the
+    way the ruff step refreshes formatting: regenerate in place, then
+    ``git add`` the result into the commit. Only docs that **already exist**
+    are touched (sync, never bootstrap a surprise tracked file in a consumer
+    repo). A generator crash warns rather than refusing the commit.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` (``non_blocking=True``); skipped when neither doc
+        exists. ``passed`` is False only when a present generator errored.
+
+    Raises:
+        SystemExit: If a needed ``forge-gen-*`` CLI is not on PATH.
+    """
+    targets = [(cli, rel) for cli, rel in _REGEN_DOCS if (repo_root / rel).exists()]
+    if not targets:
+        return StepResult(
+            name="regen_docs",
+            passed=True,
+            output="(no generated docs present — skipped)",
+            skipped=True,
+        )
+    passed = True
+    sections: list[str] = []
+    for cli, _rel in targets:
+        require_cli(cli, caller="forge-precommit")
+        ok, output = _run([cli], cwd=repo_root)
+        passed = passed and ok
+        sections.append(f"$ {cli}\n{output.strip() or '(no output)'}")
+    restaged = stage_modified_paths(repo_root, [rel for _, rel in targets])
+    if restaged:
+        sections.append("Re-staged: " + ", ".join(restaged))
+    return StepResult(
+        name="regen_docs",
+        passed=passed,
+        output="\n\n".join(sections),
+        non_blocking=True,
+    )
+
+
+_VENDORED_DATA_DIR = "src/forge/data"
+_VENDORED_MD = "src/forge/data/VENDORED.md"
+_VENDORED_SHA_RE = re.compile(r"\*\*SHA-256:\*\*\s*`([0-9a-f]{64})`")
+_VENDORED_HEADER_RE = re.compile(r"^##\s+(\S+)\s*$")
+
+
+def _vendored_documented_hashes(repo_root: Path) -> dict[str, str]:
+    """Parse ``VENDORED.md`` into a ``{filename: sha256}`` map.
+
+    Each ``## <filename>`` section documents one vendored asset; the
+    ``**SHA-256:** `<hash>``` line beneath it records its expected digest.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        Mapping of vendored filename to documented lowercase SHA-256; empty
+        when ``VENDORED.md`` is absent.
+    """
+    md = repo_root / _VENDORED_MD
+    if not md.exists():
+        return {}
+    hashes: dict[str, str] = {}
+    current: str | None = None
+    for line in md.read_text(encoding="utf-8").splitlines():
+        header = _VENDORED_HEADER_RE.match(line)
+        if header:
+            current = header.group(1)
+            continue
+        sha = _VENDORED_SHA_RE.search(line)
+        if sha and current:
+            hashes[current] = sha.group(1)
+    return hashes
+
+
+def _sha256_file(path: Path) -> str:
+    """Return *path*'s SHA-256 hex digest, read in 64 KiB chunks.
+
+    Chunked so a multi-megabyte vendored bundle never loads whole into
+    memory.
+
+    Args:
+        path: File to hash.
+
+    Returns:
+        Lowercase 64-character hex digest.
+    """
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def step_vendored_integrity(repo_root: Path) -> StepResult:
+    """Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
+
+    The large third-party bundles under ``src/forge/data/`` (Mermaid, the ELK
+    layout) carry a documented provenance SHA-256 in ``VENDORED.md``, but
+    nothing enforces it — a silently swapped or corrupted blob, or a stale
+    ``VENDORED.md`` after a manual re-bundle, would pass unnoticed. This turns
+    the documented hash into an enforced invariant: a mismatch, or a vendored
+    ``*.js`` with no documented hash, **fails the commit**. An orphaned entry
+    (documented but the file is gone) is a non-fatal note.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult``; skipped when nothing to verify, otherwise blocking on
+        any hash mismatch or undocumented blob.
+    """
+    data_dir = repo_root / _VENDORED_DATA_DIR
+    blobs = sorted(data_dir.glob("*.js")) if data_dir.is_dir() else []
+    documented = _vendored_documented_hashes(repo_root)
+    if not blobs or not documented:
+        return StepResult(
+            name="vendored_integrity",
+            passed=True,
+            output="(no vendored *.js + VENDORED.md to verify — skipped)",
+            skipped=True,
+        )
+    problems: list[str] = []
+    for blob in blobs:
+        expected = documented.get(blob.name)
+        if expected is None:
+            problems.append(f"{blob.name}: no SHA-256 entry in VENDORED.md")
+            continue
+        actual = _sha256_file(blob)
+        if actual != expected:
+            problems.append(
+                f"{blob.name}: SHA-256 mismatch\n"
+                f"    expected {expected}\n    actual   {actual}"
+            )
+    present = {b.name for b in blobs}
+    orphans = [name for name in sorted(documented) if name not in present]
+    lines = [f"Verified {len(blobs)} vendored asset(s) against VENDORED.md."]
+    if orphans:
+        lines.append("Note (documented but absent): " + ", ".join(orphans))
+    if problems:
+        lines.append("FAIL:\n  " + "\n  ".join(problems))
+    return StepResult(
+        name="vendored_integrity",
+        passed=not problems,
+        output="\n".join(lines),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
@@ -1233,10 +1499,14 @@ def _print_step_line(result: StepResult) -> None:
 # Ordered registry — the single source of truth for which steps exist,
 # their run order, and which are on by default. Opt-in steps
 # (default_on=False) run only when named in [tool.forge.precommit].enable
-# or --only. env_sync runs first (fast freshness gate); ruff runs second
-# because it mutates + re-stages files before any validators see the diff.
+# or --only. auto_rebuild runs first (heals a stale install before env_sync
+# would block on it); env_sync is the fast freshness gate; regen_docs and ruff
+# follow because they mutate + re-stage files before any validator sees the
+# diff (regen_docs refreshes generated docs, ruff reformats source).
 _STEP_REGISTRY: tuple[StepDef, ...] = (
+    StepDef("auto_rebuild", step_auto_rebuild),
     StepDef("env_sync", step_env_sync),
+    StepDef("regen_docs", step_regen_docs),
     StepDef("ruff", step_ruff),
     StepDef("docstring_verification", step_docstrings),
     StepDef("docstring_coverage", step_docstring_coverage),
@@ -1248,6 +1518,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("plugin_version", step_plugin_version),
     StepDef("release_tag_guard", step_release_tag_guard),
     StepDef("changelog_history", step_changelog_history),
+    StepDef("vendored_integrity", step_vendored_integrity),
     StepDef("pip_audit", step_pip_audit),
     StepDef("cve_usage", step_cve_usage),
     StepDef("doctest", step_doctest, default_on=False),
@@ -1326,9 +1597,10 @@ def run_all(
 
     The sequence is resolved from the registry via :func:`_resolve_steps`
     (``[tool.forge.precommit] enable/disable`` plus ``skip`` / ``only``).
-    ``step_env_sync`` runs first (a fast in-process install-freshness gate);
-    ``step_ruff`` follows and shells out to ``fix-forge-ruff`` (applies ruff
-    fixes and re-stages modified tracked files); the rest verify only.
+    ``step_auto_rebuild`` runs first (heals a stale editable install before
+    ``step_env_sync``'s freshness gate would block on it); ``step_regen_docs``
+    and ``step_ruff`` follow and mutate + re-stage files (regenerated docs,
+    ruff fixes) before any validator sees the diff; the rest verify only.
 
     Args:
         repo_root: Override the auto-detected git repo root. Useful in tests.
