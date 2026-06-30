@@ -203,6 +203,14 @@ actionable block.
 export FORGE_NO_AUTO_REBUILD=1
 ```
 
+> **Trust boundary.** `rebuild_command` is the one pre-commit setting whose
+> *command itself* comes from `pyproject.toml` (every other step runs a
+> hardcoded CLI). It runs on a contributor's machine at commit time, so a PR
+> that adds or changes `rebuild_command` deserves the same scrutiny as a change
+> to `.githooks/pre-commit` or a new `[project.scripts]` entry. It is run as
+> argv via `shlex.split` (never `shell=True`) and never in CI, but treat it as
+> trusted-repo-only config.
+
 ## `[tool.forge.docstring_coverage]`
 
 Forge-specific keys for the docstring-coverage reporter. (The coverage *gate*
