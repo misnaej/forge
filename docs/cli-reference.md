@@ -460,7 +460,8 @@ options:
 
 ```text
 usage: forge-smart-test [-h] [--depth {0,1,2,full,infinity}] [--show-files]
-                        [--coverage] [--base BASE]
+                        [--coverage] [--base BASE] [--from-commit-message]
+                        [--coverage-db COVERAGE_DB]
 
 Run only the tests a change set affects, in escalating import-depth tiers with
 fail-fast. Depth full runs the whole suite with coverage.
@@ -475,6 +476,13 @@ options:
   --coverage            Enable coverage (always on for --depth full).
   --base BASE           Ref to diff against for change detection (default:
                         auto-detect).
+  --from-commit-message
+                        Override --depth from a [depth-N]/[full] directive in
+                        HEAD's message.
+  --coverage-db COVERAGE_DB
+                        Coverage map (coverage json or .coverage DB) to union
+                        covering tests into the selection (Gap 2; enables
+                        coverage validation).
 ```
 
 ## forge-upgrade

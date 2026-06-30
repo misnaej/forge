@@ -21,13 +21,21 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from forge import config as _config
 from forge.git_utils import configure_cli_logging
-from forge.smart_test.dependencies import render_plan, select_tests
-from forge.smart_test.git_helpers import changed_python_files, resolve_base_ref
+from forge.smart_test import coverage as cov_stage
+from forge.smart_test.dependencies import SelectionPlan, render_plan, select_tests
+from forge.smart_test.git_helpers import (
+    changed_python_files,
+    head_commit_message,
+    resolve_base_ref,
+)
 from forge.smart_test.runner import clear_python_cache, run_pytest
 
 
@@ -37,6 +45,48 @@ logger = logging.getLogger(__name__)
 _FULL = "full"
 _DEPTH_CHOICES = ("0", "1", "2", _FULL, "infinity")
 _LOG_RELPATH = Path("code_health") / "smart_test.log"
+# Default CI directive: [depth-N] or [full]/[infinity] anywhere in the commit
+# message. Override via [tool.forge.smart_test].commit_directive_re.
+_DEPTH_DIRECTIVE_RE = r"\[(?:depth-(?P<n>[0-2])|(?P<full>full|infinity))\]"
+
+
+def _smart_test_config(repo_root: Path) -> dict[str, object]:
+    """Return the ``[tool.forge.smart_test]`` table, or ``{}`` when absent.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        The subsection dict (``follow_mock_patches`` etc.), or ``{}``.
+    """
+    data = _config.read_pyproject_raw(repo_root)
+    return ((data.get("tool") or {}).get("forge") or {}).get("smart_test") or {}
+
+
+def _depth_from_commit(repo_root: Path, cfg: dict[str, object]) -> str | None:
+    """Read a depth directive from ``HEAD``'s commit message, if present.
+
+    Matches ``[depth-N]`` / ``[full]`` (or a consumer regex from
+    ``commit_directive_re``) and maps it to a ``--depth`` token. Lets CI
+    drive the tier from the commit without re-implementing the grep.
+
+    Args:
+        repo_root: Git repo root.
+        cfg: The ``[tool.forge.smart_test]`` table (for ``commit_directive_re``).
+
+    Returns:
+        A depth token (``"0"``/``"1"``/``"2"``/``"full"``), or ``None`` when
+        the message carries no directive.
+    """
+    pattern = cfg.get("commit_directive_re")
+    regex = pattern if isinstance(pattern, str) else _DEPTH_DIRECTIVE_RE
+    match = re.search(regex, head_commit_message(repo_root), re.IGNORECASE)
+    if not match:
+        return None
+    groups = match.groupdict()
+    if groups.get("full"):
+        return _FULL
+    return groups.get("n")
 
 
 def _parse_depth(raw: str) -> int | str:
@@ -81,43 +131,57 @@ def _run_full(repo_root: Path) -> tuple[int, str]:
     return run_pytest(repo_root, [], coverage=True)
 
 
+@dataclass
+class _RunConfig:
+    """Configuration for a tiered test run."""
+
+    coverage: bool
+    """Whether to instrument coverage (off by default per tier)."""
+    extra_depth0: set[str]
+    """Coverage-derived tests to union into the depth-0 batch."""
+    header: str
+    """One-line run header recorded at the top of the log."""
+
+
 def _run_tiers(
-    repo_root: Path, depth: int, *, coverage: bool, base: str | None
+    repo_root: Path,
+    depth: int,
+    plan: SelectionPlan,
+    config: _RunConfig,
 ) -> tuple[int, str]:
     """Run depth batches 0..*depth* with fail-fast between them.
 
     Each batch runs only the tests *newly* reachable at its depth (lower
-    depths already passed), with the import cache cleared between batches.
-    The first failing batch short-circuits and returns its exit code.
+    depths already passed); coverage-validated extras (Gap 2) join the
+    depth-0 batch. The import cache is cleared between batches and the
+    first failing batch short-circuits.
 
     Args:
         repo_root: Git repo root.
         depth: Highest depth to run (0, 1, or 2).
-        coverage: Whether to instrument coverage (off by default per tier).
-        base: Explicit diff base ref, or ``None`` to auto-detect.
+        plan: The precomputed static selection.
+        config: Run configuration (coverage, extra_depth0, header).
 
     Returns:
         ``(exit_code, combined_output)`` across the batches that ran.
     """
-    base_ref = resolve_base_ref(repo_root, base)
-    changed = changed_python_files(repo_root, base_ref)
-    plan = select_tests(repo_root, changed, depth)
-
-    output = [f"base: {base_ref}  changed .py files: {len(changed)}\n"]
-    selected = plan.tests_up_to(depth)
-    if not selected:
+    output = [config.header]
+    if not (set(plan.tests_up_to(depth)) | config.extra_depth0):
         output.append("No tests reach the changed files — nothing to run.\n")
         return 0, "".join(output)
 
     already: set[str] = set()
     for tier in range(depth + 1):
-        batch = sorted(set(plan.tests_up_to(tier)) - already)
+        batch_set = set(plan.tests_up_to(tier))
+        if tier == 0:
+            batch_set |= config.extra_depth0
+        batch = sorted(batch_set - already)
         if not batch:
             continue
         already.update(batch)
         clear_python_cache(repo_root)
         output.append(f"\n=== depth {tier}: {len(batch)} test file(s) ===\n")
-        code, out = run_pytest(repo_root, batch, coverage=coverage)
+        code, out = run_pytest(repo_root, batch, coverage=config.coverage)
         output.append(out)
         if code != 0:
             output.append(f"\nFAILED at depth {tier} — skipping higher depths.\n")
@@ -126,12 +190,11 @@ def _run_tiers(
     return 0, "".join(output)
 
 
-def main() -> int:
-    """Select and run change-affected tests by depth; write the log.
+def _build_parser() -> argparse.ArgumentParser:
+    """Construct the ``forge-smart-test`` argument parser.
 
     Returns:
-        The exit code of the run: ``0`` on success / nothing-to-run /
-        ``--show-files``, else the first failing batch's pytest exit code.
+        The configured parser.
     """
     parser = argparse.ArgumentParser(
         prog="forge-smart-test",
@@ -162,30 +225,77 @@ def main() -> int:
         default=None,
         help="Ref to diff against for change detection (default: auto-detect).",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--from-commit-message",
+        action="store_true",
+        help="Override --depth from a [depth-N]/[full] directive in HEAD's message.",
+    )
+    parser.add_argument(
+        "--coverage-db",
+        default=None,
+        help="Coverage map (coverage json or .coverage DB) to union covering "
+        "tests into the selection (Gap 2; enables coverage validation).",
+    )
+    return parser
 
+
+def main() -> int:
+    """Select and run change-affected tests by depth; write the log.
+
+    Returns:
+        The exit code of the run: ``0`` on success / nothing-to-run /
+        ``--show-files``, else the first failing batch's pytest exit code.
+    """
+    args = _build_parser().parse_args()
     repo_root = Path.cwd()
-    depth_raw = _parse_depth(args.depth)
+    cfg = _smart_test_config(repo_root)
+    follow = bool(cfg.get("follow_mock_patches", False))
 
-    if args.show_files:
-        if depth_raw == _FULL:
-            logger.info("📋 Tests covering changed code (depth full): the entire suite")
-            return 0
-        depth: int = cast("int", depth_raw)
-        base_ref = resolve_base_ref(repo_root, args.base)
-        changed = changed_python_files(repo_root, base_ref)
-        plan = select_tests(repo_root, changed, depth)
-        logger.info("%s", render_plan(plan, depth))
-        return 0
+    depth_token = args.depth
+    if args.from_commit_message and (directive := _depth_from_commit(repo_root, cfg)):
+        depth_token = directive
+        logger.info("Depth '%s' set from commit-message directive.", depth_token)
+    depth_raw = _parse_depth(depth_token)
 
     if depth_raw == _FULL:
+        if args.show_files:
+            logger.info("📋 Tests covering changed code (depth full): the entire suite")
+            return 0
         code, body = _run_full(repo_root)
-    else:
-        depth = cast("int", depth_raw)
-        code, body = _run_tiers(
-            repo_root, depth, coverage=args.coverage, base=args.base
-        )
+        _write_log(repo_root, body)
+        logger.info("%s", body.rstrip())
+        return code
 
+    depth = cast("int", depth_raw)
+    base_ref = resolve_base_ref(repo_root, args.base)
+    changed = changed_python_files(repo_root, base_ref)
+    plan = select_tests(repo_root, changed, depth, follow_mock_patches=follow)
+
+    coverage_db = args.coverage_db or cfg.get("coverage_db")
+    coverage_validate = bool(cfg.get("coverage_validate", False)) or bool(
+        args.coverage_db
+    )
+    extra_depth0: set[str] = set()
+    if coverage_validate and isinstance(coverage_db, str):
+        extra_depth0 = cov_stage.tests_covering(Path(coverage_db), changed, repo_root)
+
+    if args.show_files:
+        logger.info("%s", render_plan(plan, depth))
+        if extra_depth0:
+            extras = "\n".join(f"  - {t}" for t in sorted(extra_depth0))
+            logger.info("📋 Coverage-validated additions (depth 0):\n%s", extras)
+        return 0
+
+    header = (
+        f"base: {base_ref}  changed .py files: {len(changed)}  "
+        f"follow_mock_patches={follow}  coverage_validate={coverage_validate}\n"
+    )
+    config = _RunConfig(
+        coverage=args.coverage,
+        extra_depth0=extra_depth0,
+        header=header,
+    )
+    code, body = _run_tiers(repo_root, depth, plan, config)
     _write_log(repo_root, body)
     logger.info("%s", body.rstrip())
     return code

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_54 modules, 533 symbols._
+_55 modules, 544 symbols._
 
 ## `forge._hook_helpers`
 
@@ -548,11 +548,21 @@ _54 modules, 533 symbols._
 
 ## `forge.smart_test.cli`
 
+- `_smart_test_config(repo_root: Path) -> dict[str, object]` _(internal)_ — Return the ``[tool.forge.smart_test]`` table, or ``{}`` when absent.
+- `_depth_from_commit(repo_root: Path, cfg: dict[str, object]) -> str | None` _(internal)_ — Read a depth directive from ``HEAD``'s commit message, if present.
 - `_parse_depth(raw: str) -> int | str` _(internal)_ — Map a ``--depth`` token to an int tier or the ``full`` sentinel.
 - `_write_log(repo_root: Path, body: str) -> None` _(internal)_ — Write *body* to ``code_health/smart_test.log``.
-- `_run_full(repo_root: Path, *, coverage: bool) -> tuple[int, str]` _(internal)_ — Run the entire suite (the ``full`` tier), always with coverage.
-- `_run_tiers(repo_root: Path, depth: int, *, coverage: bool, base: str | None) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
+- `_run_full(repo_root: Path) -> tuple[int, str]` _(internal)_ — Run the entire suite (the ``full`` tier), always with coverage.
+- `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, *, coverage: bool, extra_depth0: set[str], header: str) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
 - `main() -> int` — Select and run change-affected tests by depth; write the log.
+
+## `forge.smart_test.coverage`
+
+- `_context_to_test(context: str) -> str | None` _(internal)_ — Reduce a coverage context to a repo-relative test file path.
+- `_from_json(path: Path, changed: set[str]) -> set[str]` _(internal)_ — Extract covering tests from a ``coverage json --show-contexts`` export.
+- `_from_sqlite(path: Path, changed: set[str], repo_root: Path) -> set[str]` _(internal)_ — Extract covering tests from a ``.coverage`` SQLite DB.
+- `tests_covering(coverage_path: Path, changed_files: Iterable[str], repo_root: Path) -> set[str]` — Return repo-relative test files whose coverage touches a changed file.
 
 ## `forge.smart_test.dependencies`
 
@@ -561,15 +571,19 @@ _54 modules, 533 symbols._
 - `_roots(repo_root: Path) -> tuple[list[Path], list[Path]]` _(internal)_ — Return ``(source_dir_paths, test_dir_paths)`` as absolute paths.
 - `_iter_py(roots: Iterable[Path]) -> Iterable[Path]` _(internal)_ — Yield every ``.py`` file under *roots*.
 - `_closest_known(target: str, modules: set[str]) -> str | None` _(internal)_ — Resolve an import *target* to the deepest known module that covers it.
+- `_dotted(node: ast.expr) -> str | None` _(internal)_ — Return the dotted name of an attribute/name chain, or ``None``.
+- `_string_literals(args: list[ast.expr]) -> list[str]` _(internal)_ — Return the string-constant values among *args*, in order.
+- `_patch_targets(tree: ast.Module) -> set[str]` _(internal)_ — Return the dotted module-attribute targets of ``mock.patch`` calls.
 - `class _Graph` _(internal)_ — The internal import graph plus the name↔path mapping.
-- `build_graph(repo_root: Path) -> _Graph` — Parse the repo into an internal import graph.
-- `select_tests(repo_root: Path, changed_files: set[str], max_depth: int) -> SelectionPlan` — Compute the depth-layered test selection for a change set.
+- `build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph` — Parse the repo into an internal import graph.
+- `select_tests(repo_root: Path, changed_files: set[str], max_depth: int, *, follow_mock_patches: bool = False) -> SelectionPlan` — Compute the depth-layered test selection for a change set.
 - `render_plan(plan: SelectionPlan, depth: int) -> str` — Render a parseable ``--show-files`` plan for *depth*.
 
 ## `forge.smart_test.git_helpers`
 
 - `_ref_exists(repo_root: Path, ref: str) -> bool` _(internal)_ — Return whether *ref* resolves to a commit in the repo.
 - `resolve_base_ref(repo_root: Path, override: str | None = None) -> str` — Resolve the ref to diff ``HEAD`` against for change detection.
+- `head_commit_message(repo_root: Path) -> str` — Return ``HEAD``'s full commit message (subject + body).
 - `changed_python_files(repo_root: Path, base_ref: str) -> set[str]` — Return repo-relative ``.py`` files changed vs *base_ref*.
 
 ## `forge.smart_test.runner`

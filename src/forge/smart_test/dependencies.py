@@ -117,6 +117,124 @@ def _closest_known(target: str, modules: set[str]) -> str | None:
     return None
 
 
+def _dotted(node: ast.expr) -> str | None:
+    """Return the dotted name of an attribute/name chain, or ``None``.
+
+    ``patch`` → ``"patch"``; ``mock.patch.object`` → ``"mock.patch.object"``.
+    Returns ``None`` for any callee that is not a plain name/attribute chain
+    (e.g. a subscript or call result).
+
+    Args:
+        node: The ``func`` expression of an :class:`ast.Call`.
+
+    Returns:
+        The dotted callee name, or ``None``.
+    """
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return ".".join(reversed(parts))
+    return None
+
+
+def _string_literals(args: list[ast.expr]) -> list[str]:
+    """Return the string-constant values among *args*, in order.
+
+    Args:
+        args: Positional argument expressions of a call.
+
+    Returns:
+        Each ``str`` constant arg; non-string args are skipped.
+    """
+    return [
+        a.value
+        for a in args
+        if isinstance(a, ast.Constant) and isinstance(a.value, str)
+    ]
+
+
+def _classify_patch_call(node: ast.Call) -> str | None:
+    """Classify a call node as a patch variant: ``"patch"``, ``"dict"``, or ``None``.
+
+    Returns ``None`` if the node is not a patch call or is ``patch.object``.
+
+    Args:
+        node: An AST Call node.
+
+    Returns:
+        Patch kind (``"patch"`` or ``"dict"``) or ``None`` if not a patch call.
+    """
+    callee = _dotted(node.func)
+    if callee is None:
+        return None
+    segments = callee.split(".")
+    tail = ".".join(segments[-2:])
+    if tail in {"patch.object", "patch.dict"}:
+        kind = tail.split(".")[-1]
+    elif segments[-1] == "patch":
+        kind = "patch"
+    else:
+        return None
+    return None if kind == "object" else kind
+
+
+def _collect_sys_modules_targets(node: ast.Call, targets: set[str]) -> None:
+    """Extract module names from a ``patch.dict("sys.modules", {…})`` call.
+
+    Yields the dict literal keys (module names being injected).
+
+    Args:
+        node: A Call node confirmed to be ``patch.dict("sys.modules", {...})``.
+        targets: Set to update with the extracted module names.
+    """
+    for arg in node.args[1:]:
+        if isinstance(arg, ast.Dict):
+            targets.update(
+                k.value
+                for k in arg.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            )
+
+
+def _patch_targets(tree: ast.Module) -> set[str]:
+    """Return the dotted module-attribute targets of ``mock.patch`` calls.
+
+    Walks every :class:`ast.Call` (decorators included — ``ast.walk`` visits
+    them) and collects the string-literal target of the ``patch`` family:
+    ``patch("pkg.mod.attr")`` / ``@patch(...)`` / ``patch.dict(...)``,
+    tolerating ``mock.``/``mocker.`` prefixes. ``patch.object(obj, "attr")``
+    is skipped — ``obj`` is reached through its own import. The special
+    ``patch.dict("sys.modules", {…})`` form yields the injected module names
+    (its dict keys). Targets are returned raw (``"pkg.mod.attr"``); the
+    caller reduces them to importable modules via :func:`_closest_known`,
+    exactly as import targets are reduced.
+
+    Args:
+        tree: Parsed test module.
+
+    Returns:
+        Raw dotted patch targets; empty when the module patches nothing.
+    """
+    targets: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        kind = _classify_patch_call(node)
+        if kind is None:
+            continue
+        strings = _string_literals(node.args)
+        if not strings:
+            continue
+        if kind == "dict" and strings[0] == "sys.modules":
+            _collect_sys_modules_targets(node, targets)
+            continue
+        targets.add(strings[0])
+    return targets
+
+
 @dataclass
 class _Graph:
     """The internal import graph plus the name↔path mapping.
@@ -132,7 +250,7 @@ class _Graph:
     test_modules: set[str] = field(default_factory=set)
 
 
-def build_graph(repo_root: Path) -> _Graph:
+def build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph:
     """Parse the repo into an internal import graph.
 
     Source roots resolve to dotted names rooted at the source dir
@@ -144,6 +262,10 @@ def build_graph(repo_root: Path) -> _Graph:
 
     Args:
         repo_root: Git repo root.
+        follow_mock_patches: When ``True``, a test file's ``mock.patch``
+            string targets (Gap-1 opt-in) are added as edges alongside its
+            imports — ``patch("pkg.mod.attr")`` becomes a dep on ``pkg.mod``
+            even with no import statement. Off by default.
 
     Returns:
         The populated :class:`_Graph`.
@@ -164,9 +286,12 @@ def build_graph(repo_root: Path) -> _Graph:
         except (SyntaxError, UnicodeDecodeError):
             continue
         rel = path.relative_to(repo_root).as_posix()
-        parsed[name] = (rel, extract_import_targets(tree, name))
+        targets = extract_import_targets(tree, name)
         if any(path.is_relative_to(tr) for tr in test_roots):
             test_modules.add(name)
+            if follow_mock_patches:
+                targets = targets | _patch_targets(tree)
+        parsed[name] = (rel, targets)
 
     known = set(parsed)
     graph = _Graph(test_modules=test_modules)
@@ -178,7 +303,11 @@ def build_graph(repo_root: Path) -> _Graph:
 
 
 def select_tests(
-    repo_root: Path, changed_files: set[str], max_depth: int
+    repo_root: Path,
+    changed_files: set[str],
+    max_depth: int,
+    *,
+    follow_mock_patches: bool = False,
 ) -> SelectionPlan:
     """Compute the depth-layered test selection for a change set.
 
@@ -192,11 +321,13 @@ def select_tests(
         repo_root: Git repo root.
         changed_files: Repo-relative ``.py`` paths that changed.
         max_depth: Highest depth to expand (0, 1, or 2).
+        follow_mock_patches: Treat ``mock.patch`` string targets as edges
+            (Gap-1 opt-in); forwarded to :func:`build_graph`.
 
     Returns:
         A :class:`SelectionPlan` describing the selection.
     """
-    graph = build_graph(repo_root)
+    graph = build_graph(repo_root, follow_mock_patches=follow_mock_patches)
     module_of = {rel: name for name, rel in graph.path_of.items()}
 
     changed_modules = {module_of[f] for f in changed_files if f in module_of}

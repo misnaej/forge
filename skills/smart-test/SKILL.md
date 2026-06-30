@@ -38,6 +38,11 @@ pass before higher ones run (fail-fast).
    - `--coverage` adds coverage to the smart tiers (it is always on for
      `full`).
    - `--base <ref>` overrides the diff base (e.g. a PR target branch in CI).
+   - `--coverage-db <path>` unions tests whose coverage **contexts** cover a
+     changed line (runtime links static analysis misses); needs a per-test
+     map (`pytest --cov-context=test`). Enables `coverage_validate`.
+   - `--from-commit-message` reads a `[depth-N]` / `[full]` directive from
+     `HEAD`'s message and overrides `--depth` (CI convenience).
 
 3. **Report the outcome.** On failure the run stops at the first failing
    depth and exits non-zero; the full output is also written to
@@ -45,11 +50,33 @@ pass before higher ones run (fail-fast).
    failing depth and the failing tests; do not escalate to a higher depth
    until the current one is green.
 
+## CI recipe
+
+Drive the depth from the CI context — short on PR pushes, full on
+release/default branches and risky changes:
+
+```yaml
+# PR push: depth from a [depth-N]/[full] commit directive (default depth 1)
+- run: forge-smart-test --from-commit-message --base "origin/${{ github.base_ref }}"
+
+# Default branch / release / dependency bump: run everything with coverage
+- if: github.ref == 'refs/heads/main'
+  run: forge-smart-test --depth full
+```
+
+For coverage validation, record a per-test map on the full run
+(`pytest --cov-context=test`, export `coverage json --show-contexts`) and
+pass it on PR runs: `forge-smart-test --depth 1 --coverage-db coverage.json`.
+The full-suite escape (`--depth full|infinity`) is the no-false-negatives
+tier — force it for broad refactors.
+
 ## Notes
 
 - This is selection, not a coverage guarantee: the smart tiers are
   deliberately approximate and conservative (they err toward running an
-  extra test). `full` is the only no-false-negatives tier.
+  extra test). `full` is the only no-false-negatives tier. The opt-in
+  `follow_mock_patches` and `coverage_validate` keys widen selection toward
+  a safe superset for mock-/runtime-coupled suites (FOUNDATION §17).
 - For an opt-in depth-0 gate on every commit, set
   `[tool.forge.smart_test].precommit_depth = 0` in `pyproject.toml` (see
   `docs/configuration.md`); the `changelog_history`-style self-skipping

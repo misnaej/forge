@@ -74,6 +74,22 @@ def resolve_base_ref(repo_root: Path, override: str | None = None) -> str:
     return "HEAD"
 
 
+def head_commit_message(repo_root: Path) -> str:
+    """Return ``HEAD``'s full commit message (subject + body).
+
+    Used by ``--from-commit-message`` to read a depth directive (e.g.
+    ``[depth-2]`` / ``[full]``) a CI job left in the commit. Returns an
+    empty string when there is no commit yet.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        The commit message, or ``""`` when unavailable.
+    """
+    return run_git("log", "-1", "--format=%B", cwd=repo_root, check=False)
+
+
 def changed_python_files(repo_root: Path, base_ref: str) -> set[str]:
     """Return repo-relative ``.py`` files changed vs *base_ref*.
 

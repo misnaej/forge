@@ -1125,6 +1125,34 @@ It writes `code_health/smart_test.log` (FOUNDATION §13) for
 default pre-commit sequence (too slow); smart-test is the opt-in bridge
 for repos that want a change-scoped gate.
 
+### Opt-in correctness extensions
+
+The static import graph **under-selects** when a test couples to code
+without an `import` statement. Two opt-in extensions close that gap so the
+selector becomes a **safe superset** of the static-only one for
+mock-driven or dynamically-wired suites (all default **off** — zero change
+for existing consumers):
+
+- **Mock-patch edges** (`follow_mock_patches = true`). `unittest.mock.patch
+  ("pkg.mod.attr")` is a real test→`pkg.mod` dependency with no import. With
+  this on, a test file's `patch` / `patch.dict` / `mock.`/`mocker.` string
+  targets are added as graph edges (reduced to their importable module
+  prefix); `patch.dict("sys.modules", …)` keys count too. `patch.object` is
+  already covered by its import.
+- **Coverage validation** (`coverage_validate = true` + `coverage_db`). After
+  the static pass, union the tests whose recorded per-test coverage
+  **contexts** touch a changed line — catching runtime-only links (fixtures,
+  dynamic dispatch, `importlib`). Needs a fresh map (`pytest --cov-context=
+  test`); a stale one under-selects, so regenerate it on `full` runs.
+
+A **CI directive** (`--from-commit-message`) lets a job drive the tier from a
+`[depth-N]` / `[full]` tag in the commit message (regex configurable via
+`commit_directive_re`); `--depth full` is the documented "run everything"
+escape for risky changes (release branches, dependency bumps, broad
+refactors). With both extensions on, smart-test is portable across repos
+**without losing mock- or coverage-driven test↔code edges** — the
+precondition for a consumer to retire a bespoke selector.
+
 ---
 
 **End of FOUNDATION.md.**

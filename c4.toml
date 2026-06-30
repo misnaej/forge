@@ -80,6 +80,12 @@ description = "Rolling-next versioning, dev→main promotion, PR squash messages
 modules = ["forge.next_prep", "forge.upgrade", "forge.pr_squash_comment", "forge.pr_delta", "forge.continuation_append"]
 
 [[component]]
+name = "Smart-test"
+technology = "Python (ast) + git/pytest"
+description = "Change-driven test selection by import depth: git diff + reverse import graph (+ opt-in mock-patch edges / coverage union) run in depth-tiered pytest batches"
+modules = ["forge.smart_test.cli", "forge.smart_test.dependencies", "forge.smart_test.git_helpers", "forge.smart_test.runner", "forge.smart_test.coverage"]
+
+[[component]]
 name = "Config + shared"
 technology = "Python"
 description = "Shared foundation: pyproject/[tool.forge] config, git + logging utils, CI run-context, ruff/doctor, single-scan pip-audit helper"

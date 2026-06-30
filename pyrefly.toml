@@ -16,4 +16,6 @@ untyped-def-behavior = "check-and-infer-return-type"
 # cannot see its dynamic __init__ kwargs and false-flags every one as
 # unexpected. Treat the module as untyped so those FPs disappear without
 # disabling the unexpected-keyword check everywhere else.
-replace-imports-with-any = ["interrogate", "interrogate.*"]
+# coverage is an optional dependency for smart-test; when not installed,
+# treat it as untyped to avoid type errors on guarded imports.
+replace-imports-with-any = ["interrogate", "interrogate.*", "coverage", "coverage.*"]

@@ -178,6 +178,10 @@ speed/coverage trade-off: FOUNDATION §17.
 | `precommit_depth` | _(unset → step skipped)_ | Depth the `smart_test` step runs on commit: `0` / `1` / `2` / `full`. Setting it opts the step in. | You want a change-scoped test gate on every commit (e.g. `0` for the fastest loop). |
 | `blocking` | `false` | Fail the commit on a test failure (else non-blocking WARN). | You want the gate to actually block, not just warn. |
 | `paths` | repo `source_dirs` + `test_dirs` | Scan roots for the import graph (per-tool override of the repo layout). | Your code/tests live outside the configured `source_dirs`/`test_dirs`. |
+| `follow_mock_patches` | `false` | Also treat `unittest.mock.patch("pkg.mod.attr")` string targets as dependency edges, not only imports — `patch`/`patch.dict`/`mock.`/`mocker.` forms (`patch.object` is covered by its import). Makes the selector a safe superset for mock-heavy suites. | Your tests couple to code mainly through patching rather than imports. |
+| `coverage_validate` | `false` | After the static pass, union the tests whose recorded coverage **contexts** touch a changed line (needs `coverage_db`). Catches runtime-only links (fixtures, dynamic dispatch). | You have a fresh per-test coverage map and want belt-and-suspenders selection. |
+| `coverage_db` | _(unset)_ | Path to the coverage map for `coverage_validate`: a `coverage json --show-contexts` export or a `.coverage` SQLite DB. Also settable per-run via `--coverage-db`. A stale map under-selects — regenerate on `full` runs. | You enabled `coverage_validate`. |
+| `commit_directive_re` | `\[(?:depth-(?P<n>[0-2])\|(?P<full>full\|infinity))\]` | Regex for `--from-commit-message` to read a depth directive from `HEAD`'s message (named groups `n` / `full`). | Your CI tags commits with a different directive syntax. |
 
 ## `[tool.forge.env_sync]` — install-freshness gate (default-on)
 

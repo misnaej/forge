@@ -85,7 +85,8 @@ Code.
    - git_helpers.py: diff-base resolution + changed-`.py` enumeration (committed delta + staged/unstaged/untracked), layered on `git_utils`
    - dependencies.py: reverse test→source import graph (built on `import_graph`) + depth expansion; `SelectionPlan`, `render_plan`
    - runner.py: import-cache hygiene + a single deterministic `pytest` invocation per batch (coverage only on `full`)
-   - cli.py: `forge-smart-test` — `--depth 0/1/2/full`, `--show-files`, `--coverage`, `--base`; depth batching with fail-fast; writes `code_health/smart_test.log`
+   - coverage.py: opt-in coverage-validated selection — maps changed lines → covering tests via per-test coverage contexts (json or `.coverage` DB); unioned into the static pass
+   - cli.py: `forge-smart-test` — `--depth 0/1/2/full`, `--show-files`, `--coverage`, `--base`, `--coverage-db`, `--from-commit-message`; depth batching with fail-fast; writes `code_health/smart_test.log`
 
 4. **Package Data (`src/forge/data/`)**
    - FOUNDATION.md: shipped copy of the foundation document (symlink)

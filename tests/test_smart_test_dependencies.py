@@ -3,11 +3,12 @@
 # MOCKING STRATEGY: Graph-level tests (build_graph, select_tests) use a real
 # on-disk repo layout via the ``import_chain_repo`` fixture (no git required —
 # build_graph is a pure filesystem walk).  Pure-unit tests (_closest_known,
-# SelectionPlan.tests_up_to, render_plan) construct minimal in-memory objects
-# with no I/O.  No subprocess or network mocking.
+# SelectionPlan.tests_up_to, render_plan, _patch_targets) construct minimal
+# in-memory objects with no I/O.  No subprocess or network mocking.
 
 from __future__ import annotations
 
+import ast
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,6 +16,7 @@ import pytest
 from forge.smart_test.dependencies import (
     SelectionPlan,
     _closest_known,
+    _patch_targets,
     build_graph,
     render_plan,
     select_tests,
@@ -23,6 +25,23 @@ from forge.smart_test.dependencies import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse(code: str) -> ast.Module:
+    """Parse a Python source string into an AST module.
+
+    Args:
+        code: Valid Python source code.
+
+    Returns:
+        The parsed :class:`ast.Module`.
+    """
+    return ast.parse(code)
 
 
 # ---------------------------------------------------------------------------
@@ -222,3 +241,150 @@ def test_render_plan_header_includes_depth_number() -> None:
     plan = SelectionPlan(newly_at_depth={}, changed_tests=[], max_depth=2)
     output = render_plan(plan, 2)
     assert "depth 2" in output
+
+
+# ---------------------------------------------------------------------------
+# _patch_targets — unit tests (no I/O, pure AST)
+# ---------------------------------------------------------------------------
+
+
+def test_patch_targets_simple_patch() -> None:
+    """``patch("pkg.mod.attr")`` yields the raw target string."""
+    tree = _parse('patch("pkg.mod.attr")')
+    assert _patch_targets(tree) == {"pkg.mod.attr"}
+
+
+def test_patch_targets_decorator_form() -> None:
+    """A ``@patch(...)`` decorator is extracted just like a call-form patch."""
+    tree = _parse('@patch("pkg.mod.func")\ndef test_x():\n    pass\n')
+    assert _patch_targets(tree) == {"pkg.mod.func"}
+
+
+def test_patch_targets_patch_dict_sys_modules() -> None:
+    """``patch.dict("sys.modules", {"pkg.a": None})`` yields the dict keys."""
+    tree = _parse('patch.dict("sys.modules", {"pkg.a": None, "pkg.b": None})')
+    assert _patch_targets(tree) == {"pkg.a", "pkg.b"}
+
+
+def test_patch_targets_patch_dict_non_sys_modules() -> None:
+    """``patch.dict("pkg.registry", {...})`` yields the first string arg as target."""
+    tree = _parse('patch.dict("pkg.registry", {"key": "val"})')
+    assert _patch_targets(tree) == {"pkg.registry"}
+
+
+def test_patch_targets_three_segment_callee() -> None:
+    """3-segment patch callee target is correctly extracted."""
+    tree = _parse('unittest.mock.patch("pkg.mod.x")')
+    assert _patch_targets(tree) == {"pkg.mod.x"}
+
+
+def test_patch_targets_mock_prefix() -> None:
+    """``mock.patch("pkg.mod.x")`` is recognized (mock. prefix tolerated)."""
+    tree = _parse('mock.patch("pkg.mod.x")')
+    assert _patch_targets(tree) == {"pkg.mod.x"}
+
+
+def test_patch_targets_mocker_prefix() -> None:
+    """``mocker.patch("pkg.mod.y")`` is recognized (mocker. prefix tolerated)."""
+    tree = _parse('mocker.patch("pkg.mod.y")')
+    assert _patch_targets(tree) == {"pkg.mod.y"}
+
+
+def test_patch_targets_patch_object_skipped() -> None:
+    """``patch.object`` is skipped (reachable via import)."""
+    tree = _parse('patch.object(SomeClass, "method")')
+    assert _patch_targets(tree) == set()
+
+
+def test_patch_targets_no_string_arg_skipped() -> None:
+    """``patch(some_var)`` (no string literal) is silently skipped."""
+    tree = _parse("patch(some_variable)")
+    assert _patch_targets(tree) == set()
+
+
+def test_patch_targets_empty_module() -> None:
+    """An empty module yields an empty target set."""
+    tree = _parse("")
+    assert _patch_targets(tree) == set()
+
+
+# ---------------------------------------------------------------------------
+# patch_only_repo fixture + select_tests follow_mock_patches
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def patch_only_repo(tmp_path: Path) -> Path:
+    """Repo where test_b patches pkg.b but has NO import of it.
+
+    Layout::
+
+        <root>/
+          pyproject.toml
+          src/pkg/__init__.py
+          src/pkg/a.py          # x = 1
+          src/pkg/b.py          # thing = 42
+          tests/test_a.py       # from pkg.a import x
+          tests/test_b.py       # @patch("pkg.b.thing") only — no import
+
+    Returns:
+        The repo root path.
+    """
+    root = tmp_path
+    (root / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n',
+        encoding="utf-8",
+    )
+    pkg = root / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (pkg / "b.py").write_text("thing = 42\n", encoding="utf-8")
+
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_a.py").write_text(
+        "from pkg.a import x\n\n\ndef test_a():\n    assert x == 1\n",
+        encoding="utf-8",
+    )
+    # test_b patches pkg.b.thing but never imports pkg.b.
+    (tests_dir / "test_b.py").write_text(
+        "from unittest.mock import patch\n\n\n"
+        '@patch("pkg.b.thing")\n'
+        "def test_b(mock_thing):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_select_tests_follow_mock_patches_selects_patch_only(
+    patch_only_repo: Path,
+) -> None:
+    """Test-only patch (no import) is selected at depth 0 via patch-edge.
+
+    The test file has no ``import pkg.b`` statement; static analysis alone
+    would miss it. The patch-target edge must bridge the gap at depth 0.
+    """
+    plan = select_tests(
+        patch_only_repo, {"src/pkg/b.py"}, max_depth=0, follow_mock_patches=True
+    )
+    tests = plan.tests_up_to(0)
+    assert any("test_b" in t for t in tests), f"test_b not found in {tests}"
+
+
+def test_select_tests_no_follow_mock_patches_misses_patch_only(
+    patch_only_repo: Path,
+) -> None:
+    """With ``follow_mock_patches=False``, a patch-only test is NOT selected.
+
+    Without the opt-in, the static import graph has no edge from test_b to
+    pkg.b, so a change to pkg/b.py leaves test_b out of the selection.
+    """
+    plan = select_tests(
+        patch_only_repo, {"src/pkg/b.py"}, max_depth=0, follow_mock_patches=False
+    )
+    tests = plan.tests_up_to(0)
+    assert not any("test_b" in t for t in tests), (
+        f"test_b unexpectedly selected: {tests}"
+    )

@@ -12,6 +12,7 @@ workspace "Forge" "Python CI/CD & code-quality foundation: deterministic CLIs + 
                 doc_generators = component "Doc generators" "Generate drift-checked docs: API digest, CLI reference, and this C4 model" "Python"
                 git_hook_entrypoints = component "Git-hook entrypoints" "Managed post-merge / post-checkout hooks: foundation drift check + backgrounded self-refresh" "Python"
                 release_tooling = component "Release tooling" "Rolling-next versioning, dev→main promotion, PR squash messages, continuation log" "Python + git/gh"
+                smart_test = component "Smart-test" "Change-driven test selection by import depth: git diff + reverse import graph (+ opt-in mock-patch edges / coverage union) run in depth-tiered pytest batches" "Python (ast) + git/pytest"
                 config_shared = component "Config + shared" "Shared foundation: pyproject/[tool.forge] config, git + logging utils, CI run-context, ruff/doctor, single-scan pip-audit helper" "Python"
             }
         }
@@ -36,6 +37,7 @@ workspace "Forge" "Python CI/CD & code-quality foundation: deterministic CLIs + 
         pre_commit_dispatcher -> config_shared "imports"
         release_tooling -> config_shared "imports"
         release_tooling -> installers "imports"
+        smart_test -> config_shared "imports"
         verifiers -> config_shared "imports"
     }
 

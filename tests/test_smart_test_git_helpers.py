@@ -283,3 +283,46 @@ def test_changed_python_files_merge_base_fallback(
     monkeypatch.setattr(git_helpers, "run_git", _patched_run_git)
     result = git_helpers.changed_python_files(tmp_path, "HEAD")
     assert "fallback.py" in result
+
+
+# ---------------------------------------------------------------------------
+# head_commit_message — real git
+# ---------------------------------------------------------------------------
+
+
+def test_head_commit_message_returns_subject(tmp_path: Path) -> None:
+    """``head_commit_message`` returns the subject of HEAD's commit message."""
+    init_git_repo(tmp_path)
+    # init_git_repo commits with message "initial"
+    msg = git_helpers.head_commit_message(tmp_path)
+    assert "initial" in msg
+
+
+def test_head_commit_message_returns_subject_and_body(tmp_path: Path) -> None:
+    """``head_commit_message`` returns both the subject and body of the commit."""
+    init_git_repo(tmp_path)
+    (tmp_path / "f.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "f.py"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "subject line\n\nbody text here"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    msg = git_helpers.head_commit_message(tmp_path)
+    assert "subject line" in msg
+    assert "body text here" in msg
+
+
+def test_head_commit_message_empty_on_no_commits(tmp_path: Path) -> None:
+    """``head_commit_message`` returns an empty string when there are no commits.
+
+    ``git log -1`` on an empty repo exits non-zero; ``run_git`` with
+    ``check=False`` captures that as an empty string.
+    """
+    # Init without any commits (skip init_git_repo which always commits)
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"], cwd=tmp_path, env=_GIT_ENV, check=True
+    )
+    msg = git_helpers.head_commit_message(tmp_path)
+    assert msg == ""

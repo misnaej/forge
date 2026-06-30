@@ -92,7 +92,7 @@ def _stub_cli_deps(
 
     monkeypatch.setattr(cli, "resolve_base_ref", lambda _root, _base: "main")
     monkeypatch.setattr(cli, "changed_python_files", lambda _root, _ref: _changed)
-    monkeypatch.setattr(cli, "select_tests", lambda _root, _ch, _depth: plan)
+    monkeypatch.setattr(cli, "select_tests", lambda _root, _ch, _depth, **_kw: plan)
     monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
 
     def _fake_run_pytest(
@@ -157,7 +157,7 @@ def test_main_show_files_prints_plan_and_exits_0(
 
     monkeypatch.setattr(cli, "resolve_base_ref", lambda _r, _b: "main")
     monkeypatch.setattr(cli, "changed_python_files", lambda _r, _ref: {"src/foo.py"})
-    monkeypatch.setattr(cli, "select_tests", lambda _r, _c, _d: plan)
+    monkeypatch.setattr(cli, "select_tests", lambda _r, _c, _d, **_kw: plan)
 
     def _fail(*_a: object, **_kw: object) -> tuple[int, str]:
         called.append(True)
@@ -175,14 +175,17 @@ def test_main_show_files_prints_plan_and_exits_0(
 def test_main_show_files_full_prints_full_suite_notice(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """``--show-files --depth full`` logs the whole-suite notice and returns 0."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         sys, "argv", ["forge-smart-test", "--show-files", "--depth", "full"]
     )
-    code = cli.main()
+    with caplog.at_level(logging.INFO, logger="forge.smart_test.cli"):
+        code = cli.main()
     assert code == 0
+    assert "the entire suite" in caplog.text
 
 
 def test_main_depth0_runs_only_one_batch(
@@ -326,7 +329,7 @@ def test_main_log_written_after_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``code_health/smart_test.log`` is written after the run completes."""
+    """Write ``code_health/smart_test.log`` after run with pytest output."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "1"])
     plan = _make_plan(depth0=["tests/test_x.py"], max_depth=1)
@@ -336,6 +339,7 @@ def test_main_log_written_after_run(
 
     log_path = tmp_path / "code_health" / "smart_test.log"
     assert log_path.exists()
+    assert "run output" in log_path.read_text(encoding="utf-8")
 
 
 def test_main_changed_test_file_not_run_twice(
@@ -364,3 +368,298 @@ def test_main_changed_test_file_not_run_twice(
 
     all_paths: list[str] = [p for call_paths in captured.calls for p in call_paths]
     assert all_paths.count("tests/test_core.py") == 1
+
+
+# ---------------------------------------------------------------------------
+# _depth_from_commit
+# ---------------------------------------------------------------------------
+
+
+def test_depth_from_commit_depth_directive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``[depth-2]`` in the HEAD commit message returns ``'2'``."""
+    monkeypatch.setattr(
+        cli, "head_commit_message", lambda _root: "fix: something [depth-2] here"
+    )
+    result = cli._depth_from_commit(tmp_path, {})
+    assert result == "2"
+
+
+def test_depth_from_commit_full_directive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``[full]`` in the HEAD commit message returns the ``_FULL`` sentinel."""
+    monkeypatch.setattr(
+        cli, "head_commit_message", lambda _root: "chore: nightly run [full]"
+    )
+    result = cli._depth_from_commit(tmp_path, {})
+    assert result == cli._FULL
+
+
+def test_depth_from_commit_no_directive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A commit message without any directive returns ``None``."""
+    monkeypatch.setattr(
+        cli, "head_commit_message", lambda _root: "fix: regular commit message"
+    )
+    result = cli._depth_from_commit(tmp_path, {})
+    assert result is None
+
+
+def test_depth_from_commit_custom_regex(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``commit_directive_re`` in cfg overrides the default pattern."""
+    monkeypatch.setattr(cli, "head_commit_message", lambda _root: "TIER:2")
+    cfg: dict[str, object] = {"commit_directive_re": r"TIER:(?P<n>[0-2])"}
+    result = cli._depth_from_commit(tmp_path, cfg)
+    assert result == "2"
+
+
+def test_depth_from_commit_depth_0_directive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``[depth-0]`` in commit message returns ``'0'``."""
+    monkeypatch.setattr(
+        cli, "head_commit_message", lambda _root: "hotfix: emergency [depth-0]"
+    )
+    assert cli._depth_from_commit(tmp_path, {}) == "0"
+
+
+def test_depth_from_commit_depth_1_directive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``[depth-1]`` in commit message returns ``'1'``."""
+    monkeypatch.setattr(
+        cli, "head_commit_message", lambda _root: "feat: add thing [depth-1]"
+    )
+    assert cli._depth_from_commit(tmp_path, {}) == "1"
+
+
+def test_depth_from_commit_infinity_directive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``[infinity]`` commit directive returns ``_FULL`` (full alias)."""
+    monkeypatch.setattr(
+        cli, "head_commit_message", lambda _root: "ci: nightly [infinity]"
+    )
+    assert cli._depth_from_commit(tmp_path, {}) == cli._FULL
+
+
+# ---------------------------------------------------------------------------
+# --from-commit-message integration
+# ---------------------------------------------------------------------------
+
+
+def test_main_from_commit_message_overrides_depth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--from-commit-message`` with ``[depth-2]`` in HEAD overrides ``--depth 0``.
+
+    SCENARIO: ``--depth 0 --from-commit-message``; HEAD message contains
+        ``[depth-2]``.
+    MOCK SETUP: cli.head_commit_message returns a directive string; the depth
+        passed to cli.select_tests is captured.
+    EXPECTED BEHAVIOR: select_tests called with depth=2, not 0.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["forge-smart-test", "--depth", "0", "--from-commit-message"]
+    )
+    plan = _make_plan(depth0=["tests/test_core.py"], max_depth=2)
+    monkeypatch.setattr(cli, "head_commit_message", lambda _root: "nightly [depth-2]")
+
+    depths_used: list[int] = []
+
+    def _capturing_select(
+        _root: object, _ch: object, depth: int, **_kw: object
+    ) -> SelectionPlan:
+        depths_used.append(depth)
+        return plan
+
+    monkeypatch.setattr(cli, "resolve_base_ref", lambda _r, _b: "main")
+    monkeypatch.setattr(cli, "changed_python_files", lambda _r, _ref: {"src/foo.py"})
+    monkeypatch.setattr(cli, "select_tests", _capturing_select)
+    monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
+    monkeypatch.setattr(cli, "run_pytest", lambda _r, _p, **_kw: (0, "ok"))
+
+    code = cli.main()
+    assert code == 0
+    assert depths_used == [2], (
+        f"Expected depth 2 from commit directive, got {depths_used}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Coverage union (Gap 2 / --coverage-db)
+# ---------------------------------------------------------------------------
+
+
+def test_main_coverage_union_in_depth0_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Coverage-validated tests from ``--coverage-db`` union into the depth-0 batch.
+
+    SCENARIO: ``--depth 1 --coverage-db cov.json``; coverage stage returns one
+        extra test not present in the static plan.
+    MOCK SETUP: cli.cov_stage.tests_covering → ``{"tests/test_cov_only.py"}``
+        (in the consuming namespace); cli.select_tests → plan with
+        ``test_core.py`` at depth 0; run_pytest captured.
+    EXPECTED BEHAVIOR: depth-0 batch contains both ``test_core.py`` and
+        ``test_cov_only.py``; exit code 0.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["forge-smart-test", "--depth", "1", "--coverage-db", "cov.json"],
+    )
+    plan = _make_plan(depth0=["tests/test_core.py"], max_depth=1)
+    monkeypatch.setattr(
+        cli.cov_stage,
+        "tests_covering",
+        lambda _path, _changed, _root: {"tests/test_cov_only.py"},
+    )
+    captured = _stub_cli_deps(monkeypatch, plan=plan)
+
+    code = cli.main()
+    assert code == 0
+    assert captured.calls, "run_pytest was not called"
+    first_batch = captured.calls[0]
+    assert "tests/test_core.py" in first_batch
+    assert "tests/test_cov_only.py" in first_batch
+
+
+def test_main_coverage_validate_config_key_activates_union(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``coverage_validate=true`` activates coverage union without ``--coverage-db``.
+
+    SCENARIO: ``--depth 1`` with no ``--coverage-db`` CLI arg; the
+        ``[tool.forge.smart_test]`` table has both ``coverage_validate = true``
+        and ``coverage_db = "cov.json"``.
+    MOCK SETUP: cli._smart_test_config returns the config dict so no real
+        ``pyproject.toml`` is needed; cli.cov_stage.tests_covering returns one
+        extra test; cli.select_tests and run_pytest captured via _stub_cli_deps.
+    EXPECTED BEHAVIOR: the extra config-driven test appears in the depth-0
+        batch even though ``--coverage-db`` was not passed on the CLI.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "1"])
+    monkeypatch.setattr(
+        cli,
+        "_smart_test_config",
+        lambda _root: {"coverage_validate": True, "coverage_db": "cov.json"},
+    )
+    plan = _make_plan(depth0=["tests/test_core.py"], max_depth=1)
+    monkeypatch.setattr(
+        cli.cov_stage,
+        "tests_covering",
+        lambda _path, _changed, _root: {"tests/test_from_config.py"},
+    )
+    captured = _stub_cli_deps(monkeypatch, plan=plan)
+
+    code = cli.main()
+    assert code == 0
+    assert captured.calls, "run_pytest was not called"
+    assert "tests/test_from_config.py" in captured.calls[0]
+
+
+def test_main_follow_mock_patches_config_flows_to_select_tests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``follow_mock_patches=true`` flows to ``select_tests`` as kwarg.
+
+    SCENARIO: ``--depth 0``; ``[tool.forge.smart_test]`` has
+        ``follow_mock_patches = true``.
+    MOCK SETUP: cli._smart_test_config returns the config dict; a capturing
+        replacement for cli.select_tests records the keyword argument.
+    EXPECTED BEHAVIOR: ``select_tests`` is called with
+        ``follow_mock_patches=True``.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "0"])
+    monkeypatch.setattr(
+        cli,
+        "_smart_test_config",
+        lambda _root: {"follow_mock_patches": True},
+    )
+    plan = _make_plan(depth0=["tests/test_core.py"], max_depth=0)
+    follow_kwargs_seen: list[bool] = []
+
+    def _capturing(
+        _root: object,
+        _ch: object,
+        _depth: int,
+        *,
+        follow_mock_patches: bool = False,
+        **_kw: object,
+    ) -> SelectionPlan:
+        follow_kwargs_seen.append(follow_mock_patches)
+        return plan
+
+    monkeypatch.setattr(cli, "resolve_base_ref", lambda _r, _b: "main")
+    monkeypatch.setattr(cli, "changed_python_files", lambda _r, _ref: {"src/foo.py"})
+    monkeypatch.setattr(cli, "select_tests", _capturing)
+    monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
+    monkeypatch.setattr(cli, "run_pytest", lambda _r, _p, **_kw: (0, "ok"))
+
+    cli.main()
+    assert follow_kwargs_seen == [True], (
+        f"Expected follow_mock_patches=True forwarded; got {follow_kwargs_seen}"
+    )
+
+
+def test_main_show_files_lists_coverage_additions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``--show-files`` logs coverage-validated additions when ``--coverage-db`` given.
+
+    SCENARIO: ``--show-files --depth 1 --coverage-db cov.json``; coverage
+        stage returns a test not in the static plan.
+    MOCK SETUP: cli.cov_stage.tests_covering → ``{"tests/test_cov_extra.py"}``;
+        cli.select_tests → plan with test_core.py.
+    EXPECTED BEHAVIOR: exit 0; ``test_cov_extra.py`` appears in the log.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "forge-smart-test",
+            "--show-files",
+            "--depth",
+            "1",
+            "--coverage-db",
+            "cov.json",
+        ],
+    )
+    plan = _make_plan(depth0=["tests/test_core.py"], max_depth=1)
+    monkeypatch.setattr(
+        cli.cov_stage,
+        "tests_covering",
+        lambda _path, _changed, _root: {"tests/test_cov_extra.py"},
+    )
+    monkeypatch.setattr(cli, "resolve_base_ref", lambda _r, _b: "main")
+    monkeypatch.setattr(cli, "changed_python_files", lambda _r, _ref: {"src/foo.py"})
+    monkeypatch.setattr(cli, "select_tests", lambda _r, _c, _d, **_kw: plan)
+
+    with caplog.at_level(logging.INFO, logger="forge.smart_test.cli"):
+        code = cli.main()
+    assert code == 0
+    assert "test_cov_extra.py" in caplog.text
