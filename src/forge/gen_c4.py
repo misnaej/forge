@@ -219,7 +219,9 @@ class Person:
             system boundary instead (back-compat default).
         active: When False (or *hidden* True), the element and its dangling
             edges are omitted from every generated output (default: shown).
-        hidden: Inverse spelling of ``active`` — ``hidden = true`` hides.
+        hidden: Alternative spelling of ``active`` — an element is shown only
+            when ``active`` is true AND ``hidden`` is false, so either
+            ``hidden = true`` or ``active = false`` hides it.
         tags: Free-form labels for bulk include/exclude-by-tag view slimming.
         group: Optional band name; elements sharing a ``group`` cluster into one
             labelled band in the Container view (empty = ungrouped).
@@ -245,7 +247,9 @@ class External:
         relationship: Label for the system → external relationship.
         active: When False (or *hidden* True), the element and its dangling
             edges are omitted from every generated output (default: shown).
-        hidden: Inverse spelling of ``active`` — ``hidden = true`` hides.
+        hidden: Alternative spelling of ``active`` — an element is shown only
+            when ``active`` is true AND ``hidden`` is false, so either
+            ``hidden = true`` or ``active = false`` hides it.
         tags: Free-form labels for bulk include/exclude-by-tag view slimming.
         group: Optional band name; elements sharing a ``group`` cluster into one
             labelled band in the Container view (empty = ungrouped).
@@ -271,7 +275,9 @@ class Container:
         active: When False (or *hidden* True), the container, the components it
             owns, and their dangling edges are omitted from every output
             (default: shown).
-        hidden: Inverse spelling of ``active`` — ``hidden = true`` hides.
+        hidden: Alternative spelling of ``active`` — an element is shown only
+            when ``active`` is true AND ``hidden`` is false, so either
+            ``hidden = true`` or ``active = false`` hides it.
         tags: Free-form labels for bulk include/exclude-by-tag view slimming.
         group: Optional band name; elements sharing a ``group`` cluster into one
             labelled band in the Container view (empty = ungrouped).
@@ -301,7 +307,9 @@ class Component:
             "attach to the first declared container" (back-compat default).
         active: When False (or *hidden* True), the component and its dangling
             edges are omitted from every generated output (default: shown).
-        hidden: Inverse spelling of ``active`` — ``hidden = true`` hides.
+        hidden: Alternative spelling of ``active`` — an element is shown only
+            when ``active`` is true AND ``hidden`` is false, so either
+            ``hidden = true`` or ``active = false`` hides it.
         tags: Free-form labels for bulk include/exclude-by-tag view slimming.
         group: Optional band name; elements sharing a ``group`` cluster into one
             labelled band in the Container view (empty = ungrouped).
@@ -383,10 +391,12 @@ class RenderConfig:
             fixed page (width AND height, aspect preserved); ``"width"`` fits a
             fixed page's width only.
         pdf_margin: page margin in millimetres (default 10).
-        include_tags: when non-empty, the rendered views keep only elements
-            carrying at least one of these tags (the DSL is unaffected).
-        exclude_tags: the rendered views drop elements carrying any of these
-            tags (applied after ``include_tags``; the DSL is unaffected).
+        include_tags: when non-empty, the rendered **HTML/PDF views** keep only
+            elements carrying at least one of these tags. The DSL, the README
+            Mermaid block, and ``--format mermaid`` are canonical and unaffected.
+        exclude_tags: the rendered **HTML/PDF views** drop elements carrying any
+            of these tags (applied after ``include_tags``). The DSL / README /
+            ``--format mermaid`` are unaffected.
     """
 
     wrapping_width: int = 220
@@ -674,8 +684,7 @@ def _parse_render_config(section: dict) -> RenderConfig:
     The ``[tool.forge.c4.render]`` keys are named identically to the
     :class:`RenderConfig` fields, so each matching key is passed straight through
     and the **dataclass field defaults are the single source of defaults** (no
-    second copy to drift). Unknown keys are dropped (tolerant); a ``render`` that
-    is absent or not a table yields the all-default config; a malformed
+    second copy to drift). Unknown keys are dropped (tolerant); a malformed
     (non-table) ``theme_colors`` is dropped so its ``{}`` default stands.
 
     Args:
@@ -795,8 +804,9 @@ def _visible_config(
     owns (computed from the full model, so the default first-container ownership
     is stable). Declared relationships and import-derived edges that reference a
     removed element are pruned, so no view, the DSL, the README block, or the PDF
-    shows a dangling edge. With nothing flagged and no tag filter the model is
-    returned unchanged, keeping default output byte-identical.
+    shows a dangling edge. With nothing flagged and no tag filter the model's
+    content is returned unchanged (fresh but equal tuples), keeping default
+    output byte-identical.
 
     Args:
         config: The full authored model.
@@ -2115,7 +2125,8 @@ def _print_page_css(render: RenderConfig) -> str:
         render: The resolved render config.
 
     Returns:
-        A CSS fragment (single-brace literal) for the page's ``<style>``.
+        A CSS string for the page's ``<style>`` block, covering ``@page``
+        size and ``@media print`` layout rules for the configured fit mode.
     """
     # Fixed-page modes need an explicit break between panes (they all share one
     # @page). In auto mode each pane has a distinct named @page, and a change of
@@ -2306,21 +2317,21 @@ window.c4WireView = (function () {
     }
     if (cfg.fit === "auto") {
       // Size THIS page to THIS diagram — no forced uniform sheet.
-      var pane = svg.closest(".pane");
-      var idx = pane ? pane.getAttribute("data-pane") : null;
+      var paneEl = svg.closest(".pane");
+      var idx = paneEl ? paneEl.getAttribute("data-pane") : null;
       if (idx === null) { return; }
       var m = cfg.margin;
       var w = Math.ceil(rect.width);
       var h = Math.ceil(rect.height);
-      var pane = ' .views .pane[data-pane="' + idx + '"]';
+      var paneSel = ' .views .pane[data-pane="' + idx + '"]';
       printStyle().appendChild(document.createTextNode(
         "@page c4p" + idx + " { size: " + (w + 2 * m) + "px " +
         (h + cfg.titleReserve + 2 * m) + "px; margin: " + m + "px; }" +
-        pane + " { page: c4p" + idx + "; }" +
+        paneSel + " { page: c4p" + idx + "; }" +
         // Pin the SVG to its exact measured size in print, so the print layout
         // matches the page we computed and can never overflow onto an extra
         // sheet (auto width/height can differ subtly between screen and print).
-        pane + " .diagram-scroll svg { width: " + w + "px !important;" +
+        paneSel + " .diagram-scroll svg { width: " + w + "px !important;" +
         " height: " + h + "px !important; max-width: none !important; }"
       ));
     }
@@ -2659,13 +2670,9 @@ def _emit_mermaid(
     Returns:
         Always ``0`` (a pure render with no drift semantics).
     """
-    # Raw mermaid is a view — honour the same tag filter the HTML/PDF views use.
-    config, edges = _visible_config(
-        config,
-        edges,
-        include_tags=config.render.include_tags,
-        exclude_tags=config.render.exclude_tags,
-    )
+    # Canonical Mermaid — same content as the README block. `active`/`hidden`
+    # (applied in main) affects it; the view-only tag filter deliberately does
+    # not, so `--format mermaid` and the committed README diagram never diverge.
     mermaid = render_mermaid(config, edges)
     if not output or output == "-":
         sys.stdout.write(mermaid)

@@ -308,7 +308,8 @@ keeps its clean radial `system → external`.
 and any relationship or import-derived edge that would dangle — so you author one
 complete model and render slimmer views from it. `tags` drive the
 `[tool.forge.c4.render].include_tags` / `exclude_tags` view filters (above), which
-slim the rendered views by tag while leaving the committed DSL canonical. With
+slim the **HTML/PDF views** by tag while leaving the committed DSL, README block,
+and `--format mermaid` canonical. With
 nothing flagged, output is unchanged.
 
 ```toml
@@ -397,8 +398,8 @@ you only set a key to deviate. Unknown keys are ignored. Lives under
 | `consider_model_order` | _unset_ | `elk.considerModelOrder` | ELK ordering hint (e.g. `NODES_AND_EDGES`). |
 | `merge_edges` | `false` | `elk.mergeEdges` | Merge parallel edges. |
 | `cycle_breaking_strategy` | _unset_ | `elk.cycleBreakingStrategy` | ELK cycle-breaking (e.g. `GREEDY_MODEL_ORDER`). |
-| `include_tags` | _unset_ | _(view filter)_ | When set, the rendered views keep only elements carrying one of these tags. The DSL is unaffected. |
-| `exclude_tags` | _unset_ | _(view filter)_ | The rendered views drop elements carrying any of these tags (applied after `include_tags`). The DSL is unaffected. |
+| `include_tags` | _unset_ | _(HTML/PDF view filter)_ | When set, the HTML/PDF views keep only elements carrying one of these tags. The DSL, README block, and `--format mermaid` are canonical and unaffected. |
+| `exclude_tags` | _unset_ | _(HTML/PDF view filter)_ | The HTML/PDF views drop elements carrying any of these tags (applied after `include_tags`). The DSL / README / `--format mermaid` are unaffected. |
 
 ```toml
 [tool.forge.c4.render]
