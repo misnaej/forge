@@ -10,6 +10,8 @@ from forge.config import (
     ForgeConfig,
     detect_source_dirs,
     detect_test_dirs,
+    filter_excluded,
+    filter_under_roots,
     load_config,
     read_pyproject_raw,
     resolve_tool_roots,
@@ -245,3 +247,177 @@ def test_resolve_tool_roots_drops_option_like_and_blank_paths(tmp_path: Path) ->
     (tmp_path / "src").mkdir()
     _forge_toml(tmp_path, '[tool.forge.ruff]\npaths = ["--output=x", "-rf", "", "src"]')
     assert resolve_tool_roots(tmp_path, "ruff", include_tests=True) == ["src"]
+
+
+# ---------------------------------------------------------------------------
+# filter_under_roots (issue #83 — source-tree scoping for whole-tree steps)
+# ---------------------------------------------------------------------------
+
+
+def test_filter_under_roots_keeps_file_inside_root() -> None:
+    """A file living under a declared root is kept."""
+    assert filter_under_roots(["src/foo.py"], ["src"]) == ["src/foo.py"]
+
+
+def test_filter_under_roots_drops_file_outside_all_roots() -> None:
+    """A file outside every declared root is dropped."""
+    assert filter_under_roots(["vendor/x.py"], ["src"]) == []
+
+
+def test_filter_under_roots_no_partial_root_name_match() -> None:
+    """``src`` must NOT admit ``src_extra/x.py`` — partial prefix is rejected."""
+    assert filter_under_roots(["src_extra/x.py"], ["src"]) == []
+
+
+def test_filter_under_roots_empty_roots_keeps_nothing() -> None:
+    """An empty roots list keeps nothing, whatever the files."""
+    assert filter_under_roots(["src/foo.py", "tests/test_foo.py"], []) == []
+
+
+def test_filter_under_roots_exact_root_name_included() -> None:
+    """A file whose path equals a root (no trailing slash) is kept."""
+    assert filter_under_roots(["src"], ["src"]) == ["src"]
+
+
+def test_filter_under_roots_trailing_slash_root_normalized() -> None:
+    """A root supplied with a trailing slash behaves identically to one without."""
+    assert filter_under_roots(["src/foo.py"], ["src/"]) == ["src/foo.py"]
+
+
+def test_filter_under_roots_multiple_roots_any_match() -> None:
+    """A file under ANY declared root is kept; one outside all is dropped."""
+    result = filter_under_roots(
+        ["src/a.py", "tests/test_a.py", "docs/conf.py"],
+        ["src", "tests"],
+    )
+    assert result == ["src/a.py", "tests/test_a.py"]
+
+
+def test_filter_under_roots_preserves_input_order() -> None:
+    """Output order follows the input order, not the roots order."""
+    files = ["tests/t.py", "src/a.py", "tests/u.py"]
+    assert filter_under_roots(files, ["src", "tests"]) == files
+
+
+def test_filter_under_roots_empty_files_empty_result() -> None:
+    """Empty file list → empty output (no error)."""
+    assert filter_under_roots([], ["src"]) == []
+
+
+def test_filter_under_roots_nested_subdir_included() -> None:
+    """A deeply nested file under a declared root is included."""
+    assert filter_under_roots(["src/a/b/c/deep.py"], ["src"]) == ["src/a/b/c/deep.py"]
+
+
+# ---------------------------------------------------------------------------
+# filter_excluded (issue #83 — repo-wide glob exclude for whole-tree steps)
+# ---------------------------------------------------------------------------
+
+
+def test_filter_excluded_empty_globs_identity() -> None:
+    """Empty globs → the exact input list object is returned (no-op / no copy)."""
+    files = ["src/foo.py", "tests/test_foo.py"]
+    assert filter_excluded(files, []) is files
+
+
+def test_filter_excluded_bare_dir_excludes_subtree() -> None:
+    """A bare directory name (``vendor``) excludes its whole subtree."""
+    result = filter_excluded(["vendor/lib/x.py", "src/foo.py"], ["vendor"])
+    assert result == ["src/foo.py"]
+
+
+def test_filter_excluded_trailing_slash_glob_normalized() -> None:
+    """A glob with a trailing slash (``vendor/``) behaves the same as ``vendor``."""
+    result = filter_excluded(["vendor/x.py", "src/foo.py"], ["vendor/"])
+    assert result == ["src/foo.py"]
+
+
+def test_filter_excluded_fnmatch_extension_glob() -> None:
+    """Fnmatch glob ``*.gen.py`` excludes matching files anywhere in the tree."""
+    result = filter_excluded(
+        ["src/foo.py", "src/auto.gen.py", "src/other.gen.py"],
+        ["*.gen.py"],
+    )
+    assert result == ["src/foo.py"]
+
+
+def test_filter_excluded_nested_double_star_glob() -> None:
+    """``vendor/**`` glob excludes deeply nested paths via fnmatch."""
+    result = filter_excluded(["vendor/pkg/a.py", "src/foo.py"], ["vendor/**"])
+    assert result == ["src/foo.py"]
+
+
+def test_filter_excluded_non_matching_files_kept() -> None:
+    """Files that match no glob are kept unchanged."""
+    result = filter_excluded(["src/a.py", "tests/t.py"], ["vendor"])
+    assert result == ["src/a.py", "tests/t.py"]
+
+
+def test_filter_excluded_no_partial_dir_name_match() -> None:
+    """``vendor`` must NOT exclude ``vendor_extra/x.py`` — symmetric boundary."""
+    result = filter_excluded(["vendor_extra/x.py"], ["vendor"])
+    assert result == ["vendor_extra/x.py"]
+
+
+def test_filter_excluded_file_named_same_as_dir_excluded() -> None:
+    """A path that exactly equals the bare dir name is excluded."""
+    result = filter_excluded(["vendor", "src/foo.py"], ["vendor"])
+    assert result == ["src/foo.py"]
+
+
+def test_filter_excluded_multiple_globs_any_match() -> None:
+    """A file matching ANY single exclude glob is dropped."""
+    result = filter_excluded(
+        ["src/a.py", "src/b.gen.py", "vendor/x.py"],
+        ["*.gen.py", "vendor"],
+    )
+    assert result == ["src/a.py"]
+
+
+def test_filter_excluded_preserves_order_for_survivors() -> None:
+    """Surviving files appear in the same order as the input list."""
+    files = ["src/z.py", "src/a.py", "tests/t.py"]
+    assert filter_excluded(files, ["nothing"]) == files
+
+
+def test_filter_excluded_empty_files_nonempty_globs_empty() -> None:
+    """Empty file list + nonempty globs → empty output (no error)."""
+    assert filter_excluded([], ["vendor", "*.gen.py"]) == []
+
+
+# ---------------------------------------------------------------------------
+# ForgeConfig.exclude field + load_config exclude loading
+# ---------------------------------------------------------------------------
+
+
+def test_forge_config_default_exclude_is_empty() -> None:
+    """Bare ForgeConfig() has an empty exclude list — no patterns by default."""
+    assert ForgeConfig().exclude == []
+
+
+def test_load_config_reads_exclude_list(tmp_path: Path) -> None:
+    """load_config reads [tool.forge].exclude as a list of glob strings."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nexclude = ["vendor", "*.gen.py"]\n'
+    )
+    cfg = load_config(tmp_path)
+    assert cfg.exclude == ["vendor", "*.gen.py"]
+
+
+def test_load_config_exclude_absent_key_returns_empty(tmp_path: Path) -> None:
+    """When exclude is absent from [tool.forge], cfg.exclude is []."""
+    (tmp_path / "pyproject.toml").write_text("[tool.forge]\n")
+    cfg = load_config(tmp_path)
+    assert cfg.exclude == []
+
+
+def test_load_config_exclude_non_list_value_behavior(tmp_path: Path) -> None:
+    """Exclude = "vendor" (bare TOML string) is guarded and returns [] not char list.
+
+    The scalar ``exclude = "vendor"`` (brackets forgotten) would otherwise
+    iterate character-by-character into ``["v", "e", "n", ...]``. The guard
+    in load_config rejects non-list values and degrades to no excludes.
+    """
+    (tmp_path / "pyproject.toml").write_text('[tool.forge]\nexclude = "vendor"\n')
+    cfg = load_config(tmp_path)
+    assert cfg.exclude == []

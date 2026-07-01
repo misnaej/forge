@@ -21,6 +21,7 @@ mirror it there.
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 import tomllib
 from dataclasses import dataclass, field
@@ -118,12 +119,20 @@ class ForgeConfig:
             ``test_dirs`` is absent from ``pyproject.toml`` (``tests/`` then
             ``test/``); the field default ``["tests"]`` applies only to bare
             dataclass construction.
+        exclude: Repo-wide glob patterns (fnmatch, matched against
+            repo-relative paths) that whole-tree file-selecting steps
+            (``docstring_verification``, ``test_naming_check``) skip. The
+            single place to name paths — vendored / generated Python a repo
+            does not author — that are already excluded from ruff /
+            interrogate and should not be scanned or blocked here either.
+            Empty by default. See :func:`filter_excluded`.
     """
 
     base_branch: str = DEFAULT_BASE_BRANCH
     dev_branch: str = DEFAULT_DEV_BRANCH
     source_dirs: list[str] = field(default_factory=lambda: list(DEFAULT_SOURCE_DIRS))
     test_dirs: list[str] = field(default_factory=lambda: list(DEFAULT_TEST_DIRS))
+    exclude: list[str] = field(default_factory=list)
 
     @property
     def dual_track(self) -> bool:
@@ -262,11 +271,17 @@ def load_config(repo_root: Path) -> ForgeConfig:
         if "test_dirs" in section
         else detect_test_dirs(repo_root)
     )
+    raw_exclude = section.get("exclude", [])
+    # Guard the common footgun: ``exclude = "vendor"`` (a bare string, brackets
+    # forgotten) would otherwise iterate into ``["v", "e", ...]``. Only a list
+    # of globs is meaningful; anything else degrades to no excludes.
+    exclude = [str(p) for p in raw_exclude] if isinstance(raw_exclude, list) else []
     return ForgeConfig(
         base_branch=section.get("base_branch", DEFAULT_BASE_BRANCH),
         dev_branch=section.get("dev_branch", DEFAULT_DEV_BRANCH),
         source_dirs=source_dirs,
         test_dirs=test_dirs,
+        exclude=exclude,
     )
 
 
@@ -349,3 +364,64 @@ def resolve_tool_roots(
         else:
             roots += detect_test_dirs(repo_root)
     return _existing_dirs(repo_root, roots)
+
+
+def filter_under_roots(files: list[str], roots: list[str]) -> list[str]:
+    """Keep only *files* that live under one of *roots* (source-tree scoping).
+
+    The Option-3 half of the whole-tree exclude story (issue #83): a
+    ``--scope all`` step means "whole *source* tree", not "every tracked
+    file", so a file outside the repo's declared source / test roots
+    (``.devcontainer/`` scripts, root-level tooling, vendored trees) is
+    never scanned. Aligns the git-ls-files steps
+    (``docstring_verification``, ``test_naming_check``) with how ruff /
+    api-digest / coverage already scope via :func:`resolve_tool_roots`.
+
+    Args:
+        files: Repo-relative file paths (typically from
+            :func:`forge.git_utils.get_tracked_files`).
+        roots: Repo-relative directory roots to keep files under. An empty
+            list keeps nothing — the caller resolves roots before calling.
+
+    Returns:
+        The subset of *files* under some root, original order preserved. A
+        file matches a root when it equals the root or sits beneath it
+        (``root/…``); a bare root name never partial-matches a sibling
+        (``src`` does not admit ``src_extra/x.py``).
+    """
+    prefixes = tuple(f"{r.rstrip('/')}/" for r in roots)
+    bare = {r.rstrip("/") for r in roots}
+    return [f for f in files if f in bare or f.startswith(prefixes)]
+
+
+def filter_excluded(files: list[str], globs: list[str]) -> list[str]:
+    """Drop *files* matching any exclude *glob* (the ``[tool.forge].exclude`` half).
+
+    The Option-1 half of issue #83: a repo-wide, uniformly-honored exclude
+    so a directory already excluded from ruff / interrogate can be skipped
+    by forge's whole-tree steps too, without editing forge source. A
+    pattern matches a repo-relative path either as an fnmatch glob
+    (``*.gen.py``, ``vendor/**``) or as a directory prefix — a bare
+    directory name (``vendor`` or ``vendor/``) excludes its whole subtree.
+
+    Args:
+        files: Repo-relative file paths.
+        globs: Exclude patterns from ``[tool.forge].exclude``. Empty list is
+            a no-op (returns *files* unchanged).
+
+    Returns:
+        The subset of *files* matching no pattern, original order preserved.
+    """
+    if not globs:
+        return files
+    dir_prefixes = tuple(f"{g.rstrip('/')}/" for g in globs)
+    dir_names = {g.rstrip("/") for g in globs}
+    return [
+        f
+        for f in files
+        if not (
+            f in dir_names
+            or f.startswith(dir_prefixes)
+            or any(fnmatch.fnmatch(f, g) for g in globs)
+        )
+    ]

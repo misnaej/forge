@@ -86,6 +86,15 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "coverage). Unset → smart auto-detect of tests/ then test/.",
     ),
     ConfigKey(
+        ("tool", "forge", "exclude"),
+        default=[],
+        description="Repo-wide glob patterns (fnmatch on repo-relative paths; "
+        "a bare dir name excludes its subtree) skipped by whole-tree steps "
+        "(docstring_verification, test_naming_check) — vendored / generated "
+        "Python you don't author. --scope all also scopes to source_dirs + "
+        "test_dirs, so paths outside them need no listing here.",
+    ),
+    ConfigKey(
         ("tool", "forge", "cli_wiring", "enabled"),
         default=False,
         description="Opt into the cli_wiring pre-commit step (every [project.scripts] "
@@ -176,6 +185,50 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "source_dirs + test_dirs",
         "Per-tool override of the CVE-usage scan roots; otherwise inherits "
         "the repo-wide [tool.forge].source_dirs + test_dirs.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "precommit_depth"),
+        "unset (step skipped)",
+        "Depth the smart_test pre-commit step runs on commit (0/1/2/full). "
+        "Setting it opts the otherwise-off step in.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "blocking"),
+        default=False,
+        description="Make the smart_test step fail the commit on a test "
+        "failure (default: non-blocking WARN).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "paths"),
+        "source_dirs + test_dirs",
+        "Per-tool override of the import-graph scan roots; otherwise inherits "
+        "the repo-wide [tool.forge].source_dirs + test_dirs.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "follow_mock_patches"),
+        default=False,
+        description="Add unittest.mock.patch string targets as test→module "
+        "graph edges, so patch-only couplings select their target's tests.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "coverage_validate"),
+        default=False,
+        description="Union tests whose recorded per-test coverage contexts "
+        "touch a changed line — catches runtime-only (fixture / dynamic) "
+        "links the static import graph misses. Needs coverage_json.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "coverage_json"),
+        "unset",
+        "Path to a `coverage json --show-contexts` export consumed when "
+        "coverage_validate is on. Regenerate on full runs (stale → "
+        "under-selects).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "commit_directive_re"),
+        "built-in [depth-N] / [full] regex",
+        "Override the commit-message directive pattern --from-commit-message "
+        "reads to drive the tier from a CI commit.",
     ),
     ConfigKey(
         ("tool", "forge", "env_sync", "blocking"),
