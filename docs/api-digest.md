@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_50 modules, 534 symbols._
+_55 modules, 567 symbols._
 
 ## `forge._hook_helpers`
 
@@ -533,6 +533,7 @@ _50 modules, 534 symbols._
 - `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
 - `_one_step_successors(tag: tuple[int, int, int]) -> set[tuple[int, int, int]]` _(internal)_ — Return the three valid rolling-next successors of a tagged release.
 - `step_release_tag_guard(repo_root: Path) -> StepResult` — Block when an intermediate rolling-next release was never tagged (#66).
+- `step_smart_test(repo_root: Path) -> StepResult` — Run smart-test depth-N selection when opted in (off by default).
 - `step_changelog_history(repo_root: Path) -> StepResult` — Run ``verify-forge-changelog-history`` — the dropped-``@base``-entry guard.
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
@@ -565,6 +566,54 @@ _50 modules, 534 symbols._
 - `format_report(durations: list[Duration], top: int) -> str` — Render a ranked durations table as plain text.
 - `_read_source(log: str) -> str` _(internal)_ — Read the pytest log from a file path or stdin.
 - `main() -> int` — Entry point for ``forge-slow-tests-report``.
+
+## `forge.smart_test.cli`
+
+- `_smart_test_config(repo_root: Path) -> dict[str, object]` _(internal)_ — Return the ``[tool.forge.smart_test]`` table, or ``{}`` when absent.
+- `_depth_from_commit(repo_root: Path, cfg: dict[str, object]) -> str | None` _(internal)_ — Read a depth directive from ``HEAD``'s commit message, if present.
+- `_parse_depth(raw: str) -> int | str` _(internal)_ — Map a ``--depth`` token to an int tier or the ``full`` sentinel.
+- `_write_log(repo_root: Path, body: str) -> None` _(internal)_ — Write *body* to ``code_health/smart_test.log``.
+- `_run_full(repo_root: Path) -> tuple[int, str]` _(internal)_ — Run the entire suite (the ``full`` tier), always with coverage.
+- `class _RunConfig` _(internal)_ — Configuration for a tiered test run.
+- `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
+- `main() -> int` — Select and run change-affected tests by depth; write the log.
+
+## `forge.smart_test.coverage`
+
+- `_context_to_test(context: str) -> str | None` _(internal)_ — Reduce a coverage context to a repo-relative test file path.
+- `_from_json(data: dict[str, object], changed: set[str]) -> set[str]` _(internal)_ — Map a parsed coverage-JSON document to covering test files.
+- `tests_covering(coverage_json: Path, changed_files: Iterable[str]) -> set[str]` — Return repo-relative test files whose coverage touches a changed file.
+
+## `forge.smart_test.dependencies`
+
+- `class SelectionPlan` — The tests smart-test would run, grouped by the depth they enter at.
+  - `tests_up_to(self, depth: int) -> list[str]` — Return the sorted unique test relpaths selected at *depth* or below.
+- `_roots(repo_root: Path) -> tuple[list[Path], list[Path]]` _(internal)_ — Return ``(source_dir_paths, test_dir_paths)`` as absolute paths.
+- `_iter_py(roots: Iterable[Path]) -> Iterable[Path]` _(internal)_ — Yield every ``.py`` file under *roots*.
+- `_closest_known(target: str, modules: set[str]) -> str | None` _(internal)_ — Resolve an import *target* to the deepest known module that covers it.
+- `_dotted(node: ast.expr) -> str | None` _(internal)_ — Return the dotted name of an attribute/name chain, or ``None``.
+- `_string_literals(args: list[ast.expr]) -> list[str]` _(internal)_ — Return the string-constant values among *args*, in order.
+- `_classify_patch_call(node: ast.Call) -> str | None` _(internal)_ — Classify a call node as a patch variant: ``"patch"``, ``"dict"``, or ``None``.
+- `_collect_sys_modules_targets(node: ast.Call, targets: set[str]) -> None` _(internal)_ — Extract module names from a ``patch.dict("sys.modules", {…})`` call.
+- `_patch_targets(tree: ast.Module) -> set[str]` _(internal)_ — Return the dotted module-attribute targets of ``mock.patch`` calls.
+- `class _Graph` _(internal)_ — The internal import graph plus the name↔path mapping.
+- `build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph` — Parse the repo into an internal import graph.
+- `select_tests(repo_root: Path, changed_files: set[str], max_depth: int, *, follow_mock_patches: bool = False) -> SelectionPlan` — Compute the depth-layered test selection for a change set.
+- `render_plan(plan: SelectionPlan, depth: int) -> str` — Render a parseable ``--show-files`` plan for *depth*.
+
+## `forge.smart_test.git_helpers`
+
+- `_ref_exists(repo_root: Path, ref: str) -> bool` _(internal)_ — Return whether *ref* resolves to a commit in the repo.
+- `resolve_base_ref(repo_root: Path, override: str | None = None) -> str` — Resolve the ref to diff ``HEAD`` against for change detection.
+- `head_commit_message(repo_root: Path) -> str` — Return ``HEAD``'s full commit message (subject + body).
+- `changed_python_files(repo_root: Path, base_ref: str) -> set[str]` — Return repo-relative ``.py`` files changed vs *base_ref*.
+
+## `forge.smart_test.runner`
+
+- `clear_python_cache(repo_root: Path) -> None` — Delete every ``__pycache__`` directory under *repo_root*.
+- `_coverage_available() -> bool` _(internal)_ — Return whether the ``pytest-cov`` plugin is importable.
+- `run_pytest(repo_root: Path, test_paths: Sequence[str], *, coverage: bool = False) -> tuple[int, str]` — Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
 
 ## `forge.upgrade`
 

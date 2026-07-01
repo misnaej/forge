@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 from forge import verify_changelog_history
 from forge.config import ForgeConfig
 from tests.conftest import GIT_ENV as _GIT_ENV
+from tests.conftest import init_dual_track_repo as _init_dual_track_repo
 
 
 if TYPE_CHECKING:
@@ -35,54 +36,6 @@ if TYPE_CHECKING:
 # Shared git identity (_GIT_ENV) + ephemeral-repo init live in tests.conftest
 # (#85) — passed as env= to all subprocess helpers so commits find an identity
 # without a ~/.gitconfig.
-
-
-# ---------------------------------------------------------------------------
-# Repo helpers
-# ---------------------------------------------------------------------------
-
-
-def _init_dual_track_repo(base: Path) -> tuple[Path, Path]:
-    """Initialize a paired work/bare dual-track git repository under *base*.
-
-    Creates ``base/work`` (git init -b main, initial commit, dev branch) and
-    ``base/origin.git`` (bare repo); wires them via ``git remote add origin``
-    and pushes both ``main`` and ``dev``.  Mirrors the forge dual-track layout
-    so tests have a real remote to fetch from.
-
-    Args:
-        base: Parent directory; must already exist.
-
-    Returns:
-        A ``(work, bare)`` tuple of the work-tree and bare-repo paths.
-    """
-    work = base / "work"
-    bare = base / "origin.git"
-    work.mkdir()
-    bare.mkdir()
-
-    for cmd in (
-        ["git", "init", "-q", "-b", "main"],
-        ["git", "commit", "-q", "--allow-empty", "-m", "initial"],
-        ["git", "checkout", "-q", "-b", "dev"],
-        ["git", "checkout", "-q", "main"],
-    ):
-        subprocess.run(cmd, cwd=work, env=_GIT_ENV, check=True)
-
-    subprocess.run(["git", "init", "--bare", "-q"], cwd=bare, env=_GIT_ENV, check=True)
-    subprocess.run(
-        ["git", "remote", "add", "origin", str(bare)],
-        cwd=work,
-        env=_GIT_ENV,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "push", "-q", "origin", "main"], cwd=work, env=_GIT_ENV, check=True
-    )
-    subprocess.run(
-        ["git", "push", "-q", "origin", "dev"], cwd=work, env=_GIT_ENV, check=True
-    )
-    return work, bare
 
 
 def _setup_main_as_ancestor_repo(

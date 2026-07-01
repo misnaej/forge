@@ -81,7 +81,14 @@ Code.
    - orphans.py: `forge-audit-orphans` — dead code detection
    - suppressions.py: `forge-audit-suppressions` — noqa/ignore audit
 
-3. **Package Data (`src/forge/data/`)**
+3. **Smart-test Subpackage (`src/forge/smart_test/`)** — `forge-smart-test`, change-driven test selection by import depth (#8)
+   - git_helpers.py: diff-base resolution + changed-`.py` enumeration (committed delta + staged/unstaged/untracked), layered on `git_utils`
+   - dependencies.py: reverse test→source import graph (built on `import_graph`) + depth expansion; `SelectionPlan`, `render_plan`
+   - runner.py: import-cache hygiene + a single deterministic `pytest` invocation per batch (coverage only on `full`)
+   - coverage.py: opt-in coverage-validated selection — maps changed lines → covering tests via per-test coverage contexts (json or `.coverage` DB); unioned into the static pass
+   - cli.py: `forge-smart-test` — `--depth 0/1/2/full`, `--show-files`, `--coverage`, `--base`, `--coverage-db`, `--from-commit-message`; depth batching with fail-fast; writes `code_health/smart_test.log`
+
+4. **Package Data (`src/forge/data/`)**
    - FOUNDATION.md: shipped copy of the foundation document (symlink)
    - CHANGELOG.md: shipped copy of the changelog (symlink) — read by `forge-upgrade` to surface consumer-action upgrade notes
    - mermaid.min.js: vendored Mermaid UMD bundle (MIT, pinned) — copied next to `forge-gen-c4 --format html` output so the diagram renders offline
@@ -188,6 +195,10 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_pr_squash_comment.py: tests for pr_squash_comment
    - test_precommit.py: tests for precommit dispatcher
    - test_run_context.py: tests for run_context (CI vs workstation detection)
+   - test_smart_test_git_helpers.py: tests for smart_test.git_helpers
+   - test_smart_test_dependencies.py: tests for smart_test.dependencies
+   - test_smart_test_runner.py: tests for smart_test.runner
+   - test_smart_test_cli.py: tests for smart_test.cli
    - test_verify_docstrings.py: tests for verify_docstrings
    - test_verify_docstring_coverage.py: tests for verify_docstring_coverage
    - test_verify_manifest.py: tests for verify_manifest
