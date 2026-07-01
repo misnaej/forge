@@ -15,16 +15,24 @@ Pure module-graph reachability; no runtime instrumentation.
 from __future__ import annotations
 
 import ast
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from forge.config import resolve_tool_roots
-from forge.import_graph import extract_import_targets, resolve_module_name
+from forge.import_graph import (
+    extract_import_targets,
+    resolve_module_name,
+    resolve_package_module_name,
+)
 
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -253,12 +261,14 @@ class _Graph:
 def build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph:
     """Parse the repo into an internal import graph.
 
-    Source roots resolve to dotted names rooted at the source dir
-    (``src/forge/x.py`` → ``forge.x``); test files resolve rooted at the
-    repo so they namespace distinctly (``tests/test_x.py`` →
-    ``tests.test_x``) while their ``from forge.x import …`` edges still
-    point at the source module. Only edges to known internal modules are
-    kept; external imports are dropped.
+    Source files are named by climbing the ``__init__.py`` chain from
+    the file's parent to find the real import root (e.g.
+    ``src/forge/x.py`` → ``forge.x`` when ``src`` has no
+    ``__init__.py``); test files resolve rooted at the repo so they
+    namespace distinctly (``tests/test_x.py`` → ``tests.test_x``) while
+    their ``from forge.x import …`` edges still point at the source
+    module. Only edges to known internal modules are kept; external
+    imports are dropped.
 
     Args:
         repo_root: Git repo root.
@@ -271,14 +281,20 @@ def build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph
         The populated :class:`_Graph`.
     """
     source_roots, test_roots = _roots(repo_root)
-    # Source roots first so src files win their dotted name; repo_root last
-    # as the catch-all that names test files (which live outside src).
-    package_roots = [*source_roots, repo_root]
 
     parsed: dict[str, tuple[str, set[str]]] = {}
     test_modules: set[str] = set()
     for path in _iter_py([*source_roots, *test_roots]):
-        name = resolve_module_name(path, package_roots)
+        is_test = any(path.is_relative_to(tr) for tr in test_roots)
+        # Source files are named by their real import root (package-walk) so
+        # the dotted name matches what importers use even when the configured
+        # scan dir is not the sys.path root. Test files stay repo-rooted
+        # (tests.test_x) so they namespace distinctly from the source tree.
+        name = (
+            resolve_module_name(path, [repo_root])
+            if is_test
+            else resolve_package_module_name(path, repo_root)
+        )
         if not name:
             continue
         try:
@@ -287,7 +303,7 @@ def build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph
             continue
         rel = path.relative_to(repo_root).as_posix()
         targets = extract_import_targets(tree, name)
-        if any(path.is_relative_to(tr) for tr in test_roots):
+        if is_test:
             test_modules.add(name)
             if follow_mock_patches:
                 targets = targets | _patch_targets(tree)
@@ -339,6 +355,22 @@ def select_tests(
     for module, deps in graph.imports.items():
         for dep in deps:
             importers.setdefault(dep, set()).add(module)
+
+    # Self-check: a changed *source* module that nothing imports is the
+    # fingerprint of a source-dir/import-root mismatch — the dotted name we
+    # resolved does not match the name importers reference, so its reverse
+    # edge never connects and the tier would select zero tests silently. Warn
+    # loudly instead. A genuinely un-imported module (e.g. a CLI entry point)
+    # trips this too; a spurious warning beats a silent false green.
+    for module in changed_modules:
+        if module not in graph.test_modules and not importers.get(module):
+            logger.warning(
+                "resolved '%s' for %s; no importer references '%s' — "
+                "likely a source-dir/import-root mismatch",
+                module,
+                graph.path_of[module],
+                module,
+            )
 
     newly_at_depth: dict[int, list[str]] = {}
     seen = set(changed_modules)
