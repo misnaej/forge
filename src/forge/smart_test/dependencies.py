@@ -261,12 +261,14 @@ class _Graph:
 def build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph:
     """Parse the repo into an internal import graph.
 
-    Source roots resolve to dotted names rooted at the source dir
-    (``src/forge/x.py`` → ``forge.x``); test files resolve rooted at the
-    repo so they namespace distinctly (``tests/test_x.py`` →
-    ``tests.test_x``) while their ``from forge.x import …`` edges still
-    point at the source module. Only edges to known internal modules are
-    kept; external imports are dropped.
+    Source files are named by climbing the ``__init__.py`` chain from
+    the file's parent to find the real import root (e.g.
+    ``src/forge/x.py`` → ``forge.x`` when ``src`` has no
+    ``__init__.py``); test files resolve rooted at the repo so they
+    namespace distinctly (``tests/test_x.py`` → ``tests.test_x``) while
+    their ``from forge.x import …`` edges still point at the source
+    module. Only edges to known internal modules are kept; external
+    imports are dropped.
 
     Args:
         repo_root: Git repo root.

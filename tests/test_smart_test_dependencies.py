@@ -392,7 +392,7 @@ def test_select_tests_no_follow_mock_patches_misses_patch_only(
 
 
 # ---------------------------------------------------------------------------
-# Import-root vs source-dir naming — regression fixtures (#<bug>)
+# Import-root vs source-dir naming — regression fixtures
 #
 # source_dirs does double duty: "dirs whose .py to scan" (a broad list every
 # path-tool shares) AND "the sys.path roots to strip when naming modules"
