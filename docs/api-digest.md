@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_55 modules, 552 symbols._
+_55 modules, 553 symbols._
 
 ## `forge._hook_helpers`
 
@@ -345,6 +345,7 @@ _55 modules, 552 symbols._
 ## `forge.import_graph`
 
 - `resolve_module_name(path: Path, package_roots: list[Path]) -> str | None` — Translate a ``.py`` path to a dotted module name.
+- `resolve_package_module_name(path: Path, repo_root: Path) -> str | None` — Name a source file by its real import root, derived from package layout.
 - `extract_import_targets(tree: ast.Module, current_module: str) -> set[str]` — Return the set of fully-qualified import-candidate targets.
 
 ## `forge.install_bootstrap`

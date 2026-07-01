@@ -1116,6 +1116,16 @@ Guarantees consumers can rely on:
   stale `__pycache__` can't mask a failure.
 - **Determinism.** Same `git diff` + same tree → same selection; the
   file order handed to pytest is sorted.
+- **Import-root naming.** A changed source module is named by its real
+  `sys.path` import root — the top of its `__init__.py` package chain — not
+  by stripping the configured `source_dirs` prefix. So a `source_dirs` entry
+  that is itself a package (`libs/…` → `libs.thing.core`) or that holds a
+  nested `*/src` root (`projects/APP/src/pkg/…` → `pkg.runner`) resolves to
+  the name importers actually use, not just the `src/` layout. If a changed
+  source module resolves to a name **no importer references** (the
+  fingerprint of a source-dir/import-root mismatch, or a genuinely
+  un-imported module), smart-test logs a warning rather than silently
+  selecting zero tests.
 
 It writes `code_health/smart_test.log` (FOUNDATION §13) for
 `forge:precommit-fixer`. The optional `smart_test` pre-commit step is
@@ -1134,11 +1144,20 @@ mock-driven or dynamically-wired suites (all default **off** — zero change
 for existing consumers):
 
 - **Mock-patch edges** (`follow_mock_patches = true`). `unittest.mock.patch
-  ("pkg.mod.attr")` is a real test→`pkg.mod` dependency with no import. With
-  this on, a test file's `patch` / `patch.dict` / `mock.`/`mocker.` string
-  targets are added as graph edges (reduced to their importable module
-  prefix); `patch.dict("sys.modules", …)` keys count too. `patch.object` is
-  already covered by its import.
+  ("pkg.mod.attr")` is a test→`pkg.mod` dependency. With this on, a test
+  file's `patch` / `patch.dict` / `mock.`/`mocker.` string targets are added
+  as graph edges (reduced to their importable module prefix);
+  `patch.dict("sys.modules", …)` keys count too. `patch.object` is already
+  covered by its import. **Usually a no-op:** a test that
+  `patch("pkg.mod.attr")`s a collaborator almost always also `import`s
+  `pkg.mod` (to reference it, or via the module under test), so the patch
+  edge just duplicates an import edge that already selects the test. It
+  changes selection **only** for the genuine patch-*only* case — most often
+  `patch.dict("sys.modules", {…})` faking a module against a deferred import,
+  where no static import to the target exists. It is also **orthogonal to
+  module naming**: it adds edges but does not fix a source-dir/import-root
+  mismatch (see below) — a mis-resolved module name defeats import and patch
+  edges alike.
 - **Coverage validation** (`coverage_validate = true` + `coverage_json`). After
   the static pass, union the tests whose recorded per-test coverage
   **contexts** touch a changed line — catching runtime-only links (fixtures,

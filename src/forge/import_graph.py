@@ -49,6 +49,48 @@ def resolve_module_name(path: Path, package_roots: list[Path]) -> str | None:
     return None
 
 
+def resolve_package_module_name(path: Path, repo_root: Path) -> str | None:
+    """Name a source file by its real import root, derived from package layout.
+
+    Unlike :func:`resolve_module_name` — which strips a *configured* scan-dir
+    prefix — this climbs the ``__init__.py`` chain to find the actual
+    ``sys.path`` root, so the emitted dotted name matches what importers use
+    regardless of how the scan dir was configured. The root is the first
+    ancestor that is **not** a package (has no ``__init__.py``); the walk is
+    floored at *repo_root* so it never escapes the repo.
+
+    This resolves the source-dir/import-root split that misnames modules for
+    two layouts a plain scan-dir strip gets wrong:
+
+    - a ``source_dirs`` entry that is itself a package (``libs/`` with an
+      ``__init__.py`` → ``libs.thing.core``, not ``thing.core``), and
+    - a ``source_dirs`` entry holding a nested ``*/src`` root
+      (``projects/APP/src/pkg/runner.py`` → ``pkg.runner``, not
+      ``APP.src.pkg.runner``).
+
+    A plain ``src/pkg/mod.py`` (``src`` has no ``__init__.py``) still resolves
+    to ``pkg.mod`` — identical to the scan-dir strip, so no behavior change.
+
+    Args:
+        path: Absolute path to a Python source file.
+        repo_root: Git repo root; the highest the walk may climb.
+
+    Returns:
+        Dotted module name, or ``None`` if *path* is not under *repo_root*.
+    """
+    root = path.parent
+    while root != repo_root and (root / "__init__.py").exists():
+        root = root.parent
+    try:
+        rel = path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return None
+    parts = list(rel.with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts) if parts else None
+
+
 def extract_import_targets(tree: ast.Module, current_module: str) -> set[str]:
     """Return the set of fully-qualified import-candidate targets.
 

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import ast
+import logging
 from typing import TYPE_CHECKING
 
 import pytest
@@ -387,4 +388,200 @@ def test_select_tests_no_follow_mock_patches_misses_patch_only(
     tests = plan.tests_up_to(0)
     assert not any("test_b" in t for t in tests), (
         f"test_b unexpectedly selected: {tests}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Import-root vs source-dir naming — regression fixtures (#<bug>)
+#
+# source_dirs does double duty: "dirs whose .py to scan" (a broad list every
+# path-tool shares) AND "the sys.path roots to strip when naming modules"
+# (what smart_test needs — the *import* roots). Those coincide for a src/
+# layout and diverge for the two shapes below. When they diverge the changed
+# module is named with the wrong prefix, no reverse edge connects, and the
+# gate reports zero tests and passes green — a silent false negative.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def package_as_source_dir_repo(tmp_path: Path) -> Path:
+    """Shape A — a ``source_dirs`` entry that is itself an import root package.
+
+    ``libs`` is listed in ``source_dirs`` and is *itself a package* (carries
+    ``__init__.py``), so the sys.path root is the repo root, not ``libs/``:
+    ``libs/thing/core.py`` is imported as ``libs.thing.core``. Stripping the
+    ``libs/`` scan-dir prefix would misname it ``thing.core`` and disconnect
+    the test edge.
+
+    Layout::
+
+        <root>/
+          pyproject.toml            # source_dirs = ["src", "libs"]
+          libs/__init__.py          # libs IS a package
+          libs/thing/__init__.py
+          libs/thing/core.py        # x = 1
+          tests/test_thing.py       # from libs.thing.core import x
+
+    Returns:
+        The repo root path.
+    """
+    root = tmp_path
+    (root / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src", "libs"]\ntest_dirs = ["tests"]\n',
+        encoding="utf-8",
+    )
+    libs = root / "libs"
+    thing = libs / "thing"
+    thing.mkdir(parents=True)
+    (libs / "__init__.py").write_text("", encoding="utf-8")
+    (thing / "__init__.py").write_text("", encoding="utf-8")
+    (thing / "core.py").write_text("x = 1\n", encoding="utf-8")
+
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_thing.py").write_text(
+        "from libs.thing.core import x\n\n\ndef test_x():\n    assert x == 1\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+@pytest.fixture
+def nested_src_root_repo(tmp_path: Path) -> Path:
+    """Shape B — a ``source_dirs`` entry holding a nested ``*/src`` import root.
+
+    ``projects`` is listed in ``source_dirs`` but the real sys.path root is
+    ``projects/APP/src``: ``runner.py`` is imported as ``pkg.runner``.
+    Stripping the ``projects/`` scan-dir prefix would misname it
+    ``APP.src.pkg.runner`` and disconnect the test edge.
+
+    Layout::
+
+        <root>/
+          pyproject.toml            # source_dirs = ["src", "projects"]
+          projects/APP/src/pkg/__init__.py
+          projects/APP/src/pkg/runner.py    # def run(): ...
+          tests/test_runner.py              # from pkg.runner import run
+
+    Returns:
+        The repo root path.
+    """
+    root = tmp_path
+    (root / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src", "projects"]\ntest_dirs = ["tests"]\n',
+        encoding="utf-8",
+    )
+    pkg = root / "projects" / "APP" / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "runner.py").write_text("def run():\n    return 1\n", encoding="utf-8")
+
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_runner.py").write_text(
+        "from pkg.runner import run\n\n\ndef test_run():\n    assert run() == 1\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_shape_a_package_as_source_dir_selects_coupled_test(
+    package_as_source_dir_repo: Path,
+) -> None:
+    """Shape A: changing ``libs/thing/core.py`` selects its coupled test.
+
+    Regression: the ``libs/`` prefix must NOT be stripped when naming the
+    module — importers reference ``libs.thing.core``, so the changed file
+    must resolve to that same dotted name for the reverse edge to connect.
+    """
+    plan = select_tests(package_as_source_dir_repo, {"libs/thing/core.py"}, max_depth=1)
+    tests = plan.tests_up_to(1)
+    assert any("test_thing" in t for t in tests), f"test_thing not found in {tests}"
+
+
+def test_shape_b_nested_src_root_selects_coupled_test(
+    nested_src_root_repo: Path,
+) -> None:
+    """Shape B: changing a nested ``*/src`` module selects its coupled test.
+
+    Regression: ``projects/APP/src/pkg/runner.py`` must resolve to
+    ``pkg.runner`` (its real import root is ``projects/APP/src``), matching
+    the importer's ``from pkg.runner import run``.
+    """
+    plan = select_tests(
+        nested_src_root_repo, {"projects/APP/src/pkg/runner.py"}, max_depth=1
+    )
+    tests = plan.tests_up_to(1)
+    assert any("test_runner" in t for t in tests), f"test_runner not found in {tests}"
+
+
+def test_src_container_control_unaffected(import_chain_repo: Path) -> None:
+    """Control: the plain ``src/`` layout keeps resolving and selecting.
+
+    The naming fix for Shapes A/B must not change behavior for the common
+    ``src/``-container layout, where scan dir and import root coincide.
+    """
+    plan = select_tests(import_chain_repo, {"src/myapp/core.py"}, max_depth=1)
+    tests = plan.tests_up_to(1)
+    assert any("test_core" in t for t in tests)
+    assert any("test_service" in t for t in tests)
+
+
+# ---------------------------------------------------------------------------
+# Self-check warning — a changed module named with no importer in the graph
+# is the fingerprint of a source-dir/import-root mismatch; warn loudly instead
+# of selecting zero silently.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def orphan_changed_repo(tmp_path: Path) -> Path:
+    """``src/`` repo with a source module that no test or module imports.
+
+    Layout adds ``src/myapp/orphan.py`` (referenced by nobody) to the base
+    two-module tree, so a change to it names a real module with zero
+    importers — the mismatch fingerprint the self-check must flag.
+
+    Returns:
+        The repo root path.
+    """
+    root = tmp_path
+    (root / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n',
+        encoding="utf-8",
+    )
+    src = root / "src" / "myapp"
+    src.mkdir(parents=True)
+    (src / "__init__.py").write_text("", encoding="utf-8")
+    (src / "core.py").write_text("x = 1\n", encoding="utf-8")
+    (src / "orphan.py").write_text("y = 2\n", encoding="utf-8")
+
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_core.py").write_text(
+        "from myapp.core import x\n\n\ndef test_x():\n    assert x == 1\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_self_check_warns_on_module_with_no_importer(
+    orphan_changed_repo: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A changed module that no importer references logs a mismatch warning."""
+    with caplog.at_level(logging.WARNING):
+        select_tests(orphan_changed_repo, {"src/myapp/orphan.py"}, max_depth=1)
+    assert any("no importer references" in r.message for r in caplog.records), (
+        f"expected mismatch warning, got {[r.message for r in caplog.records]}"
+    )
+
+
+def test_self_check_silent_on_module_with_importer(
+    import_chain_repo: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A changed module that IS imported produces no mismatch warning."""
+    with caplog.at_level(logging.WARNING):
+        select_tests(import_chain_repo, {"src/myapp/core.py"}, max_depth=1)
+    assert not any("no importer references" in r.message for r in caplog.records), (
+        f"unexpected mismatch warning: {[r.message for r in caplog.records]}"
     )
