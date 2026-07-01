@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import argparse
+import dataclasses
 import logging
+import shutil
+import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
 
 from forge.gen_c4 import (
+    _BROWSER_APP_PATHS,
+    _BROWSER_ENV,
     _EDGE_MODES,
+    DEFAULT_PDF_OUTPUT,
     MERMAID_ELK_JS_NAME,
     MERMAID_JS_NAME,
     README_C4_END,
@@ -19,19 +26,37 @@ from forge.gen_c4 import (
     External,
     Person,
     Relationship,
+    RenderConfig,
+    _build_views,
     _copy_vendored_mermaid,
     _derive_container_edges,
+    _edge_endpoints,
+    _emit_pdf,
+    _external_node_line,
     _externals_with_declared_incoming,
+    _find_headless_browser,
+    _html_interaction_css,
+    _html_interaction_script,
     _IdMaps,
     _includes_derived,
+    _mermaid_box,
+    _mermaid_init_options,
+    _parse_render_config,
+    _pdf_page_geometry,
+    _print_html_to_pdf,
+    _print_page_css,
     _render_mermaid_components_for,
     _render_mermaid_containers,
     _render_mermaid_system_context,
+    _render_view_pdf_html,
     _resolve_direction,
     _resolve_edge_mode,
     _resolve_endpoint,
+    _resolve_layout,
     _slug,
     _under_prefix,
+    _visibility_fields,
+    _visible_config,
     _warn_unknown_relationships,
     assign_components,
     derive_component_edges,
@@ -487,7 +512,10 @@ def test_render_html_has_one_tab_per_view() -> None:
     assert 'data-pane="0">A</button>' in page
     assert 'data-pane="1">B</button>' in page
     assert page.count('<pre class="mermaid">') == 2
-    assert page.count("data-pane=") == 4  # 2 buttons + 2 panes paired
+    # One button + one pane div per view (the interaction script also mentions
+    # data-pane, so count the concrete markup attributes only).
+    assert page.count('class="tab" data-pane=') == 2
+    assert page.count('class="pane" data-pane=') == 2
 
 
 def test_render_mermaid_system_context_excludes_containers_and_components(
@@ -1310,10 +1338,13 @@ def test_unknown_relationship_endpoint_skipped_in_dsl() -> None:
 
 
 def test_render_html_sets_flowchart_usemaxwidth_false() -> None:
-    """render_html sets mermaid flowchart useMaxWidth: false."""
+    """render_html sets mermaid flowchart useMaxWidth: false.
+
+    The init options are emitted as JSON, so the key is double-quoted.
+    """
     config = C4Config(system="Test", description="", output="")
     page = render_html(config, [("V", "graph LR\n")])
-    assert "useMaxWidth: false" in page
+    assert '"useMaxWidth": false' in page
 
 
 def test_render_html_wraps_panes_in_scroll_container() -> None:
@@ -1612,19 +1643,25 @@ def test_render_html_loads_and_registers_elk() -> None:
     """render_html output contains all three parts of the v11 ELK wiring.
 
     Pins the vendored loader script tag (MERMAID_ELK_JS_NAME), the
-    registerLayoutLoaders call, and ``layout: c4layout`` in mermaid.initialize
+    registerLayoutLoaders call, and ``"layout": c4layout`` in mermaid.initialize
     together so a regression that drops any single piece (e.g. removing the
     script tag while keeping the init call) is caught immediately rather than
     silently degrading to dagre at runtime. The dagre-default string is also
     checked to confirm the init variable is visible before the try block runs.
+
+    The ``"layout"`` key is double-quoted (JSON format) while ``c4layout`` is a
+    bare JS variable reference, so the page-computed value wins at runtime.
     """
     config = C4Config(system="Test", description="", output="")
     page = render_html(config, [("V", "graph LR\n")])
     assert f'<script src="{MERMAID_ELK_JS_NAME}">' in page
     assert "registerLayoutLoaders" in page
-    assert "layout: c4layout" in page
+    assert '"layout": c4layout' in page
     assert "NETWORK_SIMPLEX" in page
-    assert 'var c4layout = "dagre"' in page
+    # c4layout is declared as var c4layout = requestedLayout and then conditionally
+    # set to "dagre" inside the ELK try-block; the bare assignment (not the var decl)
+    # is the dagre fallback marker.
+    assert 'c4layout = "dagre"' in page
 
 
 def test_render_html_elk_has_dagre_fallback() -> None:
@@ -1654,3 +1691,1146 @@ def test_copy_vendored_writes_both_mermaid_and_elk_sidecars(tmp_path: Path) -> N
     assert (tmp_path / MERMAID_ELK_JS_NAME).is_file()
     assert (tmp_path / MERMAID_JS_NAME).stat().st_size > 0
     assert (tmp_path / MERMAID_ELK_JS_NAME).stat().st_size > 0
+
+
+# --- #140: RenderConfig defaults and _parse_render_config ---
+
+
+def test_parse_render_config_absent_render_key_returns_defaults() -> None:
+    """_parse_render_config with no render key returns the all-defaults RenderConfig."""
+    cfg = _parse_render_config({})
+    assert cfg.wrapping_width == 220
+    assert cfg.merge_edges is False
+    assert cfg.force_node_model_order is True
+    assert cfg.node_placement_strategy == "NETWORK_SIMPLEX"
+    assert cfg.theme_colors == {}
+    assert cfg.theme == "neutral"
+    assert cfg.font_size is None
+
+
+def test_parse_render_config_populated_keys_override_defaults() -> None:
+    """_parse_render_config reads supplied keys, overriding defaults."""
+    cfg = _parse_render_config(
+        {"render": {"wrapping_width": 350, "font_size": 16, "theme": "base"}}
+    )
+    assert cfg.wrapping_width == 350
+    assert cfg.font_size == 16
+    assert cfg.theme == "base"
+
+
+def test_parse_render_config_unknown_keys_ignored() -> None:
+    """_parse_render_config silently ignores unrecognized keys; no exception raised."""
+    cfg = _parse_render_config({"render": {"bogus_key": 99, "another": "value"}})
+    assert cfg.wrapping_width == 220  # defaults preserved when unknowns are present
+
+
+def test_parse_render_config_non_dict_render_returns_defaults() -> None:
+    """_parse_render_config falls back to RenderConfig() when render is not a dict."""
+    assert _parse_render_config({"render": "bogus"}) == RenderConfig()
+    assert _parse_render_config({"render": 42}) == RenderConfig()
+
+
+def test_parse_render_config_theme_colors_non_dict_returns_empty() -> None:
+    """_parse_render_config coerces non-dict theme_colors to an empty dict."""
+    assert _parse_render_config({"render": {"theme_colors": "red"}}).theme_colors == {}
+    assert _parse_render_config({"render": {"theme_colors": [1, 2]}}).theme_colors == {}
+
+
+def test_parse_render_config_theme_colors_dict_preserved() -> None:
+    """_parse_render_config preserves a valid theme_colors mapping verbatim."""
+    colors = {"primaryColor": "#ff0000", "lineColor": "#333"}
+    cfg = _parse_render_config({"render": {"theme_colors": colors}})
+    assert cfg.theme_colors == colors
+
+
+def test_load_c4_config_parses_render_section(tmp_path: Path) -> None:
+    """load_c4_config reads [render] keys into config.render."""
+    toml_text = 'system = "Demo"\n[render]\nwrapping_width = 350\nfont_size = 16\n'
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(toml_text)
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    assert config.render.wrapping_width == 350
+    assert config.render.font_size == 16
+
+
+def test_render_config_is_frozen() -> None:
+    """RenderConfig raises FrozenInstanceError on attempted attribute mutation."""
+    rc = RenderConfig()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        rc.wrapping_width = 999
+
+
+# --- #140: _mermaid_init_options ---
+
+
+def test_mermaid_init_options_always_emitted_keys_present() -> None:
+    """_mermaid_init_options emits required always-on keys for default config."""
+    out = _mermaid_init_options(RenderConfig(), layout_var="c4layout")
+    assert '"wrappingWidth": 220' in out
+    assert '"markdownAutoWrap": true' in out
+    assert '"useMaxWidth": false' in out
+    assert "NETWORK_SIMPLEX" in out
+    assert '"forceNodeModelOrder": true' in out
+    assert '"mergeEdges": false' in out
+
+
+def test_mermaid_init_options_layout_var_is_bare_reference() -> None:
+    """_mermaid_init_options emits layout as bare variable (not string).
+
+    The dagre fallback in the HTML page sets `c4layout` at runtime; emitting the
+    variable name unquoted lets the page-computed value win rather than hard-coding
+    a string literal "c4layout" that would break the ELK / dagre switch.
+    """
+    out = _mermaid_init_options(RenderConfig(), layout_var="c4layout")
+    assert '"layout": c4layout' in out
+    assert '"layout": "c4layout"' not in out
+
+
+def test_mermaid_init_options_optional_keys_absent_with_defaults() -> None:
+    """Optional pass-through keys are absent from the output when at their defaults."""
+    out = _mermaid_init_options(RenderConfig(), layout_var="c4layout")
+    for key in (
+        "fontSize",
+        "nodeSpacing",
+        "rankSpacing",
+        "fontFamily",
+        "htmlLabels",
+        "themeCSS",
+        "considerModelOrder",
+        "cycleBreakingStrategy",
+    ):
+        assert key not in out, f"expected {key!r} absent with default RenderConfig"
+
+
+def test_mermaid_init_options_font_size_emitted_when_set() -> None:
+    """_mermaid_init_options emits fontSize when font_size is provided."""
+    out = _mermaid_init_options(RenderConfig(font_size=14), layout_var="c4layout")
+    assert '"fontSize": 14' in out
+
+
+def test_mermaid_init_options_node_spacing_emitted_when_set() -> None:
+    """_mermaid_init_options emits nodeSpacing when node_spacing is provided."""
+    out = _mermaid_init_options(RenderConfig(node_spacing=50), layout_var="c4layout")
+    assert '"nodeSpacing": 50' in out
+
+
+def test_mermaid_init_options_rank_spacing_emitted_when_set() -> None:
+    """_mermaid_init_options emits rankSpacing when rank_spacing is provided."""
+    out = _mermaid_init_options(RenderConfig(rank_spacing=20), layout_var="c4layout")
+    assert '"rankSpacing": 20' in out
+
+
+def test_mermaid_init_options_font_family_emitted_when_set() -> None:
+    """_mermaid_init_options emits fontFamily when font_family is provided."""
+    out = _mermaid_init_options(
+        RenderConfig(font_family="monospace"), layout_var="c4layout"
+    )
+    assert '"fontFamily": "monospace"' in out
+
+
+def test_mermaid_init_options_html_labels_emitted_when_set() -> None:
+    """_mermaid_init_options emits htmlLabels when html_labels is explicitly False."""
+    out = _mermaid_init_options(RenderConfig(html_labels=False), layout_var="c4layout")
+    assert '"htmlLabels": false' in out
+
+
+def test_mermaid_init_options_custom_css_emitted_when_set() -> None:
+    """_mermaid_init_options emits themeCSS when custom_css is provided."""
+    out = _mermaid_init_options(
+        RenderConfig(custom_css=".node{}"), layout_var="c4layout"
+    )
+    assert '"themeCSS": ".node{}"' in out
+
+
+def test_mermaid_init_options_consider_model_order_emitted_when_set() -> None:
+    """_mermaid_init_options emits considerModelOrder when set."""
+    out = _mermaid_init_options(
+        RenderConfig(consider_model_order="PREFER_EDGES"), layout_var="c4layout"
+    )
+    assert '"considerModelOrder": "PREFER_EDGES"' in out
+
+
+def test_mermaid_init_options_theme_variables_only_when_base_and_colors() -> None:
+    """ThemeVariables is emitted only when theme=='base' AND theme_colors is non-empty.
+
+    Three sub-cases: neutral+colors (no emit), base+empty-colors (no emit),
+    base+non-empty-colors (emit). Mermaid ignores themeVariables unless theme is
+    'base', so emitting them under other themes would be misleading dead weight.
+    """
+    colors = {"primaryColor": "#ff0000"}
+    # neutral theme with colors: NOT emitted (Mermaid ignores them anyway)
+    out_neutral = _mermaid_init_options(
+        RenderConfig(theme="neutral", theme_colors=colors), layout_var="c4layout"
+    )
+    assert "themeVariables" not in out_neutral
+    # base theme with empty colors: NOT emitted (nothing to configure)
+    out_base_empty = _mermaid_init_options(
+        RenderConfig(theme="base", theme_colors={}), layout_var="c4layout"
+    )
+    assert "themeVariables" not in out_base_empty
+    # base theme with non-empty colors: emitted
+    out_base_colors = _mermaid_init_options(
+        RenderConfig(theme="base", theme_colors=colors), layout_var="c4layout"
+    )
+    assert "themeVariables" in out_base_colors
+
+
+# --- #140 / #124: _mermaid_box + regression guards ---
+
+
+def test_mermaid_box_html_branch_exact() -> None:
+    """_mermaid_box returns the canonical <b>/<br/> HTML-tag form by default."""
+    assert (
+        _mermaid_box("Core", "Python", "Does things")
+        == "<b>Core</b><br/>[Python]<br/>Does things"
+    )
+
+
+def test_mermaid_box_markdown_branch_exact() -> None:
+    """_mermaid_box(markdown=True) returns a backtick-fenced markdown-string label."""
+    assert (
+        _mermaid_box("Core", "Python", "Does things", markdown=True)
+        == "`**Core**\n[Python]\nDoes things`"
+    )
+
+
+def test_mermaid_box_entity_escaping_html_branch() -> None:
+    """_mermaid_box HTML form entity-escapes <, >, and & in all three fields."""
+    result = _mermaid_box("A<B", "C&D", "x>y")
+    assert "A&lt;B" in result
+    assert "C&amp;D" in result
+    assert "x&gt;y" in result
+
+
+def test_mermaid_box_entity_escaping_markdown_branch() -> None:
+    """_mermaid_box markdown form entity-escapes <, >, and & in all three fields."""
+    result = _mermaid_box("A<B", "C&D", "x>y", markdown=True)
+    assert "A&lt;B" in result
+    assert "C&amp;D" in result
+    assert "x&gt;y" in result
+
+
+def test_mermaid_box_missing_technology_omits_bracket() -> None:
+    """_mermaid_box omits the [technology] bracket when technology is empty."""
+    assert "[" not in _mermaid_box("Core", "", "Desc")
+    assert "[" not in _mermaid_box("Core", "", "Desc", markdown=True)
+
+
+def test_mermaid_box_missing_description_two_part_label() -> None:
+    """_mermaid_box produces a two-part label when description is empty."""
+    assert _mermaid_box("Core", "Python", "") == "<b>Core</b><br/>[Python]"
+    assert _mermaid_box("Core", "Python", "", markdown=True) == "`**Core**\n[Python]`"
+
+
+def test_external_node_line_forwards_markdown_flag() -> None:
+    """_external_node_line passes the markdown flag through to _mermaid_box.
+
+    Default (markdown=False) produces a label with literal HTML <b> tags; the
+    per-view HTML renderers pass markdown=True, which produces a backtick-fenced
+    label so Mermaid's markdownAutoWrap can reflow long descriptions.
+    """
+    ext = External("GitHub", "Hosts repos", "reads via gh")
+    default_result = _external_node_line("github", ext)
+    assert "<b>" in default_result
+    assert "`**" not in default_result
+    md_result = _external_node_line("github", ext, markdown=True)
+    assert "`**" in md_result
+    assert "<b>" not in md_result
+
+
+def test_flat_render_mermaid_uses_html_tags_not_markdown_strings() -> None:
+    """render_mermaid uses literal HTML <b> tags; backtick markdown must not appear.
+
+    Guards the flat (README/stdout) renderer against accidental migration to the
+    markdown-string form, which is reserved for the per-view HTML renderers that
+    pair with the markdownAutoWrap Mermaid option.
+    """
+    config = C4Config(
+        system="Demo",
+        description="",
+        output="",
+        containers=(Container("App", "Python", "An app"),),
+        components=(Component("Core", ("demo.core",), description="Core component"),),
+    )
+    mermaid = render_mermaid(config, set())
+    assert "<b>" in mermaid
+    assert "`**" not in mermaid
+
+
+def test_per_view_renderers_use_markdown_strings_in_node_definitions() -> None:
+    """Per-view renderers emit markdown strings; no HTML <b> in node-definition lines.
+
+    Checks all three per-view renderers: _render_mermaid_system_context,
+    _render_mermaid_containers, and _render_mermaid_components_for. Every line
+    that defines a node (contains `["`) must carry a backtick markdown label and
+    must not contain literal HTML <b> tags — a regression would silently break
+    Mermaid's markdownAutoWrap label-overflow fix.
+    """
+    config = C4Config(
+        system="Demo",
+        description="",
+        output="",
+        persons=(Person("User", "Uses", "operates"),),
+        externals=(External("GitHub", "Hosts", "reads via gh"),),
+        containers=(Container("App", "Python", "An app"),),
+        components=(Component("Core", ("demo.core",), description="Core component"),),
+    )
+    for label, source in [
+        ("system_context", _render_mermaid_system_context(config)),
+        ("containers", _render_mermaid_containers(config, set())),
+        (
+            "components",
+            _render_mermaid_components_for(config, config.containers[0], 0, set()),
+        ),
+    ]:
+        def_lines = [ln for ln in source.splitlines() if '["' in ln]
+        assert def_lines, f"{label}: expected node-definition lines containing '[\"'"
+        assert all("<b>" not in ln for ln in def_lines), (
+            f"{label}: found literal '<b>' in a node-definition line"
+        )
+        assert any("`**" in ln for ln in def_lines), (
+            f"{label}: expected backtick markdown '`**' in node-definition line"
+        )
+
+
+# --- #124: render_html new injections ---
+
+
+def test_render_html_contains_init_options_and_interactivity() -> None:
+    """render_html injects init options and c4-focus-mode."""
+    config = C4Config(system="Test", description="", output="")
+    page = render_html(config, [("V", "graph LR\n")])
+    assert '"wrappingWidth": 220' in page
+    assert "markdownAutoWrap" in page
+    assert "c4WireView" in page
+    assert "c4-focus-mode" in page
+    assert "mermaid.initialize(" in page
+
+
+# --- #137: _find_headless_browser ---
+
+
+def test_find_headless_browser_env_existing_path_returns_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_find_headless_browser returns FORGE_C4_BROWSER when it is an executable file.
+
+    SCENARIO: FORGE_C4_BROWSER points to an executable file on disk.
+    MOCK SETUP: a real stub file (chmod +x) is created under tmp_path; env var set.
+    EXPECTED BEHAVIOR: _find_headless_browser returns that exact path string.
+    """
+    fake_browser = tmp_path / "my_browser"
+    fake_browser.write_text("")
+    fake_browser.chmod(0o755)
+    monkeypatch.setenv(_BROWSER_ENV, str(fake_browser))
+    assert _find_headless_browser() == str(fake_browser)
+
+
+def test_find_headless_browser_env_non_executable_returns_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_find_headless_browser rejects a FORGE_C4_BROWSER that is not executable.
+
+    SCENARIO: the override names a real file that lacks the execute bit.
+    MOCK SETUP: a stub file is created (mode 0o644) and pointed at by the env var.
+    EXPECTED BEHAVIOR: returns None — a non-executable path is not a browser.
+    """
+    fake_browser = tmp_path / "not_exec"
+    fake_browser.write_text("")
+    fake_browser.chmod(0o644)
+    monkeypatch.setenv(_BROWSER_ENV, str(fake_browser))
+    assert _find_headless_browser() is None
+
+
+def test_find_headless_browser_env_missing_path_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_find_headless_browser returns None when FORGE_C4_BROWSER names a missing path.
+
+    SCENARIO: FORGE_C4_BROWSER is set but the named file does not exist.
+    MOCK SETUP: env var set to a path that does not exist on disk.
+    EXPECTED BEHAVIOR: returns None; a missing override is not usable.
+    """
+    monkeypatch.setenv(_BROWSER_ENV, "/nonexistent/path/to/browser")
+    assert _find_headless_browser() is None
+
+
+def test_find_headless_browser_app_path_exists_returns_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_find_headless_browser returns the first matching macOS app-bundle path.
+
+    SCENARIO: no env override; one well-known app-bundle path exists.
+    MOCK SETUP: FORGE_C4_BROWSER unset; Path.exists returns True only for the
+        first entry of _BROWSER_APP_PATHS.
+    EXPECTED BEHAVIOR: returns that first app-bundle path.
+    """
+    monkeypatch.delenv(_BROWSER_ENV, raising=False)
+    target = _BROWSER_APP_PATHS[0]
+    monkeypatch.setattr("forge.gen_c4.Path.exists", lambda self: str(self) == target)
+    assert _find_headless_browser() == target
+
+
+def test_find_headless_browser_shutil_which_returns_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_find_headless_browser falls through to shutil.which when no app path exists.
+
+    SCENARIO: no env override; no app-bundle paths present; shutil.which finds chrome.
+    MOCK SETUP: Path.exists→False for all paths; shutil.which returns
+        '/usr/bin/chrome' for the 'chrome' command name.
+    EXPECTED BEHAVIOR: returns the path reported by shutil.which.
+    """
+    monkeypatch.delenv(_BROWSER_ENV, raising=False)
+    monkeypatch.setattr("forge.gen_c4.Path.exists", lambda _self: False)
+    monkeypatch.setattr(
+        shutil, "which", lambda cmd: "/usr/bin/chrome" if cmd == "chrome" else None
+    )
+    assert _find_headless_browser() == "/usr/bin/chrome"
+
+
+def test_find_headless_browser_nothing_found_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_find_headless_browser returns None when no browser is discoverable anywhere.
+
+    SCENARIO: no env override, no app-bundle paths, shutil.which finds nothing.
+    MOCK SETUP: FORGE_C4_BROWSER unset; Path.exists→False; shutil.which→None.
+    EXPECTED BEHAVIOR: returns None.
+    """
+    monkeypatch.delenv(_BROWSER_ENV, raising=False)
+    monkeypatch.setattr("forge.gen_c4.Path.exists", lambda _self: False)
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    assert _find_headless_browser() is None
+
+
+# --- #137: _emit_pdf ---
+
+
+def test_emit_pdf_no_browser_returns_1_with_actionable_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_emit_pdf returns 1 and logs an actionable error when no browser is found.
+
+    SCENARIO: headless browser discovery finds nothing.
+    MOCK SETUP: forge.gen_c4._find_headless_browser patched to return None.
+    EXPECTED BEHAVIOR: _emit_pdf returns 1; the error log names FORGE_C4_BROWSER
+        so the user knows how to provide an explicit override.
+    """
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: None)
+    config = C4Config(system="Test", description="", output="")
+    args = argparse.Namespace(output=None, check=False)
+    with caplog.at_level(logging.ERROR, logger="forge.gen_c4"):
+        result = _emit_pdf(tmp_path, config, set(), args)
+    assert result == 1
+    assert _BROWSER_ENV in caplog.text
+
+
+def test_emit_pdf_success_writes_pdf_and_returns_0(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_emit_pdf returns 0 and the PDF exists when the headless print succeeds.
+
+    SCENARIO: browser found, no merge tool → single-document print succeeds.
+    MOCK SETUP: _find_headless_browser → fake path; _find_pdf_merger → None (so
+        the single-document path runs); _print_html_to_pdf → a stub that writes a
+        minimal bytes file at its pdf_path arg.
+    EXPECTED BEHAVIOR: _emit_pdf returns 0; docs/architecture.pdf exists under
+        tmp_path (the DEFAULT_PDF_OUTPUT destination).
+    """
+
+    def _fake_print(browser: str, html_path: object, pdf_path: object) -> None:
+        pdf_path.write_bytes(b"%PDF-1.4 stub")  # type: ignore[union-attr]
+
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: "/fake/chrome")
+    monkeypatch.setattr("forge.gen_c4._find_pdf_merger", lambda: None)
+    monkeypatch.setattr("forge.gen_c4._print_html_to_pdf", _fake_print)
+    config = C4Config(system="Test", description="", output="")
+    args = argparse.Namespace(output=None, check=False)
+    result = _emit_pdf(tmp_path, config, set(), args)
+    assert result == 0
+    assert (tmp_path / DEFAULT_PDF_OUTPUT).is_file()
+
+
+def test_emit_pdf_per_view_renders_each_view_and_merges(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default (auto) fit renders one PDF per view and merges them.
+
+    SCENARIO: browser + merge tool present; two views.
+    MOCK SETUP: _find_headless_browser + _find_pdf_merger patched; _print_html_to_pdf
+        stubs a per-view PDF; _merge_pdfs records the parts and writes the output.
+    EXPECTED BEHAVIOR: one print per view, merge called with both parts, exit 0.
+    """
+    printed: list[str] = []
+    merged: list[int] = []
+
+    def _fake_print(browser: str, html_path: object, pdf_path: object) -> None:
+        printed.append(str(html_path))
+        pdf_path.write_bytes(b"%PDF-1.4 stub")  # type: ignore[union-attr]
+
+    def _fake_merge(merger: str, parts: object, out_path: object) -> None:
+        merged.append(len(parts))  # type: ignore[arg-type]
+        out_path.write_bytes(b"%PDF-1.4 merged")  # type: ignore[union-attr]
+
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: "/fake/chrome")
+    monkeypatch.setattr("forge.gen_c4._find_pdf_merger", lambda: "/fake/pdfunite")
+    monkeypatch.setattr("forge.gen_c4._print_html_to_pdf", _fake_print)
+    monkeypatch.setattr("forge.gen_c4._merge_pdfs", _fake_merge)
+    config = _two_container_config(
+        (Component("Core", ("a",), container="Applications"),)
+    )
+    args = argparse.Namespace(output=None, check=False)
+    result = _emit_pdf(tmp_path, config, set(), args)
+    assert result == 0
+    # One print per view (System Context, Containers, + one Component view each).
+    assert len(printed) == 3
+    assert merged == [3]  # merged once, with all three per-view PDFs
+    assert (tmp_path / DEFAULT_PDF_OUTPUT).is_file()
+
+
+def test_emit_pdf_subprocess_error_returns_1_and_logs_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_emit_pdf returns 1 and logs the failure when the browser process errors.
+
+    SCENARIO: browser found; headless print raises CalledProcessError.
+    MOCK SETUP: _find_headless_browser patched to a fake path; _print_html_to_pdf
+        raises subprocess.CalledProcessError(1, 'chrome', stderr=b'boom').
+    EXPECTED BEHAVIOR: _emit_pdf returns 1; error referencing the browser failure
+        is logged so the stderr detail is surfaced to the user.
+    """
+
+    def _raise_cpe(browser: str, html_path: object, pdf_path: object) -> None:
+        raise subprocess.CalledProcessError(1, "chrome", stderr=b"boom")
+
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: "/fake/chrome")
+    monkeypatch.setattr("forge.gen_c4._print_html_to_pdf", _raise_cpe)
+    config = C4Config(system="Test", description="", output="")
+    args = argparse.Namespace(output=None, check=False)
+    with caplog.at_level(logging.ERROR, logger="forge.gen_c4"):
+        result = _emit_pdf(tmp_path, config, set(), args)
+    assert result == 1
+    assert "Headless browser" in caplog.text
+
+
+def test_emit_pdf_check_mode_is_noop_and_writes_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_emit_pdf with --check writes nothing and never invokes the browser.
+
+    SCENARIO: --check requested for the binary, non-deterministic PDF artifact.
+    MOCK SETUP: _find_headless_browser patched to raise if called, proving the
+        check path returns before any browser discovery or write.
+    EXPECTED BEHAVIOR: returns 0; no PDF is written at DEFAULT_PDF_OUTPUT.
+    """
+
+    def _boom() -> str:
+        msg = "browser discovery must not run in --check mode"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", _boom)
+    config = C4Config(system="Test", description="", output="")
+    args = argparse.Namespace(output=None, check=True)
+    assert _emit_pdf(tmp_path, config, set(), args) == 0
+    assert not (tmp_path / DEFAULT_PDF_OUTPUT).exists()
+
+
+# --- #137: _print_html_to_pdf ---
+
+
+def test_print_html_to_pdf_invokes_browser_correctly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_print_html_to_pdf builds the correct subprocess argv for the headless browser.
+
+    SCENARIO: subprocess.run is replaced so no real browser is launched.
+    MOCK SETUP: subprocess.run replaced with a call-capturing no-op; html_path is
+        a real tmp_path file so as_uri() produces a valid file:// URL.
+    EXPECTED BEHAVIOR: captured argv[0] is the browser path; '--headless' is
+        present; a '--print-to-pdf=<pdf_path>' token is present; the file:// URI
+        of html_path appears as the last positional argument; check=True and a
+        timeout kwarg are passed to subprocess.run.
+    """
+    calls: list[dict] = []
+
+    def _fake_run(cmd: list, **kwargs: object) -> None:
+        calls.append({"cmd": list(cmd), "kwargs": kwargs})
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    html_path = tmp_path / "arch.html"
+    html_path.write_text("<html></html>")
+    pdf_path = tmp_path / "arch.pdf"
+
+    _print_html_to_pdf("/fake/browser", html_path, pdf_path)
+
+    assert len(calls) == 1
+    argv = calls[0]["cmd"]
+    kwargs = calls[0]["kwargs"]
+    assert argv[0] == "/fake/browser"
+    assert "--headless" in argv
+    assert f"--print-to-pdf={pdf_path}" in argv
+    assert html_path.as_uri() in argv
+    assert kwargs.get("check") is True
+    assert "timeout" in kwargs
+
+
+# --- #137: _build_views ---
+
+
+def test_build_views_labels_and_graph_sources() -> None:
+    """_build_views returns ordered tab labels with graph-starting sources."""
+    config = _two_container_config(
+        (
+            Component("App", ("demo.app",), container="Applications"),
+            Component("Lib", ("demo.lib",), container="Domain libraries"),
+        )
+    )
+    views = _build_views(config, set())
+    labels = [label for label, _ in views]
+    assert labels == [
+        "System Context",
+        "Containers",
+        "Applications Components",
+        "Domain libraries Components",
+    ]
+    for label, source in views:
+        assert source.startswith("graph "), (
+            f"view '{label}' source does not start with 'graph '"
+        )
+
+
+# --- #137: print CSS surface ---
+
+
+def test_render_html_has_print_media_rules() -> None:
+    """render_html includes @media print, @page, and view-title CSS rules."""
+    config = C4Config(system="Test", description="", output="")
+    page = render_html(config, [("V", "graph LR\n")])
+    assert "@media print" in page
+    assert "@page" in page
+    assert 'class="view-title"' in page
+
+
+# --- #137: argparse / main wiring for the pdf format ---
+
+
+def test_main_pdf_format_no_browser_exits_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """main() with --format pdf exits 1 when no headless browser is found.
+
+    SCENARIO: C4 config is present and valid; --format pdf is requested; browser
+        discovery returns None.
+    MOCK SETUP: repo_root patched to tmp_path; _find_headless_browser patched to
+        return None; sys.argv set to ['forge-gen-c4', '--format', 'pdf'].
+    EXPECTED BEHAVIOR: main() returns 1, confirming that the pdf format is wired
+        through _parse_args and routed to _emit_pdf.
+    """
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text('system = "Demo"\n')
+    monkeypatch.setattr("forge.gen_c4.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: None)
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4", "--format", "pdf"])
+    assert main() == 1
+
+
+# --- #137: tunable PDF page setup (pdf_* keys) + fit-to-page geometry ---
+
+
+def test_parse_render_config_pdf_keys_default() -> None:
+    """_parse_render_config defaults to tight per-view 'auto' at 10mm margin."""
+    cfg = _parse_render_config({})
+    assert cfg.pdf_page_size == "A4"
+    assert cfg.pdf_orientation == "landscape"
+    assert cfg.pdf_fit == "auto"
+    assert cfg.pdf_margin == 10
+
+
+def test_parse_render_config_pdf_keys_override() -> None:
+    """_parse_render_config reads each pdf_* key from the render table."""
+    cfg = _parse_render_config(
+        {
+            "render": {
+                "pdf_page_size": "A3",
+                "pdf_orientation": "portrait",
+                "pdf_fit": "width",
+                "pdf_margin": 20,
+            }
+        }
+    )
+    assert cfg.pdf_page_size == "A3"
+    assert cfg.pdf_orientation == "portrait"
+    assert cfg.pdf_fit == "width"
+    assert cfg.pdf_margin == 20
+
+
+def test_pdf_page_geometry_a4_landscape_default() -> None:
+    """A4 landscape: 297x210mm page, 10mm margin, printable px at 96dpi."""
+    page_w, page_h, margin, w_px, h_px = _pdf_page_geometry(RenderConfig())
+    assert (page_w, page_h, margin) == (297, 210, 10)
+    # (297 - 20) * 96/25.4 ~= 1047; height also loses the title reserve.
+    assert w_px == 1047
+    assert h_px < round((210 - 20) * 96 / 25.4)  # title reserve subtracted
+
+
+def test_pdf_page_geometry_portrait_swaps_dimensions() -> None:
+    """Portrait orientation makes the short edge the page width."""
+    page_w, page_h, _margin, _w, _h = _pdf_page_geometry(
+        RenderConfig(pdf_orientation="portrait")
+    )
+    assert (page_w, page_h) == (210, 297)
+
+
+def test_pdf_page_geometry_unknown_size_falls_back_to_a4() -> None:
+    """An unrecognized pdf_page_size resolves to A4 rather than raising."""
+    assert _pdf_page_geometry(RenderConfig(pdf_page_size="Nonsense")) == (
+        _pdf_page_geometry(RenderConfig())
+    )
+
+
+def test_pdf_page_geometry_margin_widens_when_smaller() -> None:
+    """A smaller margin yields a larger printable width."""
+    _w0 = _pdf_page_geometry(RenderConfig(pdf_margin=10))[3]
+    _w1 = _pdf_page_geometry(RenderConfig(pdf_margin=5))[3]
+    assert _w1 > _w0
+
+
+def test_print_page_css_contain_uses_scale_var() -> None:
+    """Contain fit drives the SVG off the JS-measured --c4-print-scale var."""
+    css = _print_page_css(RenderConfig(pdf_fit="contain"))
+    assert "--c4-print-scale" in css
+    # `zoom` (not transform) so the layout box reflows and the title stays on
+    # the diagram's own page.
+    assert "zoom: var(--c4-print-scale" in css
+
+
+def test_print_page_css_width_caps_to_page_width() -> None:
+    """Width fit caps the SVG to the page width and uses no print scale var."""
+    css = _print_page_css(RenderConfig(pdf_fit="width"))
+    assert "--c4-print-scale" not in css
+    assert "max-width: 100%" in css
+
+
+def test_print_page_css_page_rule_reflects_size_and_margin() -> None:
+    """A fixed-page fit carries the resolved @page size (mm) and margin."""
+    css = _print_page_css(
+        RenderConfig(
+            pdf_fit="contain",
+            pdf_page_size="Letter",
+            pdf_orientation="portrait",
+            pdf_margin=20,
+        )
+    )
+    assert "@page { size: 216mm 279mm; margin: 20mm; }" in css
+
+
+def test_print_page_css_contain_scales_to_one_fixed_page() -> None:
+    """The 'contain' fit scales each view to one fixed A4 landscape page."""
+    css = _print_page_css(RenderConfig(pdf_fit="contain"))
+    assert "@page { size: 297mm 210mm; margin: 10mm; }" in css
+    # contain fits each diagram to that page via the JS-measured print scale.
+    assert "--c4-print-scale" in css
+
+
+def test_print_page_css_auto_uses_near_zero_default_page() -> None:
+    """The default 'auto' single-doc CSS uses only a near-zero default @page."""
+    css = _print_page_css(RenderConfig())  # default fit == "auto"
+    assert "@page { size: 1px 1px; margin: 0; }" in css
+    assert "mm; }" not in css
+    assert "--c4-print-scale" not in css  # no scaling; each page fits its diagram
+
+
+def test_render_html_default_fit_is_auto() -> None:
+    """render_html defaults to the tight per-view 'auto' fit."""
+    config = C4Config(system="Test", description="", output="")
+    page = render_html(config, [("V", "graph LR\n")])
+    assert "window.c4Print" in page
+    assert '"fit": "auto"' in page
+    assert "size: 297mm" not in page  # no fixed mm page in the auto fallback CSS
+
+
+def test_render_view_pdf_html_self_sizes_its_page() -> None:
+    """A single-view PDF HTML renders with a unique id and sets one tight @page."""
+    config = C4Config(system="Sys", description="", output="")
+    html_doc = _render_view_pdf_html(config, "System Context", "graph LR\n")
+    assert '<div id="c4t">System Context</div>' in html_doc
+    # Renders with an explicit id via mermaid.render (never mermaid.run — #150).
+    assert 'mermaid.render("c4-view", pre.textContent)' in html_doc
+    assert "mermaid.run().then" not in html_doc  # no run()-based call
+    # It sets a single @page from the measured size (no fixed mm page).
+    assert '"@page { size: "' in html_doc
+    assert "getBoundingClientRect" in html_doc
+
+
+def test_resolve_layout_accepts_hierarchical_rejects_organic() -> None:
+    """_resolve_layout allows layered/dagre and rejects the organic ELK engines."""
+    for good in ("elk", "elk.layered", "dagre"):
+        assert _resolve_layout(good) == good
+    for bad in ("elk.stress", "elk.force", "elk.radial", "nonsense"):
+        with pytest.raises(ValueError, match=r"unsupported|unknown layout"):
+            _resolve_layout(bad)
+
+
+def test_parse_render_config_rejects_organic_layout() -> None:
+    """A configured organic layout fails loudly at parse time, not silently."""
+    with pytest.raises(ValueError, match="unsupported"):
+        _parse_render_config({"render": {"layout": "elk.stress"}})
+
+
+# --- #124: click-to-open-tab map + edge-id-based hover incidence ---
+
+
+def test_render_html_emits_tab_map_by_container_id() -> None:
+    """render_html maps each container's node id (slug) to its Component pane."""
+    config = _two_container_config(
+        (
+            Component("Leaderboards", ("demo.app",), container="Applications"),
+            Component("Core data", ("demo.core",), container="Domain libraries"),
+        )
+    )
+    views = _build_views(config, set())
+    page = render_html(config, views)
+    # Containers occupy panes 2 and 3 (after System Context + Containers views).
+    assert '"id": "applications", "pane": 2' in page
+    assert '"id": "domain_libraries", "pane": 3' in page
+    assert "window.c4ShowPane = show;" in page
+
+
+def test_render_html_tab_map_prefix_names_get_distinct_ids() -> None:
+    """A container whose name prefixes another's still maps to its own exact id."""
+    config = C4Config(
+        system="S",
+        description="",
+        output="",
+        containers=(Container("Foo", "", ""), Container("Foo server", "", "")),
+        components=(
+            Component("A", ("a",), container="Foo"),
+            Component("B", ("b",), container="Foo server"),
+        ),
+    )
+    page = render_html(config, _build_views(config, set()))
+    # Exact, distinct ids — never a substring/prefix match.
+    assert '"id": "foo", "pane": 2' in page
+    assert '"id": "foo_server", "pane": 3' in page
+
+
+def test_build_views_skips_container_with_no_components() -> None:
+    """A container that owns no components produces no Component view (no blank tab)."""
+    config = C4Config(
+        system="S",
+        description="",
+        output="",
+        containers=(Container("App", "", ""), Container("Infra", "", "")),
+        components=(Component("Core", ("demo.core",), container="App"),),
+    )
+    labels = [label for label, _text in _build_views(config, set())]
+    assert "App Components" in labels
+    assert "Infra Components" not in labels
+    # System Context + Containers + App Components only — Infra is dropped.
+    assert labels == ["System Context", "Containers", "App Components"]
+
+
+def test_build_views_keeps_populated_containers_unchanged() -> None:
+    """Containers that own components still each get their Component view."""
+    config = _two_container_config(
+        (
+            Component("One", ("a",), container="Applications"),
+            Component("Two", ("b",), container="Domain libraries"),
+        )
+    )
+    labels = [label for label, _text in _build_views(config, set())]
+    assert labels == [
+        "System Context",
+        "Containers",
+        "Applications Components",
+        "Domain libraries Components",
+    ]
+
+
+def test_edge_endpoints_extracts_exact_pairs() -> None:
+    """_edge_endpoints reads exact [src, tgt] ids from the edge lines, in order."""
+    text = (
+        "graph LR\n"
+        '    foo -->|"uses"| bar\n'
+        '    foo_server -->|"reads"| foo\n'
+        '    bar["label with --> arrow inside"]\n'
+    )
+    assert _edge_endpoints(text) == [["foo", "bar"], ["foo_server", "foo"]]
+
+
+def test_edge_endpoints_prefix_ids_not_confused() -> None:
+    """An edge between prefix-overlapping ids resolves to the exact endpoints.
+
+    `foo` is a prefix of `foo_server`; parsing the rendered edge DOM id
+    `L_foo_foo_server_0_0` would ambiguously split to foo->foo, but the source
+    line carries the ids as separate tokens, so the endpoints are exact.
+    """
+    text = 'graph LR\n    foo -->|"calls"| foo_server\n'
+    assert _edge_endpoints(text) == [["foo", "foo_server"]]
+
+
+def test_html_interaction_script_resolves_edges_by_exact_id() -> None:
+    """Hover incidence uses the Python-emitted exact endpoints, not id/name parsing."""
+    script = _html_interaction_script()
+    # Exact per-pane endpoints, keyed by id.
+    assert "window.c4Edges" in script
+    assert "endpoints[i]" in script
+    assert "tabs[i].id === id" in script
+    # The ambiguous edge-id parser and class hooks must be gone.
+    assert "edgeEnds" not in script
+    assert "replace(/^L_/" not in script
+    assert "LS-" not in script
+
+
+def test_interaction_has_no_magnify_and_scopes_edge_labels() -> None:
+    """No click-magnify; hover dims edge labels except the highlighted ones."""
+    script = _html_interaction_script()
+    css = _html_interaction_css()
+    # Click-magnify was removed: no scaling, scroll, or magnify class/handlers.
+    assert "c4-magnify" not in script
+    assert "c4-magnify" not in css
+    assert "scrollIntoView" not in script
+    # Only the hovered connection's text stays: non-incident labels dim, the
+    # highlighted (c4-on) labels are restored to full opacity.
+    assert "svg.c4-focus-mode g.edgeLabel { opacity: 0.1; }" in css
+    assert "svg.c4-focus-mode g.edgeLabel.c4-on { opacity: 1; }" in css
+    # The script maps labels to edges and toggles their highlight class.
+    assert "g.edgeLabels g.edgeLabel" in script
+    assert 'labels[i].classList.toggle("c4-on"' in script
+
+
+# --- element activation / visibility + tag filtering ---
+
+
+def test_visibility_fields_defaults_and_parsing() -> None:
+    """_visibility_fields reads active/hidden/tags/group with sensible defaults."""
+    assert _visibility_fields({}) == {
+        "active": True,
+        "hidden": False,
+        "tags": (),
+        "group": "",
+    }
+    parsed = _visibility_fields(
+        {"active": False, "hidden": True, "tags": ["a", "b", 3], "group": "Infra"}
+    )
+    assert parsed == {
+        "active": False,
+        "hidden": True,
+        "tags": ("a", "b"),
+        "group": "Infra",
+    }
+
+
+def test_visible_config_default_is_unchanged() -> None:
+    """With nothing flagged, _visible_config returns the model + edges unchanged."""
+    config = _two_container_config(
+        (Component("Core", ("a",), container="Applications"),)
+    )
+    edges = {("Core", "Core")}
+    filtered, fedges = _visible_config(config, edges)
+    assert filtered.containers == config.containers
+    assert filtered.components == config.components
+    assert filtered.persons == config.persons
+    assert fedges == edges
+
+
+def test_visible_config_drops_inactive_element_and_dangling_edges() -> None:
+    """A hidden element, its owned components, and edges touching it are removed."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses"), Person("Ghost", "", "uses", hidden=True)),
+        externals=(
+            External("Live", "", "uses"),
+            External("Dead", "", "x", active=False),
+        ),
+        containers=(
+            Container("App", "", ""),
+            Container("Legacy", "", "", active=False),
+        ),
+        components=(
+            Component("Core", ("a",), container="App"),
+            Component("Old", ("b",), container="Legacy"),
+        ),
+        relationships=(
+            Relationship("Core", "Old", "calls"),
+            Relationship("Dev", "Live", "via"),
+        ),
+    )
+    filtered, fedges = _visible_config(config, {("Core", "Old")})
+    assert [p.name for p in filtered.persons] == ["Dev"]
+    assert [e.name for e in filtered.externals] == ["Live"]
+    assert [c.name for c in filtered.containers] == ["App"]
+    # Component owned by the inactive container is dropped with it.
+    assert [c.name for c in filtered.components] == ["Core"]
+    # The relationship and edge touching a removed element are pruned.
+    assert [(r.source, r.destination) for r in filtered.relationships] == [
+        ("Dev", "Live")
+    ]
+    assert fedges == set()
+
+
+def test_visible_config_tag_exclude_and_include() -> None:
+    """exclude_tags drops matches; a non-empty include_tags keeps only matches."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        containers=(
+            Container("A", "", "", tags=("keep",)),
+            Container("B", "", "", tags=("drop",)),
+            Container("C", "", ""),
+        ),
+    )
+    excluded, _ = _visible_config(config, set(), exclude_tags=("drop",))
+    assert [c.name for c in excluded.containers] == ["A", "C"]
+    included, _ = _visible_config(config, set(), include_tags=("keep",))
+    assert [c.name for c in included.containers] == ["A"]
+
+
+def test_inactive_element_omitted_from_dsl() -> None:
+    """An inactive external never reaches the rendered DSL (model-level filter)."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        externals=(
+            External("Shown", "", "uses"),
+            External("Gone", "", "uses", active=False),
+        ),
+    )
+    filtered, fedges = _visible_config(config, set())
+    dsl = render_dsl(filtered, fedges)
+    assert "Shown" in dsl
+    assert "Gone" not in dsl
+
+
+def test_load_c4_config_reads_visibility_and_tags(tmp_path: Path) -> None:
+    """load_c4_config parses active/hidden/tags on elements + render tag filters.
+
+    The standalone c4.toml carries both the model and the ``[render]`` table, so
+    the visibility flags and the view tag filter are read from one place.
+    """
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(
+        'system = "S"\n'
+        "[[container]]\n"
+        'name = "Infra"\n'
+        "active = false\n"
+        'tags = ["infrastructure"]\n'
+        "[[external]]\n"
+        'name = "X"\n'
+        "hidden = true\n"
+        "[render]\n"
+        'exclude_tags = ["infrastructure"]\n'
+    )
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    assert config.containers[0].active is False
+    assert config.containers[0].tags == ("infrastructure",)
+    assert config.externals[0].hidden is True
+    assert config.render.exclude_tags == ("infrastructure",)
+
+
+# --- visual groups / bands in the Container view ---
+
+
+def test_containers_cluster_into_group_bands() -> None:
+    """Containers sharing a group render inside one labelled band subgraph."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        containers=(
+            Container("Auth", "", "", group="Capabilities"),
+            Container("Billing", "", "", group="Capabilities"),
+            Container("DB", "", "", group="Our infrastructure"),
+        ),
+    )
+    text = _render_mermaid_containers(config, set())
+    assert 'subgraph capabilities["Capabilities"]' in text
+    assert 'subgraph our_infrastructure["Our infrastructure"]' in text
+    # Both capability containers precede the band's `end`, inside it.
+    cap = text.index('subgraph capabilities["Capabilities"]')
+    end = text.index("end", cap)
+    assert 0 < text.index("auth[", cap) < end
+    assert 0 < text.index("billing[", cap) < end
+
+
+def test_ungrouped_container_stays_flat_beside_bands() -> None:
+    """A container with no group renders flat, not inside any band."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        containers=(
+            Container("Banded", "", "", group="Zone"),
+            Container("Loose", "", ""),
+        ),
+    )
+    text = _render_mermaid_containers(config, set())
+    assert 'subgraph zone["Zone"]' in text
+    # `Loose` sits at the system-boundary indent (8 spaces), not the band's (12).
+    assert "\n        loose[" in text
+    assert "\n            loose[" not in text
+
+
+def test_externals_cluster_into_group_bands() -> None:
+    """Externals sharing a group render inside their own labelled band."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        externals=(
+            External("GitHub", "", "uses", group="Third-party"),
+            External("Datadog", "", "uses", group="Third-party"),
+        ),
+    )
+    text = _render_mermaid_containers(config, set())
+    assert 'subgraph third_party["Third-party"]' in text
+    assert "github[[" in text
+    assert "datadog[[" in text
+
+
+def test_container_view_ungrouped_has_no_band_subgraph() -> None:
+    """With no groups, the Container view emits only Actors + system subgraphs."""
+    config = _two_container_config(
+        (Component("Core", ("a",), container="Applications"),)
+    )
+    text = _render_mermaid_containers(config, set())
+    subgraphs = [line for line in text.splitlines() if "subgraph" in line]
+    # Only the system boundary (no persons in this config → no Actors band).
+    assert all("group" not in s.lower() for s in subgraphs)
+    assert any(
+        "subgraph sys" in s or config.system.lower() in s.lower() for s in subgraphs
+    )
+
+
+def test_render_html_uses_unique_render_ids_not_run() -> None:
+    """render_html renders each pane via mermaid.render('c4-view-'+i), not run() (#150).
+
+    mermaid.run() stamps svg ids from Date.now(); fast back-to-back ELK layouts
+    collide on the same millisecond, so two panes get the same id and one view
+    never renders. Author-controlled ids via mermaid.render() avoid that.
+    """
+    config = C4Config(system="Test", description="", output="")
+    page = render_html(config, [("A", "graph LR\n"), ("B", "graph LR\n")])
+    assert 'mermaid.render("c4-view-" + i' in page
+    assert "mermaid.run().then" not in page  # no run()-based call
+    # The ELK loader is shared with the per-view page (one source of truth).
+    assert "window.elkLayouts" in page

@@ -172,6 +172,18 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "stays a WARN regardless).",
     ),
     ConfigKey(
+        ("tool", "forge", "smart_test", "precommit_depth"),
+        "unset (step skipped)",
+        "Depth the smart_test pre-commit step runs at (0 / 1 / 2 / full); "
+        "setting it opts the change-scoped test gate in.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "blocking"),
+        default=False,
+        description="Make the smart_test step fail the commit on a test "
+        "failure (default: non-blocking WARN).",
+    ),
+    ConfigKey(
         ("tool", "forge", "cve_usage", "paths"),
         "source_dirs + test_dirs",
         "Per-tool override of the CVE-usage scan roots; otherwise inherits "

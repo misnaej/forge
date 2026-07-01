@@ -168,6 +168,16 @@ Scope boundaries for v1:
   as forge package data). Needs only `pip install` — no Docker, Java,
   Graphviz, or network. The generated HTML + sidecars are gitignored
   (on-demand). See "Per-view HTML & the ELK layout engine" below.
+- **`pdf`** — a multi-page **vector** PDF, **one tight page per view** (each page
+  sized to its own diagram), printed from the offline HTML by an auto-detected
+  headless browser (Chrome / Chromium / Edge / Brave; `FORGE_C4_BROWSER`
+  overrides). No new Python dependency and no network — Mermaid is a JS library,
+  so a browser engine produces the vector output. The default `pdf_fit = "auto"`
+  renders each view in isolation (so the diagram + title measure cleanly) and
+  concatenates the single pages with `pdfunite` / `qpdf`; without a merge tool it
+  falls back to a fixed-page `contain` print. Fails loudly (manual Print →
+  Save-as-PDF fallback) when no browser is present. See "Legible labels &
+  interactivity" below.
 - **`mermaid`** — raw canonical Mermaid to stdout (for embedding).
 
 Every relationship line carries a label: derived import edges read
@@ -243,6 +253,36 @@ so the active engine is verifiable. Diagrams also render at intrinsic size
 graphs pan rather than shrink. `[tool.forge.c4].direction` (`LR` default / `TB`)
 threads into both the Mermaid `graph` header and the DSL `autolayout`.
 
+### Legible labels & interactivity
+
+**Wrapped, auto-sized labels.** Node labels are emitted as Mermaid **markdown
+strings** (``` `**Name**`/`[Type]`/description ```) rather than the HTML
+`<b>…</b><br/>` form, and the page sets `flowchart.wrappingWidth` with
+`markdownAutoWrap`. Mermaid then wraps the description and sizes the box to fit —
+fixing the single-line overflow the HTML form suffered, and dodging the Firefox
+v11 empty-HTML-label bug (mermaid-js/mermaid#5785). The markdown form is
+HTML-only: the flat `render_mermaid` (README block, `--format mermaid`, DSL
+`--check`) keeps the canonical HTML-tag labels, so that output stays
+byte-identical.
+
+**Consumer-configurable rendering.** The whole `mermaid.initialize(...)` setup is
+driven by `[tool.forge.c4.render]` (see
+[`docs/configuration.md`](configuration.md)); defaults reproduce the look above,
+so a repo only sets a key to deviate (fonts, spacing, colors, ELK tuning).
+
+**Hover + click interactivity.** Inline JS wires onto Mermaid's post-render SVG.
+Edge incidence is resolved by **exact node id**: the renderer emits each pane's
+precise `[sourceId, targetId]` pairs (in edge-render order) as `window.c4Edges`,
+so the i-th edge path maps to the i-th pair. This deliberately avoids parsing the
+rendered edge DOM id (`L_<source>_<target>_…`), which is ambiguous because node
+slugs contain the same `_` separator — a node whose id is a prefix of another's
+would otherwise cross-highlight. Hovering a node reveals it, its incident edges
+and *their* relationship labels (labels carry no id, so they map to edges by
+document order), and the neighbour nodes, dimming everything else; clicking a node
+whose id matches a container jumps to its Components tab. It is additive, per-tab,
+fully offline (no network, no deps), and degrades to a no-op if a selector is
+missing.
+
 ### Modeling reach (any-element relationships)
 
 `[[relationship]]` endpoints resolve against **every** element kind — person,
@@ -260,6 +300,17 @@ to that external actually renders), so the System Context view keeps its clean
 radial edges while detailed views show the specific flow. Every default — no new
 config, no non-component relationships, no person targets — is **byte-identical**
 to the prior output, locked by the existing DSL/flat tests.
+
+### Slimming & grouping (activation, tags, bands)
+
+A full model can render as leaner views without maintaining copies. Each element
+carries `active` / `hidden` (drop it and its dangling edges from **every** output
+while it stays in `c4.toml`), `tags` (with `[tool.forge.c4.render].include_tags` /
+`exclude_tags` slimming the rendered views only — the DSL stays canonical), and
+`group` (elements sharing a group cluster into one labelled band in the Container
+view — containers inside the system boundary, externals beside it — via nested
+Mermaid subgraphs). All three are additive: with nothing flagged the output is
+byte-identical.
 
 ## 6. Why this fits forge's existing patterns
 
