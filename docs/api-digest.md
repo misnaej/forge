@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_55 modules, 576 symbols._
+_55 modules, 579 symbols._
 
 ## `forge._hook_helpers`
 
@@ -173,6 +173,8 @@ _55 modules, 576 symbols._
 - `load_config(repo_root: Path) -> ForgeConfig` — Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.
 - `_existing_dirs(repo_root: Path, dirs: list[str]) -> list[str]` _(internal)_ — Filter *dirs* to existing in-repo paths, de-duplicated, order-preserving.
 - `resolve_tool_roots(repo_root: Path, tool: str, *, include_tests: bool = False) -> list[str]` — Resolve the scan roots a layout-consuming *tool* should use.
+- `filter_under_roots(files: list[str], roots: list[str]) -> list[str]` — Keep only *files* that live under one of *roots* (source-tree scoping).
+- `filter_excluded(files: list[str], globs: list[str]) -> list[str]` — Drop *files* matching any exclude *glob* (the ``[tool.forge].exclude`` half).
 
 ## `forge.continuation_append`
 
@@ -753,6 +755,7 @@ _55 modules, 576 symbols._
 - `verify_file(filepath: Path) -> list[Issue]` — Verify test naming standards in a single file.
 - `_check_file_name_alignment(filepath: Path) -> list[Issue]` _(internal)_ — Verify the ``test_`` prefix on test file names (Rule 2).
 - `_check_duplicate_file_names(all_files: list[Path]) -> list[Issue]` _(internal)_ — Check for duplicate or ambiguous file names.
+- `_test_scan_roots(repo_root: Path) -> list[str]` _(internal)_ — Resolve the *test-only* scan roots for ``--scope all`` (issue #83).
 - `_resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list[str]` _(internal)_ — Return repo-relative test file paths from CLI arg, scope, or git diff.
 - `_scan_files(py_files: list[str], repo_root: Path) -> tuple[list[Issue], list[str], int]` _(internal)_ — Verify each file, plus a cross-file duplicate-name check.
 - `_log_warnings(warnings: list[Issue]) -> None` _(internal)_ — Print warnings grouped by file.

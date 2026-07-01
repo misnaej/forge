@@ -55,6 +55,37 @@ to see what, if anything, is worth adding for your repo.
 | `dev_branch` | `"main"` (= `base_branch`) | Fast-channel integration branch. Protected from direct agent push. **Defaults to `base_branch`** → single-track, only one branch protected. | You run dual-track — set e.g. `dev_branch = "dev"` to opt in. |
 | `source_dirs` | smart-detect | Repo **source** roots — the single definition every layout-aware tool scans (see below). Unset → smart auto-detect: `src/` if present, else top-level packages. | Your source lives outside `src/` — e.g. `source_dirs = ["src", "projects/lib"]`. |
 | `test_dirs` | smart-detect | Repo **test** roots (added for tools that scan tests too). Unset → smart auto-detect of `tests/` then `test/`. | Your tests aren't under `tests/`. |
+| `exclude` | `[]` | Repo-wide glob patterns (fnmatch on repo-relative paths; a bare dir name excludes its whole subtree) skipped by the **whole-tree** steps `docstring_verification` and `test_naming_check`. See below. | You carry vendored / generated Python you don't author, already excluded from ruff + interrogate. |
+
+### `exclude` — whole-tree steps skip what isn't yours
+
+The whole-tree file-selecting steps — `docstring_verification` and
+`test_naming_check` — select files two ways so a vendored or generated tree
+you don't author is neither scanned nor blocked:
+
+1. **Source-tree scoping.** `--scope all` means the whole *source* tree, not
+   every tracked file: the tracked set is restricted to `source_dirs` (+
+   `test_dirs`; test-naming uses `test_dirs` only). A path outside those roots
+   (`.devcontainer/`, root-level tooling) is never scanned — no `exclude`
+   entry needed. This mirrors how ruff / api-digest / coverage already scope.
+2. **`[tool.forge].exclude` globs.** For paths *inside* your source roots that
+   you still want skipped (vendored `src/…/vendor/`, generated `*.gen.py`),
+   list glob patterns here. A bare directory name (`vendor` or `vendor/`)
+   drops its whole subtree; a glob (`*.gen.py`, `vendor/**`) is matched
+   (fnmatch) against the repo-relative path. This is the single place to name
+   what forge's own steps ignore, matching what you already exclude from
+   `ruff.toml` and `[tool.interrogate].exclude`.
+
+```toml
+[tool.forge]
+exclude = ["src/pkg/vendor/**", "*_pb2.py"]
+```
+
+> **Prefer specific paths over broad wildcards.** A pattern as wide as
+> `"src/**"` silently suppresses `docstring_verification` and
+> `test_naming_check` across your whole source tree — the same over-exclusion
+> footgun that `ruff` / `interrogate` `exclude` already carry. Scope to the
+> sub-path you actually don't author.
 
 ### Source-dir resolution — one definition, every tool
 

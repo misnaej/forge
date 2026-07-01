@@ -267,3 +267,151 @@ def test_main_returns_zero_when_target_missing(
         result = verify_test_naming.main()
     assert result == 0
     assert any("No test files to check" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _test_scan_roots (issue #83 — test-only root resolution for --scope all)
+# ---------------------------------------------------------------------------
+
+
+def test_test_scan_roots_no_pyproject_detects_tests_dir(tmp_path: Path) -> None:
+    """With no pyproject.toml, auto-detects tests/ from the disk layout."""
+    (tmp_path / "tests").mkdir()
+    result = verify_test_naming._test_scan_roots(tmp_path)
+    assert "tests" in result
+
+
+def test_test_scan_roots_per_tool_paths_override_wins(tmp_path: Path) -> None:
+    """[tool.forge.test_naming_check].paths overrides test_dirs and auto-detect."""
+    (tmp_path / "integration").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge]\n"
+        'test_dirs = ["tests"]\n'
+        "[tool.forge.test_naming_check]\n"
+        'paths = ["integration"]\n'
+    )
+    result = verify_test_naming._test_scan_roots(tmp_path)
+    assert result == ["integration"]
+
+
+def test_test_scan_roots_falls_back_to_test_dirs(tmp_path: Path) -> None:
+    """With no per-tool paths key, returns [tool.forge].test_dirs."""
+    (tmp_path / "pyproject.toml").write_text('[tool.forge]\ntest_dirs = ["suite"]\n')
+    result = verify_test_naming._test_scan_roots(tmp_path)
+    assert "suite" in result
+
+
+def test_test_scan_roots_non_list_paths_falls_back(tmp_path: Path) -> None:
+    """Paths = 'string' (not a list) is rejected; falls back to test_dirs."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge]\n"
+        'test_dirs = ["tests"]\n'
+        "[tool.forge.test_naming_check]\n"
+        'paths = "string"\n'
+    )
+    result = verify_test_naming._test_scan_roots(tmp_path)
+    assert "tests" in result
+    assert "string" not in result
+
+
+def test_test_scan_roots_excludes_source_dirs(tmp_path: Path) -> None:
+    """_test_scan_roots returns test_dirs only — never source_dirs.
+
+    Even when both source_dirs and test_dirs are configured and both
+    directories exist on disk, the result must contain the test root
+    but must not contain the source root.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n'
+    )
+    result = verify_test_naming._test_scan_roots(tmp_path)
+    assert "src" not in result
+    assert "tests" in result
+
+
+# ---------------------------------------------------------------------------
+# _resolve_test_files (issue #83 — file selection with root + exclude filters)
+# ---------------------------------------------------------------------------
+
+# MOCKING STRATEGY: get_tracked_files and get_modified_files are patched at
+# forge.verify_test_naming.* (where _resolve_test_files looks them up via
+# ``from forge.git_utils import ...``). A pyproject.toml or on-disk tests/
+# dir is written to tmp_path so load_config and _test_scan_roots produce
+# controlled roots and exclude lists. No real git state is required.
+
+
+def test_resolve_test_files_scope_all_filters_by_test_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """scope=all includes only files under the test roots, not source files.
+
+    SCENARIO: tracked files span both tests/ and src/.
+    MOCK SETUP: get_tracked_files returns a mixed list; tests/ exists on
+        disk so _test_scan_roots auto-detects it; no exclude configured.
+    EXPECTED BEHAVIOR: only tests/test_foo.py survives; src/pkg.py is
+        dropped by filter_under_roots.
+    """
+    (tmp_path / "tests").mkdir()
+    monkeypatch.setattr(
+        "forge.verify_test_naming.get_tracked_files",
+        lambda: ["tests/test_foo.py", "src/pkg.py"],
+    )
+    result = verify_test_naming._resolve_test_files(tmp_path, None, "all")
+    assert "tests/test_foo.py" in result
+    assert "src/pkg.py" not in result
+
+
+def test_resolve_test_files_scope_all_respects_exclude(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """scope=all drops files matching [tool.forge].exclude globs.
+
+    SCENARIO: tracked files under tests/ include one vendor test that
+        is explicitly excluded.
+    MOCK SETUP: get_tracked_files returns two test files; pyproject.toml
+        declares the vendor file in exclude; tests/ exists so scan roots
+        resolve to ["tests"].
+    EXPECTED BEHAVIOR: only tests/test_foo.py survives; tests/vendor_test.py
+        is removed by filter_excluded.
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\ntest_dirs = ["tests"]\nexclude = ["tests/vendor_test.py"]\n'
+    )
+    monkeypatch.setattr(
+        "forge.verify_test_naming.get_tracked_files",
+        lambda: ["tests/test_foo.py", "tests/vendor_test.py"],
+    )
+    result = verify_test_naming._resolve_test_files(tmp_path, None, "all")
+    assert "tests/test_foo.py" in result
+    assert "tests/vendor_test.py" not in result
+
+
+def test_resolve_test_files_scope_diff_respects_exclude(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """scope=diff drops files matching [tool.forge].exclude globs.
+
+    SCENARIO: two test files are modified; one matches a glob exclude.
+    MOCK SETUP: get_modified_files returns both files; pyproject.toml
+        declares the gen pattern in exclude.
+    EXPECTED BEHAVIOR: tests/test_widget.py survives; tests/auto.gen_test.py
+        is removed by filter_excluded.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nexclude = ["*.gen_test.py"]\n'
+    )
+    monkeypatch.setattr(
+        "forge.verify_test_naming.get_modified_files",
+        lambda **_kw: ["tests/test_widget.py", "tests/auto.gen_test.py"],
+    )
+    result = verify_test_naming._resolve_test_files(tmp_path, None, "diff")
+    assert "tests/test_widget.py" in result
+    assert "tests/auto.gen_test.py" not in result
