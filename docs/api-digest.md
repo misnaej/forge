@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_50 modules, 533 symbols._
+_50 modules, 534 symbols._
 
 ## `forge._hook_helpers`
 
@@ -255,7 +255,7 @@ _50 modules, 533 symbols._
 - `_slug(name: str) -> str` _(internal)_ — Slugify *name* into a DSL-safe identifier fragment.
 - `_q(text: str) -> str` _(internal)_ — Quote *text* as a Structurizr DSL string literal.
 - `_coerce_list(raw: object) -> list[dict]` _(internal)_ — Return *raw* as a list of dicts, tolerating a single table.
-- `_visibility_fields(entry: dict) -> dict` _(internal)_ — Extract the shared ``active`` / ``hidden`` / ``tags`` element flags.
+- `_visibility_fields(entry: dict) -> dict` _(internal)_ — Extract the shared ``active`` / ``hidden`` / ``tags`` / ``group`` flags.
 - `_parse_components(section: dict) -> tuple[Component, ...]` _(internal)_ — Parse components from rich ``[[component]]`` tables + the simple map.
 - `_validate_component_containers(components: tuple[Component, ...], containers: tuple[Container, ...]) -> None` _(internal)_ — Fail loudly on a duplicate container name or an undeclared reference.
 - `_parse_render_config(section: dict) -> RenderConfig` _(internal)_ — Build the HTML :class:`RenderConfig` from the model's ``render`` table.
@@ -288,6 +288,7 @@ _50 modules, 533 symbols._
 - `_derive_container_edges(config: C4Config, edges: set[tuple[str, str]], *, include_derived: bool = True) -> set[tuple[str, str]]` _(internal)_ — Collapse component-level edges to cross-container pairs.
 - `_container_level_maps(config: C4Config, *, sys_id: str, person_ids: dict[str, str], external_ids: dict[str, str], container_ids: dict[str, str]) -> _IdMaps` _(internal)_ — Build id maps that resolve every endpoint to its Container-view node.
 - `_container_view_declared(config: C4Config, ids: _IdMaps) -> tuple[list[str], set[str]]` _(internal)_ — Render Container-view declared edges and the externals they target.
+- `_banded_lines(elements: list[_T], line_for: Callable[[_T], str], alloc: _IdAllocator, *, base_indent: str) -> list[str]` _(internal)_ — Wrap elements sharing a ``group`` in labelled band subgraphs.
 - `_render_mermaid_containers(config: C4Config, container_edges: set[tuple[str, str]]) -> str` _(internal)_ — Render the Container view: containers inside the system boundary.
 - `_component_view_peripherals(config: C4Config, names: set[str], component_ids: dict[str, str], alloc: _IdAllocator) -> tuple[list[str], list[str]]` _(internal)_ — Render external/person peripherals + edges for one container's view.
 - `_render_mermaid_components_for(config: C4Config, container: Container, idx: int, edges: set[tuple[str, str]], *, include_derived: bool = True) -> str` _(internal)_ — Render one container's Component view: its components and their edges.

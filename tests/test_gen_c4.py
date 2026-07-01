@@ -2523,12 +2523,22 @@ def test_interaction_has_no_magnify_and_scopes_edge_labels() -> None:
 
 
 def test_visibility_fields_defaults_and_parsing() -> None:
-    """_visibility_fields reads active/hidden/tags, defaulting to shown + no tags."""
-    assert _visibility_fields({}) == {"active": True, "hidden": False, "tags": ()}
+    """_visibility_fields reads active/hidden/tags/group with sensible defaults."""
+    assert _visibility_fields({}) == {
+        "active": True,
+        "hidden": False,
+        "tags": (),
+        "group": "",
+    }
     parsed = _visibility_fields(
-        {"active": False, "hidden": True, "tags": ["a", "b", 3]}
+        {"active": False, "hidden": True, "tags": ["a", "b", 3], "group": "Infra"}
     )
-    assert parsed == {"active": False, "hidden": True, "tags": ("a", "b")}
+    assert parsed == {
+        "active": False,
+        "hidden": True,
+        "tags": ("a", "b"),
+        "group": "Infra",
+    }
 
 
 def test_visible_config_default_is_unchanged() -> None:
@@ -2641,3 +2651,77 @@ def test_load_c4_config_reads_visibility_and_tags(tmp_path: Path) -> None:
     assert config.containers[0].tags == ("infrastructure",)
     assert config.externals[0].hidden is True
     assert config.render.exclude_tags == ("infrastructure",)
+
+
+# --- visual groups / bands in the Container view ---
+
+
+def test_containers_cluster_into_group_bands() -> None:
+    """Containers sharing a group render inside one labelled band subgraph."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        containers=(
+            Container("Auth", "", "", group="Capabilities"),
+            Container("Billing", "", "", group="Capabilities"),
+            Container("DB", "", "", group="Our infrastructure"),
+        ),
+    )
+    text = _render_mermaid_containers(config, set())
+    assert 'subgraph capabilities["Capabilities"]' in text
+    assert 'subgraph our_infrastructure["Our infrastructure"]' in text
+    # Both capability containers precede the band's `end`, inside it.
+    cap = text.index('subgraph capabilities["Capabilities"]')
+    end = text.index("end", cap)
+    assert 0 < text.index("auth[", cap) < end
+    assert 0 < text.index("billing[", cap) < end
+
+
+def test_ungrouped_container_stays_flat_beside_bands() -> None:
+    """A container with no group renders flat, not inside any band."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        containers=(
+            Container("Banded", "", "", group="Zone"),
+            Container("Loose", "", ""),
+        ),
+    )
+    text = _render_mermaid_containers(config, set())
+    assert 'subgraph zone["Zone"]' in text
+    # `Loose` sits at the system-boundary indent (8 spaces), not the band's (12).
+    assert "\n        loose[" in text
+    assert "\n            loose[" not in text
+
+
+def test_externals_cluster_into_group_bands() -> None:
+    """Externals sharing a group render inside their own labelled band."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        externals=(
+            External("GitHub", "", "uses", group="Third-party"),
+            External("Datadog", "", "uses", group="Third-party"),
+        ),
+    )
+    text = _render_mermaid_containers(config, set())
+    assert 'subgraph third_party["Third-party"]' in text
+    assert "github[[" in text
+    assert "datadog[[" in text
+
+
+def test_container_view_ungrouped_has_no_band_subgraph() -> None:
+    """With no groups, the Container view emits only Actors + system subgraphs."""
+    config = _two_container_config(
+        (Component("Core", ("a",), container="Applications"),)
+    )
+    text = _render_mermaid_containers(config, set())
+    subgraphs = [line for line in text.splitlines() if "subgraph" in line]
+    # Only the system boundary (no persons in this config → no Actors band).
+    assert all("group" not in s.lower() for s in subgraphs)
+    assert any(
+        "subgraph sys" in s or config.system.lower() in s.lower() for s in subgraphs
+    )

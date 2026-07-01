@@ -68,6 +68,12 @@ The DSL / README / `--format mermaid` output is unchanged.
   `exclude_tags` bulk-filter the **rendered views** by tag (the DSL stays
   canonical). With nothing flagged, output is byte-identical.
 
+- **Visual groups / bands in the Container view.** Elements sharing a `group`
+  (e.g. `group = "Capabilities"` / `"Our infrastructure"` / `"Third-party"`)
+  cluster into one labelled band, so a dense system reads as a few organized
+  zones instead of scattered boxes. Containers band inside the system boundary;
+  externals band beside it. Ungrouped elements render flat exactly as before.
+
 ### Fixes
 - **Empty containers no longer emit a blank Component view.** A container that
   owns no components (e.g. an infrastructure unit) is skipped in the `--format

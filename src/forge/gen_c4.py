@@ -55,6 +55,7 @@ import tempfile
 from dataclasses import dataclass, field, fields, replace
 from importlib import resources
 from pathlib import Path
+from typing import TYPE_CHECKING, TypeVar
 
 from forge.audit.common import Scope
 from forge.audit.deps import build_module_graph
@@ -62,6 +63,23 @@ from forge.config import resolve_model_section, resolve_tool_roots
 from forge.gen_common import check_doc_drift
 from forge.git_utils import configure_cli_logging, repo_root
 from forge.run_context import progress_logger
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Protocol
+
+    class _Grouped(Protocol):
+        """Protocol for elements that can be banded by ``_banded_lines``.
+
+        Any element passed to ``_banded_lines`` must have a ``group`` attribute
+        that is a string (empty string = ungrouped).
+        """
+
+        @property
+        def group(self) -> str:
+            """Band name; empty string for ungrouped elements."""
+            ...
 
 
 configure_cli_logging()
@@ -135,6 +153,9 @@ _EDGE_MODES = ("imports", "declared", "both")
 # keeps the byte-identical baseline; "TB" lays the diagram out top-to-bottom.
 _DIRECTIONS = ("LR", "TB")
 
+# Generic type parameter for _banded_lines, bound to elements with a group attribute.
+_T = TypeVar("_T", bound="_Grouped")
+
 
 def _resolve_direction(value: str) -> str:
     """Validate a graph-direction string, failing loudly on an unknown value.
@@ -200,6 +221,8 @@ class Person:
             edges are omitted from every generated output (default: shown).
         hidden: Inverse spelling of ``active`` — ``hidden = true`` hides.
         tags: Free-form labels for bulk include/exclude-by-tag view slimming.
+        group: Optional band name; elements sharing a ``group`` cluster into one
+            labelled band in the Container view (empty = ungrouped).
     """
 
     name: str
@@ -209,6 +232,7 @@ class Person:
     active: bool = True
     hidden: bool = False
     tags: tuple[str, ...] = ()
+    group: str = ""
 
 
 @dataclass(frozen=True)
@@ -223,6 +247,8 @@ class External:
             edges are omitted from every generated output (default: shown).
         hidden: Inverse spelling of ``active`` — ``hidden = true`` hides.
         tags: Free-form labels for bulk include/exclude-by-tag view slimming.
+        group: Optional band name; elements sharing a ``group`` cluster into one
+            labelled band in the Container view (empty = ungrouped).
     """
 
     name: str
@@ -231,6 +257,7 @@ class External:
     active: bool = True
     hidden: bool = False
     tags: tuple[str, ...] = ()
+    group: str = ""
 
 
 @dataclass(frozen=True)
@@ -246,6 +273,8 @@ class Container:
             (default: shown).
         hidden: Inverse spelling of ``active`` — ``hidden = true`` hides.
         tags: Free-form labels for bulk include/exclude-by-tag view slimming.
+        group: Optional band name; elements sharing a ``group`` cluster into one
+            labelled band in the Container view (empty = ungrouped).
     """
 
     name: str
@@ -254,6 +283,7 @@ class Container:
     active: bool = True
     hidden: bool = False
     tags: tuple[str, ...] = ()
+    group: str = ""
 
 
 @dataclass(frozen=True)
@@ -273,6 +303,8 @@ class Component:
             edges are omitted from every generated output (default: shown).
         hidden: Inverse spelling of ``active`` — ``hidden = true`` hides.
         tags: Free-form labels for bulk include/exclude-by-tag view slimming.
+        group: Optional band name; elements sharing a ``group`` cluster into one
+            labelled band in the Container view (empty = ungrouped).
     """
 
     name: str
@@ -283,6 +315,7 @@ class Component:
     active: bool = True
     hidden: bool = False
     tags: tuple[str, ...] = ()
+    group: str = ""
 
 
 @dataclass(frozen=True)
@@ -539,14 +572,14 @@ def _coerce_list(raw: object) -> list[dict]:
 
 
 def _visibility_fields(entry: dict) -> dict:
-    """Extract the shared ``active`` / ``hidden`` / ``tags`` element flags.
+    """Extract the shared ``active`` / ``hidden`` / ``tags`` / ``group`` flags.
 
     Args:
         entry: One element's TOML table.
 
     Returns:
-        Keyword args (``active``, ``hidden``, ``tags``) for an element
-        dataclass; defaults (shown, no tags) when the keys are absent.
+        Keyword args (``active``, ``hidden``, ``tags``, ``group``) for an element
+        dataclass; defaults (shown, no tags, ungrouped) when the keys are absent.
     """
     raw_tags = entry.get("tags", [])
     tags = (
@@ -558,6 +591,7 @@ def _visibility_fields(entry: dict) -> dict:
         "active": bool(entry.get("active", True)),
         "hidden": bool(entry.get("hidden", False)),
         "tags": tags,
+        "group": str(entry.get("group", "")),
     }
 
 
@@ -1689,6 +1723,54 @@ def _container_view_declared(
     return lines, external_targets
 
 
+def _banded_lines(
+    elements: list[_T],
+    line_for: Callable[[_T], str],
+    alloc: _IdAllocator,
+    *,
+    base_indent: str,
+) -> list[str]:
+    """Wrap elements sharing a ``group`` in labelled band subgraphs.
+
+    Groups and their members render in declaration order; an element with an
+    empty ``group`` stays flat (un-banded) after the bands. When no element is
+    grouped the output is the plain flat list — byte-identical to the
+    pre-grouping rendering, so ungrouped models are unaffected.
+
+    Args:
+        elements: Elements to render, each exposing a ``group`` attribute.
+        line_for: Renders one element's node line *without* leading indent.
+        alloc: The view's id allocator, extended in place with band ids.
+        base_indent: Indent for un-banded lines and the ``subgraph``/``end``
+            band wrappers; members sit one level deeper.
+
+    Returns:
+        Mermaid lines for the (optionally banded) elements.
+    """
+    grouped: dict[str, list] = {}
+    order: list[str] = []
+    ungrouped: list = []
+    for element in elements:
+        if element.group:
+            if element.group not in grouped:
+                grouped[element.group] = []
+                order.append(element.group)
+            grouped[element.group].append(element)
+        else:
+            ungrouped.append(element)
+    if not order:
+        return [f"{base_indent}{line_for(e)}" for e in elements]
+    member_indent = base_indent + "    "
+    lines: list[str] = []
+    for group in order:
+        band_id = alloc.allocate(group, "group")
+        lines.append(f'{base_indent}subgraph {band_id}["{_m(group)}"]')
+        lines += [f"{member_indent}{line_for(e)}" for e in grouped[group]]
+        lines.append(f"{base_indent}end")
+    lines += [f"{base_indent}{line_for(e)}" for e in ungrouped]
+    return lines
+
+
 def _render_mermaid_containers(
     config: C4Config, container_edges: set[tuple[str, str]]
 ) -> str:
@@ -1729,21 +1811,30 @@ def _render_mermaid_containers(
     lines = [f"graph {config.direction}"]
     lines += _actors_subgraph(config, person_ids, alloc)
     lines.append(f'    subgraph {sys_id}["{_m(config.system)}"]')
-    lines += [
-        f'        {container_ids[c.name]}["'
-        f'{_mermaid_box(c.name, c.technology, c.description, markdown=True)}"]'
-        for c in config.containers
-    ]
+    # Containers cluster into labelled bands when they share a `group` (e.g.
+    # "Capabilities" vs "Our infrastructure"); ungrouped models render flat.
+    lines += _banded_lines(
+        list(config.containers),
+        lambda c: (
+            f'{container_ids[c.name]}["'
+            f'{_mermaid_box(c.name, c.technology, c.description, markdown=True)}"]'
+        ),
+        alloc,
+        base_indent="        ",
+    )
     lines.append("    end")
-    # Externals as FLAT nodes (no subgraph), exactly as the System Context view
-    # emits them: wrapping them in a cluster gave dagre a third sibling subgraph
-    # to mis-rank, tangling the inter-cluster container→external edges. Flat
-    # nodes let dagre place them cleanly on the flow's far side; declared after
-    # the system so they rank to the right (LR) / below (TB).
-    lines += [
-        _external_node_line(external_ids[e.name], e, markdown=True)
-        for e in config.externals
-    ]
+    # Externals as FLAT nodes (no system subgraph), exactly as the System Context
+    # view emits them — wrapping them all in one cluster gave dagre a third
+    # sibling subgraph to mis-rank. They still band by `group` (e.g.
+    # "Third-party") when grouped; ungrouped externals stay flat.
+    lines += _banded_lines(
+        list(config.externals),
+        lambda e: _external_node_line(
+            external_ids[e.name], e, indent="", markdown=True
+        ),
+        alloc,
+        base_indent="    ",
+    )
     lines += [
         f'    {person_ids[p.name]} -->|"{_m(p.uses)}"| '
         f"{_person_node(p.container, maps, fallback=sys_id)}"

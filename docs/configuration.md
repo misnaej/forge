@@ -301,6 +301,22 @@ name = "Datadog"
 tags = ["third-party"]   # exclude_tags = ["third-party"] slims it from views
 ```
 
+**Grouping into bands.** Every element also accepts a `group = "<band name>"`.
+In the **Container view**, elements sharing a `group` cluster into one labelled
+band — containers band inside the system boundary, externals beside it — so a
+dense system reads as a few organized zones ("Capabilities", "Our
+infrastructure", "Third-party", …). Ungrouped elements render flat, unchanged.
+
+```toml
+[[container]]
+name = "Auth"
+group = "Capabilities"
+
+[[container]]
+name = "Postgres"
+group = "Our infrastructure"
+```
+
 **Interactive HTML.** Each `--format html` diagram is interactive: hover a
 node to reveal it, its incident edges, and their neighbours (the rest dim, while
 the connection labels stay readable); click a container to jump to its

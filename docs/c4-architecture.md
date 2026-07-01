@@ -299,6 +299,17 @@ radial edges while detailed views show the specific flow. Every default — no n
 config, no non-component relationships, no person targets — is **byte-identical**
 to the prior output, locked by the existing DSL/flat tests.
 
+### Slimming & grouping (activation, tags, bands)
+
+A full model can render as leaner views without maintaining copies. Each element
+carries `active` / `hidden` (drop it and its dangling edges from **every** output
+while it stays in `c4.toml`), `tags` (with `[tool.forge.c4.render].include_tags` /
+`exclude_tags` slimming the rendered views only — the DSL stays canonical), and
+`group` (elements sharing a group cluster into one labelled band in the Container
+view — containers inside the system boundary, externals beside it — via nested
+Mermaid subgraphs). All three are additive: with nothing flagged the output is
+byte-identical.
+
 ## 6. Why this fits forge's existing patterns
 
 - **Reuses `forge.audit.deps`** via a new public `build_module_graph`
