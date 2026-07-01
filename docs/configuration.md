@@ -81,6 +81,12 @@ you don't author is neither scanned nor blocked:
 exclude = ["src/pkg/vendor/**", "*_pb2.py"]
 ```
 
+> **Prefer specific paths over broad wildcards.** A pattern as wide as
+> `"src/**"` silently suppresses `docstring_verification` and
+> `test_naming_check` across your whole source tree — the same over-exclusion
+> footgun that `ruff` / `interrogate` `exclude` already carry. Scope to the
+> sub-path you actually don't author.
+
 ### Source-dir resolution — one definition, every tool
 
 `source_dirs` / `test_dirs` are the **single definition of where your code

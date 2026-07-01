@@ -406,11 +406,12 @@ def filter_excluded(files: list[str], globs: list[str]) -> list[str]:
 
     Args:
         files: Repo-relative file paths.
-        globs: Exclude patterns from ``[tool.forge].exclude``. Empty list is
-            a no-op (returns *files* unchanged).
+        globs: Exclude patterns from ``[tool.forge].exclude``.
 
     Returns:
         The subset of *files* matching no pattern, original order preserved.
+        When *globs* is empty, *files* is returned as-is (same list object —
+        no copy is made).
     """
     if not globs:
         return files
