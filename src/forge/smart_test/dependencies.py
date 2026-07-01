@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from forge.config import resolve_tool_roots
 from forge.import_graph import (
+    closest_known,
     extract_import_targets,
     resolve_module_name,
     resolve_package_module_name,
@@ -99,30 +100,6 @@ def _iter_py(roots: Iterable[Path]) -> Iterable[Path]:
     """
     for root in roots:
         yield from root.rglob("*.py")
-
-
-def _closest_known(target: str, modules: set[str]) -> str | None:
-    """Resolve an import *target* to the deepest known module that covers it.
-
-    ``from pkg.mod import name`` yields candidates ``pkg.mod.name`` and
-    ``pkg.mod``; this walks the dotted name from longest to shortest and
-    returns the first that names a real module in the graph, so an
-    attribute import collapses to its module and a submodule import
-    resolves to the submodule.
-
-    Args:
-        target: A dotted import candidate.
-        modules: The set of known internal module names.
-
-    Returns:
-        The matching module name, or ``None`` when *target* is external.
-    """
-    parts = target.split(".")
-    for end in range(len(parts), 0, -1):
-        candidate = ".".join(parts[:end])
-        if candidate in modules:
-            return candidate
-    return None
 
 
 def _dotted(node: ast.expr) -> str | None:
@@ -217,7 +194,8 @@ def _patch_targets(tree: ast.Module) -> set[str]:
     is skipped — ``obj`` is reached through its own import. The special
     ``patch.dict("sys.modules", {…})`` form yields the injected module names
     (its dict keys). Targets are returned raw (``"pkg.mod.attr"``); the
-    caller reduces them to importable modules via :func:`_closest_known`,
+    caller reduces them to importable modules via
+    :func:`forge.import_graph.closest_known`,
     exactly as import targets are reduced.
 
     Args:
@@ -313,7 +291,7 @@ def build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph
     graph = _Graph(test_modules=test_modules)
     for name, (rel, targets) in parsed.items():
         graph.path_of[name] = rel
-        resolved = {m for t in targets if (m := _closest_known(t, known)) and m != name}
+        resolved = {m for t in targets if (m := closest_known(t, known)) and m != name}
         graph.imports[name] = resolved
     return graph
 

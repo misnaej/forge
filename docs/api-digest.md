@@ -4,14 +4,28 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_55 modules, 576 symbols._
+_58 modules, 577 symbols._
+
+## `forge`
+
+> _Forge: shared engineering foundation._
+
 
 ## `forge._hook_helpers`
+
+> _Shared helpers for forge's managed git-hook entrypoints._
 
 - `run_foundation_drift_check(hook_name: str) -> int` — Run ``install-forge-claude-md --check --quiet``.
 - `run_hook_extensions(hook_name: str) -> None` — Run consumer extension scripts under ``.githooks/<hook_name>.d/``.
 
+## `forge.audit`
+
+> _Forge audit pack: deterministic scripts that surface design issues._
+
+
 ## `forge.audit.agents`
+
+> _forge-audit-agents — measure agents against the canonical template._
 
 - `class AgentDoc` — Parsed view of one ``agents/*.md`` file.
 - `_split_frontmatter(text: str) -> tuple[dict[str, str | tuple[str, ...]], str]` _(internal)_ — Split YAML-ish frontmatter from the rest of an agent file.
@@ -38,6 +52,8 @@ _55 modules, 576 symbols._
 
 ## `forge.audit.all`
 
+> _Orchestrator: run every forge-audit-* script and write a summary log._
+
 - `class SubResult` — Outcome of running one sub-audit.
 - `_read_finding_count(log_text: str) -> int` _(internal)_ — Parse the ``# findings: N`` header line from a log.
 - `_run_one(name: str, scope: str, roots: list[str] | None) -> SubResult` _(internal)_ — Invoke a sub-audit CLI and parse its log.
@@ -45,6 +61,8 @@ _55 modules, 576 symbols._
 - `main() -> int` — Run every sub-audit and write ``code_health/audit_summary.log``.
 
 ## `forge.audit.claims`
+
+> _forge-audit-claims: extract domain claims from docstrings/comments._
 
 - `class ClaimsConfig` — Tunable knobs for the claims audit.
 - `_is_suppression_comment(line_text: str) -> bool` _(internal)_ — Return ``True`` if a comment is a known lint/type-checker directive.
@@ -61,6 +79,8 @@ _55 modules, 576 symbols._
 
 ## `forge.audit.common`
 
+> _Shared helpers for the forge-audit-* CLI scripts._
+
 - `class Scope` — Audit scope selector.
 - `class Severity` — Finding severity tier.
 - `class Finding` — One audit observation with provenance.
@@ -76,6 +96,8 @@ _55 modules, 576 symbols._
 
 ## `forge.audit.data`
 
+> _forge-audit-data: structured-data integrity checks._
+
 - `class DataConfig` — Tunable knobs for the data audit.
 - `_gather_files(scope: Scope, roots: list[Path], suffixes: tuple[str, ...]) -> list[Path]` _(internal)_ — Collect candidate data files across the configured suffixes.
 - `_check_csv(path: Path) -> list[Finding]` _(internal)_ — Verify CSV column count is consistent across every row.
@@ -89,9 +111,10 @@ _55 modules, 576 symbols._
 
 ## `forge.audit.deps`
 
+> _forge-audit-deps: module dependency analysis._
+
 - `class ModuleNode` — One Python module after parsing.
 - `class DepsConfig` — Tunable knobs for the dependency-analysis pipeline.
-- `_closest_known(target: str, modules: dict[str, ModuleNode]) -> str | None` _(internal)_ — Walk up the dotted name until a known module is found.
 - `_abstractness(tree: ast.Module) -> tuple[int, int]` _(internal)_ — Count abstract vs total class definitions in a module.
 - `class _TarjanState` _(internal)_ — Mutable scratch space shared across Tarjan recursion frames.
 - `_pop_scc(state: _TarjanState, root: str) -> None` _(internal)_ — Pop nodes off the DFS stack down to ``root``, forming one SCC.
@@ -111,6 +134,8 @@ _55 modules, 576 symbols._
 - `main() -> int` — CLI entry point for ``forge-audit-deps``.
 
 ## `forge.audit.dup`
+
+> _forge-audit-dup: duplicate function-body detection._
 
 - `class CodeUnit` — One function definition extracted from the source tree.
 - `_strip_docstring(body: list[ast.stmt]) -> list[ast.stmt]` _(internal)_ — Return ``body`` with a leading docstring (if any) removed.
@@ -134,6 +159,8 @@ _55 modules, 576 symbols._
 
 ## `forge.audit.orphans`
 
+> _forge-audit-orphans: dead-code detection via vulture._
+
 - `class OrphansConfig` — Tunable knobs for the orphans audit.
 - `_load_vulture() -> object` _(internal)_ — Import the vulture module or exit with an install hint.
 - `_severity(confidence: int) -> Severity` _(internal)_ — Map a vulture confidence percentage to a finding severity.
@@ -143,6 +170,8 @@ _55 modules, 576 symbols._
 - `main() -> int` — CLI entry point for ``forge-audit-orphans``.
 
 ## `forge.audit.suppressions`
+
+> _forge-audit-suppressions: list every lint / type / coverage suppression._
 
 - `class SuppressionsConfig` — Tunable knobs for the suppressions audit.
 - `_parse_codes(raw: str | None) -> list[str]` _(internal)_ — Split a comma-separated suppression-code string into trimmed codes.
@@ -157,11 +186,15 @@ _55 modules, 576 symbols._
 
 ## `forge.claude_settings_schema`
 
+> _Shared schema for the consumer ``.claude/settings.json`` forge block._
+
 - `scaffold() -> dict[str, object]` — Return a fresh deep copy of the empty-file settings scaffold.
 - `marketplace_entry(ref: str) -> dict[str, object]` — Return forge's ``extraKnownMarketplaces[forge]`` value for *ref*.
 - `read_marketplace_ref(settings: dict[str, object]) -> str | None` — Return ``extraKnownMarketplaces.forge.source.ref`` from *settings*.
 
 ## `forge.config`
+
+> _Read forge-internal config from a repo's ``pyproject.toml``._
 
 - `detect_source_dirs(repo_root: Path) -> list[str]` — Smart-detect the repo's source roots when ``source_dirs`` is unset.
 - `detect_test_dirs(repo_root: Path) -> list[str]` — Smart-detect the repo's test roots when ``test_dirs`` is unset.
@@ -176,12 +209,16 @@ _55 modules, 576 symbols._
 
 ## `forge.continuation_append`
 
+> _forge-continuation-append — append one line to ``.plan/CONTINUATION.md``._
+
 - `_today_iso() -> str` _(internal)_ — Return today's date as ``YYYY-MM-DD``.
 - `_ensure_file_and_section(path: Path) -> None` _(internal)_ — Create the file with the canonical headers if missing.
 - `_append_line(path: Path, line: str) -> None` _(internal)_ — Append *line* to *path* with a trailing newline.
 - `main() -> int` — Append one activity-log line to ``.plan/CONTINUATION.md``.
 
 ## `forge.doctor`
+
+> _forge-doctor — diagnose a forge install in the current environment._
 
 - `class CheckResult` — Outcome of one diagnostic check.
 - `_expected_clis() -> list[str]` _(internal)_ — Return the console-script names shipped by ``forge-scripts``.
@@ -201,10 +238,14 @@ _55 modules, 576 symbols._
 
 ## `forge.fix_ruff`
 
+> _Apply ruff fixes and write ``code_health/ruff.log``._
+
 - `_validate_paths(repo_root: Path, paths: list[str]) -> list[str]` _(internal)_ — Ensure every entry in *paths* resolves inside *repo_root*.
 - `main() -> int` — Apply ruff fixes and write ``code_health/ruff.log``.
 
 ## `forge.forge_config`
+
+> _forge-config — show what forge config this repo sets, and what it should._
 
 - `class ConfigKey` — One ``[tool.forge.*]`` key forge reads in a consumer repo.
 - `_lookup(data: dict, path: tuple[str, ...]) -> object` _(internal)_ — Return the value at *path* in nested *data*, or ``_UNSET`` if absent.
@@ -213,6 +254,8 @@ _55 modules, 576 symbols._
 - `main() -> int` — Entry point for ``forge-config``.
 
 ## `forge.gen_api_digest`
+
+> _Generate a compact markdown API digest of a codebase's symbols._
 
 - `class Symbol` — One top-level symbol extracted from a module.
 - `class ModuleDigest` — The top-level symbols of a single module.
@@ -237,6 +280,8 @@ _55 modules, 576 symbols._
 - `main() -> int` — Generate or verify the API digest doc.
 
 ## `forge.gen_c4`
+
+> _Generate a C4 architecture model as Structurizr DSL._
 
 - `_resolve_direction(value: str) -> str` _(internal)_ — Validate a graph-direction string, failing loudly on an unknown value.
 - `_resolve_layout(value: str) -> str` _(internal)_ — Validate the HTML/PDF layout engine, rejecting the broken organic ones.
@@ -276,7 +321,7 @@ _55 modules, 576 symbols._
 - `_component_description(component: Component) -> str` _(internal)_ — Return a component's box description for C4 rendering.
 - `_render_relationships(config: C4Config, ids: _IdMaps, edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the relationship statements of the ``model`` block.
 - `_render_views(config: C4Config, sys_id: str, container_ids: dict[str, str]) -> list[str]` _(internal)_ — Render the ``views`` block.
-- `build_model(root: Path, roots: list[Path]) -> tuple[C4Config, set[tuple[str, str]], list[str]] | None` — Assemble the C4 model: config, derived edges, and unmatched modules.
+- `build_model(root: Path, roots: list[Path]) -> tuple[C4Config, set[tuple[str, str]], list[str], list[str]] | None` — Assemble the C4 model: config, derived edges, unmatched + all modules.
 - `generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None` — Build the DSL text and unmatched-module list for the repo.
 - `_m(text: str) -> str` _(internal)_ — Escape label *text* for safe embedding in a Mermaid node label.
 - `_external_node_line(node_id: str, ext: External, *, indent: str = '    ', markdown: bool = False) -> str` _(internal)_ — Render the flat ``[[...]]`` node line for one external system.
@@ -303,6 +348,8 @@ _55 modules, 576 symbols._
 - `render_html(config: C4Config, views: list[tuple[str, str]]) -> str` — Wrap the C4 views in a self-contained, offline, tabbed HTML page.
 - `_copy_vendored_mermaid(dest_dir: Path) -> None` _(internal)_ — Write the vendored Mermaid + ELK-layout bundles next to an emitted HTML.
 - `_warn_unmatched(unmatched: list[str]) -> None` _(internal)_ — Log a coverage warning naming modules in no component.
+- `_dead_prefixes(components: tuple[Component, ...], modules: list[str]) -> list[tuple[str, str]]` _(internal)_ — Find declared component prefixes that match zero discovered modules.
+- `_check_strict_coverage(config: C4Config, modules: list[str], unmatched: list[str]) -> int` _(internal)_ — Fail ``--check`` on incomplete or dead component coverage.
 - `render_readme_block(mermaid_text: str) -> str` — Render the managed README block embedding the Mermaid diagram.
 - `_splice_readme(readme_text: str, block: str) -> str | None` _(internal)_ — Replace the managed C4 block in *readme_text* with *block*.
 - `_readme_path(root: Path, config: C4Config) -> Path` _(internal)_ — Return the configured README path under *root*.
@@ -325,6 +372,8 @@ _55 modules, 576 symbols._
 
 ## `forge.gen_cli_reference`
 
+> _Generate the forge CLI reference doc from each console script's ``--help``._
+
 - `class CliEntry` — A single forge console-script CLI.
 - `discover_clis(distribution: str = DISTRIBUTION) -> list[CliEntry]` — Discover the console-script CLIs shipped by a distribution.
 - `capture_help(entry: CliEntry) -> str` — Capture the ``--help`` output of a single CLI.
@@ -333,6 +382,8 @@ _55 modules, 576 symbols._
 
 ## `forge.gen_commit_types`
 
+> _Generate the conventional-commit alternation in ``check_commit_format.sh``._
+
 - `_alternation() -> str` _(internal)_ — Render ``CONVENTIONAL_COMMIT_TYPES`` as a `|`-joined regex alternation.
 - `_expected_line() -> str` _(internal)_ — Return the canonical ``CONVENTIONAL_TYPES='...'`` shell line.
 - `_rewrite(content: str) -> str` _(internal)_ — Return *content* with the managed block updated to the canonical line.
@@ -340,9 +391,13 @@ _55 modules, 576 symbols._
 
 ## `forge.gen_common`
 
+> _Shared helpers for forge's generated-doc CLIs._
+
 - `check_doc_drift(root: Path, doc_relpath: str, generated: str, regen_cmd: str) -> int` — Compare freshly generated content against a committed doc.
 
 ## `forge.git_utils`
+
+> _Shared git utilities for verification scripts._
 
 - `repo_root() -> Path` — Return the git repo root for the current working directory.
 - `configure_cli_logging() -> None` — Apply forge's canonical CLI logging setup.
@@ -366,12 +421,17 @@ _55 modules, 576 symbols._
 
 ## `forge.import_graph`
 
+> _Shared AST import-graph primitives._
+
+- `closest_known(target: str, modules: AbstractSet[str]) -> str | None` — Resolve an import *target* to the deepest known module that covers it.
 - `_rel_to_dotted(rel: Path) -> str | None` _(internal)_ — Convert a root-relative ``.py`` path to a dotted module name.
 - `resolve_module_name(path: Path, package_roots: list[Path]) -> str | None` — Translate a ``.py`` path to a dotted module name.
 - `resolve_package_module_name(path: Path, repo_root: Path) -> str | None` — Name a source file by its real import root, derived from package layout.
 - `extract_import_targets(tree: ast.Module, current_module: str) -> set[str]` — Return the set of fully-qualified import-candidate targets.
 
 ## `forge.install_bootstrap`
+
+> _install-forge-bootstrap — one-shot consumer onboarding._
 
 - `class Step` — One bootstrap step.
 - `_gate_skip_in_ci(_root: Path) -> str | None` _(internal)_ — Skip a step when running non-interactively per FOUNDATION §15.
@@ -383,6 +443,8 @@ _55 modules, 576 symbols._
 
 ## `forge.install_claude_settings`
 
+> _install-forge-claude-settings — enable the forge plugin per repo._
+
 - `_resolve_ref(repo_root: Path, cli_ref: str | None) -> str` _(internal)_ — Resolve the marketplace ref: ``--ref`` → pip-pin ref → ``"main"``.
 - `_load_settings(path: Path) -> dict[str, object] | None` _(internal)_ — Return the parsed ``.claude/settings.json``.
 - `_is_current(settings: dict[str, object], ref: str) -> bool` _(internal)_ — Return True when the forge marketplace (at *ref*) and plugin enable are set.
@@ -390,6 +452,8 @@ _55 modules, 576 symbols._
 - `main() -> int` — CLI entry point.
 
 ## `forge.install_claudemd`
+
+> _install-forge-claude-md — sync the forge foundation into a consumer repo._
 
 - `_foundation_text() -> str` _(internal)_ — Return the bundled FOUNDATION.md text shipped with the pip package.
 - `_forge_version() -> str` _(internal)_ — Return the installed ``forge-scripts`` version, or ``unknown``.
@@ -420,6 +484,8 @@ _55 modules, 576 symbols._
 
 ## `forge.install_githooks`
 
+> _install-forge-githooks — wire forge's git hooks into a repo._
+
 - `_installed_forge_version() -> str` _(internal)_ — Return the installed ``forge-scripts`` version, or ``0.0.0`` if absent.
 - `_compute_body_sha(body: str) -> str` _(internal)_ — Return a short hex SHA-256 digest of *body* for marker embedding.
 - `managed_marker(body_sha: str | None = None) -> str` — Render the managed-hook marker line.
@@ -438,11 +504,15 @@ _55 modules, 576 symbols._
 
 ## `forge.install_labels`
 
+> _install-forge-labels — install the forge canonical label schema into a repository._
+
 - `_existing_labels(repo: str | None) -> set[str]` _(internal)_ — Return set of existing label names in the repo.
 - `_create_label(label: dict[str, str], repo: str | None) -> bool` _(internal)_ — Create one label. Returns True on success.
 - `main() -> int` — Install canonical foundation labels in the current GitHub repo.
 
 ## `forge.install_readme_badges`
+
+> _install-forge-readme-badges — write a status-badge block into the README._
 
 - `_shields_static(label: str, message: str, color: str) -> str` _(internal)_ — Build a static shields.io badge image URL.
 - `_md(alt: str, image: str, link: str | None = None) -> str` _(internal)_ — Render one markdown badge (optionally wrapped in a link).
@@ -462,6 +532,8 @@ _55 modules, 576 symbols._
 
 ## `forge.next_prep`
 
+> _forge-next-prep — prepare main for the next task (fetch, pull, tag, prune)._
+
 - `_check_promote_pending_message(repo_root: Path, dev_branch: str, base_branch: str) -> str | None` _(internal)_ — Return a one-line user-facing prompt when promotion is pending, else ``None``.
 - `_changelog_lacks_entry(changelog_text: str, minor_tag: str) -> bool` _(internal)_ — Return True when *changelog_text* has no ``## <minor_tag>`` heading.
 - `_promotion_status_lines(repo_root: Path, dev_branch: str, base_branch: str) -> list[str]` _(internal)_ — Build the read-only promotion-status report.
@@ -476,6 +548,8 @@ _55 modules, 576 symbols._
 
 ## `forge.pip_audit_json`
 
+> _pip_audit_json — one shared pip-audit JSON invocation for both CVE steps._
+
 - `class AuditRun` — One completed pip-audit invocation.
 - `run_json(root: Path) -> AuditRun | None` — Run pip-audit once in JSON mode against *root*'s environment.
 - `_dict_list(obj: dict, key: str) -> list[dict]` _(internal)_ — Return ``obj[key]`` filtered to ``dict`` entries, or ``[]``.
@@ -485,19 +559,27 @@ _55 modules, 576 symbols._
 
 ## `forge.post_checkout`
 
+> _forge-post-checkout — runs forge's managed post-checkout git-hook logic._
+
 - `main(argv: list[str] | None = None) -> int` — Run the forge-managed post-checkout actions. Return an exit code.
 
 ## `forge.post_merge`
 
+> _forge-post-merge — runs forge's managed post-merge git-hook logic._
+
 - `main(argv: list[str] | None = None) -> int` — Run the forge-managed post-merge actions. Return an exit code.
 
 ## `forge.pr_delta`
+
+> _pr_delta — thresholds and helpers for pr-manager delta-mode short-circuit._
 
 - `extract_verified_shas(text: str) -> list[str]` — Return every ``verified-at:`` SHA referenced in *text*.
 - `touches_high_blast_radius(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`HIGH_BLAST_RADIUS_PATHS`.
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
 
 ## `forge.pr_squash_comment`
+
+> _forge-pr-squash-comment — validate, wrap, and post the squash-merge message._
 
 - `class ValidationError` — Raised when the input fails a FOUNDATION §6 squash-merge rule.
 - `_validate_title(title: str) -> None` _(internal)_ — Reject titles outside the conventional-commit format.
@@ -512,6 +594,8 @@ _55 modules, 576 symbols._
 - `main() -> int` — Validate the message, build the body, and post (or print) it.
 
 ## `forge.precommit`
+
+> _forge-precommit — pre-commit dispatcher CLI._
 
 - `_color(code: str) -> str` _(internal)_ — Return *code* if stdout is a TTY, else an empty string.
 - `class StepResult` — Outcome of a single pre-commit step.
@@ -562,6 +646,8 @@ _55 modules, 576 symbols._
 
 ## `forge.run_context`
 
+> _Detect the runtime context (interactive workstation vs. CI / automation)._
+
 - `is_non_interactive() -> bool` — Return True when running without a human at the terminal.
 - `_stdin_is_tty() -> bool` _(internal)_ — Return ``sys.stdin.isatty()`` defensively (handles closed stdin).
 - `git_auth_mode() -> AuthMode` — Detect the git / pip auth context the environment can actually use.
@@ -570,13 +656,22 @@ _55 modules, 576 symbols._
 
 ## `forge.slow_tests_report`
 
+> _forge-slow-tests-report — surface the slowest tests from a pytest run._
+
 - `class Duration` — One test-phase timing parsed from a pytest durations section.
 - `parse_durations(text: str) -> list[Duration]` — Extract and rank every durations entry in a pytest log.
 - `format_report(durations: list[Duration], top: int) -> str` — Render a ranked durations table as plain text.
 - `_read_source(log: str) -> str` _(internal)_ — Read the pytest log from a file path or stdin.
 - `main() -> int` — Entry point for ``forge-slow-tests-report``.
 
+## `forge.smart_test`
+
+> _forge.smart_test — change-driven test selection by import depth._
+
+
 ## `forge.smart_test.cli`
+
+> _forge-smart-test — change-driven test runner with depth tiers._
 
 - `_smart_test_config(repo_root: Path) -> dict[str, object]` _(internal)_ — Return the ``[tool.forge.smart_test]`` table, or ``{}`` when absent.
 - `_depth_from_commit(repo_root: Path, cfg: dict[str, object]) -> str | None` _(internal)_ — Read a depth directive from ``HEAD``'s commit message, if present.
@@ -590,17 +685,20 @@ _55 modules, 576 symbols._
 
 ## `forge.smart_test.coverage`
 
+> _Coverage-validated test selection._
+
 - `_context_to_test(context: str) -> str | None` _(internal)_ — Reduce a coverage context to a repo-relative test file path.
 - `_from_json(data: dict[str, object], changed: set[str]) -> set[str]` _(internal)_ — Map a parsed coverage-JSON document to covering test files.
 - `tests_covering(coverage_json: Path, changed_files: Iterable[str]) -> set[str]` — Return repo-relative test files whose coverage touches a changed file.
 
 ## `forge.smart_test.dependencies`
 
+> _Reverse test→source import graph and depth expansion._
+
 - `class SelectionPlan` — The tests smart-test would run, grouped by the depth they enter at.
   - `tests_up_to(self, depth: int) -> list[str]` — Return the sorted unique test relpaths selected at *depth* or below.
 - `_roots(repo_root: Path) -> tuple[list[Path], list[Path]]` _(internal)_ — Return ``(source_dir_paths, test_dir_paths)`` as absolute paths.
 - `_iter_py(roots: Iterable[Path]) -> Iterable[Path]` _(internal)_ — Yield every ``.py`` file under *roots*.
-- `_closest_known(target: str, modules: set[str]) -> str | None` _(internal)_ — Resolve an import *target* to the deepest known module that covers it.
 - `_dotted(node: ast.expr) -> str | None` _(internal)_ — Return the dotted name of an attribute/name chain, or ``None``.
 - `_string_literals(args: list[ast.expr]) -> list[str]` _(internal)_ — Return the string-constant values among *args*, in order.
 - `_classify_patch_call(node: ast.Call) -> str | None` _(internal)_ — Classify a call node as a patch variant: ``"patch"``, ``"dict"``, or ``None``.
@@ -613,6 +711,8 @@ _55 modules, 576 symbols._
 
 ## `forge.smart_test.git_helpers`
 
+> _Git plumbing for smart-test change detection._
+
 - `_ref_exists(repo_root: Path, ref: str) -> bool` _(internal)_ — Return whether *ref* resolves to a commit in the repo.
 - `resolve_base_ref(repo_root: Path, override: str | None = None) -> str` — Resolve the ref to diff ``HEAD`` against for change detection.
 - `head_commit_message(repo_root: Path) -> str` — Return ``HEAD``'s full commit message (subject + body).
@@ -620,11 +720,15 @@ _55 modules, 576 symbols._
 
 ## `forge.smart_test.runner`
 
+> _Pytest execution for smart-test._
+
 - `clear_python_cache(repo_root: Path) -> None` — Delete every ``__pycache__`` directory under *repo_root*.
 - `_coverage_available() -> bool` _(internal)_ — Return whether the ``pytest-cov`` plugin is importable.
 - `run_pytest(repo_root: Path, test_paths: Sequence[str], *, coverage: bool = False) -> tuple[int, str]` — Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
 
 ## `forge.upgrade`
+
+> _forge-upgrade — one-command consumer upgrade flow._
 
 - `_ref_type(value: str) -> str` _(internal)_ — Argparse type validator for ``--to``.
 - `class Pin` — A forge-scripts pin parsed from a consumer's ``pyproject.toml``.
@@ -646,11 +750,15 @@ _55 modules, 576 symbols._
 
 ## `forge.verify_changelog_history`
 
+> _verify-forge-changelog-history — guard main's curated CHANGELOG history._
+
 - `_headings(text: str) -> set[str]` _(internal)_ — Return the set of ``## v<semver>`` release headings in *text*.
 - `_base_is_ancestor(repo_root: Path, base_ref: str) -> bool` _(internal)_ — Return ``True`` when *base_ref* is an ancestor of ``HEAD``.
 - `main() -> int` — Fail when the working tree's CHANGELOG drops a curated ``@base`` entry.
 
 ## `forge.verify_cli_wiring`
+
+> _verify-forge-cli-wiring — assert every project script has a real caller._
 
 - `_entry_module_path(entry_point: str) -> str` _(internal)_ — Translate a ``[project.scripts]`` entry point to its source path.
 - `_expand_source(root: Path, source: str) -> list[Path]` _(internal)_ — Expand a :data:`WIRING_SOURCES` entry into concrete files.
@@ -663,6 +771,8 @@ _55 modules, 576 symbols._
 - `main() -> int` — Entry point for ``verify-forge-cli-wiring``.
 
 ## `forge.verify_cve_usage`
+
+> _verify-forge-cve-usage — second-stage CVE filter on top of pip-audit._
 
 - `class Finding` — One matched vulnerable-usage occurrence.
 - `load_patterns(root: Path) -> dict[str, dict[str, object]] | None` — Load the consumer's ``cve_usage_patterns.toml`` map.
@@ -677,10 +787,14 @@ _55 modules, 576 symbols._
 
 ## `forge.verify_doc_consistency`
 
+> _verify-forge-doc-consistency — check machine-checkable doc claims vs repo state._
+
 - `_check_cli_coverage(repo_root: Path) -> list[str]` _(internal)_ — Return findings for ``[project.scripts]`` names missing from the CLI reference.
 - `main() -> int` — CLI entry point.
 
 ## `forge.verify_docstring_coverage`
+
+> _verify-forge-docstring-coverage — measure docstring coverage % across the repo._
 
 - `_interrogate_config(data: dict) -> tuple[InterrogateConfig, float, list[str]]` _(internal)_ — Build the interrogate config + threshold + excludes from TOML data.
 - `_badge_enabled(data: dict) -> bool` _(internal)_ — Return True when the consumer opted into badge generation.
@@ -690,6 +804,8 @@ _55 modules, 576 symbols._
 - `main() -> int` — CLI entry point for ``verify-forge-docstring-coverage``.
 
 ## `forge.verify_docstrings`
+
+> _verify-forge-docstrings — verify docstring accuracy against code signatures._
 
 - `class Issue` — Represents a docstring issue found during verification.
 - `class DocstringVerifier` — AST visitor to verify docstrings match function signatures.
@@ -707,6 +823,8 @@ _55 modules, 576 symbols._
 
 ## `forge.verify_main_tags`
 
+> _forge-check-main-tags — keep minor release tags on the base branch._
+
 - `class _TagState` _(internal)_ — Where a minor tag currently sits versus where it belongs.
   - `needs_move(self) -> bool` — ``True`` when a base commit reproduces the tag but it sits elsewhere.
 - `_short(sha: str | None) -> str` _(internal)_ — Return a 9-char abbreviation of *sha*, or ``(none)`` when absent.
@@ -721,15 +839,21 @@ _55 modules, 576 symbols._
 
 ## `forge.verify_manifest`
 
+> _Validate that ``.claude-plugin/*.json`` files parse as JSON._
+
 - `_parse_json_error(manifest: Path) -> str | None` _(internal)_ — Return a formatted error if *manifest* is invalid JSON, else None.
 - `main() -> int` — Validate every ``.claude-plugin/*.json`` file and write the log.
 
 ## `forge.verify_plugin_version`
 
+> _Enforce that ``.claude-plugin/plugin.json["version"]`` > latest git tag._
+
 - `_is_release_commit(repo_root: Path) -> bool` _(internal)_ — Return True when ``HEAD``'s release fingerprint matches ANY published ``v*`` tag.
 - `main() -> int` — Enforce plugin.json version > latest git tag.
 
 ## `forge.verify_repo_structure`
+
+> _verify-forge-repo-structure — verify REPO_STRUCTURE.md matches the actual tree._
 
 - `should_ignore(name: str) -> bool` — Check whether a top-level path name should be ignored.
 - `_filter_paths(paths: set[str]) -> set[str]` _(internal)_ — Filter out non-filesystem strings from extracted paths.
@@ -744,6 +868,8 @@ _55 modules, 576 symbols._
 - `main() -> int` — Verify REPO_STRUCTURE.md is in sync with the repository tree.
 
 ## `forge.verify_test_naming`
+
+> _verify-forge-test-naming — verify test naming standards compliance._
 
 - `class Issue` — Represents a test naming issue found during verification.
 - `class TestNamingVerifier` — AST visitor to verify test naming standards.

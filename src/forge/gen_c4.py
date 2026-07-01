@@ -511,6 +511,11 @@ class C4Config:
             ``"LR"`` (left-to-right, default) or ``"TB"`` (top-to-bottom).
         render: Offline-HTML rendering knobs from ``[tool.forge.c4.render]``;
             defaults reproduce the shipped look (see :class:`RenderConfig`).
+        strict_coverage: When ``True``, ``forge-gen-c4 --check`` fails on any
+            unmapped module or any declared component prefix matching zero
+            real modules — turning the component table into an "every module
+            accounted for" gate. Default ``False`` keeps the warn-only
+            behaviour (a non-exhaustive map stays valid).
     """
 
     system: str
@@ -527,6 +532,7 @@ class C4Config:
     component_edges: str = ""
     direction: str = "LR"
     render: RenderConfig = field(default_factory=RenderConfig)
+    strict_coverage: bool = False
 
 
 @dataclass(frozen=True)
@@ -847,6 +853,7 @@ def load_c4_config(root: Path) -> C4Config | None:
         component_edges=_resolve_edge_mode(section.get("component_edges", edges)),
         direction=direction,
         render=_parse_render_config(section),
+        strict_coverage=bool(section.get("strict_coverage", False)),
     )
 
 
@@ -1352,8 +1359,8 @@ def _render_views(
 def build_model(
     root: Path,
     roots: list[Path],
-) -> tuple[C4Config, set[tuple[str, str]], list[str]] | None:
-    """Assemble the C4 model: config, derived edges, and unmatched modules.
+) -> tuple[C4Config, set[tuple[str, str]], list[str], list[str]] | None:
+    """Assemble the C4 model: config, derived edges, unmatched + all modules.
 
     The shared seam behind every output format — it loads the human model
     skeleton and derives the component-to-component edges from the import
@@ -1365,7 +1372,9 @@ def build_model(
 
     Returns:
         Tuple of (config, derived component edges, sorted unmatched module
-        names), or ``None`` when C4 generation is not opted into.
+        names, sorted full discovered-module list), or ``None`` when C4
+        generation is not opted into. The full module list backs the
+        strict-coverage dead-prefix check (:func:`_check_strict_coverage`).
 
     Raises:
         ValueError: When the config is invalid (propagated from
@@ -1376,9 +1385,10 @@ def build_model(
     if config is None:
         return None
     modules, graph = build_module_graph(Scope.FULL, roots)
-    assigned, unmatched = assign_components(sorted(modules), config.components)
+    sorted_modules = sorted(modules)
+    assigned, unmatched = assign_components(sorted_modules, config.components)
     edges = derive_component_edges(graph, assigned)
-    return config, edges, unmatched
+    return config, edges, unmatched, sorted_modules
 
 
 def generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None:
@@ -1395,7 +1405,7 @@ def generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None:
     built = build_model(root, roots)
     if built is None:
         return None
-    config, edges, unmatched = built
+    config, edges, unmatched, _modules = built
     return render_dsl(config, edges), unmatched
 
 
@@ -2657,6 +2667,72 @@ def _warn_unmatched(unmatched: list[str]) -> None:
         )
 
 
+def _dead_prefixes(
+    components: tuple[Component, ...], modules: list[str]
+) -> list[tuple[str, str]]:
+    """Find declared component prefixes that match zero discovered modules.
+
+    The mirror of ``unmatched`` (modules with no component): here a prefix a
+    ``[[component]]`` declares — a typo or a since-deleted module — matches
+    nothing in the real import graph. Undetectable from rendered-text drift
+    (a dead prefix simply contributes no box), so it only surfaces under the
+    strict-coverage gate.
+
+    Args:
+        components: Declared components with their prefixes.
+        modules: All discovered module names (the import-graph universe).
+
+    Returns:
+        ``(component name, dead prefix)`` pairs in declaration order, one per
+        prefix matching no module.
+    """
+    return [
+        (comp.name, prefix)
+        for comp in components
+        for prefix in comp.prefixes
+        if not any(_under_prefix(module, prefix) for module in modules)
+    ]
+
+
+def _check_strict_coverage(
+    config: C4Config, modules: list[str], unmatched: list[str]
+) -> int:
+    """Fail ``--check`` on incomplete or dead component coverage.
+
+    Enforces the two gaps rendered-text drift cannot catch: a real module
+    mapped to no component (the map silently rots as modules are added), and
+    a declared prefix that matches no real module (a typo / dead prefix). Both
+    are logged as errors so the fix is actionable.
+
+    Args:
+        config: The loaded model (its ``components`` are validated).
+        modules: All discovered module names (the import-graph universe).
+        unmatched: Modules matching no component prefix.
+
+    Returns:
+        ``1`` when any unmapped module or dead prefix is found, else ``0``.
+    """
+    rc = 0
+    if unmatched:
+        logger.error(
+            "strict_coverage: %d module(s) map to no [[component]] and would "
+            "silently rot out of the map: %s",
+            len(unmatched),
+            ", ".join(unmatched),
+        )
+        rc = 1
+    dead = _dead_prefixes(config.components, modules)
+    if dead:
+        logger.error(
+            "strict_coverage: %d declared component prefix(es) match no real "
+            "module (typo or dead prefix): %s",
+            len(dead),
+            ", ".join(f"{name!r} → {prefix!r}" for name, prefix in dead),
+        )
+        rc = 1
+    return rc
+
+
 README_C4_START = "<!-- forge:c4:start -->"
 README_C4_END = "<!-- forge:c4:end -->"
 
@@ -3236,7 +3312,9 @@ def main() -> int:
     Returns:
         Exit code: ``0`` on a successful write/print or in-sync check;
         ``1`` on drift, a missing artifact, absent ``[tool.forge.c4]``,
-        or an invalid model configuration (e.g. an unknown container name).
+        an invalid model configuration (e.g. an unknown container name),
+        or — under ``--check`` with ``strict_coverage`` enabled — an
+        unmapped module or a dead component prefix.
     """
     args = _parse_args()
     root = repo_root()
@@ -3251,20 +3329,31 @@ def main() -> int:
             "c4.toml) to enable C4 generation (see docs/c4-architecture.md).",
         )
         return 1
-    config, edges, unmatched = built
+    config, edges, unmatched, modules = built
     _warn_unmatched(unmatched)
+    # The strict-coverage gate is a --check-only concern and format-agnostic:
+    # it validates the model↔import-graph mapping, not any rendered artifact.
+    # Run it against the full (pre-visibility) module set so hidden elements
+    # still count toward "every module accounted for".
+    strict_rc = (
+        _check_strict_coverage(config, modules, unmatched)
+        if args.check and config.strict_coverage
+        else 0
+    )
     # active/hidden filtering is model-level — it slims every output (DSL,
     # README, mermaid, HTML, PDF). Tag filtering is view-level and applied per
     # view emitter, so the committed DSL stays canonical.
     config, edges = _visible_config(config, edges)
 
     if args.format == "mermaid":
-        return _emit_mermaid(root, config, edges, args.output)
-    if args.format == "html":
-        return _emit_html(root, config, edges, args)
-    if args.format == "pdf":
-        return _emit_pdf(root, config, edges, args)
-    return _emit_dsl(root, config, edges, args)
+        emit_rc = _emit_mermaid(root, config, edges, args.output)
+    elif args.format == "html":
+        emit_rc = _emit_html(root, config, edges, args)
+    elif args.format == "pdf":
+        emit_rc = _emit_pdf(root, config, edges, args)
+    else:
+        emit_rc = _emit_dsl(root, config, edges, args)
+    return max(strict_rc, emit_rc)
 
 
 def _parse_args() -> argparse.Namespace:

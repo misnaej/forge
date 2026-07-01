@@ -20,6 +20,33 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.17.0 — 2026-07-01
+
+Additive — the `api-digest` and `c4` generators grow into a drift-checked,
+per-module **responsibility map**: the digest now records each module's stated
+purpose, and `forge-gen-c4 --check` can gate on complete, honest component
+coverage. Plus an internal import-graph dedup. No consumer action needed.
+
+### Features
+- **`forge-gen-api-digest` records each module's module-level docstring (#131).**
+  Every module entry in `docs/api-digest.md` now shows its module-level docstring
+  summary — the module's stated purpose — under the header (or a
+  `(no module docstring)` marker). A module whose only content is a module
+  docstring (no top-level symbols) now earns an entry too, instead of being
+  silently dropped; only a module with neither symbols nor a docstring is omitted.
+- **`forge-gen-c4 --check` opt-in strict coverage gate (#132).** Set
+  `[tool.forge.c4].strict_coverage = true` to make `--check` **fail** (non-zero)
+  when any discovered module maps to no `[[component]]`, or any declared component
+  prefix matches zero real modules (a typo / dead prefix) — turning the component
+  table into an "every module accounted for" gate. Default off: a non-exhaustive
+  map keeps today's warn-only behavior.
+
+### Refactor
+- **`closest_known` promoted to `forge.import_graph` (#135).** The near-duplicate
+  `_closest_known` dotted-name resolver in `forge.audit.deps` and
+  `forge.smart_test.dependencies` is unified as `forge.import_graph.closest_known`,
+  alongside the `extract_import_targets` dual-emit it consumes. No behavior change.
+
 ## v2.16.0 — 2026-07-01
 
 Additive — `forge-gen-c4` gains **vector PDF export**, and the offline HTML it

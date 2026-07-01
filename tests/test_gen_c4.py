@@ -28,7 +28,9 @@ from forge.gen_c4 import (
     Relationship,
     RenderConfig,
     _build_views,
+    _check_strict_coverage,
     _copy_vendored_mermaid,
+    _dead_prefixes,
     _derive_container_edges,
     _edge_endpoints,
     _emit_pdf,
@@ -413,6 +415,161 @@ def test_main_writes_then_checks_in_sync(
 
     assert main() == 0
     assert (tmp_path / "docs" / "architecture.dsl").is_file()
+
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4", "--check"])
+    assert main() == 0
+
+
+# --- strict_coverage gate (issue #132) ------------------------------------
+
+
+def test_dead_prefixes_flags_prefix_matching_no_module() -> None:
+    """A declared prefix matching no module is reported; live ones are not."""
+    components = (
+        Component("Core", ("demo.core",)),
+        Component("Ghost", ("demo.ghost",)),
+    )
+    dead = _dead_prefixes(components, ["demo.core", "demo.io"])
+    assert dead == [("Ghost", "demo.ghost")]
+
+
+def test_dead_prefixes_empty_when_every_prefix_lives() -> None:
+    """No dead prefixes when each prefix matches at least one module."""
+    components = (Component("Core", ("demo.core",)), Component("IO", ("demo.io",)))
+    assert _dead_prefixes(components, ["demo.core", "demo.io.reader"]) == []
+
+
+def test_check_strict_coverage_flags_unmapped_and_dead() -> None:
+    """Both an unmapped module and a dead prefix drive a non-zero return."""
+    components = (
+        Component("Core", ("demo.core",)),
+        Component("Ghost", ("demo.ghost",)),
+    )
+    cfg = _config_with_components(components)
+    assert _check_strict_coverage(cfg, ["demo.core", "demo.io"], ["demo.io"]) == 1
+
+
+def test_check_strict_coverage_clean_returns_zero() -> None:
+    """A fully-mapped model with no dead prefix returns 0."""
+    cfg = _config_with_components((Component("Core", ("demo.core",)),))
+    assert _check_strict_coverage(cfg, ["demo.core"], []) == 0
+
+
+def _config_with_components(components: tuple[Component, ...]) -> C4Config:
+    """Build a minimal C4Config carrying *components* for coverage tests.
+
+    Args:
+        components: Components to attach to the config.
+
+    Returns:
+        A C4Config with the given components and otherwise-empty model.
+    """
+    return C4Config(
+        system="Demo",
+        description="",
+        output="docs/architecture.dsl",
+        components=components,
+    )
+
+
+def _strict_repo(root: Path, model: str) -> None:
+    """Write a two-module demo repo (``demo.core`` + ``demo.io``) with *model*.
+
+    Args:
+        root: Temporary repo root.
+        model: The c4.toml model text to write.
+    """
+    pkg = root / "src" / "demo"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "core.py").write_text("from demo import io\n")
+    (pkg / "io.py").write_text("X = 1\n")
+    _write_pyproject(
+        root,
+        '[tool.forge]\nsource_dirs = ["src"]\n\n[tool.forge.c4]\nconfig = "c4.toml"\n',
+    )
+    (root / "c4.toml").write_text(model)
+
+
+_STRICT_HEADER = 'system = "Demo"\noutput = "docs/architecture.dsl"\n'
+_STRICT_CONTAINER = '\n[[container]]\nname = "app"\n'
+
+
+def test_main_check_strict_coverage_fails_on_unmapped_module(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """strict_coverage=true + an unmapped module makes --check exit 1, naming it.
+
+    SCENARIO: Core maps demo.core; demo.io is left unmapped.
+    MOCK SETUP: repo_root patched to tmp_path; DSL written first, then --check.
+    EXPECTED BEHAVIOR: --check returns 1 and the error names demo.io.
+    """
+    model = (
+        _STRICT_HEADER
+        + "strict_coverage = true\n"
+        + _STRICT_CONTAINER
+        + '\n[components]\n"Core" = ["demo.core"]\n'
+    )
+    _strict_repo(tmp_path, model)
+    monkeypatch.setattr("forge.gen_c4.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4"])
+    assert main() == 0  # write still succeeds (unmapped only warns at write)
+
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4", "--check"])
+    with caplog.at_level(logging.ERROR):
+        assert main() == 1
+    assert any("demo.io" in r.getMessage() for r in caplog.records)
+
+
+def test_main_check_strict_coverage_fails_on_dead_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """strict_coverage=true + a dead prefix makes --check exit 1, naming it.
+
+    SCENARIO: every real module is mapped, but a Ghost component declares the
+    non-existent prefix demo.ghost.
+    EXPECTED BEHAVIOR: --check returns 1 and the error names Ghost + demo.ghost.
+    """
+    model = (
+        _STRICT_HEADER
+        + "strict_coverage = true\n"
+        + _STRICT_CONTAINER
+        + '\n[components]\n"Core" = ["demo.core"]\n"IO" = ["demo.io"]\n'
+        '"Ghost" = ["demo.ghost"]\n'
+    )
+    _strict_repo(tmp_path, model)
+    monkeypatch.setattr("forge.gen_c4.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4"])
+    assert main() == 0
+
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4", "--check"])
+    with caplog.at_level(logging.ERROR):
+        assert main() == 1
+    messages = " ".join(r.getMessage() for r in caplog.records)
+    assert "Ghost" in messages
+    assert "demo.ghost" in messages
+
+
+def test_main_check_without_strict_coverage_only_warns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flag absent → an unmapped module warns but --check still passes.
+
+    EXPECTED BEHAVIOR: with demo.io unmapped and no strict_coverage, --check
+    exits 0 (back-compatible warn-only behaviour).
+    """
+    model = (
+        _STRICT_HEADER + _STRICT_CONTAINER + '\n[components]\n"Core" = ["demo.core"]\n'
+    )
+    _strict_repo(tmp_path, model)
+    monkeypatch.setattr("forge.gen_c4.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4"])
+    assert main() == 0
 
     monkeypatch.setattr("sys.argv", ["forge-gen-c4", "--check"])
     assert main() == 0

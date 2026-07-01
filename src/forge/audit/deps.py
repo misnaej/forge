@@ -51,7 +51,11 @@ from forge.audit.common import (
     write_log,
 )
 from forge.git_utils import configure_cli_logging, repo_root
-from forge.import_graph import extract_import_targets, resolve_module_name
+from forge.import_graph import (
+    closest_known,
+    extract_import_targets,
+    resolve_module_name,
+)
 
 
 if TYPE_CHECKING:
@@ -98,25 +102,6 @@ class DepsConfig:
     distance_threshold: float = DEFAULT_DISTANCE_THRESHOLD
     output: Path | None = None
     print_tree: bool = False
-
-
-def _closest_known(target: str, modules: dict[str, ModuleNode]) -> str | None:
-    """Walk up the dotted name until a known module is found.
-
-    Args:
-        target: Raw import target (may be deeper than the known graph).
-        modules: All discovered module nodes keyed by dotted name.
-
-    Returns:
-        Closest known ancestor dotted name, or ``None`` if external.
-    """
-    parts = target.split(".")
-    while parts:
-        candidate = ".".join(parts)
-        if candidate in modules:
-            return candidate
-        parts.pop()
-    return None
 
 
 def _abstractness(tree: ast.Module) -> tuple[int, int]:
@@ -450,9 +435,10 @@ def _build_internal_graph(
         Adjacency map keyed by module → set of target module names.
     """
     graph: dict[str, set[str]] = {name: set() for name in modules}
+    known = set(modules)
     for src, targets in raw_imports.items():
         for target in targets:
-            actual = _closest_known(target, modules)
+            actual = closest_known(target, known)
             if actual and actual != src:
                 graph[src].add(actual)
     return graph

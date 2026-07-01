@@ -14,7 +14,6 @@ from forge.audit.deps import (
     ModuleNode,
     _abstractness,
     _build_internal_graph,
-    _closest_known,
     _compute_couplings,
     _instability,
     _tarjan_scc,
@@ -48,13 +47,6 @@ def _write(path: Path, text: str) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text.lstrip(), encoding="utf-8")
-
-
-def test_closest_known_walks_up_dotted_name() -> None:
-    """``X.Y.Z`` falls back to ``X.Y`` then ``X`` if only ancestors exist."""
-    modules = {"foo": ModuleNode("foo", "src/foo.py", 0, 0)}
-    assert _closest_known("foo.bar.baz", modules) == "foo"
-    assert _closest_known("unrelated", modules) is None
 
 
 def test_abstractness_counts_abc_base() -> None:

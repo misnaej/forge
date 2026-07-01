@@ -5,7 +5,11 @@ from __future__ import annotations
 import ast
 from typing import TYPE_CHECKING
 
-from forge.import_graph import extract_import_targets, resolve_module_name
+from forge.import_graph import (
+    closest_known,
+    extract_import_targets,
+    resolve_module_name,
+)
 
 
 if TYPE_CHECKING:
@@ -74,3 +78,29 @@ def test_extract_import_targets_ignores_star_import_member() -> None:
     targets = extract_import_targets(tree, "myself")
     assert "pkg" in targets
     assert "pkg.*" not in targets
+
+
+def test_closest_known_exact_match() -> None:
+    """An exact module name resolves to itself."""
+    assert closest_known("myapp.core", {"myapp.core", "myapp"}) == "myapp.core"
+
+
+def test_closest_known_attribute_collapses() -> None:
+    """``pkg.mod.attr`` collapses to ``pkg.mod`` when ``attr`` is not a module."""
+    assert closest_known("myapp.core.x", {"myapp.core", "myapp"}) == "myapp.core"
+
+
+def test_closest_known_submodule_wins_over_package() -> None:
+    """The deepest matching prefix wins — submodule beats its package."""
+    modules = {"myapp", "myapp.core", "myapp.service"}
+    assert closest_known("myapp.core", modules) == "myapp.core"
+
+
+def test_closest_known_walks_up_to_shallowest_package() -> None:
+    """A deep target with only a top-level package known walks up to it."""
+    assert closest_known("foo.bar.baz", {"foo"}) == "foo"
+
+
+def test_closest_known_external_returns_none() -> None:
+    """An import not in the internal module set returns ``None``."""
+    assert closest_known("requests.get", {"myapp.core"}) is None

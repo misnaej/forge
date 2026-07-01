@@ -271,6 +271,7 @@ import graph) **by presence** of this table; it self-skips otherwise.
 | `direction` | `"LR"` | Graph direction for every generated diagram (`"LR"` or `"TB"`); threads into the Mermaid `graph` header and the DSL `autolayout`. | Layered container models read better top-to-bottom. |
 | `edges` | `"imports"` | Whether import-**derived** ("depends-on") edges are drawn: `"imports"` / `"both"` draw them, `"declared"` draws only hand-authored `[[relationship]]` edges. Declared edges always render. | You want a curated conceptual flow instead of the noisy import graph. |
 | `container_edges` / `component_edges` | inherit `edges` | Per-view override of `edges` for the Container view / the per-container Component views. | You want the Container view to show a clean curated flow while Component views keep real import coupling. |
+| `strict_coverage` | `false` | Makes `forge-gen-c4 --check` **fail** on any module mapped to no `[[component]]`, or any declared component prefix matching zero real modules (typo / dead prefix). | You use the component table as a drift-checked "every module accounted for" map and want stale entries to fail CI, not just warn. |
 
 The model itself — the `system` / `person` / `external` / `container` /
 `component` / `relationship` tables — lives in the external `c4.toml` (pointed

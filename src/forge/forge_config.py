@@ -233,6 +233,13 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "C4 block (between <!-- forge:c4:start/end --> markers) in sync, and "
         "the c4 pre-commit step fails on drift.",
     ),
+    ConfigKey(
+        ("tool", "forge", "c4", "strict_coverage"),
+        default=False,
+        description="Make forge-gen-c4 --check fail on any module mapped to no "
+        "[[component]] or any declared component prefix matching zero real "
+        "modules (default: warn-only — a non-exhaustive map stays valid).",
+    ),
 )
 
 # Third-party tools forge reads from their OWN native section rather than
