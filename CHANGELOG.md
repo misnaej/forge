@@ -20,6 +20,79 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.16.0 — 2026-07-01
+
+Additive — `forge-gen-c4` gains **vector PDF export**, and the offline HTML it
+builds on now wraps its labels, is consumer-configurable, and is interactive.
+The DSL / README / `--format mermaid` output is unchanged.
+
+### Features
+- **`forge-gen-c4 --format pdf` — vector PDF export (#137).** Renders every C4
+  view to a multi-page **vector** PDF (`docs/architecture.pdf` by default).
+  Mermaid is a JS library, so forge drives an already-installed headless browser
+  (Chrome / Chromium / Edge / Brave, auto-detected; override with
+  `FORGE_C4_BROWSER`) via `--print-to-pdf` — **no new Python dependency, no
+  network**. By default (`pdf_fit = "auto"`) **each view prints to its own tight
+  page, sized to that diagram** (no letterbox, no blank trailing sheet, the title
+  bound to its diagram), so the PDF page count equals the view count. This renders
+  each view separately and concatenates with `pdfunite` / `qpdf`; without a merge
+  tool it falls back to `contain` (one fixed page per view, scaled to fit). Tunable
+  via `[tool.forge.c4.render]` — `pdf_fit` (`auto` / `contain` / `width`),
+  `pdf_page_size`, `pdf_orientation`, `pdf_margin`. Fails loudly with a Print →
+  Save-as-PDF fallback when no browser is found.
+- **C4 layout is restricted to hierarchy-aware engines.** `[tool.forge.c4.render]`
+  `layout` accepts only `elk` (= `elk.layered`) and `dagre`; the non-hierarchical
+  ELK engines (`elk.stress` / `elk.force` / `elk.radial`) are **rejected at
+  config-load** with a clear error — they silently drop cross-cluster edges and
+  overlap nodes on C4's multi-cluster views.
+- **C4 HTML label-overflow fix (default).** `forge-gen-c4 --format html` now
+  emits node labels as Mermaid **markdown strings** and sets
+  `flowchart.wrappingWidth` with `markdownAutoWrap`, so the description wraps and
+  Mermaid auto-sizes the box — no more single-line overflow in any view or
+  orientation. Default behaviour, no config required. Supersedes #138 (#140).
+- **`[tool.forge.c4.render]` config.** Each key passes through to
+  `mermaid.initialize(...)` — `wrapping_width`, `html_labels`, `font_family`,
+  `font_size`, `node_spacing`, `rank_spacing`, `padding`, `custom_css`, `layout`,
+  `node_placement_strategy`, `force_node_model_order` (Step 1) plus `theme`,
+  `[render.theme_colors]`, `diagram_padding`, `consider_model_order`,
+  `merge_edges`, `cycle_breaking_strategy` (Step 2). Defaults reproduce the
+  bug-fixed look; unknown keys are tolerated. See `docs/configuration.md` (#140).
+- **Interactive C4 HTML — hover-reveal + click-to-open-tab.** Hovering a node
+  reveals it, its incident edges and *their* relationship labels, and the
+  neighbour nodes while dimming everything else. Clicking a container opens its
+  Components tab. Incidence is resolved by **exact node id** (the precise
+  endpoints are emitted per pane from the model, not parsed from the ambiguous
+  edge DOM id), so prefix-overlapping node names never cross-highlight. Fully
+  offline (`file://`), no new dependencies, per-tab, degrades gracefully (#124).
+
+- **Element activation / visibility + tag filtering.** Every `[[person]]` /
+  `[[external]]` / `[[container]]` / `[[component]]` accepts `active = false` (or
+  `hidden = true`) and `tags = [...]`. A deactivated element — and the components
+  an inactive container owns, plus every declared relationship and import-derived
+  edge that touches a removed element — is omitted from **all** outputs (DSL,
+  README, mermaid, HTML, PDF) while staying in `c4.toml`, so one full model
+  renders as slimmer views. `[tool.forge.c4.render].include_tags` /
+  `exclude_tags` bulk-filter the **rendered views** by tag (the DSL stays
+  canonical). With nothing flagged, output is byte-identical.
+
+- **Visual groups / bands in the Container view.** Elements sharing a `group`
+  (e.g. `group = "Capabilities"` / `"Our infrastructure"` / `"Third-party"`)
+  cluster into one labelled band, so a dense system reads as a few organized
+  zones instead of scattered boxes. Containers band inside the system boundary;
+  externals band beside it. Ungrouped elements render flat exactly as before.
+
+### Fixes
+- **Duplicate Mermaid SVG id dropped a view (#150).** The HTML rendered panes
+  with `mermaid.run()`, which stamps each SVG an id from `Date.now()`; fast
+  back-to-back ELK layouts landed in the same millisecond, so two panes got the
+  **same** id — an invalid duplicate that left one component view unrendered
+  (blank page + title/diagram desync). Each diagram now renders via
+  `mermaid.render("c4-view-<i>", …)` with an author-controlled unique id.
+- **Empty containers no longer emit a blank Component view.** A container that
+  owns no components (e.g. an infrastructure unit) is skipped in the `--format
+  html`/`pdf` output, so it produces no empty tab or blank PDF page; containers
+  with components are unchanged.
+
 ## v2.15.0 — 2026-06-30
 
 Additive — a new opt-in `forge-smart-test` CLI + `/forge:smart-test` skill +

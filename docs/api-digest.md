@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_55 modules, 552 symbols._
+_55 modules, 576 symbols._
 
 ## `forge._hook_helpers`
 
@@ -239,6 +239,7 @@ _55 modules, 552 symbols._
 ## `forge.gen_c4`
 
 - `_resolve_direction(value: str) -> str` _(internal)_ — Validate a graph-direction string, failing loudly on an unknown value.
+- `_resolve_layout(value: str) -> str` _(internal)_ — Validate the HTML/PDF layout engine, rejecting the broken organic ones.
 - `_includes_derived(mode: str) -> bool` _(internal)_ — Return whether *mode* includes the import-derived edges.
 - `_resolve_edge_mode(value: str) -> str` _(internal)_ — Validate an edge-mode string, failing loudly on an unknown value.
 - `class Person` — A C4 actor — someone who uses the system (System Context level).
@@ -246,6 +247,7 @@ _55 modules, 552 symbols._
 - `class Container` — A deployable unit inside the system (Container level).
 - `class Component` — A named component and the module prefixes that constitute it.
 - `class Relationship` — A human-declared component-to-component relationship.
+- `class RenderConfig` — Consumer-tunable knobs for the offline HTML view (``[tool.forge.c4.render]``).
 - `class C4Config` — The human-authored ``[tool.forge.c4]`` model skeleton.
 - `class _IdMaps` _(internal)_ — Maps display names to unique DSL-safe identifiers.
 - `class _IdAllocator` _(internal)_ — Allocates unique, DSL-safe identifiers from display names.
@@ -254,9 +256,12 @@ _55 modules, 552 symbols._
 - `_slug(name: str) -> str` _(internal)_ — Slugify *name* into a DSL-safe identifier fragment.
 - `_q(text: str) -> str` _(internal)_ — Quote *text* as a Structurizr DSL string literal.
 - `_coerce_list(raw: object) -> list[dict]` _(internal)_ — Return *raw* as a list of dicts, tolerating a single table.
+- `_visibility_fields(entry: dict) -> dict` _(internal)_ — Extract the shared ``active`` / ``hidden`` / ``tags`` / ``group`` flags.
 - `_parse_components(section: dict) -> tuple[Component, ...]` _(internal)_ — Parse components from rich ``[[component]]`` tables + the simple map.
 - `_validate_component_containers(components: tuple[Component, ...], containers: tuple[Container, ...]) -> None` _(internal)_ — Fail loudly on a duplicate container name or an undeclared reference.
+- `_parse_render_config(section: dict) -> RenderConfig` _(internal)_ — Build the HTML :class:`RenderConfig` from the model's ``render`` table.
 - `load_c4_config(root: Path) -> C4Config | None` — Load the C4 model skeleton for the repo.
+- `_visible_config(config: C4Config, edges: set[tuple[str, str]], *, include_tags: tuple[str, ...] = (), exclude_tags: tuple[str, ...] = ()) -> tuple[C4Config, set[tuple[str, str]]]` _(internal)_ — Drop deactivated / tag-filtered elements and their dangling edges.
 - `assign_components(modules: list[str], components: tuple[Component, ...]) -> tuple[dict[str, str], list[str]]` — Map each module to a component by longest-prefix match.
 - `_under_prefix(module: str, prefix: str) -> bool` _(internal)_ — Return whether *module* equals *prefix* or is a dotted child of it.
 - `derive_component_edges(graph: dict[str, set[str]], assigned: dict[str, str]) -> set[tuple[str, str]]` — Collapse module-level import edges to component-level edges.
@@ -274,9 +279,9 @@ _55 modules, 552 symbols._
 - `build_model(root: Path, roots: list[Path]) -> tuple[C4Config, set[tuple[str, str]], list[str]] | None` — Assemble the C4 model: config, derived edges, and unmatched modules.
 - `generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None` — Build the DSL text and unmatched-module list for the repo.
 - `_m(text: str) -> str` _(internal)_ — Escape label *text* for safe embedding in a Mermaid node label.
-- `_external_node_line(node_id: str, ext: External, *, indent: str = '    ') -> str` _(internal)_ — Render the flat ``[[...]]`` node line for one external system.
+- `_external_node_line(node_id: str, ext: External, *, indent: str = '    ', markdown: bool = False) -> str` _(internal)_ — Render the flat ``[[...]]`` node line for one external system.
 - `render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the model as a Mermaid flowchart (offline-renderable).
-- `_mermaid_box(name: str, technology: str, description: str) -> str` _(internal)_ — Build a multi-line Mermaid box label: bold name, technology, description.
+- `_mermaid_box(name: str, technology: str, description: str, *, markdown: bool = False) -> str` _(internal)_ — Build a multi-line Mermaid box label: bold name, technology, description.
 - `_mermaid_edges(config: C4Config, ids: dict[str, dict[str, str]], edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the Mermaid relationship lines.
 - `_actors_subgraph(config: C4Config, person_ids: dict[str, str], alloc: _IdAllocator) -> list[str]` _(internal)_ — Wrap the person nodes in a top-level ``Actors`` subgraph block.
 - `_render_mermaid_system_context(config: C4Config) -> str` _(internal)_ — Render the System Context view: persons, the system, external systems.
@@ -284,9 +289,17 @@ _55 modules, 552 symbols._
 - `_derive_container_edges(config: C4Config, edges: set[tuple[str, str]], *, include_derived: bool = True) -> set[tuple[str, str]]` _(internal)_ — Collapse component-level edges to cross-container pairs.
 - `_container_level_maps(config: C4Config, *, sys_id: str, person_ids: dict[str, str], external_ids: dict[str, str], container_ids: dict[str, str]) -> _IdMaps` _(internal)_ — Build id maps that resolve every endpoint to its Container-view node.
 - `_container_view_declared(config: C4Config, ids: _IdMaps) -> tuple[list[str], set[str]]` _(internal)_ — Render Container-view declared edges and the externals they target.
+- `_banded_lines(elements: list[_T], line_for: Callable[[_T], str], alloc: _IdAllocator, *, base_indent: str) -> list[str]` _(internal)_ — Wrap elements sharing a ``group`` in labelled band subgraphs.
 - `_render_mermaid_containers(config: C4Config, container_edges: set[tuple[str, str]]) -> str` _(internal)_ — Render the Container view: containers inside the system boundary.
 - `_component_view_peripherals(config: C4Config, names: set[str], component_ids: dict[str, str], alloc: _IdAllocator) -> tuple[list[str], list[str]]` _(internal)_ — Render external/person peripherals + edges for one container's view.
 - `_render_mermaid_components_for(config: C4Config, container: Container, idx: int, edges: set[tuple[str, str]], *, include_derived: bool = True) -> str` _(internal)_ — Render one container's Component view: its components and their edges.
+- `_mermaid_init_options(render: RenderConfig, *, layout_var: str) -> str` _(internal)_ — Build the ``mermaid.initialize(...)`` options object for the HTML view.
+- `_pdf_page_geometry(render: RenderConfig) -> tuple[int, int, float, int, int]` _(internal)_ — Resolve the print page box + printable pixel area from the PDF config.
+- `_print_page_css(render: RenderConfig) -> str` _(internal)_ — Build the ``@page`` + ``@media print`` rules for the PDF layout.
+- `_html_interaction_css() -> str` _(internal)_ — Return the inline CSS for the hover-highlight focus state.
+- `_html_interaction_script() -> str` _(internal)_ — Return the inline JS wiring hover-highlight + click-to-open-tab interactivity.
+- `_edge_endpoints(mermaid_text: str) -> list[list[str]]` _(internal)_ — Extract the ordered ``[source_id, target_id]`` pairs from a view's source.
+- `_elk_loader_js(requested_layout: str) -> str` _(internal)_ — Return the JS that seeds ``c4layout`` and registers the vendored ELK loader.
 - `render_html(config: C4Config, views: list[tuple[str, str]]) -> str` — Wrap the C4 views in a self-contained, offline, tabbed HTML page.
 - `_copy_vendored_mermaid(dest_dir: Path) -> None` _(internal)_ — Write the vendored Mermaid + ELK-layout bundles next to an emitted HTML.
 - `_warn_unmatched(unmatched: list[str]) -> None` _(internal)_ — Log a coverage warning naming modules in no component.
@@ -295,7 +308,16 @@ _55 modules, 552 symbols._
 - `_readme_path(root: Path, config: C4Config) -> Path` _(internal)_ — Return the configured README path under *root*.
 - `sync_readme(root: Path, config: C4Config, mermaid_text: str, *, check: bool) -> int` — Write or verify the managed C4 block inside the configured README.
 - `_emit_mermaid(root: Path, config: C4Config, edges: set[tuple[str, str]], output: str | None) -> int` _(internal)_ — Print or write the canonical Mermaid source.
+- `_build_views(config: C4Config, edges: set[tuple[str, str]]) -> list[tuple[str, str]]` _(internal)_ — Build the ``(tab label, Mermaid source)`` pairs for the per-view artifacts.
+- `_render_view_pdf_html(config: C4Config, label: str, mermaid_src: str) -> str` _(internal)_ — Build a minimal single-view HTML that self-sizes its ``@page`` to the diagram.
+- `_find_pdf_merger() -> str | None` _(internal)_ — Locate a PDF concatenation tool for stitching the per-view PDFs.
+- `_merge_pdfs(merger: str, parts: list[Path], out_path: Path) -> None` _(internal)_ — Concatenate *parts* into *out_path* with the detected *merger*.
+- `_render_pdf_per_view(browser: str, merger: str, config: C4Config, views: list[tuple[str, str]], out_path: Path) -> None` _(internal)_ — Print each view to its own tight single-page PDF, then merge them.
+- `_render_pdf_single_doc(browser: str, config: C4Config, views: list[tuple[str, str]], out_path: Path) -> None` _(internal)_ — Print the whole tabbed HTML to a PDF in one browser pass.
 - `_emit_html(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the offline HTML view (+ vendored Mermaid sidecar).
+- `_find_headless_browser() -> str | None` _(internal)_ — Locate an installed Chromium-family browser for headless PDF printing.
+- `_print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None` _(internal)_ — Drive *browser* headlessly to print *html_path* to *pdf_path*.
+- `_emit_pdf(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Render the C4 views to a vector PDF via a headless browser.
 - `_emit_dsl(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the canonical DSL artifact and the README C4 block.
 - `main() -> int` — Generate or verify the C4 artifacts (DSL + README block, or HTML).
 - `_parse_args() -> argparse.Namespace` _(internal)_ — Parse the ``forge-gen-c4`` command-line arguments.
@@ -344,7 +366,9 @@ _55 modules, 552 symbols._
 
 ## `forge.import_graph`
 
+- `_rel_to_dotted(rel: Path) -> str | None` _(internal)_ — Convert a root-relative ``.py`` path to a dotted module name.
 - `resolve_module_name(path: Path, package_roots: list[Path]) -> str | None` — Translate a ``.py`` path to a dotted module name.
+- `resolve_package_module_name(path: Path, repo_root: Path) -> str | None` — Name a source file by its real import root, derived from package layout.
 - `extract_import_targets(tree: ast.Module, current_module: str) -> set[str]` — Return the set of fully-qualified import-candidate targets.
 
 ## `forge.install_bootstrap`

@@ -178,7 +178,7 @@ speed/coverage trade-off: FOUNDATION §17.
 | `precommit_depth` | _(unset → step skipped)_ | Depth the `smart_test` step runs on commit: `0` / `1` / `2` / `full`. Setting it opts the step in. | You want a change-scoped test gate on every commit (e.g. `0` for the fastest loop). |
 | `blocking` | `false` | Fail the commit on a test failure (else non-blocking WARN). | You want the gate to actually block, not just warn. |
 | `paths` | repo `source_dirs` + `test_dirs` | Scan roots for the import graph (per-tool override of the repo layout). | Your code/tests live outside the configured `source_dirs`/`test_dirs`. |
-| `follow_mock_patches` | `false` | Also treat `unittest.mock.patch("pkg.mod.attr")` string targets as dependency edges, not only imports — `patch`/`patch.dict`/`mock.`/`mocker.` forms (`patch.object` is covered by its import). Makes the selector a safe superset for mock-heavy suites. | Your tests couple to code mainly through patching rather than imports. |
+| `follow_mock_patches` | `false` | Also treat `unittest.mock.patch("pkg.mod.attr")` string targets as dependency edges — `patch`/`patch.dict`/`mock.`/`mocker.` forms (`patch.object` is covered by its import). **Usually a no-op:** a test that patches `pkg.mod.attr` almost always also `import`s `pkg.mod`, so the patch edge duplicates an import edge that already selects the test. Changes selection only for the genuine patch-*only* case (chiefly `patch.dict("sys.modules", {…})` against a deferred import). Orthogonal to module naming — does not fix a source-dir/import-root mismatch. | Your tests couple to code purely through patching, with no import of the target (e.g. `sys.modules` injection). |
 | `coverage_validate` | `false` | After the static pass, union the tests whose recorded coverage **contexts** touch a changed line (needs `coverage_json`). Catches runtime-only links (fixtures, dynamic dispatch). | You have a fresh per-test coverage export and want belt-and-suspenders selection. |
 | `coverage_json` | _(unset)_ | Path to a `coverage json --show-contexts` export (recorded with `pytest --cov-context=test`) for `coverage_validate`. Also settable per-run via `--coverage-json`. A stale export under-selects — regenerate on `full` runs. | You enabled `coverage_validate`. |
 | `commit_directive_re` | `\[(?:depth-(?P<n>[0-2])\|(?P<full>full))\]` | Regex for `--from-commit-message` to read a depth directive from `HEAD`'s message (named groups `n` / `full`). | Your CI tags commits with a different directive syntax. |
@@ -301,9 +301,135 @@ relationship, the generic `system → external` edge is suppressed in the views
 where the specific edge renders (Container / flat); the System Context view
 keeps its clean radial `system → external`.
 
+**Activation & tags.** Every `[[person]]` / `[[external]]` / `[[container]]` /
+`[[component]]` accepts `active = false` (equivalently `hidden = true`) and
+`tags = ["..."]`. A deactivated element stays in `c4.toml` but is omitted from
+**all** generated outputs — along with the components an inactive container owns
+and any relationship or import-derived edge that would dangle — so you author one
+complete model and render slimmer views from it. `tags` drive the
+`[tool.forge.c4.render].include_tags` / `exclude_tags` view filters (above), which
+slim the **HTML/PDF views** by tag while leaving the committed DSL, README block,
+and `--format mermaid` canonical. With
+nothing flagged, output is unchanged.
+
+```toml
+[[container]]
+name = "Legacy importer"
+active = false        # kept in c4.toml, dropped from every view + the DSL
+
+[[external]]
+name = "Datadog"
+tags = ["third-party"]   # exclude_tags = ["third-party"] slims it from views
+```
+
+**Grouping into bands.** Every element also accepts a `group = "<band name>"`.
+In the **Container view**, elements sharing a `group` cluster into one labelled
+band — containers band inside the system boundary, externals beside it — so a
+dense system reads as a few organized zones ("Capabilities", "Our
+infrastructure", "Third-party", …). Ungrouped elements render flat, unchanged.
+
+```toml
+[[container]]
+name = "Auth"
+group = "Capabilities"
+
+[[container]]
+name = "Postgres"
+group = "Our infrastructure"
+```
+
+**Interactive HTML.** Each `--format html` diagram is interactive: hover a
+node to reveal it, its incident edges, and their neighbours (the rest dim, while
+the connection labels stay readable); click a container to jump to its
+Components tab. Inline JS/CSS, fully offline, per-tab.
+
+**PDF export.** `forge-gen-c4 --format pdf` writes a multi-page **vector** PDF
+(`docs/architecture.pdf` by default). By default (`pdf_fit = "auto"`) **each C4
+view prints to exactly one page, sized to that diagram** (tight crop — no
+letterbox, no blank trailing sheet, the title always with its own diagram), so
+the PDF page count equals the number of views and the reader's page/thumbnail nav
+lines up with the diagram list one-to-one. It does this by rendering each view
+separately and concatenating the single pages with **`pdfunite`** or **`qpdf`**
+(poppler / qpdf — commonly present; if neither is installed it falls back to a
+single fixed-page print). Mermaid renders client-side, so forge drives an
+already-installed headless browser (Chrome / Chromium / Edge / Brave,
+auto-detected; set `FORGE_C4_BROWSER=/path/to/browser` to pin one) via
+`--print-to-pdf` — no new Python dependency and no network. If no browser is found
+it says so and points at the manual route (open the `--format html` page, then
+Print → Save as PDF). The page setup is tunable:
+
+| Key | Default | What it does |
+|---|---|---|
+| `pdf_fit` | `"auto"` | `auto` (default) sizes **each page to its own diagram** — one tight page per view (needs `pdfunite`/`qpdf`; falls back to `contain` without them). `contain` scales every view to fit **one fixed page** (uniform pages; a wide-short view letterboxes). `width` fits a fixed page's width only (a tall view may span extra pages). |
+| `pdf_page_size` | `"A4"` | Fixed-page size for `contain`/`width`: `A4`, `A3`, `A5`, `Letter`, `Legal`, `Tabloid` (unknown → A4). Ignored by `auto`. |
+| `pdf_orientation` | `"landscape"` | `landscape` or `portrait` — `contain`/`width` only. |
+| `pdf_margin` | `10` | Page margin in millimetres. |
+
+**Legibility of dense views.** With `auto` each view is at natural scale (never
+shrunk), so legibility is a *layout* question, not a page-fit one. If a view is a
+wide directional strip, compact it: group elements into
+[bands](#toolforgec4render--html-rendering-knobs) (`group`), or set
+`direction = "TB"` on `[tool.forge.c4]`. Native ELK compaction
+(`elk.aspectRatio` / `spacing.*`) is not reachable through Mermaid's config today
+— tracked in issue #146. **Note:** the non-hierarchical ELK engines
+(`layout = "elk.stress"` / `"elk.force"`) are **rejected** — they drop
+cross-cluster edges and overlap nodes on C4's multi-cluster views.
+
 See [`docs/c4-architecture.md`](c4-architecture.md) for the design and
 rationale, and [`skills/c4/SKILL.md`](../skills/c4/SKILL.md) for building a
 model interactively.
+
+### `[tool.forge.c4.render]` — HTML rendering knobs
+
+Tunes the offline `--format html` view only — the DSL, README block, and
+`--format mermaid` output are unaffected. Every key passes straight through to
+the page's `mermaid.initialize(...)`. **All keys are optional; the defaults
+reproduce the shipped look** (wrapped, auto-sized labels + the ELK layout), so
+you only set a key to deviate. Unknown keys are ignored. Lives under
+`[tool.forge.c4.render]` (inline) or `[render]` in a standalone `c4.toml`.
+
+| Key | Default | → Mermaid (scope) | What it does |
+|---|---|---|---|
+| `wrapping_width` | `220` | `flowchart.wrappingWidth` | Px width the description wraps at; Mermaid auto-sizes the box. The label-overflow fix. |
+| `html_labels` | _unset_ | `htmlLabels` (root) | Render labels as HTML. Set `false` to dodge the Firefox empty-label bug (#5785). |
+| `font_family` | _unset_ | `fontFamily` (root) | Font stack (offline-safe stacks only — no web fonts). |
+| `font_size` | _unset_ | `fontSize` (root) | Base font size. |
+| `node_spacing` | _unset_ | `flowchart.nodeSpacing` | Gap between sibling nodes. **Honored under `layout = "dagre"` only** — the ELK engine ignores it (see the spacing note below). |
+| `rank_spacing` | _unset_ | `flowchart.rankSpacing` | Gap between ranks/layers. **Honored under `layout = "dagre"` only** — ELK ignores it. |
+| `padding` | _unset_ | `flowchart.padding` | Inner node padding. |
+| `custom_css` | _unset_ | `themeCSS` (root) | Raw-CSS escape hatch injected into the diagram. |
+| `layout` | `"elk"` | `layout` (root) | `elk` (= `elk.layered`) or `dagre` — the two supported, **hierarchy-aware** engines (they keep C4's clusters separated and route every edge). ELK routes dense cross-cluster edges more cleanly but uses fixed spacing; `dagre` lets you tune `node_spacing` / `rank_spacing`. The organic ELK engines (`elk.stress` / `elk.force` / `elk.radial`) are **rejected at config-load** — they silently drop edges + overlap nodes on multi-cluster views. |
+| `node_placement_strategy` | `"NETWORK_SIMPLEX"` | `elk.nodePlacementStrategy` | ELK node placement (`BRANDES_KOEPF`, `NETWORK_SIMPLEX`, …). |
+| `force_node_model_order` | `true` | `elk.forceNodeModelOrder` | Preserve declared node order. |
+
+**Step 2 — theming + advanced ELK** (optional):
+
+| Key | Default | → Mermaid (scope) | What it does |
+|---|---|---|---|
+| `theme` | `"neutral"` | `theme` (root) | Must be `"base"` for `theme_colors` to apply. |
+| `[render.theme_colors]` | _unset_ | `themeVariables` (theme vars) | Hex color overrides (e.g. `primaryColor`, `lineColor`, `tertiaryColor`); applied only under `theme = "base"`. |
+| `diagram_padding` | _unset_ | `flowchart.diagramPadding` | Padding around the whole diagram. |
+| `consider_model_order` | _unset_ | `elk.considerModelOrder` | ELK ordering hint (e.g. `NODES_AND_EDGES`). |
+| `merge_edges` | `false` | `elk.mergeEdges` | Merge parallel edges. |
+| `cycle_breaking_strategy` | _unset_ | `elk.cycleBreakingStrategy` | ELK cycle-breaking (e.g. `GREEDY_MODEL_ORDER`). |
+| `include_tags` | _unset_ | _(HTML/PDF view filter)_ | When set, the HTML/PDF views keep only elements carrying one of these tags. The DSL, README block, and `--format mermaid` are canonical and unaffected. |
+| `exclude_tags` | _unset_ | _(HTML/PDF view filter)_ | The HTML/PDF views drop elements carrying any of these tags (applied after `include_tags`). The DSL / README / `--format mermaid` are unaffected. |
+
+```toml
+[tool.forge.c4.render]
+wrapping_width = 260
+layout = "elk.layered"
+theme = "base"
+
+[tool.forge.c4.render.theme_colors]
+primaryColor = "#eef4ff"
+primaryBorderColor = "#3b6fb0"
+lineColor = "#5a7a9a"
+```
+
+**Caveats** (Mermaid limitations, not forge's): subgraph / boundary titles may
+ignore `wrapping_width` (Mermaid #6110); ELK sizes nodes from the **wrapped**
+label, so there is no separate node-size override.
 
 ## `[tool.forge.cve_usage]` — usage-scoped CVE filter
 
