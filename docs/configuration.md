@@ -344,33 +344,36 @@ the connection labels stay readable); click a container to jump to its
 Components tab. Inline JS/CSS, fully offline, per-tab.
 
 **PDF export.** `forge-gen-c4 --format pdf` writes a multi-page **vector** PDF
-(`docs/architecture.pdf` by default). By default **each C4 view prints to exactly
-one page**, scaled to fit (width AND height, aspect ratio preserved) — so the PDF
-page count equals the number of views and the reader's page/thumbnail nav lines
-up with the diagram list one-to-one. Mermaid renders client-side, so forge reuses
-the same offline HTML and drives an already-installed headless browser (Chrome /
-Chromium / Edge / Brave, auto-detected; set `FORGE_C4_BROWSER=/path/to/browser`
-to pin one) via `--print-to-pdf` — no extra dependency and no network. If no
-browser is found it says so and points at the manual route (open the
-`--format html` page, then Print → Save as PDF). The same `[tool.forge.c4.render]`
-knobs below apply, since the PDF is printed from the HTML. The page setup is
-tunable:
+(`docs/architecture.pdf` by default). By default (`pdf_fit = "auto"`) **each C4
+view prints to exactly one page, sized to that diagram** (tight crop — no
+letterbox, no blank trailing sheet, the title always with its own diagram), so
+the PDF page count equals the number of views and the reader's page/thumbnail nav
+lines up with the diagram list one-to-one. It does this by rendering each view
+separately and concatenating the single pages with **`pdfunite`** or **`qpdf`**
+(poppler / qpdf — commonly present; if neither is installed it falls back to a
+single fixed-page print). Mermaid renders client-side, so forge drives an
+already-installed headless browser (Chrome / Chromium / Edge / Brave,
+auto-detected; set `FORGE_C4_BROWSER=/path/to/browser` to pin one) via
+`--print-to-pdf` — no new Python dependency and no network. If no browser is found
+it says so and points at the manual route (open the `--format html` page, then
+Print → Save as PDF). The page setup is tunable:
 
 | Key | Default | What it does |
 |---|---|---|
-| `pdf_page_size` | `"A4"` | Page size: `A4`, `A3`, `A5`, `Letter`, `Legal`, `Tabloid` (unknown → A4). Use a larger sheet (e.g. `A3`) to give a wide view more room at a legible scale. |
-| `pdf_orientation` | `"landscape"` | `landscape` or `portrait`. |
-| `pdf_fit` | `"contain"` | `contain` (default) scales each view to fit exactly **one** page (one page per view). `auto` instead sizes each page to its diagram at **natural scale** (no shrink; page count still equals the view count, plus one near-zero trailing sheet). `width` fits page width only (a tall view may span extra pages). |
+| `pdf_fit` | `"auto"` | `auto` (default) sizes **each page to its own diagram** — one tight page per view (needs `pdfunite`/`qpdf`; falls back to `contain` without them). `contain` scales every view to fit **one fixed page** (uniform pages; a wide-short view letterboxes). `width` fits a fixed page's width only (a tall view may span extra pages). |
+| `pdf_page_size` | `"A4"` | Fixed-page size for `contain`/`width`: `A4`, `A3`, `A5`, `Letter`, `Legal`, `Tabloid` (unknown → A4). Ignored by `auto`. |
+| `pdf_orientation` | `"landscape"` | `landscape` or `portrait` — `contain`/`width` only. |
 | `pdf_margin` | `10` | Page margin in millimetres. |
 
-**Legibility of wide views.** Under `contain`, a very wide diagram scaled to one
-page can get small. Levers that help (all here / above): group elements into
-[bands](#toolforgec4render--html-rendering-knobs) (`group`) to compact the
-Container view into zones, set `direction = "TB"` on `[tool.forge.c4]` for a
-taller-not-wider layout, pick a larger `pdf_page_size` (`A3`), or use
-`pdf_fit = "auto"` (natural scale, never shrunk). Native ELK compaction
+**Legibility of dense views.** With `auto` each view is at natural scale (never
+shrunk), so legibility is a *layout* question, not a page-fit one. If a view is a
+wide directional strip, compact it: group elements into
+[bands](#toolforgec4render--html-rendering-knobs) (`group`), or set
+`direction = "TB"` on `[tool.forge.c4]`. Native ELK compaction
 (`elk.aspectRatio` / `spacing.*`) is not reachable through Mermaid's config today
-— tracked in issue #146.
+— tracked in issue #146. **Note:** the non-hierarchical ELK engines
+(`layout = "elk.stress"` / `"elk.force"`) are **rejected** — they drop
+cross-cluster edges and overlap nodes on C4's multi-cluster views.
 
 See [`docs/c4-architecture.md`](c4-architecture.md) for the design and
 rationale, and [`skills/c4/SKILL.md`](../skills/c4/SKILL.md) for building a
@@ -395,7 +398,7 @@ you only set a key to deviate. Unknown keys are ignored. Lives under
 | `rank_spacing` | _unset_ | `flowchart.rankSpacing` | Gap between ranks/layers. **Honored under `layout = "dagre"` only** — ELK ignores it. |
 | `padding` | _unset_ | `flowchart.padding` | Inner node padding. |
 | `custom_css` | _unset_ | `themeCSS` (root) | Raw-CSS escape hatch injected into the diagram. |
-| `layout` | `"elk"` | `layout` (root) | `elk` (any `elk.*`) attempts the vendored ELK loader with a dagre fallback; `dagre` forces dagre. ELK routes dense cross-cluster edges far more cleanly but uses fixed spacing; `dagre` lets you tune `node_spacing` / `rank_spacing`. |
+| `layout` | `"elk"` | `layout` (root) | `elk` (= `elk.layered`) or `dagre` — the two supported, **hierarchy-aware** engines (they keep C4's clusters separated and route every edge). ELK routes dense cross-cluster edges more cleanly but uses fixed spacing; `dagre` lets you tune `node_spacing` / `rank_spacing`. The organic ELK engines (`elk.stress` / `elk.force` / `elk.radial`) are **rejected at config-load** — they silently drop edges + overlap nodes on multi-cluster views. |
 | `node_placement_strategy` | `"NETWORK_SIMPLEX"` | `elk.nodePlacementStrategy` | ELK node placement (`BRANDES_KOEPF`, `NETWORK_SIMPLEX`, …). |
 | `force_node_model_order` | `true` | `elk.forceNodeModelOrder` | Preserve declared node order. |
 

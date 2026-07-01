@@ -48,9 +48,11 @@ from forge.gen_c4 import (
     _render_mermaid_components_for,
     _render_mermaid_containers,
     _render_mermaid_system_context,
+    _render_view_pdf_html,
     _resolve_direction,
     _resolve_edge_mode,
     _resolve_endpoint,
+    _resolve_layout,
     _slug,
     _under_prefix,
     _visibility_fields,
@@ -2135,9 +2137,10 @@ def test_emit_pdf_success_writes_pdf_and_returns_0(
 ) -> None:
     """_emit_pdf returns 0 and the PDF exists when the headless print succeeds.
 
-    SCENARIO: browser found; headless print-to-PDF completes without error.
-    MOCK SETUP: _find_headless_browser patched to a fake path; _print_html_to_pdf
-        replaced by a stub that writes a minimal bytes file at its pdf_path arg.
+    SCENARIO: browser found, no merge tool → single-document print succeeds.
+    MOCK SETUP: _find_headless_browser → fake path; _find_pdf_merger → None (so
+        the single-document path runs); _print_html_to_pdf → a stub that writes a
+        minimal bytes file at its pdf_path arg.
     EXPECTED BEHAVIOR: _emit_pdf returns 0; docs/architecture.pdf exists under
         tmp_path (the DEFAULT_PDF_OUTPUT destination).
     """
@@ -2146,11 +2149,50 @@ def test_emit_pdf_success_writes_pdf_and_returns_0(
         pdf_path.write_bytes(b"%PDF-1.4 stub")  # type: ignore[union-attr]
 
     monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: "/fake/chrome")
+    monkeypatch.setattr("forge.gen_c4._find_pdf_merger", lambda: None)
     monkeypatch.setattr("forge.gen_c4._print_html_to_pdf", _fake_print)
     config = C4Config(system="Test", description="", output="")
     args = argparse.Namespace(output=None, check=False)
     result = _emit_pdf(tmp_path, config, set(), args)
     assert result == 0
+    assert (tmp_path / DEFAULT_PDF_OUTPUT).is_file()
+
+
+def test_emit_pdf_per_view_renders_each_view_and_merges(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default (auto) fit renders one PDF per view and merges them.
+
+    SCENARIO: browser + merge tool present; two views.
+    MOCK SETUP: _find_headless_browser + _find_pdf_merger patched; _print_html_to_pdf
+        stubs a per-view PDF; _merge_pdfs records the parts and writes the output.
+    EXPECTED BEHAVIOR: one print per view, merge called with both parts, exit 0.
+    """
+    printed: list[str] = []
+    merged: list[int] = []
+
+    def _fake_print(browser: str, html_path: object, pdf_path: object) -> None:
+        printed.append(str(html_path))
+        pdf_path.write_bytes(b"%PDF-1.4 stub")  # type: ignore[union-attr]
+
+    def _fake_merge(merger: str, parts: object, out_path: object) -> None:
+        merged.append(len(parts))  # type: ignore[arg-type]
+        out_path.write_bytes(b"%PDF-1.4 merged")  # type: ignore[union-attr]
+
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: "/fake/chrome")
+    monkeypatch.setattr("forge.gen_c4._find_pdf_merger", lambda: "/fake/pdfunite")
+    monkeypatch.setattr("forge.gen_c4._print_html_to_pdf", _fake_print)
+    monkeypatch.setattr("forge.gen_c4._merge_pdfs", _fake_merge)
+    config = _two_container_config(
+        (Component("Core", ("a",), container="Applications"),)
+    )
+    args = argparse.Namespace(output=None, check=False)
+    result = _emit_pdf(tmp_path, config, set(), args)
+    assert result == 0
+    # One print per view (System Context, Containers, + one Component view each).
+    assert len(printed) == 3
+    assert merged == [3]  # merged once, with all three per-view PDFs
     assert (tmp_path / DEFAULT_PDF_OUTPUT).is_file()
 
 
@@ -2310,11 +2352,11 @@ def test_main_pdf_format_no_browser_exits_1(
 
 
 def test_parse_render_config_pdf_keys_default() -> None:
-    """_parse_render_config defaults to one-page-per-view 'contain' at 10mm margin."""
+    """_parse_render_config defaults to tight per-view 'auto' at 10mm margin."""
     cfg = _parse_render_config({})
     assert cfg.pdf_page_size == "A4"
     assert cfg.pdf_orientation == "landscape"
-    assert cfg.pdf_fit == "contain"
+    assert cfg.pdf_fit == "auto"
     assert cfg.pdf_margin == 10
 
 
@@ -2396,29 +2438,55 @@ def test_print_page_css_page_rule_reflects_size_and_margin() -> None:
     assert "@page { size: 216mm 279mm; margin: 20mm; }" in css
 
 
-def test_print_page_css_default_contain_scales_to_one_page() -> None:
-    """The default 'contain' fit scales each view to one fixed A4 landscape page."""
-    css = _print_page_css(RenderConfig())
+def test_print_page_css_contain_scales_to_one_fixed_page() -> None:
+    """The 'contain' fit scales each view to one fixed A4 landscape page."""
+    css = _print_page_css(RenderConfig(pdf_fit="contain"))
     assert "@page { size: 297mm 210mm; margin: 10mm; }" in css
     # contain fits each diagram to that page via the JS-measured print scale.
     assert "--c4-print-scale" in css
 
 
 def test_print_page_css_auto_uses_near_zero_default_page() -> None:
-    """Explicit 'auto' fit uses only a near-zero default @page — no fixed mm size."""
-    css = _print_page_css(RenderConfig(pdf_fit="auto"))
+    """The default 'auto' single-doc CSS uses only a near-zero default @page."""
+    css = _print_page_css(RenderConfig())  # default fit == "auto"
     assert "@page { size: 1px 1px; margin: 0; }" in css
     assert "mm; }" not in css
     assert "--c4-print-scale" not in css  # no scaling; each page fits its diagram
 
 
-def test_render_html_default_contain_one_page_per_view() -> None:
-    """render_html defaults to contain: one fixed page per view, scaled to fit."""
+def test_render_html_default_fit_is_auto() -> None:
+    """render_html defaults to the tight per-view 'auto' fit."""
     config = C4Config(system="Test", description="", output="")
     page = render_html(config, [("V", "graph LR\n")])
     assert "window.c4Print" in page
-    assert '"fit": "contain"' in page
-    assert "@page { size: 297mm 210mm; margin: 10mm; }" in page
+    assert '"fit": "auto"' in page
+    assert "size: 297mm" not in page  # no fixed mm page in the auto fallback CSS
+
+
+def test_render_view_pdf_html_self_sizes_its_page() -> None:
+    """A single-view PDF HTML measures the SVG and sets one tight @page."""
+    config = C4Config(system="Sys", description="", output="")
+    html_doc = _render_view_pdf_html(config, "System Context", "graph LR\n")
+    assert '<div id="c4t">System Context</div>' in html_doc
+    assert 'document.querySelector("#c4d svg")' in html_doc
+    # It sets a single @page from the measured size (no fixed mm page).
+    assert '"@page { size: "' in html_doc
+    assert "getBoundingClientRect" in html_doc
+
+
+def test_resolve_layout_accepts_hierarchical_rejects_organic() -> None:
+    """_resolve_layout allows layered/dagre and rejects the organic ELK engines."""
+    for good in ("elk", "elk.layered", "dagre"):
+        assert _resolve_layout(good) == good
+    for bad in ("elk.stress", "elk.force", "elk.radial", "nonsense"):
+        with pytest.raises(ValueError, match=r"unsupported|unknown layout"):
+            _resolve_layout(bad)
+
+
+def test_parse_render_config_rejects_organic_layout() -> None:
+    """A configured organic layout fails loudly at parse time, not silently."""
+    with pytest.raises(ValueError, match="unsupported"):
+        _parse_render_config({"render": {"layout": "elk.stress"}})
 
 
 # --- #124: click-to-open-tab map + edge-id-based hover incidence ---

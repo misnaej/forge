@@ -121,6 +121,14 @@ _PDF_VIRTUAL_TIME_BUDGET_MS = 15000
 # Hard ceiling (seconds) on the headless print so a wedged browser can't hang a
 # commit or CI run.
 _PDF_TIMEOUT_S = 120
+# Large headless viewport so a wide diagram lays out + measures at full size
+# (Chrome's ~800px default would cram it and mis-measure the page bounds).
+_PDF_WINDOW_SIZE = "5000,5000"
+# PDF concatenation tools tried (in order) to stitch the per-view single-page
+# PDFs (each tightly sized to its diagram) into one file. Optional: absent →
+# forge falls back to a single-document print (fixed pages) so `--format pdf`
+# still works, just without the tight per-view sizing.
+_PDF_MERGERS = ("pdfunite", "qpdf")
 # Portrait (short_edge_mm, long_edge_mm) for the supported `pdf_page_size` keys
 # (uppercased on lookup). Landscape swaps the pair. Unknown sizes fall back to A4.
 _PAGE_SIZES_MM = {
@@ -152,6 +160,14 @@ _EDGE_MODES = ("imports", "declared", "both")
 # Global Mermaid/DSL graph direction. "LR" (left-to-right) is the default and
 # keeps the byte-identical baseline; "TB" lays the diagram out top-to-bottom.
 _DIRECTIONS = ("LR", "TB")
+# HTML/PDF layout engines forge supports. Only hierarchy-aware, cluster-correct
+# engines are allowed: the layered ELK layout ("elk"/"elk.layered") and dagre
+# preserve C4's subgraph containment (system boundary, Actors band, group bands)
+# and route every edge. The non-hierarchical force layouts ("elk.stress",
+# "elk.force", "elk.radial") silently drop cross-cluster edges and overlap nodes
+# on any multi-cluster view, so they are rejected rather than shipped as a
+# footgun. See docs/c4-architecture.md.
+_LAYOUTS = ("elk", "elk.layered", "dagre")
 
 # Generic type parameter for _banded_lines, bound to elements with a group attribute.
 _T = TypeVar("_T", bound="_Grouped")
@@ -173,6 +189,39 @@ def _resolve_direction(value: str) -> str:
         msg = f"unknown direction {value!r}; expected one of {_DIRECTIONS}"
         raise ValueError(msg)
     return value
+
+
+def _resolve_layout(value: str) -> str:
+    """Validate the HTML/PDF layout engine, rejecting the broken organic ones.
+
+    Only the hierarchy-aware engines in :data:`_LAYOUTS` are accepted. The
+    force-based ELK layouts (``elk.stress`` / ``elk.force`` / ``elk.radial``) are
+    rejected loudly: Mermaid's ELK integration does not preserve subgraph
+    containment or route edges through them, so a clustered C4 diagram silently
+    loses cross-cluster edges and overlaps nodes — a footgun, not a valid choice.
+
+    Args:
+        value: Candidate ``[tool.forge.c4.render].layout`` value.
+
+    Returns:
+        *value* unchanged when it is a supported engine.
+
+    Raises:
+        ValueError: When *value* is not one of :data:`_LAYOUTS` (the organic
+            engines get a message naming why they are unsupported).
+    """
+    if value in _LAYOUTS:
+        return value
+    if value.startswith("elk."):
+        msg = (
+            f"layout {value!r} is unsupported: the non-layered ELK engines "
+            "(elk.stress / elk.force / elk.radial) are non-hierarchical and drop "
+            "edges + overlap nodes on multi-cluster C4 views. Use one of "
+            f"{_LAYOUTS}."
+        )
+        raise ValueError(msg)
+    msg = f"unknown layout {value!r}; expected one of {_LAYOUTS}"
+    raise ValueError(msg)
 
 
 def _includes_derived(mode: str) -> bool:
@@ -370,8 +419,14 @@ class RenderConfig:
         padding: ``flowchart.padding`` — ``None`` omits.
         diagram_padding: ``flowchart.diagramPadding`` — ``None`` omits.
         custom_css: ``themeCSS`` — raw-CSS escape hatch; empty omits.
-        layout: top-level ``layout`` — ``elk`` (any ``elk.*``) attempts the
-            vendored ELK loader with a dagre fallback; ``dagre`` uses dagre.
+        layout: top-level ``layout`` — one of :data:`_LAYOUTS`: ``"elk"`` (=
+            ``elk.layered``, the default) or ``"dagre"``. Both are hierarchy-aware
+            and keep C4's clusters (system boundary, Actors band, group bands)
+            separated with every edge routed. The organic ELK engines
+            (``elk.stress`` / ``elk.force`` / ``elk.radial``) are **rejected** at
+            config-load: they are non-hierarchical and silently drop cross-cluster
+            edges + overlap nodes. ``elk`` attempts the vendored ELK loader with a
+            dagre fallback.
         node_placement_strategy: ``elk.nodePlacementStrategy``.
         force_node_model_order: ``elk.forceNodeModelOrder``.
         merge_edges: ``elk.mergeEdges``.
@@ -380,18 +435,19 @@ class RenderConfig:
         theme: ``theme`` — must be ``base`` for ``theme_colors`` to apply.
         theme_colors: ``themeVariables`` (hex values) — applied only when
             ``theme == "base"``; empty omits.
-        pdf_page_size: fixed-page size for ``pdf_fit = "contain"`` (default) /
-            ``"width"`` — ``"A4"`` / ``"A3"`` / ``"Letter"`` / ``"Legal"``
-            (unknown → A4). Ignored by ``"auto"``, which sizes each page to its
+        pdf_page_size: fixed-page size for ``pdf_fit = "contain"`` / ``"width"``
+            — ``"A4"`` / ``"A3"`` / ``"Letter"`` / ``"Legal"`` (unknown → A4).
+            Ignored by the default ``"auto"``, which sizes each page to its
             diagram.
         pdf_orientation: ``"landscape"`` (default) or ``"portrait"`` — fixed-page
             modes only (``"auto"`` follows each diagram's own shape).
-        pdf_fit: ``"contain"`` (default) prints **each view to exactly one page**,
-            the diagram scaled to fit that page (width AND height, aspect ratio
-            preserved) — so the PDF page count equals the number of views;
-            ``"auto"`` instead sizes each page to its diagram (natural scale, no
-            shrink); ``"width"`` fits a fixed page's width only (a tall view may
-            span extra pages).
+        pdf_fit: ``"auto"`` (default) prints **each view to its own tight page**
+            sized exactly to that diagram (no letterbox, no title/diagram break
+            desync, no trailing sheet) — one page per view. This renders each view
+            separately and concatenates with ``pdfunite`` / ``qpdf``; if neither is
+            installed it falls back to ``"contain"``. ``"contain"`` scales every
+            diagram to fit one **fixed** page (uniform pages, may letterbox);
+            ``"width"`` fits a fixed page's width only.
         pdf_margin: page margin in millimetres (default 10).
         include_tags: when non-empty, the rendered **HTML/PDF views** keep only
             elements carrying at least one of these tags. The DSL, the README
@@ -420,7 +476,7 @@ class RenderConfig:
     theme_colors: dict[str, str] = field(default_factory=dict)
     pdf_page_size: str = "A4"
     pdf_orientation: str = "landscape"
-    pdf_fit: str = "contain"
+    pdf_fit: str = "auto"
     pdf_margin: float = 10
     include_tags: tuple[str, ...] = ()
     exclude_tags: tuple[str, ...] = ()
@@ -711,6 +767,8 @@ def _parse_render_config(section: dict) -> RenderConfig:
                 if isinstance(value, list)
                 else ()
             )
+    if "layout" in kwargs:
+        kwargs["layout"] = _resolve_layout(str(kwargs["layout"]))
     return RenderConfig(**kwargs)
 
 
@@ -2179,8 +2237,11 @@ def _print_page_css(render: RenderConfig) -> str:
     .views {{ display: contents; }}
     .views.ready .pane,
     .views.ready .pane.active {{ display: block; }}
-    .pane {{ margin: 0; }}
-{break_rule}    .view-title {{ display: block; margin: 0 0 0.5rem; font-size: 1rem; }}
+    /* Keep a view's title and its own diagram on the same page — never break
+       between them, and never split a pane across pages. */
+    .pane {{ margin: 0; break-inside: avoid; page-break-inside: avoid; }}
+{break_rule}    .view-title {{ display: block; margin: 0 0 0.5rem; font-size: 1rem;
+      break-after: avoid; page-break-after: avoid; }}
     .diagram-scroll {{ overflow: visible; max-height: none; border: none;
       padding: 0; margin: 0; }}
     /* Reset the <pre>'s default 1em margins — otherwise the pane is taller than
@@ -2734,6 +2795,178 @@ def _build_views(
     return views
 
 
+def _render_view_pdf_html(config: C4Config, label: str, mermaid_src: str) -> str:
+    """Build a minimal single-view HTML that self-sizes its ``@page`` to the diagram.
+
+    One title + one diagram, using the same ``mermaid.initialize`` options as the
+    tabbed HTML (so the layout/aspect matches). After Mermaid renders, inline JS
+    measures the SVG (and the title, which is *visible* here — unlike the tabbed
+    page where it is hidden until print) and sets a single ``@page`` that exactly
+    bounds title + diagram + margin. The browser then prints it to **one tight
+    page** — no letterbox, no title/diagram break desync, no trailing sheet. One
+    file per view; the pages are concatenated afterwards.
+
+    Args:
+        config: The model skeleton (for the render options + margin).
+        label: The view's title.
+        mermaid_src: The view's Mermaid source.
+
+    Returns:
+        A complete single-view HTML document.
+    """
+    init_options = _mermaid_init_options(config.render, layout_var="c4layout")
+    requested_layout = json.dumps(config.render.layout)
+    margin_px = round(config.render.pdf_margin * _PX_PER_MM)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{html.escape(config.system)}</title>
+<style>
+  html, body {{ margin: 0; padding: 0; }}
+  body {{ font-family: system-ui, sans-serif; color: #1a1a1a; }}
+  #c4t {{ font-weight: bold; font-size: 14px; margin: 0 0 8px; padding: 0; }}
+  /* Reset the <pre>/div default margins so the tight @page can't overflow onto
+     a second same-sized sheet. */
+  #c4d, #c4d pre.mermaid {{ margin: 0; padding: 0; }}
+  #c4d svg {{ max-width: none !important; display: block; }}
+</style>
+</head>
+<body>
+<div id="c4t">{html.escape(label)}</div>
+<div id="c4d"><pre class="mermaid">
+{html.escape(mermaid_src)}</pre></div>
+<script src="{MERMAID_JS_NAME}"></script>
+<script src="{MERMAID_ELK_JS_NAME}"></script>
+<script>
+var requestedLayout = {requested_layout};
+var c4layout = requestedLayout;
+if (requestedLayout.indexOf("elk") === 0) {{
+  c4layout = "dagre";
+  try {{
+    if (window.elkLayouts) {{
+      mermaid.registerLayoutLoaders(window.elkLayouts.default || window.elkLayouts);
+      c4layout = requestedLayout;
+    }}
+  }} catch (err) {{ console.warn("c4: ELK unavailable — dagre:", err); }}
+}}
+mermaid.initialize({init_options});
+mermaid.run().then(function () {{
+  var svg = document.querySelector("#c4d svg");
+  var title = document.getElementById("c4t");
+  if (!svg) {{ document.title = "c4-ready"; return; }}
+  var r = svg.getBoundingClientRect();
+  var th = Math.ceil(title.getBoundingClientRect().height) + 8;
+  var w = Math.ceil(r.width);
+  var h = Math.ceil(r.height);
+  // Pin the SVG so the print layout matches what we measured.
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", h);
+  svg.style.maxWidth = "none";
+  var m = {margin_px};
+  var st = document.createElement("style");
+  st.textContent =
+    "@page {{ size: " + (w + 2 * m) + "px " + (h + th + 2 * m + 4) +
+    "px; margin: " + m + "px; }}";
+  document.head.appendChild(st);
+  document.title = "c4-ready";
+}});
+</script>
+</body>
+</html>
+"""
+
+
+def _find_pdf_merger() -> str | None:
+    """Locate a PDF concatenation tool for stitching the per-view PDFs.
+
+    Returns:
+        The path to the first available tool in :data:`_PDF_MERGERS`, or ``None``
+        when none is installed (the caller falls back to a single-document print).
+    """
+    for name in _PDF_MERGERS:
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def _merge_pdfs(merger: str, parts: list[Path], out_path: Path) -> None:
+    """Concatenate *parts* into *out_path* with the detected *merger*.
+
+    Args:
+        merger: Path to ``pdfunite`` or ``qpdf``.
+        parts: The per-view single-page PDFs, in display order.
+        out_path: Destination combined PDF.
+
+    Raises:
+        subprocess.CalledProcessError: If the merge tool exits non-zero.
+        subprocess.TimeoutExpired: If the merge exceeds the hard timeout.
+    """
+    part_paths = [os.fspath(p) for p in parts]
+    if Path(merger).name.startswith("qpdf"):
+        cmd = [merger, "--empty", "--pages", *part_paths, "--", os.fspath(out_path)]
+    else:  # pdfunite: pdfunite in1.pdf in2.pdf ... out.pdf
+        cmd = [merger, *part_paths, os.fspath(out_path)]
+    subprocess.run(cmd, check=True, capture_output=True, timeout=_PDF_TIMEOUT_S)
+
+
+def _render_pdf_per_view(
+    browser: str,
+    merger: str,
+    config: C4Config,
+    views: list[tuple[str, str]],
+    out_path: Path,
+) -> None:
+    """Print each view to its own tight single-page PDF, then merge them.
+
+    This is the default backend: each diagram is measured and sized in isolation
+    (its title is visible, its page bounds it exactly), so there is no letterbox,
+    no title/diagram break desync, and no trailing sheet — one page per view.
+
+    Args:
+        browser: Chromium-family executable.
+        merger: PDF concatenation tool (``pdfunite`` / ``qpdf``).
+        config: The model skeleton.
+        views: ``(label, Mermaid source)`` pairs.
+        out_path: Destination combined PDF.
+    """
+    with tempfile.TemporaryDirectory(prefix="forge-c4-") as workdir:
+        work = Path(workdir)
+        _copy_vendored_mermaid(work)
+        parts: list[Path] = []
+        with progress_logger("c4: per-view PDF"):
+            for index, (label, src) in enumerate(views):
+                view_html = work / f"view{index}.html"
+                view_html.write_text(_render_view_pdf_html(config, label, src))
+                view_pdf = work / f"view{index}.pdf"
+                _print_html_to_pdf(browser, view_html, view_pdf)
+                parts.append(view_pdf)
+        _merge_pdfs(merger, parts, out_path)
+
+
+def _render_pdf_single_doc(
+    browser: str, config: C4Config, views: list[tuple[str, str]], out_path: Path
+) -> None:
+    """Print the whole tabbed HTML to a PDF in one browser pass (fixed pages).
+
+    The fallback used when no merge tool is available, or when the consumer picks
+    an explicit fixed-page ``pdf_fit`` (``contain`` / ``width``).
+
+    Args:
+        browser: Chromium-family executable.
+        config: The model skeleton.
+        views: ``(label, Mermaid source)`` pairs.
+        out_path: Destination PDF.
+    """
+    with tempfile.TemporaryDirectory(prefix="forge-c4-") as workdir:
+        work = Path(workdir)
+        html_path = work / "architecture.html"
+        html_path.write_text(render_html(config, views))
+        _copy_vendored_mermaid(work)
+        _print_html_to_pdf(browser, html_path, out_path)
+
+
 def _emit_html(
     root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace
 ) -> int:
@@ -2819,18 +3052,21 @@ def _print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
         "--no-default-browser-check",
         "--disable-background-networking",
         "--disable-extensions",
+        "--hide-scrollbars",
+        # A large viewport so a wide diagram lays out at full size and the page
+        # the JS measures matches what prints (the ~800px default would cram it).
+        f"--window-size={_PDF_WINDOW_SIZE}",
         "--no-pdf-header-footer",
         f"--virtual-time-budget={_PDF_VIRTUAL_TIME_BUDGET_MS}",
         f"--print-to-pdf={os.fspath(pdf_path)}",
         html_path.as_uri(),
     ]
-    with progress_logger("c4: headless print-to-PDF"):
-        subprocess.run(
-            cmd,
-            check=True,
-            capture_output=True,
-            timeout=_PDF_TIMEOUT_S,
-        )
+    subprocess.run(
+        cmd,
+        check=True,
+        capture_output=True,
+        timeout=_PDF_TIMEOUT_S,
+    )
 
 
 def _emit_pdf(
@@ -2873,21 +3109,30 @@ def _emit_pdf(
     out_relpath = args.output or DEFAULT_PDF_OUTPUT
     out_path = _safe_out_path(root, out_relpath)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    content = render_html(config, _build_views(config, edges))
-    with tempfile.TemporaryDirectory(prefix="forge-c4-") as workdir:
-        work = Path(workdir)
-        html_path = work / "architecture.html"
-        html_path.write_text(content)
-        _copy_vendored_mermaid(work)
-        try:
-            _print_html_to_pdf(browser, html_path, out_path)
-        except subprocess.TimeoutExpired:
-            logger.exception("PDF render timed out after %ss.", _PDF_TIMEOUT_S)
-            return 1
-        except subprocess.CalledProcessError as exc:
-            detail = (exc.stderr or b"").decode(errors="replace").strip()
-            logger.exception("Headless browser failed to render the PDF: %s", detail)
-            return 1
+    views = _build_views(config, edges)
+    # Default (`pdf_fit="auto"`): one tight page per view via per-view render +
+    # merge — needs a merge tool. An explicit fixed-page fit, or a missing merge
+    # tool, uses the single-document print instead.
+    merger = _find_pdf_merger()
+    per_view = config.render.pdf_fit == "auto" and merger is not None and bool(views)
+    if config.render.pdf_fit == "auto" and merger is None:
+        logger.warning(
+            "No PDF merge tool (pdfunite/qpdf) found — falling back to a "
+            "single-document print (fixed pages, may letterbox). Install poppler "
+            "(pdfunite) for tight one-page-per-view output.",
+        )
+    try:
+        if per_view and merger is not None:
+            _render_pdf_per_view(browser, merger, config, views, out_path)
+        else:
+            _render_pdf_single_doc(browser, config, views, out_path)
+    except subprocess.TimeoutExpired:
+        logger.exception("PDF render timed out after %ss.", _PDF_TIMEOUT_S)
+        return 1
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or b"").decode(errors="replace").strip()
+        logger.exception("Headless browser / merge failed for the PDF: %s", detail)
+        return 1
     logger.info("Wrote %s (via %s).", out_relpath, Path(browser).name)
     return 0
 

@@ -168,14 +168,16 @@ Scope boundaries for v1:
   as forge package data). Needs only `pip install` — no Docker, Java,
   Graphviz, or network. The generated HTML + sidecars are gitignored
   (on-demand). See "Per-view HTML & the ELK layout engine" below.
-- **`pdf`** — a multi-page, landscape **vector** PDF (one view per page),
-  printed from the offline HTML by an auto-detected headless browser
-  (Chrome / Chromium / Edge / Brave; `FORGE_C4_BROWSER` overrides). No new
-  dependency and no network — Mermaid is a JS library, so a browser engine
-  produces the vector output; forge supplies the page and a `@media print`
-  layout that fits each view to the page. Fails loudly (with a manual
-  Print → Save-as-PDF fallback) when no browser is present. See "Legible
-  labels & interactivity" below.
+- **`pdf`** — a multi-page **vector** PDF, **one tight page per view** (each page
+  sized to its own diagram), printed from the offline HTML by an auto-detected
+  headless browser (Chrome / Chromium / Edge / Brave; `FORGE_C4_BROWSER`
+  overrides). No new Python dependency and no network — Mermaid is a JS library,
+  so a browser engine produces the vector output. The default `pdf_fit = "auto"`
+  renders each view in isolation (so the diagram + title measure cleanly) and
+  concatenates the single pages with `pdfunite` / `qpdf`; without a merge tool it
+  falls back to a fixed-page `contain` print. Fails loudly (manual Print →
+  Save-as-PDF fallback) when no browser is present. See "Legible labels &
+  interactivity" below.
 - **`mermaid`** — raw canonical Mermaid to stdout (for embedding).
 
 Every relationship line carries a label: derived import edges read

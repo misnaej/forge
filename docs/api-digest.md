@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_55 modules, 567 symbols._
+_55 modules, 573 symbols._
 
 ## `forge._hook_helpers`
 
@@ -239,6 +239,7 @@ _55 modules, 567 symbols._
 ## `forge.gen_c4`
 
 - `_resolve_direction(value: str) -> str` _(internal)_ — Validate a graph-direction string, failing loudly on an unknown value.
+- `_resolve_layout(value: str) -> str` _(internal)_ — Validate the HTML/PDF layout engine, rejecting the broken organic ones.
 - `_includes_derived(mode: str) -> bool` _(internal)_ — Return whether *mode* includes the import-derived edges.
 - `_resolve_edge_mode(value: str) -> str` _(internal)_ — Validate an edge-mode string, failing loudly on an unknown value.
 - `class Person` — A C4 actor — someone who uses the system (System Context level).
@@ -307,6 +308,11 @@ _55 modules, 567 symbols._
 - `sync_readme(root: Path, config: C4Config, mermaid_text: str, *, check: bool) -> int` — Write or verify the managed C4 block inside the configured README.
 - `_emit_mermaid(root: Path, config: C4Config, edges: set[tuple[str, str]], output: str | None) -> int` _(internal)_ — Print or write the canonical Mermaid source.
 - `_build_views(config: C4Config, edges: set[tuple[str, str]]) -> list[tuple[str, str]]` _(internal)_ — Build the ``(tab label, Mermaid source)`` pairs for the per-view artifacts.
+- `_render_view_pdf_html(config: C4Config, label: str, mermaid_src: str) -> str` _(internal)_ — Build a minimal single-view HTML that self-sizes its ``@page`` to the diagram.
+- `_find_pdf_merger() -> str | None` _(internal)_ — Locate a PDF concatenation tool for stitching the per-view PDFs.
+- `_merge_pdfs(merger: str, parts: list[Path], out_path: Path) -> None` _(internal)_ — Concatenate *parts* into *out_path* with the detected *merger*.
+- `_render_pdf_per_view(browser: str, merger: str, config: C4Config, views: list[tuple[str, str]], out_path: Path) -> None` _(internal)_ — Print each view to its own tight single-page PDF, then merge them.
+- `_render_pdf_single_doc(browser: str, config: C4Config, views: list[tuple[str, str]], out_path: Path) -> None` _(internal)_ — Print the whole tabbed HTML to a PDF in one browser pass (fixed pages).
 - `_emit_html(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the offline HTML view (+ vendored Mermaid sidecar).
 - `_find_headless_browser() -> str | None` _(internal)_ — Locate an installed Chromium-family browser for headless PDF printing.
 - `_print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None` _(internal)_ — Drive *browser* headlessly to print *html_path* to *pdf_path*.

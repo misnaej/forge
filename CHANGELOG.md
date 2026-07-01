@@ -28,18 +28,23 @@ The DSL / README / `--format mermaid` output is unchanged.
 
 ### Features
 - **`forge-gen-c4 --format pdf` — vector PDF export (#137).** Renders every C4
-  view to a multi-page, landscape-by-default, **vector** PDF
-  (`docs/architecture.pdf` by default), one view per page. Mermaid is a JS
-  library, so forge reuses the same offline HTML and
-  drives an already-installed headless browser (Chrome / Chromium / Edge / Brave,
-  auto-detected; override with `FORGE_C4_BROWSER`) via `--print-to-pdf` — **no new
-  dependency, no network**. By default (`pdf_fit = "contain"`) **each view prints
-  to exactly one page**, scaled to fit (width AND height, aspect ratio preserved),
-  so the PDF page count equals the number of views and the reader's page nav
-  matches the diagram list. Page setup is tunable via `[tool.forge.c4.render]` —
-  `pdf_page_size`, `pdf_orientation`, `pdf_fit` (`contain` default / `auto`,
-  sizing each page to its diagram at natural scale / `width`), `pdf_margin`. Fails
-  loudly with a Print → Save-as-PDF fallback when no browser is found.
+  view to a multi-page **vector** PDF (`docs/architecture.pdf` by default).
+  Mermaid is a JS library, so forge drives an already-installed headless browser
+  (Chrome / Chromium / Edge / Brave, auto-detected; override with
+  `FORGE_C4_BROWSER`) via `--print-to-pdf` — **no new Python dependency, no
+  network**. By default (`pdf_fit = "auto"`) **each view prints to its own tight
+  page, sized to that diagram** (no letterbox, no blank trailing sheet, the title
+  bound to its diagram), so the PDF page count equals the view count. This renders
+  each view separately and concatenates with `pdfunite` / `qpdf`; without a merge
+  tool it falls back to `contain` (one fixed page per view, scaled to fit). Tunable
+  via `[tool.forge.c4.render]` — `pdf_fit` (`auto` / `contain` / `width`),
+  `pdf_page_size`, `pdf_orientation`, `pdf_margin`. Fails loudly with a Print →
+  Save-as-PDF fallback when no browser is found.
+- **C4 layout is restricted to hierarchy-aware engines.** `[tool.forge.c4.render]`
+  `layout` accepts only `elk` (= `elk.layered`) and `dagre`; the non-hierarchical
+  ELK engines (`elk.stress` / `elk.force` / `elk.radial`) are **rejected at
+  config-load** with a clear error — they silently drop cross-cluster edges and
+  overlap nodes on C4's multi-cluster views.
 - **C4 HTML label-overflow fix (default).** `forge-gen-c4 --format html` now
   emits node labels as Mermaid **markdown strings** and sets
   `flowchart.wrappingWidth` with `markdownAutoWrap`, so the description wraps and
