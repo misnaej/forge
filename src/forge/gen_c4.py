@@ -445,7 +445,8 @@ class RenderConfig:
             sized exactly to that diagram (no letterbox, no title/diagram break
             desync, no trailing sheet) — one page per view. This renders each view
             separately and concatenates with ``pdfunite`` / ``qpdf``; if neither is
-            installed it falls back to ``"contain"``. ``"contain"`` scales every
+            installed it falls back to a single-document print (all views in one
+            browser pass via the full tabbed HTML). ``"contain"`` scales every
             diagram to fit one **fixed** page (uniform pages, may letterbox);
             ``"width"`` fits a fixed page's width only.
         pdf_margin: page margin in millimetres (default 10).
@@ -2432,6 +2433,38 @@ def _edge_endpoints(mermaid_text: str) -> list[list[str]]:
     return pairs
 
 
+def _elk_loader_js(requested_layout: str) -> str:
+    """Return the JS that seeds ``c4layout`` and registers the vendored ELK loader.
+
+    Any ``elk.*`` layout registers the vendored ELK loader (a classic-script
+    global that works from ``file://``) and falls back to ``dagre`` if it is
+    missing or errors. Shared by the tabbed HTML and the per-view PDF page so the
+    two never drift.
+
+    Args:
+        requested_layout: The JSON-encoded ``config.render.layout`` value.
+
+    Returns:
+        A JS snippet defining ``var c4layout``, for embedding in a ``<script>``.
+    """
+    return (
+        f"var requestedLayout = {requested_layout};\n"
+        "var c4layout = requestedLayout;\n"
+        'if (requestedLayout.indexOf("elk") === 0) {\n'
+        '  c4layout = "dagre";\n'
+        "  try {\n"
+        "    if (window.elkLayouts) {\n"
+        "      mermaid.registerLayoutLoaders("
+        "window.elkLayouts.default || window.elkLayouts);\n"
+        "      c4layout = requestedLayout;\n"
+        "    }\n"
+        "  } catch (err) {\n"
+        '    console.warn("c4: ELK layout unavailable — dagre:", err);\n'
+        "  }\n"
+        "}"
+    )
+
+
 def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
     """Wrap the C4 views in a self-contained, offline, tabbed HTML page.
 
@@ -2470,7 +2503,7 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
         for i, (label, text) in enumerate(views)
     )
     init_options = _mermaid_init_options(config.render, layout_var="c4layout")
-    requested_layout = json.dumps(config.render.layout)
+    elk_loader = _elk_loader_js(json.dumps(config.render.layout))
     interaction_css = _html_interaction_css()
     interaction_script = _html_interaction_script()
     print_css = _print_page_css(config.render)
@@ -2541,20 +2574,7 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
 // vendored ELK loader — a classic-script global, so it works from file:// —
 // which untangles the Container view's cross-cluster edges that dagre
 // mis-ranks; if the loader is missing or errors, it falls back to dagre.
-var requestedLayout = {requested_layout};
-var c4layout = requestedLayout;
-if (requestedLayout.indexOf("elk") === 0) {{
-  c4layout = "dagre";
-  try {{
-    if (window.elkLayouts) {{
-      mermaid.registerLayoutLoaders(window.elkLayouts.default || window.elkLayouts);
-      c4layout = requestedLayout;
-    }}
-  }} catch (err) {{
-    console.warn("c4: ELK layout unavailable — falling back to dagre:", err);
-  }}
-}}
-console.log("c4: layout engine =", c4layout);
+{elk_loader}
 // Printable page area (px @96dpi) + fit mode, consumed by c4WireView to set each
 // SVG's --c4-print-scale so the diagram fits its page when printed to PDF.
 window.c4Print = {print_config};
@@ -2563,7 +2583,22 @@ window.c4Edges = {edge_config};
 // Container node id -> Component-view pane index, for click-to-open-tab.
 window.c4Tabs = {tab_config};
 mermaid.initialize({init_options});
-mermaid.run().then(function () {{
+(async function () {{
+  // Render each diagram with an explicit unique id via mermaid.render() rather
+  // than mermaid.run(): run() stamps svg ids from Date.now(), and fast
+  // back-to-back ELK layouts land in the same millisecond, so two panes get the
+  // SAME id — an invalid duplicate that leaves one view unrendered (#150).
+  var pres = document.querySelectorAll(".views .pane pre.mermaid");
+  for (var i = 0; i < pres.length; i++) {{
+    try {{
+      var out = await mermaid.render("c4-view-" + i, pres[i].textContent);
+      var holder = document.createElement("div");
+      holder.innerHTML = out.svg;
+      var svg = holder.querySelector("svg");
+      pres[i].replaceWith(svg);
+      if (out.bindFunctions) {{ out.bindFunctions(svg); }}
+    }} catch (err) {{ console.warn("c4: render failed for view " + i, err); }}
+  }}
   var views = document.querySelector(".views");
   var tabs = document.querySelectorAll("button.tab");
   var panes = document.querySelectorAll(".pane");
@@ -2583,7 +2618,7 @@ mermaid.run().then(function () {{
   }});
   views.classList.add("ready");
   show(0);
-}});
+}})();
 </script>
 </body>
 </html>
@@ -2815,7 +2850,7 @@ def _render_view_pdf_html(config: C4Config, label: str, mermaid_src: str) -> str
         A complete single-view HTML document.
     """
     init_options = _mermaid_init_options(config.render, layout_var="c4layout")
-    requested_layout = json.dumps(config.render.layout)
+    elk_loader = _elk_loader_js(json.dumps(config.render.layout))
     margin_px = round(config.render.pdf_margin * _PX_PER_MM)
     return f"""<!doctype html>
 <html lang="en">
@@ -2839,22 +2874,18 @@ def _render_view_pdf_html(config: C4Config, label: str, mermaid_src: str) -> str
 <script src="{MERMAID_JS_NAME}"></script>
 <script src="{MERMAID_ELK_JS_NAME}"></script>
 <script>
-var requestedLayout = {requested_layout};
-var c4layout = requestedLayout;
-if (requestedLayout.indexOf("elk") === 0) {{
-  c4layout = "dagre";
-  try {{
-    if (window.elkLayouts) {{
-      mermaid.registerLayoutLoaders(window.elkLayouts.default || window.elkLayouts);
-      c4layout = requestedLayout;
-    }}
-  }} catch (err) {{ console.warn("c4: ELK unavailable — dagre:", err); }}
-}}
+{elk_loader}
 mermaid.initialize({init_options});
-mermaid.run().then(function () {{
-  var svg = document.querySelector("#c4d svg");
+// Single diagram, rendered with an explicit id via mermaid.render() (never
+// mermaid.run(), whose Date.now() ids collide across fast ELK renders — #150).
+var pre = document.querySelector("#c4d pre.mermaid");
+mermaid.render("c4-view", pre.textContent).then(function (out) {{
+  var holder = document.createElement("div");
+  holder.innerHTML = out.svg;
+  var svg = holder.querySelector("svg");
+  pre.replaceWith(svg);
+  if (out.bindFunctions) {{ out.bindFunctions(svg); }}
   var title = document.getElementById("c4t");
-  if (!svg) {{ document.title = "c4-ready"; return; }}
   var r = svg.getBoundingClientRect();
   var th = Math.ceil(title.getBoundingClientRect().height) + 8;
   var w = Math.ceil(r.width);
@@ -2869,6 +2900,9 @@ mermaid.run().then(function () {{
     "@page {{ size: " + (w + 2 * m) + "px " + (h + th + 2 * m + 4) +
     "px; margin: " + m + "px; }}";
   document.head.appendChild(st);
+  document.title = "c4-ready";
+}}).catch(function (err) {{
+  console.warn("c4: view render failed:", err);
   document.title = "c4-ready";
 }});
 </script>
@@ -2930,6 +2964,10 @@ def _render_pdf_per_view(
         config: The model skeleton.
         views: ``(label, Mermaid source)`` pairs.
         out_path: Destination combined PDF.
+
+    Raises:
+        subprocess.CalledProcessError: If the browser or merge tool exits non-zero.
+        subprocess.TimeoutExpired: If any print or merge step exceeds the hard timeout.
     """
     with tempfile.TemporaryDirectory(prefix="forge-c4-") as workdir:
         work = Path(workdir)
@@ -2948,16 +2986,21 @@ def _render_pdf_per_view(
 def _render_pdf_single_doc(
     browser: str, config: C4Config, views: list[tuple[str, str]], out_path: Path
 ) -> None:
-    """Print the whole tabbed HTML to a PDF in one browser pass (fixed pages).
+    """Print the whole tabbed HTML to a PDF in one browser pass.
 
     The fallback used when no merge tool is available, or when the consumer picks
-    an explicit fixed-page ``pdf_fit`` (``contain`` / ``width``).
+    an explicit fixed-page ``pdf_fit`` (``contain`` / ``width``). The page layout
+    is determined by the CSS that ``render_html`` emits for ``config.render.pdf_fit``.
 
     Args:
         browser: Chromium-family executable.
         config: The model skeleton.
         views: ``(label, Mermaid source)`` pairs.
         out_path: Destination PDF.
+
+    Raises:
+        subprocess.CalledProcessError: If the browser exits non-zero.
+        subprocess.TimeoutExpired: If the print exceeds the hard timeout.
     """
     with tempfile.TemporaryDirectory(prefix="forge-c4-") as workdir:
         work = Path(workdir)
@@ -3011,8 +3054,14 @@ def _find_headless_browser() -> str | None:
     """
     override = os.environ.get(_BROWSER_ENV)
     if override:
-        ok = Path(override).is_file() and os.access(override, os.X_OK)
-        return override if ok else None
+        if Path(override).is_file() and os.access(override, os.X_OK):
+            return override
+        logger.warning(
+            "%s=%r is not an executable file; ignoring it and auto-detecting.",
+            _BROWSER_ENV,
+            override,
+        )
+        return None
     for path in _BROWSER_APP_PATHS:
         if Path(path).exists():
             return path
@@ -3074,11 +3123,13 @@ def _emit_pdf(
 ) -> int:
     """Render the C4 views to a vector PDF via a headless browser.
 
-    Writes the same offline HTML the ``html`` format emits (plus the vendored
-    Mermaid + ELK sidecars) into a temp dir, then prints it to PDF with a
-    detected Chromium-family browser. The PDF is a binary, non-deterministic
-    artifact, so ``--check`` has nothing to verify — it is a no-op (never writes)
-    rather than silently regenerating.
+    In the default ``auto`` mode (with a merge tool available), renders each
+    view to its own minimal HTML file, prints each to a single-page PDF, then
+    concatenates. Falls back to printing the full tabbed HTML in one browser
+    pass when no merge tool is found or when the consumer sets an explicit
+    fixed-page ``pdf_fit``. The PDF is a binary, non-deterministic artifact,
+    so ``--check`` has nothing to verify — it is a no-op (never writes) rather
+    than silently regenerating.
 
     Args:
         root: Repository root directory.
@@ -3114,15 +3165,15 @@ def _emit_pdf(
     # merge — needs a merge tool. An explicit fixed-page fit, or a missing merge
     # tool, uses the single-document print instead.
     merger = _find_pdf_merger()
-    per_view = config.render.pdf_fit == "auto" and merger is not None and bool(views)
-    if config.render.pdf_fit == "auto" and merger is None:
+    want_per_view = config.render.pdf_fit == "auto" and bool(views)
+    if want_per_view and merger is None:
         logger.warning(
             "No PDF merge tool (pdfunite/qpdf) found — falling back to a "
             "single-document print (fixed pages, may letterbox). Install poppler "
             "(pdfunite) for tight one-page-per-view output.",
         )
     try:
-        if per_view and merger is not None:
+        if want_per_view and merger is not None:
             _render_pdf_per_view(browser, merger, config, views, out_path)
         else:
             _render_pdf_single_doc(browser, config, views, out_path)

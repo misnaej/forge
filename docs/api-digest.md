@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_55 modules, 573 symbols._
+_55 modules, 574 symbols._
 
 ## `forge._hook_helpers`
 
@@ -299,6 +299,7 @@ _55 modules, 573 symbols._
 - `_html_interaction_css() -> str` _(internal)_ — Return the inline CSS for the hover-highlight focus state.
 - `_html_interaction_script() -> str` _(internal)_ — Return the inline JS wiring hover-highlight + click-to-open-tab interactivity.
 - `_edge_endpoints(mermaid_text: str) -> list[list[str]]` _(internal)_ — Extract the ordered ``[source_id, target_id]`` pairs from a view's source.
+- `_elk_loader_js(requested_layout: str) -> str` _(internal)_ — Return the JS that seeds ``c4layout`` and registers the vendored ELK loader.
 - `render_html(config: C4Config, views: list[tuple[str, str]]) -> str` — Wrap the C4 views in a self-contained, offline, tabbed HTML page.
 - `_copy_vendored_mermaid(dest_dir: Path) -> None` _(internal)_ — Write the vendored Mermaid + ELK-layout bundles next to an emitted HTML.
 - `_warn_unmatched(unmatched: list[str]) -> None` _(internal)_ — Log a coverage warning naming modules in no component.
@@ -312,7 +313,7 @@ _55 modules, 573 symbols._
 - `_find_pdf_merger() -> str | None` _(internal)_ — Locate a PDF concatenation tool for stitching the per-view PDFs.
 - `_merge_pdfs(merger: str, parts: list[Path], out_path: Path) -> None` _(internal)_ — Concatenate *parts* into *out_path* with the detected *merger*.
 - `_render_pdf_per_view(browser: str, merger: str, config: C4Config, views: list[tuple[str, str]], out_path: Path) -> None` _(internal)_ — Print each view to its own tight single-page PDF, then merge them.
-- `_render_pdf_single_doc(browser: str, config: C4Config, views: list[tuple[str, str]], out_path: Path) -> None` _(internal)_ — Print the whole tabbed HTML to a PDF in one browser pass (fixed pages).
+- `_render_pdf_single_doc(browser: str, config: C4Config, views: list[tuple[str, str]], out_path: Path) -> None` _(internal)_ — Print the whole tabbed HTML to a PDF in one browser pass.
 - `_emit_html(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the offline HTML view (+ vendored Mermaid sidecar).
 - `_find_headless_browser() -> str | None` _(internal)_ — Locate an installed Chromium-family browser for headless PDF printing.
 - `_print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None` _(internal)_ — Drive *browser* headlessly to print *html_path* to *pdf_path*.

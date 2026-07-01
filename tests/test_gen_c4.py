@@ -2464,11 +2464,13 @@ def test_render_html_default_fit_is_auto() -> None:
 
 
 def test_render_view_pdf_html_self_sizes_its_page() -> None:
-    """A single-view PDF HTML measures the SVG and sets one tight @page."""
+    """A single-view PDF HTML renders with a unique id and sets one tight @page."""
     config = C4Config(system="Sys", description="", output="")
     html_doc = _render_view_pdf_html(config, "System Context", "graph LR\n")
     assert '<div id="c4t">System Context</div>' in html_doc
-    assert 'document.querySelector("#c4d svg")' in html_doc
+    # Renders with an explicit id via mermaid.render (never mermaid.run — #150).
+    assert 'mermaid.render("c4-view", pre.textContent)' in html_doc
+    assert "mermaid.run().then" not in html_doc  # no run()-based call
     # It sets a single @page from the measured size (no fixed mm page).
     assert '"@page { size: "' in html_doc
     assert "getBoundingClientRect" in html_doc
@@ -2817,3 +2819,18 @@ def test_container_view_ungrouped_has_no_band_subgraph() -> None:
     assert any(
         "subgraph sys" in s or config.system.lower() in s.lower() for s in subgraphs
     )
+
+
+def test_render_html_uses_unique_render_ids_not_run() -> None:
+    """render_html renders each pane via mermaid.render('c4-view-'+i), not run() (#150).
+
+    mermaid.run() stamps svg ids from Date.now(); fast back-to-back ELK layouts
+    collide on the same millisecond, so two panes get the same id and one view
+    never renders. Author-controlled ids via mermaid.render() avoid that.
+    """
+    config = C4Config(system="Test", description="", output="")
+    page = render_html(config, [("A", "graph LR\n"), ("B", "graph LR\n")])
+    assert 'mermaid.render("c4-view-" + i' in page
+    assert "mermaid.run().then" not in page  # no run()-based call
+    # The ELK loader is shared with the per-view page (one source of truth).
+    assert "window.elkLayouts" in page

@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v2.15.0 — 2026-06-30
+## v2.16.0 — 2026-07-01
 
 Additive — `forge-gen-c4` gains **vector PDF export**, and the offline HTML it
 builds on now wraps its labels, is consumer-configurable, and is interactive.
@@ -82,6 +82,12 @@ The DSL / README / `--format mermaid` output is unchanged.
   externals band beside it. Ungrouped elements render flat exactly as before.
 
 ### Fixes
+- **Duplicate Mermaid SVG id dropped a view (#150).** The HTML rendered panes
+  with `mermaid.run()`, which stamps each SVG an id from `Date.now()`; fast
+  back-to-back ELK layouts landed in the same millisecond, so two panes got the
+  **same** id — an invalid duplicate that left one component view unrendered
+  (blank page + title/diagram desync). Each diagram now renders via
+  `mermaid.render("c4-view-<i>", …)` with an author-controlled unique id.
 - **Empty containers no longer emit a blank Component view.** A container that
   owns no components (e.g. an infrastructure unit) is skipped in the `--format
   html`/`pdf` output, so it produces no empty tab or blank PDF page; containers
