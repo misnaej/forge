@@ -372,12 +372,16 @@ class RenderConfig:
         theme: ``theme`` — must be ``base`` for ``theme_colors`` to apply.
         theme_colors: ``themeVariables`` (hex values) — applied only when
             ``theme == "base"``; empty omits.
-        pdf_page_size: ``--format pdf`` page size — ``"A4"`` / ``"A3"`` /
-            ``"Letter"`` / ``"Legal"`` (unknown falls back to A4).
-        pdf_orientation: ``"landscape"`` (default) or ``"portrait"``.
-        pdf_fit: ``"contain"`` (default) scales each diagram to fit the whole
-            page — width AND height, aspect ratio preserved; ``"width"`` fits
-            width only, so a tall diagram can still exceed the page height.
+        pdf_page_size: fixed-page size for ``pdf_fit = "contain"`` / ``"width"``
+            — ``"A4"`` / ``"A3"`` / ``"Letter"`` / ``"Legal"`` (unknown → A4).
+            Ignored by the default ``"auto"`` fit, which sizes each page to its
+            diagram.
+        pdf_orientation: ``"landscape"`` (default) or ``"portrait"`` — fixed-page
+            modes only (``"auto"`` follows each diagram's own shape).
+        pdf_fit: ``"auto"`` (default) sizes **each PDF page to its own diagram**
+            (no forced uniform page); ``"contain"`` scales every diagram to fit a
+            fixed page (width AND height, aspect preserved); ``"width"`` fits a
+            fixed page's width only.
         pdf_margin: page margin in millimetres (default 10).
         include_tags: when non-empty, the rendered views keep only elements
             carrying at least one of these tags (the DSL is unaffected).
@@ -404,7 +408,7 @@ class RenderConfig:
     theme_colors: dict[str, str] = field(default_factory=dict)
     pdf_page_size: str = "A4"
     pdf_orientation: str = "landscape"
-    pdf_fit: str = "contain"
+    pdf_fit: str = "auto"
     pdf_margin: float = 10
     include_tags: tuple[str, ...] = ()
     exclude_tags: tuple[str, ...] = ()
@@ -2099,10 +2103,13 @@ def _pdf_page_geometry(render: RenderConfig) -> tuple[int, int, float, int, int]
 def _print_page_css(render: RenderConfig) -> str:
     """Build the ``@page`` + ``@media print`` rules for the PDF layout.
 
-    Lays every view out one-per-page at the configured size/orientation/margin.
-    In ``contain`` fit each diagram is scaled by the JS-measured
-    ``--c4-print-scale`` (set per SVG so the whole diagram fits width AND
-    height); in ``width`` fit the SVG is capped to the page width only.
+    Every view prints one-per-page. In the default ``auto`` fit there is **no**
+    fixed ``@page`` size — the interaction script injects a per-pane
+    ``@page`` sized to that diagram, so each page adapts to its own diagram
+    rather than forcing a uniform sheet. ``contain`` fits every diagram to a
+    fixed page via the JS-measured ``--c4-print-scale`` (``zoom``, so the layout
+    box reflows and the title stays on the diagram's page); ``width`` caps the
+    SVG to a fixed page's width only.
 
     Args:
         render: The resolved render config.
@@ -2110,16 +2117,35 @@ def _print_page_css(render: RenderConfig) -> str:
     Returns:
         A CSS fragment (single-brace literal) for the page's ``<style>``.
     """
-    page_w, page_h, margin, _pw, _ph = _pdf_page_geometry(render)
-    if render.pdf_fit == "width":
+    # Fixed-page modes need an explicit break between panes (they all share one
+    # @page). In auto mode each pane has a distinct named @page, and a change of
+    # `page` forces the break on its own — an explicit break would add a spurious
+    # trailing blank page.
+    break_rule = (
+        ""
+        if render.pdf_fit == "auto"
+        else "    .views .pane + .pane { page-break-before: always;\n"
+        "      break-before: page; }\n"
+    )
+    if render.pdf_fit == "auto":
+        # Per-pane @page rules are injected by the JS. Chrome emits one trailing
+        # page after the last named page; a near-zero default @page keeps it from
+        # becoming a full blank Letter sheet. (WIP: eliminating it entirely.)
+        page_rule = "  @page { size: 1px 1px; margin: 0; }\n"
+        diagram_rule = (
+            "    .diagram-scroll svg { max-width: none !important;\n"
+            "      width: auto !important; height: auto !important; }"
+        )
+    elif render.pdf_fit == "width":
+        page_w, page_h, margin, _pw, _ph = _pdf_page_geometry(render)
+        page_rule = f"  @page {{ size: {page_w}mm {page_h}mm; margin: {margin}mm; }}\n"
         diagram_rule = (
             "    .diagram-scroll svg { max-width: 100% !important;\n"
             "      width: auto !important; height: auto !important; }"
         )
     else:
-        # `zoom` (not `transform: scale`) so the layout box reflows to the scaled
-        # size — otherwise the unscaled box keeps its full height and the page
-        # break lands mid-pane, pushing the next view's title onto this page.
+        page_w, page_h, margin, _pw, _ph = _pdf_page_geometry(render)
+        page_rule = f"  @page {{ size: {page_w}mm {page_h}mm; margin: {margin}mm; }}\n"
         diagram_rule = (
             "    .diagram-scroll svg {\n"
             "      zoom: var(--c4-print-scale, 1); max-width: none !important;\n"
@@ -2128,20 +2154,25 @@ def _print_page_css(render: RenderConfig) -> str:
     msg = (
         "Print / PDF: drop the interactive chrome, show every view "
         "(Mermaid renders all panes before the tab script hides them), "
-        "one per page, scaled to fit."
+        "one per page (each page sized to its diagram in the default 'auto' fit)."
     )
     return f"""  /* {msg} */
-  @page {{ size: {page_w}mm {page_h}mm; margin: {margin}mm; }}
-  @media print {{
+{page_rule}  @media print {{
     body {{ margin: 0; }}
     .tabbar, h1, p.desc {{ display: none; }}
+    /* `display: contents` dissolves the .views box so each pane paginates as a
+       direct child of body — a wrapper box otherwise emits a trailing blank
+       page after the last named page. */
+    .views {{ display: contents; }}
     .views.ready .pane,
     .views.ready .pane.active {{ display: block; }}
-    .pane {{ margin: 0; page-break-after: always; break-after: page; }}
-    .pane:last-child {{ page-break-after: auto; break-after: auto; }}
-    .view-title {{ display: block; margin: 0 0 0.5rem; font-size: 1rem; }}
+    .pane {{ margin: 0; }}
+{break_rule}    .view-title {{ display: block; margin: 0 0 0.5rem; font-size: 1rem; }}
     .diagram-scroll {{ overflow: visible; max-height: none; border: none;
-      padding: 0; }}
+      padding: 0; margin: 0; }}
+    /* Reset the <pre>'s default 1em margins — otherwise the pane is taller than
+       the measured SVG and overflows onto a second same-sized page. */
+    .diagram-scroll pre.mermaid {{ margin: 0; padding: 0; }}
 {diagram_rule}
     svg.c4-focus-mode g.node, svg.c4-focus-mode path.flowchart-link,
     svg.c4-focus-mode g.edgeLabel {{ opacity: 1 !important; }}
@@ -2252,20 +2283,48 @@ window.c4WireView = (function () {
         });
       }
     });
-    // Fit-to-page: uniformly scale the diagram so it fits the printable area in
-    // both dimensions. Measured here (pane still visible) and applied only under
-    // @media print via the --c4-print-scale custom property.
-    if (window.c4Print && window.c4Print.fit === "contain") {
-      var rect = svg.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        var scale = Math.min(
-          window.c4Print.w / rect.width,
-          window.c4Print.h / rect.height
-        );
-        svg.style.setProperty("--c4-print-scale", String(scale));
-      }
-    }
+    // PDF page sizing, measured here while the pane is still visible.
+    preparePrintPage(svg);
   };
+  function printStyle() {
+    if (!window.c4PrintStyle) {
+      window.c4PrintStyle = document.createElement("style");
+      document.head.appendChild(window.c4PrintStyle);
+    }
+    return window.c4PrintStyle;
+  }
+  function preparePrintPage(svg) {
+    var cfg = window.c4Print;
+    if (!cfg) { return; }
+    var rect = svg.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) { return; }
+    if (cfg.fit === "contain") {
+      // Scale the diagram down to a fixed page (via @media print zoom).
+      var scale = Math.min(cfg.w / rect.width, cfg.h / rect.height);
+      svg.style.setProperty("--c4-print-scale", String(scale));
+      return;
+    }
+    if (cfg.fit === "auto") {
+      // Size THIS page to THIS diagram — no forced uniform sheet.
+      var pane = svg.closest(".pane");
+      var idx = pane ? pane.getAttribute("data-pane") : null;
+      if (idx === null) { return; }
+      var m = cfg.margin;
+      var w = Math.ceil(rect.width);
+      var h = Math.ceil(rect.height);
+      var pane = ' .views .pane[data-pane="' + idx + '"]';
+      printStyle().appendChild(document.createTextNode(
+        "@page c4p" + idx + " { size: " + (w + 2 * m) + "px " +
+        (h + cfg.titleReserve + 2 * m) + "px; margin: " + m + "px; }" +
+        pane + " { page: c4p" + idx + "; }" +
+        // Pin the SVG to its exact measured size in print, so the print layout
+        // matches the page we computed and can never overflow onto an extra
+        // sheet (auto width/height can differ subtly between screen and print).
+        pane + " .diagram-scroll svg { width: " + w + "px !important;" +
+        " height: " + h + "px !important; max-width: none !important; }"
+      ));
+    }
+  }
 })();
 """
 
@@ -2343,7 +2402,13 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
     print_css = _print_page_css(config.render)
     _w, _h, _m, print_w_px, print_h_px = _pdf_page_geometry(config.render)
     print_config = json.dumps(
-        {"w": print_w_px, "h": print_h_px, "fit": config.render.pdf_fit}
+        {
+            "w": print_w_px,
+            "h": print_h_px,
+            "fit": config.render.pdf_fit,
+            "margin": round(config.render.pdf_margin * _PX_PER_MM),
+            "titleReserve": _PDF_TITLE_RESERVE_PX,
+        }
     )
     # Exact per-pane edge endpoints (allocated ids), so hover incidence is keyed
     # by id, never by parsing the ambiguous edge DOM id or matching names.
