@@ -2310,11 +2310,11 @@ def test_main_pdf_format_no_browser_exits_1(
 
 
 def test_parse_render_config_pdf_keys_default() -> None:
-    """_parse_render_config defaults to per-diagram 'auto' pages at 10mm margin."""
+    """_parse_render_config defaults to one-page-per-view 'contain' at 10mm margin."""
     cfg = _parse_render_config({})
     assert cfg.pdf_page_size == "A4"
     assert cfg.pdf_orientation == "landscape"
-    assert cfg.pdf_fit == "auto"
+    assert cfg.pdf_fit == "contain"
     assert cfg.pdf_margin == 10
 
 
@@ -2396,24 +2396,29 @@ def test_print_page_css_page_rule_reflects_size_and_margin() -> None:
     assert "@page { size: 216mm 279mm; margin: 20mm; }" in css
 
 
-def test_print_page_css_auto_has_no_fixed_diagram_page() -> None:
-    """The default 'auto' fit uses only a near-zero default @page — no fixed size."""
+def test_print_page_css_default_contain_scales_to_one_page() -> None:
+    """The default 'contain' fit scales each view to one fixed A4 landscape page."""
     css = _print_page_css(RenderConfig())
-    # A near-zero default page (the trailing sheet), never a mm-sized fixed page.
+    assert "@page { size: 297mm 210mm; margin: 10mm; }" in css
+    # contain fits each diagram to that page via the JS-measured print scale.
+    assert "--c4-print-scale" in css
+
+
+def test_print_page_css_auto_uses_near_zero_default_page() -> None:
+    """Explicit 'auto' fit uses only a near-zero default @page — no fixed mm size."""
+    css = _print_page_css(RenderConfig(pdf_fit="auto"))
     assert "@page { size: 1px 1px; margin: 0; }" in css
     assert "mm; }" not in css
     assert "--c4-print-scale" not in css  # no scaling; each page fits its diagram
 
 
-def test_render_html_auto_default_sizes_pages_per_diagram() -> None:
-    """render_html defaults to per-diagram pages: fit=auto, per-pane @page injected."""
+def test_render_html_default_contain_one_page_per_view() -> None:
+    """render_html defaults to contain: one fixed page per view, scaled to fit."""
     config = C4Config(system="Test", description="", output="")
     page = render_html(config, [("V", "graph LR\n")])
     assert "window.c4Print" in page
-    assert '"fit": "auto"' in page
-    # No fixed mm-sized page; the interaction script injects a per-pane @page.
-    assert "size: 297mm" not in page
-    assert "@page c4p" in page
+    assert '"fit": "contain"' in page
+    assert "@page { size: 297mm 210mm; margin: 10mm; }" in page
 
 
 # --- #124: click-to-open-tab map + edge-id-based hover incidence ---

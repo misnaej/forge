@@ -33,11 +33,13 @@ The DSL / README / `--format mermaid` output is unchanged.
   library, so forge reuses the same offline HTML and
   drives an already-installed headless browser (Chrome / Chromium / Edge / Brave,
   auto-detected; override with `FORGE_C4_BROWSER`) via `--print-to-pdf` — **no new
-  dependency, no network**. Each view is laid out one-per-page and scaled to fit
-  the whole page (width AND height, aspect ratio preserved) so nothing is
-  clipped. Page setup is tunable via `[tool.forge.c4.render]` — `pdf_page_size`,
-  `pdf_orientation`, `pdf_fit` (`contain` | `width`), `pdf_margin`. Fails loudly
-  with a Print → Save-as-PDF fallback when no browser is found.
+  dependency, no network**. By default (`pdf_fit = "contain"`) **each view prints
+  to exactly one page**, scaled to fit (width AND height, aspect ratio preserved),
+  so the PDF page count equals the number of views and the reader's page nav
+  matches the diagram list. Page setup is tunable via `[tool.forge.c4.render]` —
+  `pdf_page_size`, `pdf_orientation`, `pdf_fit` (`contain` default / `auto`,
+  sizing each page to its diagram at natural scale / `width`), `pdf_margin`. Fails
+  loudly with a Print → Save-as-PDF fallback when no browser is found.
 - **C4 HTML label-overflow fix (default).** `forge-gen-c4 --format html` now
   emits node labels as Mermaid **markdown strings** and sets
   `flowchart.wrappingWidth` with `markdownAutoWrap`, so the description wraps and

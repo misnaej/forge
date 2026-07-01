@@ -380,16 +380,18 @@ class RenderConfig:
         theme: ``theme`` — must be ``base`` for ``theme_colors`` to apply.
         theme_colors: ``themeVariables`` (hex values) — applied only when
             ``theme == "base"``; empty omits.
-        pdf_page_size: fixed-page size for ``pdf_fit = "contain"`` / ``"width"``
-            — ``"A4"`` / ``"A3"`` / ``"Letter"`` / ``"Legal"`` (unknown → A4).
-            Ignored by the default ``"auto"`` fit, which sizes each page to its
+        pdf_page_size: fixed-page size for ``pdf_fit = "contain"`` (default) /
+            ``"width"`` — ``"A4"`` / ``"A3"`` / ``"Letter"`` / ``"Legal"``
+            (unknown → A4). Ignored by ``"auto"``, which sizes each page to its
             diagram.
         pdf_orientation: ``"landscape"`` (default) or ``"portrait"`` — fixed-page
             modes only (``"auto"`` follows each diagram's own shape).
-        pdf_fit: ``"auto"`` (default) sizes **each PDF page to its own diagram**
-            (no forced uniform page); ``"contain"`` scales every diagram to fit a
-            fixed page (width AND height, aspect preserved); ``"width"`` fits a
-            fixed page's width only.
+        pdf_fit: ``"contain"`` (default) prints **each view to exactly one page**,
+            the diagram scaled to fit that page (width AND height, aspect ratio
+            preserved) — so the PDF page count equals the number of views;
+            ``"auto"`` instead sizes each page to its diagram (natural scale, no
+            shrink); ``"width"`` fits a fixed page's width only (a tall view may
+            span extra pages).
         pdf_margin: page margin in millimetres (default 10).
         include_tags: when non-empty, the rendered **HTML/PDF views** keep only
             elements carrying at least one of these tags. The DSL, the README
@@ -418,7 +420,7 @@ class RenderConfig:
     theme_colors: dict[str, str] = field(default_factory=dict)
     pdf_page_size: str = "A4"
     pdf_orientation: str = "landscape"
-    pdf_fit: str = "auto"
+    pdf_fit: str = "contain"
     pdf_margin: float = 10
     include_tags: tuple[str, ...] = ()
     exclude_tags: tuple[str, ...] = ()
