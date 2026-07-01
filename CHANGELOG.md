@@ -20,6 +20,31 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.17.0 — 2026-07-01
+
+Additive — forge's whole-tree pre-commit steps become configurable: a repo can
+now exclude vendored / generated Python it does not author from
+`docstring_verification` and `test_naming_check`, and `--scope all` scopes to
+the declared source tree. No consumer action required.
+
+### Features
+- **Unified `[tool.forge].exclude` + source-tree scoping for whole-tree steps
+  (#83).** The file-selecting steps `docstring_verification` and
+  `test_naming_check` now (1) scope `--scope all` to `[tool.forge].source_dirs`
+  / `test_dirs` (test-naming uses `test_dirs` only) so "whole tree" means the
+  *source* tree — aligning them with ruff / api-digest / coverage — and (2)
+  honor a new repo-wide `[tool.forge].exclude` glob list (fnmatch + bare-dir
+  prefix) for paths inside the source roots you still want skipped. The dead
+  hardcoded `EXCLUDED_PATHS` is removed; a broad-wildcard footgun note is
+  documented. Surfaced by `forge-config --list`.
+
+### Fixes
+- **`forge-config --list` now lists the `[tool.forge.smart_test].*` keys.**
+  The seven smart-test config keys (`precommit_depth`, `blocking`, `paths`,
+  `follow_mock_patches`, `coverage_validate`, `coverage_json`,
+  `commit_directive_re`) were read but absent from the config surface report;
+  now declared (#83).
+
 ## v2.16.0 — 2026-07-01
 
 Additive — `forge-gen-c4` gains **vector PDF export**, and the offline HTML it
@@ -93,6 +118,31 @@ The DSL / README / `--format mermaid` output is unchanged.
   html`/`pdf` output, so it produces no empty tab or blank PDF page; containers
   with components are unchanged.
 
+## v2.15.0 — 2026-06-30
+
+Additive — a new opt-in `forge-smart-test` CLI + `/forge:smart-test` skill +
+a self-skipping pre-commit step; no consumer action required.
+
+### Features
+- **`forge-smart-test` — change-driven test selection by import depth.**
+  Selects only the tests a change set affects (via the `forge.import_graph`
+  reverse import graph) and runs them in escalating depth tiers
+  (`0`/`1`/`2`/`full`) with fail-fast, writing `code_health/smart_test.log`.
+  Ships the `/forge:smart-test` skill and an **opt-in**, self-skipping
+  `smart_test` pre-commit step (`[tool.forge.smart_test].precommit_depth`).
+  Opt-in extensions widen selection to a safe superset for mock- and
+  runtime-coupled suites: `follow_mock_patches` (treat `mock.patch` string
+  targets as edges) and `coverage_validate` + `--coverage-json` (union tests
+  whose coverage contexts touch a changed line). `--from-commit-message`
+  drives the tier from a `[depth-N]`/`[full]` commit directive. Depth model
+  and trade-offs in FOUNDATION §17 (#8).
+
+### Tooling
+- **`/pr` + `pr-manager` base-sync gate.** PR finalization now refuses a PR
+  that is behind or conflicting with its base (mergeable / behind-count
+  check) — a green CI run on a stale base no longer reads as ready. Surfaces
+  the state; never silently merges.
+
 ## v2.14.0 — 2026-06-30
 
 Additive — three new pre-commit steps. Two self-skip unless their artifact
@@ -125,6 +175,9 @@ command, so no consumer action is required.
 - Relocate the git re-stage helper from `fix_ruff` to
   `git_utils.stage_modified_paths` (public) so both the ruff step and the new
   `regen_docs` step share one git-add-back implementation.
+- Extract the shared AST import-scanning primitives into `forge.import_graph`,
+  reused by `forge-gen-c4` and `forge-audit-deps` — internal; folds the
+  v2.13.1 patch into this release (#126).
 
 ## v2.13.0 — 2026-06-26
 
