@@ -445,6 +445,7 @@ you only set a key to deviate. Unknown keys are ignored. Lives under
 | `cycle_breaking_strategy` | _unset_ | `elk.cycleBreakingStrategy` | ELK cycle-breaking (e.g. `GREEDY_MODEL_ORDER`). |
 | `include_tags` | _unset_ | _(HTML/PDF view filter)_ | When set, the HTML/PDF views keep only elements carrying one of these tags. The DSL, README block, and `--format mermaid` are canonical and unaffected. |
 | `exclude_tags` | _unset_ | _(HTML/PDF view filter)_ | The HTML/PDF views drop elements carrying any of these tags (applied after `include_tags`). The DSL / README / `--format mermaid` are unaffected. |
+| `route_views` | _unset_ | _(HTML/PDF extra tabs)_ | List of component names; each adds one extra HTML/PDF tab scoped to that component and the components one edge hop away — isolating a single relationship path out of a dense Container view. A name matching no connected component warns and is skipped. Unset adds no tab (canonical view set unchanged). |
 
 ```toml
 [tool.forge.c4.render]
