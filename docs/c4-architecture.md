@@ -102,6 +102,7 @@ Mirrors every other `[tool.forge.*]` tool — read via the canonical
 system = "Forge"
 description = "Python CI/CD & code-quality foundation"
 output = "docs/architecture.dsl"   # default
+# system_technology = "Python platform"  # System-Context box label; unset → "Software System"
 
 # External actors (C4 "person") and systems — the System Context level.
 [[tool.forge.c4.person]]
@@ -311,6 +312,19 @@ while it stays in `c4.toml`), `tags` (with `[tool.forge.c4.render].include_tags`
 view — containers inside the system boundary, externals beside it — via nested
 Mermaid subgraphs). All three are additive: with nothing flagged the output is
 byte-identical.
+
+### Route views (isolating one relationship path)
+
+When a Container view is too dense to follow a single flow,
+`[tool.forge.c4.render].route_views` names one or more components; each adds an
+extra HTML/PDF tab scoped to that component plus the components one edge hop
+away — a focused sub-view of one relationship path rather than the whole
+container. Scoping honours the Component view's edge-source mode (a
+`declared`-mode model never pulls in an import-only neighbour), and a name that
+matches no connected component warns and is skipped. Like the mechanisms above
+it is per-view-only (the DSL / README / `--format mermaid` stay canonical) and
+adds no tab when unset. See [`configuration.md`](configuration.md) for the field
+reference.
 
 ## 6. Why this fits forge's existing patterns
 

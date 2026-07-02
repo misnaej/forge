@@ -456,6 +456,12 @@ class RenderConfig:
         exclude_tags: the rendered **HTML/PDF views** drop elements carrying any
             of these tags (applied after ``include_tags``). The DSL / README /
             ``--format mermaid`` are unaffected.
+        route_views: names of components to generate a per-route sub-view for.
+            Each adds one extra HTML/PDF tab scoped to that component and the
+            components one edge hop away — isolating a single relationship path
+            out of a dense Container view. Empty (default) adds no tab, so the
+            canonical view set is unchanged. A name matching no connected
+            component warns and is skipped.
     """
 
     wrapping_width: int = 220
@@ -481,6 +487,7 @@ class RenderConfig:
     pdf_margin: float = 10
     include_tags: tuple[str, ...] = ()
     exclude_tags: tuple[str, ...] = ()
+    route_views: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -491,6 +498,8 @@ class C4Config:
         system: System name (System Context level).
         description: One-line system description.
         output: Repo-relative path for the emitted DSL.
+        system_technology: Technology label for the System-Context box; empty
+            keeps the C4 default ``"Software System"`` (byte-identical output).
         persons: External actors.
         externals: External software systems.
         containers: Deployable units. Each component attaches to the
@@ -516,6 +525,7 @@ class C4Config:
     system: str
     description: str
     output: str
+    system_technology: str = ""
     persons: tuple[Person, ...] = ()
     externals: tuple[External, ...] = ()
     containers: tuple[Container, ...] = ()
@@ -760,10 +770,10 @@ def _parse_render_config(section: dict) -> RenderConfig:
     kwargs = {key: value for key, value in raw.items() if key in known}
     if not isinstance(kwargs.get("theme_colors"), dict):
         kwargs.pop("theme_colors", None)
-    for tag_key in ("include_tags", "exclude_tags"):
-        value = kwargs.get(tag_key)
+    for list_key in ("include_tags", "exclude_tags", "route_views"):
+        value = kwargs.get(list_key)
         if value is not None:
-            kwargs[tag_key] = (
+            kwargs[list_key] = (
                 tuple(t for t in value if isinstance(t, str))
                 if isinstance(value, list)
                 else ()
@@ -836,6 +846,7 @@ def load_c4_config(root: Path) -> C4Config | None:
         system=section["system"],
         description=section.get("description", ""),
         output=section.get("output", DEFAULT_OUTPUT),
+        system_technology=section.get("system_technology", ""),
         persons=persons,
         externals=externals,
         containers=containers,
@@ -1640,7 +1651,10 @@ def _render_mermaid_system_context(config: C4Config) -> str:
     lines = [f"graph {config.direction}"]
     lines += _actors_subgraph(config, person_ids, alloc)
     box_label = _mermaid_box(
-        config.system, "Software System", config.description, markdown=True
+        config.system,
+        config.system_technology or "Software System",
+        config.description,
+        markdown=True,
     )
     lines.append(f'    {sys_id}("{box_label}")')
     lines += [
@@ -2779,6 +2793,67 @@ def _emit_mermaid(
     return 0
 
 
+def _route_view(
+    config: C4Config, edges: set[tuple[str, str]], focus: str
+) -> str | None:
+    """Render a component graph scoped to one element and its direct neighbours.
+
+    Isolates a single relationship path out of a dense Container view: keeps the
+    focus component plus every component one edge hop away (either direction),
+    drops persons / externals, and keeps only the containers that still own a
+    kept component. Reuses :func:`render_mermaid` on the pruned model. Adjacency
+    honours the Component view's edge-source mode (``component_edges`` falling
+    back to ``edges``): under a ``"declared"`` mode, import-derived edges neither
+    scope the view nor render, so a neighbour is pulled in only when an edge to
+    it will actually be drawn — no orphan boxes.
+
+    Args:
+        config: The (already tag-filtered) model skeleton.
+        edges: Derived component-to-component edges for the visible set.
+        focus: Component display name the sub-view centres on.
+
+    Returns:
+        Deterministic Mermaid source, or ``None`` when *focus* names no component
+        that participates in a scoped edge (nothing to route).
+    """
+    component_mode = config.component_edges or config.edges
+    include_derived = _includes_derived(component_mode)
+    adjacency = {(r.source, r.destination) for r in config.relationships}
+    if include_derived:
+        adjacency |= set(edges)
+    if not any(focus in pair for pair in adjacency):
+        return None
+    keep = (
+        {focus}
+        | {dst for src, dst in adjacency if src == focus}
+        | {src for src, dst in adjacency if dst == focus}
+    )
+    components = tuple(c for c in config.components if c.name in keep)
+    if not components:
+        return None
+    owner = _component_owner(config)
+    kept_containers = {owner.get(c.name) for c in components}
+    containers = tuple(c for c in config.containers if c.name in kept_containers)
+    kept_edges = (
+        {(src, dst) for src, dst in edges if src in keep and dst in keep}
+        if include_derived
+        else set()
+    )
+    relationships = tuple(
+        r for r in config.relationships if r.source in keep and r.destination in keep
+    )
+    scoped = replace(
+        config,
+        persons=(),
+        externals=(),
+        containers=containers,
+        components=components,
+        relationships=relationships,
+        edges=component_mode,
+    )
+    return render_mermaid(scoped, kept_edges)
+
+
 def _build_views(
     config: C4Config, edges: set[tuple[str, str]]
 ) -> list[tuple[str, str]]:
@@ -2787,7 +2862,8 @@ def _build_views(
     Single source of truth for the view set the HTML and PDF formats both render:
     System Context, Containers, then one Component view per container that *owns*
     components — an empty container (e.g. an infrastructure unit) is skipped so it
-    produces no blank tab/page — honouring each view's edge-source mode.
+    produces no blank tab/page — honouring each view's edge-source mode. Any
+    ``render.route_views`` add a trailing per-route sub-view each.
 
     Args:
         config: The model skeleton.
@@ -2827,6 +2903,14 @@ def _build_views(
         for idx, container in enumerate(config.containers)
         if _components_for_container(config, container, idx)
     ]
+    for focus in config.render.route_views:
+        source = _route_view(config, edges, focus)
+        if source is None:
+            logger.warning(
+                "route_views: %r matches no connected component; skipped", focus
+            )
+            continue
+        views.append((f"{focus} — Route", source))
     return views
 
 
