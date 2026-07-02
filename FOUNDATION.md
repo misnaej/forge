@@ -373,6 +373,24 @@ Branch prefixes: `feat/`, `fix/`, `refactor/`, `test/`, `docs/`, `chore/`.
 After plan mode, verify branch with `git branch --show-current` before editing.
 **Never start work from stale main.**
 
+### A new request mid-branch — confirm, don't reflex-split
+
+When you're already on a feature branch and the user asks for something that
+does **not** obviously fit the branch's current work *and* is not a
+continuation of the conversation, pause before creating anything:
+
+1. **Remind them what's in flight** on the current branch (and its open PR),
+   so switching focus is a conscious choice, not an accident.
+2. **Confirm** they want to work on the new thing now.
+3. If yes, **ask whether it should be its own branch** — but **default to the
+   same branch** when it is a small, quick change.
+
+This is a deliberate tradeoff: **favor quick development over heavy
+branch/PR ceremony.** Do not silently open a new branch/PR for a small ask —
+that fragments the work and multiplies release overhead. Reserve a separate
+branch for genuinely large or independently-releasable work (per the repo's
+PR-granularity rule). When unsure, stay on the current branch and ask.
+
 ### Commit messages
 
 - Max 50 words.
