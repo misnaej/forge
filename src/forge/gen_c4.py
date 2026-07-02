@@ -900,6 +900,14 @@ def _visible_config(
     inc, exc = set(include_tags), set(exclude_tags)
 
     def shown(elem: Person | External | Container | Component) -> bool:
+        """Check if element is active, visible, and matches tag filters.
+
+        Args:
+            elem: The element to filter.
+
+        Returns:
+            True if the element passes all filters.
+        """
         if not elem.active or elem.hidden:
             return False
         etags = set(elem.tags)
