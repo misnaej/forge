@@ -28,7 +28,9 @@ from forge.gen_c4 import (
     Relationship,
     RenderConfig,
     _build_views,
+    _check_strict_coverage,
     _copy_vendored_mermaid,
+    _dead_prefixes,
     _derive_container_edges,
     _edge_endpoints,
     _emit_pdf,
@@ -53,6 +55,7 @@ from forge.gen_c4 import (
     _resolve_edge_mode,
     _resolve_endpoint,
     _resolve_layout,
+    _route_view,
     _slug,
     _under_prefix,
     _visibility_fields,
@@ -413,6 +416,161 @@ def test_main_writes_then_checks_in_sync(
 
     assert main() == 0
     assert (tmp_path / "docs" / "architecture.dsl").is_file()
+
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4", "--check"])
+    assert main() == 0
+
+
+# --- strict_coverage gate (issue #132) ------------------------------------
+
+
+def test_dead_prefixes_flags_prefix_matching_no_module() -> None:
+    """A declared prefix matching no module is reported; live ones are not."""
+    components = (
+        Component("Core", ("demo.core",)),
+        Component("Ghost", ("demo.ghost",)),
+    )
+    dead = _dead_prefixes(components, ["demo.core", "demo.io"])
+    assert dead == [("Ghost", "demo.ghost")]
+
+
+def test_dead_prefixes_empty_when_every_prefix_lives() -> None:
+    """No dead prefixes when each prefix matches at least one module."""
+    components = (Component("Core", ("demo.core",)), Component("IO", ("demo.io",)))
+    assert _dead_prefixes(components, ["demo.core", "demo.io.reader"]) == []
+
+
+def test_check_strict_coverage_flags_unmapped_and_dead() -> None:
+    """Both an unmapped module and a dead prefix drive a non-zero return."""
+    components = (
+        Component("Core", ("demo.core",)),
+        Component("Ghost", ("demo.ghost",)),
+    )
+    cfg = _config_with_components(components)
+    assert _check_strict_coverage(cfg, ["demo.core", "demo.io"], ["demo.io"]) == 1
+
+
+def test_check_strict_coverage_clean_returns_zero() -> None:
+    """A fully-mapped model with no dead prefix returns 0."""
+    cfg = _config_with_components((Component("Core", ("demo.core",)),))
+    assert _check_strict_coverage(cfg, ["demo.core"], []) == 0
+
+
+def _config_with_components(components: tuple[Component, ...]) -> C4Config:
+    """Build a minimal C4Config carrying *components* for coverage tests.
+
+    Args:
+        components: Components to attach to the config.
+
+    Returns:
+        A C4Config with the given components and otherwise-empty model.
+    """
+    return C4Config(
+        system="Demo",
+        description="",
+        output="docs/architecture.dsl",
+        components=components,
+    )
+
+
+def _strict_repo(root: Path, model: str) -> None:
+    """Write a two-module demo repo (``demo.core`` + ``demo.io``) with *model*.
+
+    Args:
+        root: Temporary repo root.
+        model: The c4.toml model text to write.
+    """
+    pkg = root / "src" / "demo"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "core.py").write_text("from demo import io\n")
+    (pkg / "io.py").write_text("X = 1\n")
+    _write_pyproject(
+        root,
+        '[tool.forge]\nsource_dirs = ["src"]\n\n[tool.forge.c4]\nconfig = "c4.toml"\n',
+    )
+    (root / "c4.toml").write_text(model)
+
+
+_STRICT_HEADER = 'system = "Demo"\noutput = "docs/architecture.dsl"\n'
+_STRICT_CONTAINER = '\n[[container]]\nname = "app"\n'
+
+
+def test_main_check_strict_coverage_fails_on_unmapped_module(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """strict_coverage=true + an unmapped module makes --check exit 1, naming it.
+
+    SCENARIO: Core maps demo.core; demo.io is left unmapped.
+    MOCK SETUP: repo_root patched to tmp_path; DSL written first, then --check.
+    EXPECTED BEHAVIOR: --check returns 1 and the error names demo.io.
+    """
+    model = (
+        _STRICT_HEADER
+        + "strict_coverage = true\n"
+        + _STRICT_CONTAINER
+        + '\n[components]\n"Core" = ["demo.core"]\n'
+    )
+    _strict_repo(tmp_path, model)
+    monkeypatch.setattr("forge.gen_c4.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4"])
+    assert main() == 0  # write still succeeds (unmapped only warns at write)
+
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4", "--check"])
+    with caplog.at_level(logging.ERROR):
+        assert main() == 1
+    assert any("demo.io" in r.getMessage() for r in caplog.records)
+
+
+def test_main_check_strict_coverage_fails_on_dead_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """strict_coverage=true + a dead prefix makes --check exit 1, naming it.
+
+    SCENARIO: every real module is mapped, but a Ghost component declares the
+    non-existent prefix demo.ghost.
+    EXPECTED BEHAVIOR: --check returns 1 and the error names Ghost + demo.ghost.
+    """
+    model = (
+        _STRICT_HEADER
+        + "strict_coverage = true\n"
+        + _STRICT_CONTAINER
+        + '\n[components]\n"Core" = ["demo.core"]\n"IO" = ["demo.io"]\n'
+        '"Ghost" = ["demo.ghost"]\n'
+    )
+    _strict_repo(tmp_path, model)
+    monkeypatch.setattr("forge.gen_c4.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4"])
+    assert main() == 0
+
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4", "--check"])
+    with caplog.at_level(logging.ERROR):
+        assert main() == 1
+    messages = " ".join(r.getMessage() for r in caplog.records)
+    assert "Ghost" in messages
+    assert "demo.ghost" in messages
+
+
+def test_main_check_without_strict_coverage_only_warns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flag absent → an unmapped module warns but --check still passes.
+
+    EXPECTED BEHAVIOR: with demo.io unmapped and no strict_coverage, --check
+    exits 0 (back-compatible warn-only behaviour).
+    """
+    model = (
+        _STRICT_HEADER + _STRICT_CONTAINER + '\n[components]\n"Core" = ["demo.core"]\n'
+    )
+    _strict_repo(tmp_path, model)
+    monkeypatch.setattr("forge.gen_c4.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4"])
+    assert main() == 0
 
     monkeypatch.setattr("sys.argv", ["forge-gen-c4", "--check"])
     assert main() == 0
@@ -1706,6 +1864,7 @@ def test_parse_render_config_absent_render_key_returns_defaults() -> None:
     assert cfg.theme_colors == {}
     assert cfg.theme == "neutral"
     assert cfg.font_size is None
+    assert cfg.route_views == ()
 
 
 def test_parse_render_config_populated_keys_override_defaults() -> None:
@@ -2834,3 +2993,319 @@ def test_render_html_uses_unique_render_ids_not_run() -> None:
     assert "mermaid.run().then" not in page  # no run()-based call
     # The ELK loader is shared with the per-view page (one source of truth).
     assert "window.elkLayouts" in page
+
+
+# --- #153: system_technology ---
+
+
+def test_c4_config_system_technology_defaults_empty() -> None:
+    """C4Config.system_technology defaults to the empty string."""
+    config = C4Config(system="S", description="", output="")
+    assert config.system_technology == ""
+
+
+def test_load_c4_config_parses_system_technology(tmp_path: Path) -> None:
+    """load_c4_config reads system_technology from the model table."""
+    toml_text = 'system = "Demo"\nsystem_technology = "AWS Lambda"\n'
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(toml_text)
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    assert config.system_technology == "AWS Lambda"
+
+
+def test_load_c4_config_system_technology_absent_defaults_empty(tmp_path: Path) -> None:
+    """load_c4_config defaults system_technology to empty when the key is absent."""
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text('system = "Demo"\n')
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    assert config.system_technology == ""
+
+
+def test_default_and_explicit_software_system_render_identically() -> None:
+    """Omitting system_technology is byte-identical to naming 'Software System'."""
+    config = C4Config(system="Demo", description="A demo", output="")
+    explicit = dataclasses.replace(config, system_technology="Software System")
+    assert _render_mermaid_system_context(config) == _render_mermaid_system_context(
+        explicit
+    )
+
+
+def test_render_mermaid_system_context_uses_configured_technology_when_set() -> None:
+    """A configured system_technology overrides the 'Software System' default label."""
+    config = C4Config(
+        system="Demo",
+        description="",
+        output="",
+        system_technology="Serverless Platform",
+    )
+    source = _render_mermaid_system_context(config)
+    assert "[Serverless Platform]" in source
+    assert "[Software System]" not in source
+
+
+def test_system_technology_is_html_escaped_in_system_context() -> None:
+    """A configured system_technology is HTML-escaped like every other label."""
+    config = C4Config(
+        system="Demo",
+        description="",
+        output="",
+        system_technology="<script>&danger",
+    )
+    source = _render_mermaid_system_context(config)
+    assert "<script>" not in source
+    assert "&lt;script&gt;&amp;danger" in source
+
+
+# --- #153: RenderConfig.route_views / _parse_render_config coercion ---
+
+
+def test_parse_render_config_route_views_list_of_str_coerced_to_tuple() -> None:
+    """A list of strings for route_views coerces to a tuple, preserving order."""
+    cfg = _parse_render_config({"render": {"route_views": ["API", "Worker"]}})
+    assert cfg.route_views == ("API", "Worker")
+
+
+def test_parse_render_config_route_views_non_list_value_becomes_empty_tuple() -> None:
+    """A non-list route_views value coerces to an empty tuple rather than raising."""
+    cfg = _parse_render_config({"render": {"route_views": "not-a-list"}})
+    assert cfg.route_views == ()
+
+
+def test_parse_render_config_route_views_filters_non_str_entries() -> None:
+    """Non-string entries in a route_views list are dropped, not coerced."""
+    cfg = _parse_render_config({"render": {"route_views": ["API", 42, None]}})
+    assert cfg.route_views == ("API",)
+
+
+def test_load_c4_config_parses_route_views(tmp_path: Path) -> None:
+    """load_c4_config reads render.route_views into config.render.route_views."""
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(
+        'system = "S"\n[render]\nroute_views = ["Core"]\n'
+    )
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    assert config.render.route_views == ("Core",)
+
+
+# --- #153: _route_view ---
+
+
+def test_route_view_scopes_to_focus_and_one_hop_neighbours() -> None:
+    """_route_view keeps focus and direct neighbours, dropping two-hop nodes."""
+    config = _two_container_config(
+        (
+            Component("A", ("demo.a",), container="Applications"),
+            Component("B", ("demo.b",), container="Applications"),
+            Component("C", ("demo.c",), container="Domain libraries"),
+            Component("D", ("demo.d",), container="Domain libraries"),
+        )
+    )
+    edges = {("A", "B"), ("B", "C"), ("C", "D")}
+    source = _route_view(config, edges, "B")
+    assert source is not None
+    assert 'a["' in source
+    assert 'b["' in source
+    assert 'c["' in source
+    assert 'd["' not in source
+
+
+def test_route_view_none_when_focus_participates_in_no_edge() -> None:
+    """_route_view returns None when focus is not an edge endpoint."""
+    config = _two_container_config(
+        (
+            Component("Lonely", ("demo.lonely",), container="Applications"),
+            Component("Other", ("demo.other",), container="Applications"),
+        )
+    )
+    assert _route_view(config, set(), "Lonely") is None
+
+
+def test_route_view_uses_relationships_union_with_edges() -> None:
+    """_route_view considers declared relationships alongside derived edges."""
+    config = _two_container_config(
+        (
+            Component("B", ("demo.b",), container="Applications"),
+            Component("C", ("demo.c",), container="Domain libraries"),
+        )
+    )
+    config = dataclasses.replace(
+        config, relationships=(Relationship("B", "C", "calls"),)
+    )
+    source = _route_view(config, set(), "B")
+    assert source is not None
+    assert 'b["' in source
+    assert 'c["' in source
+
+
+def test_route_view_declared_mode_ignores_import_only_neighbour() -> None:
+    """_route_view honours the Component edge-source mode when scoping.
+
+    Under ``edges="declared"`` a purely import-derived edge is not drawn, so it
+    must not pull a neighbour into the route view either (else the box would be
+    an orphan). The same edge under ``"imports"`` mode does scope the view.
+    """
+    config = _two_container_config(
+        (
+            Component("B", ("demo.b",), container="Applications"),
+            Component("C", ("demo.c",), container="Domain libraries"),
+        )
+    )
+    declared = dataclasses.replace(config, edges="declared")
+    # B and C are connected only by a derived import edge, never declared.
+    assert _route_view(declared, {("B", "C")}, "B") is None
+    imports = dataclasses.replace(config, edges="imports")
+    source = _route_view(imports, {("B", "C")}, "B")
+    assert source is not None
+    assert 'c["' in source
+
+
+def test_route_view_drops_persons_and_externals() -> None:
+    """_route_view strips persons/externals even when focus/neighbour are populated."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="",
+        persons=(Person("Dev", "", "uses"),),
+        externals=(External("GitHub", "", "uses"),),
+        containers=(Container("App", "", ""),),
+        components=(
+            Component("A", ("demo.a",), container="App"),
+            Component("B", ("demo.b",), container="App"),
+        ),
+    )
+    source = _route_view(config, {("A", "B")}, "A")
+    assert source is not None
+    # Focus + neighbour still render; only the person/external are stripped.
+    assert 'a["' in source
+    assert 'b["' in source
+    assert "Dev" not in source
+    assert "GitHub" not in source
+
+
+def test_route_view_none_when_keep_set_has_no_declared_component() -> None:
+    """_route_view returns None when the focus edge names no declared component.
+
+    Distinct from the no-edge guard: here ``focus`` participates in an edge, but
+    neither endpoint is a declared ``Component`` (a stale/dangling edge), so the
+    keep-set filters down to zero components and there is nothing to render.
+    """
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="",
+        containers=(Container("App", "", ""),),
+        components=(Component("A", ("demo.a",), container="App"),),
+    )
+    assert _route_view(config, {("Ghost", "Phantom")}, "Ghost") is None
+
+
+def test_route_view_keeps_only_containers_owning_kept_components() -> None:
+    """_route_view drops any container that owns none of the kept components."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="",
+        containers=(
+            Container("One", "", ""),
+            Container("Two", "", ""),
+            Container("Three", "", ""),
+        ),
+        components=(
+            Component("A", ("demo.a",), container="One"),
+            Component("B", ("demo.b",), container="Two"),
+            Component("C", ("demo.c",), container="Three"),
+        ),
+    )
+    source = _route_view(config, {("A", "B")}, "A")
+    assert source is not None
+    assert 'subgraph one["One"]' in source
+    assert 'subgraph two["Two"]' in source
+    assert 'subgraph three["Three"]' not in source
+
+
+# --- #153: _build_views route_views integration ---
+
+
+def test_build_views_appends_route_view_tab_per_configured_name() -> None:
+    """_build_views appends '{name} — Route' tab per route_views entry."""
+    config = _two_container_config(
+        (
+            Component("A", ("demo.a",), container="Applications"),
+            Component("B", ("demo.b",), container="Domain libraries"),
+        )
+    )
+    config = dataclasses.replace(config, render=RenderConfig(route_views=("A",)))
+    labels = [label for label, _source in _build_views(config, {("A", "B")})]
+    assert labels == [
+        "System Context",
+        "Containers",
+        "Applications Components",
+        "Domain libraries Components",
+        "A — Route",
+    ]
+
+
+def test_build_views_route_view_unknown_name_logs_warning_and_is_skipped(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unmatched route_views name warns and adds no tab.
+
+    SCENARIO: route_views names a component with no connected edge or
+        relationship ("Ghost").
+    MOCK SETUP: none — caplog captures the module logger directly.
+    EXPECTED BEHAVIOR: exactly one WARNING mentioning "Ghost"; no "Ghost — Route"
+        tab is appended; the base view labels are unaffected.
+    """
+    config = _two_container_config(
+        (
+            Component("A", ("demo.a",), container="Applications"),
+            Component("Ghost", ("demo.ghost",), container="Domain libraries"),
+        )
+    )
+    config = dataclasses.replace(config, render=RenderConfig(route_views=("Ghost",)))
+    with caplog.at_level(logging.WARNING, logger="forge.gen_c4"):
+        views = _build_views(config, set())
+    labels = [label for label, _source in views]
+    assert len(caplog.records) == 1
+    assert "Ghost" in caplog.records[0].getMessage()
+    assert "Ghost — Route" not in labels
+    assert labels == [
+        "System Context",
+        "Containers",
+        "Applications Components",
+        "Domain libraries Components",
+    ]
+
+
+def test_build_views_multiple_route_views_preserve_config_order() -> None:
+    """Multiple route_views entries append tabs in the configured order."""
+    config = _two_container_config(
+        (
+            Component("A", ("demo.a",), container="Applications"),
+            Component("B", ("demo.b",), container="Domain libraries"),
+        )
+    )
+    config = dataclasses.replace(config, render=RenderConfig(route_views=("B", "A")))
+    labels = [label for label, _source in _build_views(config, {("A", "B")})]
+    assert labels[-2:] == ["B — Route", "A — Route"]
+
+
+def test_build_views_route_views_empty_default_adds_no_tabs() -> None:
+    """The default empty route_views adds no extra tabs."""
+    config = _two_container_config(
+        (
+            Component("A", ("demo.a",), container="Applications"),
+            Component("B", ("demo.b",), container="Domain libraries"),
+        )
+    )
+    labels = [label for label, _source in _build_views(config, {("A", "B")})]
+    assert not any(label.endswith(" — Route") for label in labels)
+    assert labels == [
+        "System Context",
+        "Containers",
+        "Applications Components",
+        "Domain libraries Components",
+    ]

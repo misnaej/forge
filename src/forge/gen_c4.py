@@ -456,6 +456,12 @@ class RenderConfig:
         exclude_tags: the rendered **HTML/PDF views** drop elements carrying any
             of these tags (applied after ``include_tags``). The DSL / README /
             ``--format mermaid`` are unaffected.
+        route_views: names of components to generate a per-route sub-view for.
+            Each adds one extra HTML/PDF tab scoped to that component and the
+            components one edge hop away — isolating a single relationship path
+            out of a dense Container view. Empty (default) adds no tab, so the
+            canonical view set is unchanged. A name matching no connected
+            component warns and is skipped.
     """
 
     wrapping_width: int = 220
@@ -481,6 +487,7 @@ class RenderConfig:
     pdf_margin: float = 10
     include_tags: tuple[str, ...] = ()
     exclude_tags: tuple[str, ...] = ()
+    route_views: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -491,6 +498,8 @@ class C4Config:
         system: System name (System Context level).
         description: One-line system description.
         output: Repo-relative path for the emitted DSL.
+        system_technology: Technology label for the System-Context box; empty
+            keeps the C4 default ``"Software System"`` (byte-identical output).
         persons: External actors.
         externals: External software systems.
         containers: Deployable units. Each component attaches to the
@@ -511,11 +520,17 @@ class C4Config:
             ``"LR"`` (left-to-right, default) or ``"TB"`` (top-to-bottom).
         render: Offline-HTML rendering knobs from ``[tool.forge.c4.render]``;
             defaults reproduce the shipped look (see :class:`RenderConfig`).
+        strict_coverage: When ``True``, ``forge-gen-c4 --check`` fails on any
+            unmapped module or any declared component prefix matching zero
+            real modules — turning the component table into an "every module
+            accounted for" gate. Default ``False`` keeps the warn-only
+            behaviour (a non-exhaustive map stays valid).
     """
 
     system: str
     description: str
     output: str
+    system_technology: str = ""
     persons: tuple[Person, ...] = ()
     externals: tuple[External, ...] = ()
     containers: tuple[Container, ...] = ()
@@ -527,6 +542,7 @@ class C4Config:
     component_edges: str = ""
     direction: str = "LR"
     render: RenderConfig = field(default_factory=RenderConfig)
+    strict_coverage: bool = False
 
 
 @dataclass(frozen=True)
@@ -760,10 +776,10 @@ def _parse_render_config(section: dict) -> RenderConfig:
     kwargs = {key: value for key, value in raw.items() if key in known}
     if not isinstance(kwargs.get("theme_colors"), dict):
         kwargs.pop("theme_colors", None)
-    for tag_key in ("include_tags", "exclude_tags"):
-        value = kwargs.get(tag_key)
+    for list_key in ("include_tags", "exclude_tags", "route_views"):
+        value = kwargs.get(list_key)
         if value is not None:
-            kwargs[tag_key] = (
+            kwargs[list_key] = (
                 tuple(t for t in value if isinstance(t, str))
                 if isinstance(value, list)
                 else ()
@@ -836,6 +852,7 @@ def load_c4_config(root: Path) -> C4Config | None:
         system=section["system"],
         description=section.get("description", ""),
         output=section.get("output", DEFAULT_OUTPUT),
+        system_technology=section.get("system_technology", ""),
         persons=persons,
         externals=externals,
         containers=containers,
@@ -847,6 +864,7 @@ def load_c4_config(root: Path) -> C4Config | None:
         component_edges=_resolve_edge_mode(section.get("component_edges", edges)),
         direction=direction,
         render=_parse_render_config(section),
+        strict_coverage=bool(section.get("strict_coverage", False)),
     )
 
 
@@ -882,6 +900,14 @@ def _visible_config(
     inc, exc = set(include_tags), set(exclude_tags)
 
     def shown(elem: Person | External | Container | Component) -> bool:
+        """Check if element is active, visible, and matches tag filters.
+
+        Args:
+            elem: The element to filter.
+
+        Returns:
+            True if the element passes all filters.
+        """
         if not elem.active or elem.hidden:
             return False
         etags = set(elem.tags)
@@ -1352,8 +1378,8 @@ def _render_views(
 def build_model(
     root: Path,
     roots: list[Path],
-) -> tuple[C4Config, set[tuple[str, str]], list[str]] | None:
-    """Assemble the C4 model: config, derived edges, and unmatched modules.
+) -> tuple[C4Config, set[tuple[str, str]], list[str], list[str]] | None:
+    """Assemble the C4 model: config, derived edges, unmatched + all modules.
 
     The shared seam behind every output format — it loads the human model
     skeleton and derives the component-to-component edges from the import
@@ -1365,7 +1391,9 @@ def build_model(
 
     Returns:
         Tuple of (config, derived component edges, sorted unmatched module
-        names), or ``None`` when C4 generation is not opted into.
+        names, sorted full discovered-module list), or ``None`` when C4
+        generation is not opted into. The full module list backs the
+        strict-coverage dead-prefix check (:func:`_check_strict_coverage`).
 
     Raises:
         ValueError: When the config is invalid (propagated from
@@ -1376,9 +1404,10 @@ def build_model(
     if config is None:
         return None
     modules, graph = build_module_graph(Scope.FULL, roots)
-    assigned, unmatched = assign_components(sorted(modules), config.components)
+    sorted_modules = sorted(modules)
+    assigned, unmatched = assign_components(sorted_modules, config.components)
     edges = derive_component_edges(graph, assigned)
-    return config, edges, unmatched
+    return config, edges, unmatched, sorted_modules
 
 
 def generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None:
@@ -1395,7 +1424,7 @@ def generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None:
     built = build_model(root, roots)
     if built is None:
         return None
-    config, edges, unmatched = built
+    config, edges, unmatched, _modules = built
     return render_dsl(config, edges), unmatched
 
 
@@ -1640,7 +1669,10 @@ def _render_mermaid_system_context(config: C4Config) -> str:
     lines = [f"graph {config.direction}"]
     lines += _actors_subgraph(config, person_ids, alloc)
     box_label = _mermaid_box(
-        config.system, "Software System", config.description, markdown=True
+        config.system,
+        config.system_technology or "Software System",
+        config.description,
+        markdown=True,
     )
     lines.append(f'    {sys_id}("{box_label}")')
     lines += [
@@ -2657,6 +2689,72 @@ def _warn_unmatched(unmatched: list[str]) -> None:
         )
 
 
+def _dead_prefixes(
+    components: tuple[Component, ...], modules: list[str]
+) -> list[tuple[str, str]]:
+    """Find declared component prefixes that match zero discovered modules.
+
+    The mirror of ``unmatched`` (modules with no component): here a prefix a
+    ``[[component]]`` declares — a typo or a since-deleted module — matches
+    nothing in the real import graph. Undetectable from rendered-text drift
+    (a dead prefix simply contributes no box), so it only surfaces under the
+    strict-coverage gate.
+
+    Args:
+        components: Declared components with their prefixes.
+        modules: All discovered module names (the import-graph universe).
+
+    Returns:
+        ``(component name, dead prefix)`` pairs in declaration order, one per
+        prefix matching no module.
+    """
+    return [
+        (comp.name, prefix)
+        for comp in components
+        for prefix in comp.prefixes
+        if not any(_under_prefix(module, prefix) for module in modules)
+    ]
+
+
+def _check_strict_coverage(
+    config: C4Config, modules: list[str], unmatched: list[str]
+) -> int:
+    """Fail ``--check`` on incomplete or dead component coverage.
+
+    Enforces the two gaps rendered-text drift cannot catch: a real module
+    mapped to no component (the map silently rots as modules are added), and
+    a declared prefix that matches no real module (a typo / dead prefix). Both
+    are logged as errors so the fix is actionable.
+
+    Args:
+        config: The loaded model (its ``components`` are validated).
+        modules: All discovered module names (the import-graph universe).
+        unmatched: Modules matching no component prefix.
+
+    Returns:
+        ``1`` when any unmapped module or dead prefix is found, else ``0``.
+    """
+    rc = 0
+    if unmatched:
+        logger.error(
+            "strict_coverage: %d module(s) map to no [[component]] and would "
+            "silently rot out of the map: %s",
+            len(unmatched),
+            ", ".join(unmatched),
+        )
+        rc = 1
+    dead = _dead_prefixes(config.components, modules)
+    if dead:
+        logger.error(
+            "strict_coverage: %d declared component prefix(es) match no real "
+            "module (typo or dead prefix): %s",
+            len(dead),
+            ", ".join(f"{name!r} → {prefix!r}" for name, prefix in dead),
+        )
+        rc = 1
+    return rc
+
+
 README_C4_START = "<!-- forge:c4:start -->"
 README_C4_END = "<!-- forge:c4:end -->"
 
@@ -2779,6 +2877,67 @@ def _emit_mermaid(
     return 0
 
 
+def _route_view(
+    config: C4Config, edges: set[tuple[str, str]], focus: str
+) -> str | None:
+    """Render a component graph scoped to one element and its direct neighbours.
+
+    Isolates a single relationship path out of a dense Container view: keeps the
+    focus component plus every component one edge hop away (either direction),
+    drops persons / externals, and keeps only the containers that still own a
+    kept component. Reuses :func:`render_mermaid` on the pruned model. Adjacency
+    honours the Component view's edge-source mode (``component_edges`` falling
+    back to ``edges``): under a ``"declared"`` mode, import-derived edges neither
+    scope the view nor render, so a neighbour is pulled in only when an edge to
+    it will actually be drawn — no orphan boxes.
+
+    Args:
+        config: The (already tag-filtered) model skeleton.
+        edges: Derived component-to-component edges for the visible set.
+        focus: Component display name the sub-view centres on.
+
+    Returns:
+        Deterministic Mermaid source, or ``None`` when *focus* names no component
+        that participates in a scoped edge (nothing to route).
+    """
+    component_mode = config.component_edges or config.edges
+    include_derived = _includes_derived(component_mode)
+    adjacency = {(r.source, r.destination) for r in config.relationships}
+    if include_derived:
+        adjacency |= set(edges)
+    if not any(focus in pair for pair in adjacency):
+        return None
+    keep = (
+        {focus}
+        | {dst for src, dst in adjacency if src == focus}
+        | {src for src, dst in adjacency if dst == focus}
+    )
+    components = tuple(c for c in config.components if c.name in keep)
+    if not components:
+        return None
+    owner = _component_owner(config)
+    kept_containers = {owner.get(c.name) for c in components}
+    containers = tuple(c for c in config.containers if c.name in kept_containers)
+    kept_edges = (
+        {(src, dst) for src, dst in edges if src in keep and dst in keep}
+        if include_derived
+        else set()
+    )
+    relationships = tuple(
+        r for r in config.relationships if r.source in keep and r.destination in keep
+    )
+    scoped = replace(
+        config,
+        persons=(),
+        externals=(),
+        containers=containers,
+        components=components,
+        relationships=relationships,
+        edges=component_mode,
+    )
+    return render_mermaid(scoped, kept_edges)
+
+
 def _build_views(
     config: C4Config, edges: set[tuple[str, str]]
 ) -> list[tuple[str, str]]:
@@ -2787,7 +2946,8 @@ def _build_views(
     Single source of truth for the view set the HTML and PDF formats both render:
     System Context, Containers, then one Component view per container that *owns*
     components — an empty container (e.g. an infrastructure unit) is skipped so it
-    produces no blank tab/page — honouring each view's edge-source mode.
+    produces no blank tab/page — honouring each view's edge-source mode. Any
+    ``render.route_views`` add a trailing per-route sub-view each.
 
     Args:
         config: The model skeleton.
@@ -2827,6 +2987,14 @@ def _build_views(
         for idx, container in enumerate(config.containers)
         if _components_for_container(config, container, idx)
     ]
+    for focus in config.render.route_views:
+        source = _route_view(config, edges, focus)
+        if source is None:
+            logger.warning(
+                "route_views: %r matches no connected component; skipped", focus
+            )
+            continue
+        views.append((f"{focus} — Route", source))
     return views
 
 
@@ -3236,7 +3404,9 @@ def main() -> int:
     Returns:
         Exit code: ``0`` on a successful write/print or in-sync check;
         ``1`` on drift, a missing artifact, absent ``[tool.forge.c4]``,
-        or an invalid model configuration (e.g. an unknown container name).
+        an invalid model configuration (e.g. an unknown container name),
+        or — under ``--check`` with ``strict_coverage`` enabled — an
+        unmapped module or a dead component prefix.
     """
     args = _parse_args()
     root = repo_root()
@@ -3251,20 +3421,31 @@ def main() -> int:
             "c4.toml) to enable C4 generation (see docs/c4-architecture.md).",
         )
         return 1
-    config, edges, unmatched = built
+    config, edges, unmatched, modules = built
     _warn_unmatched(unmatched)
+    # The strict-coverage gate is a --check-only concern and format-agnostic:
+    # it validates the model↔import-graph mapping, not any rendered artifact.
+    # Run it against the full (pre-visibility) module set so hidden elements
+    # still count toward "every module accounted for".
+    strict_rc = (
+        _check_strict_coverage(config, modules, unmatched)
+        if args.check and config.strict_coverage
+        else 0
+    )
     # active/hidden filtering is model-level — it slims every output (DSL,
     # README, mermaid, HTML, PDF). Tag filtering is view-level and applied per
     # view emitter, so the committed DSL stays canonical.
     config, edges = _visible_config(config, edges)
 
     if args.format == "mermaid":
-        return _emit_mermaid(root, config, edges, args.output)
-    if args.format == "html":
-        return _emit_html(root, config, edges, args)
-    if args.format == "pdf":
-        return _emit_pdf(root, config, edges, args)
-    return _emit_dsl(root, config, edges, args)
+        emit_rc = _emit_mermaid(root, config, edges, args.output)
+    elif args.format == "html":
+        emit_rc = _emit_html(root, config, edges, args)
+    elif args.format == "pdf":
+        emit_rc = _emit_pdf(root, config, edges, args)
+    else:
+        emit_rc = _emit_dsl(root, config, edges, args)
+    return max(strict_rc, emit_rc)
 
 
 def _parse_args() -> argparse.Namespace:

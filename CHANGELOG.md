@@ -20,6 +20,45 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.18.0 — 2026-07-02
+
+Additive — the `api-digest` and `c4` generators grow into a drift-checked,
+per-module responsibility map, the C4 render config gains display options, and
+the agent git-safety hooks are hardened against real bypasses. No consumer
+action required.
+
+### Features
+- **`forge-gen-api-digest` records each module's module-level docstring
+  (#131).** Every entry in `docs/api-digest.md` now shows its module's
+  docstring summary — its stated purpose — under the header (or a
+  `(no module docstring)` marker), and a docstring-only module (no top-level
+  symbols) now earns an entry instead of being silently dropped.
+- **`forge-gen-c4 --check` opt-in strict-coverage gate (#132).** Set
+  `[tool.forge.c4].strict_coverage = true` to make `--check` **fail** on any
+  module mapped to no `[[component]]`, or any declared component prefix
+  matching zero real modules (dead prefix). Default off — a non-exhaustive map
+  keeps today's warn-only behavior.
+- **C4 render display options (#156).** Two additive, opt-in
+  `[tool.forge.c4]` keys — a configurable System-Context `system_technology`
+  label and per-route filtered sub-views for dense Container/Component
+  diagrams. Byte-identical output when unset.
+- **`block_git_rebase` agent hook.** Blocks `git rebase` and `git pull
+  --rebase` / `-r` (no bypass). FOUNDATION §2 gains a NEVER-rebase rule and §6
+  a "confirm before splitting a mid-branch request" rule.
+
+### Fixes
+- **Hardened the agent git-safety hooks.** `block_force_push` now catches the
+  short `-f` / `-uf` cluster and `+`-prefixed force refspecs (not just
+  `--force`); and the command-matching anchor shared by `block_force_push`,
+  `block_raw_git`, and `block_git_rebase` no longer misses `git` behind an
+  inline `VAR=val` assignment, leading whitespace, or a `command` / `env`
+  wrapper.
+
+### Refactor
+- **`closest_known` promoted to `forge.import_graph` (#135).** Dedupes the
+  near-identical dotted-name resolver in `forge.audit.deps` and
+  `forge.smart_test.dependencies`. No behavior change.
+
 ## v2.17.0 — 2026-07-01
 
 Additive — forge's whole-tree pre-commit steps become configurable: a repo can

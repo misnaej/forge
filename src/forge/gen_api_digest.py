@@ -99,11 +99,14 @@ class ModuleDigest(NamedTuple):
         dotted: Dotted module path relative to the repo root with the
             source-root prefix kept (e.g. ``src/forge/doctor.py`` →
             ``forge.doctor``).
+        summary: First line of the module-level docstring — the module's
+            stated purpose — or an empty string when it has none.
         symbols: Top-level symbols in source order (public API and
             internal helpers).
     """
 
     dotted: str
+    summary: str
     symbols: tuple[Symbol, ...]
 
 
@@ -428,8 +431,11 @@ def build_digest(root: Path, roots: list[Path]) -> list[ModuleDigest]:
     """Build the per-module digest for every module under the roots.
 
     Modules that fail to parse, cannot be read, or resolve outside the
-    repo root are skipped with a warning. Modules with no top-level
-    symbols are omitted from the result.
+    repo root are skipped with a warning. A module is included when it has
+    top-level symbols **or** a module-level docstring — a docstring-only
+    module is the purest statement of a module's purpose, so it earns an
+    entry (header + summary) even with nothing to index. Only a module with
+    neither symbols nor a docstring is dropped.
 
     Args:
         root: Repository root directory.
@@ -446,9 +452,14 @@ def build_digest(root: Path, roots: list[Path]) -> list[ModuleDigest]:
             logger.warning("Skipping %s — could not parse (%s)", path, exc)
             continue
         symbols = extract_symbols(tree)
-        if symbols:
+        summary = _summary_line(tree)
+        if symbols or summary:
             digests.append(
-                ModuleDigest(dotted=_dotted_name(path, root), symbols=symbols),
+                ModuleDigest(
+                    dotted=_dotted_name(path, root),
+                    summary=summary,
+                    symbols=symbols,
+                ),
             )
     return sorted(digests, key=lambda d: d.dotted)
 
@@ -518,6 +529,9 @@ def render_digest(digests: list[ModuleDigest]) -> str:
     ]
     for digest in digests:
         lines.append(f"## `{digest.dotted}`")
+        lines.append("")
+        summary = digest.summary or "(no module docstring)"
+        lines.append(f"> _{summary}_")
         lines.append("")
         for symbol in digest.symbols:
             lines.extend(_render_symbol(symbol))
