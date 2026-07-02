@@ -19,7 +19,34 @@ from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
+    from collections.abc import Set as AbstractSet
     from pathlib import Path
+
+
+def closest_known(target: str, modules: AbstractSet[str]) -> str | None:
+    """Resolve an import *target* to the deepest known module that covers it.
+
+    The inverse consumer of :func:`extract_import_targets`'s ``(X, X.Y)``
+    dual-emit: ``from pkg.mod import name`` yields candidates ``pkg.mod.name``
+    and ``pkg.mod``; this walks the dotted name from longest to shortest and
+    returns the first that names a real module in *modules*. So an attribute
+    import collapses to its module (``pkg.mod``) and a submodule import
+    resolves to the submodule (``pkg.mod.name``).
+
+    Args:
+        target: A dotted import candidate.
+        modules: The set of known internal module names.
+
+    Returns:
+        The matching module name, or ``None`` when *target* is external
+        (no prefix of it names a known module).
+    """
+    parts = target.split(".")
+    for end in range(len(parts), 0, -1):
+        candidate = ".".join(parts[:end])
+        if candidate in modules:
+            return candidate
+    return None
 
 
 def _rel_to_dotted(rel: Path) -> str | None:
