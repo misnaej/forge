@@ -190,3 +190,92 @@ def test_attribution_allows_benign_generated_prose() -> None:
 def test_attribution_ignores_non_history_commands() -> None:
     """Commands that don't write to git/GitHub history aren't inspected."""
     assert _run_hook(_ATTRIBUTION, 'echo "generated with claude"') == 0
+
+
+_REBASE = "block_git_rebase.sh"
+
+
+def test_rebase_blocks_plain_rebase() -> None:
+    """`git rebase <upstream>` is blocked — rewriting history is forbidden."""
+    assert _run_hook(_REBASE, "git rebase origin/dev") == 2
+
+
+def test_rebase_blocks_interactive_rebase() -> None:
+    """`git rebase -i` is blocked like any other rebase invocation."""
+    assert _run_hook(_REBASE, "git rebase -i HEAD~3") == 2
+
+
+def test_rebase_blocks_pull_rebase_long_flag() -> None:
+    """`git pull --rebase` replays local commits onto upstream — also blocked."""
+    assert _run_hook(_REBASE, "git pull --rebase origin dev") == 2
+
+
+def test_rebase_blocks_pull_rebase_short_flag() -> None:
+    """`git pull -r` (the short `--rebase`) is blocked too."""
+    assert _run_hook(_REBASE, "git pull -r") == 2
+
+
+def test_rebase_has_no_agent_bypass() -> None:
+    """Even forge:git-commit-push cannot rebase — the block has no bypass."""
+    assert (
+        _run_hook(_REBASE, "git rebase origin/dev", agent_type="forge:git-commit-push")
+        == 2
+    )
+
+
+def test_rebase_allows_plain_pull() -> None:
+    """A non-rebase `git pull` is allowed (merge is the sanctioned sync)."""
+    assert _run_hook(_REBASE, "git pull origin dev") == 0
+
+
+def test_rebase_allows_merge() -> None:
+    """`git merge` — the sanctioned way to sync a branch — is allowed."""
+    assert _run_hook(_REBASE, "git merge origin/dev") == 0
+
+
+def test_rebase_ignores_word_in_commit_message() -> None:
+    """The word "rebase" inside a quoted commit body does not false-positive."""
+    assert _run_hook(_REBASE, 'git commit -m "explain why we avoid rebase here"') == 0
+
+
+_FORCE_PUSH = "block_force_push.sh"
+
+
+def test_force_push_blocks_long_force_flag() -> None:
+    """`git push --force` is blocked."""
+    assert _run_hook(_FORCE_PUSH, "git push --force origin main") == 2
+
+
+def test_force_push_blocks_force_with_lease() -> None:
+    """`git push --force-with-lease` (and its =value form) is blocked."""
+    assert _run_hook(_FORCE_PUSH, "git push --force-with-lease=origin/main") == 2
+
+
+def test_force_push_blocks_short_f_flag() -> None:
+    """`git push -f` (short --force) is blocked — the pre-hardening gap."""
+    assert _run_hook(_FORCE_PUSH, "git push -f origin main") == 2
+
+
+def test_force_push_blocks_combined_short_flag_cluster() -> None:
+    """A short-flag cluster containing `f` (`-uf`) is blocked."""
+    assert _run_hook(_FORCE_PUSH, "git push -uf origin feat") == 2
+
+
+def test_force_push_blocks_plus_refspec() -> None:
+    """A `+`-prefixed force refspec (`origin +main`) is blocked."""
+    assert _run_hook(_FORCE_PUSH, "git push origin +main") == 2
+
+
+def test_force_push_allows_plain_push() -> None:
+    """A normal `git push origin main` is allowed."""
+    assert _run_hook(_FORCE_PUSH, "git push origin main") == 0
+
+
+def test_force_push_allows_set_upstream() -> None:
+    """`git push -u origin feat` (no `f`) is not mistaken for a force push."""
+    assert _run_hook(_FORCE_PUSH, "git push -u origin feat") == 0
+
+
+def test_force_push_allows_follow_tags() -> None:
+    """`--follow-tags` contains no short `-f` cluster and is allowed."""
+    assert _run_hook(_FORCE_PUSH, "git push --follow-tags origin main") == 0
