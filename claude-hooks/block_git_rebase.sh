@@ -19,15 +19,19 @@ _block() {
     exit 2
 }
 
-# Anchor at start-of-string or after a shell separator so the word "rebase"
-# inside a quoted body (a commit message, PR description) never fires.
-if echo "$COMMAND" | grep -qE '(^|[;&|]\s*)git\s+rebase\b'; then
+# Anchor at line-start or after a shell separator so the word "rebase" inside
+# a quoted body (a commit message, PR description) never fires. The anchor also
+# tolerates a leading run of `VAR=val` assignments and a `command`/`env`/
+# `exec`/`builtin`/`sudo` wrapper, so `GIT_DIR=x git rebase` can't slip the
+# gate (shared verbatim with block_force_push.sh / block_raw_git.sh).
+GIT_ANCHOR='(^|[;&|])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo)[[:space:]]+)*git[[:space:]]+'
+if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}rebase\b"; then
     _block "git rebase"
 fi
 
 # `git pull --rebase` / `-r` is a rebase too — it replays local commits onto
 # the upstream tip, rewriting them exactly as `git rebase` would.
-if echo "$COMMAND" | grep -qE '(^|[;&|]\s*)git\s+pull\b' \
+if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}pull\b" \
     && echo "$COMMAND" | grep -qE -- '--rebase\b|(^|\s)-[a-zA-Z]*r\b'; then
     _block "git pull --rebase"
 fi

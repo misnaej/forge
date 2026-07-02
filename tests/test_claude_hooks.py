@@ -298,3 +298,58 @@ def test_force_push_blocks_doubled_space() -> None:
 def test_force_push_allows_non_push_git() -> None:
     """A non-push git command (`git status`) is not inspected."""
     assert _run_hook(_FORCE_PUSH, "git status") == 0
+
+
+# --- shared-anchor prefix bypasses (env-var / leading-ws / wrapper) --------
+# The anchor in block_force_push / block_raw_git / block_git_rebase must
+# recognize `git` even behind an inline env assignment, leading whitespace, or
+# a `command`/`env` wrapper — common shell idioms, not adversarial tricks.
+
+_RAW_GIT = "block_raw_git.sh"
+
+
+def test_force_push_blocks_env_var_prefix() -> None:
+    """`GIT_DIR=/tmp/x git push -f` (inline env assignment) is blocked."""
+    assert _run_hook(_FORCE_PUSH, "GIT_DIR=/tmp/x git push -f origin main") == 2
+
+
+def test_force_push_blocks_leading_whitespace() -> None:
+    """A force push with leading whitespace (`   git push -f`) is blocked."""
+    assert _run_hook(_FORCE_PUSH, "   git push -f origin main") == 2
+
+
+def test_force_push_blocks_command_wrapper() -> None:
+    """`command git push -f` (builtin wrapper) is blocked."""
+    assert _run_hook(_FORCE_PUSH, "command git push -f origin main") == 2
+
+
+def test_force_push_allows_env_prefix_non_force() -> None:
+    """An env-prefixed non-force push is still allowed (no over-block)."""
+    assert _run_hook(_FORCE_PUSH, "GIT_DIR=/tmp/x git push origin main") == 0
+
+
+def test_raw_git_blocks_env_var_prefix_push() -> None:
+    """`GIT_DIR=x git push` bypassed the raw-git gate before the anchor fix."""
+    assert _run_hook(_RAW_GIT, "GIT_DIR=/tmp/x git push origin main") == 2
+
+
+def test_raw_git_env_prefix_still_bypassable_slips_agent_bypass() -> None:
+    """The git-commit-push bypass still applies under an env prefix."""
+    assert (
+        _run_hook(
+            _RAW_GIT,
+            "GIT_DIR=/tmp/x git push origin main",
+            agent_type="forge:git-commit-push",
+        )
+        == 0
+    )
+
+
+def test_rebase_blocks_env_var_prefix() -> None:
+    """`GIT_DIR=x git rebase main` (inline env assignment) is blocked."""
+    assert _run_hook(_REBASE, "GIT_DIR=/tmp/x git rebase main") == 2
+
+
+def test_rebase_blocks_leading_whitespace() -> None:
+    """A rebase with leading whitespace (`   git rebase main`) is blocked."""
+    assert _run_hook(_REBASE, "   git rebase main") == 2

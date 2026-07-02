@@ -11,11 +11,15 @@
 set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
-# Only check git push commands. Anchor at start-of-string OR after a shell
-# separator (and allow any whitespace between `git` and `push`) so a chained
-# `foo; git push --force` or a doubled-space `git  push -f` can't slip past
-# the gate — matching block_git_rebase.sh / block_raw_git.sh.
-if ! echo "$COMMAND" | grep -qE '(^|[;&|]\s*)git\s+push\b'; then
+# Only check git push commands. The anchor recognizes `git` at line-start or
+# after a shell separator (`;` `&` `|`), and tolerates a leading run of
+# `VAR=val` assignments and/or a `command`/`env`/`exec`/`builtin`/`sudo`
+# wrapper — so `GIT_DIR=/tmp/x git push -f`, `  git push -f` (leading space),
+# `command git push -f`, and `foo; git  push -f` all still hit the gate. The
+# ${GIT_ANCHOR} idiom is shared verbatim with block_raw_git.sh /
+# block_git_rebase.sh (all three had the narrower anchor).
+GIT_ANCHOR='(^|[;&|])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo)[[:space:]]+)*git[[:space:]]+'
+if ! echo "$COMMAND" | grep -qE "${GIT_ANCHOR}push\b"; then
     exit 0
 fi
 if echo "$COMMAND" | grep -qE -- \
