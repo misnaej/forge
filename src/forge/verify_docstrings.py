@@ -79,6 +79,12 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from forge.config import (
+    filter_excluded,
+    filter_under_roots,
+    load_config,
+    resolve_tool_roots,
+)
 from forge.git_utils import (
     SCOPE_ALL,
     VALID_SCOPES,
@@ -91,13 +97,6 @@ from forge.git_utils import (
 
 configure_cli_logging()
 logger = logging.getLogger(__name__)
-
-# Paths to exclude from docstring verification
-# (test fixtures with intentionally bad docstrings, and setup scripts)
-EXCLUDED_PATHS = (
-    "test/scripts/",  # Test fixtures for verify_docstrings.py
-    ".devcontainer/",  # DevContainer setup scripts
-)
 
 
 @dataclass
@@ -1189,14 +1188,18 @@ def main() -> int:
             except ValueError:
                 py_files = [str(target)]
         elif args.scope == SCOPE_ALL:
-            py_files = get_tracked_files()
+            # Whole *source* tree (issue #83): restrict the tracked set to the
+            # repo's declared source / test roots, then drop repo-wide excludes.
+            roots = resolve_tool_roots(
+                repo_root, "docstring_verification", include_tests=True
+            )
+            py_files = filter_under_roots(get_tracked_files(), roots)
+            py_files = filter_excluded(py_files, load_config(repo_root).exclude)
         else:
-            py_files = get_modified_files()
+            py_files = filter_excluded(
+                get_modified_files(), load_config(repo_root).exclude
+            )
 
-        # Remove duplicates, filter out excluded paths, and sort
-        py_files = [
-            f for f in py_files if not any(f.startswith(exc) for exc in EXCLUDED_PATHS)
-        ]
         py_files = sorted(set(py_files))
 
         all_issues = []

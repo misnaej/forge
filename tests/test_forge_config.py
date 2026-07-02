@@ -167,3 +167,23 @@ def test_main_prints_report_and_exits_zero(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["forge-config", "--list"])
     assert forge_config.main() == 0
+
+
+def test_forge_config_list_includes_exclude_key() -> None:
+    """Verify ``exclude`` key appears in forge-config --list output.
+
+    The ``exclude`` key is the single repo-wide mechanism for omitting
+    vendored / generated Python from whole-tree steps.  Two checks:
+    (1) the key appears in the report output so consumers see it via
+    ``forge-config --list``; (2) the CONFIG_KEYS description for it
+    mentions vendored / generated paths so the purpose is self-evident
+    in the code — the description is what downstream docs / the
+    pre-install nudge would surface.
+    """
+    report = "\n".join(forge_config.build_report({}))
+    assert "exclude" in report
+
+    exclude_key = next(
+        k for k in forge_config.CONFIG_KEYS if k.path == ("tool", "forge", "exclude")
+    )
+    assert "vendor" in exclude_key.description or "generated" in exclude_key.description

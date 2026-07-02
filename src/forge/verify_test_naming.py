@@ -43,6 +43,12 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from forge.config import (
+    filter_excluded,
+    filter_under_roots,
+    load_config,
+    read_pyproject_raw,
+)
 from forge.git_utils import (
     SCOPE_ALL,
     VALID_SCOPES,
@@ -540,17 +546,42 @@ def _check_duplicate_file_names(all_files: list[Path]) -> list[Issue]:
 SEPARATOR = "=" * 80
 
 
+def _test_scan_roots(repo_root: Path) -> list[str]:
+    """Resolve the *test-only* scan roots for ``--scope all`` (issue #83).
+
+    Mirrors :func:`forge.config.resolve_tool_roots`'s precedence but for the
+    test tree alone (not source): a per-tool
+    ``[tool.forge.test_naming_check].paths`` override wins, else the repo-wide
+    ``[tool.forge].test_dirs``. Test-naming scans tests only, so it must not
+    pull in source roots the way ``resolve_tool_roots(include_tests=True)``
+    would.
+
+    Args:
+        repo_root: Repository root path.
+
+    Returns:
+        Repo-relative test-directory roots to scope the tracked set against.
+    """
+    forge = read_pyproject_raw(repo_root).get("tool", {}).get("forge", {})
+    tool = forge.get("test_naming_check")
+    if isinstance(tool, dict) and isinstance(tool.get("paths"), list):
+        return [str(p) for p in tool["paths"]]
+    return load_config(repo_root).test_dirs
+
+
 def _resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list[str]:
     """Return repo-relative test file paths from CLI arg, scope, or git diff.
 
     Args:
         repo_root: Repository root path.
         target: Optional file path from the CLI. Overrides *scope*.
-        scope: ``"all"`` (every tracked test file) or ``"diff"`` (test files
-            modified vs main).
+        scope: ``"all"`` (every tracked test file under the test roots) or
+            ``"diff"`` (test files modified vs main).
 
     Returns:
-        List of repo-relative test file paths.
+        List of repo-relative test file paths. For ``"all"``, the tracked set
+        is scoped to the repo's test roots (:func:`_test_scan_roots`); both
+        scopes then drop repo-wide ``[tool.forge].exclude`` globs.
     """
     if target is not None:
         test_file = Path(target)
@@ -564,10 +595,11 @@ def _resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list
             return [str(test_file.relative_to(repo_root))]
         except ValueError:
             return [str(test_file)]
-    prefix = ("test/", "tests/")
+    exclude = load_config(repo_root).exclude
     if scope == SCOPE_ALL:
-        return get_tracked_files(prefix=prefix)
-    return get_modified_files(prefix=prefix)
+        tracked = filter_under_roots(get_tracked_files(), _test_scan_roots(repo_root))
+        return filter_excluded(tracked, exclude)
+    return filter_excluded(get_modified_files(prefix=("test/", "tests/")), exclude)
 
 
 def _scan_files(

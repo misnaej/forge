@@ -127,7 +127,21 @@ cheaper than reverting.
 - **NEVER use `--no-verify`** to bypass pre-commit hooks. Fix violations
   instead.
 - **NEVER force push** without explicit user approval. Check for upstream
-  divergence first: `git fetch origin && git log origin/<branch>`.
+  divergence first: `git fetch origin && git log origin/<branch>`. The
+  `block_force_push` hook enforces this for agents across every force
+  vector — `--force` / `--force-with-lease`, the short `-f` cluster
+  (`-f` / `-uf`), and a `+`-prefixed force refspec (`git push origin
+  +main`). A human runs the intended push themselves with `! git push ...`.
+- **NEVER rebase** from an agent. Rebasing rewrites history on a
+  usually-already-published branch — forcing a force-push (itself blocked)
+  and discarding the exact commits a reviewer saw. forge squash-merges every
+  PR, so a feature branch's commit shape never reaches the base branch: sync
+  a branch with a plain **merge** of the base branch (`git merge
+  origin/<base>`), which resolves conflicts without rewriting anything. The
+  `block_git_rebase` hook enforces this for agents with **no bypass** (not
+  even `forge:git-commit-push`): it blocks `git rebase` and `git pull
+  --rebase` / `-r`. A human who truly needs a rebase runs it themselves via
+  `! git rebase ...`.
 - **NEVER add Claude/AI attribution** in commits, PRs, or merge messages
   (no `Co-Authored-By`, no `Generated with Claude`, no AI references).
 - **NEVER push directly to a protected branch** (`base_branch` /
