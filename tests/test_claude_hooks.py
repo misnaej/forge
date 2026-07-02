@@ -279,3 +279,22 @@ def test_force_push_allows_set_upstream() -> None:
 def test_force_push_allows_follow_tags() -> None:
     """`--follow-tags` contains no short `-f` cluster and is allowed."""
     assert _run_hook(_FORCE_PUSH, "git push --follow-tags origin main") == 0
+
+
+def test_force_push_blocks_chained_after_separator() -> None:
+    """A force push chained after a separator (`foo; git push -f`) is blocked.
+
+    Regression: the outer gate must anchor after a shell separator, not only
+    at string-start, or a chained command bypasses the block entirely.
+    """
+    assert _run_hook(_FORCE_PUSH, "true; git push --force origin main") == 2
+
+
+def test_force_push_blocks_doubled_space() -> None:
+    """`git  push -f` (a doubled space) is blocked — the gate allows any ws."""
+    assert _run_hook(_FORCE_PUSH, "git  push -f origin main") == 2
+
+
+def test_force_push_allows_non_push_git() -> None:
+    """A non-push git command (`git status`) is not inspected."""
+    assert _run_hook(_FORCE_PUSH, "git status") == 0

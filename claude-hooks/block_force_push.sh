@@ -11,8 +11,11 @@
 set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
-# Only check git push commands
-if ! echo "$COMMAND" | grep -qE '^git push'; then
+# Only check git push commands. Anchor at start-of-string OR after a shell
+# separator (and allow any whitespace between `git` and `push`) so a chained
+# `foo; git push --force` or a doubled-space `git  push -f` can't slip past
+# the gate — matching block_git_rebase.sh / block_raw_git.sh.
+if ! echo "$COMMAND" | grep -qE '(^|[;&|]\s*)git\s+push\b'; then
     exit 0
 fi
 if echo "$COMMAND" | grep -qE -- \
