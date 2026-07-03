@@ -53,6 +53,10 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 # Distinctly-shaped references the doc can make, each verifiable against a roster.
+# The hook pattern is deliberately scoped to ``block_*`` (the guard hooks that
+# gate agent actions and so appear in the graph); ``check_*`` / ``warn_*`` hooks
+# exist but are not dangling-checked, since widening the prefix would match plain
+# prose words like "check_something" and raise false positives.
 _HOOK_RE = re.compile(r"\bblock_[a-z0-9_]+\b")
 _CLI_RE = re.compile(r"\b(?:forge|verify-forge|install-forge|fix-forge)-[a-z0-9-]+\b")
 _SKILL_RE = re.compile(r"(?<![\w/])/([a-z][a-z0-9-]+)\b")
@@ -164,10 +168,17 @@ def _diff_report(root: Path, base: str) -> list[str]:
         One line per changed graph-relevant mention; empty when the diff touches
         nothing graph-relevant.
     """
+    # `base` is user-supplied (the --diff arg). A real ref/SHA never starts with
+    # a dash; a dash-prefixed value would be parsed as a git *option* (e.g.
+    # `--output=…`) despite the `--` pathspec separator, which only guards paths.
+    # Reject it rather than let it reach git.
+    if base.startswith("-"):
+        logger.error("agent_doc --diff: %r is not a valid base ref.", base)
+        return []
     paths = ["agents", ".claude/agents", "skills", ".claude/skills", "claude-hooks"]
     try:
         diff = subprocess.run(
-            ["git", "-C", str(root), "diff", base, "--", *paths],
+            ["git", "-C", str(root), "diff", "--end-of-options", base, "--", *paths],
             capture_output=True,
             text=True,
             check=True,
@@ -213,6 +224,9 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("agent_doc: no [tool.forge.agent_doc].path — skipping.")
             return 0
         doc_file = root / path
+        if not doc_file.resolve().is_relative_to(root.resolve()):
+            logger.error("agent_doc: configured doc %s escapes the repo root.", path)
+            return 1
         if not doc_file.is_file():
             logger.error("agent_doc: configured doc %s does not exist.", path)
             return 1
