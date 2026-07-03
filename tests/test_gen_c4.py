@@ -61,6 +61,7 @@ from forge.gen_c4 import (
     _resolve_endpoint,
     _resolve_layout,
     _route_view,
+    _safe_out_path,
     _slug,
     _svg_view_path,
     _under_prefix,
@@ -2557,6 +2558,28 @@ def test_emit_svg_subprocess_error_returns_1(
         result = _emit_svg(tmp_path, config, set(), args)
     assert result == 1
     assert "Headless browser" in caplog.text
+
+
+# --- #159: _safe_out_path escape guard ---
+
+
+def test_safe_out_path_accepts_in_repo_relpath(tmp_path: Path) -> None:
+    """A repo-relative path resolves to an absolute path under the root."""
+    out = _safe_out_path(tmp_path, "docs/architecture.svg")
+    assert out == (tmp_path / "docs" / "architecture.svg").resolve()
+    assert out.is_relative_to(tmp_path.resolve())
+
+
+def test_safe_out_path_rejects_parent_traversal(tmp_path: Path) -> None:
+    """A `..` path escaping the repo root raises ValueError (the dsl/pdf/svg guard)."""
+    with pytest.raises(ValueError, match="escapes the repository root"):
+        _safe_out_path(tmp_path, "../evil.svg")
+
+
+def test_safe_out_path_rejects_absolute_escape(tmp_path: Path) -> None:
+    """An absolute path outside the repo root raises ValueError."""
+    with pytest.raises(ValueError, match="escapes the repository root"):
+        _safe_out_path(tmp_path, "/etc/passwd")
 
 
 # --- #137: _print_html_to_pdf ---
