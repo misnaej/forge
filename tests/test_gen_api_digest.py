@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import logging
+import subprocess
 import sys
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,8 @@ from forge.gen_api_digest import (
     main,
     render_digest,
 )
+from tests.conftest import GIT_ENV as _GIT_ENV
+from tests.conftest import init_git_repo as _init_git_repo
 
 
 if TYPE_CHECKING:
@@ -57,15 +60,17 @@ class _PrivateThing:
 
 
 def _build_repo_with_module(root: Path) -> None:
-    """Create a minimal repo tree with one source module.
+    """Create a minimal git repo tree with one tracked source module.
 
     Args:
-        root: Directory to populate as the repo root.
+        root: Directory to initialize and populate as the repo root.
     """
+    _init_git_repo(root)
     pkg = root / "src" / "sample"
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("")
     (pkg / "thing.py").write_text(SAMPLE_MODULE)
+    subprocess.run(["git", "add", "-A"], cwd=root, env=_GIT_ENV, check=True)
 
 
 def test_detect_roots_prefers_src(tmp_path: Path) -> None:
@@ -254,6 +259,30 @@ def test_build_digest_covers_known_module(tmp_path: Path) -> None:
     assert "Return a string for value." in summaries
 
 
+def test_build_digest_excludes_untracked_module(tmp_path: Path) -> None:
+    """An untracked module under a scanned root is excluded from the digest.
+
+    SCENARIO: a repo with one committed module (``sample.thing``) also has a
+    second, valid module (``sample.untracked``) written to disk but never
+    ``git add``ed.
+    EXPECTED BEHAVIOR: ``build_digest`` only sees the git-tracked set, so the
+    untracked module is skipped entirely — the direct regression check for
+    issue #161 (digest output must not depend on machine-local untracked
+    files).
+    """
+    _build_repo_with_module(tmp_path)
+    pkg = tmp_path / "src" / "sample"
+    (pkg / "untracked.py").write_text(
+        '"""An untracked module."""\n\n\n'
+        "def public_fn() -> None:\n"
+        '    """Do a thing."""\n'
+    )
+    digests = build_digest(tmp_path, [tmp_path / "src"])
+    dotted_names = {d.dotted for d in digests}
+    assert "sample.thing" in dotted_names
+    assert "sample.untracked" not in dotted_names
+
+
 def test_render_digest_produces_non_empty_doc(tmp_path: Path) -> None:
     """The rendered digest is non-empty and names known symbols."""
     _build_repo_with_module(tmp_path)
@@ -289,10 +318,12 @@ def test_render_digest_shows_module_docstring_summary(tmp_path: Path) -> None:
 
 def test_build_digest_keeps_docstring_only_module(tmp_path: Path) -> None:
     """A module with only a docstring (no symbols) still earns a digest entry."""
+    _init_git_repo(tmp_path)
     pkg = tmp_path / "src" / "sample"
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("")
     (pkg / "purpose.py").write_text('"""The one job this module does."""\n')
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
     digests = build_digest(tmp_path, [tmp_path / "src"])
     by_name = {d.dotted: d for d in digests}
     assert "sample.purpose" in by_name
@@ -306,20 +337,24 @@ def test_build_digest_keeps_docstring_only_module(tmp_path: Path) -> None:
 
 def test_build_digest_drops_module_without_docstring_or_symbols(tmp_path: Path) -> None:
     """A module with neither a docstring nor symbols is omitted entirely."""
+    _init_git_repo(tmp_path)
     pkg = tmp_path / "src" / "sample"
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("")
     (pkg / "constants.py").write_text("VALUE = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
     digests = build_digest(tmp_path, [tmp_path / "src"])
     assert "sample.constants" not in {d.dotted for d in digests}
 
 
 def test_render_digest_marks_module_missing_docstring(tmp_path: Path) -> None:
     """A rendered module with symbols but no docstring gets the missing marker."""
+    _init_git_repo(tmp_path)
     pkg = tmp_path / "src" / "sample"
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("")
     (pkg / "worker.py").write_text("def go() -> None:\n    '''Do it.'''\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
     doc = render_digest(build_digest(tmp_path, [tmp_path / "src"]))
     assert "## `sample.worker`" in doc
     assert "> _(no module docstring)_" in doc

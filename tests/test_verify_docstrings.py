@@ -134,12 +134,12 @@ def test_scope_all_uses_tracked_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`--scope all` selects files via get_tracked_files, not the diff."""
+    """`--scope all` selects files via tracked_files_under_roots, not the diff."""
     used: list[str] = []
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "forge.verify_docstrings.get_tracked_files",
-        lambda: used.append("all") or [],
+        "forge.verify_docstrings.tracked_files_under_roots",
+        lambda *_a, **_kw: used.append("all") or [],
     )
     monkeypatch.setattr(
         "forge.verify_docstrings.get_modified_files",
@@ -158,8 +158,8 @@ def test_scope_diff_uses_modified_files(
     used: list[str] = []
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "forge.verify_docstrings.get_tracked_files",
-        lambda: used.append("all") or [],
+        "forge.verify_docstrings.tracked_files_under_roots",
+        lambda *_a, **_kw: used.append("all") or [],
     )
     monkeypatch.setattr(
         "forge.verify_docstrings.get_modified_files",
@@ -220,98 +220,6 @@ def test_main_returns_one_for_nonexistent_target(
 # ---------------------------------------------------------------------------
 
 
-def test_scope_all_excludes_files_outside_declared_roots(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """scope=all restricts files to declared source/test roots only.
-
-    SCENARIO: tracked files include one file inside src/ and one outside any
-        declared root (outside/).
-    MOCK SETUP: get_tracked_files returns both; resolve_tool_roots returns
-        ["src"]; load_config returns an empty exclude list. Only src/a.py
-        exists on disk so it can pass the full_path.exists() guard.
-    EXPECTED BEHAVIOR: verify_file is called for src/a.py and is NOT called
-        for outside/x.py, which is dropped by filter_under_roots.
-    """
-    (tmp_path / "src").mkdir()
-    (tmp_path / "outside").mkdir()
-    src_file = tmp_path / "src" / "a.py"
-    src_file.write_text("# stub")
-    (tmp_path / "outside" / "x.py").write_text("# stub")
-
-    called_with: list[Path] = []
-
-    def _fake_verify(filepath: Path) -> list:
-        called_with.append(filepath)
-        return []
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        "forge.verify_docstrings.get_tracked_files",
-        lambda: ["src/a.py", "outside/x.py"],
-    )
-    monkeypatch.setattr(
-        "forge.verify_docstrings.resolve_tool_roots", lambda *_a, **_kw: ["src"]
-    )
-    monkeypatch.setattr(
-        "forge.verify_docstrings.load_config", lambda _: ForgeConfig(exclude=[])
-    )
-    monkeypatch.setattr("forge.verify_docstrings.verify_file", _fake_verify)
-    monkeypatch.setattr(sys, "argv", ["verify-forge-docstrings", "--scope", "all"])
-
-    assert main() == 0
-    called_names = {p.name for p in called_with}
-    assert "a.py" in called_names
-    assert "x.py" not in called_names
-
-
-def test_scope_all_respects_exclude_glob(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """scope=all drops files matching [tool.forge].exclude globs.
-
-    SCENARIO: two files both live under src/ (inside roots) but one matches
-        the repo-wide exclude glob ``*.gen.py``.
-    MOCK SETUP: get_tracked_files returns both files; resolve_tool_roots
-        returns ["src"]; load_config exclude=["*.gen.py"]. BOTH files exist
-        on disk so the main() exists() guard cannot mask a missing filter —
-        only filter_excluded may drop src/gen.py.
-    EXPECTED BEHAVIOR: verify_file is called for src/a.py only; src/mod.gen.py
-        is dropped by filter_excluded.
-    """
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "a.py").write_text("# stub")
-    (tmp_path / "src" / "mod.gen.py").write_text("# stub")
-
-    called_with: list[Path] = []
-
-    def _fake_verify(filepath: Path) -> list:
-        called_with.append(filepath)
-        return []
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        "forge.verify_docstrings.get_tracked_files",
-        lambda: ["src/a.py", "src/mod.gen.py"],
-    )
-    monkeypatch.setattr(
-        "forge.verify_docstrings.resolve_tool_roots", lambda *_a, **_kw: ["src"]
-    )
-    monkeypatch.setattr(
-        "forge.verify_docstrings.load_config",
-        lambda _: ForgeConfig(exclude=["*.gen.py"]),
-    )
-    monkeypatch.setattr("forge.verify_docstrings.verify_file", _fake_verify)
-    monkeypatch.setattr(sys, "argv", ["verify-forge-docstrings", "--scope", "all"])
-
-    assert main() == 0
-    called_names = {p.name for p in called_with}
-    assert "a.py" in called_names
-    assert "mod.gen.py" not in called_names
-
-
 def test_scope_diff_respects_exclude_glob(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -358,18 +266,14 @@ def test_scope_all_empty_after_root_filter_returns_zero_and_no_verify_calls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """scope=all with all files outside roots yields exit 0 and no verify calls.
+    """scope=all with an empty tracked-set yields exit 0 and no verify calls.
 
-    SCENARIO: tracked files exist but all live outside the declared root.
-    MOCK SETUP: get_tracked_files returns a file under outside/ that exists on
-        disk (so the main() exists() guard cannot mask a missing filter);
-        resolve_tool_roots returns ["src"] so filter_under_roots drops it.
+    SCENARIO: tracked_files_under_roots (the composed root+exclude selector,
+        covered directly in test_config.py) returns no files.
+    MOCK SETUP: tracked_files_under_roots is patched to return [].
     EXPECTED BEHAVIOR: py_files is empty, verify_file is never called, main()
         returns 0.
     """
-    (tmp_path / "outside").mkdir()
-    (tmp_path / "outside" / "x.py").write_text("# stub")
-
     called_with: list[Path] = []
 
     def _fake_verify(filepath: Path) -> list:
@@ -378,16 +282,44 @@ def test_scope_all_empty_after_root_filter_returns_zero_and_no_verify_calls(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "forge.verify_docstrings.get_tracked_files", lambda: ["outside/x.py"]
-    )
-    monkeypatch.setattr(
-        "forge.verify_docstrings.resolve_tool_roots", lambda *_a, **_kw: ["src"]
-    )
-    monkeypatch.setattr(
-        "forge.verify_docstrings.load_config", lambda _: ForgeConfig(exclude=[])
+        "forge.verify_docstrings.tracked_files_under_roots", lambda *_a, **_kw: []
     )
     monkeypatch.setattr("forge.verify_docstrings.verify_file", _fake_verify)
     monkeypatch.setattr(sys, "argv", ["verify-forge-docstrings", "--scope", "all"])
 
     assert main() == 0
     assert called_with == []
+
+
+def test_scope_all_passes_repo_root_and_resolved_roots_to_tracked_files_under_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """scope=all forwards repo_root and resolve_tool_roots' output verbatim.
+
+    SCENARIO: main() must hand tracked_files_under_roots the exact repo_root
+        (cwd) and the exact roots resolve_tool_roots computed — not
+        re-derive either independently.
+    MOCK SETUP: resolve_tool_roots is patched to return a fixed ["src",
+        "tests"] regardless of input; tracked_files_under_roots is patched to
+        record its (repo_root, roots) call args and return [].
+    EXPECTED BEHAVIOR: the recorded args equal (tmp_path, ["src", "tests"]).
+    """
+    recorded: list[tuple[Path, list[str]]] = []
+
+    def _fake_tracked(repo_root: Path, roots: list[str]) -> list[str]:
+        recorded.append((repo_root, roots))
+        return []
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "forge.verify_docstrings.resolve_tool_roots",
+        lambda *_a, **_kw: ["src", "tests"],
+    )
+    monkeypatch.setattr(
+        "forge.verify_docstrings.tracked_files_under_roots", _fake_tracked
+    )
+    monkeypatch.setattr(sys, "argv", ["verify-forge-docstrings", "--scope", "all"])
+
+    assert main() == 0
+    assert recorded == [(tmp_path, ["src", "tests"])]
