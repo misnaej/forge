@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_55 modules, 580 symbols._
+_55 modules, 581 symbols._
 
 ## `forge._hook_helpers`
 
@@ -283,6 +283,7 @@ _55 modules, 580 symbols._
 - `_m(text: str) -> str` _(internal)_ — Escape label *text* for safe embedding in a Mermaid node label.
 - `_external_node_line(node_id: str, ext: External, *, indent: str = '    ', markdown: bool = False) -> str` _(internal)_ — Render the flat ``[[...]]`` node line for one external system.
 - `render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the model as a Mermaid flowchart (offline-renderable).
+- `_tag_class_lines(config: C4Config, ids: dict[str, dict[str, str]]) -> list[str]` _(internal)_ — Emit Mermaid ``class`` assignments carrying each element's tags.
 - `_mermaid_box(name: str, technology: str, description: str, *, markdown: bool = False) -> str` _(internal)_ — Build a multi-line Mermaid box label: bold name, technology, description.
 - `_mermaid_edges(config: C4Config, ids: dict[str, dict[str, str]], edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the Mermaid relationship lines.
 - `_actors_subgraph(config: C4Config, person_ids: dict[str, str], alloc: _IdAllocator) -> list[str]` _(internal)_ — Wrap the person nodes in a top-level ``Actors`` subgraph block.

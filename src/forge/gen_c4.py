@@ -1499,7 +1499,52 @@ def render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str:
         "component": component_ids,
     }
     lines += _mermaid_edges(config, ids, edges)
+    lines += _tag_class_lines(config, ids)
     return "\n".join(lines) + "\n"
+
+
+def _tag_class_lines(config: C4Config, ids: dict[str, dict[str, str]]) -> list[str]:
+    """Emit Mermaid ``class`` assignments carrying each element's tags.
+
+    The styling hook behind the C4 tag vocabulary (see
+    ``docs/c4-architecture.md`` — *Element tag vocabulary*): every element that
+    declares ``tags`` gets its node id assigned those tags as Mermaid CSS
+    classes, so ``render.custom_css`` or a theme can target ``.agent`` etc. to
+    tell an AI agent apart from a human ``person``. Forge ships only the hook —
+    no default palette — so a tagless model (like forge's own) is byte-identical
+    and consumers pick their own look.
+
+    Args:
+        config: The model whose elements carry the tags.
+        ids: The ``{kind: {name: node-id}}`` map the caller allocated; an
+            element is styled only when its name is present here (so a view that
+            renders a subset skips the rest).
+
+    Returns:
+        One ``class <id> <tag>`` line per (rendered element, tag) pair — a
+        separate statement per tag so each is an independently targetable CSS
+        class — in person → external → container → component order; empty when
+        nothing is tagged.
+    """
+    lines: list[str] = []
+    for elements, kind in (
+        (config.persons, "person"),
+        (config.externals, "external"),
+        (config.containers, "container"),
+        (config.components, "component"),
+    ):
+        id_map = ids.get(kind, {})
+        # One `class <id> <tag>` line PER tag: Mermaid treats a comma-joined
+        # `class a x,y` as a single literal class token `x,y`, so `.x` / `.y`
+        # would never match. Repeated `class` statements accumulate, yielding
+        # independently targetable CSS classes.
+        lines.extend(
+            f"    class {id_map[element.name]} {tag}"
+            for element in elements
+            if element.tags and element.name in id_map
+            for tag in element.tags
+        )
+    return lines
 
 
 def _mermaid_box(

@@ -55,6 +55,7 @@ from forge.gen_c4 import (
     _resolve_layout,
     _route_view,
     _slug,
+    _tag_class_lines,
     _under_prefix,
     _visibility_fields,
     _visible_config,
@@ -3152,3 +3153,97 @@ def test_build_views_route_views_empty_default_adds_no_tabs() -> None:
         "Applications Components",
         "Domain libraries Components",
     ]
+
+
+# --- element tag vocabulary: Mermaid `class` styling hook ---
+
+
+def test_render_mermaid_emits_class_line_for_tagged_element() -> None:
+    """A tagged person/container/component each get a Mermaid class line."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses", tags=("person",)),),
+        containers=(Container("App", "", "", tags=("skill",)),),
+        components=(Component("A", ("demo.a",), tags=("agent", "reporter")),),
+    )
+    mermaid = render_mermaid(config, set())
+    assert "class dev person" in mermaid
+    assert "class app skill" in mermaid
+    # A multi-tag element emits ONE class line per tag, never a comma-joined
+    # token (Mermaid would treat `agent,reporter` as a single class, so neither
+    # `.agent` nor `.reporter` would match).
+    assert "class a agent" in mermaid
+    assert "class a reporter" in mermaid
+    assert "agent,reporter" not in mermaid
+
+
+def test_render_mermaid_untagged_model_emits_no_class_lines() -> None:
+    """No element carries tags -> the styling hook is inert (no class lines)."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses"),),
+        containers=(Container("App", "", ""),),
+        components=(Component("A", ("demo.a",)),),
+    )
+    mermaid = render_mermaid(config, set())
+    assert "class " not in mermaid
+
+
+def test_tag_class_lines_orders_person_external_container_component() -> None:
+    """Class lines are emitted person -> external -> container -> component."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses", tags=("person",)),),
+        externals=(External("GitHub", "", "uses", tags=("saas",)),),
+        containers=(Container("App", "", "", tags=("skill",)),),
+        components=(Component("A", ("demo.a",), tags=("agent",)),),
+    )
+    ids = {
+        "person": {"Dev": "dev"},
+        "external": {"GitHub": "github"},
+        "container": {"App": "app"},
+        "component": {"A": "a"},
+    }
+    lines = _tag_class_lines(config, ids)
+    assert lines == [
+        "    class dev person",
+        "    class github saas",
+        "    class app skill",
+        "    class a agent",
+    ]
+
+
+def test_tag_class_lines_skips_element_absent_from_ids() -> None:
+    """A tagged element missing from the ids map (a subset view) is skipped."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        components=(Component("A", ("demo.a",), tags=("agent",)),),
+    )
+    ids = {"person": {}, "external": {}, "container": {}, "component": {}}
+    assert _tag_class_lines(config, ids) == []
+
+
+def test_tag_class_lines_empty_when_no_tags() -> None:
+    """No element in the model declares tags -> an empty list is returned."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        containers=(Container("App", "", ""),),
+        components=(Component("A", ("demo.a",)),),
+    )
+    ids = {
+        "person": {},
+        "external": {},
+        "container": {"App": "app"},
+        "component": {"A": "a"},
+    }
+    assert _tag_class_lines(config, ids) == []
