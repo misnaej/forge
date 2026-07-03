@@ -16,6 +16,7 @@ from forge.gen_c4 import (
     _BROWSER_ENV,
     _EDGE_MODES,
     DEFAULT_PDF_OUTPUT,
+    DEFAULT_SVG_OUTPUT,
     MERMAID_ELK_JS_NAME,
     MERMAID_JS_NAME,
     README_C4_END,
@@ -34,8 +35,10 @@ from forge.gen_c4 import (
     _derive_container_edges,
     _edge_endpoints,
     _emit_pdf,
+    _emit_svg,
     _external_node_line,
     _externals_with_declared_incoming,
+    _extract_svg,
     _find_headless_browser,
     _html_interaction_css,
     _html_interaction_script,
@@ -51,12 +54,15 @@ from forge.gen_c4 import (
     _render_mermaid_containers,
     _render_mermaid_system_context,
     _render_view_pdf_html,
+    _render_view_svg,
+    _render_view_svg_html,
     _resolve_direction,
     _resolve_edge_mode,
     _resolve_endpoint,
     _resolve_layout,
     _route_view,
     _slug,
+    _svg_view_path,
     _under_prefix,
     _visibility_fields,
     _visible_config,
@@ -2403,6 +2409,154 @@ def test_emit_pdf_check_mode_is_noop_and_writes_nothing(
     args = argparse.Namespace(output=None, check=True)
     assert _emit_pdf(tmp_path, config, set(), args) == 0
     assert not (tmp_path / DEFAULT_PDF_OUTPUT).exists()
+
+
+# --- #137 A: SVG export ---
+
+
+def test_extract_svg_unescapes_marker_pre() -> None:
+    """_extract_svg reads the serialized SVG from the marker pre and unescapes it."""
+    dom = (
+        '<html><body><pre id="c4svg">'
+        "&lt;svg&gt;&lt;rect/&gt;&lt;/svg&gt;"
+        "</pre></body></html>"
+    )
+    out = _extract_svg(dom)
+    assert out is not None
+    assert out.startswith('<?xml version="1.0" encoding="UTF-8"?>')
+    assert "<svg><rect/></svg>" in out
+
+
+def test_extract_svg_returns_none_when_marker_absent() -> None:
+    """A DOM without the c4svg marker (render failed) yields None."""
+    assert _extract_svg("<html><body>nothing here</body></html>") is None
+
+
+def test_extract_svg_returns_none_when_marker_empty() -> None:
+    """An empty marker pre (render not settled) yields None, not an empty file."""
+    assert _extract_svg('<pre id="c4svg">   </pre>') is None
+
+
+def test_svg_view_path_names_one_file_per_view(tmp_path: Path) -> None:
+    """_svg_view_path derives `<stem>.<slug>.svg` next to the base output."""
+    out = _svg_view_path(tmp_path / "architecture.svg", "System Context")
+    assert out.name == "architecture.system_context.svg"
+    assert out.parent == tmp_path
+
+
+def test_render_view_svg_invokes_browser_with_dump_dom(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_render_view_svg drives the browser with --dump-dom and extracts the SVG.
+
+    SCENARIO: subprocess.run is replaced so no real browser launches.
+    MOCK SETUP: subprocess.run returns stdout carrying the marker pre.
+    EXPECTED BEHAVIOR: the argv contains --dump-dom (not --print-to-pdf) and the
+        returned SVG is the unescaped, XML-declared document.
+    """
+    captured: dict[str, list[str]] = {}
+
+    class _Result:
+        """Mock subprocess.run result with stdout containing the SVG DOM."""
+
+        stdout = '<pre id="c4svg">&lt;svg&gt;&lt;/svg&gt;</pre>'
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> _Result:
+        captured["cmd"] = cmd
+        return _Result()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    out = _render_view_svg("/fake/chrome", tmp_path / "view.html")
+    assert "--dump-dom" in captured["cmd"]
+    assert not any("--print-to-pdf" in a for a in captured["cmd"])
+    assert out is not None
+    assert out.startswith("<?xml")
+
+
+def test_render_view_svg_html_serializes_via_xmlserializer() -> None:
+    """The SVG view HTML uses XMLSerializer + the c4svg marker (well-formed XML)."""
+    html_doc = _render_view_svg_html(
+        C4Config(system="T", description="", output=""), "System Context", "graph LR\n"
+    )
+    assert "XMLSerializer" in html_doc
+    assert 'pre.id = "c4svg"' in html_doc
+
+
+def test_emit_svg_no_browser_returns_1_with_actionable_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_emit_svg returns 1 and names FORGE_C4_BROWSER when no browser is found."""
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: None)
+    config = C4Config(system="Test", description="", output="")
+    args = argparse.Namespace(output=None, check=False)
+    with caplog.at_level(logging.ERROR, logger="forge.gen_c4"):
+        result = _emit_svg(tmp_path, config, set(), args)
+    assert result == 1
+    assert _BROWSER_ENV in caplog.text
+
+
+def test_emit_svg_check_mode_is_noop_and_writes_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_emit_svg with --check writes nothing and never touches the browser."""
+
+    def _boom() -> str:
+        msg = "browser discovery must not run in --check mode"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", _boom)
+    config = C4Config(system="Test", description="", output="")
+    args = argparse.Namespace(output=None, check=True)
+    assert _emit_svg(tmp_path, config, set(), args) == 0
+    assert not (tmp_path / DEFAULT_SVG_OUTPUT).exists()
+
+
+def test_emit_svg_success_writes_one_file_per_view(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_emit_svg writes one SVG per view and returns 0 when rendering succeeds.
+
+    MOCK SETUP: _find_headless_browser → fake path; _render_view_svg → a stub SVG
+        string (so no real browser runs). The default two views (System Context,
+        Containers) are produced by _build_views.
+    EXPECTED BEHAVIOR: returns 0; the per-view SVG files exist under tmp_path.
+    """
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: "/fake/chrome")
+    monkeypatch.setattr(
+        "forge.gen_c4._render_view_svg",
+        lambda _browser, _html: '<?xml version="1.0"?>\n<svg/>\n',
+    )
+    config = C4Config(system="Test", description="", output="")
+    args = argparse.Namespace(output=None, check=False)
+    result = _emit_svg(tmp_path, config, set(), args)
+    assert result == 0
+    assert (tmp_path / "docs/architecture.system_context.svg").is_file()
+    assert (tmp_path / "docs/architecture.containers.svg").is_file()
+
+
+def test_emit_svg_subprocess_error_returns_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_emit_svg returns 1 and logs when the headless browser process errors."""
+
+    def _raise_cpe(_browser: str, _html: object) -> str:
+        raise subprocess.CalledProcessError(1, "chrome", stderr="boom")
+
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: "/fake/chrome")
+    monkeypatch.setattr("forge.gen_c4._render_view_svg", _raise_cpe)
+    config = C4Config(system="Test", description="", output="")
+    args = argparse.Namespace(output=None, check=False)
+    with caplog.at_level(logging.ERROR, logger="forge.gen_c4"):
+        result = _emit_svg(tmp_path, config, set(), args)
+    assert result == 1
+    assert "Headless browser" in caplog.text
 
 
 # --- #137: _print_html_to_pdf ---
