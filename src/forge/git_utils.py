@@ -581,6 +581,7 @@ def get_tracked_files(
     *,
     suffix: str = ".py",
     prefix: str | tuple[str, ...] | None = None,
+    repo_root: Path | None = None,
 ) -> list[str]:
     """Get all git-tracked files matching the suffix/prefix filters.
 
@@ -593,13 +594,21 @@ def get_tracked_files(
         prefix: Optional path prefix(es) to filter by. Either a single
             string or a tuple of acceptable prefixes (e.g.,
             ``("test/", "tests/")`` to accept either test-dir layout).
+        repo_root: Directory to run ``git ls-files`` in. Defaults to the
+            process-wide cached :func:`repo_root`. Pass an explicit root
+            when the caller already holds one (so the tracked-set query
+            targets *that* repo, not the cached global — the seam that lets
+            the selector be exercised against a temp git repo in tests).
 
     Returns:
         Sorted, deduplicated list of tracked file paths matching the filters.
     """
-    return sorted(
-        set(_parse_files(_run_git("ls-files"), suffix=suffix, prefix=prefix)),
+    out = (
+        run_git("ls-files", cwd=repo_root, check=False)
+        if repo_root is not None
+        else _run_git("ls-files")
     )
+    return sorted(set(_parse_files(out, suffix=suffix, prefix=prefix)))
 
 
 def stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]:

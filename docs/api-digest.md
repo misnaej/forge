@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_58 modules, 587 symbols._
+_58 modules, 588 symbols._
 
 ## `forge`
 
@@ -208,6 +208,7 @@ _58 modules, 587 symbols._
 - `resolve_tool_roots(repo_root: Path, tool: str, *, include_tests: bool = False) -> list[str]` — Resolve the scan roots a layout-consuming *tool* should use.
 - `filter_under_roots(files: list[str], roots: list[str]) -> list[str]` — Keep only *files* that live under one of *roots* (source-tree scoping).
 - `filter_excluded(files: list[str], globs: list[str]) -> list[str]` — Drop *files* matching any exclude *glob* (the ``[tool.forge].exclude`` half).
+- `tracked_files_under_roots(repo_root: Path, roots: list[str], *, suffix: str = '.py') -> list[str]` — Select the git-tracked files under *roots*, minus repo-wide excludes.
 
 ## `forge.continuation_append`
 
@@ -263,7 +264,7 @@ _58 modules, 587 symbols._
 - `class ModuleDigest` — The top-level symbols of a single module.
 - `detect_roots(root: Path, explicit: list[str] | None) -> list[Path]` — Resolve the source roots to scan for Python modules.
 - `_is_test_module(path: Path) -> bool` _(internal)_ — Return whether a module path is a test module to skip.
-- `iter_modules(roots: list[Path]) -> Iterator[Path]` — Yield Python module files under the given source roots.
+- `iter_modules(repo_root: Path, roots: list[Path]) -> Iterator[Path]` — Yield Python module files under the given source roots.
 - `_annotation(node: ast.expr | None) -> str` _(internal)_ — Render an AST annotation node as source text.
 - `_format_arg(arg: ast.arg, default: ast.expr | None) -> str` _(internal)_ — Render a single argument with its annotation and default.
 - `_positional_args(args: ast.arguments) -> list[str]` _(internal)_ — Render the positional (and positional-only) arguments.
@@ -425,7 +426,7 @@ _58 modules, 587 symbols._
 - `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
 - `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get list of modified files from git.
-- `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
+- `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
 - `stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]` — ``git add`` tracked files modified within *pathspecs*.
 
 ## `forge.import_graph`

@@ -45,9 +45,9 @@ from pathlib import Path
 
 from forge.config import (
     filter_excluded,
-    filter_under_roots,
     load_config,
     read_pyproject_raw,
+    tracked_files_under_roots,
 )
 from forge.git_utils import (
     SCOPE_ALL,
@@ -55,7 +55,6 @@ from forge.git_utils import (
     capturing_to_step_log,
     configure_cli_logging,
     get_modified_files,
-    get_tracked_files,
     repo_root,
 )
 
@@ -595,10 +594,9 @@ def _resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list
             return [str(test_file.relative_to(repo_root))]
         except ValueError:
             return [str(test_file)]
-    exclude = load_config(repo_root).exclude
     if scope == SCOPE_ALL:
-        tracked = filter_under_roots(get_tracked_files(), _test_scan_roots(repo_root))
-        return filter_excluded(tracked, exclude)
+        return tracked_files_under_roots(repo_root, _test_scan_roots(repo_root))
+    exclude = load_config(repo_root).exclude
     return filter_excluded(get_modified_files(prefix=("test/", "tests/")), exclude)
 
 
