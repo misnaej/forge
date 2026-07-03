@@ -202,11 +202,17 @@ def _read_toml_file(path: Path) -> dict | None:
         return None
 
 
-def resolve_model_section(repo_root: Path) -> dict | None:
+def resolve_model_section(
+    repo_root: Path, config_override: str | None = None
+) -> dict | None:
     """Locate the C4 model table — external file or inline pyproject.
 
     Resolution, highest precedence first:
 
+    0. ``config_override`` — an explicit model-file path (the ``forge-gen-c4
+       --config`` flag), letting one repo render a *second* model (e.g. an
+       agents/skills diagram) alongside its code model without editing
+       ``pyproject.toml``. When given it wins over every source below.
     1. ``[tool.forge.c4].config`` — an explicit path to a standalone TOML
        model file (the model's tables live at that file's top level).
     2. A conventional ``c4.toml`` at the repo root (used when present and
@@ -218,6 +224,8 @@ def resolve_model_section(repo_root: Path) -> dict | None:
 
     Args:
         repo_root: Repository root directory.
+        config_override: Optional repo-relative path to a standalone model
+            file that takes precedence over all pyproject-derived sources.
 
     Returns:
         The model table dict, or ``None`` when C4 generation is not opted
@@ -226,7 +234,7 @@ def resolve_model_section(repo_root: Path) -> dict | None:
     section = (
         read_pyproject_raw(repo_root).get("tool", {}).get("forge", {}).get("c4", {})
     )
-    configured = section.get("config")
+    configured = config_override or section.get("config")
     if configured:
         candidate = (repo_root / configured).resolve()
         if not candidate.is_relative_to(repo_root.resolve()):

@@ -202,7 +202,7 @@ _58 modules, 588 symbols._
   - `dual_track(self) -> bool` — Return ``True`` when base and dev are distinct branches.
 - `read_pyproject_raw(repo_root: Path) -> dict` — Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
 - `_read_toml_file(path: Path) -> dict | None` _(internal)_ — Parse a standalone TOML file, degrading to ``None`` on any failure.
-- `resolve_model_section(repo_root: Path) -> dict | None` — Locate the C4 model table — external file or inline pyproject.
+- `resolve_model_section(repo_root: Path, config_override: str | None = None) -> dict | None` — Locate the C4 model table — external file or inline pyproject.
 - `load_config(repo_root: Path) -> ForgeConfig` — Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.
 - `_existing_dirs(repo_root: Path, dirs: list[str]) -> list[str]` _(internal)_ — Filter *dirs* to existing in-repo paths, de-duplicated, order-preserving.
 - `resolve_tool_roots(repo_root: Path, tool: str, *, include_tests: bool = False) -> list[str]` — Resolve the scan roots a layout-consuming *tool* should use.
@@ -307,7 +307,7 @@ _58 modules, 588 symbols._
 - `_parse_components(section: dict) -> tuple[Component, ...]` _(internal)_ — Parse components from rich ``[[component]]`` tables + the simple map.
 - `_validate_component_containers(components: tuple[Component, ...], containers: tuple[Container, ...]) -> None` _(internal)_ — Fail loudly on a duplicate container name or an undeclared reference.
 - `_parse_render_config(section: dict) -> RenderConfig` _(internal)_ — Build the HTML :class:`RenderConfig` from the model's ``render`` table.
-- `load_c4_config(root: Path) -> C4Config | None` — Load the C4 model skeleton for the repo.
+- `load_c4_config(root: Path, config_path: str | None = None) -> C4Config | None` — Load the C4 model skeleton for the repo.
 - `_visible_config(config: C4Config, edges: set[tuple[str, str]], *, include_tags: tuple[str, ...] = (), exclude_tags: tuple[str, ...] = ()) -> tuple[C4Config, set[tuple[str, str]]]` _(internal)_ — Drop deactivated / tag-filtered elements and their dangling edges.
 - `assign_components(modules: list[str], components: tuple[Component, ...]) -> tuple[dict[str, str], list[str]]` — Map each module to a component by longest-prefix match.
 - `_under_prefix(module: str, prefix: str) -> bool` _(internal)_ — Return whether *module* equals *prefix* or is a dotted child of it.
@@ -323,7 +323,7 @@ _58 modules, 588 symbols._
 - `_component_description(component: Component) -> str` _(internal)_ — Return a component's box description for C4 rendering.
 - `_render_relationships(config: C4Config, ids: _IdMaps, edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the relationship statements of the ``model`` block.
 - `_render_views(config: C4Config, sys_id: str, container_ids: dict[str, str]) -> list[str]` _(internal)_ — Render the ``views`` block.
-- `build_model(root: Path, roots: list[Path]) -> tuple[C4Config, set[tuple[str, str]], list[str], list[str]] | None` — Assemble the C4 model: config, derived edges, unmatched + all modules.
+- `build_model(root: Path, roots: list[Path], config_path: str | None = None) -> tuple[C4Config, set[tuple[str, str]], list[str], list[str]] | None` — Assemble the C4 model: config, derived edges, unmatched + all modules.
 - `generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None` — Build the DSL text and unmatched-module list for the repo.
 - `_m(text: str) -> str` _(internal)_ — Escape label *text* for safe embedding in a Mermaid node label.
 - `_external_node_line(node_id: str, ext: External, *, indent: str = '    ', markdown: bool = False) -> str` _(internal)_ — Render the flat ``[[...]]`` node line for one external system.

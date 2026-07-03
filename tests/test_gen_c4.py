@@ -70,6 +70,7 @@ from forge.gen_c4 import (
     _visible_config,
     _warn_unknown_relationships,
     assign_components,
+    build_model,
     derive_component_edges,
     generate,
     load_c4_config,
@@ -116,6 +117,20 @@ description = "The app"
 source = "Core"
 destination = "IO"
 description = "writes via subprocess"
+"""
+
+
+# A standalone model used to exercise the ``--config`` override path — its
+# ``system`` name is deliberately distinct from SAMPLE_MODEL's so tests can
+# assert *which* model won.
+OVERRIDE_MODEL = """\
+system = "Override System"
+description = "A model loaded via --config"
+
+[[person]]
+name = "Operator"
+description = "Drives the override model"
+uses = "operates"
 """
 
 
@@ -202,6 +217,64 @@ def test_load_c4_config_parses_external_file(tmp_path: Path) -> None:
         Relationship("Core", "IO", "writes via subprocess"),
     )
     assert {c.name for c in config.components} == {"Core", "IO"}
+
+
+def test_resolve_model_section_config_override_wins_over_inline(
+    tmp_path: Path,
+) -> None:
+    """config_override wins even when the pyproject carries a different inline model."""
+    _write_pyproject(
+        tmp_path, '[tool.forge.c4]\nsystem = "Inline"\ndescription = "inline model"\n'
+    )
+    (tmp_path / "override.toml").write_text(OVERRIDE_MODEL)
+    section = resolve_model_section(tmp_path, "override.toml")
+    assert section is not None
+    assert section["system"] == "Override System"
+
+
+def test_resolve_model_section_config_override_wins_over_configured_file(
+    tmp_path: Path,
+) -> None:
+    """config_override outranks [tool.forge.c4].config, not just the inline table."""
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(SAMPLE_MODEL)
+    (tmp_path / "override.toml").write_text(OVERRIDE_MODEL)
+    section = resolve_model_section(tmp_path, "override.toml")
+    assert section is not None
+    assert section["system"] == "Override System"
+
+
+def test_resolve_model_section_config_override_escaping_repo_returns_none(
+    tmp_path: Path,
+) -> None:
+    """A config_override path escaping the repo root is refused, like [config]."""
+    _write_pyproject(tmp_path, "[tool.forge]\n")
+    assert resolve_model_section(tmp_path, "../evil.toml") is None
+
+
+def test_load_c4_config_config_path_loads_override(tmp_path: Path) -> None:
+    """load_c4_config threads config_path through to the override model."""
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(SAMPLE_MODEL)
+    (tmp_path / "override.toml").write_text(OVERRIDE_MODEL)
+    config = load_c4_config(tmp_path, "override.toml")
+    assert config is not None
+    assert config.system == "Override System"
+    assert [p.name for p in config.persons] == ["Operator"]
+
+
+def test_build_model_config_path_uses_override(tmp_path: Path) -> None:
+    """build_model threads config_path through load_c4_config to the override model."""
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(SAMPLE_MODEL)
+    (tmp_path / "override.toml").write_text(OVERRIDE_MODEL)
+    built = build_model(tmp_path, [], "override.toml")
+    assert built is not None
+    config, edges, unmatched, modules = built
+    assert config.system == "Override System"
+    assert edges == set()
+    assert unmatched == []
+    assert modules == []
 
 
 def test_render_dsl_emits_valid_workspace_skeleton(tmp_path: Path) -> None:
