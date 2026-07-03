@@ -51,7 +51,7 @@ Code.
      doc generator
    - gen_api_digest.py: `forge-gen-api-digest` — public-symbol API
      digest generator
-   - gen_c4.py: `forge-gen-c4` — emits a C4 architecture model from the import graph + a `[tool.forge.c4]` / `c4.toml` model skeleton; `--format dsl` (Structurizr + managed README block), `--format html` (self-contained offline **per-view tabbed** Mermaid view laid out by the **ELK** engine, vendored `mermaid.min.js` + ELK loader, dagre fallback; `direction`/`edges` config; any-element `[[relationship]]` endpoints), `--format mermaid` (raw); `--check` drift mode backs the opt-in `c4` pre-commit step; opt-in, self-skips when unconfigured
+   - gen_c4.py: `forge-gen-c4` — emits a C4 architecture model from the import graph + a `[tool.forge.c4]` / `c4.toml` model skeleton; `--format dsl` (Structurizr + managed README block), `--format html` (self-contained offline **per-view tabbed** Mermaid view laid out by the **ELK** engine, vendored `mermaid.min.js` + ELK loader, dagre fallback; `direction`/`edges` config; any-element `[[relationship]]` endpoints), `--format pdf` (vector PDF via an already-installed headless browser) / `--format svg` (one vector SVG per view, same browser path), `--format mermaid` (raw); `--check` drift mode backs the opt-in `c4` pre-commit step; opt-in, self-skips when unconfigured
    - gen_commit_types.py: `forge-gen-commit-types` — generates the conventional-commit type list managed block (parity with pr_squash_comment)
    - gen_common.py: shared drift-check helper for the `forge-gen-*`
      doc generators
