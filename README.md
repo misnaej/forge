@@ -155,65 +155,16 @@ graph LR
 
 ### Agent fleet
 
-The subagents that drive those CLIs are actors too. This companion model
-([`agents.c4.toml`](agents.c4.toml), rendered with `forge-gen-c4 --config
-agents.c4.toml --format mermaid`) is the **delegation graph** — the AI
-**agents** (purple) read apart from the human **person** (blue), each ending at
-the deterministic **CLIs** (green) that are the real gate. The colours are this
-repo's `classDef` palette targeting the tag classes `forge-gen-c4` emits per the
-[element tag vocabulary](docs/c4-architecture.md) — dashed = read-only
-`reporter`, thick = `mutator`.
+forge's AI **subagents** are actors too: the **main agent** the developer talks
+to orchestrates them — running skills, following FOUNDATION guidelines, and
+delegating to specialist agents that drive the deterministic CLIs. That graph is
+too dense for one picture, so it lives in its own document, sliced into
+workflow-phase subviews (Design & Development, Review, Release, Backlog, Docs)
+plus a cross-cutting FOUNDATION-enforcers view:
 
-```mermaid
-graph TB
-    classDef person fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
-    classDef agent fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
-    classDef cli fill:#dcfce7,stroke:#15803d,color:#14532d
-    classDef reporter stroke-dasharray:5 3
-    classDef mutator stroke-width:3px
-    developer(["<b>Developer</b><br/>[Person]"])
-    pr_manager(["<b>pr-manager</b><br/>[Person]"])
-    design_checker(["<b>design-checker</b><br/>[Person]"])
-    security_checker(["<b>security-checker</b><br/>[Person]"])
-    docs_types_checker(["<b>docs-types-checker</b><br/>[Person]"])
-    precommit_fixer(["<b>precommit-fixer</b><br/>[Person]"])
-    git_commit_push(["<b>git-commit-push</b><br/>[Person]"])
-    test_advisor(["<b>test-advisor</b><br/>[Person]"])
-    test_writer(["<b>test-writer</b><br/>[Person]"])
-    forge_precommit[["<b>forge-precommit</b><br/>[CLI]<br/>quality gate"]]
-    forge_pr_squash_comment[["<b>forge-pr-squash-comment</b><br/>[CLI]<br/>squash-message CLI"]]
-    developer -->|"triggers"| pr_manager
-    pr_manager -->|"delegates"| design_checker
-    pr_manager -->|"delegates"| security_checker
-    pr_manager -->|"delegates"| docs_types_checker
-    pr_manager -->|"delegates"| precommit_fixer
-    precommit_fixer -->|"delegates"| docs_types_checker
-    precommit_fixer -->|"delegates"| design_checker
-    precommit_fixer -->|"hands off"| git_commit_push
-    test_advisor -->|"delegates"| test_writer
-    test_writer -->|"review"| test_advisor
-    precommit_fixer -->|"invokes"| forge_precommit
-    pr_manager -->|"invokes"| forge_pr_squash_comment
-    class developer person
-    class pr_manager agent
-    class pr_manager mutator
-    class design_checker agent
-    class design_checker reporter
-    class security_checker agent
-    class security_checker reporter
-    class docs_types_checker agent
-    class docs_types_checker mutator
-    class precommit_fixer agent
-    class precommit_fixer mutator
-    class git_commit_push agent
-    class git_commit_push mutator
-    class test_advisor agent
-    class test_advisor reporter
-    class test_writer agent
-    class test_writer mutator
-    class forge_precommit cli
-    class forge_pr_squash_comment cli
-```
+**→ [Agent architecture](docs/agent-architecture.md)** — how the agents, skills,
+hooks, and CLIs interact, colour-coded by kind (agent / skill / hook / CLI) with
+reporter-vs-mutator and FOUNDATION-enforcer (⚖️) signals.
 
 ---
 

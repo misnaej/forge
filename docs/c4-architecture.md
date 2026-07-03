@@ -381,23 +381,10 @@ edges (which connect *any* element to any other) use a small verb set as their
 5. **Single source of truth.** This table is canonical here; other docs point
    back rather than restating it.
 
-**Worked example — a second model.** forge renders its own agent fleet as a
-companion diagram: [`agents.c4.toml`](../agents.c4.toml) models the foundation
-subagents as C4 actors (`agent` tags), the human as `person`, and the CLIs they
-drive as `cli`, with every delegation hand-declared (`edges = "declared"`).
-Because it lives alongside the code model in `c4.toml`, it is rendered with the
-new `--config` flag rather than by editing `pyproject.toml`:
-
-```bash
-forge-gen-c4 --config agents.c4.toml --format mermaid   # embedded in the README
-forge-gen-c4 --config agents.c4.toml --check            # drift-check docs/agents.dsl
-```
-
-`--config <path>` overrides the pyproject-resolved model with a standalone file
-(escape-checked against the repo root), so one repo can render any number of
-models. The README's Agent-fleet block pairs the emitted `class` lines with a
-local `classDef` palette to colour agents apart from the human — the tag
-vocabulary in action.
+The vocabulary drives styling: any consumer that tags its C4 model elements gets
+those tags emitted as CSS classes on the rendered nodes (see *Styling is
+tag-driven* above), so `[tool.forge.c4.render].custom_css` can colour a diagram
+by role — e.g. `.agent { fill: … }` to set agents apart from a human `person`.
 
 ### Route views (isolating one relationship path)
 

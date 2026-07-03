@@ -799,7 +799,7 @@ def _parse_render_config(section: dict) -> RenderConfig:
     return RenderConfig(**kwargs)
 
 
-def load_c4_config(root: Path, config_path: str | None = None) -> C4Config | None:
+def load_c4_config(root: Path) -> C4Config | None:
     """Load the C4 model skeleton for the repo.
 
     Reads the model table from an external ``c4.toml`` (preferred) or the
@@ -807,9 +807,6 @@ def load_c4_config(root: Path, config_path: str | None = None) -> C4Config | Non
 
     Args:
         root: Repository root directory.
-        config_path: Optional standalone model-file path (the ``--config``
-            flag) that overrides the pyproject-resolved model, so a second
-            model (e.g. an agents diagram) can be rendered on demand.
 
     Returns:
         A populated :class:`C4Config`, or ``None`` when C4 generation is
@@ -818,7 +815,7 @@ def load_c4_config(root: Path, config_path: str | None = None) -> C4Config | Non
     Raises:
         ValueError: When a component names a container that is not declared.
     """
-    section = resolve_model_section(root, config_path)
+    section = resolve_model_section(root)
     if not section or not section.get("system"):
         return None
     persons = tuple(
@@ -1391,7 +1388,6 @@ def _render_views(
 def build_model(
     root: Path,
     roots: list[Path],
-    config_path: str | None = None,
 ) -> tuple[C4Config, set[tuple[str, str]], list[str], list[str]] | None:
     """Assemble the C4 model: config, derived edges, unmatched + all modules.
 
@@ -1402,8 +1398,6 @@ def build_model(
     Args:
         root: Repository root directory.
         roots: Source-root directories to scan for the import graph.
-        config_path: Optional standalone model-file path (the ``--config``
-            flag) overriding the pyproject-resolved model.
 
     Returns:
         Tuple of (config, derived component edges, sorted unmatched module
@@ -1416,7 +1410,7 @@ def build_model(
             :func:`load_c4_config`), e.g. a component naming an unknown
             container.
     """
-    config = load_c4_config(root, config_path)
+    config = load_c4_config(root)
     if config is None:
         return None
     modules, graph = build_module_graph(Scope.FULL, roots)
@@ -3709,7 +3703,7 @@ def main() -> int:
     args = _parse_args()
     root = repo_root()
     try:
-        built = build_model(root, _resolve_roots(root, args.roots), args.config)
+        built = build_model(root, _resolve_roots(root, args.roots))
     except ValueError:
         logger.exception("Invalid C4 model")
         return 1
@@ -3752,8 +3746,7 @@ def _parse_args() -> argparse.Namespace:
     """Parse the ``forge-gen-c4`` command-line arguments.
 
     Returns:
-        Parsed arguments with ``format``, ``roots``, ``check``, ``output``,
-        ``config``.
+        Parsed arguments with ``format``, ``roots``, ``check``, ``output``.
     """
     parser = argparse.ArgumentParser(
         prog="forge-gen-c4",
@@ -3790,15 +3783,6 @@ def _parse_args() -> argparse.Namespace:
         "--output",
         default=None,
         help="Override the output path. Use '-' to write to stdout.",
-    )
-    parser.add_argument(
-        "--config",
-        default=None,
-        help=(
-            "Repo-relative path to a standalone model file, overriding the "
-            "pyproject-resolved model. Renders a second model (e.g. an agents "
-            "diagram) without editing pyproject.toml."
-        ),
     )
     return parser.parse_args()
 

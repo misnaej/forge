@@ -288,7 +288,6 @@ options:
 ```text
 usage: forge-gen-c4 [-h] [--format {dsl,html,pdf,svg,mermaid}]
                     [--roots [ROOTS ...]] [--check] [--output OUTPUT]
-                    [--config CONFIG]
 
 Generate a C4 architecture model from the import graph + a [tool.forge.c4] /
 c4.toml model. Emits Structurizr DSL (default), a self-contained offline HTML
@@ -307,10 +306,6 @@ options:
   --check               Verify the committed artifact is in sync; do not
                         write.
   --output OUTPUT       Override the output path. Use '-' to write to stdout.
-  --config CONFIG       Repo-relative path to a standalone model file,
-                        overriding the pyproject-resolved model. Renders a
-                        second model (e.g. an agents diagram) without editing
-                        pyproject.toml.
 ```
 
 ## forge-gen-cli-reference
@@ -623,6 +618,17 @@ Write a drift-aware status-badge block into the README. Opt-in via
 options:
   -h, --help  show this help message and exit
   --check     Verify the block is current without writing (exit 1 on drift).
+```
+
+## verify-forge-agent-doc
+
+```text
+usage: verify-forge-agent-doc [-h] [--diff BASE]
+
+options:
+  -h, --help   show this help message and exit
+  --diff BASE  Report graph-relevant mentions changed vs BASE (Layer-2
+               helper).
 ```
 
 ## verify-forge-changelog-history
