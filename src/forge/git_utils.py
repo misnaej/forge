@@ -277,11 +277,13 @@ def gh_api(*args: str, timeout: int = 10) -> str | None:
     return out or None
 
 
-def _run_git(*args: str) -> str:
+def _run_git(*args: str, cwd: Path | None = None) -> str:
     """Run a git command and return stdout.
 
     Args:
         *args: Git command arguments.
+        cwd: Directory to run git in. Defaults to the cached process-wide
+            :func:`repo_root` when omitted.
 
     Returns:
         Stdout from the git command, or empty string on failure.
@@ -290,7 +292,7 @@ def _run_git(*args: str) -> str:
         ["git", *args],
         capture_output=True,
         text=True,
-        cwd=repo_root(),
+        cwd=cwd if cwd is not None else repo_root(),
         check=False,
     )
     return result.stdout.strip() if result.returncode == 0 else ""
@@ -603,11 +605,7 @@ def get_tracked_files(
     Returns:
         Sorted, deduplicated list of tracked file paths matching the filters.
     """
-    out = (
-        run_git("ls-files", cwd=repo_root, check=False)
-        if repo_root is not None
-        else _run_git("ls-files")
-    )
+    out = _run_git("ls-files", cwd=repo_root)
     return sorted(set(_parse_files(out, suffix=suffix, prefix=prefix)))
 
 

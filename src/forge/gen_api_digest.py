@@ -164,7 +164,7 @@ def _is_test_module(path: Path) -> bool:
     )
 
 
-def iter_modules(repo_root: Path, roots: list[Path]) -> Iterator[Path]:
+def iter_modules(root: Path, roots: list[Path]) -> Iterator[Path]:
     """Yield Python module files under the given source roots.
 
     Sources from the **git-tracked set** (via
@@ -177,23 +177,23 @@ def iter_modules(repo_root: Path, roots: list[Path]) -> Iterator[Path]:
     ``__main__.py`` entry-point shims.
 
     Args:
-        repo_root: Repository root — the base for the tracked-set query and
-            for resolving repo-relative paths back to absolute ones.
+        root: Repository root — the base for the tracked-set query and for
+            resolving repo-relative paths back to absolute ones.
         roots: Source-root directories to scan (absolute paths under the
             repo root).
 
     Yields:
         Absolute paths to module files, sorted.
     """
-    rel_roots = [str(r.resolve().relative_to(repo_root.resolve())) for r in roots]
-    for rel in tracked_files_under_roots(repo_root, rel_roots):
+    rel_roots = [str(r.resolve().relative_to(root.resolve())) for r in roots]
+    for rel in tracked_files_under_roots(root, rel_roots):
         # Two-layer test exclusion: skip whole `tests/`/`test/` dirs by
         # path part (repo-relative, so an ancestor dir named `test` can't
         # false-match), then skip stray test files (test_*.py etc.) that
         # live elsewhere via the per-file name check.
         if SKIP_DIR_NAMES & set(Path(rel).parts):
             continue
-        path = repo_root / rel
+        path = root / rel
         if path.name == "__main__.py" or _is_test_module(path):
             continue
         yield path

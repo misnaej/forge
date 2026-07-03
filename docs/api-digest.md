@@ -264,7 +264,7 @@ _58 modules, 588 symbols._
 - `class ModuleDigest` — The top-level symbols of a single module.
 - `detect_roots(root: Path, explicit: list[str] | None) -> list[Path]` — Resolve the source roots to scan for Python modules.
 - `_is_test_module(path: Path) -> bool` _(internal)_ — Return whether a module path is a test module to skip.
-- `iter_modules(repo_root: Path, roots: list[Path]) -> Iterator[Path]` — Yield Python module files under the given source roots.
+- `iter_modules(root: Path, roots: list[Path]) -> Iterator[Path]` — Yield Python module files under the given source roots.
 - `_annotation(node: ast.expr | None) -> str` _(internal)_ — Render an AST annotation node as source text.
 - `_format_arg(arg: ast.arg, default: ast.expr | None) -> str` _(internal)_ — Render a single argument with its annotation and default.
 - `_positional_args(args: ast.arguments) -> list[str]` _(internal)_ — Render the positional (and positional-only) arguments.
@@ -418,7 +418,7 @@ _58 modules, 588 symbols._
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
 - `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.
 - `gh_api(*args: str, timeout: int = 10) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
-- `_run_git(*args: str) -> str` _(internal)_ — Run a git command and return stdout.
+- `_run_git(*args: str, cwd: Path | None = None) -> str` _(internal)_ — Run a git command and return stdout.
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 - `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
