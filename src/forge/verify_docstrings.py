@@ -81,9 +81,9 @@ from pathlib import Path
 
 from forge.config import (
     filter_excluded,
-    filter_under_roots,
     load_config,
     resolve_tool_roots,
+    tracked_files_under_roots,
 )
 from forge.git_utils import (
     SCOPE_ALL,
@@ -91,7 +91,6 @@ from forge.git_utils import (
     capturing_to_step_log,
     configure_cli_logging,
     get_modified_files,
-    get_tracked_files,
 )
 
 
@@ -1193,8 +1192,7 @@ def main() -> int:
             roots = resolve_tool_roots(
                 repo_root, "docstring_verification", include_tests=True
             )
-            py_files = filter_under_roots(get_tracked_files(), roots)
-            py_files = filter_excluded(py_files, load_config(repo_root).exclude)
+            py_files = tracked_files_under_roots(repo_root, roots)
         else:
             py_files = filter_excluded(
                 get_modified_files(), load_config(repo_root).exclude

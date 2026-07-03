@@ -303,6 +303,21 @@ def test_get_tracked_files_filters_suffix_and_prefix(
     assert git_utils.get_tracked_files(prefix=("tests/",)) == ["tests/b.py"]
 
 
+def test_get_tracked_files_repo_root_kwarg_targets_explicit_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `repo_root` kwarg runs `git ls-files` in that dir, not cwd."""
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    _init_git_repo(repo)
+    (repo / "src" / "a.py").write_text("")
+    # `git ls-files` reads the index — staging is enough, no commit needed.
+    subprocess.run(["git", "add", "-A"], cwd=repo, env=_GIT_ENV, check=True)
+
+    monkeypatch.chdir(tmp_path)
+    assert git_utils.get_tracked_files(repo_root=repo) == ["src/a.py"]
+
+
 # ---------------------------------------------------------------------------
 # emit + configure_cli_logging
 # ---------------------------------------------------------------------------

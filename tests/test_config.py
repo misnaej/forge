@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 
 from forge.config import (
@@ -15,7 +16,10 @@ from forge.config import (
     load_config,
     read_pyproject_raw,
     resolve_tool_roots,
+    tracked_files_under_roots,
 )
+from tests.conftest import GIT_ENV as _GIT_ENV
+from tests.conftest import init_git_repo as _init_git_repo
 
 
 if TYPE_CHECKING:
@@ -421,3 +425,64 @@ def test_load_config_exclude_non_list_value_behavior(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text('[tool.forge]\nexclude = "vendor"\n')
     cfg = load_config(tmp_path)
     assert cfg.exclude == []
+
+
+# ---------------------------------------------------------------------------
+# tracked_files_under_roots (issue #161 — git-tracked-set composition)
+# ---------------------------------------------------------------------------
+
+
+def test_tracked_files_under_roots_keeps_tracked_file_under_root(
+    tmp_path: Path,
+) -> None:
+    """A tracked file under a scanned root survives the composed selector."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    assert tracked_files_under_roots(tmp_path, ["src"]) == ["src/a.py"]
+
+
+def test_tracked_files_under_roots_drops_untracked_file(tmp_path: Path) -> None:
+    """A file on disk but never `git add`ed is excluded — the #161 guarantee."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("")
+    subprocess.run(["git", "add", "src/a.py"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    (tmp_path / "src" / "b.py").write_text("")
+    assert tracked_files_under_roots(tmp_path, ["src"]) == ["src/a.py"]
+
+
+def test_tracked_files_under_roots_drops_file_outside_roots(tmp_path: Path) -> None:
+    """A tracked file outside the requested roots is dropped."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "src" / "a.py").write_text("")
+    (tmp_path / "outside" / "x.py").write_text("")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    assert tracked_files_under_roots(tmp_path, ["src"]) == ["src/a.py"]
+
+
+def test_tracked_files_under_roots_respects_exclude_glob(tmp_path: Path) -> None:
+    """A tracked file matching [tool.forge].exclude is dropped."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text('[tool.forge]\nexclude = ["*.gen.py"]\n')
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("")
+    (tmp_path / "src" / "b.gen.py").write_text("")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    assert tracked_files_under_roots(tmp_path, ["src"]) == ["src/a.py"]
+
+
+def test_tracked_files_under_roots_filters_by_suffix(tmp_path: Path) -> None:
+    """The `suffix` kwarg selects a different file type than the `.py` default."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("")
+    (tmp_path / "src" / "README.md").write_text("")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    assert tracked_files_under_roots(tmp_path, ["src"]) == ["src/a.py"]
+    assert tracked_files_under_roots(tmp_path, ["src"], suffix=".md") == [
+        "src/README.md"
+    ]

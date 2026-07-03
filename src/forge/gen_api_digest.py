@@ -48,16 +48,16 @@ import argparse
 import ast
 import logging
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
-from forge.config import resolve_tool_roots
+from forge.config import resolve_tool_roots, tracked_files_under_roots
 from forge.gen_common import check_doc_drift
 from forge.git_utils import configure_cli_logging, repo_root
 
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
 
 configure_cli_logging()
@@ -164,28 +164,39 @@ def _is_test_module(path: Path) -> bool:
     )
 
 
-def iter_modules(roots: list[Path]) -> Iterator[Path]:
+def iter_modules(root: Path, roots: list[Path]) -> Iterator[Path]:
     """Yield Python module files under the given source roots.
 
-    Skips ``__pycache__`` and test directories, test modules, and
+    Sources from the **git-tracked set** (via
+    :func:`forge.config.tracked_files_under_roots`), not a raw filesystem
+    walk — so an untracked / gitignored ``.py`` under a root (a locally
+    cloned vendored repo, a machine-local data dir) never leaks into the
+    digest and makes it machine-dependent (issue #161). Repo-wide
+    ``[tool.forge].exclude`` globs are honored there too. On top of that,
+    skips ``__pycache__`` and test directories, test modules, and
     ``__main__.py`` entry-point shims.
 
     Args:
-        roots: Source-root directories to walk.
+        root: Repository root — the base for the tracked-set query and for
+            resolving repo-relative paths back to absolute ones.
+        roots: Source-root directories to scan (absolute paths under the
+            repo root).
 
     Yields:
-        Absolute paths to module files, sorted within each root.
+        Absolute paths to module files, sorted.
     """
-    for root in roots:
-        for path in sorted(root.rglob("*.py")):
-            # Two-layer test exclusion: skip whole `tests/`/`test/` dirs by
-            # path part, then skip stray test files (test_*.py etc.) that
-            # live elsewhere via the per-file name check.
-            if SKIP_DIR_NAMES & set(path.parts):
-                continue
-            if path.name == "__main__.py" or _is_test_module(path):
-                continue
-            yield path
+    rel_roots = [str(r.resolve().relative_to(root.resolve())) for r in roots]
+    for rel in tracked_files_under_roots(root, rel_roots):
+        # Two-layer test exclusion: skip whole `tests/`/`test/` dirs by
+        # path part (repo-relative, so an ancestor dir named `test` can't
+        # false-match), then skip stray test files (test_*.py etc.) that
+        # live elsewhere via the per-file name check.
+        if SKIP_DIR_NAMES & set(Path(rel).parts):
+            continue
+        path = root / rel
+        if path.name == "__main__.py" or _is_test_module(path):
+            continue
+        yield path
 
 
 def _annotation(node: ast.expr | None) -> str:
@@ -445,7 +456,7 @@ def build_digest(root: Path, roots: list[Path]) -> list[ModuleDigest]:
         Module digests sorted by dotted name.
     """
     digests: list[ModuleDigest] = []
-    for path in iter_modules(roots):
+    for path in iter_modules(root, roots):
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         except (SyntaxError, OSError, UnicodeDecodeError, ValueError) as exc:

@@ -277,11 +277,13 @@ def gh_api(*args: str, timeout: int = 10) -> str | None:
     return out or None
 
 
-def _run_git(*args: str) -> str:
+def _run_git(*args: str, cwd: Path | None = None) -> str:
     """Run a git command and return stdout.
 
     Args:
         *args: Git command arguments.
+        cwd: Directory to run git in. Defaults to the cached process-wide
+            :func:`repo_root` when omitted.
 
     Returns:
         Stdout from the git command, or empty string on failure.
@@ -290,7 +292,7 @@ def _run_git(*args: str) -> str:
         ["git", *args],
         capture_output=True,
         text=True,
-        cwd=repo_root(),
+        cwd=cwd if cwd is not None else repo_root(),
         check=False,
     )
     return result.stdout.strip() if result.returncode == 0 else ""
@@ -581,6 +583,7 @@ def get_tracked_files(
     *,
     suffix: str = ".py",
     prefix: str | tuple[str, ...] | None = None,
+    repo_root: Path | None = None,
 ) -> list[str]:
     """Get all git-tracked files matching the suffix/prefix filters.
 
@@ -593,13 +596,17 @@ def get_tracked_files(
         prefix: Optional path prefix(es) to filter by. Either a single
             string or a tuple of acceptable prefixes (e.g.,
             ``("test/", "tests/")`` to accept either test-dir layout).
+        repo_root: Directory to run ``git ls-files`` in. Defaults to the
+            process-wide cached :func:`repo_root`. Pass an explicit root
+            when the caller already holds one (so the tracked-set query
+            targets *that* repo, not the cached global — the seam that lets
+            the selector be exercised against a temp git repo in tests).
 
     Returns:
         Sorted, deduplicated list of tracked file paths matching the filters.
     """
-    return sorted(
-        set(_parse_files(_run_git("ls-files"), suffix=suffix, prefix=prefix)),
-    )
+    out = _run_git("ls-files", cwd=repo_root)
+    return sorted(set(_parse_files(out, suffix=suffix, prefix=prefix)))
 
 
 def stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]:
