@@ -17,12 +17,17 @@ if [ "$AGENT_TYPE" = "git-commit-push" ] || [ "$AGENT_TYPE" = "forge:git-commit-
 fi
 
 # Anchor at start-of-string or after a shell separator so substrings
-# inside quoted bodies (PR descriptions, commit messages) don't fire.
+# inside quoted bodies (PR descriptions, commit messages) don't fire. The
+# anchor also tolerates a leading run of `VAR=val` assignments and a
+# `command`/`env`/`exec`/`builtin`/`sudo` wrapper, so `GIT_DIR=x git push`
+# and `command git commit` can't slip the gate (shared verbatim with
+# block_force_push.sh / block_git_rebase.sh).
 #
 # Known accepted slip-through: `bash -c "git commit ..."` — git sits
 # after a quote, not a separator. Acceptable (matches
 # block_install_deps.sh's xargs slip-through stance).
-if echo "$COMMAND" | grep -qE '(^|[;&|]\s*)git\s+(commit|push)\b'; then
+GIT_ANCHOR='(^|[;&|])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo)[[:space:]]+)*git[[:space:]]+'
+if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}(commit|push)\b"; then
     echo "BLOCKED: raw 'git commit' / 'git push' from Bash is forbidden by FOUNDATION §3 mandatory-delegation. Use the forge:git-commit-push agent — it runs pre-commit, signs the commit per the convention, and pushes with the right tracking flags." >&2
     exit 2
 fi

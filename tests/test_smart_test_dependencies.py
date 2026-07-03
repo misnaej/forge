@@ -2,9 +2,10 @@
 
 # MOCKING STRATEGY: Graph-level tests (build_graph, select_tests) use a real
 # on-disk repo layout via the ``import_chain_repo`` fixture (no git required —
-# build_graph is a pure filesystem walk).  Pure-unit tests (_closest_known,
-# SelectionPlan.tests_up_to, render_plan, _patch_targets) construct minimal
+# build_graph is a pure filesystem walk).  Pure-unit tests
+# (SelectionPlan.tests_up_to, render_plan, _patch_targets) construct minimal
 # in-memory objects with no I/O.  No subprocess or network mocking.
+# ``closest_known`` moved to forge.import_graph — see tests/test_import_graph.py.
 
 from __future__ import annotations
 
@@ -16,7 +17,6 @@ import pytest
 
 from forge.smart_test.dependencies import (
     SelectionPlan,
-    _closest_known,
     _patch_targets,
     build_graph,
     render_plan,
@@ -89,27 +89,6 @@ def import_chain_repo(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return root
-
-
-def test_closest_known_exact_match() -> None:
-    """An exact module name resolves to itself."""
-    assert _closest_known("myapp.core", {"myapp.core", "myapp"}) == "myapp.core"
-
-
-def test_closest_known_attribute_collapses() -> None:
-    """``pkg.mod.attr`` collapses to ``pkg.mod`` when ``attr`` is not a module."""
-    assert _closest_known("myapp.core.x", {"myapp.core", "myapp"}) == "myapp.core"
-
-
-def test_closest_known_submodule_wins_over_package() -> None:
-    """The deepest matching prefix wins — submodule beats its package."""
-    modules = {"myapp", "myapp.core", "myapp.service"}
-    assert _closest_known("myapp.core", modules) == "myapp.core"
-
-
-def test_closest_known_external_returns_none() -> None:
-    """An import not in the internal module set returns ``None``."""
-    assert _closest_known("requests.get", {"myapp.core"}) is None
 
 
 def test_tests_up_to_returns_sorted_union_at_depth() -> None:

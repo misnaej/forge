@@ -278,6 +278,53 @@ def test_render_digest_marks_internal_symbols(tmp_path: Path) -> None:
     assert "_(internal)_" not in public_line
 
 
+def test_render_digest_shows_module_docstring_summary(tmp_path: Path) -> None:
+    """A module with a docstring renders its summary line under the header."""
+    _build_repo_with_module(tmp_path)
+    digests = build_digest(tmp_path, [tmp_path / "src"])
+    doc = render_digest(digests)
+    assert "## `sample.thing`" in doc
+    assert "> _Sample module for digest tests._" in doc
+
+
+def test_build_digest_keeps_docstring_only_module(tmp_path: Path) -> None:
+    """A module with only a docstring (no symbols) still earns a digest entry."""
+    pkg = tmp_path / "src" / "sample"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "purpose.py").write_text('"""The one job this module does."""\n')
+    digests = build_digest(tmp_path, [tmp_path / "src"])
+    by_name = {d.dotted: d for d in digests}
+    assert "sample.purpose" in by_name
+    entry = by_name["sample.purpose"]
+    assert entry.symbols == ()
+    assert entry.summary == "The one job this module does."
+    doc = render_digest(digests)
+    assert "## `sample.purpose`" in doc
+    assert "> _The one job this module does._" in doc
+
+
+def test_build_digest_drops_module_without_docstring_or_symbols(tmp_path: Path) -> None:
+    """A module with neither a docstring nor symbols is omitted entirely."""
+    pkg = tmp_path / "src" / "sample"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "constants.py").write_text("VALUE = 1\n")
+    digests = build_digest(tmp_path, [tmp_path / "src"])
+    assert "sample.constants" not in {d.dotted for d in digests}
+
+
+def test_render_digest_marks_module_missing_docstring(tmp_path: Path) -> None:
+    """A rendered module with symbols but no docstring gets the missing marker."""
+    pkg = tmp_path / "src" / "sample"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "worker.py").write_text("def go() -> None:\n    '''Do it.'''\n")
+    doc = render_digest(build_digest(tmp_path, [tmp_path / "src"]))
+    assert "## `sample.worker`" in doc
+    assert "> _(no module docstring)_" in doc
+
+
 def test_main_writes_doc_and_returns_zero(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
