@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_58 modules, 582 symbols._
+_58 modules, 588 symbols._
 
 ## `forge`
 
@@ -367,8 +367,14 @@ _58 modules, 582 symbols._
 - `_render_pdf_single_doc(browser: str, config: C4Config, views: list[tuple[str, str]], out_path: Path) -> None` _(internal)_ — Print the whole tabbed HTML to a PDF in one browser pass.
 - `_emit_html(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the offline HTML view (+ vendored Mermaid sidecar).
 - `_find_headless_browser() -> str | None` _(internal)_ — Locate an installed Chromium-family browser for headless PDF printing.
+- `_headless_base_cmd(browser: str) -> list[str]` _(internal)_ — Return the argv prefix shared by the PDF-print and SVG-dump backends.
 - `_print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None` _(internal)_ — Drive *browser* headlessly to print *html_path* to *pdf_path*.
 - `_emit_pdf(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Render the C4 views to a vector PDF via a headless browser.
+- `_render_view_svg_html(config: C4Config, label: str, mermaid_src: str) -> str` _(internal)_ — Build a single-view HTML that emits its rendered SVG as serialized XML.
+- `_extract_svg(dom: str) -> str | None` _(internal)_ — Pull the serialized SVG XML back out of the dumped page DOM.
+- `_render_view_svg(browser: str, html_path: Path) -> str | None` _(internal)_ — Drive *browser* headlessly to render one view's HTML and return its SVG.
+- `_svg_view_path(base: Path, label: str) -> Path` _(internal)_ — Return the per-view SVG file path for *label* next to *base*.
+- `_emit_svg(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Render each C4 view to its own standalone vector SVG via a headless browser.
 - `_emit_dsl(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the canonical DSL artifact and the README C4 block.
 - `main() -> int` — Generate or verify the C4 artifacts (DSL + README block, or HTML).
 - `_parse_args() -> argparse.Namespace` _(internal)_ — Parse the ``forge-gen-c4`` command-line arguments.

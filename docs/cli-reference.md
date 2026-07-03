@@ -286,20 +286,21 @@ options:
 ## forge-gen-c4
 
 ```text
-usage: forge-gen-c4 [-h] [--format {dsl,html,pdf,mermaid}]
+usage: forge-gen-c4 [-h] [--format {dsl,html,pdf,svg,mermaid}]
                     [--roots [ROOTS ...]] [--check] [--output OUTPUT]
 
 Generate a C4 architecture model from the import graph + a [tool.forge.c4] /
 c4.toml model. Emits Structurizr DSL (default), a self-contained offline HTML
-view, a vector PDF, or raw Mermaid.
+view, a vector PDF, per-view SVG files, or raw Mermaid.
 
 options:
   -h, --help            show this help message and exit
-  --format {dsl,html,pdf,mermaid}
+  --format {dsl,html,pdf,svg,mermaid}
                         Output: 'dsl' (Structurizr + README block, default),
                         'html' (offline view), 'pdf' (vector PDF via a
-                        headless browser), or 'mermaid' (raw Mermaid to
-                        stdout).
+                        headless browser), 'svg' (one vector SVG file per
+                        view, via a headless browser), or 'mermaid' (raw
+                        Mermaid to stdout).
   --roots [ROOTS ...]   Source dirs to scan. Defaults to the repo's configured
                         source roots.
   --check               Verify the committed artifact is in sync; do not

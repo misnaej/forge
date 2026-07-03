@@ -397,6 +397,17 @@ Print → Save as PDF). The page setup is tunable:
 | `pdf_orientation` | `"landscape"` | `landscape` or `portrait` — `contain`/`width` only. |
 | `pdf_margin` | `10` | Page margin in millimetres. |
 
+**SVG export.** `forge-gen-c4 --format svg` writes **one standalone vector SVG
+file per view** — `<stem>.<view-slug>.svg` next to `--output` (default
+`docs/architecture.svg` → `docs/architecture.system_context.svg`,
+`…containers.svg`, one per Component/route view). It reuses the same offline page
+and already-installed headless browser as `--format pdf` (no new dependency, no
+network), capturing each view's Mermaid-rendered `<svg>` — serialized in-browser
+to well-formed XML at the diagram's intrinsic size, so each file opens crisp in a
+browser, Inkscape, or an `<img>`/`<object>` embed. Like PDF, an SVG is a
+browser-rendered artifact (non-reproducible coordinates), so `--check` is a
+no-op, not a drift gate.
+
 **Legibility of dense views.** With `auto` each view is at natural scale (never
 shrunk), so legibility is a *layout* question, not a page-fit one. If a view is a
 wide directional strip, compact it: group elements into
