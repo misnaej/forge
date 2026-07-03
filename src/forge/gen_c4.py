@@ -123,16 +123,17 @@ _BROWSER_COMMANDS = (
     "brave-browser",
     "chrome",
 )
-# Mermaid's async run() needs wall-clock to finish before the page is printed;
-# Chrome's virtual-time budget (ms) advances time deterministically until the
-# render settles. Generous so large models complete.
-_PDF_VIRTUAL_TIME_BUDGET_MS = 15000
-# Hard ceiling (seconds) on the headless print so a wedged browser can't hang a
+# Shared by both headless-browser backends (PDF print + SVG dump). Mermaid's
+# async render needs wall-clock to settle before the DOM is captured; Chrome's
+# virtual-time budget (ms) advances time deterministically until it does.
+# Generous so large models complete.
+_HEADLESS_VIRTUAL_TIME_BUDGET_MS = 15000
+# Hard ceiling (seconds) on a headless run so a wedged browser can't hang a
 # commit or CI run.
-_PDF_TIMEOUT_S = 120
+_HEADLESS_TIMEOUT_S = 120
 # Large headless viewport so a wide diagram lays out + measures at full size
-# (Chrome's ~800px default would cram it and mis-measure the page bounds).
-_PDF_WINDOW_SIZE = "5000,5000"
+# (Chrome's ~800px default would cram it and mis-measure the bounds).
+_HEADLESS_WINDOW_SIZE = "5000,5000"
 # PDF concatenation tools tried (in order) to stitch the per-view single-page
 # PDFs (each tightly sized to its diagram) into one file. Optional: absent →
 # forge falls back to a single-document print (fixed pages) so `--format pdf`
@@ -3119,7 +3120,7 @@ def _merge_pdfs(merger: str, parts: list[Path], out_path: Path) -> None:
         cmd = [merger, "--empty", "--pages", *part_paths, "--", os.fspath(out_path)]
     else:  # pdfunite: pdfunite in1.pdf in2.pdf ... out.pdf
         cmd = [merger, *part_paths, os.fspath(out_path)]
-    subprocess.run(cmd, check=True, capture_output=True, timeout=_PDF_TIMEOUT_S)
+    subprocess.run(cmd, check=True, capture_output=True, timeout=_HEADLESS_TIMEOUT_S)
 
 
 def _render_pdf_per_view(
@@ -3249,24 +3250,22 @@ def _find_headless_browser() -> str | None:
     return None
 
 
-def _print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
-    """Drive *browser* headlessly to print *html_path* to *pdf_path*.
+def _headless_base_cmd(browser: str) -> list[str]:
+    """Return the argv prefix shared by the PDF-print and SVG-dump backends.
 
-    Mermaid renders the diagrams client-side, so the browser engine — not forge
-    — produces the vector PDF; the ``@media print`` rules in the page lay every
-    view out one-per-page. Flags keep the run offline and non-interactive (no
-    sandbox prompt, no background networking, no first-run UI).
+    The offline / non-interactive flag set both :func:`_print_html_to_pdf` and
+    :func:`_render_view_svg` rely on lives here in one place, so a new safety or
+    offline flag cannot be added to one backend and silently forgotten in the
+    other. Each caller appends its format-specific flags (``--print-to-pdf`` /
+    ``--dump-dom``) and the ``file://`` page URI.
 
     Args:
         browser: Path to the Chromium-family executable.
-        html_path: The offline HTML to render (loaded over ``file://``).
-        pdf_path: Destination PDF path.
 
-    Raises:
-        subprocess.CalledProcessError: If the browser exits non-zero.
-        subprocess.TimeoutExpired: If the print exceeds the hard timeout.
+    Returns:
+        The executable followed by the shared headless flags.
     """
-    cmd = [
+    return [
         browser,
         "--headless",
         # --no-sandbox: the Chromium sandbox needs a writable user-data dir /
@@ -3279,11 +3278,33 @@ def _print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
         "--disable-background-networking",
         "--disable-extensions",
         "--hide-scrollbars",
-        # A large viewport so a wide diagram lays out at full size and the page
-        # the JS measures matches what prints (the ~800px default would cram it).
-        f"--window-size={_PDF_WINDOW_SIZE}",
+        # A large viewport so a wide diagram lays out + measures at full size
+        # (Chrome's ~800px default would cram it and mis-measure the bounds).
+        f"--window-size={_HEADLESS_WINDOW_SIZE}",
+        f"--virtual-time-budget={_HEADLESS_VIRTUAL_TIME_BUDGET_MS}",
+    ]
+
+
+def _print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
+    """Drive *browser* headlessly to print *html_path* to *pdf_path*.
+
+    Mermaid renders the diagrams client-side, so the browser engine — not forge
+    — produces the vector PDF; the ``@media print`` rules in the page lay every
+    view out one-per-page. The shared offline/non-interactive flags come from
+    :func:`_headless_base_cmd`.
+
+    Args:
+        browser: Path to the Chromium-family executable.
+        html_path: The offline HTML to render (loaded over ``file://``).
+        pdf_path: Destination PDF path.
+
+    Raises:
+        subprocess.CalledProcessError: If the browser exits non-zero.
+        subprocess.TimeoutExpired: If the print exceeds the hard timeout.
+    """
+    cmd = [
+        *_headless_base_cmd(browser),
         "--no-pdf-header-footer",
-        f"--virtual-time-budget={_PDF_VIRTUAL_TIME_BUDGET_MS}",
         f"--print-to-pdf={os.fspath(pdf_path)}",
         html_path.as_uri(),
     ]
@@ -3291,7 +3312,7 @@ def _print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
         cmd,
         check=True,
         capture_output=True,
-        timeout=_PDF_TIMEOUT_S,
+        timeout=_HEADLESS_TIMEOUT_S,
     )
 
 
@@ -3355,7 +3376,7 @@ def _emit_pdf(
         else:
             _render_pdf_single_doc(browser, config, views, out_path)
     except subprocess.TimeoutExpired:
-        logger.exception("PDF render timed out after %ss.", _PDF_TIMEOUT_S)
+        logger.exception("PDF render timed out after %ss.", _HEADLESS_TIMEOUT_S)
         return 1
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or b"").decode(errors="replace").strip()
@@ -3383,7 +3404,12 @@ def _render_view_svg_html(config: C4Config, label: str, mermaid_src: str) -> str
 
     Args:
         config: The model skeleton (for the render/layout options).
-        label: The view's title (unused in output; kept for signature parity).
+        label: The view's title, set as the page's initial ``<title>``; the
+            script overwrites it to the ``"c4-ready"`` readiness marker once the
+            render settles, so it never reaches the dumped DOM
+            :func:`_extract_svg` reads. Kept to match
+            :func:`_render_view_pdf_html`'s signature so the caller's view loop
+            stays symmetric.
         mermaid_src: The view's Mermaid source.
 
     Returns:
@@ -3476,27 +3502,13 @@ def _render_view_svg(browser: str, html_path: Path) -> str | None:
         subprocess.CalledProcessError: If the browser exits non-zero.
         subprocess.TimeoutExpired: If the render exceeds the hard timeout.
     """
-    cmd = [
-        browser,
-        "--headless",
-        "--no-sandbox",
-        "--disable-gpu",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-background-networking",
-        "--disable-extensions",
-        "--hide-scrollbars",
-        f"--window-size={_PDF_WINDOW_SIZE}",
-        f"--virtual-time-budget={_PDF_VIRTUAL_TIME_BUDGET_MS}",
-        "--dump-dom",
-        html_path.as_uri(),
-    ]
+    cmd = [*_headless_base_cmd(browser), "--dump-dom", html_path.as_uri()]
     proc = subprocess.run(
         cmd,
         check=True,
         capture_output=True,
         text=True,
-        timeout=_PDF_TIMEOUT_S,
+        timeout=_HEADLESS_TIMEOUT_S,
     )
     return _extract_svg(proc.stdout)
 
@@ -3573,7 +3585,7 @@ def _emit_svg(
                     out_path.write_text(svg, encoding="utf-8")
                     written.append(os.path.relpath(out_path, root))
     except subprocess.TimeoutExpired:
-        logger.exception("SVG render timed out after %ss.", _PDF_TIMEOUT_S)
+        logger.exception("SVG render timed out after %ss.", _HEADLESS_TIMEOUT_S)
         return 1
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or "").strip()
