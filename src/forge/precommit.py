@@ -1023,6 +1023,36 @@ def _cli_wiring_enabled(repo_root: Path) -> bool:
     return bool(_forge_step_config(repo_root, "cli_wiring").get("enabled"))
 
 
+def step_agent_doc(repo_root: Path) -> StepResult:
+    """Run ``verify-forge-agent-doc`` — keep a hand-maintained agent doc in sync.
+
+    Gates the deterministic floor under a repo's agent-architecture document
+    (coverage of every agent/skill + no dangling hook/CLI/skill references).
+    Requires opt-in — ``[tool.forge.agent_doc] path = "..."`` — because most
+    repos have no such doc; self-skips otherwise so they stay green.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` mirroring the CLI exit code, or a skipped result when
+        the consumer has not configured an agent doc.
+
+    Raises:
+        SystemExit: If ``verify-forge-agent-doc`` is not on PATH.
+    """
+    if not _forge_step_config(repo_root, "agent_doc").get("path"):
+        return StepResult(
+            name="agent_doc",
+            passed=True,
+            output="(no [tool.forge.agent_doc].path in pyproject.toml — skipped)",
+            skipped=True,
+        )
+    require_cli("verify-forge-agent-doc", caller="forge-precommit")
+    passed, output = _run(["verify-forge-agent-doc"], cwd=repo_root)
+    return StepResult(name="agent_doc", passed=passed, output=output)
+
+
 def step_plugin_version(repo_root: Path) -> StepResult:
     """Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
 
@@ -1553,6 +1583,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("repo_structure_check", step_repo_structure),
     StepDef("manifest_json", step_manifest_json),
     StepDef("cli_wiring", step_cli_wiring),
+    StepDef("agent_doc", step_agent_doc),
     StepDef("commit_types_parity", step_commit_types_parity),
     StepDef("plugin_version", step_plugin_version),
     StepDef("release_tag_guard", step_release_tag_guard),
