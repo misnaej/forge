@@ -312,6 +312,14 @@ class External:
         tags: Free-form labels for bulk include/exclude-by-tag view slimming.
         group: Optional band name; elements sharing a ``group`` cluster into one
             labelled band in the Container view (empty = ungrouped).
+        owned: True for **infrastructure the team owns and operates** (a DB /
+            compute / storage / runtime) rather than a third-party system.
+            C4's external test is ownership, so owned infra doesn't belong in the
+            third-party lane: ``owned = true`` gets the reserved ``infrastructure``
+            tag (a distinct palette colour) and, when ungrouped, defaults to an
+            "Our infrastructure" band — separating it visually from real
+            externals. Relationships are unaffected; default ``False`` is
+            byte-identical.
     """
 
     name: str
@@ -321,6 +329,7 @@ class External:
     hidden: bool = False
     tags: tuple[str, ...] = ()
     group: str = ""
+    owned: bool = False
 
 
 @dataclass(frozen=True)
@@ -694,6 +703,37 @@ def _visibility_fields(entry: dict) -> dict:
     }
 
 
+_OWNED_INFRA_TAG = "infrastructure"
+_OWNED_INFRA_GROUP = "Our infrastructure"
+
+
+def _external_fields(entry: dict) -> dict:
+    """Build the :class:`External` keyword args, applying ``owned`` semantics.
+
+    Extends :func:`_visibility_fields` for externals: when ``owned = true``, the
+    element is team-operated infrastructure, not a third party, so it gains the
+    reserved ``infrastructure`` tag (distinct palette colour) and — if the author
+    set no explicit ``group`` — an "Our infrastructure" band, keeping it out of
+    the third-party lane. A ``False`` (default) / absent ``owned`` returns exactly
+    the base visibility fields, so existing models are byte-identical.
+
+    Args:
+        entry: One ``[[external]]`` TOML table.
+
+    Returns:
+        Keyword args for :class:`External` (base visibility fields plus ``owned``,
+        with ``tags`` / ``group`` adjusted when owned).
+    """
+    fields = _visibility_fields(entry)
+    owned = bool(entry.get("owned", False))
+    if owned:
+        if _OWNED_INFRA_TAG not in fields["tags"]:
+            fields["tags"] = (*fields["tags"], _OWNED_INFRA_TAG)
+        if not fields["group"]:
+            fields["group"] = _OWNED_INFRA_GROUP
+    return {**fields, "owned": owned}
+
+
 def _parse_components(section: dict) -> tuple[Component, ...]:
     """Parse components from rich ``[[component]]`` tables + the simple map.
 
@@ -833,7 +873,7 @@ def load_c4_config(root: Path) -> C4Config | None:
             e.get("name", "?"),
             e.get("description", ""),
             e.get("relationship", "uses"),
-            **_visibility_fields(e),
+            **_external_fields(e),
         )
         for e in _coerce_list(section.get("external"))
     )
@@ -1548,6 +1588,7 @@ _DEFAULT_TAG_PALETTE: dict[str, str] = {
     "container": "fill:#dbeafe,stroke:#2563eb,color:#1e3a8a",
     "component": "fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e",
     "external": "fill:#f3e8ff,stroke:#9333ea,color:#581c87",
+    "infrastructure": "fill:#ccfbf1,stroke:#0d9488,color:#134e4a",
     # modifiers
     "reporter": "stroke-dasharray:5 3",
     "mutator": "stroke-width:3px",

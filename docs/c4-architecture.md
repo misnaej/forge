@@ -313,6 +313,28 @@ view — containers inside the system boundary, externals beside it — via nest
 Mermaid subgraphs). All three are additive: with nothing flagged the output is
 byte-identical.
 
+### Owned infrastructure vs. third-party externals
+
+C4's test for an `[[external]]` is **ownership** — a system you do *not* build or
+operate. But `[[container]]` (your app code) + `[[external]]` (third party) leave
+no home for **infrastructure the team owns and runs** (a DB, compute cluster,
+object store, tool runtime): it isn't app code, and it isn't third-party. Model
+it as an `[[external]]` with **`owned = true`**:
+
+```toml
+[[tool.forge.c4.external]]
+name = "Results DB"
+description = "Team-operated Postgres"
+relationship = "reads/writes"
+owned = true
+```
+
+`owned = true` is a shortcut: the element gains the reserved `infrastructure`
+tag (a distinct teal palette colour, not third-party purple) and — unless you
+set an explicit `group` — an **"Our infrastructure"** band, so it renders apart
+from genuine third parties in every view while its relationships stay intact.
+Default (`owned` unset) is byte-identical.
+
 ### Element tag vocabulary (naming standard)
 
 C4's four stock element kinds — Person, Software System, Container, Component —
@@ -342,12 +364,15 @@ is mandatory on every element:
 | `module` | a code package / module | Component |
 | `policy` | a foundational rule or governing doc | External |
 
-**Structural tags** — `container`, `component`, `external` (and `person`, above)
-name a C4 element's own stock type rather than a domain role. They exist so a
-plain code model (no agents/skills) can still be coloured by the reference
-palette below; the reference palette defines them alongside the kind tags. Use a
-domain kind (`agent` / `skill` / …) when one fits; fall back to a structural tag
-otherwise.
+**Structural tags** — `container`, `component`, `external`, `infrastructure`
+(and `person`, above) name a C4 element's own stock type rather than a domain
+role. They exist so a plain code model (no agents/skills) can still be coloured
+by the reference palette below; the reference palette defines them alongside the
+kind tags. Use a domain kind (`agent` / `skill` / …) when one fits; fall back to
+a structural tag otherwise. `infrastructure` marks **team-owned infrastructure**
+(a DB / compute / storage / runtime you operate) — distinct from a third-party
+`external`; set it via the `owned = true` shortcut on an `[[external]]` (below),
+which also bands it under "Our infrastructure".
 
 **Modifier tags — zero or more (open set).** Refine a kind without changing it:
 
