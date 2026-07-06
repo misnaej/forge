@@ -313,6 +313,91 @@ view — containers inside the system boundary, externals beside it — via nest
 Mermaid subgraphs). All three are additive: with nothing flagged the output is
 byte-identical.
 
+### Element tag vocabulary (naming standard)
+
+C4's four stock element kinds — Person, Software System, Container, Component —
+don't name what a modern repo actually contains: **AI agents, slash-command
+skills, git/CI hooks, CLIs, code modules, policy docs**. An agent in particular
+is an *actor* (it acts on the system) but is not a human, and C4 has one
+`Person` shape for both — so a diagram can't tell a developer from an agent.
+
+Rather than invent new element types (new dataclasses, new render shapes), forge
+standardises a **controlled `tags` vocabulary**. Any repo — forge or a consumer —
+tags its C4 elements from the same set, so views can filter and (later) style by
+role, and agents are separable from people. This is the C4 analogue of the
+canonical issue-label schema (FOUNDATION §14): a shared vocabulary, not a
+per-repo invention.
+
+**Kind tags — exactly one per element, required (reserved names).** The kind is
+what separates a human `person` from an `agent` (both ride C4's `Person`), so it
+is mandatory on every element:
+
+| Tag | Marks | Rides on C4 type |
+|---|---|---|
+| `person` | a human actor (developer, reviewer) | Person |
+| `agent` | an AI subagent / worker | Person |
+| `skill` | an invocable entry point (e.g. a slash command) | Container |
+| `hook` | a git / CI / editor hook that guards an action | Container |
+| `cli` | a shipped command-line tool | Component |
+| `module` | a code package / module | Component |
+| `policy` | a foundational rule or governing doc | External |
+
+**Structural tags** — `container`, `component`, `external` (and `person`, above)
+name a C4 element's own stock type rather than a domain role. They exist so a
+plain code model (no agents/skills) can still be coloured by the reference
+palette below; the reference palette defines them alongside the kind tags. Use a
+domain kind (`agent` / `skill` / …) when one fits; fall back to a structural tag
+otherwise.
+
+**Modifier tags — zero or more (open set).** Refine a kind without changing it:
+
+| Tag | Meaning | Typically on |
+|---|---|---|
+| `reporter` / `mutator` | read-only vs. can modify files/state | `agent` |
+| `blocking` / `advisory` | failure halts vs. only warns | `hook`, pre-commit step |
+| `foundation` / `local` | shipped to consumers vs. repo-only | any |
+| `orchestrator` | the driving main agent (a distinct look) | the top-level agent |
+
+**Relationship verbs — controlled edge labels.** Declared `[[relationship]]`
+edges (which connect *any* element to any other) use a small verb set as their
+`description`, so the graph reads consistently:
+
+- `triggers` (person → skill) · `delegates` (agent → agent) ·
+  `invokes` (agent/skill → cli) · `guards` (hook → action) ·
+  `enforces` (policy → agent/hook) · `reads` (→ policy/doc)
+
+**Rules.**
+
+1. **One kind tag per element, required.** `person` vs `agent` is the only thing
+   distinguishing a human from an AI actor — never omit it.
+2. **Kind tags are reserved.** Consumers add their own *domain* tags freely
+   (`frontend`, `data-pipeline`) but never redefine a kind.
+3. **Filtering is free today.** `[tool.forge.c4.render].include_tags = ["agent"]`
+   already yields an agent-only rendering (the DSL stays canonical).
+4. **Styling is tag-driven.** Each of an element's tags is emitted as a
+   separate Mermaid `class` statement on its node, so every tag becomes an
+   independently targetable CSS class (a two-tag `agent` + `reporter` element
+   matches both `.agent` and `.reporter`). Forge also ships a **reference
+   palette**: for each reserved tag actually used, `forge-gen-c4` emits a
+   `classDef` (`person` / `agent` / `skill` / `hook` / `cli` / `module` /
+   `policy` / `container` / `component` / `external` + the `reporter` / `mutator`
+   / `orchestrator` modifiers), so a tagged diagram is coloured out of the box —
+   the same palette `docs/agent-architecture.md` uses, so the two diagrams read
+   alike. A tagless model emits neither `classDef` nor `class` (byte-identical),
+   and `[tool.forge.c4.render].custom_css` overrides any class.
+   **v1 scope:** classes + palette are emitted on the flat/README diagram
+   (`--format mermaid`/`dsl`) and `route_views` tabs. The **System Context**,
+   **Containers**, and per-container **Component** tabs of `--format html` /
+   `--format pdf` do not carry them yet — wiring the three per-view renderers is
+   tracked follow-up.
+5. **Single source of truth.** This table is canonical here; other docs point
+   back rather than restating it.
+
+The vocabulary drives styling: any consumer that tags its C4 model elements gets
+those tags emitted as CSS classes on the rendered nodes (see *Styling is
+tag-driven* above), so `[tool.forge.c4.render].custom_css` can colour a diagram
+by role — e.g. `.agent { fill: … }` to set agents apart from a human `person`.
+
 ### Route views (isolating one relationship path)
 
 When a Container view is too dense to follow a single flow,
@@ -378,6 +463,12 @@ Deferred enhancements (the feature shipped without these by design):
    distinct shapes/colors for person vs. system vs. container vs.
    component vs. external. v1's Mermaid flowchart uses simple boxes
    (persons as stadiums, externals as subroutine boxes) without the full
-   C4 visual vocabulary. A later pass could emit Mermaid `classDef`
-   styling or switch the HTML view to Mermaid's C4 diagram type (once its
-   experimental status settles) for shape fidelity.
+   C4 visual vocabulary. **Shipped:** the [element tag
+   vocabulary](#element-tag-vocabulary-naming-standard) emits each element's
+   tags as CSS classes **and** a reference `classDef` palette, so a tagged model
+   is coloured by role out of the box (`custom_css` still overrides). Still open:
+   **per-view coverage** — the palette reaches the flat/README diagram and
+   `route_views` tabs, but *not* the System Context / Containers / Component tabs
+   of `--format html` / `--format pdf` (those three renderers don't emit tag
+   classes yet) — and distinct per-kind **shapes**, or switching the HTML view to
+   Mermaid's C4 diagram type (once its experimental status settles).

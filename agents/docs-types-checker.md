@@ -249,6 +249,16 @@ I am usually called BY `precommit-fixer`, not directly. The workflow is:
 precommit-fixer → docs-types-checker → precommit-fixer (re-verify formatting)
 ```
 
+## Agent-architecture doc (when configured)
+
+Skip when `[tool.forge.agent_doc]` is unset. When set (the repo keeps a
+hand-maintained agent-architecture doc) and this is a PR finalization: the
+pre-commit `agent_doc` step already gates its **nodes** (coverage + no dangling
+refs); your job is the curated **edges** the script can't judge. Run
+`verify-forge-agent-doc --diff <base>` (base = PR target branch) for the
+agent/skill/hook mentions this diff changed, then **Edit** the doc where a
+delegation, rename, or removal left it stale, noting what changed.
+
 ## Output
 
 `verified-at:` header per the [reporter-agent contract in

@@ -620,6 +620,17 @@ options:
   --check     Verify the block is current without writing (exit 1 on drift).
 ```
 
+## verify-forge-agent-doc
+
+```text
+usage: verify-forge-agent-doc [-h] [--diff BASE]
+
+options:
+  -h, --help   show this help message and exit
+  --diff BASE  Report graph-relevant mentions changed vs BASE (Layer-2
+               helper).
+```
+
 ## verify-forge-changelog-history
 
 ```text

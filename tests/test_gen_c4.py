@@ -5,15 +5,17 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import logging
+import re
 import shutil
 import subprocess
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from forge.gen_c4 import (
     _BROWSER_APP_PATHS,
     _BROWSER_ENV,
+    _DEFAULT_TAG_PALETTE,
     _EDGE_MODES,
     DEFAULT_PDF_OUTPUT,
     DEFAULT_SVG_OUTPUT,
@@ -64,6 +66,8 @@ from forge.gen_c4 import (
     _safe_out_path,
     _slug,
     _svg_view_path,
+    _tag_class_lines,
+    _tag_classdef_lines,
     _under_prefix,
     _visibility_fields,
     _visible_config,
@@ -80,10 +84,6 @@ from forge.gen_c4 import (
     resolve_model_section,
     sync_readme,
 )
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 # A minimal standalone c4.toml model used across the file-loading tests.
@@ -3495,3 +3495,217 @@ def test_build_views_route_views_empty_default_adds_no_tabs() -> None:
         "Applications Components",
         "Domain libraries Components",
     ]
+
+
+# --- element tag vocabulary: Mermaid `class` styling hook ---
+
+
+def test_render_mermaid_emits_class_line_for_tagged_element() -> None:
+    """A tagged person/container/component each get a Mermaid class line."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses", tags=("person",)),),
+        containers=(Container("App", "", "", tags=("skill",)),),
+        components=(Component("A", ("demo.a",), tags=("agent", "reporter")),),
+    )
+    mermaid = render_mermaid(config, set())
+    assert "class dev person" in mermaid
+    assert "class app skill" in mermaid
+    # A multi-tag element emits ONE class line per tag, never a comma-joined
+    # token (Mermaid would treat `agent,reporter` as a single class, so neither
+    # `.agent` nor `.reporter` would match).
+    assert "class a agent" in mermaid
+    assert "class a reporter" in mermaid
+    assert "agent,reporter" not in mermaid
+
+
+def test_render_mermaid_untagged_model_emits_no_class_lines() -> None:
+    """No element carries tags -> the styling hook (palette + class) is inert.
+
+    Byte-identity guard: with nothing tagged, neither the ``_tag_classdef_lines``
+    palette lookup nor the ``_tag_class_lines`` assignments emit anything, so an
+    untagged model's Mermaid output is unaffected by the tag vocabulary feature.
+    """
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses"),),
+        containers=(Container("App", "", ""),),
+        components=(Component("A", ("demo.a",)),),
+    )
+    mermaid = render_mermaid(config, set())
+    assert "classDef" not in mermaid
+    assert "class " not in mermaid
+
+
+def test_tag_class_lines_orders_person_external_container_component() -> None:
+    """Class lines are emitted person -> external -> container -> component."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses", tags=("person",)),),
+        externals=(External("GitHub", "", "uses", tags=("saas",)),),
+        containers=(Container("App", "", "", tags=("skill",)),),
+        components=(Component("A", ("demo.a",), tags=("agent",)),),
+    )
+    ids = {
+        "person": {"Dev": "dev"},
+        "external": {"GitHub": "github"},
+        "container": {"App": "app"},
+        "component": {"A": "a"},
+    }
+    lines = _tag_class_lines(config, ids)
+    assert lines == [
+        "    class dev person",
+        "    class github saas",
+        "    class app skill",
+        "    class a agent",
+    ]
+
+
+def test_tag_class_lines_skips_element_absent_from_ids() -> None:
+    """A tagged element missing from the ids map (a subset view) is skipped."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        components=(Component("A", ("demo.a",), tags=("agent",)),),
+    )
+    ids = {"person": {}, "external": {}, "container": {}, "component": {}}
+    assert _tag_class_lines(config, ids) == []
+
+
+def test_tag_class_lines_empty_when_no_tags() -> None:
+    """No element in the model declares tags -> an empty list is returned."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        containers=(Container("App", "", ""),),
+        components=(Component("A", ("demo.a",)),),
+    )
+    ids = {
+        "person": {},
+        "external": {},
+        "container": {"App": "app"},
+        "component": {"A": "a"},
+    }
+    assert _tag_class_lines(config, ids) == []
+
+
+# --- default tag palette: reserved-tag `classDef` emission ---
+
+
+def test_tag_classdef_lines_emits_for_present_reserved_tags() -> None:
+    """A person tagged "person" and a component tagged "cli" each get a classDef."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses", tags=("person",)),),
+        components=(Component("A", ("demo.a",), tags=("cli",)),),
+    )
+    lines = _tag_classdef_lines(config)
+    assert lines == [
+        "    classDef cli fill:#dcfce7,stroke:#15803d,color:#14532d",
+        "    classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12",
+    ]
+
+
+def test_tag_classdef_lines_skips_unreserved_tags() -> None:
+    """A tag absent from the palette (a bespoke label) emits no classDef line."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        components=(Component("A", ("demo.a",), tags=("bespoke",)),),
+    )
+    assert _tag_classdef_lines(config) == []
+
+
+def test_tag_classdef_lines_empty_when_no_tags() -> None:
+    """No element in the model declares tags -> an empty list is returned."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        containers=(Container("App", "", ""),),
+        components=(Component("A", ("demo.a",)),),
+    )
+    assert _tag_classdef_lines(config) == []
+
+
+def test_tag_classdef_lines_deduplicates_across_elements() -> None:
+    """Two components sharing a reserved tag emit ONE classDef, not one each."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        components=(
+            Component("A", ("demo.a",), tags=("component",)),
+            Component("B", ("demo.b",), tags=("component",)),
+        ),
+    )
+    lines = _tag_classdef_lines(config)
+    assert lines == ["    classDef component fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e"]
+
+
+def test_render_mermaid_tagged_emits_classdef_then_class() -> None:
+    """render_mermaid emits the palette classDef before the class assignment."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses", tags=("person",)),),
+    )
+    mermaid = render_mermaid(config, set())
+    assert "classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12" in mermaid
+    assert "class dev person" in mermaid
+    assert mermaid.index("classDef person") < mermaid.index("class dev person")
+
+
+# --- design review gaps: palette<->doc consistency + route_view tag coverage ---
+
+_CLASSDEF_RE = re.compile(r"^\s*classDef (\S+) (.+)$", re.MULTILINE)
+
+
+def test_agent_doc_classdefs_match_default_palette() -> None:
+    """Every ``classDef`` in docs/agent-architecture.md matches the live palette.
+
+    The doc hand-copies ``_DEFAULT_TAG_PALETTE``'s colours so GitHub's static
+    Mermaid render looks the same as the tool-generated one; this guards
+    against silent drift between the two. The doc repeats the same classDef
+    block once per subview, so matches are deduped into a dict before
+    comparing.
+    """
+    doc_path = Path(__file__).parents[1] / "docs" / "agent-architecture.md"
+    text = doc_path.read_text(encoding="utf-8")
+    found = {tag: style.strip() for tag, style in _CLASSDEF_RE.findall(text)}
+    shared = {tag: style for tag, style in found.items() if tag in _DEFAULT_TAG_PALETTE}
+    # Not vacuous: the doc actually declares several reserved tags.
+    assert len(shared) >= 3
+    for tag, style in shared.items():
+        assert style == _DEFAULT_TAG_PALETTE[tag]
+
+
+def test_route_view_carries_tag_classes() -> None:
+    """A route-view tab carries the palette classDef + class lines for its tags.
+
+    Route-view tabs render via :func:`render_mermaid` on a pruned model (see
+    ``_route_view``), so a tagged component's styling hook must survive the
+    pruning — this is the documented v1 scope for per-view tag styling.
+    """
+    config = _two_container_config(
+        (
+            Component("A", ("demo.a",), container="Applications", tags=("cli",)),
+            Component("B", ("demo.b",), container="Applications"),
+        )
+    )
+    source = _route_view(config, {("A", "B")}, "A")
+    assert source is not None
+    assert "classDef cli" in source
+    assert "class a cli" in source
