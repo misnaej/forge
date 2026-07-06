@@ -503,5 +503,5 @@ def _warn_untracked_under_roots(repo_root: Path, roots: list[str], suffix: str) 
             "include (only git-tracked files are scanned, for reproducibility).",
             len(untracked),
             suffix,
-            ", ".join(roots) or "(no roots)",
+            ", ".join(roots),
         )
