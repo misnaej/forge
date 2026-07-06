@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_59 modules, 596 symbols._
+_59 modules, 601 symbols._
 
 ## `forge`
 
@@ -209,6 +209,7 @@ _59 modules, 596 symbols._
 - `filter_under_roots(files: list[str], roots: list[str]) -> list[str]` — Keep only *files* that live under one of *roots* (source-tree scoping).
 - `filter_excluded(files: list[str], globs: list[str]) -> list[str]` — Drop *files* matching any exclude *glob* (the ``[tool.forge].exclude`` half).
 - `tracked_files_under_roots(repo_root: Path, roots: list[str], *, suffix: str = '.py') -> list[str]` — Select the git-tracked files under *roots*, minus repo-wide excludes.
+- `_warn_untracked_under_roots(repo_root: Path, roots: list[str], suffix: str) -> None` _(internal)_ — Warn (dev-loop only) when untracked source under *roots* goes unscanned.
 
 ## `forge.continuation_append`
 
@@ -429,6 +430,7 @@ _59 modules, 596 symbols._
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
 - `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get list of modified files from git.
 - `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
+- `get_untracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get untracked, non-gitignored files matching the suffix/prefix filters.
 - `stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]` — ``git add`` tracked files modified within *pathspecs*.
 
 ## `forge.import_graph`
@@ -768,7 +770,10 @@ _59 modules, 596 symbols._
 - `_config_doc_path(root: Path) -> str | None` _(internal)_ — Return the configured agent-doc path, or ``None`` to self-skip.
 - `_roster(root: Path) -> dict[str, set[str]]` _(internal)_ — Discover the repo's agents, skills, hooks, and CLIs.
 - `_check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]` _(internal)_ — Return coverage + dangling problems for *doc* against *roster*.
-- `_diff_report(root: Path, base: str) -> list[str]` _(internal)_ — Report graph-relevant mentions changed in the diff against *base*.
+- `_classify_mention(text: str) -> str | None` _(internal)_ — Describe the highest-priority graph-relevant mention in *text*, or ``None``.
+- `_diff_report(root: Path, base: str) -> list[str]` _(internal)_ — Classify the graph-relevant mentions a PR added or removed vs *base*.
+- `_handle_diff_mode(root: Path, path: str, base: str) -> None` _(internal)_ — Report graph-relevant changes in diff mode.
+- `_handle_normal_mode(doc: str, roster: dict[str, set[str]], path: str) -> int` _(internal)_ — Check the agent doc for coverage and dangling references in normal mode.
 - `main(argv: list[str] | None = None) -> int` — Run the agent-doc verifier.
 
 ## `forge.verify_changelog_history`

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from typing import TYPE_CHECKING
 
+from forge import config
 from forge.config import (
     DEFAULT_BASE_BRANCH,
     DEFAULT_DEV_BRANCH,
@@ -24,6 +26,8 @@ from tests.conftest import init_git_repo as _init_git_repo
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 
 def test_default_is_single_track() -> None:
@@ -486,3 +490,96 @@ def test_tracked_files_under_roots_filters_by_suffix(tmp_path: Path) -> None:
     assert tracked_files_under_roots(tmp_path, ["src"], suffix=".md") == [
         "src/README.md"
     ]
+
+
+# ---------------------------------------------------------------------------
+# _warn_untracked_under_roots (issue #164 — warn on forgotten git add)
+# ---------------------------------------------------------------------------
+
+
+def test_tracked_files_under_roots_warns_on_untracked_when_interactive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An untracked source file under a scanned root logs one warning."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("")
+    subprocess.run(["git", "add", "src/a.py"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    (tmp_path / "src" / "b.py").write_text("")
+    monkeypatch.setattr(config, "is_non_interactive", lambda: False)
+
+    with caplog.at_level(logging.WARNING):
+        result = tracked_files_under_roots(tmp_path, ["src"])
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "1 untracked .py file(s) under src" in warnings[0].getMessage()
+    assert result == ["src/a.py"]
+
+
+def test_tracked_files_under_roots_no_warning_when_all_tracked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No warning fires when every file under the root is tracked."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    monkeypatch.setattr(config, "is_non_interactive", lambda: False)
+
+    with caplog.at_level(logging.WARNING):
+        tracked_files_under_roots(tmp_path, ["src"])
+
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_tracked_files_under_roots_no_warning_when_non_interactive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The warning self-skips in non-interactive (CI) contexts."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "b.py").write_text("")
+    monkeypatch.setattr(config, "is_non_interactive", lambda: True)
+
+    with caplog.at_level(logging.WARNING):
+        tracked_files_under_roots(tmp_path, ["src"])
+
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_tracked_files_under_roots_no_warning_for_gitignored_untracked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A gitignored untracked file is deliberately excluded from the warning."""
+    _init_git_repo(tmp_path)
+    (tmp_path / ".gitignore").write_text("ignored/\n")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("")
+    (tmp_path / "ignored").mkdir()
+    (tmp_path / "ignored" / "c.py").write_text("")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    monkeypatch.setattr(config, "is_non_interactive", lambda: False)
+
+    with caplog.at_level(logging.WARNING):
+        tracked_files_under_roots(tmp_path, ["src", "ignored"])
+
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_tracked_files_under_roots_no_warning_when_untracked_outside_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An untracked file outside the scanned roots does not trigger a warning."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    (tmp_path / "other").mkdir()
+    (tmp_path / "other" / "b.py").write_text("")
+    monkeypatch.setattr(config, "is_non_interactive", lambda: False)
+
+    with caplog.at_level(logging.WARNING):
+        tracked_files_under_roots(tmp_path, ["src"])
+
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]

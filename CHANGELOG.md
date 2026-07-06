@@ -20,6 +20,29 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.20.0 — 2026-07-06
+
+Additive — the agent-architecture doc's **Layer-2 drift check** lands and wires
+into `/pr`, plus a source-tracking hygiene warning. No consumer action required.
+
+### Features
+- **Agent-architecture doc Layer-2 consistency check (#169).**
+  `verify-forge-agent-doc --diff <base>` emits a structured graph-change report
+  (`added agents/x.md: delegates → design-checker`); the `/pr` flow now has
+  `docs-types-checker` verify `docs/agent-architecture.md`'s **edges** against a
+  PR's agent/skill/hook changes at review time — config-gated via
+  `[tool.forge.agent_doc]`, self-skips otherwise. Completes the drift guardrail
+  whose Layer-1 (coverage + no-dangling `agent_doc` pre-commit step) shipped in
+  v2.19.0. The report is *candidates, not mandates*: it never misses a real edge
+  but surfaces prose mentions the reviewing agent filters out.
+- **Source-tracking warning (#164).** Flags untracked, non-gitignored Python
+  under the configured source roots — the editable-install footgun where a new
+  module isn't yet `git add`-ed.
+
+### Docs
+- **FOUNDATION §8 — no `#<n>` issue/PR references in current-state prose docs**
+  (changelog excepted): docs describe the current shape, not their history (#169).
+
 ## v2.19.0 — 2026-07-06
 
 Additive — a C4 element **tag vocabulary** + reference colour palette, a
