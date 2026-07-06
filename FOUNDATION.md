@@ -483,6 +483,15 @@ Reviewed by `forge:design-checker` agent (foundation) + per-repo wrappers.
   - `# Updated from legacy format`
   - `# Fix for issue #<n>`
   - `"""Refactored from old implementation to use new format."""`
+- **Prose docs (markdown) describe current state too — no issue/PR numbers.**
+  An architecture doc, guide, or README describes what *is*, so it must not
+  embed `#<n>` issue/PR references as tracking or provenance markers (`tracked
+  in #163`, `added by #142`) — they rot, and the doc's job is the current shape,
+  not its history. The **only** exception is a changelog / release-notes file,
+  whose purpose *is* the history and which legitimately cites PRs. Defer status
+  to GitHub (the canonical backlog, §14). Any agent that writes or reviews a
+  non-changelog doc (e.g. `docs-types-checker` when it touches the
+  agent-architecture doc) applies this rule.
 - **Private helpers** (`_foo`) can have a one-liner docstring.
 - **Examples use generic placeholders or in-repo concrete names only.**
   See §2 — no private employer / client / project / process names in

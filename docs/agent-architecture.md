@@ -2,11 +2,11 @@
 
 > **Maintained by hand, guarded by a check.** Nodes (agents / skills / hooks /
 > CLIs) are discovered from the repo; edges, phases, and enforcer badges are
-> hand-curated and source-verified. Two layers keep it honest ([#163](https://github.com/misnaej/forge/issues/163)): the `agent_doc` pre-commit step
-> gates node **coverage + no dangling refs** on every commit, and at PR review
-> `docs-types-checker` runs `verify-forge-agent-doc --diff <base>` to surface the
-> **edge** changes a PR made so they get reconciled here. Still eyeball it when
-> `agents/`, `skills/`, or `claude-hooks/` change.
+> hand-curated and source-verified. Two layers keep it honest: the `agent_doc`
+> pre-commit step gates node **coverage + no dangling refs** on every commit,
+> and at PR review `docs-types-checker` runs `verify-forge-agent-doc --diff
+> <base>` to surface the **edge** changes a PR made so they get reconciled
+> here. Still eyeball it when `agents/`, `skills/`, or `claude-hooks/` change.
 
 How forge's AI **subagents** interact with the **skills** that invoke them,
 the **hooks** that guard them, and the deterministic **CLIs** they drive —
