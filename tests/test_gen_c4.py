@@ -65,6 +65,7 @@ from forge.gen_c4 import (
     _slug,
     _svg_view_path,
     _tag_class_lines,
+    _tag_classdef_lines,
     _under_prefix,
     _visibility_fields,
     _visible_config,
@@ -3514,7 +3515,12 @@ def test_render_mermaid_emits_class_line_for_tagged_element() -> None:
 
 
 def test_render_mermaid_untagged_model_emits_no_class_lines() -> None:
-    """No element carries tags -> the styling hook is inert (no class lines)."""
+    """No element carries tags -> the styling hook (palette + class) is inert.
+
+    Byte-identity guard: with nothing tagged, neither the ``_tag_classdef_lines``
+    palette lookup nor the ``_tag_class_lines`` assignments emit anything, so an
+    untagged model's Mermaid output is unaffected by the tag vocabulary feature.
+    """
     config = C4Config(
         system="Sys",
         description="",
@@ -3524,6 +3530,7 @@ def test_render_mermaid_untagged_model_emits_no_class_lines() -> None:
         components=(Component("A", ("demo.a",)),),
     )
     mermaid = render_mermaid(config, set())
+    assert "classDef" not in mermaid
     assert "class " not in mermaid
 
 
@@ -3581,3 +3588,74 @@ def test_tag_class_lines_empty_when_no_tags() -> None:
         "component": {"A": "a"},
     }
     assert _tag_class_lines(config, ids) == []
+
+
+# --- default tag palette: reserved-tag `classDef` emission ---
+
+
+def test_tag_classdef_lines_emits_for_present_reserved_tags() -> None:
+    """A person tagged "person" and a component tagged "cli" each get a classDef."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses", tags=("person",)),),
+        components=(Component("A", ("demo.a",), tags=("cli",)),),
+    )
+    lines = _tag_classdef_lines(config)
+    assert lines == [
+        "    classDef cli fill:#dcfce7,stroke:#15803d,color:#14532d",
+        "    classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12",
+    ]
+
+
+def test_tag_classdef_lines_skips_unreserved_tags() -> None:
+    """A tag absent from the palette (a bespoke label) emits no classDef line."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        components=(Component("A", ("demo.a",), tags=("bespoke",)),),
+    )
+    assert _tag_classdef_lines(config) == []
+
+
+def test_tag_classdef_lines_empty_when_no_tags() -> None:
+    """No element in the model declares tags -> an empty list is returned."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        containers=(Container("App", "", ""),),
+        components=(Component("A", ("demo.a",)),),
+    )
+    assert _tag_classdef_lines(config) == []
+
+
+def test_tag_classdef_lines_deduplicates_across_elements() -> None:
+    """Two components sharing a reserved tag emit ONE classDef, not one each."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        components=(
+            Component("A", ("demo.a",), tags=("component",)),
+            Component("B", ("demo.b",), tags=("component",)),
+        ),
+    )
+    lines = _tag_classdef_lines(config)
+    assert lines == ["    classDef component fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e"]
+
+
+def test_render_mermaid_tagged_emits_classdef_then_class() -> None:
+    """render_mermaid emits the palette classDef before the class assignment."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses", tags=("person",)),),
+    )
+    mermaid = render_mermaid(config, set())
+    assert "classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12" in mermaid
+    assert "class dev person" in mermaid
+    assert mermaid.index("classDef person") < mermaid.index("class dev person")

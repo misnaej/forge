@@ -18,7 +18,7 @@ sliced into workflow-phase subviews so each stays readable.
 
 ## How to read these diagrams
 
-- **Node kind (colour):** 🟨 human · 🟦 main agent · 🟪 AI agent · 🟧 skill ·
+- **Node kind (colour):** 🟨 person · 🟦 main agent · 🟪 AI agent · 🟧 skill ·
   🟥 hook · 🟩 CLI · ⬜ policy (FOUNDATION §)
 - **Agent border:** *dashed* = **reporter** (read-only, no `Write`/`Edit`) ·
   *thick* = **mutator** (writes files or git/GitHub state)
@@ -34,7 +34,7 @@ The agents whose job is compliance, and the rules they enforce.
 
 ```mermaid
 graph LR
-  classDef human fill:#fef9c3,stroke:#ca8a04,color:#713f12
+  classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12
   classDef agent fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
   classDef skill fill:#ffedd5,stroke:#ea580c,color:#7c2d12
   classDef hook fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
@@ -91,7 +91,7 @@ graph LR
 
 ```mermaid
 graph LR
-  classDef human fill:#fef9c3,stroke:#ca8a04,color:#713f12
+  classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12
   classDef agent fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
   classDef skill fill:#ffedd5,stroke:#ea580c,color:#7c2d12
   classDef hook fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
@@ -100,7 +100,7 @@ graph LR
   classDef orchestrator fill:#c7d2fe,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
   classDef reporter stroke-dasharray:5 3
   classDef mutator stroke-width:3px
-  human(["Developer<br/>human"])
+  human(["Developer<br/>person"])
   main_agent{{"Main agent<br/>orchestrator"}}
   human -->|drives| main_agent
   hk_block_force_push[/"block_force_push<br/>hook"/]
@@ -141,7 +141,7 @@ graph LR
   sk_smart_test -->|invokes| cli_forge_smart_test
   git_commit_push -.->|guarded by| hk_block_no_verify
   git_commit_push -.->|guarded by| hk_block_force_push
-  class human human
+  class human person
   class main_agent orchestrator
   class hk_block_force_push hook
   class hk_block_no_verify hook
@@ -174,7 +174,7 @@ graph LR
 
 ```mermaid
 graph LR
-  classDef human fill:#fef9c3,stroke:#ca8a04,color:#713f12
+  classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12
   classDef agent fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
   classDef skill fill:#ffedd5,stroke:#ea580c,color:#7c2d12
   classDef hook fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
@@ -183,7 +183,7 @@ graph LR
   classDef orchestrator fill:#c7d2fe,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
   classDef reporter stroke-dasharray:5 3
   classDef mutator stroke-width:3px
-  human(["Developer<br/>human"])
+  human(["Developer<br/>person"])
   main_agent{{"Main agent<br/>orchestrator"}}
   human -->|drives| main_agent
   hk_block_pr_merge[/"block_pr_merge<br/>hook"/]
@@ -213,7 +213,7 @@ graph LR
   pr_manager -->|invokes| cli_forge_pr_squash_comment
   pr_manager -->|invokes| cli_forge_continuation_append
   pr_manager -.->|guarded by| hk_block_pr_merge
-  class human human
+  class human person
   class main_agent orchestrator
   class hk_block_pr_merge hook
   class design_checker agent
@@ -236,7 +236,7 @@ graph LR
 
 ```mermaid
 graph LR
-  classDef human fill:#fef9c3,stroke:#ca8a04,color:#713f12
+  classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12
   classDef agent fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
   classDef skill fill:#ffedd5,stroke:#ea580c,color:#7c2d12
   classDef hook fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
@@ -245,7 +245,7 @@ graph LR
   classDef orchestrator fill:#c7d2fe,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
   classDef reporter stroke-dasharray:5 3
   classDef mutator stroke-width:3px
-  human(["Developer<br/>human"])
+  human(["Developer<br/>person"])
   main_agent{{"Main agent<br/>orchestrator"}}
   human -->|drives| main_agent
   cli_forge_check_main_tags[("forge-check-main-tags<br/>CLI")]
@@ -257,7 +257,7 @@ graph LR
   sk_next -->|chains| sk_promote
   sk_next -->|invokes| cli_forge_next_prep
   sk_next -->|invokes| cli_forge_check_main_tags
-  class human human
+  class human person
   class main_agent orchestrator
   class cli_forge_check_main_tags cli
   class cli_forge_next_prep cli
@@ -269,7 +269,7 @@ graph LR
 
 ```mermaid
 graph LR
-  classDef human fill:#fef9c3,stroke:#ca8a04,color:#713f12
+  classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12
   classDef agent fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
   classDef skill fill:#ffedd5,stroke:#ea580c,color:#7c2d12
   classDef hook fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
@@ -278,7 +278,7 @@ graph LR
   classDef orchestrator fill:#c7d2fe,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
   classDef reporter stroke-dasharray:5 3
   classDef mutator stroke-width:3px
-  human(["Developer<br/>human"])
+  human(["Developer<br/>person"])
   main_agent{{"Main agent<br/>orchestrator"}}
   human -->|drives| main_agent
   cli_install_forge_labels[("install-forge-labels<br/>CLI")]
@@ -292,7 +292,7 @@ graph LR
   sk_next -->|invokes| issue_triage
   sk_triage -->|invokes| issue_triage
   issue_triage -->|invokes| cli_install_forge_labels
-  class human human
+  class human person
   class main_agent orchestrator
   class cli_install_forge_labels cli
   class issue_triage agent
@@ -307,7 +307,7 @@ graph LR
 
 ```mermaid
 graph LR
-  classDef human fill:#fef9c3,stroke:#ca8a04,color:#713f12
+  classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12
   classDef agent fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
   classDef skill fill:#ffedd5,stroke:#ea580c,color:#7c2d12
   classDef hook fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
@@ -316,7 +316,7 @@ graph LR
   classDef orchestrator fill:#c7d2fe,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
   classDef reporter stroke-dasharray:5 3
   classDef mutator stroke-width:3px
-  human(["Developer<br/>human"])
+  human(["Developer<br/>person"])
   main_agent{{"Main agent<br/>orchestrator"}}
   human -->|drives| main_agent
   sk_c4(["/c4<br/>skill"])
@@ -327,7 +327,7 @@ graph LR
   main_agent -->|runs| sk_weekly
   sk_weekly -->|invokes| weekly_summary
   sk_c4 -->|invokes| cli_forge_gen_c4
-  class human human
+  class human person
   class main_agent orchestrator
   class sk_c4 skill
   class cli_forge_gen_c4 cli

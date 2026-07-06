@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_59 modules, 595 symbols._
+_59 modules, 596 symbols._
 
 ## `forge`
 
@@ -329,6 +329,7 @@ _59 modules, 595 symbols._
 - `_m(text: str) -> str` _(internal)_ — Escape label *text* for safe embedding in a Mermaid node label.
 - `_external_node_line(node_id: str, ext: External, *, indent: str = '    ', markdown: bool = False) -> str` _(internal)_ — Render the flat ``[[...]]`` node line for one external system.
 - `render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the model as a Mermaid flowchart (offline-renderable).
+- `_tag_classdef_lines(config: C4Config) -> list[str]` _(internal)_ — Emit a ``classDef`` for each reserved tag the model actually uses.
 - `_tag_class_lines(config: C4Config, ids: dict[str, dict[str, str]]) -> list[str]` _(internal)_ — Emit Mermaid ``class`` assignments carrying each element's tags.
 - `_mermaid_box(name: str, technology: str, description: str, *, markdown: bool = False) -> str` _(internal)_ — Build a multi-line Mermaid box label: bold name, technology, description.
 - `_mermaid_edges(config: C4Config, ids: dict[str, dict[str, str]], edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the Mermaid relationship lines.

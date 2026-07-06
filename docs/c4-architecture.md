@@ -369,15 +369,19 @@ edges (which connect *any* element to any other) use a small verb set as their
 4. **Styling is tag-driven.** Each of an element's tags is emitted as a
    separate Mermaid `class` statement on its node, so every tag becomes an
    independently targetable CSS class (a two-tag `agent` + `reporter` element
-   matches both `.agent` and `.reporter`). `[tool.forge.c4.render].custom_css`
-   (or a theme) can then style `.agent { … }`. Forge ships the *hook*, not
-   opinionated colours — a default per-kind palette is deliberate future work
-   (see §9 item 5), so repos choose their own look first.
-   **v1 scope:** classes are emitted on the flat/README diagram (`--format
-   mermaid`/`dsl`) and on `route_views` tabs. The **System Context**,
+   matches both `.agent` and `.reporter`). Forge also ships a **reference
+   palette**: for each reserved tag actually used, `forge-gen-c4` emits a
+   `classDef` (`person` / `agent` / `skill` / `hook` / `cli` / `module` /
+   `policy` / `container` / `component` / `external` + the `reporter` / `mutator`
+   / `orchestrator` modifiers), so a tagged diagram is coloured out of the box —
+   the same palette `docs/agent-architecture.md` uses, so the two diagrams read
+   alike. A tagless model emits neither `classDef` nor `class` (byte-identical),
+   and `[tool.forge.c4.render].custom_css` overrides any class.
+   **v1 scope:** classes + palette are emitted on the flat/README diagram
+   (`--format mermaid`/`dsl`) and `route_views` tabs. The **System Context**,
    **Containers**, and per-container **Component** tabs of `--format html` /
-   `--format pdf` do not carry classes yet — wiring the three per-view
-   renderers is tracked follow-up.
+   `--format pdf` do not carry them yet — wiring the three per-view renderers is
+   tracked follow-up.
 5. **Single source of truth.** This table is canonical here; other docs point
    back rather than restating it.
 
@@ -451,10 +455,11 @@ Deferred enhancements (the feature shipped without these by design):
    distinct shapes/colors for person vs. system vs. container vs.
    component vs. external. v1's Mermaid flowchart uses simple boxes
    (persons as stadiums, externals as subroutine boxes) without the full
-   C4 visual vocabulary. **Partially shipped:** the [element tag
-   vocabulary](#element-tag-vocabulary-naming-standard) now emits each
-   element's tags as CSS classes, so `custom_css` can style by role today.
-   Still open: a **default per-kind palette** (so agents look distinct with
-   no config) and per-view HTML coverage — or switching the HTML view to
-   Mermaid's C4 diagram type (once its experimental status settles) for
-   shape fidelity.
+   C4 visual vocabulary. **Shipped:** the [element tag
+   vocabulary](#element-tag-vocabulary-naming-standard) emits each element's
+   tags as CSS classes **and** a reference `classDef` palette, so a tagged model
+   is coloured by role out of the box (`custom_css` still overrides). Still open:
+   **per-view HTML coverage** (the palette reaches the flat/README diagram + PDF
+   per-view SVGs, not yet the System Context / Containers / Component HTML tabs)
+   and distinct per-kind **shapes** — or switching the HTML view to Mermaid's C4
+   diagram type (once its experimental status settles) for shape fidelity.

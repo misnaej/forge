@@ -150,6 +150,23 @@ graph LR
     release_tooling -->|"imports"| installers
     smart_test -->|"imports"| config_shared
     verifiers -->|"imports"| config_shared
+    classDef component fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+    classDef container fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef external fill:#f3e8ff,stroke:#9333ea,color:#581c87
+    classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    class forge_developer person
+    class consumer_repo person
+    class github external
+    class forge_scripts container
+    class pre_commit_dispatcher component
+    class audit_suite component
+    class verifiers component
+    class installers component
+    class doc_generators component
+    class git_hook_entrypoints component
+    class release_tooling component
+    class smart_test component
+    class config_shared component
 ```
 <!-- forge:c4:end -->
 

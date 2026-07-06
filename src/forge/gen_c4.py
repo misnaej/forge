@@ -1527,8 +1527,65 @@ def render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str:
         "component": component_ids,
     }
     lines += _mermaid_edges(config, ids, edges)
+    lines += _tag_classdef_lines(config)
     lines += _tag_class_lines(config, ids)
     return "\n".join(lines) + "\n"
+
+
+# Reference palette for the reserved kind/modifier tags — the colours the
+# hand-authored agent-architecture doc uses, so both diagrams read the same.
+# Emitted as ``classDef`` only for tags actually present, so a tagless model
+# stays byte-identical; ``render.custom_css`` still overrides any of these.
+_DEFAULT_TAG_PALETTE: dict[str, str] = {
+    # kinds
+    "person": "fill:#fef9c3,stroke:#ca8a04,color:#713f12",
+    "agent": "fill:#ede9fe,stroke:#7c3aed,color:#4c1d95",
+    "skill": "fill:#ffedd5,stroke:#ea580c,color:#7c2d12",
+    "hook": "fill:#fee2e2,stroke:#dc2626,color:#7f1d1d",
+    "cli": "fill:#dcfce7,stroke:#15803d,color:#14532d",
+    "module": "fill:#ecfccb,stroke:#65a30d,color:#365314",
+    "policy": "fill:#f1f5f9,stroke:#64748b,color:#334155",
+    "container": "fill:#dbeafe,stroke:#2563eb,color:#1e3a8a",
+    "component": "fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e",
+    "external": "fill:#f3e8ff,stroke:#9333ea,color:#581c87",
+    # modifiers
+    "reporter": "stroke-dasharray:5 3",
+    "mutator": "stroke-width:3px",
+    "orchestrator": "fill:#c7d2fe,stroke:#4338ca,color:#1e1b4b,stroke-width:2px",
+}
+
+
+def _tag_classdef_lines(config: C4Config) -> list[str]:
+    """Emit a ``classDef`` for each reserved tag the model actually uses.
+
+    Pairs with :func:`_tag_class_lines`: the ``class`` assignments target a CSS
+    class, and this defines that class's look from :data:`_DEFAULT_TAG_PALETTE`
+    (the same colours as ``docs/agent-architecture.md``), so a tagged diagram is
+    coloured out of the box on GitHub. Only reserved tags that appear are
+    defined — an untagged model emits nothing (byte-identical) — and a repo's
+    ``render.custom_css`` still overrides any class.
+
+    Args:
+        config: The model whose elements carry the tags.
+
+    Returns:
+        One ``classDef <tag> <style>`` line per reserved tag present, sorted;
+        empty when nothing carries a reserved tag.
+    """
+    used: set[str] = set()
+    for elements in (
+        config.persons,
+        config.externals,
+        config.containers,
+        config.components,
+    ):
+        for element in elements:
+            used.update(element.tags)
+    return [
+        f"    classDef {tag} {_DEFAULT_TAG_PALETTE[tag]}"
+        for tag in sorted(used)
+        if tag in _DEFAULT_TAG_PALETTE
+    ]
 
 
 def _tag_class_lines(config: C4Config, ids: dict[str, dict[str, str]]) -> list[str]:
@@ -1538,9 +1595,9 @@ def _tag_class_lines(config: C4Config, ids: dict[str, dict[str, str]]) -> list[s
     ``docs/c4-architecture.md`` — *Element tag vocabulary*): every element that
     declares ``tags`` gets its node id assigned those tags as Mermaid CSS
     classes, so ``render.custom_css`` or a theme can target ``.agent`` etc. to
-    tell an AI agent apart from a human ``person``. Forge ships only the hook —
-    no default palette — so a tagless model (like forge's own) is byte-identical
-    and consumers pick their own look.
+    tell an AI agent apart from a human ``person``. :func:`_tag_classdef_lines`
+    supplies a reference palette for the reserved tags (overridable via
+    ``custom_css``); a tagless model emits neither and stays byte-identical.
 
     Args:
         config: The model whose elements carry the tags.
