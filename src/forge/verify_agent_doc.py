@@ -155,21 +155,27 @@ def _check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]:
 
 # Ordered (pattern, description-template) pairs classifying a graph-relevant
 # mention in a changed diff line — the first match wins. The template's ``{name}``
-# is filled with the matched target so the report reads as an edge, not raw text.
+# is filled with capture group 1 so the report reads as an edge, not raw text.
+# The CLI / hook / skill patterns REUSE the no-dangling constants above (wrapping
+# a capture group where they lack one) so the classifier and the dangling check
+# can never drift apart (FOUNDATION §12).
 _MENTION_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"subagent_type=[\"']?(?:forge:)?([a-z0-9-]+)"), "delegates → {name}"),
     (re.compile(r"Skill\(skill=[\"']?(?:forge:)?([a-z0-9-]+)"), "chains skill /{name}"),
-    (
-        re.compile(r"\b((?:forge|verify-forge|install-forge|fix-forge)-[a-z0-9-]+)\b"),
-        "invokes CLI {name}",
-    ),
-    (re.compile(r"\b(block_[a-z0-9_]+)\b"), "guarded by hook {name}"),
-    (re.compile(r"(?<![\w/])/([a-z][a-z0-9-]+)\b"), "mentions skill /{name}"),
+    (re.compile(f"({_CLI_RE.pattern})"), "invokes CLI {name}"),
+    (re.compile(f"({_HOOK_RE.pattern})"), "guarded by hook {name}"),
+    (_SKILL_RE, "mentions skill /{name}"),  # already captures the /name group
 )
 
 
 def _classify_mention(text: str) -> str | None:
-    """Describe the first graph-relevant mention in *text*, or ``None``.
+    """Describe the highest-priority graph-relevant mention in *text*, or ``None``.
+
+    Only ONE edge is reported per line — the first rule in :data:`_MENTION_RULES`
+    that matches wins, by rule priority (not text order). A line naming two
+    distinct edge types (e.g. a CLI *and* a hook) surfaces only the
+    higher-priority one; this is acceptable for an advisory delta report where
+    such lines are rare and a human reconciles against the doc anyway.
 
     Args:
         text: A single changed diff line (without its ``+``/``-`` marker).
@@ -189,9 +195,9 @@ def _diff_report(root: Path, base: str) -> list[str]:
     """Classify the graph-relevant mentions a PR added or removed vs *base*.
 
     The Layer-2 helper: it does not judge whether the doc is correct — it
-    surfaces the delegation/invocation/guard mentions the diff touched, each as
-    an ``added``/``removed`` entry tagged with its file, so ``docs-types-checker``
-    can check ``docs/agent-architecture.md`` against just those changes.
+    surfaces the delegation/invocation/guard mentions the diff touched so
+    ``docs-types-checker`` can verify the configured agent doc against just
+    those changes.
 
     Args:
         root: Repository root directory.
@@ -219,16 +225,29 @@ def _diff_report(root: Path, base: str) -> list[str]:
     except (subprocess.CalledProcessError, FileNotFoundError):
         logger.warning("agent_doc --diff: could not run git diff against %s", base)
         return []
+    # Track BOTH diff sides: a removed line is attributed to the `--- a/` file and
+    # an added line to the `+++ b/` file. On a whole-file delete git emits
+    # `+++ /dev/null` (and on a new file `--- /dev/null`), so keying only off the
+    # `+++` header would misattribute a deleted file's removed lines to whatever
+    # file preceded it. `/dev/null` (no `a/`/`b/` prefix) resets that side to "?".
     report: list[str] = []
-    current = "?"
+    a_file = b_file = "?"
     for line in diff.splitlines():
-        if line.startswith("+++ b/"):
-            current = line[len("+++ b/") :]
-        elif line.startswith(("+", "-")) and not line.startswith(("+++", "---")):
+        if line.startswith("--- a/"):
+            a_file = line[len("--- a/") :]
+        elif line.startswith("--- /dev/null"):
+            a_file = "?"
+        elif line.startswith("+++ b/"):
+            b_file = line[len("+++ b/") :]
+        elif line.startswith("+++ /dev/null"):
+            b_file = "?"
+        elif line.startswith(("+", "-")):
             edge = _classify_mention(line[1:])
             if edge:
-                sign = "added" if line[0] == "+" else "removed"
-                report.append(f"{sign} {current}: {edge}")
+                sign, where = (
+                    ("added", b_file) if line[0] == "+" else ("removed", a_file)
+                )
+                report.append(f"{sign} {where}: {edge}")
     return report
 
 

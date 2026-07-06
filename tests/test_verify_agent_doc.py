@@ -375,6 +375,32 @@ def test_diff_report_reports_removed_line_with_removed_sign(tmp_path: Path) -> N
     assert "removed agents/foo.md: delegates → design-checker" in lines
 
 
+def test_diff_report_attributes_deleted_file_correctly(tmp_path: Path) -> None:
+    """A whole-file deletion is attributed to the deleted file, not its neighbor.
+
+    SCENARIO: agents/foo.md (containing a `subagent_type=` delegation line) is
+    deleted entirely, and agents/alpha.md — which sorts before foo.md and thus
+    precedes it in the diff — is modified in the same commit. On a whole-file
+    delete git emits `+++ /dev/null` for foo.md's hunk, so code keying only off
+    the `+++ b/<path>` header would misattribute foo.md's removed line to
+    whichever file's `+++ b/` header last appeared, i.e. alpha.md.
+    EXPECTED BEHAVIOR: `_diff_report` tracks the `--- a/<file>` side too and
+    attributes the removed line to agents/foo.md; no entry mentions alpha.md.
+    """
+    _write(tmp_path / "agents" / "alpha.md", "# alpha\nOriginal alpha description.\n")
+    _write(
+        tmp_path / "agents" / "foo.md",
+        '# foo\nDelegates via subagent_type="forge:design-checker".\n',
+    )
+    _git_commit_all(tmp_path, "initial")
+    (tmp_path / "agents" / "foo.md").unlink()
+    _write(tmp_path / "agents" / "alpha.md", "# alpha\nRevised alpha description.\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+    lines = vad._diff_report(tmp_path, "HEAD")
+    assert lines == ["removed agents/foo.md: delegates → design-checker"]
+    assert not any("alpha.md" in line for line in lines)
+
+
 # --- _classify_mention -------------------------------------------------------
 
 

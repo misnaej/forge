@@ -768,7 +768,7 @@ _59 modules, 599 symbols._
 - `_config_doc_path(root: Path) -> str | None` _(internal)_ — Return the configured agent-doc path, or ``None`` to self-skip.
 - `_roster(root: Path) -> dict[str, set[str]]` _(internal)_ — Discover the repo's agents, skills, hooks, and CLIs.
 - `_check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]` _(internal)_ — Return coverage + dangling problems for *doc* against *roster*.
-- `_classify_mention(text: str) -> str | None` _(internal)_ — Describe the first graph-relevant mention in *text*, or ``None``.
+- `_classify_mention(text: str) -> str | None` _(internal)_ — Describe the highest-priority graph-relevant mention in *text*, or ``None``.
 - `_diff_report(root: Path, base: str) -> list[str]` _(internal)_ — Classify the graph-relevant mentions a PR added or removed vs *base*.
 - `_handle_diff_mode(root: Path, path: str, base: str) -> None` _(internal)_ — Report graph-relevant changes in diff mode.
 - `_handle_normal_mode(doc: str, roster: dict[str, set[str]], path: str) -> int` _(internal)_ — Check the agent doc for coverage and dangling references in normal mode.
