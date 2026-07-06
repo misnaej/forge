@@ -331,9 +331,11 @@ owned = true
 
 `owned = true` is a shortcut: the element gains the reserved `infrastructure`
 tag (a distinct teal palette colour, not third-party purple) and — unless you
-set an explicit `group` — an **"Our infrastructure"** band, so it renders apart
-from genuine third parties in every view while its relationships stay intact.
-Default (`owned` unset) is byte-identical.
+set an explicit `group` — an **"Our infrastructure"** band, keeping it apart
+from genuine third parties while its relationships stay intact. The two markers
+land in different views (colour in the flat/README view + `route_views` tabs;
+band in the Containers tab) — same per-view coverage as any tag/group, see the
+*v1 scope* note below. Default (`owned` unset) is byte-identical.
 
 ### Element tag vocabulary (naming standard)
 
@@ -405,8 +407,9 @@ edges (which connect *any* element to any other) use a small verb set as their
    matches both `.agent` and `.reporter`). Forge also ships a **reference
    palette**: for each reserved tag actually used, `forge-gen-c4` emits a
    `classDef` (`person` / `agent` / `skill` / `hook` / `cli` / `module` /
-   `policy` / `container` / `component` / `external` + the `reporter` / `mutator`
-   / `orchestrator` modifiers), so a tagged diagram is coloured out of the box —
+   `policy` / `container` / `component` / `external` / `infrastructure` + the
+   `reporter` / `mutator` / `orchestrator` modifiers), so a tagged diagram is
+   coloured out of the box —
    the same palette `docs/agent-architecture.md` uses, so the two diagrams read
    alike. A tagless model emits neither `classDef` nor `class` (byte-identical),
    and `[tool.forge.c4.render].custom_css` overrides any class.

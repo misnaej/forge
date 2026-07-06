@@ -703,6 +703,10 @@ def _visibility_fields(entry: dict) -> dict:
     }
 
 
+# Reserved tag + default band name applied to `owned = true` externals, so
+# team-operated infrastructure gets a distinct palette colour (see
+# _DEFAULT_TAG_PALETTE) and visual separation from real third-party systems
+# instead of blending into the external lane.
 _OWNED_INFRA_TAG = "infrastructure"
 _OWNED_INFRA_GROUP = "Our infrastructure"
 
