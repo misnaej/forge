@@ -397,6 +397,17 @@ Print → Save as PDF). The page setup is tunable:
 | `pdf_orientation` | `"landscape"` | `landscape` or `portrait` — `contain`/`width` only. |
 | `pdf_margin` | `10` | Page margin in millimetres. |
 
+**SVG export.** `forge-gen-c4 --format svg` writes **one standalone vector SVG
+file per view** — `<stem>.<view-slug>.svg` next to `--output` (default
+`docs/architecture.svg` → `docs/architecture.system_context.svg`,
+`…containers.svg`, one per Component/route view). It reuses the same offline page
+and already-installed headless browser as `--format pdf` (no new dependency, no
+network), capturing each view's Mermaid-rendered `<svg>` — serialized in-browser
+to well-formed XML at the diagram's intrinsic size, so each file opens crisp in a
+browser, Inkscape, or an `<img>`/`<object>` embed. Like PDF, an SVG is a
+browser-rendered artifact (non-reproducible coordinates), so `--check` is a
+no-op, not a drift gate.
+
 **Legibility of dense views.** With `auto` each view is at natural scale (never
 shrunk), so legibility is a *layout* question, not a page-fit one. If a view is a
 wide directional strip, compact it: group elements into
@@ -429,7 +440,7 @@ you only set a key to deviate. Unknown keys are ignored. Lives under
 | `node_spacing` | _unset_ | `flowchart.nodeSpacing` | Gap between sibling nodes. **Honored under `layout = "dagre"` only** — the ELK engine ignores it (see the spacing note below). |
 | `rank_spacing` | _unset_ | `flowchart.rankSpacing` | Gap between ranks/layers. **Honored under `layout = "dagre"` only** — ELK ignores it. |
 | `padding` | _unset_ | `flowchart.padding` | Inner node padding. |
-| `custom_css` | _unset_ | `themeCSS` (root) | Raw-CSS escape hatch injected into the diagram. |
+| `custom_css` | _unset_ | `themeCSS` (root) | Raw-CSS escape hatch injected into the diagram. Every element's `tags` are emitted as Mermaid CSS classes on its node (e.g. `.agent`), so this can style by role — see the [element tag vocabulary](c4-architecture.md) for the reserved tag set. |
 | `layout` | `"elk"` | `layout` (root) | `elk` (= `elk.layered`) or `dagre` — the two supported, **hierarchy-aware** engines (they keep C4's clusters separated and route every edge). ELK routes dense cross-cluster edges more cleanly but uses fixed spacing; `dagre` lets you tune `node_spacing` / `rank_spacing`. The organic ELK engines (`elk.stress` / `elk.force` / `elk.radial`) are **rejected at config-load** — they silently drop edges + overlap nodes on multi-cluster views. |
 | `node_placement_strategy` | `"NETWORK_SIMPLEX"` | `elk.nodePlacementStrategy` | ELK node placement (`BRANDES_KOEPF`, `NETWORK_SIMPLEX`, …). |
 | `force_node_model_order` | `true` | `elk.forceNodeModelOrder` | Preserve declared node order. |

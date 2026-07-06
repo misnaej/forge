@@ -15,21 +15,25 @@ output = "docs/architecture.dsl"
 readme = "README.md"
 
 [[person]]
+tags = ["person"]
 name = "Forge developer"
 description = "Maintains forge and runs its pre-commit gate"
 uses = "develops, commits, runs CLIs"
 
 [[person]]
+tags = ["person"]
 name = "Consumer repo"
 description = "A repo that adopts forge's governance layer"
 uses = "installs + invokes forge CLIs/hooks"
 
 [[external]]
+tags = ["external"]
 name = "GitHub"
 description = "Hosts repos, PRs, issues, labels, releases"
 relationship = "reads/writes via gh"
 
 [[container]]
+tags = ["container"]
 name = "forge-scripts"
 technology = "Python pip package"
 description = "Every forge CLI + the pre-commit dispatcher"
@@ -38,54 +42,63 @@ description = "Every forge CLI + the pre-commit dispatcher"
 # meaningful boxes) plus the module prefixes that constitute it. The simple
 # `[components]` name = [prefixes] map is also accepted for quick starts.
 [[component]]
+tags = ["component"]
 name = "Pre-commit dispatcher"
 technology = "Python"
 description = "The single quality gate — runs each step by shelling out, reading back exit code + code_health/<step>.log"
 modules = ["forge.precommit"]
 
 [[component]]
+tags = ["component"]
 name = "Audit suite"
 technology = "Python (AST)"
 description = "Deeper code-health audits: dependency graph, duplication, dead code, doc-claim checks"
 modules = ["forge.audit"]
 
 [[component]]
+tags = ["component"]
 name = "Verifiers"
 technology = "Python (AST)"
 description = "Single-responsibility pre-commit checks: docstrings, naming, repo structure, manifest, wiring, CVE usage"
 modules = ["forge.verify_docstrings", "forge.verify_docstring_coverage", "forge.verify_manifest", "forge.verify_plugin_version", "forge.verify_repo_structure", "forge.verify_test_naming", "forge.verify_cli_wiring", "forge.verify_doc_consistency", "forge.verify_cve_usage", "forge.verify_main_tags", "forge.verify_changelog_history"]
 
 [[component]]
+tags = ["component"]
 name = "Installers"
 technology = "Python + gh"
 description = "Install/refresh git hooks, CLAUDE.md, labels, README badges, and Claude settings; bootstrap umbrella"
 modules = ["forge.install_bootstrap", "forge.install_githooks", "forge.install_claudemd", "forge.install_claude_settings", "forge.install_labels", "forge.install_readme_badges", "forge.claude_settings_schema"]
 
 [[component]]
+tags = ["component"]
 name = "Doc generators"
 technology = "Python"
 description = "Generate drift-checked docs: API digest, CLI reference, and this C4 model"
 modules = ["forge.gen_api_digest", "forge.gen_cli_reference", "forge.gen_c4", "forge.gen_commit_types", "forge.gen_common"]
 
 [[component]]
+tags = ["component"]
 name = "Git-hook entrypoints"
 technology = "Python"
 description = "Managed post-merge / post-checkout hooks: foundation drift check + backgrounded self-refresh"
 modules = ["forge.post_merge", "forge.post_checkout", "forge._hook_helpers"]
 
 [[component]]
+tags = ["component"]
 name = "Release tooling"
 technology = "Python + git/gh"
 description = "Rolling-next versioning, dev→main promotion, PR squash messages, continuation log"
 modules = ["forge.next_prep", "forge.upgrade", "forge.pr_squash_comment", "forge.pr_delta", "forge.continuation_append"]
 
 [[component]]
+tags = ["component"]
 name = "Smart-test"
 technology = "Python (ast) + git/pytest"
 description = "Change-driven test selection by import depth: git diff + reverse import graph (+ opt-in mock-patch edges / coverage union) run in depth-tiered pytest batches"
 modules = ["forge.smart_test.cli", "forge.smart_test.dependencies", "forge.smart_test.git_helpers", "forge.smart_test.runner", "forge.smart_test.coverage"]
 
 [[component]]
+tags = ["component"]
 name = "Config + shared"
 technology = "Python"
 description = "Shared foundation: pyproject/[tool.forge] config, git + logging utils, CI run-context, ruff/doctor, single-scan pip-audit helper"

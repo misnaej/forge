@@ -38,6 +38,7 @@ verify-forge-repo-structure = "forge.verify_repo_structure:main"
 install-forge-labels = "forge.install_labels:main"
 verify-forge-test-naming = "forge.verify_test_naming:main"
 verify-forge-cli-wiring = "forge.verify_cli_wiring:main"
+verify-forge-agent-doc = "forge.verify_agent_doc:main"
 verify-forge-doc-consistency = "forge.verify_doc_consistency:main"
 verify-forge-cve-usage = "forge.verify_cve_usage:main"
 forge-gen-cli-reference = "forge.gen_cli_reference:main"
@@ -108,6 +109,13 @@ dev_branch = "dev"
 # its layout matches WIRING_SOURCES in src/forge/verify_cli_wiring.py.
 # Consumer repos with different layouts should leave this disabled.
 enabled = true
+
+[tool.forge.agent_doc]
+# The hand-maintained agent-architecture doc. Enables the `agent_doc`
+# pre-commit step (verify-forge-agent-doc): coverage of every agent/skill +
+# no dangling hook/CLI/skill references. Consumer repos without such a doc
+# leave this unset and the step self-skips.
+path = "docs/agent-architecture.md"
 
 [tool.forge.precommit]
 # Forge dogfoods its own opt-in steps: typecheck (see [tool.forge.typecheck])

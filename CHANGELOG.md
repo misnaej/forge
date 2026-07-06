@@ -20,6 +20,36 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.19.0 — 2026-07-06
+
+Additive — a C4 element **tag vocabulary** + reference colour palette, a
+hand-maintained **agent-architecture** diagram with its own drift guardrail, and
+**per-view SVG export**. No consumer action required.
+
+### Features
+- **C4 element tag vocabulary + tag-driven styling (#160).** A
+  consumer-adoptable standard of reserved kind/modifier tags
+  (`person` / `agent` / `skill` / `hook` / `cli` / `module` / `policy`, plus
+  `reporter` / `mutator`). `forge-gen-c4` emits each tag as a Mermaid CSS class
+  **and** a reference `classDef` palette, so a tagged model is coloured by role
+  out of the box (byte-identical when untagged); forge's own code-C4 README
+  diagram is now colour-coded. See `docs/c4-architecture.md`.
+- **Agent-architecture diagram + drift guardrail (#160).** New
+  `docs/agent-architecture.md` maps the agent × skill × hook × CLI interactions
+  by workflow phase (+ a FOUNDATION-enforcers view). A new
+  `verify-forge-agent-doc` CLI — the self-skipping `agent_doc` pre-commit step —
+  gates coverage of every agent/skill + no dangling refs, with a `--diff`
+  helper the `docs-types-checker` uses to verify edges at PR review. Opt in via
+  `[tool.forge.agent_doc].path`; repos without such a doc self-skip.
+- **`forge-gen-c4 --format svg` per-view export (#158).** One vector SVG per C4
+  view via the shared headless-browser path, offline.
+
+### Fixes / Docs / Test
+- **`forge-gen-api-digest` indexes only git-tracked files (#161)** — no longer
+  walks untracked or ignored trees.
+- **Agent tier model documented by frequency × judgment (#165).**
+- **`_safe_out_path` inward `..` traversal now covered by test (#166).**
+
 ## v2.18.0 — 2026-07-02
 
 Additive — the `api-digest` and `c4` generators grow into a drift-checked,

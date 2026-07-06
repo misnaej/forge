@@ -27,13 +27,18 @@ Usage::
 
     forge-gen-c4                    # write Structurizr DSL
     forge-gen-c4 --format html      # write offline HTML view
+    forge-gen-c4 --format pdf       # write a vector PDF (headless browser)
+    forge-gen-c4 --format svg       # write one vector SVG per view (headless browser)
     forge-gen-c4 --format mermaid    # write raw Mermaid to stdout
     forge-gen-c4 --check            # verify committed artifact is in sync
     forge-gen-c4 --output -         # write to stdout
 
 The ``--format html`` output is self-contained and offline: it renders the
 model via Mermaid, referencing a vendored ``mermaid.min.js`` (MIT) sidecar
-written next to the HTML — no Docker, Java, Graphviz, or network needed.
+written next to the HTML — no Docker, Java, Graphviz, or network needed. The
+``pdf`` and ``svg`` formats reuse that same offline page, driving an
+already-installed headless Chromium-family browser (no new dependency): ``pdf``
+via ``--print-to-pdf``, ``svg`` by serializing each view's rendered ``<svg>``.
 
 Exit Codes:
     0: The artifact was written (or printed), or it is in sync (``--check``).
@@ -89,6 +94,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_OUTPUT = "docs/architecture.dsl"
 DEFAULT_HTML_OUTPUT = "docs/architecture.html"
 DEFAULT_PDF_OUTPUT = "docs/architecture.pdf"
+# Base path for `--format svg`; one file per view is written next to it as
+# `<stem>.<view-slug>.svg` (SVG is inherently one-file-per-view, unlike the
+# single-file PDF).
+DEFAULT_SVG_OUTPUT = "docs/architecture.svg"
 REGEN_CMD = "forge-gen-c4"
 # Headless-browser print-to-PDF backend. Mermaid is a JS library, so a
 # browser engine must execute it to produce a vector PDF; forge reuses the same
@@ -114,16 +123,17 @@ _BROWSER_COMMANDS = (
     "brave-browser",
     "chrome",
 )
-# Mermaid's async run() needs wall-clock to finish before the page is printed;
-# Chrome's virtual-time budget (ms) advances time deterministically until the
-# render settles. Generous so large models complete.
-_PDF_VIRTUAL_TIME_BUDGET_MS = 15000
-# Hard ceiling (seconds) on the headless print so a wedged browser can't hang a
+# Shared by both headless-browser backends (PDF print + SVG dump). Mermaid's
+# async render needs wall-clock to settle before the DOM is captured; Chrome's
+# virtual-time budget (ms) advances time deterministically until it does.
+# Generous so large models complete.
+_HEADLESS_VIRTUAL_TIME_BUDGET_MS = 15000
+# Hard ceiling (seconds) on a headless run so a wedged browser can't hang a
 # commit or CI run.
-_PDF_TIMEOUT_S = 120
+_HEADLESS_TIMEOUT_S = 120
 # Large headless viewport so a wide diagram lays out + measures at full size
-# (Chrome's ~800px default would cram it and mis-measure the page bounds).
-_PDF_WINDOW_SIZE = "5000,5000"
+# (Chrome's ~800px default would cram it and mis-measure the bounds).
+_HEADLESS_WINDOW_SIZE = "5000,5000"
 # PDF concatenation tools tried (in order) to stitch the per-view single-page
 # PDFs (each tightly sized to its diagram) into one file. Optional: absent →
 # forge falls back to a single-document print (fixed pages) so `--format pdf`
@@ -1517,7 +1527,109 @@ def render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str:
         "component": component_ids,
     }
     lines += _mermaid_edges(config, ids, edges)
+    lines += _tag_classdef_lines(config)
+    lines += _tag_class_lines(config, ids)
     return "\n".join(lines) + "\n"
+
+
+# Reference palette for the reserved kind/modifier tags — the colours the
+# hand-authored agent-architecture doc uses, so both diagrams read the same.
+# Emitted as ``classDef`` only for tags actually present, so a tagless model
+# stays byte-identical; ``render.custom_css`` still overrides any of these.
+_DEFAULT_TAG_PALETTE: dict[str, str] = {
+    # kinds
+    "person": "fill:#fef9c3,stroke:#ca8a04,color:#713f12",
+    "agent": "fill:#ede9fe,stroke:#7c3aed,color:#4c1d95",
+    "skill": "fill:#ffedd5,stroke:#ea580c,color:#7c2d12",
+    "hook": "fill:#fee2e2,stroke:#dc2626,color:#7f1d1d",
+    "cli": "fill:#dcfce7,stroke:#15803d,color:#14532d",
+    "module": "fill:#ecfccb,stroke:#65a30d,color:#365314",
+    "policy": "fill:#f1f5f9,stroke:#64748b,color:#334155",
+    "container": "fill:#dbeafe,stroke:#2563eb,color:#1e3a8a",
+    "component": "fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e",
+    "external": "fill:#f3e8ff,stroke:#9333ea,color:#581c87",
+    # modifiers
+    "reporter": "stroke-dasharray:5 3",
+    "mutator": "stroke-width:3px",
+    "orchestrator": "fill:#c7d2fe,stroke:#4338ca,color:#1e1b4b,stroke-width:2px",
+}
+
+
+def _tag_classdef_lines(config: C4Config) -> list[str]:
+    """Emit a ``classDef`` for each reserved tag the model actually uses.
+
+    Pairs with :func:`_tag_class_lines`: the ``class`` assignments target a CSS
+    class, and this defines that class's look from :data:`_DEFAULT_TAG_PALETTE`
+    (the same colours as ``docs/agent-architecture.md``), so a tagged diagram is
+    coloured out of the box on GitHub. Only reserved tags that appear are
+    defined — an untagged model emits nothing (byte-identical) — and a repo's
+    ``render.custom_css`` still overrides any class.
+
+    Args:
+        config: The model whose elements carry the tags.
+
+    Returns:
+        One ``classDef <tag> <style>`` line per reserved tag present, sorted;
+        empty when nothing carries a reserved tag.
+    """
+    used: set[str] = set()
+    for elements in (
+        config.persons,
+        config.externals,
+        config.containers,
+        config.components,
+    ):
+        for element in elements:
+            used.update(element.tags)
+    return [
+        f"    classDef {tag} {_DEFAULT_TAG_PALETTE[tag]}"
+        for tag in sorted(used)
+        if tag in _DEFAULT_TAG_PALETTE
+    ]
+
+
+def _tag_class_lines(config: C4Config, ids: dict[str, dict[str, str]]) -> list[str]:
+    """Emit Mermaid ``class`` assignments carrying each element's tags.
+
+    The styling hook behind the C4 tag vocabulary (see
+    ``docs/c4-architecture.md`` — *Element tag vocabulary*): every element that
+    declares ``tags`` gets its node id assigned those tags as Mermaid CSS
+    classes, so ``render.custom_css`` or a theme can target ``.agent`` etc. to
+    tell an AI agent apart from a human ``person``. :func:`_tag_classdef_lines`
+    supplies a reference palette for the reserved tags (overridable via
+    ``custom_css``); a tagless model emits neither and stays byte-identical.
+
+    Args:
+        config: The model whose elements carry the tags.
+        ids: The ``{kind: {name: node-id}}`` map the caller allocated; an
+            element is styled only when its name is present here (so a view that
+            renders a subset skips the rest).
+
+    Returns:
+        One ``class <id> <tag>`` line per (rendered element, tag) pair — a
+        separate statement per tag so each is an independently targetable CSS
+        class — in person → external → container → component order; empty when
+        nothing is tagged.
+    """
+    lines: list[str] = []
+    for elements, kind in (
+        (config.persons, "person"),
+        (config.externals, "external"),
+        (config.containers, "container"),
+        (config.components, "component"),
+    ):
+        id_map = ids.get(kind, {})
+        # One `class <id> <tag>` line PER tag: Mermaid treats a comma-joined
+        # `class a x,y` as a single literal class token `x,y`, so `.x` / `.y`
+        # would never match. Repeated `class` statements accumulate, yielding
+        # independently targetable CSS classes.
+        lines.extend(
+            f"    class {id_map[element.name]} {tag}"
+            for element in elements
+            if element.tags and element.name in id_map
+            for tag in element.tags
+        )
+    return lines
 
 
 def _mermaid_box(
@@ -3110,7 +3222,7 @@ def _merge_pdfs(merger: str, parts: list[Path], out_path: Path) -> None:
         cmd = [merger, "--empty", "--pages", *part_paths, "--", os.fspath(out_path)]
     else:  # pdfunite: pdfunite in1.pdf in2.pdf ... out.pdf
         cmd = [merger, *part_paths, os.fspath(out_path)]
-    subprocess.run(cmd, check=True, capture_output=True, timeout=_PDF_TIMEOUT_S)
+    subprocess.run(cmd, check=True, capture_output=True, timeout=_HEADLESS_TIMEOUT_S)
 
 
 def _render_pdf_per_view(
@@ -3240,24 +3352,22 @@ def _find_headless_browser() -> str | None:
     return None
 
 
-def _print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
-    """Drive *browser* headlessly to print *html_path* to *pdf_path*.
+def _headless_base_cmd(browser: str) -> list[str]:
+    """Return the argv prefix shared by the PDF-print and SVG-dump backends.
 
-    Mermaid renders the diagrams client-side, so the browser engine — not forge
-    — produces the vector PDF; the ``@media print`` rules in the page lay every
-    view out one-per-page. Flags keep the run offline and non-interactive (no
-    sandbox prompt, no background networking, no first-run UI).
+    The offline / non-interactive flag set both :func:`_print_html_to_pdf` and
+    :func:`_render_view_svg` rely on lives here in one place, so a new safety or
+    offline flag cannot be added to one backend and silently forgotten in the
+    other. Each caller appends its format-specific flags (``--print-to-pdf`` /
+    ``--dump-dom``) and the ``file://`` page URI.
 
     Args:
         browser: Path to the Chromium-family executable.
-        html_path: The offline HTML to render (loaded over ``file://``).
-        pdf_path: Destination PDF path.
 
-    Raises:
-        subprocess.CalledProcessError: If the browser exits non-zero.
-        subprocess.TimeoutExpired: If the print exceeds the hard timeout.
+    Returns:
+        The executable followed by the shared headless flags.
     """
-    cmd = [
+    return [
         browser,
         "--headless",
         # --no-sandbox: the Chromium sandbox needs a writable user-data dir /
@@ -3270,11 +3380,33 @@ def _print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
         "--disable-background-networking",
         "--disable-extensions",
         "--hide-scrollbars",
-        # A large viewport so a wide diagram lays out at full size and the page
-        # the JS measures matches what prints (the ~800px default would cram it).
-        f"--window-size={_PDF_WINDOW_SIZE}",
+        # A large viewport so a wide diagram lays out + measures at full size
+        # (Chrome's ~800px default would cram it and mis-measure the bounds).
+        f"--window-size={_HEADLESS_WINDOW_SIZE}",
+        f"--virtual-time-budget={_HEADLESS_VIRTUAL_TIME_BUDGET_MS}",
+    ]
+
+
+def _print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
+    """Drive *browser* headlessly to print *html_path* to *pdf_path*.
+
+    Mermaid renders the diagrams client-side, so the browser engine — not forge
+    — produces the vector PDF; the ``@media print`` rules in the page lay every
+    view out one-per-page. The shared offline/non-interactive flags come from
+    :func:`_headless_base_cmd`.
+
+    Args:
+        browser: Path to the Chromium-family executable.
+        html_path: The offline HTML to render (loaded over ``file://``).
+        pdf_path: Destination PDF path.
+
+    Raises:
+        subprocess.CalledProcessError: If the browser exits non-zero.
+        subprocess.TimeoutExpired: If the print exceeds the hard timeout.
+    """
+    cmd = [
+        *_headless_base_cmd(browser),
         "--no-pdf-header-footer",
-        f"--virtual-time-budget={_PDF_VIRTUAL_TIME_BUDGET_MS}",
         f"--print-to-pdf={os.fspath(pdf_path)}",
         html_path.as_uri(),
     ]
@@ -3282,7 +3414,7 @@ def _print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
         cmd,
         check=True,
         capture_output=True,
-        timeout=_PDF_TIMEOUT_S,
+        timeout=_HEADLESS_TIMEOUT_S,
     )
 
 
@@ -3346,13 +3478,230 @@ def _emit_pdf(
         else:
             _render_pdf_single_doc(browser, config, views, out_path)
     except subprocess.TimeoutExpired:
-        logger.exception("PDF render timed out after %ss.", _PDF_TIMEOUT_S)
+        logger.exception("PDF render timed out after %ss.", _HEADLESS_TIMEOUT_S)
         return 1
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or b"").decode(errors="replace").strip()
         logger.exception("Headless browser / merge failed for the PDF: %s", detail)
         return 1
     logger.info("Wrote %s (via %s).", out_relpath, Path(browser).name)
+    return 0
+
+
+_SVG_RE = re.compile(r'<pre id="c4svg">(.*)</pre>', re.DOTALL)
+_SVG_XML_DECL = '<?xml version="1.0" encoding="UTF-8"?>\n'
+
+
+def _render_view_svg_html(config: C4Config, label: str, mermaid_src: str) -> str:
+    """Build a single-view HTML that emits its rendered SVG as serialized XML.
+
+    Unlike :func:`_render_view_pdf_html` (which lays the SVG out for printing),
+    this renders the diagram, pins its intrinsic ``width``/``height`` so the
+    standalone file opens at natural size, then replaces the page body with a
+    ``<pre id="c4svg">`` holding ``XMLSerializer``'s output. Serializing in the
+    browser yields **well-formed XML** (proper self-closing tags, namespaces) —
+    which a raw ``--dump-dom`` HTML serialization of the live ``<svg>`` does not
+    guarantee (Mermaid's ``foreignObject`` labels carry HTML void elements).
+    :func:`_extract_svg` reads that ``<pre>`` back and HTML-unescapes it.
+
+    Args:
+        config: The model skeleton (for the render/layout options).
+        label: The view's title, set as the page's initial ``<title>``; the
+            script overwrites it to the ``"c4-ready"`` readiness marker once the
+            render settles, so it never reaches the dumped DOM
+            :func:`_extract_svg` reads. Kept to match
+            :func:`_render_view_pdf_html`'s signature so the caller's view loop
+            stays symmetric.
+        mermaid_src: The view's Mermaid source.
+
+    Returns:
+        A complete single-view HTML document.
+    """
+    init_options = _mermaid_init_options(config.render, layout_var="c4layout")
+    elk_loader = _elk_loader_js(json.dumps(config.render.layout))
+    return f"""<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{html.escape(label)}</title></head>
+<body>
+<pre class="mermaid" style="display:none">
+{html.escape(mermaid_src)}</pre>
+<script src="{MERMAID_JS_NAME}"></script>
+<script src="{MERMAID_ELK_JS_NAME}"></script>
+<script>
+{elk_loader}
+mermaid.initialize({init_options});
+var src = document.querySelector("pre.mermaid").textContent;
+// Explicit id (never mermaid.run(), whose Date.now() ids collide — #150).
+mermaid.render("c4-view", src).then(function (out) {{
+  var holder = document.createElement("div");
+  holder.innerHTML = out.svg;
+  var svg = holder.querySelector("svg");
+  // Attach to the document first so it lays out — a detached node measures 0.
+  // Mermaid's own max-width style caps width:100% at the intrinsic size, so
+  // the measured rect is the natural diagram size.
+  document.body.replaceChildren(svg);
+  var r = svg.getBoundingClientRect();
+  // Pin intrinsic size so the standalone file isn't width:100%/zero-height.
+  svg.setAttribute("width", Math.ceil(r.width));
+  svg.setAttribute("height", Math.ceil(r.height));
+  var xml = new XMLSerializer().serializeToString(svg);
+  var pre = document.createElement("pre");
+  pre.id = "c4svg";
+  pre.textContent = xml;
+  document.body.replaceChildren(pre);
+  document.title = "c4-ready";
+}}).catch(function (err) {{
+  console.warn("c4: svg render failed:", err);
+  document.title = "c4-ready";
+}});
+</script>
+</body>
+</html>
+"""
+
+
+def _extract_svg(dom: str) -> str | None:
+    """Pull the serialized SVG XML back out of the dumped page DOM.
+
+    :func:`_render_view_svg_html` parks ``XMLSerializer``'s output inside a
+    ``<pre id="c4svg">`` (so it survives ``--dump-dom``'s HTML serialization as
+    escaped text); this reads that text node and HTML-unescapes it into the
+    well-formed SVG document, with an XML declaration prepended.
+
+    Args:
+        dom: The full serialized DOM emitted by the headless browser's
+            ``--dump-dom`` after Mermaid finished rendering.
+
+    Returns:
+        The standalone SVG document text, or ``None`` when the marker ``<pre>``
+        is absent (the render failed or had not settled).
+    """
+    match = _SVG_RE.search(dom)
+    if match is None or not match.group(1).strip():
+        return None
+    return _SVG_XML_DECL + html.unescape(match.group(1).strip()) + "\n"
+
+
+def _render_view_svg(browser: str, html_path: Path) -> str | None:
+    """Drive *browser* headlessly to render one view's HTML and return its SVG.
+
+    Mermaid renders client-side, so the browser engine — not forge — produces the
+    vector SVG; ``--dump-dom`` serializes the post-render DOM and
+    ``--virtual-time-budget`` gives Mermaid's async render wall-clock to settle
+    first (the same wait the PDF backend relies on). The extracted ``<svg>`` is
+    self-contained, so it needs no external CSS. Flags keep the run offline and
+    non-interactive, mirroring :func:`_print_html_to_pdf`.
+
+    Args:
+        browser: Path to the Chromium-family executable.
+        html_path: The offline single-view HTML to render (loaded over
+            ``file://``).
+
+    Returns:
+        The standalone SVG text, or ``None`` when the page produced no ``<svg>``.
+
+    Raises:
+        subprocess.CalledProcessError: If the browser exits non-zero.
+        subprocess.TimeoutExpired: If the render exceeds the hard timeout.
+    """
+    cmd = [*_headless_base_cmd(browser), "--dump-dom", html_path.as_uri()]
+    proc = subprocess.run(
+        cmd,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=_HEADLESS_TIMEOUT_S,
+    )
+    return _extract_svg(proc.stdout)
+
+
+def _svg_view_path(base: Path, label: str) -> Path:
+    """Return the per-view SVG file path for *label* next to *base*.
+
+    Args:
+        base: The base output path (e.g. ``docs/architecture.svg``).
+        label: The view's display title.
+
+    Returns:
+        ``<base-dir>/<base-stem>.<slug>.svg`` — one deterministic file per view.
+    """
+    stem = base.name[: -len(base.suffix)] if base.suffix else base.name
+    return base.parent / f"{stem}.{_slug(label)}.svg"
+
+
+def _emit_svg(
+    root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace
+) -> int:
+    """Render each C4 view to its own standalone vector SVG via a headless browser.
+
+    One ``.svg`` per view (System Context, Containers, each Component / route
+    view), written next to ``--output`` as ``<stem>.<view-slug>.svg``. Reuses the
+    same offline HTML + installed Chromium-family browser as ``--format pdf`` (no
+    new dependency, no network), capturing Mermaid's rendered ``<svg>`` via
+    ``--dump-dom``. Like PDF, the SVG is a browser-rendered artifact whose exact
+    coordinates are not reproducible across engines, so ``--check`` is a no-op
+    rather than a drift gate.
+
+    Args:
+        root: Repository root directory.
+        config: The model skeleton.
+        edges: Derived component edges.
+        args: Parsed CLI args (``check``, ``output``).
+
+    Returns:
+        ``0`` on a successful write (or a skipped ``--check``); ``1`` when no
+        browser is found or the headless render fails.
+    """
+    if args.check:
+        logger.info(
+            "SVG output has no drift check (browser-rendered, non-reproducible "
+            "coordinates); --check skips it. Regenerate with `%s --format svg`.",
+            REGEN_CMD,
+        )
+        return 0
+    browser = _find_headless_browser()
+    if browser is None:
+        logger.error(
+            "No headless-capable browser found for SVG export. Install Chrome / "
+            "Chromium / Edge / Brave, or set %s=/path/to/browser.",
+            _BROWSER_ENV,
+        )
+        return 1
+    base = _safe_out_path(root, args.output or DEFAULT_SVG_OUTPUT)
+    base.parent.mkdir(parents=True, exist_ok=True)
+    views = _build_views(config, edges)
+    written: list[str] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="forge-c4-") as workdir:
+            work = Path(workdir)
+            _copy_vendored_mermaid(work)
+            with progress_logger("c4: per-view SVG"):
+                for index, (label, src) in enumerate(views):
+                    view_html = work / f"view{index}.html"
+                    view_html.write_text(_render_view_svg_html(config, label, src))
+                    svg = _render_view_svg(browser, view_html)
+                    if svg is None:
+                        logger.warning("SVG render produced no <svg> for %r", label)
+                        continue
+                    out_path = _svg_view_path(base, label)
+                    out_path.write_text(svg, encoding="utf-8")
+                    written.append(os.path.relpath(out_path, root))
+    except subprocess.TimeoutExpired:
+        logger.exception("SVG render timed out after %ss.", _HEADLESS_TIMEOUT_S)
+        return 1
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip()
+        logger.exception("Headless browser failed for the SVG: %s", detail)
+        return 1
+    if not written:
+        logger.error("No SVG views were written (no renderable views).")
+        return 1
+    logger.info(
+        "Wrote %d SVG view(s) (via %s): %s",
+        len(written),
+        Path(browser).name,
+        ", ".join(written),
+    )
     return 0
 
 
@@ -3443,6 +3792,8 @@ def main() -> int:
         emit_rc = _emit_html(root, config, edges, args)
     elif args.format == "pdf":
         emit_rc = _emit_pdf(root, config, edges, args)
+    elif args.format == "svg":
+        emit_rc = _emit_svg(root, config, edges, args)
     else:
         emit_rc = _emit_dsl(root, config, edges, args)
     return max(strict_rc, emit_rc)
@@ -3459,16 +3810,18 @@ def _parse_args() -> argparse.Namespace:
         description=(
             "Generate a C4 architecture model from the import graph + a "
             "[tool.forge.c4] / c4.toml model. Emits Structurizr DSL (default), "
-            "a self-contained offline HTML view, a vector PDF, or raw Mermaid."
+            "a self-contained offline HTML view, a vector PDF, per-view SVG "
+            "files, or raw Mermaid."
         ),
     )
     parser.add_argument(
         "--format",
-        choices=("dsl", "html", "pdf", "mermaid"),
+        choices=("dsl", "html", "pdf", "svg", "mermaid"),
         default="dsl",
         help=(
             "Output: 'dsl' (Structurizr + README block, default), "
             "'html' (offline view), 'pdf' (vector PDF via a headless browser), "
+            "'svg' (one vector SVG file per view, via a headless browser), "
             "or 'mermaid' (raw Mermaid to stdout)."
         ),
     )

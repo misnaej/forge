@@ -5,17 +5,20 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import logging
+import re
 import shutil
 import subprocess
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from forge.gen_c4 import (
     _BROWSER_APP_PATHS,
     _BROWSER_ENV,
+    _DEFAULT_TAG_PALETTE,
     _EDGE_MODES,
     DEFAULT_PDF_OUTPUT,
+    DEFAULT_SVG_OUTPUT,
     MERMAID_ELK_JS_NAME,
     MERMAID_JS_NAME,
     README_C4_END,
@@ -34,8 +37,10 @@ from forge.gen_c4 import (
     _derive_container_edges,
     _edge_endpoints,
     _emit_pdf,
+    _emit_svg,
     _external_node_line,
     _externals_with_declared_incoming,
+    _extract_svg,
     _find_headless_browser,
     _html_interaction_css,
     _html_interaction_script,
@@ -51,12 +56,18 @@ from forge.gen_c4 import (
     _render_mermaid_containers,
     _render_mermaid_system_context,
     _render_view_pdf_html,
+    _render_view_svg,
+    _render_view_svg_html,
     _resolve_direction,
     _resolve_edge_mode,
     _resolve_endpoint,
     _resolve_layout,
     _route_view,
+    _safe_out_path,
     _slug,
+    _svg_view_path,
+    _tag_class_lines,
+    _tag_classdef_lines,
     _under_prefix,
     _visibility_fields,
     _visible_config,
@@ -73,10 +84,6 @@ from forge.gen_c4 import (
     resolve_model_section,
     sync_readme,
 )
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 # A minimal standalone c4.toml model used across the file-loading tests.
@@ -2405,6 +2412,185 @@ def test_emit_pdf_check_mode_is_noop_and_writes_nothing(
     assert not (tmp_path / DEFAULT_PDF_OUTPUT).exists()
 
 
+# --- #137 A: SVG export ---
+
+
+def test_extract_svg_unescapes_marker_pre() -> None:
+    """_extract_svg reads the serialized SVG from the marker pre and unescapes it."""
+    dom = (
+        '<html><body><pre id="c4svg">'
+        "&lt;svg&gt;&lt;rect/&gt;&lt;/svg&gt;"
+        "</pre></body></html>"
+    )
+    out = _extract_svg(dom)
+    assert out is not None
+    assert out.startswith('<?xml version="1.0" encoding="UTF-8"?>')
+    assert "<svg><rect/></svg>" in out
+
+
+def test_extract_svg_returns_none_when_marker_absent() -> None:
+    """A DOM without the c4svg marker (render failed) yields None."""
+    assert _extract_svg("<html><body>nothing here</body></html>") is None
+
+
+def test_extract_svg_returns_none_when_marker_empty() -> None:
+    """An empty marker pre (render not settled) yields None, not an empty file."""
+    assert _extract_svg('<pre id="c4svg">   </pre>') is None
+
+
+def test_svg_view_path_names_one_file_per_view(tmp_path: Path) -> None:
+    """_svg_view_path derives `<stem>.<slug>.svg` next to the base output."""
+    out = _svg_view_path(tmp_path / "architecture.svg", "System Context")
+    assert out.name == "architecture.system_context.svg"
+    assert out.parent == tmp_path
+
+
+def test_render_view_svg_invokes_browser_with_dump_dom(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_render_view_svg drives the browser with --dump-dom and extracts the SVG.
+
+    SCENARIO: subprocess.run is replaced so no real browser launches.
+    MOCK SETUP: subprocess.run returns stdout carrying the marker pre.
+    EXPECTED BEHAVIOR: the argv contains --dump-dom (not --print-to-pdf) and the
+        returned SVG is the unescaped, XML-declared document.
+    """
+    captured: dict[str, list[str]] = {}
+
+    class _Result:
+        """Mock subprocess.run result with stdout containing the SVG DOM."""
+
+        stdout = '<pre id="c4svg">&lt;svg&gt;&lt;/svg&gt;</pre>'
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> _Result:
+        captured["cmd"] = cmd
+        return _Result()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    out = _render_view_svg("/fake/chrome", tmp_path / "view.html")
+    assert "--dump-dom" in captured["cmd"]
+    assert not any("--print-to-pdf" in a for a in captured["cmd"])
+    assert out is not None
+    assert out.startswith("<?xml")
+
+
+def test_render_view_svg_html_serializes_via_xmlserializer() -> None:
+    """The SVG view HTML uses XMLSerializer + the c4svg marker (well-formed XML)."""
+    html_doc = _render_view_svg_html(
+        C4Config(system="T", description="", output=""), "System Context", "graph LR\n"
+    )
+    assert "XMLSerializer" in html_doc
+    assert 'pre.id = "c4svg"' in html_doc
+
+
+def test_emit_svg_no_browser_returns_1_with_actionable_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_emit_svg returns 1 and names FORGE_C4_BROWSER when no browser is found."""
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: None)
+    config = C4Config(system="Test", description="", output="")
+    args = argparse.Namespace(output=None, check=False)
+    with caplog.at_level(logging.ERROR, logger="forge.gen_c4"):
+        result = _emit_svg(tmp_path, config, set(), args)
+    assert result == 1
+    assert _BROWSER_ENV in caplog.text
+
+
+def test_emit_svg_check_mode_is_noop_and_writes_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_emit_svg with --check writes nothing and never touches the browser."""
+
+    def _boom() -> str:
+        msg = "browser discovery must not run in --check mode"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", _boom)
+    config = C4Config(system="Test", description="", output="")
+    args = argparse.Namespace(output=None, check=True)
+    assert _emit_svg(tmp_path, config, set(), args) == 0
+    assert not (tmp_path / DEFAULT_SVG_OUTPUT).exists()
+
+
+def test_emit_svg_success_writes_one_file_per_view(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_emit_svg writes one SVG per view and returns 0 when rendering succeeds.
+
+    MOCK SETUP: _find_headless_browser → fake path; _render_view_svg → a stub SVG
+        string (so no real browser runs). The default two views (System Context,
+        Containers) are produced by _build_views.
+    EXPECTED BEHAVIOR: returns 0; the per-view SVG files exist under tmp_path.
+    """
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: "/fake/chrome")
+    monkeypatch.setattr(
+        "forge.gen_c4._render_view_svg",
+        lambda _browser, _html: '<?xml version="1.0"?>\n<svg/>\n',
+    )
+    config = C4Config(system="Test", description="", output="")
+    args = argparse.Namespace(output=None, check=False)
+    result = _emit_svg(tmp_path, config, set(), args)
+    assert result == 0
+    assert (tmp_path / "docs/architecture.system_context.svg").is_file()
+    assert (tmp_path / "docs/architecture.containers.svg").is_file()
+
+
+def test_emit_svg_subprocess_error_returns_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_emit_svg returns 1 and logs when the headless browser process errors."""
+
+    def _raise_cpe(_browser: str, _html: object) -> str:
+        raise subprocess.CalledProcessError(1, "chrome", stderr="boom")
+
+    monkeypatch.setattr("forge.gen_c4._find_headless_browser", lambda: "/fake/chrome")
+    monkeypatch.setattr("forge.gen_c4._render_view_svg", _raise_cpe)
+    config = C4Config(system="Test", description="", output="")
+    args = argparse.Namespace(output=None, check=False)
+    with caplog.at_level(logging.ERROR, logger="forge.gen_c4"):
+        result = _emit_svg(tmp_path, config, set(), args)
+    assert result == 1
+    assert "Headless browser" in caplog.text
+
+
+# --- #159: _safe_out_path escape guard ---
+
+
+def test_safe_out_path_accepts_in_repo_relpath(tmp_path: Path) -> None:
+    """A repo-relative path resolves to an absolute path under the root."""
+    out = _safe_out_path(tmp_path, "docs/architecture.svg")
+    assert out == (tmp_path / "docs" / "architecture.svg").resolve()
+    assert out.is_relative_to(tmp_path.resolve())
+
+
+def test_safe_out_path_accepts_inward_traversal_that_stays_within_root(
+    tmp_path: Path,
+) -> None:
+    """A `..` segment that still resolves inside root is accepted, not rejected."""
+    out = _safe_out_path(tmp_path, "docs/../out.svg")
+    assert out == (tmp_path / "out.svg").resolve()
+    assert out.is_relative_to(tmp_path.resolve())
+
+
+def test_safe_out_path_rejects_parent_traversal(tmp_path: Path) -> None:
+    """A `..` path escaping the repo root raises ValueError (the dsl/pdf/svg guard)."""
+    with pytest.raises(ValueError, match="escapes the repository root"):
+        _safe_out_path(tmp_path, "../evil.svg")
+
+
+def test_safe_out_path_rejects_absolute_escape(tmp_path: Path) -> None:
+    """An absolute path outside the repo root raises ValueError."""
+    with pytest.raises(ValueError, match="escapes the repository root"):
+        _safe_out_path(tmp_path, "/etc/passwd")
+
+
 # --- #137: _print_html_to_pdf ---
 
 
@@ -3309,3 +3495,217 @@ def test_build_views_route_views_empty_default_adds_no_tabs() -> None:
         "Applications Components",
         "Domain libraries Components",
     ]
+
+
+# --- element tag vocabulary: Mermaid `class` styling hook ---
+
+
+def test_render_mermaid_emits_class_line_for_tagged_element() -> None:
+    """A tagged person/container/component each get a Mermaid class line."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses", tags=("person",)),),
+        containers=(Container("App", "", "", tags=("skill",)),),
+        components=(Component("A", ("demo.a",), tags=("agent", "reporter")),),
+    )
+    mermaid = render_mermaid(config, set())
+    assert "class dev person" in mermaid
+    assert "class app skill" in mermaid
+    # A multi-tag element emits ONE class line per tag, never a comma-joined
+    # token (Mermaid would treat `agent,reporter` as a single class, so neither
+    # `.agent` nor `.reporter` would match).
+    assert "class a agent" in mermaid
+    assert "class a reporter" in mermaid
+    assert "agent,reporter" not in mermaid
+
+
+def test_render_mermaid_untagged_model_emits_no_class_lines() -> None:
+    """No element carries tags -> the styling hook (palette + class) is inert.
+
+    Byte-identity guard: with nothing tagged, neither the ``_tag_classdef_lines``
+    palette lookup nor the ``_tag_class_lines`` assignments emit anything, so an
+    untagged model's Mermaid output is unaffected by the tag vocabulary feature.
+    """
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses"),),
+        containers=(Container("App", "", ""),),
+        components=(Component("A", ("demo.a",)),),
+    )
+    mermaid = render_mermaid(config, set())
+    assert "classDef" not in mermaid
+    assert "class " not in mermaid
+
+
+def test_tag_class_lines_orders_person_external_container_component() -> None:
+    """Class lines are emitted person -> external -> container -> component."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses", tags=("person",)),),
+        externals=(External("GitHub", "", "uses", tags=("saas",)),),
+        containers=(Container("App", "", "", tags=("skill",)),),
+        components=(Component("A", ("demo.a",), tags=("agent",)),),
+    )
+    ids = {
+        "person": {"Dev": "dev"},
+        "external": {"GitHub": "github"},
+        "container": {"App": "app"},
+        "component": {"A": "a"},
+    }
+    lines = _tag_class_lines(config, ids)
+    assert lines == [
+        "    class dev person",
+        "    class github saas",
+        "    class app skill",
+        "    class a agent",
+    ]
+
+
+def test_tag_class_lines_skips_element_absent_from_ids() -> None:
+    """A tagged element missing from the ids map (a subset view) is skipped."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        components=(Component("A", ("demo.a",), tags=("agent",)),),
+    )
+    ids = {"person": {}, "external": {}, "container": {}, "component": {}}
+    assert _tag_class_lines(config, ids) == []
+
+
+def test_tag_class_lines_empty_when_no_tags() -> None:
+    """No element in the model declares tags -> an empty list is returned."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        containers=(Container("App", "", ""),),
+        components=(Component("A", ("demo.a",)),),
+    )
+    ids = {
+        "person": {},
+        "external": {},
+        "container": {"App": "app"},
+        "component": {"A": "a"},
+    }
+    assert _tag_class_lines(config, ids) == []
+
+
+# --- default tag palette: reserved-tag `classDef` emission ---
+
+
+def test_tag_classdef_lines_emits_for_present_reserved_tags() -> None:
+    """A person tagged "person" and a component tagged "cli" each get a classDef."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses", tags=("person",)),),
+        components=(Component("A", ("demo.a",), tags=("cli",)),),
+    )
+    lines = _tag_classdef_lines(config)
+    assert lines == [
+        "    classDef cli fill:#dcfce7,stroke:#15803d,color:#14532d",
+        "    classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12",
+    ]
+
+
+def test_tag_classdef_lines_skips_unreserved_tags() -> None:
+    """A tag absent from the palette (a bespoke label) emits no classDef line."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        components=(Component("A", ("demo.a",), tags=("bespoke",)),),
+    )
+    assert _tag_classdef_lines(config) == []
+
+
+def test_tag_classdef_lines_empty_when_no_tags() -> None:
+    """No element in the model declares tags -> an empty list is returned."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        containers=(Container("App", "", ""),),
+        components=(Component("A", ("demo.a",)),),
+    )
+    assert _tag_classdef_lines(config) == []
+
+
+def test_tag_classdef_lines_deduplicates_across_elements() -> None:
+    """Two components sharing a reserved tag emit ONE classDef, not one each."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        components=(
+            Component("A", ("demo.a",), tags=("component",)),
+            Component("B", ("demo.b",), tags=("component",)),
+        ),
+    )
+    lines = _tag_classdef_lines(config)
+    assert lines == ["    classDef component fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e"]
+
+
+def test_render_mermaid_tagged_emits_classdef_then_class() -> None:
+    """render_mermaid emits the palette classDef before the class assignment."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        persons=(Person("Dev", "", "uses", tags=("person",)),),
+    )
+    mermaid = render_mermaid(config, set())
+    assert "classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12" in mermaid
+    assert "class dev person" in mermaid
+    assert mermaid.index("classDef person") < mermaid.index("class dev person")
+
+
+# --- design review gaps: palette<->doc consistency + route_view tag coverage ---
+
+_CLASSDEF_RE = re.compile(r"^\s*classDef (\S+) (.+)$", re.MULTILINE)
+
+
+def test_agent_doc_classdefs_match_default_palette() -> None:
+    """Every ``classDef`` in docs/agent-architecture.md matches the live palette.
+
+    The doc hand-copies ``_DEFAULT_TAG_PALETTE``'s colours so GitHub's static
+    Mermaid render looks the same as the tool-generated one; this guards
+    against silent drift between the two. The doc repeats the same classDef
+    block once per subview, so matches are deduped into a dict before
+    comparing.
+    """
+    doc_path = Path(__file__).parents[1] / "docs" / "agent-architecture.md"
+    text = doc_path.read_text(encoding="utf-8")
+    found = {tag: style.strip() for tag, style in _CLASSDEF_RE.findall(text)}
+    shared = {tag: style for tag, style in found.items() if tag in _DEFAULT_TAG_PALETTE}
+    # Not vacuous: the doc actually declares several reserved tags.
+    assert len(shared) >= 3
+    for tag, style in shared.items():
+        assert style == _DEFAULT_TAG_PALETTE[tag]
+
+
+def test_route_view_carries_tag_classes() -> None:
+    """A route-view tab carries the palette classDef + class lines for its tags.
+
+    Route-view tabs render via :func:`render_mermaid` on a pruned model (see
+    ``_route_view``), so a tagged component's styling hook must survive the
+    pruning — this is the documented v1 scope for per-view tag styling.
+    """
+    config = _two_container_config(
+        (
+            Component("A", ("demo.a",), container="Applications", tags=("cli",)),
+            Component("B", ("demo.b",), container="Applications"),
+        )
+    )
+    source = _route_view(config, {("A", "B")}, "A")
+    assert source is not None
+    assert "classDef cli" in source
+    assert "class a cli" in source

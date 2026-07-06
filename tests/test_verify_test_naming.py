@@ -208,12 +208,12 @@ def test_scope_all_uses_tracked_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`--scope all` selects test files via get_tracked_files(prefix=...)."""
+    """`--scope all` selects test files via tracked_files_under_roots."""
     used: list[str] = []
     monkeypatch.setattr("forge.verify_test_naming.repo_root", lambda: tmp_path)
     monkeypatch.setattr(
-        "forge.verify_test_naming.get_tracked_files",
-        lambda **_kw: used.append("all") or [],
+        "forge.verify_test_naming.tracked_files_under_roots",
+        lambda *_a, **_kw: used.append("all") or [],
     )
     monkeypatch.setattr(
         "forge.verify_test_naming.get_modified_files",
@@ -344,53 +344,35 @@ def test_test_scan_roots_excludes_source_dirs(tmp_path: Path) -> None:
 # controlled roots and exclude lists. No real git state is required.
 
 
-def test_resolve_test_files_scope_all_filters_by_test_roots(
+def test_resolve_test_files_scope_all_delegates_to_tracked_files_under_roots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """scope=all includes only files under the test roots, not source files.
+    """scope=all delegates file selection to tracked_files_under_roots.
 
-    SCENARIO: tracked files span both tests/ and src/.
-    MOCK SETUP: get_tracked_files returns a mixed list; tests/ exists on
-        disk so _test_scan_roots auto-detects it; no exclude configured.
-    EXPECTED BEHAVIOR: only tests/test_foo.py survives; src/pkg.py is
-        dropped by filter_under_roots.
+    SCENARIO: _resolve_test_files must forward the exact repo_root and the
+        exact roots _test_scan_roots computed to tracked_files_under_roots
+        (the composed root+exclude selector, covered directly in
+        test_config.py) and return its result verbatim.
+    MOCK SETUP: tests/ exists on disk so _test_scan_roots resolves to
+        ["tests"]; tracked_files_under_roots is patched to record its
+        (repo_root, roots) call args and return a fixed file list.
+    EXPECTED BEHAVIOR: _resolve_test_files returns the patched list, and the
+        recorded call args equal (tmp_path, ["tests"]).
     """
     (tmp_path / "tests").mkdir()
+    recorded: list[tuple[Path, list[str]]] = []
+
+    def _fake_tracked(repo_root: Path, roots: list[str]) -> list[str]:
+        recorded.append((repo_root, roots))
+        return ["tests/test_foo.py"]
+
     monkeypatch.setattr(
-        "forge.verify_test_naming.get_tracked_files",
-        lambda: ["tests/test_foo.py", "src/pkg.py"],
+        "forge.verify_test_naming.tracked_files_under_roots", _fake_tracked
     )
     result = verify_test_naming._resolve_test_files(tmp_path, None, "all")
-    assert "tests/test_foo.py" in result
-    assert "src/pkg.py" not in result
-
-
-def test_resolve_test_files_scope_all_respects_exclude(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """scope=all drops files matching [tool.forge].exclude globs.
-
-    SCENARIO: tracked files under tests/ include one vendor test that
-        is explicitly excluded.
-    MOCK SETUP: get_tracked_files returns two test files; pyproject.toml
-        declares the vendor file in exclude; tests/ exists so scan roots
-        resolve to ["tests"].
-    EXPECTED BEHAVIOR: only tests/test_foo.py survives; tests/vendor_test.py
-        is removed by filter_excluded.
-    """
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "pyproject.toml").write_text(
-        '[tool.forge]\ntest_dirs = ["tests"]\nexclude = ["tests/vendor_test.py"]\n'
-    )
-    monkeypatch.setattr(
-        "forge.verify_test_naming.get_tracked_files",
-        lambda: ["tests/test_foo.py", "tests/vendor_test.py"],
-    )
-    result = verify_test_naming._resolve_test_files(tmp_path, None, "all")
-    assert "tests/test_foo.py" in result
-    assert "tests/vendor_test.py" not in result
+    assert result == ["tests/test_foo.py"]
+    assert recorded == [(tmp_path, ["tests"])]
 
 
 def test_resolve_test_files_scope_diff_respects_exclude(

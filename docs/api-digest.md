@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_58 modules, 581 symbols._
+_59 modules, 596 symbols._
 
 ## `forge`
 
@@ -208,6 +208,7 @@ _58 modules, 581 symbols._
 - `resolve_tool_roots(repo_root: Path, tool: str, *, include_tests: bool = False) -> list[str]` — Resolve the scan roots a layout-consuming *tool* should use.
 - `filter_under_roots(files: list[str], roots: list[str]) -> list[str]` — Keep only *files* that live under one of *roots* (source-tree scoping).
 - `filter_excluded(files: list[str], globs: list[str]) -> list[str]` — Drop *files* matching any exclude *glob* (the ``[tool.forge].exclude`` half).
+- `tracked_files_under_roots(repo_root: Path, roots: list[str], *, suffix: str = '.py') -> list[str]` — Select the git-tracked files under *roots*, minus repo-wide excludes.
 
 ## `forge.continuation_append`
 
@@ -263,7 +264,7 @@ _58 modules, 581 symbols._
 - `class ModuleDigest` — The top-level symbols of a single module.
 - `detect_roots(root: Path, explicit: list[str] | None) -> list[Path]` — Resolve the source roots to scan for Python modules.
 - `_is_test_module(path: Path) -> bool` _(internal)_ — Return whether a module path is a test module to skip.
-- `iter_modules(roots: list[Path]) -> Iterator[Path]` — Yield Python module files under the given source roots.
+- `iter_modules(root: Path, roots: list[Path]) -> Iterator[Path]` — Yield Python module files under the given source roots.
 - `_annotation(node: ast.expr | None) -> str` _(internal)_ — Render an AST annotation node as source text.
 - `_format_arg(arg: ast.arg, default: ast.expr | None) -> str` _(internal)_ — Render a single argument with its annotation and default.
 - `_positional_args(args: ast.arguments) -> list[str]` _(internal)_ — Render the positional (and positional-only) arguments.
@@ -328,6 +329,8 @@ _58 modules, 581 symbols._
 - `_m(text: str) -> str` _(internal)_ — Escape label *text* for safe embedding in a Mermaid node label.
 - `_external_node_line(node_id: str, ext: External, *, indent: str = '    ', markdown: bool = False) -> str` _(internal)_ — Render the flat ``[[...]]`` node line for one external system.
 - `render_mermaid(config: C4Config, edges: set[tuple[str, str]]) -> str` — Render the model as a Mermaid flowchart (offline-renderable).
+- `_tag_classdef_lines(config: C4Config) -> list[str]` _(internal)_ — Emit a ``classDef`` for each reserved tag the model actually uses.
+- `_tag_class_lines(config: C4Config, ids: dict[str, dict[str, str]]) -> list[str]` _(internal)_ — Emit Mermaid ``class`` assignments carrying each element's tags.
 - `_mermaid_box(name: str, technology: str, description: str, *, markdown: bool = False) -> str` _(internal)_ — Build a multi-line Mermaid box label: bold name, technology, description.
 - `_mermaid_edges(config: C4Config, ids: dict[str, dict[str, str]], edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the Mermaid relationship lines.
 - `_actors_subgraph(config: C4Config, person_ids: dict[str, str], alloc: _IdAllocator) -> list[str]` _(internal)_ — Wrap the person nodes in a top-level ``Actors`` subgraph block.
@@ -366,8 +369,14 @@ _58 modules, 581 symbols._
 - `_render_pdf_single_doc(browser: str, config: C4Config, views: list[tuple[str, str]], out_path: Path) -> None` _(internal)_ — Print the whole tabbed HTML to a PDF in one browser pass.
 - `_emit_html(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the offline HTML view (+ vendored Mermaid sidecar).
 - `_find_headless_browser() -> str | None` _(internal)_ — Locate an installed Chromium-family browser for headless PDF printing.
+- `_headless_base_cmd(browser: str) -> list[str]` _(internal)_ — Return the argv prefix shared by the PDF-print and SVG-dump backends.
 - `_print_html_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None` _(internal)_ — Drive *browser* headlessly to print *html_path* to *pdf_path*.
 - `_emit_pdf(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Render the C4 views to a vector PDF via a headless browser.
+- `_render_view_svg_html(config: C4Config, label: str, mermaid_src: str) -> str` _(internal)_ — Build a single-view HTML that emits its rendered SVG as serialized XML.
+- `_extract_svg(dom: str) -> str | None` _(internal)_ — Pull the serialized SVG XML back out of the dumped page DOM.
+- `_render_view_svg(browser: str, html_path: Path) -> str | None` _(internal)_ — Drive *browser* headlessly to render one view's HTML and return its SVG.
+- `_svg_view_path(base: Path, label: str) -> Path` _(internal)_ — Return the per-view SVG file path for *label* next to *base*.
+- `_emit_svg(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Render each C4 view to its own standalone vector SVG via a headless browser.
 - `_emit_dsl(root: Path, config: C4Config, edges: set[tuple[str, str]], args: argparse.Namespace) -> int` _(internal)_ — Write or verify the canonical DSL artifact and the README C4 block.
 - `main() -> int` — Generate or verify the C4 artifacts (DSL + README block, or HTML).
 - `_parse_args() -> argparse.Namespace` _(internal)_ — Parse the ``forge-gen-c4`` command-line arguments.
@@ -411,7 +420,7 @@ _58 modules, 581 symbols._
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
 - `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.
 - `gh_api(*args: str, timeout: int = 10) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
-- `_run_git(*args: str) -> str` _(internal)_ — Run a git command and return stdout.
+- `_run_git(*args: str, cwd: Path | None = None) -> str` _(internal)_ — Run a git command and return stdout.
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 - `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
@@ -419,7 +428,7 @@ _58 modules, 581 symbols._
 - `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
 - `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get list of modified files from git.
-- `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
+- `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
 - `stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]` — ``git add`` tracked files modified within *pathspecs*.
 
 ## `forge.import_graph`
@@ -626,6 +635,7 @@ _58 modules, 581 symbols._
 - `step_cve_usage(repo_root: Path) -> StepResult` — Run ``verify-forge-cve-usage`` — the usage-scoped second stage on pip_audit.
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
 - `_cli_wiring_enabled(repo_root: Path) -> bool` _(internal)_ — Return True when the repo has opted into the cli_wiring check.
+- `step_agent_doc(repo_root: Path) -> StepResult` — Run ``verify-forge-agent-doc`` — keep a hand-maintained agent doc in sync.
 - `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
 - `_one_step_successors(tag: tuple[int, int, int]) -> set[tuple[int, int, int]]` _(internal)_ — Return the three valid rolling-next successors of a tagged release.
 - `step_release_tag_guard(repo_root: Path) -> StepResult` — Block when an intermediate rolling-next release was never tagged (#66).
@@ -750,6 +760,16 @@ _58 modules, 581 symbols._
 - `_run_pip_install(ref: str, *, auth_mode: AuthMode, timeout_seconds: int | None) -> int` _(internal)_ — Run the force-reinstall pip command, wrapped in a progress logger.
 - `_run_apply(args: argparse.Namespace, root: Path) -> int` _(internal)_ — ``--apply``: do phase 1 + run pip + do phase 2, in one command.
 - `main() -> int` — One-command forge upgrade entry point.
+
+## `forge.verify_agent_doc`
+
+> _verify-forge-agent-doc — keep a hand-maintained agent-architecture doc in line._
+
+- `_config_doc_path(root: Path) -> str | None` _(internal)_ — Return the configured agent-doc path, or ``None`` to self-skip.
+- `_roster(root: Path) -> dict[str, set[str]]` _(internal)_ — Discover the repo's agents, skills, hooks, and CLIs.
+- `_check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]` _(internal)_ — Return coverage + dangling problems for *doc* against *roster*.
+- `_diff_report(root: Path, base: str) -> list[str]` _(internal)_ — Report graph-relevant mentions changed in the diff against *base*.
+- `main(argv: list[str] | None = None) -> int` — Run the agent-doc verifier.
 
 ## `forge.verify_changelog_history`
 

@@ -27,6 +27,8 @@ import tomllib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from forge.git_utils import get_tracked_files
+
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -426,3 +428,40 @@ def filter_excluded(files: list[str], globs: list[str]) -> list[str]:
             or any(fnmatch.fnmatch(f, g) for g in globs)
         )
     ]
+
+
+def tracked_files_under_roots(
+    repo_root: Path,
+    roots: list[str],
+    *,
+    suffix: str = ".py",
+) -> list[str]:
+    """Select the git-tracked files under *roots*, minus repo-wide excludes.
+
+    The one "which source files apply" selector every whole-tree
+    file-scanning forge tool shares — the composition of
+    :func:`forge.git_utils.get_tracked_files` (the tracked set — never a
+    raw filesystem walk), :func:`filter_under_roots` (source-tree scoping),
+    and :func:`filter_excluded` (the ``[tool.forge].exclude`` half). Sourcing
+    from the tracked set is what makes output reproducible across machines
+    (issue #161): an untracked / gitignored file — a locally-cloned vendored
+    repo, a machine-local data dir — is by definition not part of the
+    committed source surface, so it must never be indexed or checked. The
+    docstring-verification, test-naming, and api-digest whole-tree passes all
+    route through here so the guarantee is uniform rather than re-derived
+    (and drifting) per tool.
+
+    Args:
+        repo_root: Git repo root — the source of ``[tool.forge].exclude``.
+        roots: Repo-relative directory roots to keep files under (as produced
+            by :func:`resolve_tool_roots`). An empty list keeps nothing.
+        suffix: File suffix to select. Defaults to ``".py"``.
+
+    Returns:
+        Repo-relative tracked file paths under some root, with
+        ``[tool.forge].exclude`` globs removed, sorted (the
+        :func:`get_tracked_files` order).
+    """
+    tracked = get_tracked_files(suffix=suffix, repo_root=repo_root)
+    files = filter_under_roots(tracked, roots)
+    return filter_excluded(files, load_config(repo_root).exclude)
