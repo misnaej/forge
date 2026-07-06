@@ -5,15 +5,17 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import logging
+import re
 import shutil
 import subprocess
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from forge.gen_c4 import (
     _BROWSER_APP_PATHS,
     _BROWSER_ENV,
+    _DEFAULT_TAG_PALETTE,
     _EDGE_MODES,
     DEFAULT_PDF_OUTPUT,
     DEFAULT_SVG_OUTPUT,
@@ -82,10 +84,6 @@ from forge.gen_c4 import (
     resolve_model_section,
     sync_readme,
 )
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 # A minimal standalone c4.toml model used across the file-loading tests.
@@ -3659,3 +3657,46 @@ def test_render_mermaid_tagged_emits_classdef_then_class() -> None:
     assert "classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12" in mermaid
     assert "class dev person" in mermaid
     assert mermaid.index("classDef person") < mermaid.index("class dev person")
+
+
+# --- design review gaps: palette<->doc consistency + route_view tag coverage ---
+
+_CLASSDEF_RE = re.compile(r"^\s*classDef (\S+) (.+)$", re.MULTILINE)
+
+
+def test_agent_doc_classdefs_match_default_palette() -> None:
+    """Every ``classDef`` in docs/agent-architecture.md matches the live palette.
+
+    The doc hand-copies ``_DEFAULT_TAG_PALETTE``'s colours so GitHub's static
+    Mermaid render looks the same as the tool-generated one; this guards
+    against silent drift between the two. The doc repeats the same classDef
+    block once per subview, so matches are deduped into a dict before
+    comparing.
+    """
+    doc_path = Path(__file__).parents[1] / "docs" / "agent-architecture.md"
+    text = doc_path.read_text(encoding="utf-8")
+    found = {tag: style.strip() for tag, style in _CLASSDEF_RE.findall(text)}
+    shared = {tag: style for tag, style in found.items() if tag in _DEFAULT_TAG_PALETTE}
+    # Not vacuous: the doc actually declares several reserved tags.
+    assert len(shared) >= 3
+    for tag, style in shared.items():
+        assert style == _DEFAULT_TAG_PALETTE[tag]
+
+
+def test_route_view_carries_tag_classes() -> None:
+    """A route-view tab carries the palette classDef + class lines for its tags.
+
+    Route-view tabs render via :func:`render_mermaid` on a pruned model (see
+    ``_route_view``), so a tagged component's styling hook must survive the
+    pruning — this is the documented v1 scope for per-view tag styling.
+    """
+    config = _two_container_config(
+        (
+            Component("A", ("demo.a",), container="Applications", tags=("cli",)),
+            Component("B", ("demo.b",), container="Applications"),
+        )
+    )
+    source = _route_view(config, {("A", "B")}, "A")
+    assert source is not None
+    assert "classDef cli" in source
+    assert "class a cli" in source

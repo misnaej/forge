@@ -342,6 +342,13 @@ is mandatory on every element:
 | `module` | a code package / module | Component |
 | `policy` | a foundational rule or governing doc | External |
 
+**Structural tags** — `container`, `component`, `external` (and `person`, above)
+name a C4 element's own stock type rather than a domain role. They exist so a
+plain code model (no agents/skills) can still be coloured by the reference
+palette below; the reference palette defines them alongside the kind tags. Use a
+domain kind (`agent` / `skill` / …) when one fits; fall back to a structural tag
+otherwise.
+
 **Modifier tags — zero or more (open set).** Refine a kind without changing it:
 
 | Tag | Meaning | Typically on |
@@ -349,6 +356,7 @@ is mandatory on every element:
 | `reporter` / `mutator` | read-only vs. can modify files/state | `agent` |
 | `blocking` / `advisory` | failure halts vs. only warns | `hook`, pre-commit step |
 | `foundation` / `local` | shipped to consumers vs. repo-only | any |
+| `orchestrator` | the driving main agent (a distinct look) | the top-level agent |
 
 **Relationship verbs — controlled edge labels.** Declared `[[relationship]]`
 edges (which connect *any* element to any other) use a small verb set as their
@@ -459,7 +467,8 @@ Deferred enhancements (the feature shipped without these by design):
    vocabulary](#element-tag-vocabulary-naming-standard) emits each element's
    tags as CSS classes **and** a reference `classDef` palette, so a tagged model
    is coloured by role out of the box (`custom_css` still overrides). Still open:
-   **per-view HTML coverage** (the palette reaches the flat/README diagram + PDF
-   per-view SVGs, not yet the System Context / Containers / Component HTML tabs)
-   and distinct per-kind **shapes** — or switching the HTML view to Mermaid's C4
-   diagram type (once its experimental status settles) for shape fidelity.
+   **per-view coverage** — the palette reaches the flat/README diagram and
+   `route_views` tabs, but *not* the System Context / Containers / Component tabs
+   of `--format html` / `--format pdf` (those three renderers don't emit tag
+   classes yet) — and distinct per-kind **shapes**, or switching the HTML view to
+   Mermaid's C4 diagram type (once its experimental status settles).

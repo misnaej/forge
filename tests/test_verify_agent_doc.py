@@ -314,3 +314,42 @@ def test_main_diff_branch_returns_zero(
     monkeypatch.setattr(vad, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(sys, "argv", ["verify-forge-agent-doc", "--diff", "HEAD"])
     assert vad.main() == 0
+
+
+def test_main_rejects_doc_path_escaping_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """main() exits 1 when the configured doc path escapes the repo root.
+
+    SCENARIO: [tool.forge.agent_doc].path is set to "../evil.md", which
+    resolves outside tmp_path.
+    MOCK SETUP: repo_root pinned to tmp_path; argv patched.
+    EXPECTED BEHAVIOR: the `is_relative_to(root)` guard rejects the path
+    before any file-existence check runs.
+    """
+    _write(
+        tmp_path / "pyproject.toml",
+        '[tool.forge.agent_doc]\npath = "../evil.md"\n',
+    )
+    monkeypatch.setattr(vad, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(sys, "argv", ["verify-forge-agent-doc"])
+    assert vad.main() == 1
+
+
+def test_diff_report_surfaces_bare_slash_skill_mention(tmp_path: Path) -> None:
+    """A bare ``/name`` mention with no other edge token is now surfaced.
+
+    SCENARIO: before ``edge_re`` gained ``_SKILL_RE``, a diff line mentioning
+    a skill only as a bare slash-command ("use `/commit`") — with no
+    ``subagent_type=``, ``Skill(skill=``, CLI, or hook token alongside it —
+    was invisible to `_diff_report`. It must now be surfaced.
+    """
+    _write(tmp_path / "skills" / "ship" / "SKILL.md", "# ship\n")
+    _git_commit_all(tmp_path, "initial")
+    _write(
+        tmp_path / "skills" / "ship" / "SKILL.md",
+        "# ship\nAfter shipping, use `/commit` to finish up.\n",
+    )
+    lines = vad._diff_report(tmp_path, "HEAD")
+    assert any("/commit" in line for line in lines)

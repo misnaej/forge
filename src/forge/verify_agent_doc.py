@@ -187,7 +187,12 @@ def _diff_report(root: Path, base: str) -> list[str]:
         logger.warning("agent_doc --diff: could not run git diff against %s", base)
         return []
     edge_re = re.compile(
-        r"subagent_type=|Skill\(skill=|" + _CLI_RE.pattern + "|" + _HOOK_RE.pattern
+        r"subagent_type=|Skill\(skill=|"
+        + _CLI_RE.pattern
+        + "|"
+        + _HOOK_RE.pattern
+        + "|"
+        + _SKILL_RE.pattern  # bare /name mentions — the `chains` edge source
     )
     return [
         line.rstrip()
