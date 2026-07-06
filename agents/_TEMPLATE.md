@@ -71,6 +71,17 @@ here).
 | Multi-step reasoning + hallucination risk | `opus` |
 | Delegated workhorse, match parent context | `inherit` |
 
+Tier on **frequency × judgment-load**, not judgment alone. `haiku`
+pays off only where an agent is **both** high-frequency **and**
+low-judgment (dispatch / transcription off structured input) —
+`precommit-fixer`, `git-commit-push`. A low-judgment agent that runs
+**rarely** (e.g. `weekly-summary`) saves almost nothing on a downgrade,
+so leave it at the tier its output quality wants. A **content-generating**
+agent whose value is the quality of what it writes (`docs-types-checker`
+writes docstrings that ship) stays `sonnet`+ regardless of frequency — a
+shallow-but-passing artifact is worse than none. Downgrade only when the
+cost win is real *and* quality is untouched.
+
 ## Reporter-agent header contract
 
 Every reporter agent (pure Reporter or Reporter-with-artifact) MUST
