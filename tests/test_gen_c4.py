@@ -2570,6 +2570,15 @@ def test_safe_out_path_accepts_in_repo_relpath(tmp_path: Path) -> None:
     assert out.is_relative_to(tmp_path.resolve())
 
 
+def test_safe_out_path_accepts_inward_traversal_that_stays_within_root(
+    tmp_path: Path,
+) -> None:
+    """A `..` segment that still resolves inside root is accepted, not rejected."""
+    out = _safe_out_path(tmp_path, "docs/../out.svg")
+    assert out == (tmp_path / "out.svg").resolve()
+    assert out.is_relative_to(tmp_path.resolve())
+
+
 def test_safe_out_path_rejects_parent_traversal(tmp_path: Path) -> None:
     """A `..` path escaping the repo root raises ValueError (the dsl/pdf/svg guard)."""
     with pytest.raises(ValueError, match="escapes the repository root"):
