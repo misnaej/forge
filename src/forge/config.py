@@ -27,7 +27,8 @@ import tomllib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from forge.git_utils import get_tracked_files
+from forge.git_utils import get_tracked_files, get_untracked_files
+from forge.run_context import is_non_interactive
 
 
 if TYPE_CHECKING:
@@ -451,6 +452,13 @@ def tracked_files_under_roots(
     route through here so the guarantee is uniform rather than re-derived
     (and drifting) per tool.
 
+    Side effect (dev-loop only): emits one ``logger.warning`` via
+    :func:`_warn_untracked_under_roots` naming any *untracked, non-gitignored*
+    source under *roots* the tracked-set scan skipped — the "forgot to
+    ``git add``" case (issue #164). The returned list is unaffected; the
+    warning self-skips in CI. A gitignored file is deliberately silent (it is
+    declared out of scope, per #161).
+
     Args:
         repo_root: Git repo root — the source of ``[tool.forge].exclude``.
         roots: Repo-relative directory roots to keep files under (as produced
@@ -464,4 +472,36 @@ def tracked_files_under_roots(
     """
     tracked = get_tracked_files(suffix=suffix, repo_root=repo_root)
     files = filter_under_roots(tracked, roots)
+    _warn_untracked_under_roots(repo_root, roots, suffix)
     return filter_excluded(files, load_config(repo_root).exclude)
+
+
+def _warn_untracked_under_roots(repo_root: Path, roots: list[str], suffix: str) -> None:
+    """Warn (dev-loop only) when untracked source under *roots* goes unscanned.
+
+    Side effect: emits one ``logger.warning`` naming the count of untracked,
+    non-gitignored ``suffix`` files under *roots* the tracked-set scan skipped
+    — the "forgot to ``git add``" case (issue #164). Self-skips in
+    non-interactive / CI contexts (FOUNDATION §15): the warning recommends a
+    manual ``git add``, meaningless on a CI checkout. Gitignored files are
+    deliberately out of scope (issue #161) and never warned about.
+
+    Args:
+        repo_root: Git repo root — where the untracked-set query runs.
+        roots: Repo-relative directory roots the scan is scoped to.
+        suffix: File suffix the scan selects (e.g. ``".py"``).
+    """
+    if is_non_interactive():
+        return
+    untracked = filter_under_roots(
+        get_untracked_files(suffix=suffix, repo_root=repo_root),
+        roots,
+    )
+    if untracked:
+        logger.warning(
+            "%d untracked %s file(s) under %s not indexed — 'git add' to "
+            "include (only git-tracked files are scanned, for reproducibility).",
+            len(untracked),
+            suffix,
+            ", ".join(roots) or "(no roots)",
+        )

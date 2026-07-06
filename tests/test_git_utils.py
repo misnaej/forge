@@ -319,6 +319,66 @@ def test_get_tracked_files_repo_root_kwarg_targets_explicit_repo(
 
 
 # ---------------------------------------------------------------------------
+# get_untracked_files
+# ---------------------------------------------------------------------------
+
+
+def test_get_untracked_files_lists_untracked_non_ignored_file(tmp_path: Path) -> None:
+    """An untracked, non-ignored file is listed."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("")
+    assert git_utils.get_untracked_files(repo_root=tmp_path) == ["src/a.py"]
+
+
+def test_get_untracked_files_excludes_tracked_file(tmp_path: Path) -> None:
+    """A file already staged in the index is not untracked."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    assert git_utils.get_untracked_files(repo_root=tmp_path) == []
+
+
+def test_get_untracked_files_excludes_gitignored_file(tmp_path: Path) -> None:
+    """A gitignored file is never listed, even though it is untracked."""
+    _init_git_repo(tmp_path)
+    (tmp_path / ".gitignore").write_text("ignored/\n")
+    (tmp_path / "ignored").mkdir()
+    (tmp_path / "ignored" / "c.py").write_text("")
+    assert git_utils.get_untracked_files(repo_root=tmp_path) == []
+
+
+def test_get_untracked_files_filters_suffix_and_prefix(tmp_path: Path) -> None:
+    """get_untracked_files lists `git ls-files --others` filtered by suffix/prefix."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "note.txt").write_text("")
+    assert git_utils.get_untracked_files(repo_root=tmp_path) == ["src/a.py"]
+    assert git_utils.get_untracked_files(repo_root=tmp_path, suffix=".txt") == [
+        "docs/note.txt"
+    ]
+    assert git_utils.get_untracked_files(repo_root=tmp_path, prefix="src/") == [
+        "src/a.py"
+    ]
+
+
+def test_get_untracked_files_repo_root_kwarg_targets_explicit_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `repo_root` kwarg runs `git ls-files --others` in that dir, not cwd."""
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    _init_git_repo(repo)
+    (repo / "src" / "a.py").write_text("")
+
+    monkeypatch.chdir(tmp_path)
+    assert git_utils.get_untracked_files(repo_root=repo) == ["src/a.py"]
+
+
+# ---------------------------------------------------------------------------
 # emit + configure_cli_logging
 # ---------------------------------------------------------------------------
 

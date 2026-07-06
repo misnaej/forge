@@ -609,6 +609,40 @@ def get_tracked_files(
     return sorted(set(_parse_files(out, suffix=suffix, prefix=prefix)))
 
 
+def get_untracked_files(
+    *,
+    suffix: str = ".py",
+    prefix: str | tuple[str, ...] | None = None,
+    repo_root: Path | None = None,
+) -> list[str]:
+    """Get untracked, non-gitignored files matching the suffix/prefix filters.
+
+    The complement to :func:`get_tracked_files`: files present on disk but
+    absent from the index and **not** gitignored (``git ls-files --others
+    --exclude-standard``) — the "forgot to ``git add``" set. Sole use is
+    warning when a first-party source file is silently skipped by a
+    tracked-set scan (issue #164). A gitignored file is *deliberately*
+    out of scope (issue #161) and is never listed here — that is exactly
+    what ``--exclude-standard`` filters out.
+
+    Args:
+        suffix: File suffix to filter by. Defaults to '.py'.
+        prefix: Optional path prefix(es) to filter by. Either a single
+            string or a tuple of acceptable prefixes (e.g.,
+            ``("test/", "tests/")`` to accept either test-dir layout).
+        repo_root: Directory to run ``git ls-files`` in. Defaults to the
+            process-wide cached :func:`repo_root`. Pass an explicit root
+            when the caller already holds one (the seam that lets the
+            query be exercised against a temp git repo in tests).
+
+    Returns:
+        Sorted, deduplicated list of untracked (non-ignored) file paths
+        matching the filters.
+    """
+    out = _run_git("ls-files", "--others", "--exclude-standard", cwd=repo_root)
+    return sorted(set(_parse_files(out, suffix=suffix, prefix=prefix)))
+
+
 def stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]:
     """``git add`` tracked files modified within *pathspecs*.
 
