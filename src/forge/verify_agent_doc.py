@@ -153,20 +153,53 @@ def _check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]:
     return problems
 
 
+# Ordered (pattern, description-template) pairs classifying a graph-relevant
+# mention in a changed diff line — the first match wins. The template's ``{name}``
+# is filled with the matched target so the report reads as an edge, not raw text.
+_MENTION_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"subagent_type=[\"']?(?:forge:)?([a-z0-9-]+)"), "delegates → {name}"),
+    (re.compile(r"Skill\(skill=[\"']?(?:forge:)?([a-z0-9-]+)"), "chains skill /{name}"),
+    (
+        re.compile(r"\b((?:forge|verify-forge|install-forge|fix-forge)-[a-z0-9-]+)\b"),
+        "invokes CLI {name}",
+    ),
+    (re.compile(r"\b(block_[a-z0-9_]+)\b"), "guarded by hook {name}"),
+    (re.compile(r"(?<![\w/])/([a-z][a-z0-9-]+)\b"), "mentions skill /{name}"),
+)
+
+
+def _classify_mention(text: str) -> str | None:
+    """Describe the first graph-relevant mention in *text*, or ``None``.
+
+    Args:
+        text: A single changed diff line (without its ``+``/``-`` marker).
+
+    Returns:
+        A human-readable edge description (e.g. ``"delegates → pr-manager"``),
+        or ``None`` when the line carries no graph-relevant mention.
+    """
+    for pattern, template in _MENTION_RULES:
+        match = pattern.search(text)
+        if match:
+            return template.format(name=match.group(1))
+    return None
+
+
 def _diff_report(root: Path, base: str) -> list[str]:
-    """Report graph-relevant mentions changed in the diff against *base*.
+    """Classify the graph-relevant mentions a PR added or removed vs *base*.
 
     The Layer-2 helper: it does not judge whether the doc is correct — it
-    surfaces the agent/skill/hook/edge mentions a PR added or removed so
-    ``docs-types-checker`` can verify the doc with context, scoped to the delta.
+    surfaces the delegation/invocation/guard mentions the diff touched, each as
+    an ``added``/``removed`` entry tagged with its file, so ``docs-types-checker``
+    can check ``docs/agent-architecture.md`` against just those changes.
 
     Args:
         root: Repository root directory.
         base: Git ref to diff against (e.g. ``origin/main``).
 
     Returns:
-        One line per changed graph-relevant mention; empty when the diff touches
-        nothing graph-relevant.
+        One ``<added|removed> <file>: <edge>`` line per changed graph-relevant
+        mention; empty when the diff touches nothing graph-relevant.
     """
     # `base` is user-supplied (the --diff arg). A real ref/SHA never starts with
     # a dash; a dash-prefixed value would be parsed as a git *option* (e.g.
@@ -186,23 +219,70 @@ def _diff_report(root: Path, base: str) -> list[str]:
     except (subprocess.CalledProcessError, FileNotFoundError):
         logger.warning("agent_doc --diff: could not run git diff against %s", base)
         return []
-    edge_re = re.compile(
-        r"subagent_type=|Skill\(skill=|"
-        + _CLI_RE.pattern
-        + "|"
-        + _HOOK_RE.pattern
-        + "|"
-        + _SKILL_RE.pattern  # bare /name mentions — the `chains` edge source
-    )
-    return [
-        line.rstrip()
-        for line in diff.splitlines()
-        if (
-            line.startswith(("+", "-"))
-            and not line.startswith(("+++", "---"))
-            and edge_re.search(line)
+    report: list[str] = []
+    current = "?"
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            current = line[len("+++ b/") :]
+        elif line.startswith(("+", "-")) and not line.startswith(("+++", "---")):
+            edge = _classify_mention(line[1:])
+            if edge:
+                sign = "added" if line[0] == "+" else "removed"
+                report.append(f"{sign} {current}: {edge}")
+    return report
+
+
+def _handle_diff_mode(root: Path, path: str, base: str) -> None:
+    """Report graph-relevant changes in diff mode.
+
+    Args:
+        root: Repository root directory.
+        path: Configured doc file path.
+        base: Git ref to diff against.
+    """
+    changes = _diff_report(root, base)
+    if not changes:
+        logger.info(
+            "agent_doc: no graph-relevant changes vs %s — %s needs no review.",
+            base,
+            path,
         )
-    ]
+        return
+    logger.info(
+        "agent_doc: %d graph-relevant change(s) vs %s — verify %s reflects them:",
+        len(changes),
+        base,
+        path,
+    )
+    for change in changes:
+        logger.info("  %s", change)
+
+
+def _handle_normal_mode(doc: str, roster: dict[str, set[str]], path: str) -> int:
+    """Check the agent doc for coverage and dangling references in normal mode.
+
+    Args:
+        doc: The agent-doc text.
+        roster: The repo roster from :func:`_roster`.
+        path: Configured doc file path.
+
+    Returns:
+        Process exit code: ``0`` in sync, ``1`` on a problem.
+    """
+    problems = _check_doc(doc, roster)
+    if problems:
+        logger.error("agent_doc: %s out of sync with the repo:", path)
+        for problem in problems:
+            logger.error("  %s", problem)
+        return 1
+    logger.info(
+        "agent_doc: %s is in sync (%d agents, %d skills, %d hooks).",
+        path,
+        len(roster["agents"]),
+        len(roster["skills"]),
+        len(roster["hooks"]),
+    )
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -239,24 +319,9 @@ def main(argv: list[str] | None = None) -> int:
         roster = _roster(root)
 
         if args.diff is not None:
-            for line in _diff_report(root, args.diff):
-                logger.info("changed: %s", line)
+            _handle_diff_mode(root, path, args.diff)
             return 0
-
-        problems = _check_doc(doc, roster)
-        if problems:
-            logger.error("agent_doc: %s out of sync with the repo:", path)
-            for problem in problems:
-                logger.error("  %s", problem)
-            return 1
-        logger.info(
-            "agent_doc: %s is in sync (%d agents, %d skills, %d hooks).",
-            path,
-            len(roster["agents"]),
-            len(roster["skills"]),
-            len(roster["hooks"]),
-        )
-        return 0
+        return _handle_normal_mode(doc, roster, path)
 
 
 if __name__ == "__main__":

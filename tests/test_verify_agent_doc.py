@@ -263,11 +263,12 @@ def test_diff_report_rejects_dash_prefixed_base(tmp_path: Path) -> None:
 
 
 def test_diff_report_happy_path_extracts_edge_lines(tmp_path: Path) -> None:
-    """Added lines matching an edge pattern are returned; unrelated prose is not.
+    """Added lines matching an edge pattern are returned as structured entries.
 
     SCENARIO: a real git repo gets a baseline commit, then agents/foo.md is
     amended to add a `subagent_type=` delegation line alongside unrelated
-    prose. `_diff_report` must surface only the graph-relevant addition.
+    prose. `_diff_report` must surface only the graph-relevant addition,
+    classified via `_classify_mention` rather than as a raw diff line.
     """
     _write(tmp_path / "agents" / "foo.md", "# foo\n")
     _git_commit_all(tmp_path, "initial")
@@ -276,8 +277,8 @@ def test_diff_report_happy_path_extracts_edge_lines(tmp_path: Path) -> None:
         '# foo\nDelegates via subagent_type="forge:design-checker".\nsome prose\n',
     )
     lines = vad._diff_report(tmp_path, "HEAD")
-    assert any('subagent_type="forge:design-checker"' in line for line in lines)
-    assert not any("some prose" in line for line in lines)
+    assert "added agents/foo.md: delegates → design-checker" in lines
+    assert not any("prose" in line for line in lines)
 
 
 def test_diff_report_filters_non_graph_lines(tmp_path: Path) -> None:
@@ -343,7 +344,8 @@ def test_diff_report_surfaces_bare_slash_skill_mention(tmp_path: Path) -> None:
     SCENARIO: before ``edge_re`` gained ``_SKILL_RE``, a diff line mentioning
     a skill only as a bare slash-command ("use `/commit`") — with no
     ``subagent_type=``, ``Skill(skill=``, CLI, or hook token alongside it —
-    was invisible to `_diff_report`. It must now be surfaced.
+    was invisible to `_diff_report`. It must now be surfaced, classified as
+    a "mentions skill" edge.
     """
     _write(tmp_path / "skills" / "ship" / "SKILL.md", "# ship\n")
     _git_commit_all(tmp_path, "initial")
@@ -352,4 +354,60 @@ def test_diff_report_surfaces_bare_slash_skill_mention(tmp_path: Path) -> None:
         "# ship\nAfter shipping, use `/commit` to finish up.\n",
     )
     lines = vad._diff_report(tmp_path, "HEAD")
-    assert any("/commit" in line for line in lines)
+    assert any("mentions skill /commit" in line for line in lines)
+
+
+def test_diff_report_reports_removed_line_with_removed_sign(tmp_path: Path) -> None:
+    """A deleted graph-relevant line is reported with the `removed` sign.
+
+    SCENARIO: agents/foo.md starts with a `subagent_type=` delegation line
+    that is then deleted entirely. `_diff_report` must surface it as a
+    `removed` entry, mirroring how an addition is surfaced as `added`.
+    """
+    _write(
+        tmp_path / "agents" / "foo.md",
+        '# foo\nDelegates via subagent_type="forge:design-checker".\n',
+    )
+    _git_commit_all(tmp_path, "initial")
+    _write(tmp_path / "agents" / "foo.md", "# foo\n")
+    lines = vad._diff_report(tmp_path, "HEAD")
+    assert any(line.startswith("removed ") for line in lines)
+    assert "removed agents/foo.md: delegates → design-checker" in lines
+
+
+# --- _classify_mention -------------------------------------------------------
+
+
+def test_classify_mention_delegates_on_subagent_type() -> None:
+    """A `subagent_type="forge:X"` mention classifies as a delegation edge."""
+    text = 'Task(subagent_type="forge:design-checker", prompt="...")'
+    assert vad._classify_mention(text) == "delegates → design-checker"
+
+
+def test_classify_mention_chains_skill_on_skill_call() -> None:
+    """A `Skill(skill="X")` mention classifies as a skill-chaining edge."""
+    text = 'Skill(skill="forge:commit")'
+    assert vad._classify_mention(text) == "chains skill /commit"
+
+
+def test_classify_mention_invokes_cli_on_forge_prefixed_token() -> None:
+    """A bare `forge-*` CLI token classifies as a CLI-invocation edge."""
+    text = "Runs `forge-precommit` before committing."
+    assert vad._classify_mention(text) == "invokes CLI forge-precommit"
+
+
+def test_classify_mention_guarded_by_hook_on_block_prefixed_token() -> None:
+    """A `block_*` token classifies as a hook-guard edge."""
+    text = "Enforced by the block_push hook."
+    assert vad._classify_mention(text) == "guarded by hook block_push"
+
+
+def test_classify_mention_mentions_skill_on_bare_slash_name() -> None:
+    """A bare `/name` mention classifies as a skill mention edge."""
+    text = "After shipping, use `/commit` to finish up."
+    assert vad._classify_mention(text) == "mentions skill /commit"
+
+
+def test_classify_mention_none_on_plain_prose() -> None:
+    """Plain prose with no graph-relevant mention classifies as None."""
+    assert vad._classify_mention("This is just an ordinary sentence.") is None
