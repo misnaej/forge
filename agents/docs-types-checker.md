@@ -256,9 +256,14 @@ hand-maintained agent-architecture doc) and this is a PR finalization: the
 pre-commit `agent_doc` step already gates its **nodes** (coverage + no dangling
 refs); your job is the curated **edges** the script can't judge. Run
 `verify-forge-agent-doc --diff <base>` (base = PR target branch) for the
-agent/skill/hook mentions this diff changed, then **Edit** the doc where a
-delegation, rename, or removal left it stale, noting what changed. Never add a
-`#<n>` issue/PR reference to the doc — it describes current state, not history
+agent/skill/hook mentions this diff changed. **The report is candidates, not
+mandates:** it surfaces *every* changed mention — so it never misses a real edge
+— but that includes prose references to a CLI/hook a file merely names without
+invoking (e.g. a checklist mentioning a tool another agent runs). **Judge each**
+— reconcile only edges the curated, deliberately sparse doc should show; dismiss
+prose mentions that aren't graph edges. Then **Edit** the doc where a delegation,
+rename, or removal left it stale, noting what changed. Never add a `#<n>`
+issue/PR reference to the doc — it describes current state, not history
 (FOUNDATION §8).
 
 ## Output
