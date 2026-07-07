@@ -509,9 +509,9 @@ template, writing findings to `code_health/audit_agents.log`.
 ### Plugin staleness — symptoms and recovery
 
 When a forge release renames or adds an agent, an already-running session keeps
-the **cached** plugin from startup. Symptom: `Agent type 'forge:<name>' not
-found` though the agent is on disk in `agents/<name>.md` — the cache (under
-`~/.claude/plugins/cache/forge/forge/<version>/`) is behind. Recovery: `/plugin
+the **cached** plugin from startup. Symptom: `Agent type 'forge:<name>' not found`
+though the agent is on disk — the cache
+(`~/.claude/plugins/cache/forge/forge/<version>/`) is behind. Recovery: `/plugin
 update forge@forge`, then `/reload-plugins` (picks up new agents / hooks / skills
 / MCP / LSP servers); for **monitor** changes, restart the session
 (`/reload-plugins` does not refresh monitors). The `check_upstream` warning (from
@@ -779,11 +779,13 @@ superset** for mock-driven or dynamically-wired suites:
 
 - **Mock-patch edges** (`follow_mock_patches = true`) — treats a test's `patch`
   string targets as graph edges; matters only for the patch-*only* case (e.g. a
-  `sys.modules` fake against a deferred import).
+  `sys.modules` fake against a deferred import). Orthogonal to module naming: it
+  adds edges but does not fix a source-dir/import-root mismatch.
 - **Coverage validation** (`coverage_validate = true` + `coverage_json`) — unions
   tests whose per-test coverage **contexts** touch a changed line, catching
   runtime-only links (fixtures, dynamic dispatch, `importlib`). Needs a fresh
-  `coverage json --show-contexts` export; regenerate on `full` runs.
+  `coverage json --show-contexts` export (`pytest --cov-context=test`); regenerate
+  on `full` runs.
 
 A **CI directive** (`--from-commit-message`) drives the tier from a `[depth-N]` /
 `[full]` commit tag (regex via `commit_directive_re`); `--depth full` is the "run
