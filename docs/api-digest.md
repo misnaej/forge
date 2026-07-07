@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_59 modules, 601 symbols._
+_59 modules, 603 symbols._
 
 ## `forge`
 
@@ -344,6 +344,8 @@ _59 modules, 601 symbols._
 - `_render_mermaid_containers(config: C4Config, container_edges: set[tuple[str, str]]) -> str` _(internal)_ — Render the Container view: containers inside the system boundary.
 - `_component_view_peripherals(config: C4Config, names: set[str], component_ids: dict[str, str], alloc: _IdAllocator) -> tuple[list[str], list[str]]` _(internal)_ — Render external/person peripherals + edges for one container's view.
 - `_render_mermaid_components_for(config: C4Config, container: Container, idx: int, edges: set[tuple[str, str]], *, include_derived: bool = True) -> str` _(internal)_ — Render one container's Component view: its components and their edges.
+- `_mermaid_elk_options(render: RenderConfig) -> dict[str, object]` _(internal)_ — Build the elk sub-dict for mermaid.initialize (see _mermaid_init_options).
+- `_mermaid_root_options(render: RenderConfig, *, flowchart: dict[str, object], elk: dict[str, object]) -> dict[str, object]` _(internal)_ — Build the root sub-dict for mermaid.initialize (see _mermaid_init_options).
 - `_mermaid_init_options(render: RenderConfig, *, layout_var: str) -> str` _(internal)_ — Build the ``mermaid.initialize(...)`` options object for the HTML view.
 - `_pdf_page_geometry(render: RenderConfig) -> tuple[int, int, float, int, int]` _(internal)_ — Resolve the print page box + printable pixel area from the PDF config.
 - `_print_page_css(render: RenderConfig) -> str` _(internal)_ — Build the ``@page`` + ``@media print`` rules for the PDF layout.

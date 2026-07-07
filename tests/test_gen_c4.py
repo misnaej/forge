@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import logging
 import re
 import shutil
@@ -1965,6 +1966,8 @@ def test_mermaid_init_options_optional_keys_absent_with_defaults() -> None:
         "themeCSS",
         "considerModelOrder",
         "cycleBreakingStrategy",
+        "layerSpacing",
+        "baseValue",
     ):
         assert key not in out, f"expected {key!r} absent with default RenderConfig"
 
@@ -1985,6 +1988,33 @@ def test_mermaid_init_options_rank_spacing_emitted_when_set() -> None:
     """_mermaid_init_options emits rankSpacing when rank_spacing is provided."""
     out = _mermaid_init_options(RenderConfig(rank_spacing=20), layout_var="c4layout")
     assert '"rankSpacing": 20' in out
+
+
+def test_mermaid_init_options_elk_spacing_emitted_in_elk_block() -> None:
+    """The elk_* spacing keys land in the ``elk`` block the vendored bundle reads.
+
+    The vendored ELK adapter reads ``config.elk.nodeSpacing`` /
+    ``.layerSpacing`` / ``.baseValue`` (issue #146); the ``flowchart`` block's
+    own ``nodeSpacing`` reaches dagre only, so these must appear under ``elk``.
+    """
+    out = _mermaid_init_options(
+        RenderConfig(elk_node_spacing=90, elk_layer_spacing=120, elk_base_value=70),
+        layout_var="c4layout",
+    )
+    root = json.loads(out[: out.rfind(", ")] + "}")
+    assert root["elk"]["nodeSpacing"] == 90
+    assert root["elk"]["layerSpacing"] == 120
+    assert root["elk"]["baseValue"] == 70
+    # dagre-only flowchart spacing stays untouched when only elk_* keys are set.
+    assert "nodeSpacing" not in root["flowchart"]
+
+
+def test_mermaid_init_options_elk_spacing_absent_by_default() -> None:
+    """The elk_* spacing keys are omitted from the elk block at their defaults."""
+    out = _mermaid_init_options(RenderConfig(), layout_var="c4layout")
+    root = json.loads(out[: out.rfind(", ")] + "}")
+    for key in ("nodeSpacing", "layerSpacing", "baseValue"):
+        assert key not in root["elk"], f"expected elk.{key} absent by default"
 
 
 def test_mermaid_init_options_font_family_emitted_when_set() -> None:

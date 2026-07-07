@@ -412,9 +412,10 @@ no-op, not a drift gate.
 shrunk), so legibility is a *layout* question, not a page-fit one. If a view is a
 wide directional strip, compact it: group elements into
 [bands](#toolforgec4render--html-rendering-knobs) (`group`), or set
-`direction = "TB"` on `[tool.forge.c4]`. Native ELK compaction
-(`elk.aspectRatio` / `spacing.*`) is not reachable through Mermaid's config today
-— tracked in issue #146. **Note:** the non-hierarchical ELK engines
+`direction = "TB"` on `[tool.forge.c4]`. ELK's node/layer spacing is tunable
+via `elk_node_spacing` / `elk_layer_spacing` / `elk_base_value` (see the render
+knobs below); other native ELK options (`elk.aspectRatio`) are not reachable
+through Mermaid's config today. **Note:** the non-hierarchical ELK engines
 (`layout = "elk.stress"` / `"elk.force"`) are **rejected** — they drop
 cross-cluster edges and overlap nodes on C4's multi-cluster views.
 
@@ -437,11 +438,14 @@ you only set a key to deviate. Unknown keys are ignored. Lives under
 | `html_labels` | _unset_ | `htmlLabels` (root) | Render labels as HTML. Set `false` to dodge the Firefox empty-label bug (#5785). |
 | `font_family` | _unset_ | `fontFamily` (root) | Font stack (offline-safe stacks only — no web fonts). |
 | `font_size` | _unset_ | `fontSize` (root) | Base font size. |
-| `node_spacing` | _unset_ | `flowchart.nodeSpacing` | Gap between sibling nodes. **Honored under `layout = "dagre"` only** — the ELK engine ignores it (see the spacing note below). |
-| `rank_spacing` | _unset_ | `flowchart.rankSpacing` | Gap between ranks/layers. **Honored under `layout = "dagre"` only** — ELK ignores it. |
+| `node_spacing` | _unset_ | `flowchart.nodeSpacing` | Gap between sibling nodes. **Honored under `layout = "dagre"` only** — the ELK engine ignores it; use `elk_node_spacing` for the ELK default. |
+| `rank_spacing` | _unset_ | `flowchart.rankSpacing` | Gap between ranks/layers. **Honored under `layout = "dagre"` only** — ELK ignores it; use `elk_layer_spacing` under ELK. |
+| `elk_node_spacing` | _unset_ | `elk.spacing.nodeNode` | Gap between sibling nodes under **ELK** (the ELK counterpart of `node_spacing`). Raising it visibly widens within-layer gaps. `unset` keeps the bundle default. |
+| `elk_layer_spacing` | _unset_ | `elk.layered.spacing.nodeNodeBetweenLayers` | Gap between layers under **ELK** (counterpart of `rank_spacing`). |
+| `elk_base_value` | _unset_ | `elk.spacing.baseValue` | ELK master spacing all unset per-pair spacings derive from — raises every gap proportionally. |
 | `padding` | _unset_ | `flowchart.padding` | Inner node padding. |
 | `custom_css` | _unset_ | `themeCSS` (root) | Raw-CSS escape hatch injected into the diagram. Every element's `tags` are emitted as Mermaid CSS classes on its node (e.g. `.agent`), so this can style by role — see the [element tag vocabulary](c4-architecture.md) for the reserved tag set. |
-| `layout` | `"elk"` | `layout` (root) | `elk` (= `elk.layered`) or `dagre` — the two supported, **hierarchy-aware** engines (they keep C4's clusters separated and route every edge). ELK routes dense cross-cluster edges more cleanly but uses fixed spacing; `dagre` lets you tune `node_spacing` / `rank_spacing`. The organic ELK engines (`elk.stress` / `elk.force` / `elk.radial`) are **rejected at config-load** — they silently drop edges + overlap nodes on multi-cluster views. |
+| `layout` | `"elk"` | `layout` (root) | `elk` (= `elk.layered`) or `dagre` — the two supported, **hierarchy-aware** engines (they keep C4's clusters separated and route every edge). ELK routes dense cross-cluster edges more cleanly and tunes spacing via `elk_node_spacing` / `elk_layer_spacing`; `dagre` tunes `node_spacing` / `rank_spacing`. The organic ELK engines (`elk.stress` / `elk.force` / `elk.radial`) are **rejected at config-load** — they silently drop edges + overlap nodes on multi-cluster views. |
 | `node_placement_strategy` | `"NETWORK_SIMPLEX"` | `elk.nodePlacementStrategy` | ELK node placement (`BRANDES_KOEPF`, `NETWORK_SIMPLEX`, …). |
 | `force_node_model_order` | `true` | `elk.forceNodeModelOrder` | Preserve declared node order. |
 
