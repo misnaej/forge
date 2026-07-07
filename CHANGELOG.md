@@ -20,6 +20,25 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.21.0 — 2026-07-07
+
+Additive — `forge-gen-c4` gains an `owned` flag on `[[external]]` for
+team-operated infrastructure, distinct from third-party externals. Default
+(`owned` unset) is byte-identical.
+
+### ⚠️ Upgrade notes
+- **`infrastructure` is now a reserved C4 tag.** If a pre-existing `c4.toml`
+  used the literal tag string `"infrastructure"` as a free-form domain tag on a
+  non-owned element, that element now renders in the reserved teal palette
+  colour instead of its prior colour. Visual-only; no config change required.
+
+### Features
+- **`owned = true` on `[[external]]` (#143).** Marks team-operated
+  infrastructure (DB / compute / storage / runtime) as distinct from
+  third-party externals — sugar over the existing tag+group machinery: adds the
+  reserved `infrastructure` tag (a distinct teal palette colour) and defaults an
+  "Our infrastructure" band when no explicit `group` is set.
+
 ## v2.20.0 — 2026-07-06
 
 Additive — the agent-architecture doc's **Layer-2 drift check** lands and wires
