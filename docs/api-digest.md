@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_59 modules, 601 symbols._
+_59 modules, 602 symbols._
 
 ## `forge`
 
@@ -306,6 +306,7 @@ _59 modules, 601 symbols._
 - `_q(text: str) -> str` _(internal)_ — Quote *text* as a Structurizr DSL string literal.
 - `_coerce_list(raw: object) -> list[dict]` _(internal)_ — Return *raw* as a list of dicts, tolerating a single table.
 - `_visibility_fields(entry: dict) -> dict` _(internal)_ — Extract the shared ``active`` / ``hidden`` / ``tags`` / ``group`` flags.
+- `_external_fields(entry: dict) -> dict` _(internal)_ — Build the :class:`External` keyword args, applying ``owned`` semantics.
 - `_parse_components(section: dict) -> tuple[Component, ...]` _(internal)_ — Parse components from rich ``[[component]]`` tables + the simple map.
 - `_validate_component_containers(components: tuple[Component, ...], containers: tuple[Container, ...]) -> None` _(internal)_ — Fail loudly on a duplicate container name or an undeclared reference.
 - `_parse_render_config(section: dict) -> RenderConfig` _(internal)_ — Build the HTML :class:`RenderConfig` from the model's ``render`` table.
