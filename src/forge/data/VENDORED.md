@@ -37,7 +37,7 @@ file, and refresh the SHA-256 + version here (`shasum -a 256`).
   and the model-order options (`forceNodeModelOrder: true`, no
   `considerModelOrder`), forwarding neither from `config.elk` — so
   `forge-gen-c4`'s render config could not tune node/layer gaps nor override
-  node ordering under ELK (issue #146). Before re-bundling,
+  node ordering under ELK. Before re-bundling,
   `dist/chunks/mermaid-layout-elk.core/render-*.mjs` is patched to read these
   from `config.elk`: `spacing.baseValue` ← `config.elk?.baseValue ?? <default>`
   (both sites); `spacing.nodeNode` / `elk.layered.spacing.nodeNodeBetweenLayers`

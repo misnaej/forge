@@ -454,7 +454,7 @@ class RenderConfig:
         elk_node_spacing: ELK within-layer node gap (``spacing.nodeNode``) — the
             ELK counterpart of ``node_spacing`` (which reaches dagre only). The
             vendored ELK bundle hardcodes spacing unless this is set; ``None``
-            omits, leaving the bundle default (issue #146).
+            omits, leaving the bundle default.
         elk_layer_spacing: ELK between-layer gap
             (``elk.layered.spacing.nodeNodeBetweenLayers``) — the ELK counterpart
             of ``rank_spacing``. ``None`` omits.
