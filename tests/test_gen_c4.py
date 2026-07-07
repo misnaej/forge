@@ -39,6 +39,7 @@ from forge.gen_c4 import (
     _edge_endpoints,
     _emit_pdf,
     _emit_svg,
+    _external_fields,
     _external_node_line,
     _externals_with_declared_incoming,
     _extract_svg,
@@ -3010,6 +3011,35 @@ def test_visibility_fields_defaults_and_parsing() -> None:
     }
 
 
+def test_external_fields_owned_adds_infrastructure_tag_and_band() -> None:
+    """An owned external gains the reserved tag and the default infra band."""
+    fields = _external_fields({"name": "DB", "owned": True})
+    assert "infrastructure" in fields["tags"]
+    assert fields["group"] == "Our infrastructure"
+    assert fields["owned"] is True
+
+
+def test_external_fields_owned_keeps_explicit_group() -> None:
+    """An explicit group on an owned external is not overridden."""
+    fields = _external_fields({"name": "DB", "owned": True, "group": "Data"})
+    assert fields["group"] == "Data"
+    assert "infrastructure" in fields["tags"]
+
+
+def test_external_fields_not_owned_is_plain() -> None:
+    """An external with no ``owned`` key parses to the byte-identical defaults."""
+    fields = _external_fields({"name": "GitHub"})
+    assert fields["owned"] is False
+    assert fields["tags"] == ()
+    assert fields["group"] == ""
+
+
+def test_external_fields_owned_no_duplicate_tag() -> None:
+    """An explicit "infrastructure" tag is not duplicated by the owned logic."""
+    fields = _external_fields({"name": "DB", "owned": True, "tags": ["infrastructure"]})
+    assert fields["tags"].count("infrastructure") == 1
+
+
 def test_visible_config_default_is_unchanged() -> None:
     """With nothing flagged, _visible_config returns the model + edges unchanged."""
     config = _two_container_config(
@@ -3120,6 +3150,24 @@ def test_load_c4_config_reads_visibility_and_tags(tmp_path: Path) -> None:
     assert config.containers[0].tags == ("infrastructure",)
     assert config.externals[0].hidden is True
     assert config.render.exclude_tags == ("infrastructure",)
+
+
+def test_load_c4_config_parses_owned_external(tmp_path: Path) -> None:
+    """load_c4_config wires ``owned = true`` through ``_external_fields``."""
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text(
+        'system = "S"\n'
+        "[[external]]\n"
+        'name = "DB"\n'
+        'description = "The database"\n'
+        "owned = true\n"
+    )
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    db = config.externals[0]
+    assert db.owned is True
+    assert "infrastructure" in db.tags
+    assert db.group == "Our infrastructure"
 
 
 # --- visual groups / bands in the Container view ---
@@ -3667,6 +3715,40 @@ def test_tag_classdef_lines_empty_when_no_tags() -> None:
         components=(Component("A", ("demo.a",)),),
     )
     assert _tag_classdef_lines(config) == []
+
+
+# --- owned infrastructure: reserved "infrastructure" classDef/class emission ---
+
+
+def test_render_mermaid_owned_external_emits_infrastructure_classdef() -> None:
+    """An owned external's "infrastructure" tag drives a classDef + class line."""
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        externals=(External("DB", "", "uses", owned=True, tags=("infrastructure",)),),
+    )
+    mermaid = render_mermaid(config, set())
+    assert "classDef infrastructure" in mermaid
+    assert "class db infrastructure" in mermaid
+
+
+def test_render_mermaid_plain_external_byte_identical() -> None:
+    """An untagged, unowned external leaves the tag vocabulary inert.
+
+    Mirrors :func:`test_render_mermaid_untagged_model_emits_no_class_lines`: the
+    ``owned`` feature must be byte-identical for a model that never sets it.
+    """
+    config = C4Config(
+        system="Sys",
+        description="",
+        output="o",
+        externals=(External("GitHub", "", "uses"),),
+    )
+    mermaid = render_mermaid(config, set())
+    assert "classDef" not in mermaid
+    assert "class " not in mermaid
+    assert "infrastructure" not in mermaid
 
 
 def test_tag_classdef_lines_deduplicates_across_elements() -> None:

@@ -313,6 +313,30 @@ view — containers inside the system boundary, externals beside it — via nest
 Mermaid subgraphs). All three are additive: with nothing flagged the output is
 byte-identical.
 
+### Owned infrastructure vs. third-party externals
+
+C4's test for an `[[external]]` is **ownership** — a system you do *not* build or
+operate. But `[[container]]` (your app code) + `[[external]]` (third party) leave
+no home for **infrastructure the team owns and runs** (a DB, compute cluster,
+object store, tool runtime): it isn't app code, and it isn't third-party. Model
+it as an `[[external]]` with **`owned = true`**:
+
+```toml
+[[tool.forge.c4.external]]
+name = "Results DB"
+description = "Team-operated Postgres"
+relationship = "reads/writes"
+owned = true
+```
+
+`owned = true` is a shortcut: the element gains the reserved `infrastructure`
+tag (a distinct teal palette colour, not third-party purple) and — unless you
+set an explicit `group` — an **"Our infrastructure"** band, keeping it apart
+from genuine third parties while its relationships stay intact. The two markers
+land in different views (colour in the flat/README view + `route_views` tabs;
+band in the Containers tab) — same per-view coverage as any tag/group, see the
+*v1 scope* note below. Default (`owned` unset) is byte-identical.
+
 ### Element tag vocabulary (naming standard)
 
 C4's four stock element kinds — Person, Software System, Container, Component —
@@ -342,12 +366,15 @@ is mandatory on every element:
 | `module` | a code package / module | Component |
 | `policy` | a foundational rule or governing doc | External |
 
-**Structural tags** — `container`, `component`, `external` (and `person`, above)
-name a C4 element's own stock type rather than a domain role. They exist so a
-plain code model (no agents/skills) can still be coloured by the reference
-palette below; the reference palette defines them alongside the kind tags. Use a
-domain kind (`agent` / `skill` / …) when one fits; fall back to a structural tag
-otherwise.
+**Structural tags** — `container`, `component`, `external`, `infrastructure`
+(and `person`, above) name a C4 element's own stock type rather than a domain
+role. They exist so a plain code model (no agents/skills) can still be coloured
+by the reference palette below; the reference palette defines them alongside the
+kind tags. Use a domain kind (`agent` / `skill` / …) when one fits; fall back to
+a structural tag otherwise. `infrastructure` marks **team-owned infrastructure**
+(a DB / compute / storage / runtime you operate) — distinct from a third-party
+`external`; set it via the `owned = true` shortcut on an `[[external]]` (below),
+which also bands it under "Our infrastructure".
 
 **Modifier tags — zero or more (open set).** Refine a kind without changing it:
 
@@ -380,8 +407,9 @@ edges (which connect *any* element to any other) use a small verb set as their
    matches both `.agent` and `.reporter`). Forge also ships a **reference
    palette**: for each reserved tag actually used, `forge-gen-c4` emits a
    `classDef` (`person` / `agent` / `skill` / `hook` / `cli` / `module` /
-   `policy` / `container` / `component` / `external` + the `reporter` / `mutator`
-   / `orchestrator` modifiers), so a tagged diagram is coloured out of the box —
+   `policy` / `container` / `component` / `external` / `infrastructure` + the
+   `reporter` / `mutator` / `orchestrator` modifiers), so a tagged diagram is
+   coloured out of the box —
    the same palette `docs/agent-architecture.md` uses, so the two diagrams read
    alike. A tagless model emits neither `classDef` nor `class` (byte-identical),
    and `[tool.forge.c4.render].custom_css` overrides any class.
