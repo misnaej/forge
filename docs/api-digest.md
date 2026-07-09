@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_59 modules, 602 symbols._
+_59 modules, 604 symbols._
 
 ## `forge`
 
@@ -345,6 +345,7 @@ _59 modules, 602 symbols._
 - `_render_mermaid_containers(config: C4Config, container_edges: set[tuple[str, str]]) -> str` _(internal)_ — Render the Container view: containers inside the system boundary.
 - `_component_view_peripherals(config: C4Config, names: set[str], component_ids: dict[str, str], alloc: _IdAllocator) -> tuple[list[str], list[str]]` _(internal)_ — Render external/person peripherals + edges for one container's view.
 - `_render_mermaid_components_for(config: C4Config, container: Container, idx: int, edges: set[tuple[str, str]], *, include_derived: bool = True) -> str` _(internal)_ — Render one container's Component view: its components and their edges.
+- `_embed_json(obj: object) -> str` _(internal)_ — Serialize ``obj`` to JSON safe to embed inside an inline ``<script>``.
 - `_mermaid_init_options(render: RenderConfig, *, layout_var: str) -> str` _(internal)_ — Build the ``mermaid.initialize(...)`` options object for the HTML view.
 - `_pdf_page_geometry(render: RenderConfig) -> tuple[int, int, float, int, int]` _(internal)_ — Resolve the print page box + printable pixel area from the PDF config.
 - `_print_page_css(render: RenderConfig) -> str` _(internal)_ — Build the ``@page`` + ``@media print`` rules for the PDF layout.
@@ -664,6 +665,7 @@ _59 modules, 602 symbols._
 
 > _Detect the runtime context (interactive workstation vs. CI / automation)._
 
+- `is_ci() -> bool` — Return True when a CI / automation marker env var is set.
 - `is_non_interactive() -> bool` — Return True when running without a human at the terminal.
 - `_stdin_is_tty() -> bool` _(internal)_ — Return ``sys.stdin.isatty()`` defensively (handles closed stdin).
 - `git_auth_mode() -> AuthMode` — Detect the git / pip auth context the environment can actually use.
