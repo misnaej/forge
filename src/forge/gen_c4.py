@@ -2267,13 +2267,13 @@ def _render_mermaid_components_for(
 
 
 def _embed_json(obj: object) -> str:
-    r"""Serialize ``obj`` to JSON safe to embed inside an inline ``<script>``.
+    """Serialize ``obj`` to JSON safe to embed inside an inline ``<script>``.
 
     ``json.dumps`` does not escape the literal ``</script>``, so a string
     value containing it would terminate the surrounding inline script element
-    early. Escaping ``<`` as ``\\u003c`` (valid JSON — it parses back to
-    ``<``) removes every ``</script>`` / ``<!--`` breakout while leaving the
-    decoded data byte-identical. Defense-in-depth: the C4 render model is
+    early. Escaping every ``<`` as its ``u003c`` JSON unicode escape (which
+    parses back to ``<``), removing all ``</script>`` / ``<!--`` breakouts, leaving
+    the decoded data byte-identical. Defense-in-depth: the C4 render model is
     built from the repo's own ``[tool.forge.c4]`` config, not untrusted
     input, but a stray ``<`` in a ``custom_css`` / ``font_family`` /
     ``theme_colors`` value must never be able to break the page (#175).
@@ -2282,7 +2282,8 @@ def _embed_json(obj: object) -> str:
         obj: Any JSON-serializable object destined for a ``<script>`` blob.
 
     Returns:
-        The ``json.dumps`` output with every ``<`` replaced by ``\\u003c``.
+        The ``json.dumps`` output with every ``<`` rewritten to its
+        ``u003c`` JSON unicode escape.
     """
     return json.dumps(obj).replace("<", "\\u003c")
 

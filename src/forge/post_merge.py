@@ -1,27 +1,30 @@
 """forge-post-merge — runs forge's managed post-merge git-hook logic.
 
-Invoked by the thin ``.githooks/post-merge`` wrapper. CI-aware:
-no-ops in non-interactive contexts per FOUNDATION §15. When the
-process runs interactively, performs the following actions:
+Invoked by the thin ``.githooks/post-merge`` wrapper. Per FOUNDATION §15,
+actions 1-3 are forge's own interactive-only dev-loop aids — skipped in
+any non-interactive context (CI *or* a no-tty local shell). Action 4,
+consumer extensions, is the consumer's own logic and is suppressed only
+in genuine CI (``is_ci()``), so it still runs on a non-tty local ``git
+pull`` (VS Code terminal, tmux, piped shell).
 
 1. Foundation drift check via ``install-forge-claude-md --check
    --quiet`` (shared with post-checkout; see
-   :mod:`forge._hook_helpers`).
+   :mod:`forge._hook_helpers`). *[interactive-only]*
 2. Self-update of managed hook wrappers via a backgrounded
    ``install-forge-githooks --refresh --quiet`` — picks up forge
    upgrades automatically on every ``git pull``. post-checkout does
    not run this step; the installed forge-scripts version only
    changes via ``pip install``, which is most naturally chained
-   off a ``git pull``.
+   off a ``git pull``. *[interactive-only]*
 3. Rolling-next tag staleness advisory via
    :func:`forge.next_prep.tag_staleness_warning` — warns when
    ``plugin.json``'s version is ahead of the latest ``v*`` tag
    (a merge bumped the version but ``forge-next-prep --tag`` was
-   not yet run).
+   not yet run). *[interactive-only]*
 4. Consumer extension scripts in ``.githooks/post-merge.d/`` via
    :func:`forge._hook_helpers.run_hook_extensions` — a sanctioned
    drop-in point that survives every refresh (the installer never
-   touches the ``.d`` subdirectory).
+   touches the ``.d`` subdirectory). *[runs in any non-CI context]*
 """
 
 from __future__ import annotations
@@ -68,7 +71,9 @@ def main(argv: list[str] | None = None) -> int:
             "Forge-managed post-merge git-hook entrypoint. Invoked by "
             "the thin .githooks/post-merge wrapper. Runs the foundation "
             "drift check and backgrounds a self-refresh of managed hook "
-            "wrappers. No-ops in non-interactive contexts (FOUNDATION §15)."
+            "wrappers (both skipped in any non-interactive context per "
+            "FOUNDATION §15); consumer .d extensions run in any non-CI "
+            "context."
         ),
     )
     parser.add_argument(

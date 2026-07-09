@@ -79,9 +79,12 @@ def run_hook_extensions(hook_name: str) -> None:
     hook must never fail the underlying git operation over a consumer
     extension, the same posture as the foundation drift check.
 
-    Callers invoke this only inside their interactive / branch-move
-    guards, so extensions inherit the CI no-op behaviour (FOUNDATION
-    §15) and never fire during file-level checkouts.
+    Callers gate this on ``not is_ci()`` (a separate guard from forge's
+    own interactive-only dev-loop aids), so consumer extensions run in
+    any local context — including a non-tty ``git pull`` / checkout — and
+    are suppressed only under genuine CI (FOUNDATION §15). post-checkout
+    additionally keeps them behind its branch-move early-return, so they
+    never fire during file-level checkouts.
 
     Args:
         hook_name: Managed hook short name (``"post-merge"`` /

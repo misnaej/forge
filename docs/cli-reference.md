@@ -366,8 +366,8 @@ usage: forge-post-checkout [-h] [prev_head] [new_head] [branch_flag]
 
 Forge-managed post-checkout git-hook entrypoint. Invoked by the thin
 .githooks/post-checkout wrapper. Runs the foundation drift check only when the
-HEAD actually moved (branch_flag == '1'). No-ops in non-interactive contexts
-(FOUNDATION §15).
+HEAD actually moved (branch_flag == '1') and only interactively (FOUNDATION
+§15); consumer .d extensions run in any non-CI context.
 
 positional arguments:
   prev_head    prior HEAD (passed by git)
@@ -385,8 +385,8 @@ usage: forge-post-merge [-h] [squash_flag]
 
 Forge-managed post-merge git-hook entrypoint. Invoked by the thin
 .githooks/post-merge wrapper. Runs the foundation drift check and backgrounds
-a self-refresh of managed hook wrappers. No-ops in non-interactive contexts
-(FOUNDATION §15).
+a self-refresh of managed hook wrappers (both skipped in any non-interactive
+context per FOUNDATION §15); consumer .d extensions run in any non-CI context.
 
 positional arguments:
   squash_flag  squash-merge status flag passed by git (1=squash, 0=otherwise);

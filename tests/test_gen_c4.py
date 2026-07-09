@@ -2194,6 +2194,17 @@ def test_embed_json_escapes_html_comment_open() -> None:
     assert "\\u003c!--" in out
 
 
+def test_embed_json_escapes_bare_script_open() -> None:
+    """A bare ``<script`` (no closing slash, no comment) is neutralized too.
+
+    Escaping every ``<`` — not only the ``</script>`` / ``<!--`` shapes — means
+    an opening ``<script`` tag in a value can never start a real element either.
+    """
+    out = _embed_json({"css": "x <script src=evil>"})
+    assert "<script" not in out
+    assert "\\u003cscript" in out
+
+
 def test_embed_json_round_trips_through_json_loads() -> None:
     """The escaped output still json.loads back to the exact original object."""
     original = {"themeCSS": "a{} </script><script>alert(1)</script>", "n": 3}

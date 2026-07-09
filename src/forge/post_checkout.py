@@ -1,7 +1,11 @@
 """forge-post-checkout — runs forge's managed post-checkout git-hook logic.
 
-Invoked by the thin ``.githooks/post-checkout`` wrapper. CI-aware:
-no-ops in non-interactive contexts per FOUNDATION §15.
+Invoked by the thin ``.githooks/post-checkout`` wrapper. Per FOUNDATION
+§15, the foundation drift check is an interactive-only dev-loop aid —
+skipped in any non-interactive context (CI *or* a no-tty local shell).
+Consumer ``.d`` extensions are the consumer's own logic and are
+suppressed only in genuine CI (``is_ci()``), so they still run on a
+no-tty local checkout.
 
 Git invokes ``post-checkout`` with three positional args:
 ``<prev_head> <new_head> <branch_flag>``. The CLI honors the third
@@ -65,7 +69,8 @@ def main(argv: list[str] | None = None) -> int:
             "Forge-managed post-checkout git-hook entrypoint. Invoked by "
             "the thin .githooks/post-checkout wrapper. Runs the foundation "
             "drift check only when the HEAD actually moved (branch_flag == "
-            "'1'). No-ops in non-interactive contexts (FOUNDATION §15)."
+            "'1') and only interactively (FOUNDATION §15); consumer .d "
+            "extensions run in any non-CI context."
         ),
     )
     parser.add_argument("prev_head", nargs="?", help="prior HEAD (passed by git)")

@@ -8,10 +8,15 @@ greppable for code review.
 
 Public surface:
 
+- :func:`is_ci` — True only under a recognized CI / automation runner
+  (the CI-marker half of :func:`is_non_interactive`, ignoring tty). Use
+  it to suppress behavior in genuine CI only, while still running it in
+  any local context — even one whose stdin is not a tty.
 - :func:`is_non_interactive` — True when running without a human at the
-  terminal. Used to suppress dev-loop aids (interactive prompts,
-  staleness warnings recommending manual action, hard-fail exit codes
-  that assume the user can fix what's missing).
+  terminal (``is_ci()`` or a non-tty stdin). Used to suppress dev-loop
+  aids (interactive prompts, staleness warnings recommending manual
+  action, hard-fail exit codes that assume the user can fix what's
+  missing).
 - :func:`git_auth_mode` — best-effort detection of the git/pip auth
   context: ``ssh``, ``https-token``, ``https-anonymous``, or ``none``.
   Lets tooling pick a URL form that the environment can actually
