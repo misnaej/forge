@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import logging
 import re
 import shutil
@@ -36,6 +37,7 @@ from forge.gen_c4 import (
     _dead_prefixes,
     _derive_container_edges,
     _edge_endpoints,
+    _embed_json,
     _emit_pdf,
     _emit_svg,
     _external_fields,
@@ -2173,6 +2175,66 @@ def test_render_html_contains_init_options_and_interactivity() -> None:
     assert "c4WireView" in page
     assert "c4-focus-mode" in page
     assert "mermaid.initialize(" in page
+
+
+# --- #175: _embed_json / </script> breakout escaping ---
+
+
+def test_embed_json_escapes_script_close_tag() -> None:
+    """_embed_json escapes </script> so a string value can't close the enclosing tag."""
+    out = _embed_json({"themeCSS": "a{} </script><script>alert(1)</script>"})
+    assert "</script>" not in out
+    assert "\\u003c/script>" in out
+
+
+def test_embed_json_escapes_html_comment_open() -> None:
+    """_embed_json also escapes <!-- (an alternate HTML-parser breakout vector)."""
+    out = _embed_json({"note": "<!-- injected -->"})
+    assert "<!--" not in out
+    assert "\\u003c!--" in out
+
+
+def test_embed_json_round_trips_through_json_loads() -> None:
+    """The escaped output still json.loads back to the exact original object."""
+    original = {"themeCSS": "a{} </script><script>alert(1)</script>", "n": 3}
+    out = _embed_json(original)
+    assert json.loads(out) == original
+
+
+def test_embed_json_no_op_when_no_angle_brackets() -> None:
+    """A value with no '<' round-trips through _embed_json unchanged (edge case)."""
+    original = {"plain": "no special characters here"}
+    assert _embed_json(original) == json.dumps(original)
+
+
+def test_render_html_escapes_script_breakout_in_custom_css() -> None:
+    """render_html embeds custom_css safely even when it contains a literal </script>.
+
+    Regression test for #175: ``json.dumps`` alone does not escape
+    ``</script>``, so an unescaped ``custom_css`` value could prematurely
+    close the surrounding inline ``<script>`` element and inject arbitrary
+    markup. Compares the injected-payload page against a payload-free
+    baseline: an equal ``</script>`` count proves the payload's own
+    ``</script>`` never became a real closing tag, and the value still
+    round-trips through ``json.loads`` to the original string.
+    """
+    payload = "a{} </script><script>alert(1)</script>"
+    render = RenderConfig(custom_css=payload)
+    config = C4Config(system="Test", description="", output="", render=render)
+    page = render_html(config, [("V", "graph LR\n")])
+    baseline = render_html(
+        C4Config(system="Test", description="", output=""),
+        [("V", "graph LR\n")],
+    )
+
+    assert page.count("</script>") == baseline.count("</script>")
+    assert "\\u003c/script>" in page
+
+    prefix = '"themeCSS": "'
+    start = page.index(prefix) + len(prefix)
+    end = page.index('"', start)
+    raw_json_string_body = page[start:end]
+    assert json.loads(f'"{raw_json_string_body}"') == payload
 
 
 # --- #137: _find_headless_browser ---

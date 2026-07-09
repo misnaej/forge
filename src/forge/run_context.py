@@ -90,12 +90,28 @@ _HTTPS_TOKEN_ENV: Final[tuple[str, ...]] = (
 AuthMode = Literal["ssh", "https-token", "https-anonymous", "none"]
 
 
+def is_ci() -> bool:
+    """Return True when a CI / automation marker env var is set.
+
+    This is the CI-only half of :func:`is_non_interactive`: it consults
+    :data:`_CI_MARKERS` but does **not** consider stdin's tty status, so a
+    local invocation whose stdin is not a tty (VS Code integrated terminal,
+    tmux, a piped shell, a subshell) returns ``False``. Use this — not
+    :func:`is_non_interactive` — to suppress behavior only in genuine CI
+    while still running it in any local context where a human is present.
+
+    Returns:
+        ``True`` only when running under a recognized CI / automation runner.
+    """
+    return any(os.environ.get(name) for name in _CI_MARKERS)
+
+
 def is_non_interactive() -> bool:
     """Return True when running without a human at the terminal.
 
     Detection (any of the following → ``True``):
 
-    - Any env var in :data:`_CI_MARKERS` is set to a non-empty value.
+    - :func:`is_ci` is True (a :data:`_CI_MARKERS` env var is set).
     - ``sys.stdin.isatty()`` is False (e.g. piped invocation, no TTY
       attached).
 
@@ -104,7 +120,7 @@ def is_non_interactive() -> bool:
         Conservative: prefer ``True`` over hard-failing on an absent
         interactive dependency.
     """
-    if any(os.environ.get(name) for name in _CI_MARKERS):
+    if is_ci():
         return True
     return not _stdin_is_tty()
 

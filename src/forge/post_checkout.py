@@ -27,7 +27,7 @@ import sys
 
 from forge._hook_helpers import run_foundation_drift_check, run_hook_extensions
 from forge.git_utils import configure_cli_logging
-from forge.run_context import is_non_interactive
+from forge.run_context import is_ci, is_non_interactive
 
 
 configure_cli_logging()
@@ -53,10 +53,11 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         ``0`` when ``branch_flag != "1"`` (file-level checkout, no
-        HEAD move) — fast exit. ``0`` in non-interactive contexts
-        (CI / no-TTY) — fast exit before any side effect. ``1`` when
-        ``install-forge-claude-md`` is not on PATH. ``0`` on normal
-        completion.
+        HEAD move) — fast exit. ``0`` in CI — fast exit before any side
+        effect. In a non-interactive-but-non-CI context (a no-tty local
+        checkout), the drift check is skipped but consumer ``.d``
+        extensions still run. ``1`` when ``install-forge-claude-md`` is
+        not on PATH. ``0`` on normal completion.
     """
     parser = argparse.ArgumentParser(
         prog="forge-post-checkout",
@@ -80,11 +81,19 @@ def main(argv: list[str] | None = None) -> int:
     if parsed.branch_flag != _GIT_BRANCH_CHECKOUT_FLAG:
         return 0
 
-    if is_non_interactive():
-        return 0
+    # forge's own drift check is an interactive-only dev-loop aid
+    # (FOUNDATION §15) — skipped in any non-interactive context.
+    rc = 0
+    if not is_non_interactive():
+        rc = run_foundation_drift_check("post-checkout")
 
-    rc = run_foundation_drift_check("post-checkout")
-    run_hook_extensions("post-checkout")
+    # Consumer extensions are the consumer's own logic — they must run
+    # wherever a human is present, including a no-tty local checkout.
+    # Only genuine CI suppresses them; gating on the tty-inclusive
+    # is_non_interactive() silently skipped them for many local terminals
+    # (#177). Symmetric with post-merge.
+    if not is_ci():
+        run_hook_extensions("post-checkout")
     return rc
 
 

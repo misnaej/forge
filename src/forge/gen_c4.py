@@ -2266,6 +2266,27 @@ def _render_mermaid_components_for(
     return "\n".join(lines) + "\n"
 
 
+def _embed_json(obj: object) -> str:
+    r"""Serialize ``obj`` to JSON safe to embed inside an inline ``<script>``.
+
+    ``json.dumps`` does not escape the literal ``</script>``, so a string
+    value containing it would terminate the surrounding inline script element
+    early. Escaping ``<`` as ``\\u003c`` (valid JSON — it parses back to
+    ``<``) removes every ``</script>`` / ``<!--`` breakout while leaving the
+    decoded data byte-identical. Defense-in-depth: the C4 render model is
+    built from the repo's own ``[tool.forge.c4]`` config, not untrusted
+    input, but a stray ``<`` in a ``custom_css`` / ``font_family`` /
+    ``theme_colors`` value must never be able to break the page (#175).
+
+    Args:
+        obj: Any JSON-serializable object destined for a ``<script>`` blob.
+
+    Returns:
+        The ``json.dumps`` output with every ``<`` replaced by ``\\u003c``.
+    """
+    return json.dumps(obj).replace("<", "\\u003c")
+
+
 def _mermaid_init_options(render: RenderConfig, *, layout_var: str) -> str:
     """Build the ``mermaid.initialize(...)`` options object for the HTML view.
 
@@ -2328,7 +2349,7 @@ def _mermaid_init_options(render: RenderConfig, *, layout_var: str) -> str:
         root["themeCSS"] = render.custom_css
     if render.theme == "base" and render.theme_colors:
         root["themeVariables"] = render.theme_colors
-    inner = json.dumps(root)[1:-1]
+    inner = _embed_json(root)[1:-1]
     return f'{{{inner}, "layout": {layout_var}}}'
 
 
@@ -2692,12 +2713,12 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
         for i, (label, text) in enumerate(views)
     )
     init_options = _mermaid_init_options(config.render, layout_var="c4layout")
-    elk_loader = _elk_loader_js(json.dumps(config.render.layout))
+    elk_loader = _elk_loader_js(_embed_json(config.render.layout))
     interaction_css = _html_interaction_css()
     interaction_script = _html_interaction_script()
     print_css = _print_page_css(config.render)
     _w, _h, _m, print_w_px, print_h_px = _pdf_page_geometry(config.render)
-    print_config = json.dumps(
+    print_config = _embed_json(
         {
             "w": print_w_px,
             "h": print_h_px,
@@ -2708,7 +2729,7 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
     )
     # Exact per-pane edge endpoints (allocated ids), so hover incidence is keyed
     # by id, never by parsing the ambiguous edge DOM id or matching names.
-    edge_config = json.dumps([_edge_endpoints(text) for _label, text in views])
+    edge_config = _embed_json([_edge_endpoints(text) for _label, text in views])
     # Click-to-open-tab map: each container's Component view, keyed by the exact
     # node id (slug) of the container — an id equality test, immune to one
     # container name being a prefix/substring of another.
@@ -2718,7 +2739,7 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
         for i, (label, _t) in enumerate(views)
         if label.endswith(suffix)
     ]
-    tab_config = json.dumps(tab_targets)
+    tab_config = _embed_json(tab_targets)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -3175,7 +3196,7 @@ def _render_view_pdf_html(config: C4Config, label: str, mermaid_src: str) -> str
         A complete single-view HTML document.
     """
     init_options = _mermaid_init_options(config.render, layout_var="c4layout")
-    elk_loader = _elk_loader_js(json.dumps(config.render.layout))
+    elk_loader = _elk_loader_js(_embed_json(config.render.layout))
     margin_px = round(config.render.pdf_margin * _PX_PER_MM)
     return f"""<!doctype html>
 <html lang="en">
@@ -3563,7 +3584,7 @@ def _render_view_svg_html(config: C4Config, label: str, mermaid_src: str) -> str
         A complete single-view HTML document.
     """
     init_options = _mermaid_init_options(config.render, layout_var="c4layout")
-    elk_loader = _elk_loader_js(json.dumps(config.render.layout))
+    elk_loader = _elk_loader_js(_embed_json(config.render.layout))
     return f"""<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><title>{html.escape(label)}</title></head>
