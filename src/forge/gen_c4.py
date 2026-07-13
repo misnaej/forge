@@ -451,6 +451,16 @@ class RenderConfig:
         merge_edges: ``elk.mergeEdges``.
         consider_model_order: ``elk.considerModelOrder`` — empty omits.
         cycle_breaking_strategy: ``elk.cycleBreakingStrategy`` — empty omits.
+        elk_node_spacing: ELK within-layer node gap (``spacing.nodeNode``) — the
+            ELK counterpart of ``node_spacing`` (which reaches dagre only). The
+            vendored ELK bundle hardcodes spacing unless this is set; ``None``
+            omits, leaving the bundle default.
+        elk_layer_spacing: ELK between-layer gap
+            (``elk.layered.spacing.nodeNodeBetweenLayers``) — the ELK counterpart
+            of ``rank_spacing``. ``None`` omits.
+        elk_base_value: ELK master spacing (``spacing.baseValue``) all unset
+            per-pair spacings derive from — raises every gap proportionally.
+            ``None`` omits (bundle keeps its 35/30 defaults).
         theme: ``theme`` — must be ``base`` for ``theme_colors`` to apply.
         theme_colors: ``themeVariables`` (hex values) — applied only when
             ``theme == "base"``; empty omits.
@@ -498,6 +508,9 @@ class RenderConfig:
     merge_edges: bool = False
     consider_model_order: str = ""
     cycle_breaking_strategy: str = ""
+    elk_node_spacing: int | None = None
+    elk_layer_spacing: int | None = None
+    elk_base_value: int | None = None
     theme: str = "neutral"
     theme_colors: dict[str, str] = field(default_factory=dict)
     pdf_page_size: str = "A4"
@@ -2266,6 +2279,93 @@ def _render_mermaid_components_for(
     return "\n".join(lines) + "\n"
 
 
+def _mermaid_elk_options(render: RenderConfig) -> dict[str, object]:
+    """Build the elk sub-dict for mermaid.initialize (see _mermaid_init_options).
+
+    Constructs the ELK layout options with always-present keys plus optional keys
+    grouped by predicate: is not None (0 is valid) for spacing/base values, and
+    truthy (empty omits) for model-order and cycle-breaking settings.
+
+    Args:
+        render: The resolved render config.
+
+    Returns:
+        ELK configuration dict ready to embed in mermaid options.
+    """
+    return {
+        "nodePlacementStrategy": render.node_placement_strategy,
+        "forceNodeModelOrder": render.force_node_model_order,
+        "mergeEdges": render.merge_edges,
+        **{
+            key: value
+            for key, value in (
+                ("nodeSpacing", render.elk_node_spacing),
+                ("layerSpacing", render.elk_layer_spacing),
+                ("baseValue", render.elk_base_value),
+            )
+            if value is not None
+        },
+        **{
+            key: value
+            for key, value in (
+                ("considerModelOrder", render.consider_model_order),
+                ("cycleBreakingStrategy", render.cycle_breaking_strategy),
+            )
+            if value
+        },
+    }
+
+
+def _mermaid_root_options(
+    render: RenderConfig,
+    *,
+    flowchart: dict[str, object],
+    elk: dict[str, object],
+) -> dict[str, object]:
+    """Build the root sub-dict for mermaid.initialize (see _mermaid_init_options).
+
+    Constructs the root Mermaid options with always-present keys (security, theme,
+    markdown wrap) plus optional keys grouped by predicate: is not None (False/0
+    are valid) for html labels and font size, and truthy (empty omits) for font
+    family and custom CSS. Theme variables apply only under theme=="base".
+
+    Args:
+        render: The resolved render config.
+        flowchart: The pre-built flowchart configuration dict.
+        elk: The pre-built ELK configuration dict.
+
+    Returns:
+        Root configuration dict ready to serialize to JSON for mermaid.initialize.
+    """
+    root: dict[str, object] = {
+        "startOnLoad": False,
+        "securityLevel": "loose",
+        "theme": render.theme,
+        "markdownAutoWrap": True,
+        "flowchart": flowchart,
+        "elk": elk,
+        **{
+            key: value
+            for key, value in (
+                ("htmlLabels", render.html_labels),
+                ("fontSize", render.font_size),
+            )
+            if value is not None
+        },
+        **{
+            key: value
+            for key, value in (
+                ("fontFamily", render.font_family),
+                ("themeCSS", render.custom_css),
+            )
+            if value
+        },
+    }
+    if render.theme == "base" and render.theme_colors:
+        root["themeVariables"] = render.theme_colors
+    return root
+
+
 def _embed_json(obj: object) -> str:
     """Serialize ``obj`` to JSON safe to embed inside an inline ``<script>``.
 
@@ -2323,33 +2423,8 @@ def _mermaid_init_options(render: RenderConfig, *, layout_var: str) -> str:
             if value is not None
         },
     }
-    elk: dict[str, object] = {
-        "nodePlacementStrategy": render.node_placement_strategy,
-        "forceNodeModelOrder": render.force_node_model_order,
-        "mergeEdges": render.merge_edges,
-    }
-    if render.consider_model_order:
-        elk["considerModelOrder"] = render.consider_model_order
-    if render.cycle_breaking_strategy:
-        elk["cycleBreakingStrategy"] = render.cycle_breaking_strategy
-    root: dict[str, object] = {
-        "startOnLoad": False,
-        "securityLevel": "loose",
-        "theme": render.theme,
-        "markdownAutoWrap": True,
-        "flowchart": flowchart,
-        "elk": elk,
-    }
-    if render.html_labels is not None:
-        root["htmlLabels"] = render.html_labels
-    if render.font_family:
-        root["fontFamily"] = render.font_family
-    if render.font_size is not None:
-        root["fontSize"] = render.font_size
-    if render.custom_css:
-        root["themeCSS"] = render.custom_css
-    if render.theme == "base" and render.theme_colors:
-        root["themeVariables"] = render.theme_colors
+    elk = _mermaid_elk_options(render)
+    root = _mermaid_root_options(render, flowchart=flowchart, elk=elk)
     inner = _embed_json(root)[1:-1]
     return f'{{{inner}, "layout": {layout_var}}}'
 

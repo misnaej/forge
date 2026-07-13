@@ -32,8 +32,23 @@ file, and refresh the SHA-256 + version here (`shasum -a 256`).
   HTML could never load the upstream build. The IIFE inlines every chunk (0
   dynamic imports). The page registers it via `mermaid.registerLayoutLoaders`
   and selects `layout: elk`, falling back to dagre if the global is absent.
-- **SHA-256:** `64be3e0fd87f39939319071c16d505458757012585a82b628308dcc47b736249`
-- **Bytes:** 1534525
+- **Local patch (forge):** the upstream adapter hardcodes the ELK layout
+  spacing (`spacing.baseValue: 35` on the root graph, `30` on subgraph nodes)
+  and the model-order options (`forceNodeModelOrder: true`, no
+  `considerModelOrder`), forwarding neither from `config.elk` — so
+  `forge-gen-c4`'s render config could not tune node/layer gaps nor override
+  node ordering under ELK. Before re-bundling,
+  `dist/chunks/mermaid-layout-elk.core/render-*.mjs` is patched to read these
+  from `config.elk`: `spacing.baseValue` ← `config.elk?.baseValue ?? <default>`
+  (both sites); `spacing.nodeNode` / `elk.layered.spacing.nodeNodeBetweenLayers`
+  ← `config.elk?.nodeSpacing` / `?.layerSpacing` (injected only when set);
+  `elk.layered.crossingMinimization.forceNodeModelOrder` ←
+  `config.elk?.forceNodeModelOrder ?? true`; and
+  `elk.layered.considerModelOrder.strategy` ← `config.elk?.considerModelOrder`
+  (injected only when set). Inert when unset (rendered output byte-identical to
+  upstream), so defaults are unchanged.
+- **SHA-256:** `8d7b281b00030c344a9790e1c63f1f8307e6a65aa3efc609975d3c9153abc014`
+- **Bytes:** 1535121
 - **Bundled transitive deps:** `@mermaid-js/layout-elk@0.1.8` declares
   `elkjs ^0.9.3` and `d3 ^7.9.0`; both are inlined into the IIFE (the whole
   point of the re-bundle — zero runtime imports). The exact resolved patch
@@ -41,11 +56,23 @@ file, and refresh the SHA-256 + version here (`shasum -a 256`).
   future re-bundle should commit the `elk-build/package-lock.json` to pin
   them exactly (tracked in #127).
 
-To update: re-bundle with esbuild and refresh the SHA-256 + version above:
+To update: re-bundle with esbuild and refresh the SHA-256 + version above.
+**Re-apply the forge spacing patch** (see "Local patch" above) to the freshly
+installed `dist/chunks/mermaid-layout-elk.core/render-*.mjs` before bundling —
+the `.` package export resolves to the unminified `.core` chunk, so patch that
+one:
 
 ```sh
 mkdir elk-build && cd elk-build && npm init -y
 npm install @mermaid-js/layout-elk@<version>
+# Patch dist/chunks/mermaid-layout-elk.core/render-*.mjs. At both
+# `spacing.baseValue` sites (root graph + subgraph node.layoutOptions):
+#   "spacing.baseValue": data4Layout.config.elk?.baseValue ?? <35 or 30>,
+#   ...(data4Layout.config.elk?.nodeSpacing != null ? { "spacing.nodeNode": data4Layout.config.elk.nodeSpacing } : {}),
+#   ...(data4Layout.config.elk?.layerSpacing != null ? { "elk.layered.spacing.nodeNodeBetweenLayers": data4Layout.config.elk.layerSpacing } : {}),
+# And on the root graph's layoutOptions (model order):
+#   "elk.layered.crossingMinimization.forceNodeModelOrder": data4Layout.config.elk?.forceNodeModelOrder ?? true,
+#   ...(data4Layout.config.elk?.considerModelOrder != null ? { "elk.layered.considerModelOrder.strategy": data4Layout.config.elk.considerModelOrder } : {}),
 printf 'export { default } from "@mermaid-js/layout-elk";\n' > entry.mjs
 npx esbuild entry.mjs --bundle --format=iife --global-name=elkLayouts \
   --minify --legal-comments=none --outfile=mermaid-layout-elk.iife.min.js
