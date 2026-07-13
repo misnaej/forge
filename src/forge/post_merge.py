@@ -1,27 +1,30 @@
 """forge-post-merge — runs forge's managed post-merge git-hook logic.
 
-Invoked by the thin ``.githooks/post-merge`` wrapper. CI-aware:
-no-ops in non-interactive contexts per FOUNDATION §15. When the
-process runs interactively, performs the following actions:
+Invoked by the thin ``.githooks/post-merge`` wrapper. Per FOUNDATION §15,
+actions 1-3 are forge's own interactive-only dev-loop aids — skipped in
+any non-interactive context (CI *or* a no-tty local shell). Action 4,
+consumer extensions, is the consumer's own logic and is suppressed only
+in genuine CI (``is_ci()``), so it still runs on a non-tty local ``git
+pull`` (VS Code terminal, tmux, piped shell).
 
 1. Foundation drift check via ``install-forge-claude-md --check
    --quiet`` (shared with post-checkout; see
-   :mod:`forge._hook_helpers`).
+   :mod:`forge._hook_helpers`). *[interactive-only]*
 2. Self-update of managed hook wrappers via a backgrounded
    ``install-forge-githooks --refresh --quiet`` — picks up forge
    upgrades automatically on every ``git pull``. post-checkout does
    not run this step; the installed forge-scripts version only
    changes via ``pip install``, which is most naturally chained
-   off a ``git pull``.
+   off a ``git pull``. *[interactive-only]*
 3. Rolling-next tag staleness advisory via
    :func:`forge.next_prep.tag_staleness_warning` — warns when
    ``plugin.json``'s version is ahead of the latest ``v*`` tag
    (a merge bumped the version but ``forge-next-prep --tag`` was
-   not yet run).
+   not yet run). *[interactive-only]*
 4. Consumer extension scripts in ``.githooks/post-merge.d/`` via
    :func:`forge._hook_helpers.run_hook_extensions` — a sanctioned
    drop-in point that survives every refresh (the installer never
-   touches the ``.d`` subdirectory).
+   touches the ``.d`` subdirectory). *[runs in any non-CI context]*
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from pathlib import Path
 from forge._hook_helpers import run_foundation_drift_check, run_hook_extensions
 from forge.git_utils import configure_cli_logging
 from forge.next_prep import tag_staleness_warning
-from forge.run_context import is_non_interactive
+from forge.run_context import is_ci, is_non_interactive
 
 
 configure_cli_logging()
@@ -55,8 +58,10 @@ def main(argv: list[str] | None = None) -> int:
             The parser accepts and ignores it.
 
     Returns:
-        ``0`` in non-interactive contexts (CI / no-TTY) — fast exit
-        before any side effect. ``1`` when
+        ``0`` in CI — fast exit before any side effect. In a
+        non-interactive-but-non-CI context (e.g. a local pull whose stdin
+        is not a tty), forge's own drift check and self-refresh are skipped
+        but consumer ``.d`` extensions still run. ``1`` when
         ``install-forge-claude-md`` is not on PATH (forge-scripts not
         installed in this env). ``0`` on normal completion.
     """
@@ -66,7 +71,9 @@ def main(argv: list[str] | None = None) -> int:
             "Forge-managed post-merge git-hook entrypoint. Invoked by "
             "the thin .githooks/post-merge wrapper. Runs the foundation "
             "drift check and backgrounds a self-refresh of managed hook "
-            "wrappers. No-ops in non-interactive contexts (FOUNDATION §15)."
+            "wrappers (both skipped in any non-interactive context per "
+            "FOUNDATION §15); consumer .d extensions run in any non-CI "
+            "context."
         ),
     )
     parser.add_argument(
@@ -77,38 +84,43 @@ def main(argv: list[str] | None = None) -> int:
     raw = sys.argv[1:] if argv is None else argv
     parser.parse_args(raw)
 
-    if is_non_interactive():
-        return 0
+    rc = 0
+    # forge's own drift check, self-refresh and tag advisory are
+    # interactive-only dev-loop aids (FOUNDATION §15) — skipped in any
+    # non-interactive context, CI or a no-tty local shell alike.
+    if not is_non_interactive():
+        rc = run_foundation_drift_check("post-merge")
 
-    rc = run_foundation_drift_check("post-merge")
+        # Self-refresh — backgrounded + output-redirected. The hook
+        # process exits first, then ``install-forge-githooks`` rewrites
+        # the managed hook files. A mid-execution self-rewrite would
+        # risk bash reading stale buffers past the current chunk
+        # boundary. Skipped when the drift check failed (forge-scripts not
+        # installed) or the installer CLI is absent.
+        if rc == 0 and shutil.which("install-forge-githooks") is not None:
+            subprocess.Popen(
+                ["install-forge-githooks", "--refresh", "--quiet"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
 
-    # Self-refresh — backgrounded + output-redirected. The hook
-    # process exits first, then ``install-forge-githooks`` rewrites
-    # the managed hook files. A mid-execution self-rewrite would
-    # risk bash reading stale buffers past the current chunk
-    # boundary. Skipped when the drift check failed (forge-scripts not
-    # installed) or the installer CLI is absent.
-    if rc == 0 and shutil.which("install-forge-githooks") is not None:
-        subprocess.Popen(
-            ["install-forge-githooks", "--refresh", "--quiet"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        # Surface a rolling-next tag the integration branch owes — a merge
+        # bumped plugin.json but `forge-next-prep --tag` was never run, so the
+        # tag silently lags. Advisory only; the user runs the tag command.
+        staleness = tag_staleness_warning(Path.cwd())
+        if staleness:
+            logger.warning("%s", staleness)
 
-    # Surface a rolling-next tag the integration branch owes — a merge
-    # bumped plugin.json but `forge-next-prep --tag` was never run, so the
-    # tag silently lags. Advisory only; the user runs the tag command.
-    staleness = tag_staleness_warning(Path.cwd())
-    if staleness:
-        logger.warning("%s", staleness)
-
-    # Consumer extensions run in any interactive context, independent of
-    # the forge drift check — symmetric with post-checkout. They are the
-    # consumer's logic, not forge's, so a forge misconfiguration must not
-    # silently suppress them.
-    run_hook_extensions("post-merge")
+    # Consumer extensions are the consumer's own logic, not forge's, so they
+    # must run wherever a human is present — including a local pull whose
+    # stdin is not a tty (VS Code terminal, tmux, piped shell, subshell).
+    # Only genuine CI suppresses them; gating on the tty-inclusive
+    # is_non_interactive() silently skipped them for whole classes of local
+    # terminals (#177). Symmetric with post-checkout.
+    if not is_ci():
+        run_hook_extensions("post-merge")
     return rc
 
 

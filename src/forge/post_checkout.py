@@ -1,7 +1,11 @@
 """forge-post-checkout — runs forge's managed post-checkout git-hook logic.
 
-Invoked by the thin ``.githooks/post-checkout`` wrapper. CI-aware:
-no-ops in non-interactive contexts per FOUNDATION §15.
+Invoked by the thin ``.githooks/post-checkout`` wrapper. Per FOUNDATION
+§15, the foundation drift check is an interactive-only dev-loop aid —
+skipped in any non-interactive context (CI *or* a no-tty local shell).
+Consumer ``.d`` extensions are the consumer's own logic and are
+suppressed only in genuine CI (``is_ci()``), so they still run on a
+no-tty local checkout.
 
 Git invokes ``post-checkout`` with three positional args:
 ``<prev_head> <new_head> <branch_flag>``. The CLI honors the third
@@ -27,7 +31,7 @@ import sys
 
 from forge._hook_helpers import run_foundation_drift_check, run_hook_extensions
 from forge.git_utils import configure_cli_logging
-from forge.run_context import is_non_interactive
+from forge.run_context import is_ci, is_non_interactive
 
 
 configure_cli_logging()
@@ -53,10 +57,11 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         ``0`` when ``branch_flag != "1"`` (file-level checkout, no
-        HEAD move) — fast exit. ``0`` in non-interactive contexts
-        (CI / no-TTY) — fast exit before any side effect. ``1`` when
-        ``install-forge-claude-md`` is not on PATH. ``0`` on normal
-        completion.
+        HEAD move) — fast exit. ``0`` in CI — fast exit before any side
+        effect. In a non-interactive-but-non-CI context (a no-tty local
+        checkout), the drift check is skipped but consumer ``.d``
+        extensions still run. ``1`` when ``install-forge-claude-md`` is
+        not on PATH. ``0`` on normal completion.
     """
     parser = argparse.ArgumentParser(
         prog="forge-post-checkout",
@@ -64,7 +69,8 @@ def main(argv: list[str] | None = None) -> int:
             "Forge-managed post-checkout git-hook entrypoint. Invoked by "
             "the thin .githooks/post-checkout wrapper. Runs the foundation "
             "drift check only when the HEAD actually moved (branch_flag == "
-            "'1'). No-ops in non-interactive contexts (FOUNDATION §15)."
+            "'1') and only interactively (FOUNDATION §15); consumer .d "
+            "extensions run in any non-CI context."
         ),
     )
     parser.add_argument("prev_head", nargs="?", help="prior HEAD (passed by git)")
@@ -80,11 +86,19 @@ def main(argv: list[str] | None = None) -> int:
     if parsed.branch_flag != _GIT_BRANCH_CHECKOUT_FLAG:
         return 0
 
-    if is_non_interactive():
-        return 0
+    # forge's own drift check is an interactive-only dev-loop aid
+    # (FOUNDATION §15) — skipped in any non-interactive context.
+    rc = 0
+    if not is_non_interactive():
+        rc = run_foundation_drift_check("post-checkout")
 
-    rc = run_foundation_drift_check("post-checkout")
-    run_hook_extensions("post-checkout")
+    # Consumer extensions are the consumer's own logic — they must run
+    # wherever a human is present, including a no-tty local checkout.
+    # Only genuine CI suppresses them; gating on the tty-inclusive
+    # is_non_interactive() silently skipped them for many local terminals
+    # (#177). Symmetric with post-merge.
+    if not is_ci():
+        run_hook_extensions("post-checkout")
     return rc
 
 

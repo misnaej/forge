@@ -15,7 +15,7 @@ Forge-local wrapper around the shipped `forge:issue-triage` agent
 a shipped product *and* its own active dev repo, so its backlog mixes
 two audiences. This wrapper teaches triage to mark the forge-internal
 stream with the `forge-internal` label. Everything else — the canonical
-tier/type/surface schema, the `📋 Backlog Index`, the five modes — is
+tier/type/surface schema, the `📋 Backlog Index`, the modes — is
 the foundation agent's job; **do not reimplement it here**.
 
 ## Source of truth
@@ -23,7 +23,7 @@ the foundation agent's job; **do not reimplement it here**.
 - The `forge-internal` label convention: [CLAUDE.md](../../CLAUDE.md)
   "forge-internal issue label".
 - All generic triage policy (label schema, Backlog Index contract, the
-  five modes): FOUNDATION §14 + the `forge:issue-triage` agent. This
+  modes): FOUNDATION §14 + the `forge:issue-triage` agent. This
   wrapper never restates them.
 
 ## Workflow
