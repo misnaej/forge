@@ -115,9 +115,9 @@ Regenerate the Backlog Index.
 
 ### `deep-review`
 
-Weekly whole-backlog coherence pass, designed for the **strongest
-available model** — the caller sets the model override when invoking
-this mode (other modes stay on the default). Cadence guard first: read
+Weekly whole-backlog coherence pass; the caller invokes it with the
+**strongest available model** override (other modes keep the
+default). Cadence guard first: read
 the most recent `[issue-triage] deep-review completed:` comment on the
 Backlog Index; if under 7 days old, report its date and stop (caller
 may explicitly force).
@@ -132,13 +132,12 @@ may explicitly force).
    member issues.
 4. For each approved umbrella, emit sequenced **goal files** in the
    report — the caller persists them under `.plan/goals/` as
-   `NN-<slug>.md`, two-digit `NN` = execution order. Each file is one
+   `NN-<slug>.md` (two-digit `NN` = execution order). Each is one
    self-contained Claude Code `/goal` condition, **strictly under 3900
    characters** (`/goal` caps conditions at 4000): done-condition,
-   member issues, verification steps. Recommend planning each goal
-   with `/advisor` before execution. Goal files are disposable working
-   state — the umbrella issue + its `[issue-triage]` comments are the
-   durable record.
+   member issues, verification steps; plan each with `/advisor`
+   first. Goal files are disposable working state — the umbrella
+   issue + its `[issue-triage]` comments are the durable record.
 5. Comment `[issue-triage] deep-review completed: YYYY-MM-DD` on the
    Backlog Index.
 
@@ -213,7 +212,9 @@ Every agent-driven label change leaves a comment prefixed
 
 Mode-dependent — see each mode's last step. Every mode ends with a
 report line naming the mode and the counts ("N triaged, M respected,
-Backlog Index updated").
+Backlog Index updated"). `deep-review` additionally returns umbrella
+proposals/decisions and, per approved umbrella, full goal-file
+content for the caller to persist.
 
 ## Success Criteria
 

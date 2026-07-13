@@ -23,7 +23,7 @@ the foundation agent's job; **do not reimplement it here**.
 - The `forge-internal` label convention: [CLAUDE.md](../../CLAUDE.md)
   "forge-internal issue label".
 - All generic triage policy (label schema, Backlog Index contract, the
-  five modes): FOUNDATION §14 + the `forge:issue-triage` agent. This
+  modes): FOUNDATION §14 + the `forge:issue-triage` agent. This
   wrapper never restates them.
 
 ## Workflow
