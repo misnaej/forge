@@ -1,6 +1,6 @@
 ---
 name: issue-triage
-description: GitHub-native issue triage. Maintains the canonical foundation label schema and a single auto-generated "📋 Backlog Index" issue per repo. Five modes - bootstrap, triage, recommend-next, post-pr, stale-scan.
+description: GitHub-native issue triage. Maintains the canonical foundation label schema and a single auto-generated "📋 Backlog Index" issue per repo. Six modes - bootstrap, triage, recommend-next, post-pr, stale-scan, deep-review.
 tools:
   - Bash
   - Read
@@ -37,10 +37,9 @@ gh issue list --search "📋 Backlog Index in:title" --state open --json number 
 gh issue create --title "📋 Backlog Index" --body "_(auto-generated; do not edit)_"
 ```
 
-When `docs/development/issue_backlog.md` is present, copy the rationale
-per issue into a `[issue-triage]` comment on the live GitHub issue,
-then `git rm` the file. Finish by running `triage` to apply tier
-labels and render the Backlog Index body.
+If a legacy `docs/development/issue_backlog.md` exists, copy each
+issue's rationale into a `[issue-triage]` comment on the live issue,
+then `git rm` it. Finish with a `triage` run.
 
 ### `triage`
 
@@ -114,6 +113,35 @@ gh issue comment <N> --body "[issue-triage] No activity > 180 days. Close, defer
 
 Regenerate the Backlog Index.
 
+### `deep-review`
+
+Weekly whole-backlog coherence pass, designed for the **strongest
+available model** — the caller sets the model override when invoking
+this mode (other modes stay on the default). Cadence guard first: read
+the most recent `[issue-triage] deep-review completed:` comment on the
+Backlog Index; if under 7 days old, report its date and stop (caller
+may explicitly force).
+
+1. Run a full `triage` pass.
+2. Read EVERY open issue (body + comments) and judge the backlog as a
+   whole: duplicates, contradictions, stale `Requires:` lines, missing
+   dependencies, clusters only solvable together.
+3. Propose one umbrella issue per cluster (title, member issues,
+   ordering, rationale). Create it only after user approval
+   (`AskUserQuestion`); body leads with `Requires:` + a checklist of
+   member issues.
+4. For each approved umbrella, emit sequenced **goal files** in the
+   report — the caller persists them under `.plan/goals/` as
+   `NN-<slug>.md`, two-digit `NN` = execution order. Each file is one
+   self-contained Claude Code `/goal` condition, **strictly under 3900
+   characters** (`/goal` caps conditions at 4000): done-condition,
+   member issues, verification steps. Recommend planning each goal
+   with `/advisor` before execution. Goal files are disposable working
+   state — the umbrella issue + its `[issue-triage]` comments are the
+   durable record.
+5. Comment `[issue-triage] deep-review completed: YYYY-MM-DD` on the
+   Backlog Index.
+
 ## Backlog Index regeneration
 
 Rebuild the body from scratch each run — **never read the existing body
@@ -168,6 +196,8 @@ Every agent-driven label change leaves a comment prefixed
 - Regenerate the Backlog Index body deterministically
 - Recommend top issues based on live tiers + signals
 - Migrate a legacy `docs/development/issue_backlog.md` (bootstrap)
+- Propose umbrella issues and, after explicit user approval, create
+  them; emit sequenced `/goal`-ready goal-file content (deep-review)
 
 ### I WILL NOT (report and stop)
 
@@ -176,6 +206,8 @@ Every agent-driven label change leaves a comment prefixed
 - Edit issue bodies other than the Backlog Index → **out of scope**
 - Override user-set tier labels silently → **comment alternative instead**
 - Install dependencies → **`install-forge-labels` must already be available**
+- Write files → **the caller persists goal files (no `Write` tool)**
+- Run `deep-review` within 7 days of the last → **skip unless forced**
 
 ## Output
 
@@ -189,3 +221,4 @@ Backlog Index updated").
 - Backlog Index body is current (regenerated this run)
 - Every agent-driven label change has a `[issue-triage]` comment trail
 - No markdown backlog file remains post-bootstrap
+- Every emitted goal file is numbered, self-contained, under 3900 chars
