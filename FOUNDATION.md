@@ -572,17 +572,21 @@ filesystem / import scans (both optional — treat every reference as conditiona
 
 GitHub is the **canonical** backlog — no markdown files. The `forge:issue-triage`
 agent reads live `gh` data, applies labels, and curates a single auto-generated
-"📋 Backlog Index" issue per repo. The agent owns the per-mode gh-recipe cookbook
-(`bootstrap` / `triage` / `recommend-next` / `post-pr` / `stale-scan`), the Backlog
-Index template, and its regeneration algorithm; this section owns the policy it enforces.
+"📋 Backlog Index" issue per repo. The agent owns the per-mode cookbook
+(`bootstrap` / `triage` / `recommend-next` / `post-pr` / `stale-scan` /
+`deep-review`), the Backlog Index template, and regeneration; this section owns
+the policy. The weekly `deep-review` mode re-reads the backlog (whole or
+topic-scoped) and may — only with explicit user approval — create umbrella issues
+grouping related work and emit sequenced local goal files to execute them
+(mechanics in the agent doc).
 
 ### Issue structure — lead with `Requires:`
 
 **Every issue opens with a `Requires:` line** (before the body) naming any
-blocking dependency — another issue/PR that must land first — or `Requires:
-nothing`. This surfaces ordering up front so a blocked task isn't mistaken for a
-quick-win. `forge:issue-triage` adds one when missing (asking the author if
-unclear) and labels the issue `blocked` while its stated prerequisite is open.
+blocking dependency or `Requires: nothing`. This surfaces ordering up front so a
+blocked task isn't mistaken for a quick-win. `forge:issue-triage` adds one when
+missing (asking the author if unclear) and labels the issue `blocked` while its
+stated prerequisite is open.
 
 ### Canonical label schema
 
@@ -609,14 +613,13 @@ without conflict.
 
 One issue per repo, titled `📋 Backlog Index`. Pinned. Body **owned exclusively by
 the agent** — humans do not edit it. Each `triage` run rebuilds it from scratch
-(no merge logic, zero conflict risk); the template + regeneration steps live in
-the `forge:issue-triage` agent doc.
+(no merge logic); template + regeneration steps live in the agent doc.
 
 ### Override policy
 
 Users override by changing labels manually. The agent **respects the last applied
-label** — it never silently re-tiers. If signals strongly suggest a different tier
-than the user-set one, it comments ("…consider re-tiering") but does NOT auto-change.
+label** — it never silently re-tiers. If signals suggest a different tier, it
+comments ("…consider re-tiering") but does NOT auto-change.
 
 ### Issue templates
 
