@@ -115,17 +115,19 @@ Regenerate the Backlog Index.
 
 ### `deep-review`
 
-Weekly whole-backlog coherence pass; the caller invokes it with the
-**strongest available model** override (other modes keep the
-default). Cadence guard first: read
-the most recent `[issue-triage] deep-review completed:` comment on the
-Backlog Index; if under 7 days old, report its date and stop (caller
-may explicitly force).
+Weekly backlog coherence pass — whole-backlog by default, or scoped
+to a caller-named topic (label, subsystem, theme). The caller invokes
+it with the **strongest available model** override (other modes keep
+the default). Cadence guard first: read the most recent
+`[issue-triage] deep-review completed:` comment **with the same
+scope** on the Backlog Index; if under 7 days old, report its date
+and stop (caller may explicitly force).
 
 1. Run a full `triage` pass.
-2. Read EVERY open issue (body + comments) and judge the backlog as a
-   whole: duplicates, contradictions, stale `Requires:` lines, missing
-   dependencies, clusters only solvable together.
+2. Read EVERY in-scope open issue (body + comments; a topic selects
+   by label, title/body match, or stated relatedness) and judge them
+   together: duplicates, contradictions, stale `Requires:` lines,
+   missing dependencies, clusters only solvable together.
 3. Propose one umbrella issue per cluster (title, member issues,
    ordering, rationale). Create it only after user approval
    (`AskUserQuestion`); body leads with `Requires:` + a checklist of
@@ -138,8 +140,9 @@ may explicitly force).
    member issues, verification steps; plan each with `/advisor`
    first. Goal files are disposable working state — the umbrella
    issue + its `[issue-triage]` comments are the durable record.
-5. Comment `[issue-triage] deep-review completed: YYYY-MM-DD` on the
-   Backlog Index.
+5. Comment `[issue-triage] deep-review completed: YYYY-MM-DD
+   (scope: full|<topic>)` on the Backlog Index (no scope suffix =
+   `full`).
 
 ## Backlog Index regeneration
 

@@ -575,9 +575,10 @@ agent reads live `gh` data, applies labels, and curates a single auto-generated
 "📋 Backlog Index" issue per repo. The agent owns the per-mode cookbook
 (`bootstrap` / `triage` / `recommend-next` / `post-pr` / `stale-scan` /
 `deep-review`), the Backlog Index template, and regeneration; this section owns
-the policy. The weekly `deep-review` mode re-reads the backlog as a whole and may
-— only with explicit user approval — create umbrella issues grouping related work
-and emit sequenced local goal files to execute them (mechanics in the agent doc).
+the policy. The weekly `deep-review` mode re-reads the backlog (whole or
+topic-scoped) and may — only with explicit user approval — create umbrella issues
+grouping related work and emit sequenced local goal files to execute them
+(mechanics in the agent doc).
 
 ### Issue structure — lead with `Requires:`
 
