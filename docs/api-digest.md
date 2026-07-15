@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_59 modules, 602 symbols._
+_61 modules, 613 symbols._
 
 ## `forge`
 
@@ -184,6 +184,13 @@ _59 modules, 602 symbols._
 - `run(scope: Scope, roots: list[Path], config: SuppressionsConfig) -> int` — Execute the suppressions audit.
 - `main() -> int` — CLI entry point for ``forge-audit-suppressions``.
 
+## `forge.changelog`
+
+> _Changelog-parsing primitives shared by forge's release tooling._
+
+- `release_headings(text: str) -> set[str]` — Return the set of ``## v<semver>`` release headings in *text*.
+- `changelog_lacks_entry(changelog_text: str, tag: str) -> bool` — Return ``True`` when *changelog_text* has no ``## <tag>`` heading.
+
 ## `forge.claude_settings_schema`
 
 > _Shared schema for the consumer ``.claude/settings.json`` forge block._
@@ -345,6 +352,9 @@ _59 modules, 602 symbols._
 - `_render_mermaid_containers(config: C4Config, container_edges: set[tuple[str, str]]) -> str` _(internal)_ — Render the Container view: containers inside the system boundary.
 - `_component_view_peripherals(config: C4Config, names: set[str], component_ids: dict[str, str], alloc: _IdAllocator) -> tuple[list[str], list[str]]` _(internal)_ — Render external/person peripherals + edges for one container's view.
 - `_render_mermaid_components_for(config: C4Config, container: Container, idx: int, edges: set[tuple[str, str]], *, include_derived: bool = True) -> str` _(internal)_ — Render one container's Component view: its components and their edges.
+- `_mermaid_elk_options(render: RenderConfig) -> dict[str, object]` _(internal)_ — Build the elk sub-dict for mermaid.initialize (see _mermaid_init_options).
+- `_mermaid_root_options(render: RenderConfig, *, flowchart: dict[str, object], elk: dict[str, object]) -> dict[str, object]` _(internal)_ — Build the root sub-dict for mermaid.initialize (see _mermaid_init_options).
+- `_embed_json(obj: object) -> str` _(internal)_ — Serialize ``obj`` to JSON safe to embed inside an inline ``<script>``.
 - `_mermaid_init_options(render: RenderConfig, *, layout_var: str) -> str` _(internal)_ — Build the ``mermaid.initialize(...)`` options object for the HTML view.
 - `_pdf_page_geometry(render: RenderConfig) -> tuple[int, int, float, int, int]` _(internal)_ — Resolve the print page box + printable pixel area from the PDF config.
 - `_print_page_css(render: RenderConfig) -> str` _(internal)_ — Build the ``@page`` + ``@media print`` rules for the PDF layout.
@@ -417,6 +427,7 @@ _59 modules, 602 symbols._
 - `configure_cli_logging() -> None` — Apply forge's canonical CLI logging setup.
 - `emit(msg: str) -> None` — Write *msg* to stdout with a trailing newline.
 - `parse_semver(version: str) -> tuple[int, int, int] | None` — Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
+- `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
 - `latest_v_tag(root: Path) -> str | None` — Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
 - `require_cli(name: str, *, caller: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
@@ -550,7 +561,6 @@ _59 modules, 602 symbols._
 > _forge-next-prep — prepare main for the next task (fetch, pull, tag, prune)._
 
 - `_check_promote_pending_message(repo_root: Path, dev_branch: str, base_branch: str) -> str | None` _(internal)_ — Return a one-line user-facing prompt when promotion is pending, else ``None``.
-- `_changelog_lacks_entry(changelog_text: str, minor_tag: str) -> bool` _(internal)_ — Return True when *changelog_text* has no ``## <minor_tag>`` heading.
 - `_promotion_status_lines(repo_root: Path, dev_branch: str, base_branch: str) -> list[str]` _(internal)_ — Build the read-only promotion-status report.
 - `_is_newer(plugin_ver: str, latest_tag: str | None) -> bool` _(internal)_ — Return True when ``v<plugin_ver>`` would sort *after* ``latest_tag``.
 - `tag_staleness_warning(repo_root: Path) -> str | None` — Return a warning when the integration branch owes a rolling-next tag.
@@ -660,10 +670,22 @@ _59 modules, 602 symbols._
 - `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
 - `main() -> int` — CLI entry point.
 
+## `forge.release`
+
+> _forge-release — cut an annotated ``vX.Y.Z`` release tag for tag-versioned repos._
+
+- `_dirty_tree_error(repo_root: Path) -> str | None` _(internal)_ — Return an error when the working tree has uncommitted changes.
+- `_wrong_branch_error(repo_root: Path, base_branch: str) -> str | None` _(internal)_ — Return an error when ``HEAD`` is not on *base_branch*.
+- `_wrong_release_model_error(repo_root: Path, cfg: ForgeConfig) -> str | None` _(internal)_ — Return an error when this repo's release model isn't single-track.
+- `_changelog_gate_error(repo_root: Path, tag: str) -> str | None` _(internal)_ — Return an error when ``CHANGELOG.md`` exists but lacks *tag*'s entry.
+- `_cut_release(repo_root: Path, tag: str) -> None` _(internal)_ — Create the annotated *tag* on ``HEAD`` and push it to ``origin``.
+- `main() -> int` — Cut the next ``vX.Y.Z`` release tag off the latest ``v*`` tag.
+
 ## `forge.run_context`
 
 > _Detect the runtime context (interactive workstation vs. CI / automation)._
 
+- `is_ci() -> bool` — Return True when a CI / automation marker env var is set.
 - `is_non_interactive() -> bool` — Return True when running without a human at the terminal.
 - `_stdin_is_tty() -> bool` _(internal)_ — Return ``sys.stdin.isatty()`` defensively (handles closed stdin).
 - `git_auth_mode() -> AuthMode` — Detect the git / pip auth context the environment can actually use.
@@ -781,7 +803,6 @@ _59 modules, 602 symbols._
 
 > _verify-forge-changelog-history — guard main's curated CHANGELOG history._
 
-- `_headings(text: str) -> set[str]` _(internal)_ — Return the set of ``## v<semver>`` release headings in *text*.
 - `_base_is_ancestor(repo_root: Path, base_ref: str) -> bool` _(internal)_ — Return ``True`` when *base_ref* is an ancestor of ``HEAD``.
 - `main() -> int` — Fail when the working tree's CHANGELOG drops a curated ``@base`` entry.
 

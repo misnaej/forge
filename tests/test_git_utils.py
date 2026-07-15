@@ -106,6 +106,47 @@ def test_parse_semver_rejects_non_triple() -> None:
 
 
 # ---------------------------------------------------------------------------
+# next_version
+# ---------------------------------------------------------------------------
+
+
+def test_next_version_patch_bump() -> None:
+    """A ``"patch"`` bump increments the trailing component."""
+    assert git_utils.next_version("v1.2.3", "patch") == "v1.2.4"
+
+
+def test_next_version_minor_bump_resets_patch() -> None:
+    """A ``"minor"`` bump increments minor and resets patch to zero."""
+    assert git_utils.next_version("v1.2.3", "minor") == "v1.3.0"
+
+
+def test_next_version_major_bump_resets_minor_and_patch() -> None:
+    """A ``"major"`` bump increments major and resets minor and patch to zero."""
+    assert git_utils.next_version("v1.2.3", "major") == "v2.0.0"
+
+
+def test_next_version_bare_triple_accepted() -> None:
+    """A tag without the ``v`` prefix parses the same as a prefixed one."""
+    assert git_utils.next_version("1.2.3", "patch") == "v1.2.4"
+
+
+def test_next_version_none_tag_bases_at_zero() -> None:
+    """``None`` (no prior release) is treated as a ``v0.0.0`` base."""
+    assert git_utils.next_version(None, "minor") == "v0.1.0"
+
+
+def test_next_version_unparseable_tag_bases_at_zero() -> None:
+    """A tag ``parse_semver`` cannot read is treated as a ``v0.0.0`` base."""
+    assert git_utils.next_version("not-a-version", "patch") == "v0.0.1"
+
+
+def test_next_version_unknown_bump_raises_value_error() -> None:
+    """An unrecognized *bump* name raises ``ValueError``."""
+    with pytest.raises(ValueError, match="unknown bump"):
+        git_utils.next_version("v1.2.3", "revision")
+
+
+# ---------------------------------------------------------------------------
 # Source-dir resolution moved to forge.config (smart-detect + resolver);
 # see test_config.py. git_utils no longer owns a source-dir helper.
 

@@ -101,6 +101,13 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "reachable from a wiring source).",
     ),
     ConfigKey(
+        ("tool", "forge", "agent_doc", "path"),
+        "unset (agent_doc step self-skips)",
+        "Repo-relative path of the hand-maintained agent-architecture doc "
+        "checked by the agent_doc pre-commit step (verify-forge-agent-doc); "
+        "setting it opts the step in.",
+    ),
+    ConfigKey(
         ("tool", "forge", "docstring_coverage", "badge"),
         default=False,
         description="Generate interrogate's coverage badge to "

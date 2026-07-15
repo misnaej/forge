@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import logging
 import re
 import shutil
@@ -36,6 +37,7 @@ from forge.gen_c4 import (
     _dead_prefixes,
     _derive_container_edges,
     _edge_endpoints,
+    _embed_json,
     _emit_pdf,
     _emit_svg,
     _external_fields,
@@ -1966,6 +1968,8 @@ def test_mermaid_init_options_optional_keys_absent_with_defaults() -> None:
         "themeCSS",
         "considerModelOrder",
         "cycleBreakingStrategy",
+        "layerSpacing",
+        "baseValue",
     ):
         assert key not in out, f"expected {key!r} absent with default RenderConfig"
 
@@ -1986,6 +1990,45 @@ def test_mermaid_init_options_rank_spacing_emitted_when_set() -> None:
     """_mermaid_init_options emits rankSpacing when rank_spacing is provided."""
     out = _mermaid_init_options(RenderConfig(rank_spacing=20), layout_var="c4layout")
     assert '"rankSpacing": 20' in out
+
+
+def test_mermaid_init_options_elk_spacing_emitted_in_elk_block() -> None:
+    """The elk_* spacing keys land in the ``elk`` block the vendored bundle reads.
+
+    The vendored ELK adapter reads ``config.elk.nodeSpacing`` /
+    ``.layerSpacing`` / ``.baseValue``; the ``flowchart`` block's own
+    ``nodeSpacing`` reaches dagre only, so these must appear under ``elk``.
+    """
+    out = _mermaid_init_options(
+        RenderConfig(elk_node_spacing=90, elk_layer_spacing=120, elk_base_value=70),
+        layout_var="c4layout",
+    )
+    root = json.loads(out[: out.rfind(", ")] + "}")
+    assert root["elk"]["nodeSpacing"] == 90
+    assert root["elk"]["layerSpacing"] == 120
+    assert root["elk"]["baseValue"] == 70
+    # dagre-only flowchart spacing stays untouched when only elk_* keys are set.
+    assert "nodeSpacing" not in root["flowchart"]
+
+
+def test_mermaid_init_options_elk_spacing_absent_by_default() -> None:
+    """The elk_* spacing keys are omitted from the elk block at their defaults."""
+    out = _mermaid_init_options(RenderConfig(), layout_var="c4layout")
+    root = json.loads(out[: out.rfind(", ")] + "}")
+    for key in ("nodeSpacing", "layerSpacing", "baseValue"):
+        assert key not in root["elk"], f"expected elk.{key} absent by default"
+
+
+def test_mermaid_init_options_elk_base_value_zero_emitted() -> None:
+    """``elk_base_value=0`` still emits — the ``is not None`` predicate is load-bearing.
+
+    ``0`` is a legitimate "flatten all ELK spacing" value, so the omit-when-unset
+    logic must key off ``is not None``, not truthiness (a ``if value:`` guard
+    would silently drop it).
+    """
+    out = _mermaid_init_options(RenderConfig(elk_base_value=0), layout_var="c4layout")
+    root = json.loads(out[: out.rfind(", ")] + "}")
+    assert root["elk"]["baseValue"] == 0
 
 
 def test_mermaid_init_options_font_family_emitted_when_set() -> None:
@@ -2173,6 +2216,77 @@ def test_render_html_contains_init_options_and_interactivity() -> None:
     assert "c4WireView" in page
     assert "c4-focus-mode" in page
     assert "mermaid.initialize(" in page
+
+
+# --- #175: _embed_json / </script> breakout escaping ---
+
+
+def test_embed_json_escapes_script_close_tag() -> None:
+    """_embed_json escapes </script> so a string value can't close the enclosing tag."""
+    out = _embed_json({"themeCSS": "a{} </script><script>alert(1)</script>"})
+    assert "</script>" not in out
+    assert "\\u003c/script>" in out
+
+
+def test_embed_json_escapes_html_comment_open() -> None:
+    """_embed_json also escapes <!-- (an alternate HTML-parser breakout vector)."""
+    out = _embed_json({"note": "<!-- injected -->"})
+    assert "<!--" not in out
+    assert "\\u003c!--" in out
+
+
+def test_embed_json_escapes_bare_script_open() -> None:
+    """A bare ``<script`` (no closing slash, no comment) is neutralized too.
+
+    Escaping every ``<`` — not only the ``</script>`` / ``<!--`` shapes — means
+    an opening ``<script`` tag in a value can never start a real element either.
+    """
+    out = _embed_json({"css": "x <script src=evil>"})
+    assert "<script" not in out
+    assert "\\u003cscript" in out
+
+
+def test_embed_json_round_trips_through_json_loads() -> None:
+    """The escaped output still json.loads back to the exact original object."""
+    original = {"themeCSS": "a{} </script><script>alert(1)</script>", "n": 3}
+    out = _embed_json(original)
+    assert json.loads(out) == original
+
+
+def test_embed_json_no_op_when_no_angle_brackets() -> None:
+    """A value with no '<' round-trips through _embed_json unchanged (edge case)."""
+    original = {"plain": "no special characters here"}
+    assert _embed_json(original) == json.dumps(original)
+
+
+def test_render_html_escapes_script_breakout_in_custom_css() -> None:
+    """render_html embeds custom_css safely even when it contains a literal </script>.
+
+    Regression test for #175: ``json.dumps`` alone does not escape
+    ``</script>``, so an unescaped ``custom_css`` value could prematurely
+    close the surrounding inline ``<script>`` element and inject arbitrary
+    markup. Compares the injected-payload page against a payload-free
+    baseline: an equal ``</script>`` count proves the payload's own
+    ``</script>`` never became a real closing tag, and the value still
+    round-trips through ``json.loads`` to the original string.
+    """
+    payload = "a{} </script><script>alert(1)</script>"
+    render = RenderConfig(custom_css=payload)
+    config = C4Config(system="Test", description="", output="", render=render)
+    page = render_html(config, [("V", "graph LR\n")])
+    baseline = render_html(
+        C4Config(system="Test", description="", output=""),
+        [("V", "graph LR\n")],
+    )
+
+    assert page.count("</script>") == baseline.count("</script>")
+    assert "\\u003c/script>" in page
+
+    prefix = '"themeCSS": "'
+    start = page.index(prefix) + len(prefix)
+    end = page.index('"', start)
+    raw_json_string_body = page[start:end]
+    assert json.loads(f'"{raw_json_string_body}"') == payload
 
 
 # --- #137: _find_headless_browser ---

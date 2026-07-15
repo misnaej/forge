@@ -12,7 +12,7 @@ from tests.conftest import FakeProc
 
 
 # ---------------------------------------------------------------------------
-# is_non_interactive
+# is_ci / is_non_interactive
 # ---------------------------------------------------------------------------
 
 
@@ -20,6 +20,63 @@ def _clear_ci_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Strip every recognised CI marker from the test process's env."""
     for name in mod._CI_MARKERS:
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize("marker", mod._CI_MARKERS)
+def test_is_ci_true_when_marker_set(
+    marker: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each recognised CI env var marks the run as genuine CI (#177).
+
+    Args:
+        marker: Name of a CI env var from ``_CI_MARKERS``.
+    """
+    _clear_ci_env(monkeypatch)
+    monkeypatch.setenv(marker, "1")
+    assert mod.is_ci() is True
+
+
+def test_is_ci_false_when_no_markers_regardless_of_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No CI markers -> is_ci() is False even when stdin is not a tty (#177).
+
+    This is the crux of the #177 fix: ``is_ci()`` must NOT consult stdin at
+    all, so a local non-tty invocation (VS Code terminal, tmux, piped shell)
+    is never mistaken for genuine CI.
+    """
+    _clear_ci_env(monkeypatch)
+    monkeypatch.setattr(mod, "_stdin_is_tty", lambda: False)
+    assert mod.is_ci() is False
+
+
+def test_is_ci_false_when_no_markers_and_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No CI markers + a tty stdin -> is_ci() is False (interactive workstation)."""
+    _clear_ci_env(monkeypatch)
+    monkeypatch.setattr(mod, "_stdin_is_tty", lambda: True)
+    assert mod.is_ci() is False
+
+
+def test_is_non_interactive_true_on_non_tty_local_pull_when_not_ci(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-tty local pull: is_ci() False but is_non_interactive() stays True.
+
+    Regression for #177: before the fix, ``is_non_interactive()`` was the
+    only signal consulted by the post-merge/post-checkout hooks, which
+    conflated "no CI marker" with "no human present" and silently skipped
+    consumer hook extensions on ordinary non-tty local pulls. This test
+    pins the still-correct half of the contract: a non-tty shell is
+    genuinely non-interactive (dev-loop aids should still be suppressed)
+    even though it's not CI (consumer extensions should still run).
+    """
+    _clear_ci_env(monkeypatch)
+    monkeypatch.setattr(mod, "_stdin_is_tty", lambda: False)
+    assert mod.is_ci() is False
+    assert mod.is_non_interactive() is True
 
 
 @pytest.mark.parametrize("marker", mod._CI_MARKERS)

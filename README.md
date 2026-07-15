@@ -619,6 +619,7 @@ Topic-specific docs (read what you need, skip what you don't):
 | [`docs/ci-recipe.md`](docs/ci-recipe.md) | You want a pasteable GitHub Actions workflow for running forge in CI. |
 | [`docs/ci-access.md`](docs/ci-access.md) | Your CI runner can't clone forge with implicit SSH. |
 | [`docs/audit-pack.md`](docs/audit-pack.md) | You want to use the `forge-audit-*` CLIs for codebase health checks. |
+| [`docs/consumer-release.md`](docs/consumer-release.md) | Your repo's version derives from `v*` git tags (setuptools-scm) and you want `forge-release` (or its public primitives) instead of hand-rolling the tag/push flow. |
 | [`docs/security.md`](docs/security.md) | Security-sensitive coding standards forge enforces. |
 | [`FOUNDATION.md`](FOUNDATION.md) | The engineering principles forge ships to every consumer (linked from your `CLAUDE.md`). |
 | [`REPO_STRUCTURE.md`](REPO_STRUCTURE.md) | Map of every directory in this repo. |

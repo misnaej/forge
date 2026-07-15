@@ -20,6 +20,38 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.22.0 — 2026-07-15
+
+Additive — forge's release-tagging primitives become reusable by consumer
+repos. Single-track, tag-versioned (setuptools-scm) repos get a first-class
+release CLI instead of reimplementing forge's flow; nothing changes for
+manifest-versioned or dual-track repos.
+
+### Features
+- **`forge-release` — single-track release orchestrator.** For repos whose
+  version derives from `v*` tags (setuptools-scm, no
+  `.claude-plugin/plugin.json`): guards clean tree + on `base_branch` +
+  single-track model + CHANGELOG entry present, then computes the next tag
+  (`--bump major|minor|patch` off the latest `v*` tag) and cuts an annotated
+  tag + push. `--dry-run` previews. Refuses dual-track and manifest-versioned
+  repos, pointing at their flows.
+- **Public release primitives.** New `forge.changelog` module
+  (`release_headings`, `changelog_lacks_entry` — promoted from private
+  helpers in `next_prep` / `verify_changelog_history`) and
+  `forge.git_utils.next_version` (pure semver bump). Together with
+  `latest_v_tag`, `parse_semver`, `run_git`, `configure_cli_logging` these
+  form a documented **stable public Python import surface** — breaking one
+  is now a MAJOR release.
+
+### Fixes
+- **`forge-config --list` now declares `[tool.forge.agent_doc].path`** — the
+  `agent_doc` pre-commit step read it undeclared, so the config surface was
+  silently incomplete (also documented in `docs/configuration.md`).
+
+### Docs
+- **`docs/consumer-release.md`** — the single-track consumer release recipe
+  plus the stable-import-surface table.
+
 ## v2.21.0 — 2026-07-07
 
 Additive — `forge-gen-c4` gains an `owned` flag on `[[external]]` for

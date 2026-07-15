@@ -8,12 +8,12 @@ drops curated ``## vX.Y.Z`` entries from origin/<base>.
 # ``verify_changelog_history.load_config`` to supply a ForgeConfig without a
 # real ``pyproject.toml``, mirroring the Group F pattern in
 # ``test_verify_main_tags.py``. ``sys.argv`` is patched to the CLI name so
-# argparse does not interpret pytest's own arguments. Group A (``_headings``)
-# is pure; Group B (``_base_is_ancestor``) uses real git. Group C tests that
-# exercise fetch/ancestor checks require a real dual-track repo with a bare
-# origin; tests that exit before any git call need only a ``chdir(tmp_path)``.
-# Monkeypatch targets use the consuming namespace (``verify_changelog_history.*``),
-# never the originating module.
+# argparse does not interpret pytest's own arguments. Group B
+# (``_base_is_ancestor``) is pure real-git, no config needed. Group C tests
+# that exercise fetch/ancestor checks require a real dual-track repo with a
+# bare origin; tests that exit before any git call need only a
+# ``chdir(tmp_path)``. Monkeypatch targets use the consuming namespace
+# (``verify_changelog_history.*``), never the originating module.
 
 from __future__ import annotations
 
@@ -92,36 +92,6 @@ def _setup_main_as_ancestor_repo(
         check=True,
     )
     return work, bare
-
-
-# ---------------------------------------------------------------------------
-# Group A — _headings (pure)
-# ---------------------------------------------------------------------------
-
-
-def test_headings_parses_semver_level2_only() -> None:
-    """``_headings`` picks up ``## vX.Y.Z`` lines and ignores other markup."""
-    text = (
-        "# Changelog\n"
-        "\n"
-        "## v1.1.0\n"
-        "\n"
-        "Some prose about v1.1.0.\n"
-        "\n"
-        "### Sub-heading ignored\n"
-        "\n"
-        "## v1.0.0\n"
-        "\n"
-        "Not a heading: ## v0.9.0 inline\n"
-    )
-    result = verify_changelog_history._headings(text)
-    assert result == {"v1.0.0", "v1.1.0"}
-
-
-def test_headings_returns_empty_when_no_semver_headings() -> None:
-    """``_headings`` returns an empty set when no ``## vX.Y.Z`` lines exist."""
-    text = "# Changelog\n\nSome unreleased notes.\n\n### Details\n"
-    assert verify_changelog_history._headings(text) == set()
 
 
 # ---------------------------------------------------------------------------
@@ -465,9 +435,9 @@ def test_passes_when_headings_reordered(
 
     MOCK SETUP: ``load_config`` → ``ForgeConfig(base="main", dev="dev")``.
         origin/main CHANGELOG lists ``## v1.1.0`` before ``## v1.0.0``; the
-        release branch lists them in the opposite order.  Since ``_headings``
-        returns a set, order is irrelevant — both produce
-        ``{"v1.0.0", "v1.1.0"}`` and the difference is empty.
+        release branch lists them in the opposite order.  Since
+        ``release_headings`` returns a set, order is irrelevant — both
+        produce ``{"v1.0.0", "v1.1.0"}`` and the difference is empty.
     EXPECTED BEHAVIOR: returns 0; caplog contains "preserved".
     """
     # Reversed order relative to origin/main's "## v1.1.0\n\n## v1.0.0\n".

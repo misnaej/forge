@@ -366,8 +366,8 @@ usage: forge-post-checkout [-h] [prev_head] [new_head] [branch_flag]
 
 Forge-managed post-checkout git-hook entrypoint. Invoked by the thin
 .githooks/post-checkout wrapper. Runs the foundation drift check only when the
-HEAD actually moved (branch_flag == '1'). No-ops in non-interactive contexts
-(FOUNDATION §15).
+HEAD actually moved (branch_flag == '1') and only interactively (FOUNDATION
+§15); consumer .d extensions run in any non-CI context.
 
 positional arguments:
   prev_head    prior HEAD (passed by git)
@@ -385,8 +385,8 @@ usage: forge-post-merge [-h] [squash_flag]
 
 Forge-managed post-merge git-hook entrypoint. Invoked by the thin
 .githooks/post-merge wrapper. Runs the foundation drift check and backgrounds
-a self-refresh of managed hook wrappers. No-ops in non-interactive contexts
-(FOUNDATION §15).
+a self-refresh of managed hook wrappers (both skipped in any non-interactive
+context per FOUNDATION §15); consumer .d extensions run in any non-CI context.
 
 positional arguments:
   squash_flag  squash-merge status flag passed by git (1=squash, 0=otherwise);
@@ -439,6 +439,23 @@ options:
   --only STEP[,STEP...]
                         Run exactly these steps (repeatable or comma-
                         separated).
+```
+
+## forge-release
+
+```text
+usage: forge-release [-h] --bump {major,minor,patch} [--dry-run]
+
+Cut a vX.Y.Z release tag for a single-track, tag-versioned (setuptools-scm)
+repo: clean tree + on base branch + CHANGELOG entry present, then annotated
+tag + push.
+
+options:
+  -h, --help            show this help message and exit
+  --bump {major,minor,patch}
+                        Semver increment to apply to the latest v* tag.
+  --dry-run             Report the tag that would be cut and exit without
+                        tagging.
 ```
 
 ## forge-slow-tests-report

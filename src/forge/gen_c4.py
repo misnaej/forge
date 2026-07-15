@@ -451,6 +451,16 @@ class RenderConfig:
         merge_edges: ``elk.mergeEdges``.
         consider_model_order: ``elk.considerModelOrder`` — empty omits.
         cycle_breaking_strategy: ``elk.cycleBreakingStrategy`` — empty omits.
+        elk_node_spacing: ELK within-layer node gap (``spacing.nodeNode``) — the
+            ELK counterpart of ``node_spacing`` (which reaches dagre only). The
+            vendored ELK bundle hardcodes spacing unless this is set; ``None``
+            omits, leaving the bundle default.
+        elk_layer_spacing: ELK between-layer gap
+            (``elk.layered.spacing.nodeNodeBetweenLayers``) — the ELK counterpart
+            of ``rank_spacing``. ``None`` omits.
+        elk_base_value: ELK master spacing (``spacing.baseValue``) all unset
+            per-pair spacings derive from — raises every gap proportionally.
+            ``None`` omits (bundle keeps its 35/30 defaults).
         theme: ``theme`` — must be ``base`` for ``theme_colors`` to apply.
         theme_colors: ``themeVariables`` (hex values) — applied only when
             ``theme == "base"``; empty omits.
@@ -498,6 +508,9 @@ class RenderConfig:
     merge_edges: bool = False
     consider_model_order: str = ""
     cycle_breaking_strategy: str = ""
+    elk_node_spacing: int | None = None
+    elk_layer_spacing: int | None = None
+    elk_base_value: int | None = None
     theme: str = "neutral"
     theme_colors: dict[str, str] = field(default_factory=dict)
     pdf_page_size: str = "A4"
@@ -2266,6 +2279,115 @@ def _render_mermaid_components_for(
     return "\n".join(lines) + "\n"
 
 
+def _mermaid_elk_options(render: RenderConfig) -> dict[str, object]:
+    """Build the elk sub-dict for mermaid.initialize (see _mermaid_init_options).
+
+    Constructs the ELK layout options with always-present keys plus optional keys
+    grouped by predicate: is not None (0 is valid) for spacing/base values, and
+    truthy (empty omits) for model-order and cycle-breaking settings.
+
+    Args:
+        render: The resolved render config.
+
+    Returns:
+        ELK configuration dict ready to embed in mermaid options.
+    """
+    return {
+        "nodePlacementStrategy": render.node_placement_strategy,
+        "forceNodeModelOrder": render.force_node_model_order,
+        "mergeEdges": render.merge_edges,
+        **{
+            key: value
+            for key, value in (
+                ("nodeSpacing", render.elk_node_spacing),
+                ("layerSpacing", render.elk_layer_spacing),
+                ("baseValue", render.elk_base_value),
+            )
+            if value is not None
+        },
+        **{
+            key: value
+            for key, value in (
+                ("considerModelOrder", render.consider_model_order),
+                ("cycleBreakingStrategy", render.cycle_breaking_strategy),
+            )
+            if value
+        },
+    }
+
+
+def _mermaid_root_options(
+    render: RenderConfig,
+    *,
+    flowchart: dict[str, object],
+    elk: dict[str, object],
+) -> dict[str, object]:
+    """Build the root sub-dict for mermaid.initialize (see _mermaid_init_options).
+
+    Constructs the root Mermaid options with always-present keys (security, theme,
+    markdown wrap) plus optional keys grouped by predicate: is not None (False/0
+    are valid) for html labels and font size, and truthy (empty omits) for font
+    family and custom CSS. Theme variables apply only under theme=="base".
+
+    Args:
+        render: The resolved render config.
+        flowchart: The pre-built flowchart configuration dict.
+        elk: The pre-built ELK configuration dict.
+
+    Returns:
+        Root configuration dict ready to serialize to JSON for mermaid.initialize.
+    """
+    root: dict[str, object] = {
+        "startOnLoad": False,
+        "securityLevel": "loose",
+        "theme": render.theme,
+        "markdownAutoWrap": True,
+        "flowchart": flowchart,
+        "elk": elk,
+        **{
+            key: value
+            for key, value in (
+                ("htmlLabels", render.html_labels),
+                ("fontSize", render.font_size),
+            )
+            if value is not None
+        },
+        **{
+            key: value
+            for key, value in (
+                ("fontFamily", render.font_family),
+                ("themeCSS", render.custom_css),
+            )
+            if value
+        },
+    }
+    if render.theme == "base" and render.theme_colors:
+        root["themeVariables"] = render.theme_colors
+    return root
+
+
+def _embed_json(obj: object) -> str:
+    """Serialize ``obj`` to JSON safe to embed inside an inline ``<script>``.
+
+    ``json.dumps`` does not escape the literal ``</script>``, so a string
+    value containing it would terminate the surrounding inline script element
+    early. Escaping every ``<`` as its ``u003c`` JSON unicode escape (which
+    parses back to ``<``), removing all ``</script>`` / ``<!--`` breakouts, leaving
+    the decoded data byte-identical. Defense-in-depth: the C4 render model is
+    built from the repo's own ``[tool.forge.c4]`` config, not untrusted
+    input, but a stray ``<`` in a ``custom_css`` / ``font_family`` /
+    ``theme_colors`` value must never be able to break the page (#175).
+
+    Args:
+        obj: Any JSON-serializable object destined for a ``<script>`` blob.
+
+    Returns:
+        The ``json.dumps`` output with every ``<`` rewritten to its
+        ``u003c`` JSON unicode escape.
+    """
+    return json.dumps(obj).replace("<", "\\u003c")
+
+
 def _mermaid_init_options(render: RenderConfig, *, layout_var: str) -> str:
     """Build the ``mermaid.initialize(...)`` options object for the HTML view.
 
@@ -2301,34 +2423,9 @@ def _mermaid_init_options(render: RenderConfig, *, layout_var: str) -> str:
             if value is not None
         },
     }
-    elk: dict[str, object] = {
-        "nodePlacementStrategy": render.node_placement_strategy,
-        "forceNodeModelOrder": render.force_node_model_order,
-        "mergeEdges": render.merge_edges,
-    }
-    if render.consider_model_order:
-        elk["considerModelOrder"] = render.consider_model_order
-    if render.cycle_breaking_strategy:
-        elk["cycleBreakingStrategy"] = render.cycle_breaking_strategy
-    root: dict[str, object] = {
-        "startOnLoad": False,
-        "securityLevel": "loose",
-        "theme": render.theme,
-        "markdownAutoWrap": True,
-        "flowchart": flowchart,
-        "elk": elk,
-    }
-    if render.html_labels is not None:
-        root["htmlLabels"] = render.html_labels
-    if render.font_family:
-        root["fontFamily"] = render.font_family
-    if render.font_size is not None:
-        root["fontSize"] = render.font_size
-    if render.custom_css:
-        root["themeCSS"] = render.custom_css
-    if render.theme == "base" and render.theme_colors:
-        root["themeVariables"] = render.theme_colors
-    inner = json.dumps(root)[1:-1]
+    elk = _mermaid_elk_options(render)
+    root = _mermaid_root_options(render, flowchart=flowchart, elk=elk)
+    inner = _embed_json(root)[1:-1]
     return f'{{{inner}, "layout": {layout_var}}}'
 
 
@@ -2692,12 +2789,12 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
         for i, (label, text) in enumerate(views)
     )
     init_options = _mermaid_init_options(config.render, layout_var="c4layout")
-    elk_loader = _elk_loader_js(json.dumps(config.render.layout))
+    elk_loader = _elk_loader_js(_embed_json(config.render.layout))
     interaction_css = _html_interaction_css()
     interaction_script = _html_interaction_script()
     print_css = _print_page_css(config.render)
     _w, _h, _m, print_w_px, print_h_px = _pdf_page_geometry(config.render)
-    print_config = json.dumps(
+    print_config = _embed_json(
         {
             "w": print_w_px,
             "h": print_h_px,
@@ -2708,7 +2805,7 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
     )
     # Exact per-pane edge endpoints (allocated ids), so hover incidence is keyed
     # by id, never by parsing the ambiguous edge DOM id or matching names.
-    edge_config = json.dumps([_edge_endpoints(text) for _label, text in views])
+    edge_config = _embed_json([_edge_endpoints(text) for _label, text in views])
     # Click-to-open-tab map: each container's Component view, keyed by the exact
     # node id (slug) of the container — an id equality test, immune to one
     # container name being a prefix/substring of another.
@@ -2718,7 +2815,7 @@ def render_html(config: C4Config, views: list[tuple[str, str]]) -> str:
         for i, (label, _t) in enumerate(views)
         if label.endswith(suffix)
     ]
-    tab_config = json.dumps(tab_targets)
+    tab_config = _embed_json(tab_targets)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -3175,7 +3272,7 @@ def _render_view_pdf_html(config: C4Config, label: str, mermaid_src: str) -> str
         A complete single-view HTML document.
     """
     init_options = _mermaid_init_options(config.render, layout_var="c4layout")
-    elk_loader = _elk_loader_js(json.dumps(config.render.layout))
+    elk_loader = _elk_loader_js(_embed_json(config.render.layout))
     margin_px = round(config.render.pdf_margin * _PX_PER_MM)
     return f"""<!doctype html>
 <html lang="en">
@@ -3563,7 +3660,7 @@ def _render_view_svg_html(config: C4Config, label: str, mermaid_src: str) -> str
         A complete single-view HTML document.
     """
     init_options = _mermaid_init_options(config.render, layout_var="c4layout")
-    elk_loader = _elk_loader_js(json.dumps(config.render.layout))
+    elk_loader = _elk_loader_js(_embed_json(config.render.layout))
     return f"""<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><title>{html.escape(label)}</title></head>
