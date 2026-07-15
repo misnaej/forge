@@ -27,6 +27,7 @@ Code.
 1. **CLI Modules**
    - precommit.py: `forge-precommit` — pre-commit dispatcher; most steps shell out to their own SRP CLI, a few (env_sync, pip_audit) run in-process for speed / single-invocation sharing
    - next_prep.py: `forge-next-prep` — refresh main, optional rolling-next tag bump, prune stale branches; used by `/next` skill
+   - release.py: `forge-release` — single-track release orchestrator for tag-versioned (setuptools-scm) consumer repos: guards (clean tree, on base branch, single-track model, CHANGELOG entry) → annotated tag + push (exempt in `cli_wiring_exempt.toml`)
    - continuation_append.py: `forge-continuation-append` — single source of truth for `.plan/CONTINUATION.md` append format; called by `forge:git-commit-push` and `forge:pr-manager`
    - pr_squash_comment.py: `forge-pr-squash-comment` — validates + posts the squash-merge comment; canonical `CONVENTIONAL_COMMIT_TYPES` source
    - pr_delta.py: shared delta-mode thresholds/regex for the pr-manager agent
@@ -67,7 +68,8 @@ Code.
    - install_labels.py: `install-forge-labels` — GitHub label installer
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
-   - git_utils.py: shared git helpers and CLI logging setup
+   - git_utils.py: shared git helpers and CLI logging setup (public API for consumers: `latest_v_tag`, `parse_semver`, `next_version`, `run_git`, `configure_cli_logging`)
+   - changelog.py: shared `## vX.Y.Z` CHANGELOG heading recognition (`release_headings`, `changelog_lacks_entry`) — single source for next_prep, verify_changelog_history, and release; public API for consumers
    - import_graph.py: `forge.import_graph` — shared AST import primitives (`extract_import_targets`, `resolve_module_name`, `closest_known`) used by `audit.deps` and `smart_test.dependencies`
    - run_context.py: `forge.run_context` — CI vs workstation detection (`is_non_interactive`, `git_auth_mode`, `progress_logger`) per FOUNDATION §15
 
@@ -192,6 +194,8 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_install_labels.py: tests for install_labels
    - test_manifests.py: tests for plugin manifests
    - test_next_prep.py: tests for next_prep
+   - test_release.py: tests for release (forge-release CLI guards + tagging)
+   - test_changelog.py: tests for changelog (release_headings / changelog_lacks_entry)
    - test_pr_delta.py: tests for pr_delta shared thresholds/regex
    - test_pr_squash_comment.py: tests for pr_squash_comment
    - test_precommit.py: tests for precommit dispatcher
@@ -245,6 +249,7 @@ Forge's own bootstrap tooling (not a consumer pattern):
 - adopting.md: modular adoption guide — three independent install tracks (CLIs / + git hooks / + plugin) + "what lands on disk" table + drift/upgrade explainer
 - configuration.md: complete `[tool.forge.*]` config reference + setup guide (written counterpart to `forge-config --list`)
 - release-process.md: forge-only single source of truth for versioning + dev→main promotion + the invariant→test contract
+- consumer-release.md: single-track (tag-versioned/setuptools-scm) consumer release recipe — `forge-release` usage + the stable public Python import surface
 - customizing-precommit.md: adding repo-specific steps to `.githooks/pre-commit`
 - security.md: security policy and review documentation
 - standalone-installers.md: per-installer reference for manual usage (sibling of `install-forge-bootstrap`)
