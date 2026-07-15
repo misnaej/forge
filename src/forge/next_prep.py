@@ -42,6 +42,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from forge.changelog import changelog_lacks_entry
 from forge.config import load_config
 from forge.git_utils import (
     configure_cli_logging,
@@ -108,28 +109,6 @@ def _check_promote_pending_message(
         f"{base_branch} at v{base_ver} ({bump} bump). "
         f"Run /promote (or your repo's equivalent) to open the "
         f"{dev_branch}→{base_branch} release PR."
-    )
-
-
-def _changelog_lacks_entry(changelog_text: str, minor_tag: str) -> bool:
-    """Return True when *changelog_text* has no ``## <minor_tag>`` heading.
-
-    Matches a heading whose version token equals ``minor_tag`` — either
-    ``## v1.6.0 — <date>`` (the Keep-a-Changelog form forge uses) or a
-    bare ``## v1.6.0`` — so the optional date suffix does not defeat the
-    lookup. Drives the non-blocking promotion advisory; see
-    ``docs/release-process.md`` §5.
-
-    Args:
-        changelog_text: Full ``CHANGELOG.md`` contents.
-        minor_tag: Release tag to look for, e.g. ``"v1.6.0"``.
-
-    Returns:
-        ``True`` when no heading for ``minor_tag`` is present.
-    """
-    return not any(
-        line.startswith(f"## {minor_tag} ") or line.strip() == f"## {minor_tag}"
-        for line in changelog_text.splitlines()
     )
 
 
@@ -207,7 +186,7 @@ def _promotion_status_lines(
         "show", f"origin/{dev_branch}:CHANGELOG.md", cwd=repo_root, check=False
     )
     if changelog:
-        missing = [tag for _, tag in staged if _changelog_lacks_entry(changelog, tag)]
+        missing = [tag for _, tag in staged if changelog_lacks_entry(changelog, tag)]
         if missing:
             lines.append(
                 f"⚠️  CHANGELOG.md (origin/{dev_branch}) has no entry for "

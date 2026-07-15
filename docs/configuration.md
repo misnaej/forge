@@ -115,6 +115,12 @@ different scope. `forge-config --list` shows the resolved keys.
 |---|---|---|---|
 | `enabled` | `false` | Opt into the `cli_wiring` pre-commit step: every `[project.scripts]` entry must be reachable from a wiring source (install bootstrap, pre-commit, audit, hooks, agents, skills…). | Your repo ships `[project.scripts]` and follows forge's layout and you want unreachable CLIs caught. |
 
+## `[tool.forge.agent_doc]`
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `path` | unset (step self-skips) | Repo-relative path of a hand-maintained agent-architecture doc; setting it opts into the `agent_doc` pre-commit step (`verify-forge-agent-doc`: full agent/skill coverage, no dangling hook/CLI/skill references). | You keep an agent-architecture doc and want drift caught at commit time. |
+
 ## `[tool.forge.hooks]` — Claude Code safety hooks
 
 Read by the **shell** safety hooks (not the Python config surface), so

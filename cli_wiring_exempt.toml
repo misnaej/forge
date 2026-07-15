@@ -6,3 +6,6 @@ reason = "CI/local reporting convenience invoked from the CI recipe and ad-hoc a
 
 [exempt."forge-check-main-tags"]
 reason = "Forge-private release tooling invoked by the /promote skill (.claude/skills/promote/, not a grepped wiring source); run by a human at the minor-boundary promotion, not from a pre-commit/hook/bootstrap path."
+
+[exempt."forge-release"]
+reason = "Consumer-facing release orchestrator for single-track tag-versioned repos; run by a human at release time, not from a pre-commit/hook/bootstrap path (forge itself uses the rolling-next flow instead)."

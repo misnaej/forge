@@ -441,6 +441,23 @@ options:
                         separated).
 ```
 
+## forge-release
+
+```text
+usage: forge-release [-h] --bump {major,minor,patch} [--dry-run]
+
+Cut a vX.Y.Z release tag for a single-track, tag-versioned (setuptools-scm)
+repo: clean tree + on base branch + CHANGELOG entry present, then annotated
+tag + push.
+
+options:
+  -h, --help            show this help message and exit
+  --bump {major,minor,patch}
+                        Semver increment to apply to the latest v* tag.
+  --dry-run             Report the tag that would be cut and exit without
+                        tagging.
+```
+
 ## forge-slow-tests-report
 
 ```text

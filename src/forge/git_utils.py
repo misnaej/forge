@@ -110,6 +110,38 @@ def parse_semver(version: str) -> tuple[int, int, int] | None:
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
+def next_version(latest_tag: str | None, bump: str) -> str:
+    """Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
+
+    Pure semver arithmetic — no git. Public API for tag-versioned
+    (setuptools-scm) consumer repos composing a release flow off
+    :func:`latest_v_tag`, and the version source for ``forge-release``.
+
+    Args:
+        latest_tag: Latest release tag (e.g. ``"v1.2.3"``; bare ``"1.2.3"``
+            accepted). ``None`` — or a tag :func:`parse_semver` cannot
+            read — is treated as a ``v0.0.0`` base, so a repo with no
+            releases yet gets ``v0.1.0`` from a ``"minor"`` bump.
+        bump: One of ``"major"``, ``"minor"``, ``"patch"``.
+
+    Returns:
+        The bumped tag, always ``v``-prefixed (``"v1.2.3"`` + ``"minor"``
+        → ``"v1.3.0"``).
+
+    Raises:
+        ValueError: When *bump* is not a recognized increment name.
+    """
+    major, minor, patch = parse_semver(latest_tag or "") or (0, 0, 0)
+    if bump == "major":
+        return f"v{major + 1}.0.0"
+    if bump == "minor":
+        return f"v{major}.{minor + 1}.0"
+    if bump == "patch":
+        return f"v{major}.{minor}.{patch + 1}"
+    msg = f"unknown bump {bump!r}: expected 'major', 'minor', or 'patch'"
+    raise ValueError(msg)
+
+
 def latest_v_tag(root: Path) -> str | None:
     """Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
 

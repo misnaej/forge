@@ -29,10 +29,10 @@ from __future__ import annotations
 
 import argparse
 import logging
-import re
 import sys
 from pathlib import Path
 
+from forge.changelog import release_headings
 from forge.config import load_config
 from forge.git_utils import configure_cli_logging, parse_semver, run_git
 
@@ -41,19 +41,6 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 _CHANGELOG = "CHANGELOG.md"
-_HEADING_RE = re.compile(r"^##\s+(v\d+\.\d+\.\d+)\b", re.MULTILINE)
-
-
-def _headings(text: str) -> set[str]:
-    """Return the set of ``## v<semver>`` release headings in *text*.
-
-    Args:
-        text: CHANGELOG markdown body.
-
-    Returns:
-        Each ``vX.Y.Z`` named in a level-2 release heading; empty when none.
-    """
-    return set(_HEADING_RE.findall(text))
 
 
 def _base_is_ancestor(repo_root: Path, base_ref: str) -> bool:
@@ -125,8 +112,8 @@ def main() -> int:
         logger.info("(no %s on %s — skipped)", _CHANGELOG, base_ref)
         return 0
 
-    base_headings = _headings(base_changelog)
-    local_headings = _headings(changelog.read_text(encoding="utf-8"))
+    base_headings = release_headings(base_changelog)
+    local_headings = release_headings(changelog.read_text(encoding="utf-8"))
     missing = sorted(
         base_headings - local_headings, key=lambda tag: parse_semver(tag) or (0, 0, 0)
     )
