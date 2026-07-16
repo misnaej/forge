@@ -1310,7 +1310,7 @@ def test_step_typecheck_default_pyrefly(
 
     monkeypatch.setattr(precommit, "_run", _run)
     result = precommit.step_typecheck(tmp_path)
-    assert captured["cmd"][:2] == ["pyrefly", "check"]
+    assert captured["cmd"][:3] == ["pyrefly", "check", "--"]
     assert result.passed
     assert result.non_blocking
 
@@ -1360,6 +1360,169 @@ def test_step_typecheck_drops_option_like_paths(
     assert result.skipped
     assert result.passed
     assert ran == []  # pyrefly never invoked with the injected flag
+
+
+def test_step_typecheck_diff_scope_builds_prefix_from_resolved_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Diff scope forwards a `(root/,)` prefix and the resolved repo_root.
+
+    MOCK SETUP: `[tool.forge.typecheck].paths = ["src"]` resolves the scan
+    root; `get_modified_files` is stubbed to capture its kwargs instead of
+    shelling out to git, returning one file under that root.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.precommit]\nscope = "diff"\n\n'
+        '[tool.forge.typecheck]\npaths = ["src"]\n',
+    )
+    _present(monkeypatch)
+    captured: dict[str, object] = {}
+
+    def _fake_get_modified_files(**kwargs: object) -> list[str]:
+        captured.update(kwargs)
+        return ["src/a.py"]
+
+    monkeypatch.setattr(precommit, "get_modified_files", _fake_get_modified_files)
+    run_captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        run_captured["cmd"] = cmd
+        return True, "0 errors"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    precommit.step_typecheck(tmp_path)
+    assert captured["prefix"] == ("src/",)
+    assert captured["repo_root"] == tmp_path
+    assert run_captured["cmd"] == ["pyrefly", "check", "--", "src/a.py"]
+
+
+def test_step_typecheck_diff_scope_root_dot_disables_prefix_filter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `paths = ["."]` root disables the prefix filter (whole diff eligible)."""
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.precommit]\nscope = "diff"\n\n'
+        '[tool.forge.typecheck]\npaths = ["."]\n',
+    )
+    _present(monkeypatch)
+    captured: dict[str, object] = {}
+
+    def _fake_get_modified_files(**kwargs: object) -> list[str]:
+        captured.update(kwargs)
+        return ["a.py"]
+
+    monkeypatch.setattr(precommit, "get_modified_files", _fake_get_modified_files)
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, "0 errors"))
+    precommit.step_typecheck(tmp_path)
+    assert captured["prefix"] is None
+
+
+def test_step_typecheck_diff_scope_multi_root_prefixes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multiple `paths` roots each become their own `root/` prefix entry."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "lib").mkdir()
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.precommit]\nscope = "diff"\n\n'
+        '[tool.forge.typecheck]\npaths = ["src", "lib"]\n',
+    )
+    _present(monkeypatch)
+    captured: dict[str, object] = {}
+
+    def _fake_get_modified_files(**kwargs: object) -> list[str]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(precommit, "get_modified_files", _fake_get_modified_files)
+    precommit.step_typecheck(tmp_path)
+    assert captured["prefix"] == ("src/", "lib/")
+
+
+def test_step_typecheck_diff_scope_skips_when_no_modified_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Diff scope skips cleanly before `require_cli` when nothing modified.
+
+    MOCK SETUP: pyrefly is absent from PATH — proves the skip fires before
+    the CLI presence check, so an empty diff never demands pyrefly be
+    installed.
+    """
+    (tmp_path / "src").mkdir()
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.precommit]\nscope = "diff"\n\n'
+        '[tool.forge.typecheck]\npaths = ["src"]\n',
+    )
+    monkeypatch.setattr(precommit, "get_modified_files", lambda **_kw: [])
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    result = precommit.step_typecheck(tmp_path)
+    assert result.skipped
+    assert result.passed
+    assert "(no modified files in scope — skipped)" in result.output
+
+
+def test_step_typecheck_diff_scope_filters_deleted_files_from_disk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deleted-on-disk modified file is dropped before the pyrefly invocation."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "kept.py").write_text("x = 1\n", encoding="utf-8")
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.precommit]\nscope = "diff"\n\n'
+        '[tool.forge.typecheck]\npaths = ["src"]\n',
+    )
+    _present(monkeypatch)
+    monkeypatch.setattr(
+        precommit,
+        "get_modified_files",
+        lambda **_kw: ["src/deleted.py", "src/kept.py"],
+    )
+    run_captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        run_captured["cmd"] = cmd
+        return True, "0 errors"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    precommit.step_typecheck(tmp_path)
+    assert run_captured["cmd"][3:] == ["src/kept.py"]
+
+
+def test_step_typecheck_diff_scope_skips_when_all_modified_files_deleted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Skip when every modified file in scope was deleted, not just when none matched.
+
+    MOCK SETUP: pyrefly is absent from PATH — same skip-before-require_cli
+    contract as the empty-diff case, exercised here via a diff that names
+    one file which no longer exists on disk.
+    """
+    (tmp_path / "src").mkdir()
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.precommit]\nscope = "diff"\n\n'
+        '[tool.forge.typecheck]\npaths = ["src"]\n',
+    )
+    monkeypatch.setattr(precommit, "get_modified_files", lambda **_kw: ["src/gone.py"])
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    result = precommit.step_typecheck(tmp_path)
+    assert result.skipped
+    assert result.passed
+    assert "(no modified files in scope — skipped)" in result.output
 
 
 def test_step_doctest_drops_paths_escaping_repo(
