@@ -205,6 +205,33 @@ def _resolve_scope(repo_root: Path, step: str) -> str:
     return SCOPE_ALL
 
 
+def _diff_scope_files(repo_root: Path, roots: list[str]) -> list[str]:
+    """Modified ``.py`` files under *roots*, for a diff-scoped direct-invoked step.
+
+    The shared file selection for steps that invoke a third-party binary
+    directly (no forge wrapper CLI to own it — see
+    ``docs/step-invocation.md``): restrict the diff to the step's resolved
+    roots so ``diff`` always selects a subset of what ``all`` would check,
+    then drop paths deleted on disk (deletions still appear in
+    ``git diff --name-only``). A root of ``"."`` disables the prefix
+    filter — every modified file is in scope.
+
+    Args:
+        repo_root: Git repo root.
+        roots: The step's resolved scan roots (from
+            :func:`forge.config.resolve_tool_roots`).
+
+    Returns:
+        Repo-relative paths of modified files under *roots* that still
+        exist on disk. Empty when nothing in scope changed — the caller
+        decides whether that is a skip.
+    """
+    norm = [p.rstrip("/") for p in roots]
+    prefixes = None if "." in norm else tuple(f"{p}/" for p in norm)
+    modified = get_modified_files(prefix=prefixes, repo_root=repo_root)
+    return [f for f in modified if (repo_root / f).is_file()]
+
+
 def _run(
     cmd: list[str],
     cwd: Path,
@@ -1342,11 +1369,7 @@ def step_typecheck(repo_root: Path) -> StepResult:
             skipped=True,
         )
     if _resolve_scope(repo_root, "typecheck") == SCOPE_DIFF:
-        roots = [p.rstrip("/") for p in paths]
-        prefixes = None if "." in roots else tuple(f"{p}/" for p in roots)
-        modified = get_modified_files(prefix=prefixes, repo_root=repo_root)
-        # Deletions appear in the diff but no longer exist on disk.
-        paths = [f for f in modified if (repo_root / f).is_file()]
+        paths = _diff_scope_files(repo_root, paths)
         if not paths:
             return StepResult(
                 name="typecheck",
