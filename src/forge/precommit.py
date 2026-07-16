@@ -71,8 +71,10 @@ from forge import config, pip_audit_json
 from forge.config import resolve_model_section
 from forge.git_utils import (
     SCOPE_ALL,
+    SCOPE_DIFF,
     VALID_SCOPES,
     emit,
+    get_modified_files,
     latest_v_tag,
     parse_semver,
     read_local_plugin_version,
@@ -1297,16 +1299,23 @@ def step_doctest(repo_root: Path) -> StepResult:
 
 
 def step_typecheck(repo_root: Path) -> StepResult:
-    """Run pyrefly over the source tree (opt-in).
+    """Run pyrefly over the resolved scope (opt-in).
 
     pyrefly is forge's type checker — same Astral model as ruff (single
     Rust binary, pyproject-native, reads/migrates ``[tool.mypy]`` config),
     so it slots into forge's existing toolchain with no Node runtime.
-    Scans the roots from :func:`forge.config.resolve_tool_roots` (granular
+    Scope is ``all`` by default — the roots from
+    :func:`forge.config.resolve_tool_roots` (granular
     ``[tool.forge.typecheck].paths`` → ``[tool.forge].source_dirs`` → smart
-    auto-detect), skipping when none resolve. Non-blocking unless
-    ``blocking = true``: a type-checker false positive that refuses a commit
-    trains ``--no-verify``, so the gate is advisory by default.
+    auto-detect) — and switchable to ``diff`` per ``[tool.forge.precommit]``,
+    see :func:`_resolve_scope`. ``diff`` checks only the modified files
+    *under those same roots* (unlike the sibling diff steps, which take the
+    whole diff), so it always selects a subset of what ``all`` would check.
+    Caveat: pyrefly's explicit-file mode ignores ``project_excludes`` from
+    ``pyrefly.toml`` — a consumer relying on that key should keep this step
+    on ``all``. Non-blocking unless ``blocking = true``: a type-checker
+    false positive that refuses a commit trains ``--no-verify``, so the
+    gate is advisory by default.
 
     Opt-in only — runs when listed in ``[tool.forge.precommit] enable``.
     When opted in but ``pyrefly`` is absent, fails loudly (the consumer
@@ -1318,7 +1327,7 @@ def step_typecheck(repo_root: Path) -> StepResult:
     Returns:
         ``StepResult`` mirroring pyrefly's exit code; ``non_blocking`` is
         the inverse of ``blocking``. Skipped (passing) when no source dirs
-        resolve.
+        resolve, or in ``diff`` scope when no modified files fall under them.
 
     Raises:
         SystemExit: If ``pyrefly`` is not on PATH.
@@ -1332,8 +1341,21 @@ def step_typecheck(repo_root: Path) -> StepResult:
             output="(no source dirs detected — skipped)",
             skipped=True,
         )
+    if _resolve_scope(repo_root, "typecheck") == SCOPE_DIFF:
+        roots = [p.rstrip("/") for p in paths]
+        prefixes = None if "." in roots else tuple(f"{p}/" for p in roots)
+        modified = get_modified_files(prefix=prefixes, repo_root=repo_root)
+        # Deletions appear in the diff but no longer exist on disk.
+        paths = [f for f in modified if (repo_root / f).is_file()]
+        if not paths:
+            return StepResult(
+                name="typecheck",
+                passed=True,
+                output="(no modified files in scope — skipped)",
+                skipped=True,
+            )
     require_cli("pyrefly", caller="forge-precommit")
-    passed, output = _run(["pyrefly", "check", *paths], cwd=repo_root)
+    passed, output = _run(["pyrefly", "check", "--", *paths], cwd=repo_root)
     return StepResult(
         name="typecheck", passed=passed, output=output, non_blocking=not blocking
     )
