@@ -30,12 +30,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from forge.config import resolve_tool_roots
+from forge.config import resolve_tool_roots, select_diff_files
 from forge.git_utils import (
     SCOPE_DIFF,
     VALID_SCOPES,
     configure_cli_logging,
-    get_modified_files,
     require_cli,
     stage_modified_paths,
     write_step_log,
@@ -112,7 +111,7 @@ def main() -> int:
 
     repo_root = Path.cwd()
     if args.scope == SCOPE_DIFF:
-        modified = get_modified_files()
+        modified = select_diff_files(repo_root)
         if not modified:
             write_step_log(repo_root, "ruff", "(no modified files — skipped)")
             logger.info("No modified files vs main at %s", repo_root)

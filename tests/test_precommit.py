@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-from forge import precommit
+from forge import config, precommit
 from forge.pip_audit_json import AuditRun
 
 
@@ -1386,7 +1386,7 @@ def test_step_typecheck_diff_scope_builds_prefix_from_resolved_roots(
         captured.update(kwargs)
         return ["src/a.py"]
 
-    monkeypatch.setattr(precommit, "get_modified_files", _fake_get_modified_files)
+    monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
     run_captured: dict[str, list[str]] = {}
 
     def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
@@ -1418,7 +1418,7 @@ def test_step_typecheck_diff_scope_root_dot_disables_prefix_filter(
         captured.update(kwargs)
         return ["a.py"]
 
-    monkeypatch.setattr(precommit, "get_modified_files", _fake_get_modified_files)
+    monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
     monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, "0 errors"))
     precommit.step_typecheck(tmp_path)
     assert captured["prefix"] is None
@@ -1443,7 +1443,7 @@ def test_step_typecheck_diff_scope_multi_root_prefixes(
         captured.update(kwargs)
         return []
 
-    monkeypatch.setattr(precommit, "get_modified_files", _fake_get_modified_files)
+    monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
     precommit.step_typecheck(tmp_path)
     assert captured["prefix"] == ("src/", "lib/")
 
@@ -1464,7 +1464,7 @@ def test_step_typecheck_diff_scope_skips_when_no_modified_files(
         '[tool.forge.precommit]\nscope = "diff"\n\n'
         '[tool.forge.typecheck]\npaths = ["src"]\n',
     )
-    monkeypatch.setattr(precommit, "get_modified_files", lambda **_kw: [])
+    monkeypatch.setattr(config, "get_modified_files", lambda **_kw: [])
     monkeypatch.setattr(shutil, "which", lambda _name: None)
     result = precommit.step_typecheck(tmp_path)
     assert result.skipped
@@ -1486,7 +1486,7 @@ def test_step_typecheck_diff_scope_filters_deleted_files_from_disk(
     )
     _present(monkeypatch)
     monkeypatch.setattr(
-        precommit,
+        config,
         "get_modified_files",
         lambda **_kw: ["src/deleted.py", "src/kept.py"],
     )
@@ -1517,7 +1517,7 @@ def test_step_typecheck_diff_scope_skips_when_all_modified_files_deleted(
         '[tool.forge.precommit]\nscope = "diff"\n\n'
         '[tool.forge.typecheck]\npaths = ["src"]\n',
     )
-    monkeypatch.setattr(precommit, "get_modified_files", lambda **_kw: ["src/gone.py"])
+    monkeypatch.setattr(config, "get_modified_files", lambda **_kw: ["src/gone.py"])
     monkeypatch.setattr(shutil, "which", lambda _name: None)
     result = precommit.step_typecheck(tmp_path)
     assert result.skipped

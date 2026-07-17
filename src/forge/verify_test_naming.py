@@ -44,9 +44,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from forge.config import (
-    filter_excluded,
     load_config,
     read_pyproject_raw,
+    select_diff_files,
     tracked_files_under_roots,
 )
 from forge.git_utils import (
@@ -54,7 +54,6 @@ from forge.git_utils import (
     VALID_SCOPES,
     capturing_to_step_log,
     configure_cli_logging,
-    get_modified_files,
     repo_root,
 )
 
@@ -596,8 +595,7 @@ def _resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list
             return [str(test_file)]
     if scope == SCOPE_ALL:
         return tracked_files_under_roots(repo_root, _test_scan_roots(repo_root))
-    exclude = load_config(repo_root).exclude
-    return filter_excluded(get_modified_files(prefix=("test/", "tests/")), exclude)
+    return select_diff_files(repo_root, roots=["test", "tests"], apply_exclude=True)
 
 
 def _scan_files(

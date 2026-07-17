@@ -80,9 +80,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from forge.config import (
-    filter_excluded,
-    load_config,
     resolve_tool_roots,
+    select_diff_files,
     tracked_files_under_roots,
 )
 from forge.git_utils import (
@@ -90,7 +89,6 @@ from forge.git_utils import (
     VALID_SCOPES,
     capturing_to_step_log,
     configure_cli_logging,
-    get_modified_files,
 )
 
 
@@ -1194,9 +1192,7 @@ def main() -> int:
             )
             py_files = tracked_files_under_roots(repo_root, roots)
         else:
-            py_files = filter_excluded(
-                get_modified_files(), load_config(repo_root).exclude
-            )
+            py_files = select_diff_files(repo_root, apply_exclude=True)
 
         py_files = sorted(set(py_files))
 
