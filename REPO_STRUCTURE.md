@@ -251,6 +251,7 @@ Forge's own bootstrap tooling (not a consumer pattern):
 - release-process.md: forge-only single source of truth for versioning + dev→main promotion + the invariant→test contract
 - consumer-release.md: single-track (tag-versioned/setuptools-scm) consumer release recipe — `forge-release` usage + the stable public Python import surface
 - customizing-precommit.md: adding repo-specific steps to `.githooks/pre-commit`
+- step-invocation.md: contributor rule for how pre-commit steps invoke their tools — orchestrator is the contract; standalone CLI only when it *is* the tool or does real orchestration
 - security.md: security policy and review documentation
 - standalone-installers.md: per-installer reference for manual usage (sibling of `install-forge-bootstrap`)
 

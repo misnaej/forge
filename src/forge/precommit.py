@@ -1313,7 +1313,7 @@ def step_doctest(repo_root: Path) -> StepResult:
         )
     require_cli("pytest", caller="forge-precommit")
     passed, output = _run(
-        ["pytest", "--doctest-modules", "--doctest-continue-on-failure", *paths],
+        ["pytest", "--doctest-modules", "--doctest-continue-on-failure", "--", *paths],
         cwd=repo_root,
     )
     # pytest>=8 prints "no tests ran" when zero examples were collected
