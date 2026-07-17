@@ -215,6 +215,7 @@ _61 modules, 614 symbols._
 - `resolve_tool_roots(repo_root: Path, tool: str, *, include_tests: bool = False) -> list[str]` — Resolve the scan roots a layout-consuming *tool* should use.
 - `filter_under_roots(files: list[str], roots: list[str]) -> list[str]` — Keep only *files* that live under one of *roots* (source-tree scoping).
 - `filter_excluded(files: list[str], globs: list[str]) -> list[str]` — Drop *files* matching any exclude *glob* (the ``[tool.forge].exclude`` half).
+- `select_diff_files(repo_root: Path, *, roots: list[str] | None = None, apply_exclude: bool = False, drop_deleted: bool = True, suffix: str = '.py') -> list[str]` — Select the modified files a diff-scoped step should check.
 - `tracked_files_under_roots(repo_root: Path, roots: list[str], *, suffix: str = '.py') -> list[str]` — Select the git-tracked files under *roots*, minus repo-wide excludes.
 - `_warn_untracked_under_roots(repo_root: Path, roots: list[str], suffix: str) -> None` _(internal)_ — Warn (dev-loop only) when untracked source under *roots* goes unscanned.
 
@@ -627,7 +628,6 @@ _61 modules, 614 symbols._
 - `class StepDef` — A registry entry: a step's name, its function, and whether it runs by default.
 - `_forge_step_config(repo_root: Path, step: str) -> dict[str, object]` _(internal)_ — Return the ``[tool.forge.<step>]`` table, or ``{}`` when absent.
 - `_resolve_scope(repo_root: Path, step: str) -> str` _(internal)_ — Resolve a step's file-selection scope: per-step override → global → ``"all"``.
-- `_diff_scope_files(repo_root: Path, roots: list[str]) -> list[str]` _(internal)_ — Modified ``.py`` files under *roots*, for a diff-scoped direct-invoked step.
 - `_run(cmd: list[str], cwd: Path) -> tuple[bool, str]` _(internal)_ — Run *cmd* and capture combined output.
 - `_declared_scripts(repo_root: Path) -> tuple[str, set[str]] | None` _(internal)_ — Return ``(package_name, declared [project.scripts] names)`` or ``None``.
 - `_installed_console_scripts(name: str) -> set[str] | None` _(internal)_ — Return *name*'s installed ``console_scripts`` entry-point names.

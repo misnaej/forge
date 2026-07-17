@@ -1,16 +1,15 @@
 """Tests for the verify-forge-docstrings CLI public API.
 
-# MOCKING STRATEGY (for the scope-filter tests added for issue #83):
-# ``main()`` obtains its file lists via ``get_tracked_files`` / ``get_modified_files``
-# (both patched at ``forge.verify_docstrings.*``), scopes them via
-# ``resolve_tool_roots`` (patched to return controlled roots), and drops
-# repo-wide excludes via ``load_config`` (patched to return a ForgeConfig with
-# a controlled ``exclude`` list). ``verify_file`` is patched to capture which
-# absolute paths it is called with and to return ``[]`` (no issues). Real files
-# are created under ``tmp_path`` for the survivors so they pass the
-# ``full_path.exists()`` guard inside ``main()``. ``monkeypatch.chdir(tmp_path)``
-# ensures ``repo_root = Path.cwd()`` resolves to ``tmp_path`` for the entire
-# execution of ``main()``.
+# MOCKING STRATEGY:
+# ``main()`` selects its file lists via ``tracked_files_under_roots`` /
+# ``select_diff_files`` (patched at ``forge.verify_docstrings.*``); the latter
+# calls ``get_modified_files`` / ``load_config`` as module-local names inside
+# ``forge.config``, so those two are patched there instead. ``verify_file`` is
+# patched to capture which absolute paths it is called with and to return
+# ``[]`` (no issues). Real files are created under ``tmp_path`` for the
+# survivors so they pass the ``full_path.exists()`` guard inside ``main()``.
+# ``monkeypatch.chdir(tmp_path)`` ensures ``repo_root = Path.cwd()`` resolves
+# to ``tmp_path`` for the entire execution of ``main()``.
 """
 
 from __future__ import annotations
@@ -19,6 +18,7 @@ import logging
 import sys
 from typing import TYPE_CHECKING
 
+from forge import config
 from forge.config import ForgeConfig
 from forge.verify_docstrings import main, verify_file
 
@@ -142,8 +142,7 @@ def test_scope_all_uses_tracked_files(
         lambda *_a, **_kw: used.append("all") or [],
     )
     monkeypatch.setattr(
-        "forge.verify_docstrings.get_modified_files",
-        lambda: used.append("diff") or [],
+        config, "get_modified_files", lambda **_kw: used.append("diff") or []
     )
     monkeypatch.setattr(sys, "argv", ["verify-forge-docstrings", "--scope", "all"])
     assert main() == 0
@@ -162,8 +161,7 @@ def test_scope_diff_uses_modified_files(
         lambda *_a, **_kw: used.append("all") or [],
     )
     monkeypatch.setattr(
-        "forge.verify_docstrings.get_modified_files",
-        lambda: used.append("diff") or [],
+        config, "get_modified_files", lambda **_kw: used.append("diff") or []
     )
     monkeypatch.setattr(sys, "argv", ["verify-forge-docstrings", "--scope", "diff"])
     assert main() == 0
@@ -246,12 +244,12 @@ def test_scope_diff_respects_exclude_glob(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "forge.verify_docstrings.get_modified_files",
-        lambda: ["src/b.py", "src/auto.gen.py"],
+        config,
+        "get_modified_files",
+        lambda **_kw: ["src/b.py", "src/auto.gen.py"],
     )
     monkeypatch.setattr(
-        "forge.verify_docstrings.load_config",
-        lambda _: ForgeConfig(exclude=["*.gen.py"]),
+        config, "load_config", lambda _: ForgeConfig(exclude=["*.gen.py"])
     )
     monkeypatch.setattr("forge.verify_docstrings.verify_file", _fake_verify)
     monkeypatch.setattr(sys, "argv", ["verify-forge-docstrings", "--scope", "diff"])

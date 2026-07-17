@@ -19,7 +19,7 @@ import logging
 import sys
 from typing import TYPE_CHECKING
 
-from forge import verify_test_naming
+from forge import config, verify_test_naming
 
 
 if TYPE_CHECKING:
@@ -216,8 +216,7 @@ def test_scope_all_uses_tracked_files(
         lambda *_a, **_kw: used.append("all") or [],
     )
     monkeypatch.setattr(
-        "forge.verify_test_naming.get_modified_files",
-        lambda **_kw: used.append("diff") or [],
+        config, "get_modified_files", lambda **_kw: used.append("diff") or []
     )
     monkeypatch.setattr(sys, "argv", ["verify-forge-test-naming", "--scope", "all"])
     assert verify_test_naming.main() == 0
@@ -337,11 +336,13 @@ def test_test_scan_roots_excludes_source_dirs(tmp_path: Path) -> None:
 # _resolve_test_files (issue #83 — file selection with root + exclude filters)
 # ---------------------------------------------------------------------------
 
-# MOCKING STRATEGY: get_tracked_files and get_modified_files are patched at
-# forge.verify_test_naming.* (where _resolve_test_files looks them up via
-# ``from forge.git_utils import ...``). A pyproject.toml or on-disk tests/
-# dir is written to tmp_path so load_config and _test_scan_roots produce
-# controlled roots and exclude lists. No real git state is required.
+# MOCKING STRATEGY: _resolve_test_files delegates to
+# ``tracked_files_under_roots`` / ``select_diff_files`` (patched at
+# ``forge.verify_test_naming.*`` where they're looked up); ``get_modified_files``
+# is patched at ``forge.config.*`` instead, since ``select_diff_files`` calls it
+# as a module-local name there. A pyproject.toml or on-disk tests/ dir is
+# written to tmp_path so load_config and _test_scan_roots produce controlled
+# roots and exclude lists. No real git state is required.
 
 
 def test_resolve_test_files_scope_all_delegates_to_tracked_files_under_roots(
@@ -390,10 +391,50 @@ def test_resolve_test_files_scope_diff_respects_exclude(
     (tmp_path / "pyproject.toml").write_text(
         '[tool.forge]\nexclude = ["*.gen_test.py"]\n'
     )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_widget.py").write_text("")
+    (tmp_path / "tests" / "auto.gen_test.py").write_text("")
     monkeypatch.setattr(
-        "forge.verify_test_naming.get_modified_files",
+        config,
+        "get_modified_files",
         lambda **_kw: ["tests/test_widget.py", "tests/auto.gen_test.py"],
     )
     result = verify_test_naming._resolve_test_files(tmp_path, None, "diff")
     assert "tests/test_widget.py" in result
     assert "tests/auto.gen_test.py" not in result
+
+
+def test_resolve_test_files_scope_diff_drops_files_outside_test_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """scope=diff restricts the diff to files under the test/ or tests/ roots.
+
+    SCENARIO: the diff includes one file under tests/ and one file under
+        src/ (outside any test root).
+    MOCK SETUP: get_modified_files is faked to apply its real `prefix`
+        contract — filtering its fixed two-file list down to entries
+        starting with a prefix it's called with — so the assertion proves
+        select_diff_files actually forwards `("test/", "tests/")`, not just
+        that some other filter happens to drop src/foo.py. Both files are
+        created on disk so the drop_deleted filter cannot be the reason
+        either survives or is dropped.
+    EXPECTED BEHAVIOR: tests/test_widget.py survives; src/foo.py is dropped
+        by the prefix restriction before it ever reaches filter_excluded.
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_widget.py").write_text("")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "foo.py").write_text("")
+
+    def _fake_get_modified_files(**kwargs: object) -> list[str]:
+        files = ["tests/test_widget.py", "src/foo.py"]
+        prefix = kwargs.get("prefix")
+        if prefix:
+            files = [f for f in files if f.startswith(prefix)]
+        return files
+
+    monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
+    result = verify_test_naming._resolve_test_files(tmp_path, None, "diff")
+    assert "tests/test_widget.py" in result
+    assert "src/foo.py" not in result

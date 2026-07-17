@@ -79,6 +79,20 @@ process** and must uphold those invariants itself:
   installed.
 - **`run_context` still applies** (FOUNDATION §15) — no inline CI checks.
 
+### Diff-scope selection is centralized
+
+Do not hand-roll `get_modified_files` post-processing. Every diff-scoped
+step — CLI-backed or direct — routes through
+[`forge.config.select_diff_files`](../src/forge/config.py), the single home
+for turning a git diff into a step's file list. Its knobs stay per-step *by
+design*: `roots` (restrict to scan roots, or whole diff), `apply_exclude`
+(the `[tool.forge].exclude` globs — only the two whole-tree steps set it;
+ruff/typecheck own their exclusions elsewhere), and `drop_deleted` (default
+on — a file deleted in the diff still appears in `git diff --name-only` but
+errors when handed to a tool that opens it). This is what threads `repo_root`
+correctly and drops deletions uniformly, so a new diff-scoped step gets both
+guarantees for free instead of re-deriving them.
+
 ## Promotion path
 
 A direct-invoked tool is promoted to a forge CLI **the moment it gains

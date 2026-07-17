@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from forge import fix_ruff
+from forge import config, fix_ruff
 
 
 if TYPE_CHECKING:
@@ -73,8 +73,10 @@ def test_scope_diff_runs_ruff_on_modified_files(
 ) -> None:
     """`--scope diff` targets the modified-file set, not the source dirs."""
     monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "changed.py").write_text("x = 1\n", encoding="utf-8")
     calls = _stub_subprocess(monkeypatch)
-    monkeypatch.setattr(fix_ruff, "get_modified_files", lambda: ["src/changed.py"])
+    monkeypatch.setattr(config, "get_modified_files", lambda **_kw: ["src/changed.py"])
     monkeypatch.setattr("sys.argv", ["fix-forge-ruff", "--scope", "diff"])
     assert fix_ruff.main() == 0
     format_calls = [c for c in calls if c[:2] == ["ruff", "format"]]
@@ -87,7 +89,7 @@ def test_scope_diff_skips_when_no_modified_files(
     """`--scope diff` with an empty diff is a clean skip (no ruff run)."""
     monkeypatch.chdir(tmp_path)
     calls = _stub_subprocess(monkeypatch)
-    monkeypatch.setattr(fix_ruff, "get_modified_files", list)
+    monkeypatch.setattr(config, "get_modified_files", lambda **_kw: [])
     monkeypatch.setattr("sys.argv", ["fix-forge-ruff", "--scope", "diff"])
     assert fix_ruff.main() == 0
     assert not [c for c in calls if c[:1] == ["ruff"]]
