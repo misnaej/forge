@@ -577,9 +577,10 @@ def _resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list
             ``"diff"`` (test files modified vs main).
 
     Returns:
-        List of repo-relative test file paths. For ``"all"``, the tracked set
-        is scoped to the repo's test roots (:func:`_test_scan_roots`); both
-        scopes then drop repo-wide ``[tool.forge].exclude`` globs.
+        List of repo-relative test file paths. Both scopes resolve the same
+        test roots via :func:`_test_scan_roots` (so a custom
+        ``[tool.forge].test_dirs`` applies uniformly, not just to ``"all"``)
+        and drop repo-wide ``[tool.forge].exclude`` globs.
     """
     if target is not None:
         test_file = Path(target)
@@ -593,9 +594,10 @@ def _resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list
             return [str(test_file.relative_to(repo_root))]
         except ValueError:
             return [str(test_file)]
+    roots = _test_scan_roots(repo_root)
     if scope == SCOPE_ALL:
-        return tracked_files_under_roots(repo_root, _test_scan_roots(repo_root))
-    return select_diff_files(repo_root, roots=["test", "tests"], apply_exclude=True)
+        return tracked_files_under_roots(repo_root, roots)
+    return select_diff_files(repo_root, roots=roots, apply_exclude=True)
 
 
 def _scan_files(

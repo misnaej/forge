@@ -438,3 +438,41 @@ def test_resolve_test_files_scope_diff_drops_files_outside_test_prefix(
     result = verify_test_naming._resolve_test_files(tmp_path, None, "diff")
     assert "tests/test_widget.py" in result
     assert "src/foo.py" not in result
+
+
+def test_resolve_test_files_scope_diff_honors_custom_test_dirs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """scope=diff resolves [tool.forge].test_dirs instead of a hardcoded prefix.
+
+    SCENARIO: the repo configures a non-default test root (``suite/``); a
+        test file modified under it must be selected in diff scope — the old
+        hardcoded ``test/``/``tests/`` prefix would have wrongly dropped it.
+    MOCK SETUP: get_modified_files is faked to apply its real `prefix`
+        contract — filtering its fixed two-file list down to entries
+        starting with a prefix it's called with — so the assertion proves
+        the resolved prefix is actually ``("suite/",)``, not just that some
+        other filter happens to drop src/foo.py. Both files are created on
+        disk so the drop_deleted filter cannot be the reason either survives
+        or is dropped.
+    EXPECTED BEHAVIOR: suite/test_thing.py survives; src/foo.py is dropped
+        by the prefix restriction before it ever reaches filter_excluded.
+    """
+    (tmp_path / "pyproject.toml").write_text('[tool.forge]\ntest_dirs = ["suite"]\n')
+    (tmp_path / "suite").mkdir()
+    (tmp_path / "suite" / "test_thing.py").write_text("")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "foo.py").write_text("")
+
+    def _fake_get_modified_files(**kwargs: object) -> list[str]:
+        files = ["suite/test_thing.py", "src/foo.py"]
+        prefix = kwargs.get("prefix")
+        if prefix:
+            files = [f for f in files if f.startswith(prefix)]
+        return files
+
+    monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
+    result = verify_test_naming._resolve_test_files(tmp_path, None, "diff")
+    assert "suite/test_thing.py" in result
+    assert "src/foo.py" not in result
