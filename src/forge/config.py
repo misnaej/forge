@@ -27,7 +27,12 @@ import tomllib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from forge.git_utils import get_modified_files, get_tracked_files, get_untracked_files
+from forge.git_utils import (
+    get_modified_files,
+    get_tracked_files,
+    get_untracked_files,
+    path_escapes_repo,
+)
 from forge.run_context import is_non_interactive
 
 
@@ -476,19 +481,17 @@ def select_diff_files(
         if "." not in norm:
             prefixes = tuple(f"{r}/" for r in norm)
     modified = get_modified_files(prefix=prefixes, suffix=suffix, repo_root=repo_root)
-    repo_real = repo_root.resolve()
     files: list[str] = []
     for f in modified:
-        candidate = (repo_root / f).resolve()
         # Defense-in-depth: a `git diff` path is always repo-relative, but a
         # diff-scoped step must never hand its tool a path that escapes the
         # repo. Drop (don't raise) — this is a library selector shared by four
         # in-process steps, and an escaping path is an anomaly to skip, not
         # grounds to abort the whole pre-commit. Untrusted argv keeps its
         # fail-loud guard in `fix_ruff._validate_paths` (the `scope=all` path).
-        if candidate != repo_real and repo_real not in candidate.parents:
+        if path_escapes_repo(repo_root, f):
             continue
-        if drop_deleted and not candidate.is_file():
+        if drop_deleted and not (repo_root / f).is_file():
             continue
         files.append(f)
     if apply_exclude:

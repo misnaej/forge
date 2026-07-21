@@ -35,6 +35,7 @@ from forge.git_utils import (
     SCOPE_DIFF,
     VALID_SCOPES,
     configure_cli_logging,
+    path_escapes_repo,
     require_cli,
     stage_modified_paths,
     write_step_log,
@@ -66,10 +67,8 @@ def _validate_paths(repo_root: Path, paths: list[str]) -> list[str]:
         SystemExit: If any entry resolves outside *repo_root*. Exit 2
             (config error).
     """
-    repo_real = repo_root.resolve()
     for raw in paths:
-        candidate = (repo_root / raw).resolve()
-        if repo_real != candidate and repo_real not in candidate.parents:
+        if path_escapes_repo(repo_root, raw):
             sys.stderr.write(
                 f"fix-forge-ruff: refusing path outside repo root: {raw}\n"
             )

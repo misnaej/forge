@@ -681,6 +681,31 @@ def get_untracked_files(
     return sorted(set(_parse_files(out, suffix=suffix, prefix=prefix)))
 
 
+def path_escapes_repo(repo_root: Path, path: str) -> bool:
+    """Return True if *path* resolves outside *repo_root*.
+
+    The one repo-containment predicate shared by every caller that must not
+    hand a tool a path escaping the repo: it resolves ``repo_root / path``
+    (following ``..``, absolute-path replacement, and symlinks) and checks
+    the result is neither the repo root itself nor a descendant of it. Only
+    the *action* on a True result differs by caller — the diff-scope selector
+    (:func:`forge.config.select_diff_files`) drops the offender, while
+    ``fix_ruff._validate_paths`` raises on it (untrusted argv is a fail-loud
+    boundary). Keeping the test itself in one place means a future edge case
+    (a new symlink or platform quirk) is fixed once, not per call site.
+
+    Args:
+        repo_root: Git repo root the *path* is interpreted relative to.
+        path: Candidate path (repo-relative string, or absolute).
+
+    Returns:
+        True when the resolved path lies outside *repo_root*.
+    """
+    repo_real = repo_root.resolve()
+    candidate = (repo_root / path).resolve()
+    return candidate != repo_real and repo_real not in candidate.parents
+
+
 def stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]:
     """``git add`` tracked files modified within *pathspecs*.
 
