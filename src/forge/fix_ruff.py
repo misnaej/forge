@@ -111,12 +111,14 @@ def main() -> int:
 
     repo_root = Path.cwd()
     if args.scope == SCOPE_DIFF:
-        modified = select_diff_files(repo_root)
-        if not modified:
+        # select_diff_files already guarantees every path resolves inside the
+        # repo, so no _validate_paths pass is needed here (unlike the argv
+        # branch below, whose positional dirs are untrusted input).
+        source_dirs = select_diff_files(repo_root)
+        if not source_dirs:
             write_step_log(repo_root, "ruff", "(no modified files — skipped)")
             logger.info("No modified files vs main at %s", repo_root)
             return 0
-        source_dirs = _validate_paths(repo_root, modified)
     else:
         roots = args.dirs or resolve_tool_roots(repo_root, "ruff", include_tests=True)
         source_dirs = _validate_paths(repo_root, roots)
