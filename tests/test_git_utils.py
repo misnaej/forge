@@ -942,3 +942,47 @@ def test_stage_modified_paths_real_git_stages_modified_tracked_file(
         check=True,
     )
     assert "docs/api-digest.md" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# path_escapes_repo
+# ---------------------------------------------------------------------------
+
+
+def test_path_escapes_repo_in_repo_file_false(tmp_path: Path) -> None:
+    """A plain in-repo relative path is not an escape."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "ok.py").write_text("")
+    assert git_utils.path_escapes_repo(tmp_path, "src/ok.py") is False
+
+
+def test_path_escapes_repo_dotdot_traversal_true(tmp_path: Path) -> None:
+    """A ``..`` segment that climbs above repo_root is an escape."""
+    assert git_utils.path_escapes_repo(tmp_path, "../evil.py") is True
+
+
+def test_path_escapes_repo_absolute_outside_true(tmp_path: Path) -> None:
+    """An absolute path replaces repo_root in the join and escapes."""
+    assert git_utils.path_escapes_repo(tmp_path, "/etc/passwd") is True
+
+
+def test_path_escapes_repo_nested_in_repo_false(tmp_path: Path) -> None:
+    """A deeply nested in-repo path is not an escape."""
+    assert git_utils.path_escapes_repo(tmp_path, "a/b/c/deep.py") is False
+
+
+def test_path_escapes_repo_symlink_escape_true(tmp_path: Path) -> None:
+    """A symlink inside repo_root resolving outside it is an escape.
+
+    Creates ``tmp_path/link`` as a symlink to a sibling directory outside
+    ``tmp_path`` (the repo root), then resolves a path through it —
+    ``Path.resolve()`` follows the symlink out of the repo.
+    """
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    link = tmp_path / "link"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlink creation not permitted on this platform")
+    assert git_utils.path_escapes_repo(tmp_path, "link/x.py") is True

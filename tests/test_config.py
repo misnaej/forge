@@ -769,3 +769,28 @@ def test_select_diff_files_empty_diff_returns_empty(
     """An empty diff (`get_modified_files` returns nothing) yields `[]`."""
     monkeypatch.setattr(config, "get_modified_files", lambda **_kw: [])
     assert select_diff_files(tmp_path) == []
+
+
+def test_select_diff_files_drops_paths_escaping_repo_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A modified-file path that resolves outside `repo_root` is dropped.
+
+    SCENARIO: get_modified_files returns one in-repo path and one path that
+        escapes the repo root via `..`; only the in-repo path survives.
+    MOCK SETUP: get_modified_files is patched to a fake returning
+        ["src/ok.py", "../evil.py"]. Only `tmp_path/src/ok.py` is created on
+        disk, so drop_deleted keeps it — `../evil.py` is never created, but
+        the repo-containment check drops it before drop_deleted even runs,
+        so its on-disk state is irrelevant.
+    EXPECTED BEHAVIOR: select_diff_files returns ["src/ok.py"]; "../evil.py"
+        is excluded by the repo-containment filter.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "ok.py").write_text("")
+    monkeypatch.setattr(
+        config, "get_modified_files", lambda **_kw: ["src/ok.py", "../evil.py"]
+    )
+    result = select_diff_files(tmp_path, roots=None)
+    assert result == ["src/ok.py"]
+    assert "../evil.py" not in result

@@ -27,7 +27,12 @@ import tomllib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from forge.git_utils import get_modified_files, get_tracked_files, get_untracked_files
+from forge.git_utils import (
+    get_modified_files,
+    get_tracked_files,
+    get_untracked_files,
+    path_escapes_repo,
+)
 from forge.run_context import is_non_interactive
 
 
@@ -466,17 +471,29 @@ def select_diff_files(
         suffix: File suffix filter, forwarded to ``get_modified_files``.
 
     Returns:
-        Repo-relative modified-file paths matching the selected filters.
-        Empty when nothing in scope changed — the caller decides the skip.
+        Repo-relative modified-file paths matching the selected filters,
+        every one guaranteed to resolve inside *repo_root*. Empty when
+        nothing in scope changed — the caller decides the skip.
     """
     prefixes: tuple[str, ...] | None = None
     if roots is not None:
         norm = [r.rstrip("/") for r in roots]
         if "." not in norm:
             prefixes = tuple(f"{r}/" for r in norm)
-    files = get_modified_files(prefix=prefixes, suffix=suffix, repo_root=repo_root)
-    if drop_deleted:
-        files = [f for f in files if (repo_root / f).is_file()]
+    modified = get_modified_files(prefix=prefixes, suffix=suffix, repo_root=repo_root)
+    files: list[str] = []
+    for f in modified:
+        # Defense-in-depth: a `git diff` path is always repo-relative, but a
+        # diff-scoped step must never hand its tool a path that escapes the
+        # repo. Drop (don't raise) — this is a library selector shared by four
+        # in-process steps, and an escaping path is an anomaly to skip, not
+        # grounds to abort the whole pre-commit. Untrusted argv keeps its
+        # fail-loud guard in `fix_ruff._validate_paths` (the `scope=all` path).
+        if path_escapes_repo(repo_root, f):
+            continue
+        if drop_deleted and not (repo_root / f).is_file():
+            continue
+        files.append(f)
     if apply_exclude:
         files = filter_excluded(files, load_config(repo_root).exclude)
     return files

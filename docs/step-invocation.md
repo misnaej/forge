@@ -89,9 +89,13 @@ design*: `roots` (restrict to scan roots, or whole diff), `apply_exclude`
 (the `[tool.forge].exclude` globs — only the two whole-tree steps set it;
 ruff/typecheck own their exclusions elsewhere), and `drop_deleted` (default
 on — a file deleted in the diff still appears in `git diff --name-only` but
-errors when handed to a tool that opens it). This is what threads `repo_root`
-correctly and drops deletions uniformly, so a new diff-scoped step gets both
-guarantees for free instead of re-deriving them.
+errors when handed to a tool that opens it). Every returned path is also
+guaranteed to resolve inside `repo_root` — an anomalous escaping entry is
+dropped, not raised, since this is a shared library selector, not a
+fail-loud argv boundary (see the function's docstring for the full
+rationale). This is what threads `repo_root` correctly, drops deletions
+uniformly, and guards against repo-escaping paths, so a new diff-scoped step
+gets all three guarantees for free instead of re-deriving them.
 
 ## Promotion path
 
