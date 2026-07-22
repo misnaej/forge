@@ -14,7 +14,10 @@ Operations (in order, each idempotent):
    then ``git pull --ff-only`` — sync to latest.
 3. **Optional auto-tag** (``--tag``): if ``.claude-plugin/plugin.json``
    has a ``version`` strictly ahead of the latest ``v*`` tag, tag the
-   merge commit and push the tag. Forge's rolling-next workflow.
+   merge commit and push the tag. Forge's rolling-next workflow. On a
+   single-track repo with no plugin manifest the flag warns and skips
+   (per-merge tagging is a plugin-repo pattern — ``forge-release`` cuts
+   release tags there).
 4. **Prune stale branches** (``--prune-branches``, default ON): delete
    local branches whose remote shows ``[origin/...: gone]``. Uses
    ``git branch -d`` (safe) — never ``-D``.
