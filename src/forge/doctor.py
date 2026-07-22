@@ -25,6 +25,7 @@ Usage:
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -127,6 +128,46 @@ def _check_gh() -> list[CheckResult]:
             detail="ok" if auth.returncode == 0 else "run `gh auth login`",
         ),
     ]
+
+
+# A plugin name is joined under ``~/.claude/plugins/cache/`` as a single
+# path component, so it must be a bare directory name. The charset excludes
+# both path separators (``/`` / ``\``) — so the value can never split into
+# multiple components — and, by requiring a leading alphanumeric, a bare
+# ``..``. Those two together fully bar a parent-escaping ``..`` component
+# from ever forming; a ``..`` *substring* like ``a..b`` is a harmless
+# literal directory name and is allowed. ``\Z`` (not ``$``) also rejects a
+# trailing newline, which ``$`` would admit.
+_SAFE_PLUGIN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def _validate_plugin_name(name: str) -> str:
+    """Argparse ``type`` for ``--plugin-name`` — reject a cache-escaping value.
+
+    ``--plugin-name`` is joined straight onto ``~/.claude/plugins/cache/`` as
+    one path component, so a value carrying a path separator (which would
+    split it into multiple components, one possibly ``..``) or a bare ``..``
+    could point the plugin reads at an arbitrary directory (#200). Fail
+    loudly at parse time rather than silently reading the wrong tree.
+
+    Args:
+        name: The raw ``--plugin-name`` argument.
+
+    Returns:
+        *name* unchanged when it is a safe bare plugin identifier.
+
+    Raises:
+        argparse.ArgumentTypeError: When *name* is empty, does not start with
+            an alphanumeric, or contains a path separator.
+    """
+    if not _SAFE_PLUGIN_NAME_RE.match(name):
+        msg = (
+            f"invalid --plugin-name {name!r}: expected a bare plugin name "
+            "(starts alphanumeric; letters, digits, '.', '_', '-'; no path "
+            "separators)"
+        )
+        raise argparse.ArgumentTypeError(msg)
+    return name
 
 
 def _find_plugin_dir(plugin_name: str) -> Path | None:
@@ -628,6 +669,7 @@ def main() -> int:
     parser.add_argument(
         "--plugin-name",
         default="forge",
+        type=_validate_plugin_name,
         help=(
             "Claude Code plugin name to check (default: forge). The plugin "
             "checks self-skip if no install is found, so consumers who don't "
