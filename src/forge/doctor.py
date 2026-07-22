@@ -25,6 +25,7 @@ Usage:
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -127,6 +128,41 @@ def _check_gh() -> list[CheckResult]:
             detail="ok" if auth.returncode == 0 else "run `gh auth login`",
         ),
     ]
+
+
+# A plugin name is joined under ``~/.claude/plugins/cache/`` before any
+# filesystem read, so it must be a bare directory name — never a path.
+# Starts with an alphanumeric (rejects a leading dot / ``-``), then allows
+# only ``.`` / ``_`` / ``-``; the explicit ``..`` check below rejects an
+# embedded traversal token the charset alone would admit (e.g. ``a..b``).
+_SAFE_PLUGIN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _validate_plugin_name(name: str) -> str:
+    """Argparse ``type`` for ``--plugin-name`` — reject a cache-escaping value.
+
+    ``--plugin-name`` is joined straight onto ``~/.claude/plugins/cache/``,
+    so a value carrying a path separator or ``..`` could point the plugin
+    reads at an arbitrary directory (#200). Fail loudly at parse time rather
+    than silently reading the wrong tree.
+
+    Args:
+        name: The raw ``--plugin-name`` argument.
+
+    Returns:
+        *name* unchanged when it is a safe bare plugin identifier.
+
+    Raises:
+        argparse.ArgumentTypeError: When *name* is empty, contains a path
+            separator, or contains a ``..`` traversal token.
+    """
+    if not _SAFE_PLUGIN_NAME_RE.match(name) or ".." in name:
+        msg = (
+            f"invalid --plugin-name {name!r}: expected a bare plugin name "
+            "(letters, digits, '.', '_', '-'; no path separators or '..')"
+        )
+        raise argparse.ArgumentTypeError(msg)
+    return name
 
 
 def _find_plugin_dir(plugin_name: str) -> Path | None:
@@ -628,6 +664,7 @@ def main() -> int:
     parser.add_argument(
         "--plugin-name",
         default="forge",
+        type=_validate_plugin_name,
         help=(
             "Claude Code plugin name to check (default: forge). The plugin "
             "checks self-skip if no install is found, so consumers who don't "

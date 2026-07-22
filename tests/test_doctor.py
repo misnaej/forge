@@ -8,9 +8,12 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from typing import TYPE_CHECKING
 from unittest.mock import patch
+
+import pytest
 
 from forge import doctor, precommit
 from tests.conftest import make_fake_run
@@ -18,8 +21,6 @@ from tests.conftest import make_fake_run
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def test_check_clis_returns_one_result_per_expected_cli() -> None:
@@ -81,6 +82,37 @@ def test_check_gh_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
     results = doctor._check_gh()
     assert results[0].passed
     assert results[1].passed
+
+
+# --- _validate_plugin_name() (#200) -----------------------------------------
+
+
+def test_validate_plugin_name_accepts_bare_names() -> None:
+    """A bare identifier matching the safe charset passes through unchanged."""
+    for name in ["forge", "myrepo", "my.plugin", "a_b-c"]:
+        assert doctor._validate_plugin_name(name) == name
+
+
+def test_validate_plugin_name_rejects_traversal_and_separators() -> None:
+    """Path separators, '..' tokens, and non-alnum leads raise ArgumentTypeError."""
+    for name in ["../../etc", "a/b", "..", ".hidden", "-x", "a..b", "", "foo/.."]:
+        with pytest.raises(argparse.ArgumentTypeError):
+            doctor._validate_plugin_name(name)
+
+
+def test_doctor_cli_rejects_unsafe_plugin_name() -> None:
+    """A traversal --plugin-name fails argparse's type= validator at parse time.
+
+    argparse exits with code 2 (usage error) when a ``type=`` callable
+    raises ``ArgumentTypeError``, before any check runs (#200).
+    """
+    argv = ["forge-doctor", "--plugin-name", "../../etc"]
+    with (
+        patch.object(doctor.sys, "argv", argv),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        doctor.main()
+    assert exc_info.value.code == 2
 
 
 def test_read_json_missing_file(tmp_path: Path) -> None:
