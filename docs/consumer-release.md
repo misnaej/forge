@@ -32,15 +32,9 @@ Then it computes the tag (`next_version(latest_v_tag(...), bump)`),
 creates it annotated on `HEAD`, and pushes it to `origin`. `--dry-run`
 reports the tag that would be cut and stops.
 
-A typical release is therefore:
-
-```bash
-git switch main && git pull --ff-only
-# CHANGELOG's top `## vX.Y.Z` entry is already release-ready
-# (see "Changelog convention" below)
-forge-release --bump minor --dry-run   # confirm the computed tag
-forge-release --bump minor             # tag + push
-```
+The full release recipe — including which steps an agent may run —
+is under ["Cutting a release — agent/human boundary"](#cutting-a-release--agenthuman-boundary)
+below.
 
 No config is required: a repo without `[tool.forge]` defaults to
 single-track on `main`.
@@ -64,9 +58,9 @@ in spirit; the deliberate divergences are listed at the end.
 - **No `## Unreleased` section.** The top heading always names the
   version **about to be released** — the CHANGELOG *declares* the next
   version, and the tag `forge-release` cuts *confirms* it. This is the
-  single-track analogue of the rolling-next manifest invariant that
-  plugin repos get from `verify-forge-plugin-version`: the declared
-  next version always leads the latest tag.
+  single-track analogue of forge's own rolling-next invariant
+  ([`release-process.md`](release-process.md), forge-only): the
+  declared next version always leads the latest tag.
 
 ### Per-PR rule
 
