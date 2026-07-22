@@ -17,12 +17,27 @@ Stop immediately and report if any step fails.
 1. **Check for uncommitted work**
    `git status --porcelain`. If ANY output (staged/unstaged/untracked), warn the user with the file list and **stop**.
 
-2. **Refresh main, optionally tag, prune stale branches** — one CLI call:
+2. **Refresh main, optionally tag, prune stale branches** — one CLI
+   call. **Pick the command by repo class first:**
+
    ```bash
+   # Plugin-manifest / dual-track repo (e.g. forge itself):
    forge-next-prep --tag
+
+   # Single-track repo without a plugin manifest (the standard
+   # consumer case) — no --tag; release tags are cut only at release
+   # time via forge-release (docs/consumer-release.md):
+   forge-next-prep
    ```
+
    - `git fetch --prune` → `git checkout main && git pull --ff-only`.
-   - With `--tag`: if `.claude-plugin/plugin.json["version"]` is strictly ahead of the latest `v*` tag, tag the merge commit and push (the rolling-next release pattern). No-op when plugin.json is absent, the version equals the latest tag, or the version is older. Drop `--tag` for repos that don't ship a plugin manifest or that don't follow the rolling-next pattern.
+   - With `--tag` (plugin repos only): if
+     `.claude-plugin/plugin.json["version"]` is strictly ahead of the
+     latest `v*` tag, tag the merge commit and push. Rationale and
+     cadence live in `docs/release-process.md` (forge-only). No-op when
+     the version equals the latest tag or is older. On a single-track
+     repo with no plugin manifest, the CLI warns and skips the tag step
+     — per-merge tagging is not a consumer pattern.
    - Deletes local branches with `[origin/...: gone]` tracking via safe `git branch -d`. Branches with unmerged commits are reported, not deleted by the CLI — the skill then `-D`s any whose PR is confirmed merged (the squash-merge case `-d` cannot detect; see Important Rules). Use `--no-prune-branches` to skip.
    - Exits non-zero (1) when main cannot fast-forward — stop and report.
    - **Align base-branch release tags (dual-track):** then run
