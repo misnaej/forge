@@ -141,6 +141,7 @@ graph LR
     pre_commit_dispatcher -->|"runs --check drift steps"| doc_generators
     installers -->|"bootstrap runs generators"| doc_generators
     audit_suite -->|"imports"| config_shared
+    config_shared -->|"imports"| installers
     doc_generators -->|"imports"| audit_suite
     doc_generators -->|"imports"| config_shared
     doc_generators -->|"imports"| release_tooling
