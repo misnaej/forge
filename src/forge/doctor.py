@@ -14,8 +14,8 @@ Checks:
      c. ``agents/``, ``skills/``, ``claude-hooks/`` directories populated.
   4. Version skew across install surfaces (#184) — the pip package, the
      git-hook sidecar, and the cached plugin should share a version; a
-     lagging surface is flagged with its remediation command (advisory in
-     CI, a real failure at an interactive terminal).
+     lagging surface is reported as an advisory with the exact command to
+     converge it (never fails the exit code — the report line is the signal).
 
 Usage:
     forge-doctor                              # human-readable
@@ -35,9 +35,11 @@ from pathlib import Path
 from forge import config
 from forge.git_utils import emit, parse_semver
 from forge.install_githooks import SIDECAR_NAME as _HOOK_VERSION_SIDECAR
-from forge.run_context import is_non_interactive
 
 
+# Drift is only meaningful across at least two surfaces; a single present
+# surface (e.g. a pip-only consumer with no hooks/plugin) has nothing to
+# compare against and must be skipped, not flagged.
 _MIN_SURFACES_TO_COMPARE = 2
 
 
@@ -311,18 +313,22 @@ def _check_version_skew(
     them. Absent surfaces (no hooks, no plugin — e.g. a pip-only consumer) are
     skipped, not failed.
 
-    Posture: a lagging surface is a **failing** check when a human is at the
-    terminal (loud + actionable), downgraded to advisory ``info`` under
-    :func:`is_non_interactive` — a CI runner legitimately predates an install
-    and must never hard-fail on it (FOUNDATION §15).
+    Posture: a lagging surface is reported as an **advisory** (``info``), never
+    a failure — it carries the remediation but never sways ``forge-doctor``'s
+    exit code, matching the ``under_used_capabilities`` advisory pattern.
+    Advisory-not-failing keeps the exit contract stable across environments (no
+    fail-locally/pass-in-CI split, and no hard-fail on a CI runner that
+    legitimately predates an install — FOUNDATION §15); the remediation line in
+    the report is the actionable signal, not the exit code.
 
     Args:
         repo_root: Repo whose ``.githooks/`` sidecar is read.
         plugin_root: Cache slot for the plugin, or None when uncached / skipped.
 
     Returns:
-        One aligned/advisory ``CheckResult`` when nothing is behind, else one
-        failing result per lagging surface naming its remediation.
+        A single ``version_skew`` result when surfaces align (or too few to
+        compare), else one advisory result per lagging surface naming its
+        remediation.
     """
     raw = {
         "pip package": _surface_pip_version(),
@@ -355,12 +361,11 @@ def _check_version_skew(
             )
         ]
 
-    advisory = is_non_interactive()
     return [
         CheckResult(
             name=f"version_skew:{name.replace(' ', '_')}",
             passed=False,
-            info=advisory,
+            info=True,
             detail=(
                 f"{name} at v{'.'.join(str(n) for n in triple)}, behind current "
                 f"v{cur} — run `{_SKEW_REMEDIATION[name]}`"

@@ -374,11 +374,15 @@ def test_version_skew_aligned_normalizes_dev_suffix(
     assert "aligned at v2.23.1" in results[0].detail
 
 
-def test_version_skew_flags_lagging_surface(
+def test_version_skew_flags_lagging_surface_as_advisory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Lagging plugin cache produces failing version_skew result.
+    """Lagging plugin cache produces an advisory version_skew result.
+
+    A lagging surface is always reported as advisory (``info=True``,
+    ``passed=False``) — it carries the remediation but never sways the exit
+    code, regardless of interactive vs. CI context.
 
     MOCK SETUP: pip + hooks report v2.23.1; the cached plugin.json reports
     the older v2.22.0.
@@ -393,45 +397,16 @@ def test_version_skew_flags_lagging_surface(
         json.dumps({"version": "2.22.0"}), encoding="utf-8"
     )
     monkeypatch.setattr(doctor, "_find_install_dir", lambda _root: install_dir)
-    monkeypatch.setattr(doctor, "is_non_interactive", lambda: False)
 
     results = doctor._check_version_skew(tmp_path, tmp_path)
 
     assert len(results) == 1
     assert results[0].name == "version_skew:plugin_cache"
     assert not results[0].passed
-    assert not results[0].info
+    assert results[0].info  # advisory only — never sways the exit code
     assert "2.22.0" in results[0].detail
     assert "2.23.1" in results[0].detail
     assert "/plugin update forge@forge" in results[0].detail
-
-
-def test_version_skew_lagging_surface_is_advisory_in_ci(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Skew is advisory (info=True) under is_non_interactive().
-
-    MOCK SETUP: identical surface setup to the interactive-failure case,
-    with is_non_interactive patched to True.
-    """
-    monkeypatch.setattr(doctor.metadata, "version", lambda _dist: "2.23.1")
-    githooks = tmp_path / ".githooks"
-    githooks.mkdir()
-    (githooks / doctor._HOOK_VERSION_SIDECAR).write_text("2.23.1", encoding="utf-8")
-    install_dir = tmp_path / "plugin" / "2.22.0"
-    (install_dir / ".claude-plugin").mkdir(parents=True)
-    (install_dir / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"version": "2.22.0"}), encoding="utf-8"
-    )
-    monkeypatch.setattr(doctor, "_find_install_dir", lambda _root: install_dir)
-    monkeypatch.setattr(doctor, "is_non_interactive", lambda: True)
-
-    results = doctor._check_version_skew(tmp_path, tmp_path)
-
-    assert len(results) == 1
-    assert not results[0].passed
-    assert results[0].info  # advisory only — never sways the exit code
 
 
 def test_version_skew_below_two_surfaces_reports_nothing_to_compare(
