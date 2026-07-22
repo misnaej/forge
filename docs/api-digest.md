@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_61 modules, 615 symbols._
+_61 modules, 616 symbols._
 
 ## `forge`
 
@@ -644,6 +644,7 @@ _61 modules, 615 symbols._
 - `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
 - `step_c4(repo_root: Path) -> StepResult` — Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
+- `step_api_digest_check(repo_root: Path) -> StepResult` — Run ``forge-gen-api-digest --check`` — api-digest drift guard (opt-in).
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
 - `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.
 - `_write_audit_sidecar(repo_root: Path, data: dict) -> None` _(internal)_ — Persist pip-audit's parsed JSON to the shared sidecar.

@@ -765,6 +765,57 @@ def step_c4(repo_root: Path) -> StepResult:
     return StepResult(name="c4", passed=passed, output=output)
 
 
+# The api-digest doc path — shared by the non-blocking auto-writer
+# (:data:`_REGEN_DOCS`) and the opt-in blocking drift gate
+# (:func:`step_api_digest_check`) so the two never disagree on which file
+# they operate over.
+_API_DIGEST_DOC = "docs/api-digest.md"
+
+
+def step_api_digest_check(repo_root: Path) -> StepResult:
+    """Run ``forge-gen-api-digest --check`` — api-digest drift guard (opt-in).
+
+    The **blocking** counterpart to the non-blocking ``regen_docs`` step,
+    which auto-writes ``docs/api-digest.md`` but never refuses a commit.
+    Mirrors the ``c4`` step's ``--check`` gate: a repo that opts in has a
+    stale or incomplete digest refused at commit time instead of shipping
+    silently — closing the two paths a stale digest otherwise lands by
+    (``regen_docs`` hitting a non-blocking generator error, or an
+    amended/rebased commit that skipped the hook). Complements rather than
+    replaces the auto-writer; a repo running ``forge-precommit`` in CI also
+    catches the squash-merge case where the local hook never ran.
+
+    Kept opt-in and separate from the auto-writer deliberately: the digest
+    changes on nearly every code PR, so a blocking gate adds a
+    regenerate-before-commit step to routine work — friction the
+    rarely-changing C4 model does not carry.
+
+    Opt-in only — runs when listed in ``[tool.forge.precommit] enable``.
+    Self-skips when ``docs/api-digest.md`` does not exist (a repo not
+    maintaining the digest is not forced to start).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` mirroring the CLI exit code, or a skipped result when
+        no api-digest doc is present.
+
+    Raises:
+        SystemExit: If ``forge-gen-api-digest`` is not on PATH.
+    """
+    if not (repo_root / _API_DIGEST_DOC).exists():
+        return StepResult(
+            name="api_digest_check",
+            passed=True,
+            output=f"(no {_API_DIGEST_DOC} — skipped)",
+            skipped=True,
+        )
+    require_cli("forge-gen-api-digest", caller="forge-precommit")
+    passed, output = _run(["forge-gen-api-digest", "--check"], cwd=repo_root)
+    return StepResult(name="api_digest_check", passed=passed, output=output)
+
+
 # Maximum residual ``pip-audit`` advisories allowed before the WARN
 # escalates to a loud banner. The check is non-blocking either way;
 # above this threshold the output is prefixed with a visible nudge
@@ -1380,10 +1431,13 @@ def step_doc_consistency(repo_root: Path) -> StepResult:
     )
 
 
-# Generators that write a tracked doc but have no drift gate of their own —
-# step_regen_docs keeps each fresh (regenerate + re-stage) when it exists.
+# Generators whose tracked doc is kept fresh non-blockingly by
+# step_regen_docs (regenerate + re-stage). cli-reference.md has no drift
+# gate of its own; api-digest.md has an opt-in one (step_api_digest_check,
+# off by default), so it stays here too — the non-blocking auto-write is the
+# always-on baseline, the gate the strict superset a repo can enable.
 _REGEN_DOCS: tuple[tuple[str, str], ...] = (
-    ("forge-gen-api-digest", "docs/api-digest.md"),
+    ("forge-gen-api-digest", _API_DIGEST_DOC),
     ("forge-gen-cli-reference", "docs/cli-reference.md"),
 )
 
@@ -1392,9 +1446,11 @@ def step_regen_docs(repo_root: Path) -> StepResult:
     """Regenerate the otherwise-unwired generated docs and re-stage them.
 
     ``docs/api-digest.md`` and ``docs/cli-reference.md`` come from
-    deterministic generators but — unlike the C4 model and the commit-types
-    hook — have no drift gate, so they silently rot. This refreshes them the
-    way the ruff step refreshes formatting: regenerate in place, then
+    deterministic generators. ``cli-reference.md`` has no drift gate, so it
+    would silently rot without this; ``api-digest.md`` has only the *opt-in*
+    :func:`step_api_digest_check` gate, so it too relies on this always-on
+    refresh by default. This refreshes them the way the ruff step refreshes
+    formatting: regenerate in place, then
     ``git add`` the result into the commit. Only docs that **already exist**
     are touched (sync, never bootstrap a surprise tracked file in a consumer
     repo). A generator crash warns rather than refusing the commit.
@@ -1612,6 +1668,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("typecheck", step_typecheck, default_on=False),
     StepDef("doc_consistency", step_doc_consistency, default_on=False),
     StepDef("c4", step_c4, default_on=False),
+    StepDef("api_digest_check", step_api_digest_check, default_on=False),
     StepDef("smart_test", step_smart_test, default_on=False),
 )
 

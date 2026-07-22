@@ -1085,6 +1085,7 @@ def test_resolve_steps_default_excludes_opt_in(tmp_path: Path) -> None:
     assert "doctest" not in names
     assert "typecheck" not in names
     assert "doc_consistency" not in names
+    assert "api_digest_check" not in names
 
 
 def test_resolve_steps_enable_adds_opt_in(tmp_path: Path) -> None:
@@ -1523,6 +1524,75 @@ def test_step_typecheck_diff_scope_skips_when_all_modified_files_deleted(
     assert result.skipped
     assert result.passed
     assert "(no modified files in scope — skipped)" in result.output
+
+
+def test_step_api_digest_check_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runs `forge-gen-api-digest --check` and mirrors a passing exit.
+
+    MOCK SETUP: `docs/api-digest.md` present (so the step doesn't skip);
+    the CLI resolves on PATH; ``_run`` captures the command and returns a
+    passing canned result.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api-digest.md").write_text("# API Digest\n", encoding="utf-8")
+    _present(monkeypatch)
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return True, "up to date"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    result = precommit.step_api_digest_check(tmp_path)
+    assert captured["cmd"] == ["forge-gen-api-digest", "--check"]
+    assert result.passed
+    assert not result.non_blocking
+    assert not result.skipped
+
+
+def test_step_api_digest_check_drift_is_blocking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A drifted digest fails the step and stays blocking (refuses commit)."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api-digest.md").write_text("# API Digest\n", encoding="utf-8")
+    _present(monkeypatch)
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (False, "out of sync"))
+    result = precommit.step_api_digest_check(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+
+
+def test_step_api_digest_check_no_doc_is_skipped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No `docs/api-digest.md` skips cleanly without reaching `require_cli`.
+
+    MOCK SETUP: the CLI is absent from PATH — asserting no `SystemExit` is
+    raised proves the skip check runs before `require_cli`.
+    """
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    result = precommit.step_api_digest_check(tmp_path)
+    assert result.skipped
+    assert result.passed
+    assert "(no docs/api-digest.md — skipped)" in result.output
+
+
+def test_step_api_digest_check_missing_cli_exits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An opted-in-but-absent `forge-gen-api-digest` binary fails loudly."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api-digest.md").write_text("# API Digest\n", encoding="utf-8")
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        precommit.step_api_digest_check(tmp_path)
 
 
 def test_step_doctest_drops_paths_escaping_repo(
