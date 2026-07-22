@@ -256,3 +256,198 @@ def test_step_tools_keys_are_opt_in_steps() -> None:
     """
     opt_in = {d.name for d in precommit._STEP_REGISTRY if not d.default_on}
     assert set(doctor._STEP_TOOLS).issubset(opt_in)
+
+
+# --- _surface_*() readers (#184) -------------------------------------------
+
+
+def test_surface_pip_version_reads_installed_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Returns the version string reported by importlib.metadata."""
+    monkeypatch.setattr(doctor.metadata, "version", lambda _dist: "2.23.1")
+    assert doctor._surface_pip_version() == "2.23.1"
+
+
+def test_surface_pip_version_none_when_not_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Returns None when the forge-scripts distribution isn't installed."""
+
+    def _raise(_dist: str) -> str:
+        raise doctor.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(doctor.metadata, "version", _raise)
+    assert doctor._surface_pip_version() is None
+
+
+def test_surface_hook_version_none_when_sidecar_absent(tmp_path: Path) -> None:
+    """No .githooks/.forge-hook-version sidecar → None, not an error."""
+    assert doctor._surface_hook_version(tmp_path) is None
+
+
+def test_surface_hook_version_reads_stripped_sidecar(tmp_path: Path) -> None:
+    """The sidecar's version string is returned with trailing whitespace stripped."""
+    githooks = tmp_path / ".githooks"
+    githooks.mkdir()
+    (githooks / doctor._HOOK_VERSION_SIDECAR).write_text("2.23.1\n", encoding="utf-8")
+    assert doctor._surface_hook_version(tmp_path) == "2.23.1"
+
+
+def test_surface_hook_version_none_when_sidecar_empty(tmp_path: Path) -> None:
+    """An empty (or whitespace-only) sidecar counts as absent."""
+    githooks = tmp_path / ".githooks"
+    githooks.mkdir()
+    (githooks / doctor._HOOK_VERSION_SIDECAR).write_text("   \n", encoding="utf-8")
+    assert doctor._surface_hook_version(tmp_path) is None
+
+
+def test_surface_plugin_version_none_when_plugin_root_none() -> None:
+    """No cached plugin install → None, short-circuiting before any lookup."""
+    assert doctor._surface_plugin_version(None) is None
+
+
+def test_surface_plugin_version_reads_plugin_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prefers the plugin.json "version" field over the install dir name."""
+    install_dir = tmp_path / "forge" / "2.23.1"
+    (install_dir / ".claude-plugin").mkdir(parents=True)
+    (install_dir / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"version": "2.23.1"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(doctor, "_find_install_dir", lambda _root: install_dir)
+    assert doctor._surface_plugin_version(tmp_path) == "2.23.1"
+
+
+def test_surface_plugin_version_falls_back_to_dir_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When plugin.json is missing/unversioned, the install dir name is used."""
+    install_dir = tmp_path / "forge" / "2.23.1"
+    install_dir.mkdir(parents=True)
+    monkeypatch.setattr(doctor, "_find_install_dir", lambda _root: install_dir)
+    assert doctor._surface_plugin_version(tmp_path) == "2.23.1"
+
+
+def test_surface_plugin_version_none_when_no_install_found(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No recognisable install layout under plugin_root → None."""
+    monkeypatch.setattr(doctor, "_find_install_dir", lambda _root: None)
+    assert doctor._surface_plugin_version(tmp_path) is None
+
+
+# --- _check_version_skew() (#184) -------------------------------------------
+
+
+def test_version_skew_aligned_normalizes_dev_suffix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same X.Y.Z across all three surfaces reports aligned, dev-suffix and all.
+
+    MOCK SETUP: pip reports an editable-install dev suffix
+    (``2.23.1.dev2+gabc``), the hook sidecar and plugin.json report bare
+    ``2.23.1`` — parse_semver normalizes all three to the same triple.
+    """
+    monkeypatch.setattr(doctor.metadata, "version", lambda _dist: "2.23.1.dev2+gabc")
+    githooks = tmp_path / ".githooks"
+    githooks.mkdir()
+    (githooks / doctor._HOOK_VERSION_SIDECAR).write_text("2.23.1", encoding="utf-8")
+    install_dir = tmp_path / "plugin" / "2.23.1"
+    (install_dir / ".claude-plugin").mkdir(parents=True)
+    (install_dir / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"version": "2.23.1"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(doctor, "_find_install_dir", lambda _root: install_dir)
+
+    results = doctor._check_version_skew(tmp_path, tmp_path)
+
+    assert len(results) == 1
+    assert results[0].name == "version_skew"
+    assert results[0].passed
+    assert not results[0].info
+    assert "aligned at v2.23.1" in results[0].detail
+
+
+def test_version_skew_flags_lagging_surface_as_advisory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Lagging plugin cache produces an advisory version_skew result.
+
+    A lagging surface is always reported as advisory (``info=True``,
+    ``passed=False``) — it carries the remediation but never sways the exit
+    code, regardless of interactive vs. CI context.
+
+    MOCK SETUP: pip + hooks report v2.23.1; the cached plugin.json reports
+    the older v2.22.0.
+    """
+    monkeypatch.setattr(doctor.metadata, "version", lambda _dist: "2.23.1")
+    githooks = tmp_path / ".githooks"
+    githooks.mkdir()
+    (githooks / doctor._HOOK_VERSION_SIDECAR).write_text("2.23.1", encoding="utf-8")
+    install_dir = tmp_path / "plugin" / "2.22.0"
+    (install_dir / ".claude-plugin").mkdir(parents=True)
+    (install_dir / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"version": "2.22.0"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(doctor, "_find_install_dir", lambda _root: install_dir)
+
+    results = doctor._check_version_skew(tmp_path, tmp_path)
+
+    assert len(results) == 1
+    assert results[0].name == "version_skew:plugin_cache"
+    assert not results[0].passed
+    assert results[0].info  # advisory only — never sways the exit code
+    assert "2.22.0" in results[0].detail
+    assert "2.23.1" in results[0].detail
+    assert "/plugin update forge@forge" in results[0].detail
+
+
+def test_version_skew_below_two_surfaces_reports_nothing_to_compare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Single surface present (pip only) returns info result."""
+    monkeypatch.setattr(doctor.metadata, "version", lambda _dist: "2.23.1")
+
+    results = doctor._check_version_skew(tmp_path, None)
+
+    assert len(results) == 1
+    assert results[0].name == "version_skew"
+    assert results[0].passed
+    assert results[0].info
+    assert "pip package" in results[0].detail
+    assert "nothing to compare" in results[0].detail
+
+
+def test_version_skew_drops_unparseable_surface(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unparseable version is excluded from comparison.
+
+    MOCK SETUP: pip + hooks report the same valid v2.23.1; the plugin
+    install dir name is "garbage" (unparseable) with no plugin.json, so
+    parse_semver returns None for it and it's dropped from comparison —
+    the remaining two surfaces still align.
+    """
+    monkeypatch.setattr(doctor.metadata, "version", lambda _dist: "2.23.1")
+    githooks = tmp_path / ".githooks"
+    githooks.mkdir()
+    (githooks / doctor._HOOK_VERSION_SIDECAR).write_text("2.23.1", encoding="utf-8")
+    install_dir = tmp_path / "plugin" / "garbage"
+    install_dir.mkdir(parents=True)
+    monkeypatch.setattr(doctor, "_find_install_dir", lambda _root: install_dir)
+
+    results = doctor._check_version_skew(tmp_path, tmp_path)
+
+    assert len(results) == 1
+    assert results[0].passed
+    assert not results[0].info
+    assert "aligned at v2.23.1" in results[0].detail

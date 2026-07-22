@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_61 modules, 616 symbols._
+_61 modules, 620 symbols._
 
 ## `forge`
 
@@ -241,6 +241,10 @@ _61 modules, 616 symbols._
 - `_read_json(path: Path) -> tuple[dict, str | None]` _(internal)_ — Read a JSON file. Returns (data, error_message_or_None).
 - `_find_install_dir(plugin_root: Path) -> Path | None` _(internal)_ — Walk the Claude Code cache layout to find the active plugin install.
 - `_version_key(name: str) -> tuple[int, ...]` _(internal)_ — Return a sortable key for a version-shaped directory name.
+- `_surface_pip_version() -> str | None` _(internal)_ — Version of the installed ``forge-scripts`` package, or None if absent.
+- `_surface_hook_version(repo_root: Path) -> str | None` _(internal)_ — Forge version recorded in the git-hook sidecar, or None when absent.
+- `_surface_plugin_version(plugin_root: Path | None) -> str | None` _(internal)_ — Version of the cached Claude Code plugin install, or None when absent.
+- `_check_version_skew(repo_root: Path, plugin_root: Path | None) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
 - `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
 - `_check_plugin_contents(plugin_root: Path | None) -> list[CheckResult]` _(internal)_ — Verify the expected plugin sub-directories contain files.
 - `_check_step_tools(repo_root: Path) -> list[CheckResult]` _(internal)_ — Verify the external tool for each enabled pre-commit step is on PATH.

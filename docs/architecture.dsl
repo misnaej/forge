@@ -27,6 +27,7 @@ workspace "Forge" "Python CI/CD & code-quality foundation: deterministic CLIs + 
         pre_commit_dispatcher -> doc_generators "runs --check drift steps"
         installers -> doc_generators "bootstrap runs generators"
         audit_suite -> config_shared "imports"
+        config_shared -> installers "imports"
         doc_generators -> audit_suite "imports"
         doc_generators -> config_shared "imports"
         doc_generators -> release_tooling "imports"

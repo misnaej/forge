@@ -12,6 +12,10 @@ Checks:
      a. Plugin directory found under ``~/.claude/plugins/cache/``.
      b. ``plugin.json`` and ``marketplace.json`` present and well-formed.
      c. ``agents/``, ``skills/``, ``claude-hooks/`` directories populated.
+  4. Version skew across install surfaces (#184) — the pip package, the
+     git-hook sidecar, and the cached plugin should share a version; a
+     lagging surface is reported as an advisory with the exact command to
+     converge it (never fails the exit code — the report line is the signal).
 
 Usage:
     forge-doctor                              # human-readable
@@ -29,7 +33,14 @@ from importlib import metadata
 from pathlib import Path
 
 from forge import config
-from forge.git_utils import emit
+from forge.git_utils import emit, parse_semver
+from forge.install_githooks import SIDECAR_NAME as _HOOK_VERSION_SIDECAR
+
+
+# Drift is only meaningful across at least two surfaces; a single present
+# surface (e.g. a pip-only consumer with no hooks/plugin) has nothing to
+# compare against and must be skipped, not flagged.
+_MIN_SURFACES_TO_COMPARE = 2
 
 
 @dataclass
@@ -223,6 +234,145 @@ def _version_key(name: str) -> tuple[int, ...]:
         return tuple(int(p) for p in parts)
     except ValueError:
         return (0,)
+
+
+# One forge install exposes its version through three independently-written
+# surfaces; when they drift, generated artifacts differ between contributors
+# and the hooks may run older logic than the CLIs (#184). Remediation per
+# surface — the single command that re-converges that one onto the current line.
+_SKEW_REMEDIATION = {
+    "pip package": "forge-upgrade --apply",
+    "git hooks": "install-forge-githooks",
+    "plugin cache": "/plugin update forge@forge (then /reload-plugins)",
+}
+
+
+def _surface_pip_version() -> str | None:
+    """Version of the installed ``forge-scripts`` package, or None if absent."""
+    try:
+        return metadata.version(DIST_NAME)
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def _surface_hook_version(repo_root: Path) -> str | None:
+    """Forge version recorded in the git-hook sidecar, or None when absent.
+
+    Reads the gitignored ``.githooks/.forge-hook-version`` sidecar written by
+    ``install-forge-githooks`` (the tracked hook *marker* deliberately omits
+    the version to stay byte-stable across bumps — see that CLI). A repo whose
+    hooks aren't forge-managed simply has no sidecar and is skipped.
+
+    Args:
+        repo_root: Directory whose ``.githooks/`` is inspected.
+
+    Returns:
+        The recorded version string (may carry a ``.devN+g<sha>`` suffix), or
+        None when the sidecar is missing or empty.
+    """
+    sidecar = repo_root / ".githooks" / _HOOK_VERSION_SIDECAR
+    if not sidecar.is_file():
+        return None
+    return sidecar.read_text(encoding="utf-8").strip() or None
+
+
+def _surface_plugin_version(plugin_root: Path | None) -> str | None:
+    """Version of the cached Claude Code plugin install, or None when absent.
+
+    Prefers the ``version`` field of the installed ``plugin.json`` (robust to
+    a flattened cache layout) and falls back to the cache directory name.
+
+    Args:
+        plugin_root: Cache slot for the plugin, or None when uncached.
+
+    Returns:
+        The cached plugin's version string, or None when no install is found.
+    """
+    if plugin_root is None:
+        return None
+    install_dir = _find_install_dir(plugin_root)
+    if install_dir is None:
+        return None
+    data, err = _read_json(install_dir / ".claude-plugin" / "plugin.json")
+    if err is None and data.get("version"):
+        return str(data["version"])
+    return install_dir.name
+
+
+def _check_version_skew(
+    repo_root: Path,
+    plugin_root: Path | None,
+) -> list[CheckResult]:
+    """Compare forge's version across its install surfaces and flag drift (#184).
+
+    Reads the three surfaces a single forge install presents — the pip
+    ``forge-scripts`` package, the git-hook sidecar, and the cached Claude Code
+    plugin — normalizes each with :func:`parse_semver` (so a ``.devN+g<sha>``
+    editable version and a bare-semver plugin compare cleanly), and reports the
+    ones lagging the highest (current) line with the exact command to converge
+    them. Absent surfaces (no hooks, no plugin — e.g. a pip-only consumer) are
+    skipped, not failed.
+
+    Posture: a lagging surface is reported as an **advisory** (``info``), never
+    a failure — it carries the remediation but never sways ``forge-doctor``'s
+    exit code, matching the ``under_used_capabilities`` advisory pattern.
+    Advisory-not-failing keeps the exit contract stable across environments (no
+    fail-locally/pass-in-CI split, and no hard-fail on a CI runner that
+    legitimately predates an install — FOUNDATION §15); the remediation line in
+    the report is the actionable signal, not the exit code.
+
+    Args:
+        repo_root: Repo whose ``.githooks/`` sidecar is read.
+        plugin_root: Cache slot for the plugin, or None when uncached / skipped.
+
+    Returns:
+        A single ``version_skew`` result when surfaces align (or too few to
+        compare), else one advisory result per lagging surface naming its
+        remediation.
+    """
+    raw = {
+        "pip package": _surface_pip_version(),
+        "git hooks": _surface_hook_version(repo_root),
+        "plugin cache": _surface_plugin_version(plugin_root),
+    }
+    parsed = {name: parse_semver(v) for name, v in raw.items() if v is not None}
+    comparable = {name: t for name, t in parsed.items() if t is not None}
+    if len(comparable) < _MIN_SURFACES_TO_COMPARE:
+        only = next(iter(comparable), "no")
+        return [
+            CheckResult(
+                name="version_skew",
+                passed=True,
+                info=True,
+                detail=f"only the {only} surface is present — nothing to compare",
+            )
+        ]
+
+    current = max(comparable.values())
+    behind = {name: t for name, t in comparable.items() if t < current}
+    cur = ".".join(str(n) for n in current)
+    if not behind:
+        aligned = ", ".join(sorted(comparable))
+        return [
+            CheckResult(
+                name="version_skew",
+                passed=True,
+                detail=f"aligned at v{cur} ({aligned})",
+            )
+        ]
+
+    return [
+        CheckResult(
+            name=f"version_skew:{name.replace(' ', '_')}",
+            passed=False,
+            info=True,
+            detail=(
+                f"{name} at v{'.'.join(str(n) for n in triple)}, behind current "
+                f"v{cur} — run `{_SKEW_REMEDIATION[name]}`"
+            ),
+        )
+        for name, triple in sorted(behind.items())
+    ]
 
 
 def _check_plugin_manifests(
@@ -499,6 +649,7 @@ def main() -> int:
     results.extend(_check_gh())
     results.extend(_check_step_tools(Path.cwd()))
 
+    plugin_root: Path | None = None
     if not args.skip_plugin_checks:
         plugin_check = _check_plugin_install(args.plugin_name)
         results.append(plugin_check)
@@ -508,6 +659,7 @@ def main() -> int:
         results.extend(_check_plugin_manifests(plugin_root, args.plugin_name))
         results.extend(_check_plugin_contents(plugin_root))
 
+    results.extend(_check_version_skew(Path.cwd(), plugin_root))
     results.extend(_check_under_used_capabilities(Path.cwd()))
 
     if args.json:
