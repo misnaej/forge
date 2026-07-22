@@ -30,12 +30,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from forge.config import resolve_tool_roots
+from forge.config import resolve_tool_roots, select_diff_files
 from forge.git_utils import (
     SCOPE_DIFF,
     VALID_SCOPES,
     configure_cli_logging,
-    get_modified_files,
+    path_escapes_repo,
     require_cli,
     stage_modified_paths,
     write_step_log,
@@ -67,10 +67,8 @@ def _validate_paths(repo_root: Path, paths: list[str]) -> list[str]:
         SystemExit: If any entry resolves outside *repo_root*. Exit 2
             (config error).
     """
-    repo_real = repo_root.resolve()
     for raw in paths:
-        candidate = (repo_root / raw).resolve()
-        if repo_real != candidate and repo_real not in candidate.parents:
+        if path_escapes_repo(repo_root, raw):
             sys.stderr.write(
                 f"fix-forge-ruff: refusing path outside repo root: {raw}\n"
             )
@@ -112,12 +110,14 @@ def main() -> int:
 
     repo_root = Path.cwd()
     if args.scope == SCOPE_DIFF:
-        modified = get_modified_files()
-        if not modified:
+        # select_diff_files already guarantees every path resolves inside the
+        # repo, so no _validate_paths pass is needed here (unlike the argv
+        # branch below, whose positional dirs are untrusted input).
+        source_dirs = select_diff_files(repo_root)
+        if not source_dirs:
             write_step_log(repo_root, "ruff", "(no modified files — skipped)")
             logger.info("No modified files vs main at %s", repo_root)
             return 0
-        source_dirs = _validate_paths(repo_root, modified)
     else:
         roots = args.dirs or resolve_tool_roots(repo_root, "ruff", include_tests=True)
         source_dirs = _validate_paths(repo_root, roots)

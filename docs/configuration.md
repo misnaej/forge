@@ -140,16 +140,16 @@ available as `forge-precommit --only <names>` / `--skip <names>`.
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
 | `disable` | `[]` | Force-skip these default steps by name (e.g. `["pip_audit"]`). | You want a default step off repo-wide. |
-| `enable` | `[]` | Opt into normally-off steps by name: `doctest`, `typecheck`, `doc_consistency`. | You want one of the opt-in steps below to run. |
+| `enable` | `[]` | Opt into normally-off steps by name: `doctest`, `typecheck`, `doc_consistency`, `api_digest_check`. | You want one of the opt-in steps below to run. |
 | `scope` | `"all"` | Default file scope for the scope-aware steps — `"all"` (whole tracked source tree) or `"diff"` (only files modified vs main). | You want a faster, diff-only gate repo-wide (trades completeness for speed). |
 | `scope_overrides` | `{}` | Per-step scope, overriding `scope`. Keys are step names; values are `"all"` / `"diff"`. | You want most steps full-repo but one (or vice-versa) on the diff. |
 
 ### Changing a step's scope
 
-Three of forge's steps select files: **`ruff`**, **`docstring_verification`**,
-and **`test_naming_check`**. Each runs over the **whole tracked tree by
-default** (`scope = "all"`) — the strict floor. To scope one (or all) to the
-diff vs main instead:
+Four of forge's steps select files: **`ruff`**, **`docstring_verification`**,
+**`test_naming_check`**, and **`typecheck`**. Each runs over the **whole
+tracked tree by default** (`scope = "all"`) — the strict floor. To scope one
+(or all) to the diff vs main instead:
 
 ```toml
 [tool.forge.precommit]
@@ -158,14 +158,21 @@ scope = "all"                 # global default (this is already the default)
 [tool.forge.precommit.scope_overrides]
 ruff = "diff"                 # lint only changed files
 docstring_verification = "diff"
+typecheck = "diff"            # pyrefly only on changed files under its roots
 # test_naming_check stays "all" (inherits the global default)
 ```
 
 Resolution order per step: `scope_overrides.<step>` → `scope` → `"all"`. An
 unrecognised value falls back to `"all"`. The other steps are either
 inherently whole-repo (`repo_structure_check`, `cli_wiring`, `manifest_json`,
-…) or scoped by their own `paths` key (`doctest`, `typecheck`) — `scope` does
-not apply to them. `forge-config --list` shows the resolved values.
+…) or scoped by their own `paths` key (`doctest`) — `scope` does not apply
+to them. `forge-config --list` shows the resolved values.
+
+For `typecheck`, `diff` selects only the modified files **under its resolved
+roots** (`[tool.forge.typecheck].paths` → `source_dirs` → auto-detect), so it
+always checks a subset of what `all` would. Caveat: pyrefly's explicit-file
+mode ignores `project_excludes` from `pyrefly.toml` — keep `typecheck` on
+`all` if you rely on that key.
 
 > **Why default `all`?** A `diff`-only gate passes a commit while leaving
 > violations elsewhere in the tree unchecked — the gate then reflects "what
@@ -199,6 +206,17 @@ commit trains `--no-verify`.
 The `doc_consistency` step (`verify-forge-doc-consistency`, enabled the
 same way) has no config table — it checks that every `[project.scripts]`
 CLI is documented in `docs/cli-reference.md`, and is always non-blocking.
+
+The `api_digest_check` step (`forge-gen-api-digest --check`, enabled the
+same way) has no config table — it is the **blocking** drift gate for
+`docs/api-digest.md`, mirroring how `c4` guards the C4 model. The
+default-on `regen_docs` step already regenerates and re-stages the digest
+non-blockingly; enable this when you also want a stale or incomplete digest
+**refused** at commit time (e.g. to catch a generator error `regen_docs`
+would only warn on, or to gate the digest in CI). Kept opt-in because the
+digest changes on nearly every code PR, so the gate adds a
+regenerate-before-commit step to routine work. Self-skips when
+`docs/api-digest.md` is absent.
 
 ## `[tool.forge.smart_test]` — opt-in change-scoped test gate
 

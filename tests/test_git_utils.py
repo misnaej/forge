@@ -244,18 +244,33 @@ def _stub_branch_path(
     *,
     current_branch: str,
     diff_outputs: dict[str, str],
+    calls: list[tuple[list[str], object]] | None = None,
 ) -> None:
-    r"""Stub subprocess so get_modified_files exercises the feature-branch path.
+    r"""Stub subprocess so get_modified_files exercises a branch code path.
+
+    Covers both the feature-branch path (``current_branch`` other than
+    ``"main"``, exercising ``rev-parse --verify`` + the three merged diffs)
+    and the ``main`` fallback path (``current_branch="main"``, exercising
+    only the ``HEAD~1`` diff) with one shared fake.
 
     Args:
         monkeypatch: pytest fixture.
-        tmp_path: Synthetic repo root.
+        tmp_path: Synthetic repo root, returned for an unstubbed
+            ``rev-parse --show-toplevel`` (the cached global
+            :func:`git_utils.repo_root` path, used when a test calls
+            :func:`git_utils.get_modified_files` without ``repo_root=``).
         current_branch: Value returned by ``git branch --show-current``.
         diff_outputs: Maps the trailing arg of `git diff --name-only` to
-            stdout (e.g., ``{"main...HEAD": "src/foo.py\\n"}``).
+            stdout (e.g., ``{"main...HEAD": "src/foo.py\\n"}`` on a feature
+            branch, or ``{"HEAD~1": "src/x.py\\n"}`` on ``main``).
+        calls: When given, every ``(cmd, cwd_kwarg)`` pair is appended —
+            lets callers assert on the ``cwd`` each git invocation ran
+            with (e.g. to verify an explicit ``repo_root=`` threads through).
     """
 
-    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+    def _fake_run(cmd: list[str], **kwargs: object) -> object:
+        if calls is not None:
+            calls.append((cmd, kwargs.get("cwd")))
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return type("P", (), {"returncode": 0, "stdout": f"{tmp_path}\n"})()
         if cmd[1:3] == ["branch", "--show-current"]:
@@ -312,18 +327,70 @@ def test_get_modified_files_main_falls_back_to_head_prev(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """On main, the previous-commit diff is used."""
-
-    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
-        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
-            return type("P", (), {"returncode": 0, "stdout": f"{tmp_path}\n"})()
-        if cmd[1:3] == ["branch", "--show-current"]:
-            return type("P", (), {"returncode": 0, "stdout": "main\n"})()
-        if cmd[1:3] == ["diff", "--name-only"] and cmd[-1] == "HEAD~1":
-            return type("P", (), {"returncode": 0, "stdout": "src/x.py\n"})()
-        return type("P", (), {"returncode": 0, "stdout": ""})()
-
-    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    _stub_branch_path(
+        monkeypatch,
+        tmp_path,
+        current_branch="main",
+        diff_outputs={"HEAD~1": "src/x.py\n"},
+    )
     assert git_utils.get_modified_files() == ["src/x.py"]
+
+
+def test_get_modified_files_threads_repo_root_into_feature_branch_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit `repo_root=` threads through every feature-branch `_run_git` call.
+
+    MOCK SETUP: shares `_stub_branch_path`'s feature-branch fake — `rev-parse
+    --verify main` succeeds, so every diff variant (`base...HEAD`,
+    `--cached`, plain) is exercised. `calls` captures each `(cmd, cwd)`
+    pair to confirm every git invocation ran with the explicit `repo_root`
+    rather than the cached process-wide :func:`git_utils.repo_root`.
+    """
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    calls: list[tuple[list[str], object]] = []
+    _stub_branch_path(
+        monkeypatch,
+        tmp_path,
+        current_branch="feat/x",
+        diff_outputs={"main...HEAD": "src/a.py\n", "--cached": "", "": ""},
+        calls=calls,
+    )
+    files = git_utils.get_modified_files(repo_root=other_root)
+    assert files == ["src/a.py"]
+    assert calls
+    assert all(cwd == other_root for _cmd, cwd in calls)
+    assert not any(cmd[1:3] == ["rev-parse", "--show-toplevel"] for cmd, _cwd in calls)
+
+
+def test_get_modified_files_threads_repo_root_into_main_fallback_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit `repo_root=` threads through the main-branch `HEAD~1` fallback call.
+
+    MOCK SETUP: shares `_stub_branch_path`'s main-fallback fake; `calls`
+    captures each `(cmd, cwd)` pair to confirm the `HEAD~1` diff ran with
+    the explicit `repo_root`.
+    """
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    calls: list[tuple[list[str], object]] = []
+    _stub_branch_path(
+        monkeypatch,
+        tmp_path,
+        current_branch="main",
+        diff_outputs={"HEAD~1": "src/x.py\n"},
+        calls=calls,
+    )
+    files = git_utils.get_modified_files(repo_root=other_root)
+    assert files == ["src/x.py"]
+    head_prev_cwds = [
+        cwd
+        for cmd, cwd in calls
+        if cmd[1:3] == ["diff", "--name-only"] and cmd[-1] == "HEAD~1"
+    ]
+    assert head_prev_cwds == [other_root]
 
 
 def test_get_tracked_files_filters_suffix_and_prefix(
@@ -875,3 +942,47 @@ def test_stage_modified_paths_real_git_stages_modified_tracked_file(
         check=True,
     )
     assert "docs/api-digest.md" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# path_escapes_repo
+# ---------------------------------------------------------------------------
+
+
+def test_path_escapes_repo_in_repo_file_false(tmp_path: Path) -> None:
+    """A plain in-repo relative path is not an escape."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "ok.py").write_text("")
+    assert git_utils.path_escapes_repo(tmp_path, "src/ok.py") is False
+
+
+def test_path_escapes_repo_dotdot_traversal_true(tmp_path: Path) -> None:
+    """A ``..`` segment that climbs above repo_root is an escape."""
+    assert git_utils.path_escapes_repo(tmp_path, "../evil.py") is True
+
+
+def test_path_escapes_repo_absolute_outside_true(tmp_path: Path) -> None:
+    """An absolute path replaces repo_root in the join and escapes."""
+    assert git_utils.path_escapes_repo(tmp_path, "/etc/passwd") is True
+
+
+def test_path_escapes_repo_nested_in_repo_false(tmp_path: Path) -> None:
+    """A deeply nested in-repo path is not an escape."""
+    assert git_utils.path_escapes_repo(tmp_path, "a/b/c/deep.py") is False
+
+
+def test_path_escapes_repo_symlink_escape_true(tmp_path: Path) -> None:
+    """A symlink inside repo_root resolving outside it is an escape.
+
+    Creates ``tmp_path/link`` as a symlink to a sibling directory outside
+    ``tmp_path`` (the repo root), then resolves a path through it —
+    ``Path.resolve()`` follows the symlink out of the repo.
+    """
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    link = tmp_path / "link"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlink creation not permitted on this platform")
+    assert git_utils.path_escapes_repo(tmp_path, "link/x.py") is True

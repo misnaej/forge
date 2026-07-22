@@ -18,6 +18,7 @@ from forge.config import (
     load_config,
     read_pyproject_raw,
     resolve_tool_roots,
+    select_diff_files,
     tracked_files_under_roots,
 )
 from tests.conftest import GIT_ENV as _GIT_ENV
@@ -583,3 +584,213 @@ def test_tracked_files_under_roots_no_warning_when_untracked_outside_roots(
         tracked_files_under_roots(tmp_path, ["src"])
 
     assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+# ---------------------------------------------------------------------------
+# select_diff_files (issue #191 — unified diff-scoped file selection)
+# ---------------------------------------------------------------------------
+
+
+def test_select_diff_files_roots_none_passes_no_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`roots=None` (the default) forwards no prefix filter to get_modified_files."""
+    captured: dict[str, object] = {}
+
+    def _fake_get_modified_files(**kwargs: object) -> list[str]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
+    select_diff_files(tmp_path)
+    assert captured["prefix"] is None
+
+
+def test_select_diff_files_root_dot_disables_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `roots=["."]` root disables the prefix filter, same as `roots=None`."""
+    captured: dict[str, object] = {}
+
+    def _fake_get_modified_files(**kwargs: object) -> list[str]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
+    select_diff_files(tmp_path, roots=["."])
+    assert captured["prefix"] is None
+
+
+def test_select_diff_files_mixed_root_with_dot_disables_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `.` root short-circuits the prefix filter even alongside another root."""
+    captured: dict[str, object] = {}
+
+    def _fake_get_modified_files(**kwargs: object) -> list[str]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
+    select_diff_files(tmp_path, roots=["src", "."])
+    assert captured["prefix"] is None
+
+
+def test_select_diff_files_single_root_builds_prefix_tuple(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single root becomes a one-element `(root/,)` prefix tuple."""
+    captured: dict[str, object] = {}
+
+    def _fake_get_modified_files(**kwargs: object) -> list[str]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
+    select_diff_files(tmp_path, roots=["src"])
+    assert captured["prefix"] == ("src/",)
+
+
+def test_select_diff_files_multi_root_builds_prefix_tuple(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Multiple roots each become their own `root/` prefix entry."""
+    captured: dict[str, object] = {}
+
+    def _fake_get_modified_files(**kwargs: object) -> list[str]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
+    select_diff_files(tmp_path, roots=["src", "lib"])
+    assert captured["prefix"] == ("src/", "lib/")
+
+
+def test_select_diff_files_trailing_slash_root_normalized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A trailing slash on a root is normalized before the prefix is built."""
+    captured: dict[str, object] = {}
+
+    def _fake_get_modified_files(**kwargs: object) -> list[str]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
+    select_diff_files(tmp_path, roots=["src/"])
+    assert captured["prefix"] == ("src/",)
+
+
+def test_select_diff_files_forwards_repo_root_and_suffix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`repo_root` is forwarded verbatim.
+
+    `suffix` defaults to `.py` and is overridable.
+    """
+    captured: dict[str, object] = {}
+
+    def _fake_get_modified_files(**kwargs: object) -> list[str]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
+    select_diff_files(tmp_path)
+    assert captured["repo_root"] == tmp_path
+    assert captured["suffix"] == ".py"
+
+    select_diff_files(tmp_path, suffix=".ts")
+    assert captured["suffix"] == ".ts"
+
+
+def test_select_diff_files_drop_deleted_true_drops_nonexistent_keeps_on_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`drop_deleted=True` (the default) drops a path no longer on disk."""
+    (tmp_path / "kept.py").write_text("")
+    monkeypatch.setattr(
+        config, "get_modified_files", lambda **_kw: ["kept.py", "gone.py"]
+    )
+    assert select_diff_files(tmp_path) == ["kept.py"]
+
+
+def test_select_diff_files_drop_deleted_false_keeps_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`drop_deleted=False` keeps a path even when it no longer exists on disk."""
+    (tmp_path / "kept.py").write_text("")
+    monkeypatch.setattr(
+        config, "get_modified_files", lambda **_kw: ["kept.py", "gone.py"]
+    )
+    assert select_diff_files(tmp_path, drop_deleted=False) == ["kept.py", "gone.py"]
+
+
+def test_select_diff_files_apply_exclude_true_filters_via_load_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`apply_exclude=True` drops files matching `[tool.forge].exclude` globs.
+
+    MOCK SETUP: load_config is patched to return a ForgeConfig with
+        exclude=["*.gen.py"]; get_modified_files returns one matching and one
+        non-matching file. drop_deleted=False isolates the exclude filter from
+        the on-disk existence check — neither file is created here.
+    """
+    monkeypatch.setattr(
+        config, "load_config", lambda _repo_root: ForgeConfig(exclude=["*.gen.py"])
+    )
+    monkeypatch.setattr(
+        config,
+        "get_modified_files",
+        lambda **_kw: ["src/b.py", "src/auto.gen.py"],
+    )
+    result = select_diff_files(tmp_path, apply_exclude=True, drop_deleted=False)
+    assert result == ["src/b.py"]
+
+
+def test_select_diff_files_apply_exclude_false_skips_filter_glob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`apply_exclude=False` (the default) leaves exclude-matching files in."""
+    monkeypatch.setattr(
+        config, "load_config", lambda _repo_root: ForgeConfig(exclude=["*.gen.py"])
+    )
+    monkeypatch.setattr(
+        config,
+        "get_modified_files",
+        lambda **_kw: ["src/b.py", "src/auto.gen.py"],
+    )
+    result = select_diff_files(tmp_path, drop_deleted=False)
+    assert result == ["src/b.py", "src/auto.gen.py"]
+
+
+def test_select_diff_files_empty_diff_returns_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty diff (`get_modified_files` returns nothing) yields `[]`."""
+    monkeypatch.setattr(config, "get_modified_files", lambda **_kw: [])
+    assert select_diff_files(tmp_path) == []
+
+
+def test_select_diff_files_drops_paths_escaping_repo_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A modified-file path that resolves outside `repo_root` is dropped.
+
+    SCENARIO: get_modified_files returns one in-repo path and one path that
+        escapes the repo root via `..`; only the in-repo path survives.
+    MOCK SETUP: get_modified_files is patched to a fake returning
+        ["src/ok.py", "../evil.py"]. Only `tmp_path/src/ok.py` is created on
+        disk, so drop_deleted keeps it — `../evil.py` is never created, but
+        the repo-containment check drops it before drop_deleted even runs,
+        so its on-disk state is irrelevant.
+    EXPECTED BEHAVIOR: select_diff_files returns ["src/ok.py"]; "../evil.py"
+        is excluded by the repo-containment filter.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "ok.py").write_text("")
+    monkeypatch.setattr(
+        config, "get_modified_files", lambda **_kw: ["src/ok.py", "../evil.py"]
+    )
+    result = select_diff_files(tmp_path, roots=None)
+    assert result == ["src/ok.py"]
+    assert "../evil.py" not in result

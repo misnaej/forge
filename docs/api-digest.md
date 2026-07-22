@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_61 modules, 613 symbols._
+_61 modules, 616 symbols._
 
 ## `forge`
 
@@ -215,6 +215,7 @@ _61 modules, 613 symbols._
 - `resolve_tool_roots(repo_root: Path, tool: str, *, include_tests: bool = False) -> list[str]` — Resolve the scan roots a layout-consuming *tool* should use.
 - `filter_under_roots(files: list[str], roots: list[str]) -> list[str]` — Keep only *files* that live under one of *roots* (source-tree scoping).
 - `filter_excluded(files: list[str], globs: list[str]) -> list[str]` — Drop *files* matching any exclude *glob* (the ``[tool.forge].exclude`` half).
+- `select_diff_files(repo_root: Path, *, roots: list[str] | None = None, apply_exclude: bool = False, drop_deleted: bool = True, suffix: str = '.py') -> list[str]` — Select the modified files a diff-scoped step should check.
 - `tracked_files_under_roots(repo_root: Path, roots: list[str], *, suffix: str = '.py') -> list[str]` — Select the git-tracked files under *roots*, minus repo-wide excludes.
 - `_warn_untracked_under_roots(repo_root: Path, roots: list[str], suffix: str) -> None` _(internal)_ — Warn (dev-loop only) when untracked source under *roots* goes unscanned.
 
@@ -440,9 +441,10 @@ _61 modules, 613 symbols._
 - `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
 - `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
-- `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None) -> list[str]` — Get list of modified files from git.
+- `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get list of modified files from git.
 - `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
 - `get_untracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get untracked, non-gitignored files matching the suffix/prefix filters.
+- `path_escapes_repo(repo_root: Path, path: str) -> bool` — Return True if *path* resolves outside *repo_root*.
 - `stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]` — ``git add`` tracked files modified within *pathspecs*.
 
 ## `forge.import_graph`
@@ -642,6 +644,7 @@ _61 modules, 613 symbols._
 - `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
 - `step_c4(repo_root: Path) -> StepResult` — Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
+- `step_api_digest_check(repo_root: Path) -> StepResult` — Run ``forge-gen-api-digest --check`` — api-digest drift guard (opt-in).
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
 - `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.
 - `_write_audit_sidecar(repo_root: Path, data: dict) -> None` _(internal)_ — Persist pip-audit's parsed JSON to the shared sidecar.
@@ -656,7 +659,7 @@ _61 modules, 613 symbols._
 - `step_changelog_history(repo_root: Path) -> StepResult` — Run ``verify-forge-changelog-history`` — the dropped-``@base``-entry guard.
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
-- `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the source tree (opt-in).
+- `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the resolved scope (opt-in).
 - `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
 - `step_regen_docs(repo_root: Path) -> StepResult` — Regenerate the otherwise-unwired generated docs and re-stage them.
 - `_vendored_documented_hashes(repo_root: Path) -> dict[str, str]` _(internal)_ — Parse ``VENDORED.md`` into a ``{filename: sha256}`` map.

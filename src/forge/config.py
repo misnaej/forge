@@ -27,7 +27,12 @@ import tomllib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from forge.git_utils import get_tracked_files, get_untracked_files
+from forge.git_utils import (
+    get_modified_files,
+    get_tracked_files,
+    get_untracked_files,
+    path_escapes_repo,
+)
 from forge.run_context import is_non_interactive
 
 
@@ -429,6 +434,69 @@ def filter_excluded(files: list[str], globs: list[str]) -> list[str]:
             or any(fnmatch.fnmatch(f, g) for g in globs)
         )
     ]
+
+
+def select_diff_files(
+    repo_root: Path,
+    *,
+    roots: list[str] | None = None,
+    apply_exclude: bool = False,
+    drop_deleted: bool = True,
+    suffix: str = ".py",
+) -> list[str]:
+    """Select the modified files a diff-scoped step should check.
+
+    The single home for every step's ``scope = "diff"`` file selection —
+    ruff, docstring_verification, test_naming_check, typecheck all route
+    here instead of each hand-rolling a ``get_modified_files`` recipe. The
+    knobs stay per-step *by design*, not accident: root-restriction and
+    exclude-globbing legitimately differ (test-naming only wants test dirs;
+    ``[tool.forge].exclude`` is scoped to the two whole-tree steps, while
+    ruff/typecheck own their exclusions via ``ruff.toml`` / pyrefly's
+    ``project_excludes``). ``drop_deleted`` is the one behavior every step
+    shares: a path deleted in the diff still appears in
+    ``git diff --name-only`` but errors when handed to a tool that opens it.
+
+    Args:
+        repo_root: Git repo root (threaded through to ``get_modified_files``
+            so an in-process caller is not at the mercy of the cwd-cached
+            global root).
+        roots: When given, restrict the diff to files under these roots
+            (each becomes a path prefix). A root of ``"."`` — or ``None`` —
+            means no restriction (the whole diff).
+        apply_exclude: Apply the ``[tool.forge].exclude`` globs. Only the
+            two whole-tree steps set this; ruff/typecheck leave it off.
+        drop_deleted: Drop paths that no longer exist on disk (deletions in
+            the diff). Default on — a deleted file has nothing to check.
+        suffix: File suffix filter, forwarded to ``get_modified_files``.
+
+    Returns:
+        Repo-relative modified-file paths matching the selected filters,
+        every one guaranteed to resolve inside *repo_root*. Empty when
+        nothing in scope changed — the caller decides the skip.
+    """
+    prefixes: tuple[str, ...] | None = None
+    if roots is not None:
+        norm = [r.rstrip("/") for r in roots]
+        if "." not in norm:
+            prefixes = tuple(f"{r}/" for r in norm)
+    modified = get_modified_files(prefix=prefixes, suffix=suffix, repo_root=repo_root)
+    files: list[str] = []
+    for f in modified:
+        # Defense-in-depth: a `git diff` path is always repo-relative, but a
+        # diff-scoped step must never hand its tool a path that escapes the
+        # repo. Drop (don't raise) — this is a library selector shared by four
+        # in-process steps, and an escaping path is an anomaly to skip, not
+        # grounds to abort the whole pre-commit. Untrusted argv keeps its
+        # fail-loud guard in `fix_ruff._validate_paths` (the `scope=all` path).
+        if path_escapes_repo(repo_root, f):
+            continue
+        if drop_deleted and not (repo_root / f).is_file():
+            continue
+        files.append(f)
+    if apply_exclude:
+        files = filter_excluded(files, load_config(repo_root).exclude)
+    return files
 
 
 def tracked_files_under_roots(

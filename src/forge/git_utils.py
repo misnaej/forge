@@ -534,6 +534,7 @@ def get_modified_files(
     *,
     suffix: str = ".py",
     prefix: str | tuple[str, ...] | None = None,
+    repo_root: Path | None = None,
 ) -> list[str]:
     """Get list of modified files from git.
 
@@ -550,16 +551,21 @@ def get_modified_files(
         prefix: Optional path prefix(es) to filter by. Either a single
             string or a tuple of acceptable prefixes (e.g.,
             ``("test/", "tests/")`` to accept either test-dir layout).
+        repo_root: Directory to run git in. Defaults to the process-wide
+            cached :func:`repo_root`. Pass an explicit root when the caller
+            already holds one — required for in-process callers like
+            ``forge-precommit`` steps, where the cached global may point at
+            a different repo than the one under check (e.g. in tests).
 
     Returns:
         Deduplicated list of modified file paths matching the filters.
     """
-    current_branch = _run_git("branch", "--show-current")
+    current_branch = _run_git("branch", "--show-current", cwd=repo_root)
 
     if current_branch and current_branch != "main":
         # Try main, then origin/main as base branch
         for base in ("main", "origin/main"):
-            if not _run_git("rev-parse", "--verify", base):
+            if not _run_git("rev-parse", "--verify", base, cwd=repo_root):
                 continue
 
             logger.info(
@@ -570,17 +576,17 @@ def get_modified_files(
 
             # Branch commits + staged + unstaged
             branch_files = _parse_files(
-                _run_git("diff", "--name-only", f"{base}...HEAD"),
+                _run_git("diff", "--name-only", f"{base}...HEAD", cwd=repo_root),
                 suffix=suffix,
                 prefix=prefix,
             )
             staged_files = _parse_files(
-                _run_git("diff", "--name-only", "--cached"),
+                _run_git("diff", "--name-only", "--cached", cwd=repo_root),
                 suffix=suffix,
                 prefix=prefix,
             )
             unstaged_files = _parse_files(
-                _run_git("diff", "--name-only"),
+                _run_git("diff", "--name-only", cwd=repo_root),
                 suffix=suffix,
                 prefix=prefix,
             )
@@ -594,7 +600,7 @@ def get_modified_files(
     return sorted(
         set(
             _parse_files(
-                _run_git("diff", "--name-only", "HEAD~1"),
+                _run_git("diff", "--name-only", "HEAD~1", cwd=repo_root),
                 suffix=suffix,
                 prefix=prefix,
             ),
@@ -673,6 +679,31 @@ def get_untracked_files(
     """
     out = _run_git("ls-files", "--others", "--exclude-standard", cwd=repo_root)
     return sorted(set(_parse_files(out, suffix=suffix, prefix=prefix)))
+
+
+def path_escapes_repo(repo_root: Path, path: str) -> bool:
+    """Return True if *path* resolves outside *repo_root*.
+
+    The one repo-containment predicate shared by every caller that must not
+    hand a tool a path escaping the repo: it resolves ``repo_root / path``
+    (following ``..``, absolute-path replacement, and symlinks) and checks
+    the result is neither the repo root itself nor a descendant of it. Only
+    the *action* on a True result differs by caller — the diff-scope selector
+    (:func:`forge.config.select_diff_files`) drops the offender, while
+    ``fix_ruff._validate_paths`` raises on it (untrusted argv is a fail-loud
+    boundary). Keeping the test itself in one place means a future edge case
+    (a new symlink or platform quirk) is fixed once, not per call site.
+
+    Args:
+        repo_root: Git repo root the *path* is interpreted relative to.
+        path: Candidate path (repo-relative string, or absolute).
+
+    Returns:
+        True when the resolved path lies outside *repo_root*.
+    """
+    repo_real = repo_root.resolve()
+    candidate = (repo_root / path).resolve()
+    return candidate != repo_real and repo_real not in candidate.parents
 
 
 def stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]:

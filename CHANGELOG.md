@@ -20,6 +20,54 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.23.0 — 2026-07-22
+
+Additive and internal — a unified engine for change-scoped (diff) file
+selection across the pre-commit steps, plus an opt-in drift gate for the
+api-digest doc. No consumer action required: the new gate is off by
+default, the new typecheck scope is opt-in config, and the diff-selection
+changes are internal correctness improvements.
+
+### Features
+
+- **Diff scope for the `typecheck` step** (#183): pyrefly can now run over
+  only the files a change set touches, via `[tool.forge.precommit]`
+  `scope` / `scope_overrides.typecheck = "diff"` — the same knob the
+  `ruff` / `docstring_verification` / `test_naming_check` steps already
+  honor. Default stays whole-tree.
+- **Opt-in blocking drift gate for `docs/api-digest.md`** (#197): a new
+  `api_digest_check` pre-commit step (`forge-gen-api-digest --check`),
+  enabled via `[tool.forge.precommit] enable`, refuses a commit on a stale
+  digest — mirroring the `c4` gate. Off by default (the digest changes on
+  nearly every PR); the non-blocking `regen_docs` auto-writer stays the
+  always-on baseline.
+
+### Fixes
+
+- **`test_naming_check` diff scope now honors `[tool.forge].test_dirs`**
+  (#195): the diff branch hardcoded `test/`,`tests/`, so a repo with custom
+  test roots got an empty diff-scoped set. Both scopes now resolve the same
+  configured roots.
+- **Repo-containment guard on diff-scoped selection** (#196): every
+  diff-scoped step now drops any modified-file path resolving outside the
+  repo root before handing it to a tool (previously only `ruff` had this,
+  via its argv guard). Deleted-in-diff files are likewise dropped uniformly.
+
+### Refactor
+
+- **Unified diff-scope file selection** (#189, #192): the per-step
+  hand-rolled `get_modified_files` recipes collapse into one
+  `forge.config.select_diff_files` choke point, so root-restriction,
+  exclude-globbing, deletion-dropping, and repo-containment are decided in
+  one place with per-step knobs instead of drifting across four call sites.
+
+### Docs
+
+- **Step-invocation architecture rule** (#188): new
+  `docs/step-invocation.md` codifies when a pre-commit step ships its own
+  CLI vs. invokes a tool directly (`forge-precommit --only <step>` is the
+  single standard entry point), with the direct-invocation invariants.
+
 ## v2.22.0 — 2026-07-15
 
 Additive — forge's release-tagging primitives become reusable by consumer
