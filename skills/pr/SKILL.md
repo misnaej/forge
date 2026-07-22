@@ -106,16 +106,14 @@ Documentation must stay in sync with code. For each item below, update **only if
 9. **`README.md`** — repo structure, setup, install commands, test commands, status sections, architecture diagram.
 10. **`CLAUDE.md`** — new shared agent behaviors, new protected files, new ruff ignores, new tools, technology stack changes.
 11. **`CHANGELOG.md`** (when the repo keeps one at its root, per-PR
-    convention) — for a PR with a user-facing effect, add one concise
-    bullet under the top `## vX.Y.Z` heading, grouped under the right
-    `### Added` / `### Changed` / `### Fixed` / `### Removed`
-    subheading (create it if absent), committed on the PR's own branch
-    — never batched into a later release PR. Convention details:
-    [`docs/consumer-release.md`](../../docs/consumer-release.md)
-    "Changelog convention". Skip silently when there is no root
-    `CHANGELOG.md`, and on repos whose changelog is written at
-    release/promotion time instead of per PR (e.g. a dual-track plugin
-    repo per [`docs/release-process.md`](../../docs/release-process.md)) —
+    convention) — for a PR with a user-facing effect, add its changelog
+    bullet in this PR, following the "Changelog convention" section of
+    [`docs/consumer-release.md`](../../docs/consumer-release.md) (which
+    owns the heading format, grouping, and timing rules). Skip silently
+    when there is no root `CHANGELOG.md`, and on repos whose changelog
+    is written at release/promotion time instead of per PR (e.g. a
+    dual-track plugin repo per
+    [`docs/release-process.md`](../../docs/release-process.md)) —
     follow that repo's own release process.
 12. **`REPO_STRUCTURE.md`** (when the repo maintains one — see [FOUNDATION §13](../../FOUNDATION.md#13-code_health-convention)) — list new source modules and new test files so the canonical repo map stays accurate. The `repo_structure_check` pre-commit step does not enforce two-way coverage; this update is on the PR author.
 13. **Per-component READMEs** (e.g., subsystem-level `README.md` files, agent definition files) — if their tools, setup, or usage changed.
@@ -166,7 +164,7 @@ confirmation, then edit `settings.json` — the change rides in this PR.
 
 ## Step 4: Finalize via `pr-manager` (MANDATORY)
 
-15. Delegate finalization. **Pass the Step 1 reports verbatim in the prompt** so `pr-manager` does not re-run the same three verification agents — see [agents/pr-manager.md "Pre-run reports" note](../../agents/pr-manager.md). Two passes per PR is pure waste.
+16. Delegate finalization. **Pass the Step 1 reports verbatim in the prompt** so `pr-manager` does not re-run the same three verification agents — see [agents/pr-manager.md "Pre-run reports" note](../../agents/pr-manager.md). Two passes per PR is pure waste.
 
     ```
     Agent(subagent_type="pr-manager", prompt="Verify and finalize PR #<number>.
@@ -203,14 +201,14 @@ The squash-merge message becomes the permanent commit message on `main`.
 
 ## Step 5: Post-PR backlog update
 
-16. **`issue-triage`** — Run `post-pr` mode after merge:
+17. **`issue-triage`** — Run `post-pr` mode after merge:
     ```
     Agent(subagent_type="issue-triage", prompt="Run post-pr mode. PR #<number> was just finalized. Detect issues closed by this PR, remove their tier labels, and regenerate the 📋 Backlog Index issue.")
     ```
 
 ## Step 6: Update CONTINUATION state
 
-17. The `pr-manager` agent appends a one-line activity record to `.plan/CONTINUATION.md` automatically (gitignored).
+18. The `pr-manager` agent appends a one-line activity record to `.plan/CONTINUATION.md` automatically (gitignored).
 
 ## Rules
 
