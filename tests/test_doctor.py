@@ -88,14 +88,23 @@ def test_check_gh_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_validate_plugin_name_accepts_bare_names() -> None:
-    """A bare identifier matching the safe charset passes through unchanged."""
-    for name in ["forge", "myrepo", "my.plugin", "a_b-c"]:
+    """A bare identifier matching the safe charset passes through unchanged.
+
+    ``a..b`` is included deliberately: a ``..`` *substring* is a harmless
+    literal directory name (only an exact ``..`` component escapes, and that
+    is barred by the leading-alnum rule), so it must not be over-rejected.
+    """
+    for name in ["forge", "myrepo", "my.plugin", "a_b-c", "a..b"]:
         assert doctor._validate_plugin_name(name) == name
 
 
 def test_validate_plugin_name_rejects_traversal_and_separators() -> None:
-    """Path separators, '..' tokens, and non-alnum leads raise ArgumentTypeError."""
-    for name in ["../../etc", "a/b", "..", ".hidden", "-x", "a..b", "", "foo/.."]:
+    r"""Path separators, bare '..', non-alnum leads, and trailing newlines raise.
+
+    The trailing-newline case (``"forge\\n"``) locks in the ``\\Z`` anchor —
+    a bare ``$`` would admit it (Python ``$`` matches before a final newline).
+    """
+    for name in ["../../etc", "a/b", "..", ".hidden", "-x", "", "foo/..", "forge\n"]:
         with pytest.raises(argparse.ArgumentTypeError):
             doctor._validate_plugin_name(name)
 
