@@ -36,13 +36,77 @@ A typical release is therefore:
 
 ```bash
 git switch main && git pull --ff-only
-# author the `## vX.Y.Z` CHANGELOG entry, commit it via a PR
+# CHANGELOG's top `## vX.Y.Z` entry is already release-ready
+# (see "Changelog convention" below)
 forge-release --bump minor --dry-run   # confirm the computed tag
 forge-release --bump minor             # tag + push
 ```
 
 No config is required: a repo without `[tool.forge]` defaults to
 single-track on `main`.
+
+## Changelog convention
+
+`forge-release` works with or without a `CHANGELOG.md`, but a repo that
+keeps one should follow **one** convention — this one — so the CHANGELOG
+gate, the release recipe, and any local tooling all agree on what the
+file means. It follows [Keep a Changelog](https://keepachangelog.com/)
+in spirit; the deliberate divergences are listed at the end.
+
+### Format
+
+- One level-2 heading per release: `## vX.Y.Z — YYYY-MM-DD`. The date
+  may be added when the release is cut; `release_headings` recognizes
+  the heading with or without it.
+- Under each release heading, group entries as `### Added` /
+  `### Changed` / `### Fixed` / `### Removed` — create a group when its
+  first entry appears; omit empty groups.
+- **No `## Unreleased` section.** The top heading always names the
+  version **about to be released** — the CHANGELOG *declares* the next
+  version, and the tag `forge-release` cuts *confirms* it. This is the
+  single-track analogue of the rolling-next manifest invariant that
+  plugin repos get from `verify-forge-plugin-version`: the declared
+  next version always leads the latest tag.
+
+### Per-PR rule
+
+Every PR with a user-facing effect adds its bullet under the top
+`## vX.Y.Z` heading **in that same PR** — never batched into a later
+"release PR". The CHANGELOG is release-ready at all times: cutting a
+release requires no CHANGELOG-only commit beyond (possibly) stamping
+the date. Released headings below the top one are history — never edit
+them.
+
+### Cutting a release — agent/human boundary
+
+```bash
+git switch main && git pull --ff-only
+# top `## vX.Y.Z` heading already matches the bump you intend
+# (retitle it via a normal PR if the accumulated entries warrant a
+# different increment than first declared)
+forge-release --bump patch|minor|major --dry-run   # confirm the computed tag
+forge-release --bump patch|minor|major             # tag + push — a human runs this
+```
+
+An agent prepares CHANGELOG entries and runs `--dry-run` only. Pushing
+the tag is the user's action: a `v*` tag *defines* a version the moment
+it lands, and there is no un-publishing it from environments that
+already resolved it.
+
+### Concurrent releases serialize through git
+
+Two concurrent release branches both edit the same top heading, so git
+forces a merge conflict; whoever resolves it moves their entries under
+the next number. Deterministic ordering with no external coordinator —
+the conflict is the feature, not a nuisance.
+
+### Divergences from Keep a Changelog
+
+- **No `## Unreleased` section** — the declared next version plays that
+  role, and the tag gate in `forge-release` checks it mechanically.
+- **Headings are `v`-prefixed and dated with an em dash**
+  (`## v1.6.0 — 2026-07-01`), matching what `release_headings`
+  recognizes, rather than KaC's bracketed `## [1.6.0] - 2026-07-01`.
 
 ## Stable public Python import surface
 
