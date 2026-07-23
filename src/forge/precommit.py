@@ -67,7 +67,7 @@ import shlex
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from forge import config, pip_audit_json
 from forge.changelog import changelog_version_findings, stranded_added_versions
@@ -77,7 +77,6 @@ from forge.git_utils import (
     SCOPE_DIFF,
     VALID_SCOPES,
     emit,
-    get_modified_files,
     latest_v_tag,
     parse_semver,
     read_local_plugin_version,
@@ -1767,9 +1766,11 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
             skipped=True,
         )
     step_cfg = _forge_step_config(repo_root, "changelog")
-    exempt = tuple(str(p) for p in cast("list", step_cfg.get("exempt_paths") or []))
-    require = tuple(str(p) for p in cast("list", step_cfg.get("require_paths") or []))
-    files = get_modified_files(suffix="", prefix=None, repo_root=repo_root)
+    exempt = tuple(_cfg_str_list(step_cfg, "exempt_paths", []))
+    require = tuple(_cfg_str_list(step_cfg, "require_paths", []))
+    # drop_deleted=False: a deleted file is still a change that may require
+    # a changelog entry — the default would silently exempt deletions.
+    files = config.select_diff_files(repo_root, suffix="", drop_deleted=False)
     triggers = [
         path
         for path in files

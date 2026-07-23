@@ -2882,7 +2882,7 @@ def test_step_changelog_updated_fails_without_entry(
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     monkeypatch.setattr(
-        precommit, "get_modified_files", lambda **_kw: ["src/pkg/mod.py"]
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
     )
     result = precommit.step_changelog_updated(tmp_path)
     assert not result.passed
@@ -2896,9 +2896,9 @@ def test_step_changelog_updated_passes_with_entry(
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     monkeypatch.setattr(
-        precommit,
-        "get_modified_files",
-        lambda **_kw: ["src/pkg/mod.py", "CHANGELOG.md"],
+        precommit.config,
+        "select_diff_files",
+        lambda *_a, **_kw: ["src/pkg/mod.py", "CHANGELOG.md"],
     )
     result = precommit.step_changelog_updated(tmp_path)
     assert result.passed
@@ -2916,10 +2916,14 @@ def test_step_changelog_updated_honors_exempt_and_require_paths(
     )
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     monkeypatch.setattr(
-        precommit, "get_modified_files", lambda **_kw: ["projects/scratch/x.py"]
+        precommit.config,
+        "select_diff_files",
+        lambda *_a, **_kw: ["projects/scratch/x.py"],
     )
     assert precommit.step_changelog_updated(tmp_path).passed
     monkeypatch.setattr(
-        precommit, "get_modified_files", lambda **_kw: ["projects/shipped/x.py"]
+        precommit.config,
+        "select_diff_files",
+        lambda *_a, **_kw: ["projects/shipped/x.py"],
     )
     assert not precommit.step_changelog_updated(tmp_path).passed

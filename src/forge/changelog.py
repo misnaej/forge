@@ -145,9 +145,7 @@ def _governing_versions(text: str) -> list[str | None]:
     """Map each line in *text* to its governing release version heading.
 
     Scans the text sequentially, updating the "current" heading as new
-    ``## `` lines are encountered. Returns a parallel list mapping each line
-    number to the version heading that governs it (the most-recent heading
-    above that line, or ``None`` if no heading precedes).
+    ``## `` lines are encountered.
 
     Args:
         text: Full CHANGELOG.md contents.
@@ -189,6 +187,10 @@ def _iter_added_lines(diff_text: str) -> Iterator[tuple[int, str]]:
         if line.startswith(("+++", "---")):
             continue
         if line.startswith("-"):
+            continue
+        # ``\ No newline at end of file`` markers consume no new-file line;
+        # counting one would shift attribution for the rest of the hunk.
+        if line.startswith("\\"):
             continue
         new_lineno += 1
         if line.startswith("+"):
