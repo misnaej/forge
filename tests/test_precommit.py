@@ -24,6 +24,7 @@ from forge.pip_audit_json import AuditRun
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -2736,3 +2737,189 @@ def test_step_smart_test_blocking_when_opted_in(
     result = precommit.step_smart_test(tmp_path)
     assert not result.passed
     assert not result.non_blocking
+
+
+# ---------------------------------------------------------------------------
+# step_changelog_version / step_changelog_updated
+# ---------------------------------------------------------------------------
+
+
+def _fake_run_git_dispatch(
+    *, branch: str = "feat/x", merge_base: str = "", diff: str = ""
+) -> Callable[..., str]:
+    """Build a ``run_git`` fake dispatching on the git subcommand.
+
+    Args:
+        branch: What ``branch --show-current`` reports.
+        merge_base: What ``merge-base`` reports (empty → unresolvable).
+        diff: What ``diff`` reports.
+
+    Returns:
+        A callable with ``run_git``'s signature.
+    """
+
+    def _fake(*args: str, **_kw: object) -> str:
+        if args[:2] == ("branch", "--show-current"):
+            return branch
+        if args[0] == "merge-base":
+            return merge_base
+        if args[0] == "diff":
+            return diff
+        return ""
+
+    return _fake
+
+
+def test_step_changelog_version_skips_without_changelog(tmp_path: Path) -> None:
+    """No CHANGELOG.md → self-skip."""
+    result = precommit.step_changelog_version(tmp_path)
+    assert result.skipped
+
+
+def test_step_changelog_version_skips_manifest_repo(tmp_path: Path) -> None:
+    """Plugin-manifest repo → verify-forge-plugin-version owns it; skip."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text("{}")
+    result = precommit.step_changelog_version(tmp_path)
+    assert result.skipped
+
+
+def test_step_changelog_version_skips_dual_track(tmp_path: Path) -> None:
+    """Dual-track repo (dev_branch != base_branch) → skip."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text('[tool.forge]\ndev_branch = "dev"\n')
+    result = precommit.step_changelog_version(tmp_path)
+    assert result.skipped
+
+
+def test_step_changelog_version_fails_on_invalid_heading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`## Unreleased` heading fails the gate, blocking by default."""
+    (tmp_path / "CHANGELOG.md").write_text("## Unreleased\n\n## v1.0.0\n")
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    result = precommit.step_changelog_version(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+    assert "## Unreleased" in result.output
+
+
+def test_step_changelog_version_passes_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Consistent headings and no stranded entries → pass."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.1.0\n\n- a\n\n## v1.0.0\n")
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    result = precommit.step_changelog_version(tmp_path)
+    assert result.passed
+
+
+def test_step_changelog_version_detects_stranded_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Branch diff adds a bullet under the already-tagged top heading → fail."""
+    text = "## v1.0.0\n\n- new bullet\n"
+    diff = (
+        "--- a/CHANGELOG.md\n"
+        "+++ b/CHANGELOG.md\n"
+        "@@ -1,1 +1,3 @@\n"
+        " ## v1.0.0\n"
+        "+\n"
+        "+- new bullet\n"
+    )
+    (tmp_path / "CHANGELOG.md").write_text(text)
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(
+        precommit, "run_git", _fake_run_git_dispatch(merge_base="abc123", diff=diff)
+    )
+    result = precommit.step_changelog_version(tmp_path)
+    assert not result.passed
+    assert "stranded" in result.output
+
+
+def test_step_changelog_version_nonblocking_when_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[tool.forge.changelog].blocking=false downgrades a finding to WARN."""
+    (tmp_path / "CHANGELOG.md").write_text("## Unreleased\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\nblocking = false\n"
+    )
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: None)
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    result = precommit.step_changelog_version(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+
+
+def test_step_changelog_updated_env_escape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SKIP_CHANGELOG_CHECK=1 skips the gate."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    monkeypatch.setenv("SKIP_CHANGELOG_CHECK", "1")
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.skipped
+
+
+def test_step_changelog_updated_skips_on_base_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Per-PR guard — on the base branch it self-skips."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch(branch="main"))
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.skipped
+
+
+def test_step_changelog_updated_fails_without_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Code changed, CHANGELOG untouched → fail with the skip hint."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(
+        precommit, "get_modified_files", lambda **_kw: ["src/pkg/mod.py"]
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert not result.passed
+    assert "SKIP_CHANGELOG_CHECK=1" in result.output
+
+
+def test_step_changelog_updated_passes_with_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Change set includes CHANGELOG.md → pass."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(
+        precommit,
+        "get_modified_files",
+        lambda **_kw: ["src/pkg/mod.py", "CHANGELOG.md"],
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.passed
+
+
+def test_step_changelog_updated_honors_exempt_and_require_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """exempt_paths silences a subtree; require_paths re-includes inside it."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\n"
+        'exempt_paths = ["projects/"]\n'
+        'require_paths = ["projects/shipped/"]\n'
+    )
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(
+        precommit, "get_modified_files", lambda **_kw: ["projects/scratch/x.py"]
+    )
+    assert precommit.step_changelog_updated(tmp_path).passed
+    monkeypatch.setattr(
+        precommit, "get_modified_files", lambda **_kw: ["projects/shipped/x.py"]
+    )
+    assert not precommit.step_changelog_updated(tmp_path).passed

@@ -535,6 +535,34 @@ mitigation = "ensure XML sources are trusted"
 |---|---|---|---|
 | `paths` | `source_dirs` + `test_dirs` | Per-tool override of the scan roots; otherwise the shared layout. | The vulnerable surface lives outside your normal source roots. |
 
+## `[tool.forge.changelog]` — opt-in CHANGELOG gates
+
+Two opt-in pre-commit steps for **single-track, tag-versioned** repos
+following the [consumer changelog convention](consumer-release.md)
+(enable via `[tool.forge.precommit] enable = ["changelog_version",
+"changelog_updated"]`):
+
+- **`changelog_version`** — the declared-version gate: every `##`
+  heading is a recognized `vX.Y.Z` (a stray `## Unreleased` fails),
+  headings strictly decrease, the latest `v*` tag has an entry, the top
+  heading is never *behind* the latest tag (equality is valid — the
+  normal state right after a release is cut), and on a feature branch no
+  diff-added entries sit under an already-released heading (the
+  stranded-entries race). Self-skips without a root `CHANGELOG.md`, on
+  manifest-versioned repos (`verify-forge-plugin-version` owns the
+  invariant), and on dual-track repos (changelog is curated at
+  promotion).
+- **`changelog_updated`** — the per-PR freshness gate: a change set that
+  touches a changelog-requiring path without touching `CHANGELOG.md`
+  fails. Self-skips without a `CHANGELOG.md` and on the base branch;
+  `SKIP_CHANGELOG_CHECK=1` skips one commit (genuine no-ops).
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `blocking` | `true` | Findings fail the commit; `false` downgrades both steps to a WARN. | Staged adoption on a repo with a messy changelog history. |
+| `exempt_paths` | `[]` | Path prefixes `changelog_updated` ignores. | Scratch/experimental dirs whose changes need no entry. |
+| `require_paths` | `[]` | Prefixes that always require an entry, overriding `exempt_paths` (checked first). | A shipped subtree inside an otherwise exempt dir. |
+
 ## `[tool.forge.badges]` — README status badges
 
 `install-forge-readme-badges` writes a **drift-aware managed block**

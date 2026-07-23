@@ -65,3 +65,134 @@ def test_changelog_lacks_entry_false_when_tag_present() -> None:
 def test_changelog_lacks_entry_true_on_empty_text() -> None:
     """Empty changelog text has no entries, so any tag is missing."""
     assert changelog.changelog_lacks_entry("", "v1.0.0") is True
+
+
+# ---------------------------------------------------------------------------
+# changelog_version_findings
+# ---------------------------------------------------------------------------
+
+
+def test_version_findings_clean_changelog_passes() -> None:
+    """Dated headings, strictly decreasing, top == latest tag → no findings."""
+    text = "# Changelog\n\n## v1.1.0 — 2026-07-01\n\n- a\n\n## v1.0.0\n\n- b\n"
+    assert changelog.changelog_version_findings(text, "v1.1.0") == []
+
+
+def test_version_findings_flags_unreleased_heading() -> None:
+    """`## Unreleased` is not a recognized version — flagged, not ignored."""
+    text = "## Unreleased\n\n## v1.0.0\n"
+    findings = changelog.changelog_version_findings(text, "v1.0.0")
+    assert any("## Unreleased" in f for f in findings)
+
+
+def test_version_findings_flags_vless_and_truncated_headings() -> None:
+    """v-less `## 1.0.0` and truncated `## v1.2` fail the shared recognizer."""
+    text = "## 1.1.0\n\n## v1.2\n"
+    findings = changelog.changelog_version_findings(text, None)
+    assert len(findings) == 2
+    assert all("not a valid vX.Y.Z" in f for f in findings)
+
+
+def test_version_findings_invalid_only_omits_no_heading_message() -> None:
+    """A flagged invalid heading suppresses the separate 'no heading' error."""
+    findings = changelog.changelog_version_findings("## v1.2\n", None)
+    assert len(findings) == 1
+    assert "no `## vX.Y.Z` heading" not in findings[0]
+
+
+def test_version_findings_empty_text_reports_no_heading() -> None:
+    """No headings at all → the single 'no heading' finding."""
+    findings = changelog.changelog_version_findings("# Changelog\n", None)
+    assert findings == ["CHANGELOG.md has no `## vX.Y.Z` heading."]
+
+
+def test_version_findings_duplicate_heading_breaks_monotonicity() -> None:
+    """A duplicated version fails the strictly-decreasing rule."""
+    text = "## v1.0.0\n\n## v1.0.0\n"
+    findings = changelog.changelog_version_findings(text, None)
+    assert any("not strictly decreasing" in f for f in findings)
+
+
+def test_version_findings_out_of_order_headings_flagged() -> None:
+    """An older version above a newer one fails monotonicity."""
+    text = "## v1.0.0\n\n## v1.1.0\n"
+    findings = changelog.changelog_version_findings(text, None)
+    assert any("not strictly decreasing" in f for f in findings)
+
+
+def test_version_findings_latest_tag_missing_entry() -> None:
+    """The latest tag must have a matching heading."""
+    text = "## v1.0.0\n"
+    findings = changelog.changelog_version_findings(text, "v1.1.0")
+    assert any("has no `## v1.1.0` heading" in f for f in findings)
+
+
+def test_version_findings_top_behind_latest_tag() -> None:
+    """Top heading older than the latest tag → 'behind' finding."""
+    text = "## v1.0.0\n\n## v0.9.0\n"
+    findings = changelog.changelog_version_findings(text, "v1.1.0")
+    assert any("behind the latest tag v1.1.0" in f for f in findings)
+
+
+def test_version_findings_no_tags_skips_tag_checks() -> None:
+    """With no tags yet, only heading validity + ordering are checked."""
+    text = "## v0.1.0\n"
+    assert changelog.changelog_version_findings(text, None) == []
+
+
+# ---------------------------------------------------------------------------
+# stranded_added_versions
+# ---------------------------------------------------------------------------
+
+
+_STRAND_TEXT = (
+    "# Changelog\n\n## v0.2.0 — 2026-07-01\n\n- new bullet\n\n## v0.1.0\n\n- old\n"
+)
+
+_STRAND_DIFF = (
+    "--- a/CHANGELOG.md\n"
+    "+++ b/CHANGELOG.md\n"
+    "@@ -1,7 +1,9 @@\n"
+    " # Changelog\n"
+    " \n"
+    " ## v0.2.0 — 2026-07-01\n"
+    " \n"
+    "+- new bullet\n"
+    "+\n"
+    " ## v0.1.0\n"
+    " \n"
+    " - old\n"
+)
+
+
+def test_stranded_detects_entry_under_released_heading() -> None:
+    """Added bullet under a heading equal to the latest tag → stranded."""
+    result = changelog.stranded_added_versions(_STRAND_TEXT, _STRAND_DIFF, "v0.2.0")
+    assert result == ["v0.2.0"]
+
+
+def test_stranded_silent_when_heading_leads_tag() -> None:
+    """Same diff but the receiving heading is ahead of the latest tag → clean."""
+    result = changelog.stranded_added_versions(_STRAND_TEXT, _STRAND_DIFF, "v0.1.9")
+    assert result == []
+
+
+def test_stranded_ignores_added_heading_lines_and_blanks() -> None:
+    """A diff that only opens a new heading (plus blanks) strands nothing."""
+    text = "## v0.3.0\n\n## v0.2.0\n\n- old\n"
+    diff = (
+        "--- a/CHANGELOG.md\n"
+        "+++ b/CHANGELOG.md\n"
+        "@@ -1,3 +1,5 @@\n"
+        "+## v0.3.0\n"
+        "+\n"
+        " ## v0.2.0\n"
+        " \n"
+        " - old\n"
+    )
+    assert changelog.stranded_added_versions(text, diff, "v0.2.0") == []
+
+
+def test_stranded_no_tags_returns_empty() -> None:
+    """Without any release tag nothing can be stranded."""
+    assert changelog.stranded_added_versions(_STRAND_TEXT, _STRAND_DIFF, None) == []

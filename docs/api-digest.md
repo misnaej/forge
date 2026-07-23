@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_61 modules, 622 symbols._
+_61 modules, 632 symbols._
 
 ## `forge`
 
@@ -190,6 +190,12 @@ _61 modules, 622 symbols._
 
 - `release_headings(text: str) -> set[str]` — Return the set of ``## v<semver>`` release headings in *text*.
 - `changelog_lacks_entry(changelog_text: str, tag: str) -> bool` — Return ``True`` when *changelog_text* has no ``## <tag>`` heading.
+- `_recognized_version(token: str) -> str | None` _(internal)_ — Return the ``vX.Y.Z`` a heading *token* names, or ``None``.
+- `changelog_version_findings(text: str, latest_tag: str | None) -> list[str]` — Validate *text*'s release headings against each other and *latest_tag*.
+- `_governing_versions(text: str) -> list[str | None]` _(internal)_ — Map each line in *text* to its governing release version heading.
+- `_iter_added_lines(diff_text: str) -> Iterator[tuple[int, str]]` _(internal)_ — Yield (line_number, content) pairs for each addition in a unified diff.
+- `_stranded_from_added(governing: list[str | None], added_lines: Iterator[tuple[int, str]], tag: tuple[int, int, int] | None) -> list[str]` _(internal)_ — Detect released headings that received new content in a diff.
+- `stranded_added_versions(text: str, diff_text: str, latest_tag: str | None) -> list[str]` — Return released heading versions that *diff_text* adds entries under.
 
 ## `forge.claude_settings_schema`
 
@@ -671,6 +677,10 @@ _61 modules, 622 symbols._
 - `_vendored_documented_hashes(repo_root: Path) -> dict[str, str]` _(internal)_ — Parse ``VENDORED.md`` into a ``{filename: sha256}`` map.
 - `_sha256_file(path: Path) -> str` _(internal)_ — Return *path*'s SHA-256 hex digest, read in 64 KiB chunks.
 - `step_vendored_integrity(repo_root: Path) -> StepResult` — Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
+- `_changelog_blocking(repo_root: Path) -> bool` _(internal)_ — Return whether the changelog steps block the commit (default yes).
+- `step_changelog_version(repo_root: Path) -> StepResult` — Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
+- `_merge_base_with(repo_root: Path, base_branch: str) -> str` _(internal)_ — Return the merge-base SHA of ``HEAD`` and *base_branch*, or ``""``.
+- `step_changelog_updated(repo_root: Path) -> StepResult` — Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
 - `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
 - `_validate_step_names(names: Sequence[str]) -> None` _(internal)_ — Raise ``ValueError`` listing any *names* that are not registered steps.
