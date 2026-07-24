@@ -218,35 +218,30 @@ branch checkout. Only the `push` trigger is safe here — never run a
 
 ### Dual-track plugin repos (manifest-declared version)
 
-Same shape, tagging the fast channel with the rolling-next version from
-`.claude-plugin/plugin.json`. **The reference implementation is the
-`tag-dev-release` job in forge's own `.github/workflows/ci.yml`** —
-copy from there, not from this trimmed illustration:
+Same idea, tagging the fast channel with the rolling-next version from
+`.claude-plugin/plugin.json`. **The reference implementation is forge's
+own `.github/workflows/tag-release.yml`** — a workflow separate from
+the read-only CI one, gated via `workflow_run`, with a second job that
+relocates promoted minor tags on pushes to the base branch
+(`forge-check-main-tags --fix`). Copy that file, not a trimmed
+illustration.
 
-```yaml
-  tag-dev-release:
-    needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@<pinned-sha>   # SHA-pin actions in write jobs
-        with:
-          fetch-depth: 0
-          ref: ${{ github.sha }}   # tag the validated commit, never the tip
-      - uses: actions/setup-python@<pinned-sha>
-        with:
-          python-version: '3.13'
-      - run: pip install -e .
-      - run: forge-next-prep --tag --no-sync --no-prune-branches
-```
+### Safety details (both flavors)
 
-Two details matter in both flavors: check out `${{ github.sha }}` (the
-commit your gate job actually validated — a branch `ref:` re-resolves
-the tip and can tag a fast-following, unvalidated merge), and pass
-`--no-sync` so `forge-next-prep` stays on that pinned commit instead of
-syncing back to the branch tip.
+- **Keep the write surface separate.** A dedicated tag workflow (or at
+  minimum a dedicated job) holds the only `contents: write`; your CI
+  workflow stays read-only. Cross-workflow gating uses `workflow_run` +
+  a `conclusion == 'success'` check.
+- **Filter to `push` events.** CI also completes for PR runs — fork PRs
+  included — so a `workflow_run`-triggered write job must check
+  `github.event.workflow_run.event == 'push'` (and the branch) before
+  doing anything.
+- **Tag the validated commit, never the tip.** Check out
+  `${{ github.event.workflow_run.head_sha }}` (or `${{ github.sha }}`
+  in an inline job) — a branch `ref:` re-resolves the tip and can tag a
+  fast-following, unvalidated merge. With `forge-next-prep`, pass
+  `--no-sync` so the CLI stays on that pinned commit.
+- **SHA-pin actions** in any write-capable workflow.
 
 With either job in place, `/next`'s tag step becomes a no-op fallback
 (both CLIs are idempotent), and the manual `forge-release` recipe in

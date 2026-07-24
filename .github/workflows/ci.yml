@@ -11,9 +11,9 @@ on:
     branches: [main, dev]
   pull_request:
 
-# Defense-in-depth: default is read-only; the one exception is the
-# tag-dev-release job below, which carries a job-scoped `contents: write`
-# to push the release tag. Pinning least privilege documents intent.
+# Defense-in-depth: workflow only reads (no artifact uploads, no PR comments,
+# no label mutations). Tagging lives in the separate tag-release.yml
+# workflow, keeping every job here read-only by construction.
 permissions:
   contents: read
 
@@ -53,39 +53,3 @@ jobs:
       # shipped by the installed forge-scripts.
       - name: install-forge-claude-md --check (CLAUDE.md sync)
         run: install-forge-claude-md --check
-
-  tag-dev-release:
-    # Tag-on-merge, dual-track flavor: after CI passes on a push to dev,
-    # cut the rolling-next tag plugin.json declares (idempotent — no-op
-    # when the version equals the latest tag). Gated on the ci job so a
-    # broken merge never ships a tag to @dev consumers. Recipe for
-    # consumer repos: docs/ci-recipe.md §4.
-    #
-    # This job holds `contents: write`, so its actions are SHA-pinned and
-    # the checkout is pinned to the exact commit the ci job validated
-    # (github.sha) — `ref: dev` would re-resolve the tip and could tag a
-    # fast-following, unvalidated merge. `--no-sync` keeps forge-next-prep
-    # on that pinned SHA instead of syncing back to the branch tip.
-    needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout the validated commit (full history + tags)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-        with:
-          fetch-depth: 0
-          ref: ${{ github.sha }}
-
-      - name: Setup Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
-        with:
-          python-version: '3.13'
-          cache: 'pip'
-
-      - name: Install forge-scripts
-        run: pip install -e .
-
-      - name: Tag the rolling-next release when plugin.json is ahead
-        run: forge-next-prep --tag --no-sync --no-prune-branches
