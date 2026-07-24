@@ -17,4 +17,4 @@ If `$ARGUMENTS` is `strict`, run in strict mode (also escalates remaining `pip_a
 Agent(subagent_type="precommit-fixer", prompt="Clear all pre-commit failures. mode: strict")
 ```
 
-**Never** invoke `ruff`, `verify-forge-ruff*`, or `.githooks/pre-commit` from this skill or any caller — `precommit-fixer` is the sole entry point.
+**Never** invoke `ruff`, `fix-forge-ruff`, or `.githooks/pre-commit` from this skill or any caller — `precommit-fixer` is the sole entry point.

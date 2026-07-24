@@ -183,7 +183,7 @@ def require_cli(name: str, *, caller: str | None = None) -> None:
     degraded output.
 
     Args:
-        name: Console-script name to check (e.g. ``"verify-forge-ruff"``,
+        name: Console-script name to check (e.g. ``"verify-forge-docstrings"``,
             ``"ruff"``, ``"gh"``).
         caller: Optional name of the CLI making the check (e.g.
             ``"forge-precommit"``). Used to prefix the error so the user
