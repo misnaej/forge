@@ -113,6 +113,44 @@ gate remains the final check at cut time.
   (`## v1.6.0 — 2026-07-01`), matching what `release_headings`
   recognizes, rather than KaC's bracketed `## [1.6.0] - 2026-07-01`.
 
+## Choosing the bump
+
+The same decision procedure forge applies to its own releases, stated
+generically so any repo using `forge-release --bump` picks the
+increment the same way.
+
+**First, declare your public surface** — the set of things a consumer
+of *your* repo can rely on: CLIs and their arguments, importable
+APIs, file/output formats, config keys, documented behaviors. Write
+the list down in your repo's docs; everything outside it is internal
+and never drives the bump.
+
+**The axis is *new capability* vs *new option on an existing one* —
+NOT *any visible change*.** The single governing rule: **if a change
+does not break or alter the base behavior of an already-adopted
+capability, it is never a MINOR — it is a PATCH.**
+
+- **PATCH (Z+1)** — a bug fix; a refactor with identical externals; or
+  a new opt-in option layered on an existing capability that leaves
+  its base behavior unchanged (a new flag / mode / config key, inert
+  until set). A bug fix changes observable behavior almost by
+  definition — that alone does not make it MINOR. Also PATCH: doc
+  fixes; internal-only changes.
+- **MINOR (Y+1, Z→0)** — a genuinely **new capability or artifact**
+  that did not exist before, backward-compatible: a new CLI or
+  subcommand, a new public API, a new opt-in check or pipeline stage.
+  A new *option on an existing* capability is PATCH, not MINOR.
+- **MAJOR (X+1, Y→0, Z→0)** — breaking: something in the public
+  surface renamed / removed / signature-incompatible; semantics of an
+  adopted behavior inverted or altered; any upgrade that requires the
+  consumer to act beyond updating the pin.
+
+**When in doubt**, ask the deciding question: *is this a new
+capability, or a new option on an existing one?* Tags are free, but
+inflation cuts both ways: a MINOR on an opt-in knob sends a consumer
+reading `git log vX.Y.Z..vX.(Y+1).0` hunting for a feature that isn't
+there, just as a misleading PATCH hides a real one.
+
 ## Stable public Python import surface
 
 Repos that need a variation `forge-release` doesn't cover can compose
