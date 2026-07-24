@@ -19,9 +19,17 @@ name: tag-release
 # CI validated — never a branch ref that could re-resolve to a newer,
 # unvalidated tip. Actions are SHA-pinned (write-capable workflow).
 # Consumer recipe: docs/ci-recipe.md §4.
+#
+# Activation: GitHub evaluates workflow_run triggers from the workflow
+# definition on the DEFAULT branch (main). Until this file reaches main
+# via a promotion, neither job fires — for any branch. Meanwhile
+# `/next`'s `forge-next-prep --tag` and `forge-check-main-tags --fix`
+# steps remain the (idempotent) manual path.
 
 on:
   workflow_run:
+    # Must match ci.yml's `name:` exactly — rename both together or
+    # this trigger silently stops firing.
     workflows: [CI]
     types: [completed]
 

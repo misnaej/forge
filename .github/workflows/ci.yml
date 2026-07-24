@@ -1,3 +1,6 @@
+# The workflow name is load-bearing: tag-release.yml triggers on
+# `workflow_run: workflows: [CI]` — rename both together or tagging
+# silently stops firing.
 name: CI
 
 # Runs the same checks the local pre-commit hook runs, on every PR + push to

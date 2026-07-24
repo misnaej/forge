@@ -193,12 +193,14 @@ counts as success), so re-runs and races are safe.
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      # SHA-pin actions in write-capable jobs (v4.2.2 / v5.3.0 shown —
+      # resolve current SHAs for your copies).
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0   # setuptools-scm + tag comparison need history
           # checkout defaults to github.sha on push events — the exact
           # commit the gate job validated; do not override with a branch ref
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
           python-version: '3.13'
       - run: pip install "forge-scripts @ git+https://github.com/misnaej/forge.git@main"
@@ -225,6 +227,12 @@ the read-only CI one, gated via `workflow_run`, with a second job that
 relocates promoted minor tags on pushes to the base branch
 (`forge-check-main-tags --fix`). Copy that file, not a trimmed
 illustration.
+
+One `workflow_run` gotcha: GitHub evaluates the trigger from the
+workflow definition on the repo's **default branch** — a
+`workflow_run`-based tag workflow starts firing only once the file
+itself has landed there. Until then the manual tagging path (or an
+inline `needs:` job, which has no such lag) keeps working.
 
 ### Safety details (both flavors)
 
