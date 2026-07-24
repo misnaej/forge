@@ -115,9 +115,9 @@ gate remains the final check at cut time.
 
 ## Choosing the bump
 
-The same decision procedure forge applies to its own releases, stated
-generically so any repo using `forge-release --bump` picks the
-increment the same way.
+The same decision axis governs both forge's own manifest-versioned
+bumps and any single-track repo's `forge-release --bump`, stated
+generically here so every consumer picks the increment the same way.
 
 **First, declare your public surface** — the set of things a consumer
 of *your* repo can rely on: CLIs and their arguments, importable
