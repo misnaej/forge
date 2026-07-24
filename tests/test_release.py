@@ -479,3 +479,191 @@ def test_main_guard_failure_wins_over_dry_run(
     with caplog.at_level(logging.ERROR, logger="forge.release"):
         result = release.main()
     assert result == 1
+
+
+# ---------------------------------------------------------------------------
+# --from-changelog
+# ---------------------------------------------------------------------------
+
+
+def _single_track_cfg(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point ``release.load_config`` at a single-track config."""
+    monkeypatch.setattr(
+        release,
+        "load_config",
+        lambda _root: ForgeConfig(base_branch="main", dev_branch="main"),
+    )
+
+
+def test_main_from_changelog_cuts_declared_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: CHANGELOG declares v1.3.0, latest tag v1.2.3, on main.
+
+    MOCK SETUP: real work tree + bare origin; load_config → single-track.
+    EXPECTED BEHAVIOR: v1.3.0 tagged and pushed to origin; exit 0.
+    """
+    work, bare = _repo_with_origin(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.3.0\n\n- x\n\n## v1.2.3\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "v1.2.3"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    _single_track_cfg(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
+    monkeypatch.chdir(work)
+    assert release.main() == 0
+    assert _tag_exists(work, "v1.3.0")
+    assert _tag_exists(bare, "v1.3.0")
+
+
+def test_main_from_changelog_idempotent_when_already_tagged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Top heading equals the latest tag → exit 0, nothing new cut."""
+    work, bare = _repo_with_origin(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.2.3\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "v1.2.3"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    _single_track_cfg(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
+    monkeypatch.chdir(work)
+    with caplog.at_level(logging.INFO, logger="forge.release"):
+        assert release.main() == 0
+    assert any("already released" in r.getMessage() for r in caplog.records)
+    # The pre-existing local tag was never pushed — origin must stay bare.
+    assert not _tag_exists(bare, "v1.2.3")
+
+
+def test_main_from_changelog_stale_heading_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Top heading behind the latest tag → guard failure, exit 1."""
+    work, _bare = _repo_with_origin(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.1.0\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "v1.2.3"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    _single_track_cfg(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
+    monkeypatch.chdir(work)
+    with caplog.at_level(logging.ERROR, logger="forge.release"):
+        assert release.main() == 1
+    assert any("behind the latest tag" in r.getMessage() for r in caplog.records)
+
+
+def test_main_from_changelog_requires_changelog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No CHANGELOG.md → error naming the requirement, exit 1."""
+    work, _bare = _repo_with_origin(tmp_path)
+    _single_track_cfg(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
+    monkeypatch.chdir(work)
+    with caplog.at_level(logging.ERROR, logger="forge.release"):
+        assert release.main() == 1
+    assert any("needs a CHANGELOG.md" in r.getMessage() for r in caplog.records)
+
+
+def test_main_from_changelog_ci_allows_detached_tip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: CI merge-event checkout — detached HEAD at origin/main tip.
+
+    MOCK SETUP: real repo + origin; HEAD detached at the pushed tip;
+        release.is_ci → True.
+    EXPECTED BEHAVIOR: branch guard swaps to the tip check; tag cut; exit 0.
+    """
+    work, bare = _repo_with_origin(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v0.2.0\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "--detach", "HEAD"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(["git", "fetch", "-q", "origin"], cwd=work, env=_GIT_ENV, check=True)
+    _single_track_cfg(monkeypatch)
+    monkeypatch.setattr(release, "is_ci", lambda: True)
+    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
+    monkeypatch.chdir(work)
+    assert release.main() == 0
+    assert _tag_exists(bare, "v0.2.0")
+
+
+def test_main_from_changelog_ci_refuses_non_tip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Detached HEAD at an older commit than origin's tip → exit 1."""
+    work, _bare = _repo_with_origin(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v0.2.0\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
+    )
+    first = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    (work / "later.txt").write_text("x")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "later"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "--detach", first],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(["git", "fetch", "-q", "origin"], cwd=work, env=_GIT_ENV, check=True)
+    _single_track_cfg(monkeypatch)
+    monkeypatch.setattr(release, "is_ci", lambda: True)
+    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
+    monkeypatch.chdir(work)
+    with caplog.at_level(logging.ERROR, logger="forge.release"):
+        assert release.main() == 1
+    assert any("not the tip" in r.getMessage() for r in caplog.records)

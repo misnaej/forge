@@ -444,7 +444,8 @@ options:
 ## forge-release
 
 ```text
-usage: forge-release [-h] --bump {major,minor,patch} [--dry-run]
+usage: forge-release [-h] (--bump {major,minor,patch} | --from-changelog)
+                     [--dry-run]
 
 Cut a vX.Y.Z release tag for a single-track, tag-versioned (setuptools-scm)
 repo: clean tree + on base branch + CHANGELOG entry present, then annotated
@@ -454,6 +455,9 @@ options:
   -h, --help            show this help message and exit
   --bump {major,minor,patch}
                         Semver increment to apply to the latest v* tag.
+  --from-changelog      Cut the version the CHANGELOG.md top heading declares.
+                        Idempotent (already tagged → exit 0); the tag-on-merge
+                        CI mode — see docs/ci-recipe.md.
   --dry-run             Report the tag that would be cut and exit without
                         tagging.
 ```

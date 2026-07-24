@@ -52,3 +52,33 @@ jobs:
       # shipped by the installed forge-scripts.
       - name: install-forge-claude-md --check (CLAUDE.md sync)
         run: install-forge-claude-md --check
+
+  tag-dev-release:
+    # Tag-on-merge, dual-track flavor: after CI passes on a push to dev,
+    # cut the rolling-next tag plugin.json declares (idempotent — no-op
+    # when the version equals the latest tag). Gated on the ci job so a
+    # broken merge never ships a tag to @dev consumers. Recipe for
+    # consumer repos: docs/ci-recipe.md §4.
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout dev (full history + tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: dev
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install forge-scripts
+        run: pip install -e .
+
+      - name: Tag the rolling-next release when plugin.json is ahead
+        run: forge-next-prep --tag --no-prune-branches

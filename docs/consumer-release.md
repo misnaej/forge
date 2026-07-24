@@ -75,6 +75,17 @@ them.
 
 ### Cutting a release — agent/human boundary
 
+**Automated (recommended): CI is the tag-pusher.** With the
+tag-on-merge job from [`ci-recipe.md`](ci-recipe.md) §4 installed,
+`forge-release --from-changelog` runs on every merge to the base
+branch and cuts the version the top heading declares — idempotent,
+race-tolerant, and (in the recommended gated form) only after the test
+job passes. Nobody pushes release tags by hand; the boundary question
+dissolves because the declared heading, reviewed in its PR, *is* the
+release decision.
+
+**Manual fallback** (no workflow, or an out-of-band cut):
+
 ```bash
 git switch main && git pull --ff-only
 # top `## vX.Y.Z` heading already matches the bump you intend
@@ -84,10 +95,10 @@ forge-release --bump patch|minor|major --dry-run   # confirm the computed tag
 forge-release --bump patch|minor|major             # tag + push — a human runs this
 ```
 
-An agent prepares CHANGELOG entries and runs `--dry-run` only. Pushing
-the tag is the user's action: a `v*` tag *defines* a version the moment
-it lands, and there is no un-publishing it from environments that
-already resolved it.
+On the manual path, an agent prepares CHANGELOG entries and runs
+`--dry-run` only. Pushing the tag is the user's action: a `v*` tag
+*defines* a version the moment it lands, and there is no un-publishing
+it from environments that already resolved it.
 
 ### Concurrent releases serialize through git
 

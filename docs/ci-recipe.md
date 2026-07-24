@@ -171,6 +171,78 @@ Pick a cadence that matches how aggressively you want forge updates:
 
 ---
 
+## 4. Tag-on-merge release automation
+
+Cutting the release tag on every merge removes the human-latency window
+in which further PRs pile onto an already-declared version, and closes
+the stale-local-tag gap entirely — the remote is always current.
+
+### Single-track repos (CHANGELOG-declared version)
+
+Add a job to your CI workflow that runs after your tests, on pushes to
+the base branch only. `forge-release --from-changelog` cuts the version
+the CHANGELOG top heading declares; it is idempotent (already tagged →
+exit 0) and race-tolerant (a concurrent manual cut of the same version
+counts as success), so re-runs and races are safe.
+
+```yaml
+  tag-release:
+    needs: test            # gate on your test job — recommended
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # setuptools-scm + tag comparison need history
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install "forge-scripts @ git+https://github.com/misnaej/forge.git@main"
+      - run: forge-release --from-changelog
+```
+
+The `needs: test` gate means a broken merge never becomes a released
+tag. Repos that prefer tag-immediately + forward-fix (a patch PR opens
+the next heading) can drop the `needs:` line — both modes are
+supported; gated is the recommended default because a `v*` tag is
+distribution the moment it lands.
+
+The job runs on a detached `HEAD`; `forge-release --from-changelog`
+verifies it is the tip of `origin/<base_branch>` instead of requiring a
+branch checkout. Only the `push` trigger is safe here — never run a
+`contents: write` job from `pull_request_target`.
+
+### Dual-track plugin repos (manifest-declared version)
+
+Same shape, tagging the fast channel with the rolling-next version from
+`.claude-plugin/plugin.json` — this is the job forge's own CI runs:
+
+```yaml
+  tag-dev-release:
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: dev
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install -e .
+      - run: forge-next-prep --tag --no-prune-branches
+```
+
+With either job in place, `/next`'s tag step becomes a no-op fallback
+(both CLIs are idempotent), and the manual `forge-release` recipe in
+[`consumer-release.md`](consumer-release.md) remains available for
+repos without the workflow.
+
 ## Auth troubleshooting
 
 | Symptom | Fix |
