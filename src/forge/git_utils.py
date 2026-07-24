@@ -183,7 +183,7 @@ def require_cli(name: str, *, caller: str | None = None) -> None:
     degraded output.
 
     Args:
-        name: Console-script name to check (e.g. ``"verify-forge-ruff"``,
+        name: Console-script name to check (e.g. ``"verify-forge-docstrings"``,
             ``"ruff"``, ``"gh"``).
         caller: Optional name of the CLI making the check (e.g.
             ``"forge-precommit"``). Used to prefix the error so the user
@@ -535,16 +535,18 @@ def get_modified_files(
     suffix: str = ".py",
     prefix: str | tuple[str, ...] | None = None,
     repo_root: Path | None = None,
+    base_branch: str = "main",
 ) -> list[str]:
     """Get list of modified files from git.
 
-    Detects files modified in the current branch compared to main,
-    including branch commits, staged files, and unstaged changes.
+    Detects files modified in the current branch compared to the base
+    branch, including branch commits, staged files, and unstaged changes.
 
     Strategy:
-        - Feature branch: all files modified vs main/origin/main
+        - Feature branch: all files modified vs
+          ``<base_branch>``/``origin/<base_branch>``
           (branch commits + staged + unstaged)
-        - Main branch: files modified vs previous commit
+        - Base branch: files modified vs previous commit
 
     Args:
         suffix: File suffix to filter by. Defaults to '.py'.
@@ -556,15 +558,18 @@ def get_modified_files(
             already holds one — required for in-process callers like
             ``forge-precommit`` steps, where the cached global may point at
             a different repo than the one under check (e.g. in tests).
+        base_branch: Branch the feature-branch diff compares against.
+            Callers with a loaded ``[tool.forge]`` config pass
+            ``cfg.base_branch`` (``forge.config.select_diff_files`` does);
+            the default matches the config default.
 
     Returns:
         Deduplicated list of modified file paths matching the filters.
     """
     current_branch = _run_git("branch", "--show-current", cwd=repo_root)
 
-    if current_branch and current_branch != "main":
-        # Try main, then origin/main as base branch
-        for base in ("main", "origin/main"):
+    if current_branch and current_branch != base_branch:
+        for base in (base_branch, f"origin/{base_branch}"):
             if not _run_git("rev-parse", "--verify", base, cwd=repo_root):
                 continue
 

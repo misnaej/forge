@@ -56,6 +56,15 @@ git rev-list --left-right --count "origin/<base>...HEAD"   # left = behind
   history and re-triggers CI, so surface it and let the user decide.
 - **Up to date, `MERGEABLE`** → proceed to Step 1.
 
+**Stranded-changelog check** (single-track repos with a root
+`CHANGELOG.md`): a release tag cut while this PR was open leaves the
+PR's entries under an already-released heading — nothing conflicts, so
+neither git nor the checks above notice. After the fetch, run
+`forge-precommit --only changelog_version` (self-skips on repos where
+the convention doesn't apply). A `stranded` finding means: bump the top
+`## vX.Y.Z` heading to the next version, move this PR's entries under
+it, commit, and re-run from Step 0.5.
+
 Merging the base re-triggers CI — wait for it to go green again before
 finalizing (a finalize on a now-stale CI run is misleading).
 

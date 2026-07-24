@@ -169,7 +169,7 @@ extras>... <original task>")`.
 
 **Forbidden — do NOT handle directly:**
 - Run `git commit` / `git push` directly → use `forge:git-commit-push`
-- Invoke `ruff` directly (or any `verify-forge-ruff*` wrapper) from an agent → use `forge:precommit-fixer` (reads `code_health/` reports, dispatches fixes). Only the pre-commit hook runs ruff here.
+- Invoke `ruff` (or `fix-forge-ruff`) directly from an agent → use `forge:precommit-fixer` (reads `code_health/` reports, dispatches fixes). Only the pre-commit hook runs ruff here.
 - Hand-curate a file list or rule selection for `forge:precommit-fixer` → don't; it scopes itself off the pre-commit report.
 - Write PR descriptions or squash-merge messages → use `forge:pr-manager`
 - Review code for security / design → use `forge:security-checker` / `forge:design-checker`

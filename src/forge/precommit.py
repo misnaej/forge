@@ -22,11 +22,13 @@ a vendored-integrity gate (vendored ``data/*.js`` blobs must match their
 ``forge-scripts`` pip package and invoked by ``.githooks/pre-commit``
 after ``install-forge-githooks``.
 
-Four further steps are **opt-in** (off by default): ``doctest``
+Further steps are **opt-in** (off by default): ``doctest``
 (``pytest --doctest-modules``), ``typecheck`` (``pyrefly``),
-``doc_consistency`` (doc claims vs repo state), and ``c4`` (C4 diagram
-drift; self-skips when no ``[tool.forge.c4]``). Opt in by listing them in
-``[tool.forge.precommit] enable``. The same table's
+``doc_consistency`` (doc claims vs repo state), ``c4`` (C4 diagram
+drift; self-skips when no ``[tool.forge.c4]``), ``changelog_version``
+(single-track CHANGELOG headings vs tags, stranded-entry detection) and
+``changelog_updated`` (per-PR CHANGELOG freshness). Opt in by listing
+them in ``[tool.forge.precommit] enable``. The same table's
 ``disable`` list force-skips any default step; ``--only`` / ``--skip``
 do the same for a single run. This override layer sits on top of each
 step's own self-skip — it never weakens one, and ``disable`` beats
@@ -56,6 +58,7 @@ after run only if the forge sequence passed.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import importlib.metadata
 import json
@@ -68,6 +71,7 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
 from forge import config, pip_audit_json
+from forge.changelog import changelog_version_findings, stranded_added_versions
 from forge.config import resolve_model_section
 from forge.git_utils import (
     SCOPE_ALL,
@@ -78,11 +82,12 @@ from forge.git_utils import (
     parse_semver,
     read_local_plugin_version,
     require_cli,
+    run_git,
     stage_modified_paths,
     write_step_log,
 )
 from forge.git_utils import repo_root as get_repo_root
-from forge.run_context import is_non_interactive
+from forge.run_context import is_ci, is_non_interactive
 
 
 if TYPE_CHECKING:
@@ -1599,6 +1604,223 @@ def step_vendored_integrity(repo_root: Path) -> StepResult:
     )
 
 
+_SKIP_CHANGELOG_ENV = "SKIP_CHANGELOG_CHECK"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _changelog_blocking(repo_root: Path) -> bool:
+    """Return whether the changelog steps block the commit (default yes).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``[tool.forge.changelog].blocking``, defaulting to ``True`` — a
+        freshness/consistency gate that only warns defeats its purpose;
+        ``blocking = false`` exists for staged adoption.
+    """
+    return bool(_forge_step_config(repo_root, "changelog").get("blocking", True))
+
+
+def step_changelog_version(repo_root: Path) -> StepResult:
+    """Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
+
+    The single-track declared-version invariant from
+    ``docs/consumer-release.md`` "Changelog convention", enforced between
+    releases rather than only at ``forge-release`` cut time: every ``##``
+    heading is a recognized version, headings strictly decrease, the
+    latest ``v*`` tag has an entry, the top heading is never behind the
+    latest tag, and — on a feature branch — no diff-added entries sit
+    under an already-released heading (the stranded-entries race: a tag
+    cut under an open PR leaves its bullets attributed to a release that
+    does not contain the code, with no merge conflict to signal it).
+
+    Self-skips when there is no root ``CHANGELOG.md``, on
+    manifest-versioned repos (``verify-forge-plugin-version`` owns the
+    declared-version invariant there), and on dual-track repos (their
+    changelog is curated at promotion — ``docs/release-process.md`` §5).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        StepResult; blocking unless ``[tool.forge.changelog].blocking``
+        is ``false``.
+    """
+    name = "changelog_version"
+    changelog = repo_root / "CHANGELOG.md"
+    if not changelog.exists():
+        return StepResult(
+            name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
+        )
+    if (repo_root / ".claude-plugin" / "plugin.json").exists():
+        return StepResult(
+            name=name,
+            passed=True,
+            output=(
+                "Manifest-versioned repo — verify-forge-plugin-version owns "
+                "the declared-version invariant; skipped."
+            ),
+            skipped=True,
+        )
+    cfg = config.load_config(repo_root)
+    if cfg.dual_track:
+        return StepResult(
+            name=name,
+            passed=True,
+            output="Dual-track repo — changelog is curated at promotion; skipped.",
+            skipped=True,
+        )
+    text = changelog.read_text(encoding="utf-8")
+    # Best-effort tag refresh: stale local tags would wrongly accept a
+    # behind-the-tag heading (plain `git fetch` skips tags not on fetched
+    # tips). Gated on is_ci() — NOT is_non_interactive(): agent-driven
+    # local runs (non-tty stdin) are the primary audience of the stranded
+    # check and have no authoritative fetch; genuine CI does (§15).
+    # Bounded + stdin-less so an offline remote or credential prompt
+    # degrades to a stale-tag check instead of hanging the commit.
+    if not is_ci():
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            subprocess.run(
+                ["git", "fetch", "--tags", "--quiet"],
+                cwd=repo_root,
+                capture_output=True,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                timeout=10,
+            )
+    latest = latest_v_tag(repo_root)
+    findings = changelog_version_findings(text, latest)
+    current = run_git("branch", "--show-current", cwd=repo_root, check=False)
+    if current and current != cfg.base_branch:
+        merge_base = _merge_base_with(repo_root, cfg.base_branch)
+        if merge_base:
+            diff_text = run_git(
+                "diff", merge_base, "--", "CHANGELOG.md", cwd=repo_root, check=False
+            )
+            if diff_text:
+                findings.extend(
+                    f"Entries added under released heading {version} (not ahead "
+                    f"of latest tag {latest}) — stranded; move them under the "
+                    "next `## vX.Y.Z` heading."
+                    for version in stranded_added_versions(text, diff_text, latest)
+                )
+    return StepResult(
+        name=name,
+        passed=not findings,
+        output=(
+            "\n".join(findings)
+            if findings
+            else "CHANGELOG release headings consistent with tags."
+        ),
+        non_blocking=not _changelog_blocking(repo_root),
+    )
+
+
+def _merge_base_with(repo_root: Path, base_branch: str) -> str:
+    """Return the merge-base SHA of ``HEAD`` and *base_branch*, or ``""``.
+
+    Tries the local branch first, then its ``origin/`` tracking ref, so
+    the stranded-entries diff works in clones that only fetched the
+    remote branch.
+
+    Args:
+        repo_root: Git repo root.
+        base_branch: Configured base-branch name.
+
+    Returns:
+        The merge-base SHA, or empty string when neither ref resolves.
+    """
+    for ref in (base_branch, f"origin/{base_branch}"):
+        sha = run_git("merge-base", ref, "HEAD", cwd=repo_root, check=False)
+        if sha:
+            return sha
+    return ""
+
+
+def step_changelog_updated(repo_root: Path) -> StepResult:
+    """Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
+
+    The per-PR freshness rule from ``docs/consumer-release.md``: every
+    change with a user-facing effect adds its bullet in the same PR, so
+    the changelog stays release-ready. Fails when the change set (branch
+    commits + staged + unstaged vs the base branch) touches a
+    changelog-requiring path but not ``CHANGELOG.md``.
+
+    Path policy: ``[tool.forge.changelog].require_paths`` prefixes always
+    require an entry (checked first), ``exempt_paths`` prefixes never do,
+    everything else requires one. ``SKIP_CHANGELOG_CHECK=1`` skips the
+    gate for a genuine no-op (mechanical revert). Self-skips without a
+    root ``CHANGELOG.md`` and on the base branch or a detached HEAD (it
+    is a per-PR guard).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        StepResult; blocking unless ``[tool.forge.changelog].blocking``
+        is ``false``.
+    """
+    name = "changelog_updated"
+    if os.environ.get(_SKIP_CHANGELOG_ENV, "").strip().lower() in _TRUTHY:
+        return StepResult(
+            name=name,
+            passed=True,
+            output=f"{_SKIP_CHANGELOG_ENV} set — skipped.",
+            skipped=True,
+        )
+    changelog = repo_root / "CHANGELOG.md"
+    if not changelog.exists():
+        return StepResult(
+            name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
+        )
+    cfg = config.load_config(repo_root)
+    current = run_git("branch", "--show-current", cwd=repo_root, check=False)
+    if not current or current == cfg.base_branch:
+        return StepResult(
+            name=name,
+            passed=True,
+            output="Per-PR guard — base branch or detached HEAD; skipped.",
+            skipped=True,
+        )
+    step_cfg = _forge_step_config(repo_root, "changelog")
+    exempt = tuple(_cfg_str_list(step_cfg, "exempt_paths", []))
+    require = tuple(_cfg_str_list(step_cfg, "require_paths", []))
+    # drop_deleted=False: a deleted file is still a change that may require
+    # a changelog entry — the default would silently exempt deletions.
+    files = config.select_diff_files(repo_root, suffix="", drop_deleted=False)
+    triggers = [
+        path
+        for path in files
+        if path != "CHANGELOG.md"
+        and (
+            (require and path.startswith(require))
+            or not (exempt and path.startswith(exempt))
+        )
+    ]
+    if triggers and "CHANGELOG.md" not in files:
+        return StepResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(triggers)} changed file(s) require a CHANGELOG.md entry "
+                f"(first: {triggers[0]}). Add a bullet under the top "
+                "`## vX.Y.Z` heading (docs/consumer-release.md), or set "
+                f"{_SKIP_CHANGELOG_ENV}=1 for a genuine no-op."
+            ),
+            non_blocking=not _changelog_blocking(repo_root),
+        )
+    return StepResult(
+        name=name,
+        passed=True,
+        output=(
+            "CHANGELOG.md updated alongside the change set."
+            if triggers
+            else "No changelog-requiring changes."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
@@ -1670,6 +1892,8 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("c4", step_c4, default_on=False),
     StepDef("api_digest_check", step_api_digest_check, default_on=False),
     StepDef("smart_test", step_smart_test, default_on=False),
+    StepDef("changelog_version", step_changelog_version, default_on=False),
+    StepDef("changelog_updated", step_changelog_updated, default_on=False),
 )
 
 _DEFAULT_ON: frozenset[str] = frozenset(d.name for d in _STEP_REGISTRY if d.default_on)

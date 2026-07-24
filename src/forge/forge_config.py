@@ -194,6 +194,26 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "the repo-wide [tool.forge].source_dirs + test_dirs.",
     ),
     ConfigKey(
+        ("tool", "forge", "changelog", "blocking"),
+        default=True,
+        description="Make the opt-in changelog_version / changelog_updated "
+        "steps fail the commit on a finding (default: blocking; set false "
+        "for staged adoption as a WARN).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "changelog", "exempt_paths"),
+        default=[],
+        description="Path prefixes the changelog_updated step ignores — "
+        "scratch/experimental dirs whose changes need no CHANGELOG.md entry.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "changelog", "require_paths"),
+        default=[],
+        description="Path prefixes that always require a CHANGELOG.md entry, "
+        "overriding exempt_paths (a shipped subtree inside an otherwise "
+        "exempt dir). Checked before exempt_paths.",
+    ),
+    ConfigKey(
         ("tool", "forge", "smart_test", "precommit_depth"),
         "unset (step skipped)",
         "Depth the smart_test pre-commit step runs on commit (0/1/2/full). "

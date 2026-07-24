@@ -59,8 +59,10 @@ in spirit; the deliberate divergences are listed at the end.
   version **about to be released** — the CHANGELOG *declares* the next
   version, and the tag `forge-release` cuts *confirms* it. This is the
   single-track analogue of forge's own rolling-next invariant
-  ([`release-process.md`](release-process.md), forge-only): the
-  declared next version always leads the latest tag.
+  ([`release-process.md`](release-process.md), forge-only). Right after
+  a release is cut, top heading and latest tag are **equal** — that
+  window is valid; the **first PR after a tag opens the next
+  `## vX.Y.Z` heading** (and carries its own entries under it).
 
 ### Per-PR rule
 
@@ -93,6 +95,15 @@ Two concurrent release branches both edit the same top heading, so git
 forces a merge conflict; whoever resolves it moves their entries under
 the next number. Deterministic ordering with no external coordinator —
 the conflict is the feature, not a nuisance.
+
+### Enforcement
+
+Two opt-in pre-commit steps gate this convention between releases (see
+[`configuration.md`](configuration.md), `[tool.forge.changelog]`):
+`changelog_version` (heading validity, ordering, tag alignment, and
+stranded-entry detection when a tag lands under an open PR) and
+`changelog_updated` (the per-PR entry rule). `forge-release`'s CHANGELOG
+gate remains the final check at cut time.
 
 ### Divergences from Keep a Changelog
 

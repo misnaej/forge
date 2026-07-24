@@ -34,8 +34,8 @@ Non-blocking initially; promoted after Layer 3 trim PRs.
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans
-                        modified files vs main.
+                        Audit scope. 'full' scans roots; 'changed' scans files
+                        modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to
@@ -72,8 +72,8 @@ Extract domain claims from docstrings/comments for verification.
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans
-                        modified files vs main.
+                        Audit scope. 'full' scans roots; 'changed' scans files
+                        modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to
@@ -93,8 +93,8 @@ Structured-data integrity (CSV alignment + parse checks).
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans
-                        modified files vs main.
+                        Audit scope. 'full' scans roots; 'changed' scans files
+                        modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to
@@ -114,8 +114,8 @@ readable dependency tree to code_health/audit_deps_tree.log.
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans
-                        modified files vs main.
+                        Audit scope. 'full' scans roots; 'changed' scans files
+                        modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to
@@ -141,8 +141,8 @@ Detect duplicate / near-duplicate / name-colliding functions.
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans
-                        modified files vs main.
+                        Audit scope. 'full' scans roots; 'changed' scans files
+                        modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to
@@ -168,8 +168,8 @@ Detect unused code via vulture (>= min-confidence).
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans
-                        modified files vs main.
+                        Audit scope. 'full' scans roots; 'changed' scans files
+                        modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to
@@ -190,8 +190,8 @@ List lint/type/coverage suppressions and resolve rule names.
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans
-                        modified files vs main.
+                        Audit scope. 'full' scans roots; 'changed' scans files
+                        modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to

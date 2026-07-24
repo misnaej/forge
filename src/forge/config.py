@@ -473,14 +473,20 @@ def select_diff_files(
     Returns:
         Repo-relative modified-file paths matching the selected filters,
         every one guaranteed to resolve inside *repo_root*. Empty when
-        nothing in scope changed — the caller decides the skip.
+        nothing in scope changed — the caller decides the skip. The diff
+        base is the repo's configured ``[tool.forge].base_branch``.
     """
     prefixes: tuple[str, ...] | None = None
     if roots is not None:
         norm = [r.rstrip("/") for r in roots]
         if "." not in norm:
             prefixes = tuple(f"{r}/" for r in norm)
-    modified = get_modified_files(prefix=prefixes, suffix=suffix, repo_root=repo_root)
+    modified = get_modified_files(
+        prefix=prefixes,
+        suffix=suffix,
+        repo_root=repo_root,
+        base_branch=load_config(repo_root).base_branch,
+    )
     files: list[str] = []
     for f in modified:
         # Defense-in-depth: a `git diff` path is always repo-relative, but a
