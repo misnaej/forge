@@ -58,6 +58,7 @@ after run only if the forge sequence passed.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import importlib.metadata
 import json
@@ -86,7 +87,7 @@ from forge.git_utils import (
     write_step_log,
 )
 from forge.git_utils import repo_root as get_repo_root
-from forge.run_context import is_non_interactive
+from forge.run_context import is_ci, is_non_interactive
 
 
 if TYPE_CHECKING:
@@ -1673,10 +1674,21 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     text = changelog.read_text(encoding="utf-8")
     # Best-effort tag refresh: stale local tags would wrongly accept a
     # behind-the-tag heading (plain `git fetch` skips tags not on fetched
-    # tips). Non-fatal — an offline commit must still succeed. Skipped
-    # non-interactively: CI fetches tags authoritatively (FOUNDATION §15).
-    if not is_non_interactive():
-        run_git("fetch", "--tags", "--quiet", cwd=repo_root, check=False)
+    # tips). Gated on is_ci() — NOT is_non_interactive(): agent-driven
+    # local runs (non-tty stdin) are the primary audience of the stranded
+    # check and have no authoritative fetch; genuine CI does (§15).
+    # Bounded + stdin-less so an offline remote or credential prompt
+    # degrades to a stale-tag check instead of hanging the commit.
+    if not is_ci():
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            subprocess.run(
+                ["git", "fetch", "--tags", "--quiet"],
+                cwd=repo_root,
+                capture_output=True,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                timeout=10,
+            )
     latest = latest_v_tag(repo_root)
     findings = changelog_version_findings(text, latest)
     current = run_git("branch", "--show-current", cwd=repo_root, check=False)

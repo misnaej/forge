@@ -2929,25 +2929,33 @@ def test_step_changelog_updated_honors_exempt_and_require_paths(
     assert not precommit.step_changelog_updated(tmp_path).passed
 
 
-def test_step_changelog_version_fetches_tags_only_interactively(
+def test_step_changelog_version_fetches_tags_unless_ci(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Interactive run refreshes tags best-effort; CI run does not re-fetch."""
+    """Local runs (human OR agent) refresh tags; genuine CI does not re-fetch.
+
+    SCENARIO: gate must be is_ci(), not is_non_interactive() — agent-driven
+    runs have a non-tty stdin but no authoritative tag fetch of their own.
+    MOCK SETUP: subprocess.run recorded (the fetch is a direct bounded
+    call); run_git faked for branch/merge-base reads.
+    EXPECTED BEHAVIOR: fetch argv appears when is_ci() is False, absent
+    when True.
+    """
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
     monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
-    calls: list[tuple[str, ...]] = []
-    base_fake = _fake_run_git_dispatch()
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    fetches: list[list[str]] = []
 
-    def _recording(*args: str, **kw: object) -> str:
-        calls.append(args)
-        return base_fake(*args, **kw)
+    def _fake_subprocess_run(cmd: list[str], **_kw: object) -> object:
+        fetches.append(list(cmd))
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
-    monkeypatch.setattr(precommit, "run_git", _recording)
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     assert precommit.step_changelog_version(tmp_path).passed
-    assert any(c[:2] == ("fetch", "--tags") for c in calls)
+    assert any(c[:3] == ["git", "fetch", "--tags"] for c in fetches)
 
-    calls.clear()
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
+    fetches.clear()
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
     assert precommit.step_changelog_version(tmp_path).passed
-    assert not any(c[:2] == ("fetch", "--tags") for c in calls)
+    assert not any(c[:3] == ["git", "fetch", "--tags"] for c in fetches)

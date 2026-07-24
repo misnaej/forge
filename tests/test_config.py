@@ -794,3 +794,19 @@ def test_select_diff_files_drops_paths_escaping_repo_root(
     result = select_diff_files(tmp_path, roots=None)
     assert result == ["src/ok.py"]
     assert "../evil.py" not in result
+
+
+def test_select_diff_files_forwards_configured_base_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The diff base comes from [tool.forge].base_branch, not a hardcoded main."""
+    (tmp_path / "pyproject.toml").write_text('[tool.forge]\nbase_branch = "develop"\n')
+    captured: dict[str, object] = {}
+
+    def _fake_get_modified_files(**kwargs: object) -> list[str]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
+    select_diff_files(tmp_path)
+    assert captured["base_branch"] == "develop"

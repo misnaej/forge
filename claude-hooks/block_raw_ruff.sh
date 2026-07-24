@@ -10,8 +10,8 @@ COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
 
 # Anchor: ruff at start-of-string or after a shell separator. Quoted
 # bodies (PR descriptions, commit messages mentioning "ruff") do not
-# fire. verify-forge-ruff*, fix-forge-ruff*, and similar one-token
-# wrappers don't match because ruff sits mid-string in those.
+# fire. fix-forge-ruff* and similar one-token wrappers don't match
+# because ruff sits mid-string in those.
 #
 # Known accepted slip-through: `bash -c "ruff check ..."` — ruff sits
 # after a quote, not a separator. Acceptable (matches

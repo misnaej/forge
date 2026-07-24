@@ -473,7 +473,8 @@ def select_diff_files(
     Returns:
         Repo-relative modified-file paths matching the selected filters,
         every one guaranteed to resolve inside *repo_root*. Empty when
-        nothing in scope changed — the caller decides the skip.
+        nothing in scope changed — the caller decides the skip. The diff
+        base is the repo's configured ``[tool.forge].base_branch``.
     """
     prefixes: tuple[str, ...] | None = None
     if roots is not None:
