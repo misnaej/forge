@@ -480,7 +480,12 @@ def select_diff_files(
         norm = [r.rstrip("/") for r in roots]
         if "." not in norm:
             prefixes = tuple(f"{r}/" for r in norm)
-    modified = get_modified_files(prefix=prefixes, suffix=suffix, repo_root=repo_root)
+    modified = get_modified_files(
+        prefix=prefixes,
+        suffix=suffix,
+        repo_root=repo_root,
+        base_branch=load_config(repo_root).base_branch,
+    )
     files: list[str] = []
     for f in modified:
         # Defense-in-depth: a `git diff` path is always repo-relative, but a

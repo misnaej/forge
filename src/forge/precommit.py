@@ -1671,6 +1671,12 @@ def step_changelog_version(repo_root: Path) -> StepResult:
             skipped=True,
         )
     text = changelog.read_text(encoding="utf-8")
+    # Best-effort tag refresh: stale local tags would wrongly accept a
+    # behind-the-tag heading (plain `git fetch` skips tags not on fetched
+    # tips). Non-fatal — an offline commit must still succeed. Skipped
+    # non-interactively: CI fetches tags authoritatively (FOUNDATION §15).
+    if not is_non_interactive():
+        run_git("fetch", "--tags", "--quiet", cwd=repo_root, check=False)
     latest = latest_v_tag(repo_root)
     findings = changelog_version_findings(text, latest)
     current = run_git("branch", "--show-current", cwd=repo_root, check=False)

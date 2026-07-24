@@ -2927,3 +2927,27 @@ def test_step_changelog_updated_honors_exempt_and_require_paths(
         lambda *_a, **_kw: ["projects/shipped/x.py"],
     )
     assert not precommit.step_changelog_updated(tmp_path).passed
+
+
+def test_step_changelog_version_fetches_tags_only_interactively(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Interactive run refreshes tags best-effort; CI run does not re-fetch."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    calls: list[tuple[str, ...]] = []
+    base_fake = _fake_run_git_dispatch()
+
+    def _recording(*args: str, **kw: object) -> str:
+        calls.append(args)
+        return base_fake(*args, **kw)
+
+    monkeypatch.setattr(precommit, "run_git", _recording)
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    assert precommit.step_changelog_version(tmp_path).passed
+    assert any(c[:2] == ("fetch", "--tags") for c in calls)
+
+    calls.clear()
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
+    assert precommit.step_changelog_version(tmp_path).passed
+    assert not any(c[:2] == ("fetch", "--tags") for c in calls)
