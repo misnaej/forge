@@ -177,6 +177,7 @@ breaks are MAJOR releases:
 | `forge.git_utils.run_git(*args, cwd=..., check=...)` | Run git, return stripped stdout; raises on failure when `check=True`. |
 | `forge.git_utils.configure_cli_logging()` | Root logger at `INFO`, bare-message formatter; idempotent. |
 | `forge.changelog.release_headings(text)` | Set of `vX.Y.Z` named in `##` release headings. |
+| `forge.changelog.top_release_heading(text)` | Topmost recognized `vX.Y.Z` release heading, or `None`. |
 | `forge.changelog.changelog_lacks_entry(changelog_text, tag)` | `True` when no `## <tag>` heading is present. |
 
 Anything not in this table (underscore-prefixed or not) is internal and

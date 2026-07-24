@@ -613,3 +613,23 @@ def test_tag_misuse_warning_silent_on_dual_track(tmp_path: Path) -> None:
     """Dual-track config → rolling-next applies even without a local manifest."""
     cfg = ForgeConfig(dev_branch="dev")
     assert next_prep._tag_misuse_warning(tmp_path, cfg) is None
+
+
+def test_main_no_sync_skips_checkout_and_pull(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--no-sync tags on the current HEAD without fetch/switch/pull.
+
+    SCENARIO: CI tag job checked out the exact validated SHA; syncing to
+    the branch tip would re-race. MOCK SETUP: run_git + subprocess.run
+    recorded. EXPECTED BEHAVIOR: no "switch"/"pull" invocations; tags
+    fetched; exit 0.
+    """
+    captured = _run_main_capturing_git(
+        monkeypatch,
+        tmp_path,
+        ["forge-next-prep", "--tag", "--no-sync", "--no-prune-branches"],
+    )
+    assert not any(c[:1] == ["switch"] for c in captured)
+    assert not any(c[:1] == ["pull"] for c in captured)
+    assert any(c[:2] == ["fetch", "--tags"] for c in captured)

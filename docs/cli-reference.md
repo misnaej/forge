@@ -338,8 +338,8 @@ options:
 ## forge-next-prep
 
 ```text
-usage: forge-next-prep [-h] [--tag] [--no-prune-branches] [--promotion-status]
-                       [--target {dev,base}]
+usage: forge-next-prep [-h] [--tag] [--no-prune-branches] [--no-sync]
+                       [--promotion-status] [--target {dev,base}]
 
 Prepare main for the next task: fetch + pull --ff-only, optionally tag the
 rolling-next release, prune stale local branches. Used by the /next skill.
@@ -350,6 +350,12 @@ options:
                        v* tag and push the tag (forge's rolling-next
                        workflow). Off by default.
   --no-prune-branches  Skip the stale-branch prune step.
+  --no-sync            Skip the fetch/checkout/pull steps and operate on the
+                       current HEAD (tags are still fetched for the version
+                       comparison). For CI tag jobs that check out the exact
+                       validated SHA — syncing to the branch tip would re-
+                       introduce the race the pinned checkout exists to
+                       prevent.
   --promotion-status   Read-only: fetch tags, then print the base/dev plugin
                        versions and the ordered list of v* releases pending
                        promotion, and exit. No checkout, pull, tag, or prune.

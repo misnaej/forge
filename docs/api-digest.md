@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_61 modules, 636 symbols._
+_61 modules, 637 symbols._
 
 ## `forge`
 
@@ -585,6 +585,7 @@ _61 modules, 636 symbols._
 - `_emit_promotion_status(repo_root: Path, dev_branch: str, base_branch: str) -> int` _(internal)_ — Fetch tags and log the read-only promotion-status report.
 - `_log_prune_result(repo_root: Path) -> None` _(internal)_ — Prune stale local branches and log the outcome.
 - `main() -> int` — Refresh main, optionally tag the release, prune stale local branches.
+- `_tag_and_report(repo_root: Path, cfg: ForgeConfig, args: argparse.Namespace) -> int` _(internal)_ — Run the post-sync tail: optional tag, optional prune, advisory.
 
 ## `forge.pip_audit_json`
 
@@ -702,7 +703,7 @@ _61 modules, 636 symbols._
 - `_declared_tag_or_error(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Resolve the tag ``--from-changelog`` should cut.
 - `_tag_exists(repo_root: Path, tag: str) -> bool` _(internal)_ — Return whether *tag* already exists locally or on ``origin``.
 - `_cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> int` _(internal)_ — Create the annotated *tag* on ``HEAD`` and push it to ``origin``.
-- `main() -> int` — Cut the next ``vX.Y.Z`` release tag off the latest ``v*`` tag.
+- `main() -> int` — Cut the ``vX.Y.Z`` release tag — bumped off the latest tag, or declared.
 
 ## `forge.run_context`
 

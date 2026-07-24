@@ -31,7 +31,11 @@ Two version sources, one orchestration:
   release", so a tag-on-merge CI job and a manual cut can race safely.
   Under CI (``forge.run_context.is_ci``) the on-branch guard becomes a
   ``HEAD == origin/<base_branch>`` check, since merge-event checkouts
-  are detached.
+  are detached. Two mode-specific rules on top of the guard list above:
+  a missing ``CHANGELOG.md`` is a hard failure (there is nothing to
+  declare from — unlike guard 4's warn-and-proceed on the ``--bump``
+  path), and a top heading *behind* the latest tag fails as a stale
+  checkout / un-bumped heading.
 
 ``--dry-run`` reports the tag that would be cut and stops before
 mutating anything. Exits ``0`` on success, dry-run, or an idempotent
@@ -255,10 +259,16 @@ def _cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> i
 
 
 def main() -> int:
-    """Cut the next ``vX.Y.Z`` release tag off the latest ``v*`` tag.
+    """Cut the ``vX.Y.Z`` release tag — bumped off the latest tag, or declared.
+
+    ``--bump`` computes the tag from the latest ``v*`` tag;
+    ``--from-changelog`` cuts the version the CHANGELOG top heading
+    declares.
 
     Returns:
-        ``0`` on success or ``--dry-run``, ``1`` when any guard refuses.
+        ``0`` on success, ``--dry-run``, or the idempotent
+        already-released case; ``1`` when any guard refuses or the tag
+        push fails.
     """
     parser = argparse.ArgumentParser(
         prog="forge-release",
@@ -301,6 +311,13 @@ def main() -> int:
         tag, declared_err = _declared_tag_or_error(repo_root)
         if declared_err or tag is None:
             logger.error("%s", declared_err or "No release heading found.")
+            return 1
+        # Model check BEFORE the idempotency short-circuit: "wrong release
+        # model" is a configuration signal independent of tag state — a
+        # stale tag matching the declared version must not mask it.
+        model_err = _wrong_release_model_error(repo_root, cfg)
+        if model_err:
+            logger.error("%s", model_err)
             return 1
         if _tag_exists(repo_root, tag):
             logger.info("%s is already released — nothing to do.", tag)

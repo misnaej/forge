@@ -240,7 +240,7 @@ def test_cut_release_tags_locally_and_warns_without_origin(
     """No ``origin`` remote — tag is created locally and a warning is logged."""
     _init_git_repo(tmp_path)
     with caplog.at_level(logging.WARNING, logger="forge.release"):
-        release._cut_release(tmp_path, "v1.0.0")
+        assert release._cut_release(tmp_path, "v1.0.0") == 0
     assert _tag_exists(tmp_path, "v1.0.0")
     assert any("origin" in r.getMessage() for r in caplog.records)
 
@@ -252,7 +252,7 @@ def test_cut_release_tags_and_pushes_when_origin_exists(
     """An ``origin`` remote — tag is created and pushed; the bare repo has it."""
     work, bare = _repo_with_origin(tmp_path)
     with caplog.at_level(logging.INFO, logger="forge.release"):
-        release._cut_release(work, "v1.0.0")
+        assert release._cut_release(work, "v1.0.0") == 0
     assert _tag_exists(bare, "v1.0.0")
     assert any("Tagged and pushed" in r.getMessage() for r in caplog.records)
 
@@ -667,3 +667,111 @@ def test_main_from_changelog_ci_refuses_non_tip(
     with caplog.at_level(logging.ERROR, logger="forge.release"):
         assert release.main() == 1
     assert any("not the tip" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _cut_release — race tolerance + return contract
+# ---------------------------------------------------------------------------
+
+
+def test_cut_release_race_tolerant_push_failure_with_remote_tag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCENARIO: push fails but the tag exists remotely — concurrent cut.
+
+    MOCK SETUP: run_git faked; "push" raises CalledProcessError, the
+        post-failure "tag --list" reports the tag present.
+    EXPECTED BEHAVIOR: race_tolerant=True → return 0 + concurrency log.
+    """
+
+    def _fake_git(*args: str, **_kw: object) -> str:
+        if args[0] == "push":
+            raise subprocess.CalledProcessError(1, ["git", "push"])
+        if args[0] == "remote":
+            return "https://example.invalid/origin.git"
+        if args[:2] == ("tag", "--list") and len(args) == 3:
+            return args[2]
+        return ""
+
+    monkeypatch.setattr(release, "run_git", _fake_git)
+    with caplog.at_level(logging.INFO, logger="forge.release"):
+        result = release._cut_release(tmp_path, "v1.0.0", race_tolerant=True)
+    assert result == 0
+    assert any("appeared concurrently" in r.getMessage() for r in caplog.records)
+
+
+def test_cut_release_push_failure_without_tolerance_returns_one(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Push failure on the strict (--bump) path → error + exit 1."""
+
+    def _fake_git(*args: str, **_kw: object) -> str:
+        if args[0] == "push":
+            raise subprocess.CalledProcessError(1, ["git", "push"])
+        if args[0] == "remote":
+            return "https://example.invalid/origin.git"
+        return ""
+
+    monkeypatch.setattr(release, "run_git", _fake_git)
+    with caplog.at_level(logging.ERROR, logger="forge.release"):
+        result = release._cut_release(tmp_path, "v1.0.0", race_tolerant=False)
+    assert result == 1
+    assert any("failed" in r.getMessage() for r in caplog.records)
+
+
+def test_cut_release_race_tolerant_push_failure_without_remote_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Push fails and no concurrent tag exists → still exit 1."""
+
+    def _fake_git(*args: str, **_kw: object) -> str:
+        if args[0] == "push":
+            raise subprocess.CalledProcessError(1, ["git", "push"])
+        if args[0] == "remote":
+            return "https://example.invalid/origin.git"
+        return ""  # tag --list and ls-remote report nothing
+
+    monkeypatch.setattr(release, "run_git", _fake_git)
+    assert release._cut_release(tmp_path, "v1.0.0", race_tolerant=True) == 1
+
+
+def test_main_from_changelog_model_guard_beats_idempotency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Wrong release model is reported even when the declared tag exists.
+
+    SCENARIO: dual-track repo with a stale tag matching the CHANGELOG
+        top heading — misconfiguration must not be masked by the
+        already-released short-circuit.
+    MOCK SETUP: real repo + tag v1.0.0; load_config → dual-track.
+    EXPECTED BEHAVIOR: exit 1 naming the promotion flow, not "already
+        released" exit 0.
+    """
+    work, _bare = _repo_with_origin(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.0.0\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.0.0", "-m", "v1.0.0"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    monkeypatch.setattr(
+        release,
+        "load_config",
+        lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
+    )
+    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
+    monkeypatch.chdir(work)
+    with caplog.at_level(logging.ERROR, logger="forge.release"):
+        assert release.main() == 1
+    assert any("Dual-track" in r.getMessage() for r in caplog.records)

@@ -196,6 +196,8 @@ counts as success), so re-runs and races are safe.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0   # setuptools-scm + tag comparison need history
+          # checkout defaults to github.sha on push events — the exact
+          # commit the gate job validated; do not override with a branch ref
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -217,7 +219,9 @@ branch checkout. Only the `push` trigger is safe here — never run a
 ### Dual-track plugin repos (manifest-declared version)
 
 Same shape, tagging the fast channel with the rolling-next version from
-`.claude-plugin/plugin.json` — this is the job forge's own CI runs:
+`.claude-plugin/plugin.json`. **The reference implementation is the
+`tag-dev-release` job in forge's own `.github/workflows/ci.yml`** —
+copy from there, not from this trimmed illustration:
 
 ```yaml
   tag-dev-release:
@@ -227,16 +231,22 @@ Same shape, tagging the fast channel with the rolling-next version from
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@<pinned-sha>   # SHA-pin actions in write jobs
         with:
           fetch-depth: 0
-          ref: dev
-      - uses: actions/setup-python@v5
+          ref: ${{ github.sha }}   # tag the validated commit, never the tip
+      - uses: actions/setup-python@<pinned-sha>
         with:
           python-version: '3.13'
       - run: pip install -e .
-      - run: forge-next-prep --tag --no-prune-branches
+      - run: forge-next-prep --tag --no-sync --no-prune-branches
 ```
+
+Two details matter in both flavors: check out `${{ github.sha }}` (the
+commit your gate job actually validated — a branch `ref:` re-resolves
+the tip and can tag a fast-following, unvalidated merge), and pass
+`--no-sync` so `forge-next-prep` stays on that pinned commit instead of
+syncing back to the branch tip.
 
 With either job in place, `/next`'s tag step becomes a no-op fallback
 (both CLIs are idempotent), and the manual `forge-release` recipe in
