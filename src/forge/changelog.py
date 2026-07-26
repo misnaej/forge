@@ -83,6 +83,30 @@ def _recognized_version(token: str) -> str | None:
     return next(iter(found)) if found else None
 
 
+def top_release_heading(text: str) -> str | None:
+    """Return the first (topmost) recognized ``vX.Y.Z`` release heading.
+
+    The single-track convention's *declared* version
+    (``docs/consumer-release.md`` "Changelog convention"): the top
+    heading names the release being prepared, so it is the version
+    ``forge-release --from-changelog`` cuts. Non-version ``##`` headings
+    above it (which ``changelog_version_findings`` flags) are skipped
+    rather than treated as the top.
+
+    Args:
+        text: Full ``CHANGELOG.md`` contents.
+
+    Returns:
+        The topmost recognized ``vX.Y.Z``, or ``None`` when no release
+        heading exists.
+    """
+    for token in _ANY_HEADING_RE.findall(text):
+        version = _recognized_version(token)
+        if version is not None:
+            return version
+    return None
+
+
 def changelog_version_findings(text: str, latest_tag: str | None) -> list[str]:
     """Validate *text*'s release headings against each other and *latest_tag*.
 

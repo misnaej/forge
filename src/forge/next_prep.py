@@ -437,6 +437,17 @@ def main() -> int:
         help="Skip the stale-branch prune step.",
     )
     parser.add_argument(
+        "--no-sync",
+        action="store_true",
+        help=(
+            "Skip the fetch/checkout/pull steps and operate on the current "
+            "HEAD (tags are still fetched for the version comparison). For "
+            "CI tag jobs that check out the exact validated SHA — syncing "
+            "to the branch tip would re-introduce the race the pinned "
+            "checkout exists to prevent."
+        ),
+    )
+    parser.add_argument(
         "--promotion-status",
         action="store_true",
         help=(
@@ -464,6 +475,12 @@ def main() -> int:
         return _emit_promotion_status(repo_root, cfg.dev_branch, cfg.base_branch)
 
     target_branch = cfg.dev_branch if args.target == "dev" else cfg.base_branch
+
+    if args.no_sync:
+        # CI tag path: HEAD is already the exact commit CI validated;
+        # only the tag set needs refreshing for the version comparison.
+        run_git("fetch", "--tags", "--quiet", cwd=repo_root, check=False)
+        return _tag_and_report(repo_root, cfg, args)
 
     logger.info("Fetching from origin...")
     run_git("fetch", "--prune", cwd=repo_root)
@@ -505,6 +522,23 @@ def main() -> int:
         )
         return 1
 
+    return _tag_and_report(repo_root, cfg, args)
+
+
+def _tag_and_report(repo_root: Path, cfg: ForgeConfig, args: argparse.Namespace) -> int:
+    """Run the post-sync tail: optional tag, optional prune, advisory.
+
+    Shared by the normal (synced) path and ``--no-sync``, so the tag /
+    prune / promotion-advisory behavior cannot drift between them.
+
+    Args:
+        repo_root: Repo root.
+        cfg: Loaded ``[tool.forge]`` config.
+        args: Parsed CLI namespace (``tag``, ``no_prune_branches``).
+
+    Returns:
+        Always ``0`` — failures in these steps raise.
+    """
     if args.tag:
         misuse = _tag_misuse_warning(repo_root, cfg)
         if misuse:

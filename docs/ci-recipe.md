@@ -171,6 +171,91 @@ Pick a cadence that matches how aggressively you want forge updates:
 
 ---
 
+## 4. Tag-on-merge release automation
+
+Cutting the release tag on every merge removes the human-latency window
+in which further PRs pile onto an already-declared version, and closes
+the stale-local-tag gap entirely — the remote is always current.
+
+### Single-track repos (CHANGELOG-declared version)
+
+Add a job to your CI workflow that runs after your tests, on pushes to
+the base branch only. `forge-release --from-changelog` cuts the version
+the CHANGELOG top heading declares; it is idempotent (already tagged →
+exit 0) and race-tolerant (a concurrent manual cut of the same version
+counts as success), so re-runs and races are safe.
+
+```yaml
+  tag-release:
+    needs: test            # gate on your test job — recommended
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # SHA-pin actions in write-capable jobs (v4.2.2 / v5.3.0 shown —
+      # resolve current SHAs for your copies).
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0   # setuptools-scm + tag comparison need history
+          # checkout defaults to github.sha on push events — the exact
+          # commit the gate job validated; do not override with a branch ref
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: '3.13'
+      - run: pip install "forge-scripts @ git+https://github.com/misnaej/forge.git@main"
+      - run: forge-release --from-changelog
+```
+
+The `needs: test` gate means a broken merge never becomes a released
+tag. Repos that prefer tag-immediately + forward-fix (a patch PR opens
+the next heading) can drop the `needs:` line — both modes are
+supported; gated is the recommended default because a `v*` tag is
+distribution the moment it lands.
+
+The job runs on a detached `HEAD`; `forge-release --from-changelog`
+verifies it is the tip of `origin/<base_branch>` instead of requiring a
+branch checkout. Only the `push` trigger is safe here — never run a
+`contents: write` job from `pull_request_target`.
+
+### Dual-track plugin repos (manifest-declared version)
+
+Same idea, tagging the fast channel with the rolling-next version from
+`.claude-plugin/plugin.json`. **The reference implementation is forge's
+own `.github/workflows/tag-release.yml`** — a workflow separate from
+the read-only CI one, gated via `workflow_run`, with a second job that
+relocates promoted minor tags on pushes to the base branch
+(`forge-check-main-tags --fix`). Copy that file, not a trimmed
+illustration.
+
+One `workflow_run` gotcha: GitHub evaluates the trigger from the
+workflow definition on the repo's **default branch** — a
+`workflow_run`-based tag workflow starts firing only once the file
+itself has landed there. Until then the manual tagging path (or an
+inline `needs:` job, which has no such lag) keeps working.
+
+### Safety details (both flavors)
+
+- **Keep the write surface separate.** A dedicated tag workflow (or at
+  minimum a dedicated job) holds the only `contents: write`; your CI
+  workflow stays read-only. Cross-workflow gating uses `workflow_run` +
+  a `conclusion == 'success'` check.
+- **Filter to `push` events.** CI also completes for PR runs — fork PRs
+  included — so a `workflow_run`-triggered write job must check
+  `github.event.workflow_run.event == 'push'` (and the branch) before
+  doing anything.
+- **Tag the validated commit, never the tip.** Check out
+  `${{ github.event.workflow_run.head_sha }}` (or `${{ github.sha }}`
+  in an inline job) — a branch `ref:` re-resolves the tip and can tag a
+  fast-following, unvalidated merge. With `forge-next-prep`, pass
+  `--no-sync` so the CLI stays on that pinned commit.
+- **SHA-pin actions** in any write-capable workflow.
+
+With either job in place, `/next`'s tag step becomes a no-op fallback
+(both CLIs are idempotent), and the manual `forge-release` recipe in
+[`consumer-release.md`](consumer-release.md) remains available for
+repos without the workflow.
+
 ## Auth troubleshooting
 
 | Symptom | Fix |
