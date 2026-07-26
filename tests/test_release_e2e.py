@@ -13,27 +13,32 @@ the same fixture. They double as a living check that the
 
 # MOCKING STRATEGY: almost none — the point of this module is real git.
 # Every scenario runs against a throwaway work tree wired to a local
-# bare "origin" (no network, no gh). The only patched seams are
-# ``release.load_config`` / config-free defaults (the fixture has no
-# ``[tool.forge]`` table, so single-track "main" defaults apply),
-# ``sys.argv`` for argparse, and ``precommit.is_ci`` where a scenario
-# pins the CI/non-CI branch of the tag-fetch gate.
+# bare "origin" (no network, no gh). ``load_config`` runs unmocked and
+# returns single-track defaults because the fixture's ``pyproject.toml``
+# has no ``[tool.forge]`` table. The only patched seams are ``sys.argv``
+# for argparse and ``precommit.is_ci`` where a scenario pins the
+# CI/non-CI branch of the tag-fetch gate; an autouse fixture sanitizes
+# the ambient git environment (identity, global config) because the
+# code under test reaches git via ``run_git``, which inherits
+# ``os.environ`` rather than the scaffolding's ``GIT_ENV``.
 
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge import precommit, release
 from tests.conftest import GIT_ENV as _GIT_ENV
-from tests.conftest import init_git_repo as _init_git_repo
+from tests.conftest import init_single_track_repo
+from tests.conftest import tag_exists as _tag_exists
 
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 _CHANGELOG = (
@@ -51,6 +56,28 @@ _CHANGELOG = (
     "\n"
     "- initial release\n"
 )
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_ambient_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Sanitize the ambient git environment for the code under test.
+
+    The scaffolding's own git calls run with ``GIT_ENV``, but
+    ``release.main()`` and the changelog steps reach git through forge's
+    ``run_git``, which inherits ``os.environ`` — without this fixture,
+    tags cut by the code under test carry the developer's real identity
+    and, on a ``tag.gpgsign`` machine, would try to sign a throwaway
+    test tag with a real key (hanging non-interactively).
+    """
+    home = tmp_path / "hermetic-home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for key, value in _GIT_ENV.items():
+        if key != "PATH":
+            monkeypatch.setenv(key, value)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -90,13 +117,7 @@ def _consumer_repo(base: Path) -> tuple[Path, Path]:
     Returns:
         A ``(work, bare)`` tuple.
     """
-    work = base / "work"
-    bare = base / "origin.git"
-    work.mkdir()
-    bare.mkdir()
-    _init_git_repo(work)
-    subprocess.run(["git", "init", "--bare", "-q"], cwd=bare, env=_GIT_ENV, check=True)
-    _git(work, "remote", "add", "origin", str(bare))
+    work, bare = init_single_track_repo(base)
 
     (work / "pyproject.toml").write_text(
         "[build-system]\n"
@@ -119,19 +140,6 @@ def _consumer_repo(base: Path) -> tuple[Path, Path]:
     return work, bare
 
 
-def _bare_has_tag(bare: Path, tag: str) -> bool:
-    """Return whether *bare* carries *tag*.
-
-    Args:
-        bare: Bare origin repo.
-        tag: Tag name.
-
-    Returns:
-        ``True`` when the tag exists on the origin side.
-    """
-    return _git(bare, "tag", "--list", tag) == tag
-
-
 def test_manual_bump_recipe_end_to_end(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -150,11 +158,11 @@ def test_manual_bump_recipe_end_to_end(
     with caplog.at_level(logging.INFO, logger="forge.release"):
         assert release.main() == 0
     assert any("v0.2.0" in r.getMessage() for r in caplog.records)
-    assert not _bare_has_tag(bare, "v0.2.0")
+    assert not _tag_exists(bare, "v0.2.0")
 
     monkeypatch.setattr("sys.argv", ["forge-release", "--bump", "minor"])
     assert release.main() == 0
-    assert _bare_has_tag(bare, "v0.2.0")
+    assert _tag_exists(bare, "v0.2.0")
     assert _git(work, "cat-file", "-t", "v0.2.0") == "tag"
 
 
@@ -175,7 +183,7 @@ def test_from_changelog_recipe_end_to_end_with_idempotent_rerun(
 
     monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
     assert release.main() == 0
-    assert _bare_has_tag(bare, "v0.2.0")
+    assert _tag_exists(bare, "v0.2.0")
 
     with caplog.at_level(logging.INFO, logger="forge.release"):
         assert release.main() == 0
@@ -256,11 +264,14 @@ def test_changelog_steps_catch_missing_entry_and_stranded_bullet(
 def test_changelog_version_step_accepts_posttag_equality_window(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Right after a cut, top heading == latest tag is the valid state.
+    """SCENARIO: the post-tag equality window on main is the valid state.
 
-    The convention's equality window: on main, immediately after
-    ``forge-release`` tagged the declared version, the step must pass —
-    the next PR (not a release PR) opens the following heading.
+    Immediately after ``forge-release`` tags the declared version, top
+    heading == latest tag; the next PR (not a release PR) opens the
+    following heading.
+    MOCK SETUP: real fixture; sys.argv patched for the cut; is_ci pinned
+    True so the step skips its network-shaped tag fetch.
+    EXPECTED BEHAVIOR: changelog_version passes in the equality window.
     """
     work, _bare = _consumer_repo(tmp_path)
     monkeypatch.setattr(precommit, "is_ci", lambda: True)
