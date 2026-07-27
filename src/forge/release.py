@@ -225,6 +225,74 @@ def _tag_exists(repo_root: Path, tag: str) -> bool:
     )
 
 
+def _select_branch_guard(
+    repo_root: Path, base_branch: str, *, from_changelog_mode: bool
+) -> str | None:
+    """Choose the appropriate branch guard for the release mode.
+
+    Args:
+        repo_root: Repo root for git invocations.
+        base_branch: The configured release trunk (e.g. ``"main"``).
+        from_changelog_mode: When ``True``, use the CI-tolerant detached-HEAD
+            check; otherwise use the on-branch check for workstation mode.
+
+    Returns:
+        One-line error string, or ``None`` when the branch check passes.
+    """
+    if from_changelog_mode and is_ci():
+        return _detached_head_error(repo_root, base_branch)
+    return _wrong_branch_error(repo_root, base_branch)
+
+
+def _prepare_from_changelog(
+    repo_root: Path, cfg: ForgeConfig
+) -> tuple[str | None, str | None]:
+    """Resolve and validate the tag declared in CHANGELOG.md.
+
+    Model check is performed BEFORE the idempotency short-circuit to ensure
+    that a dual-track misconfiguration is never masked by a stale tag
+    matching the declared version.
+
+    Args:
+        repo_root: Repo root.
+        cfg: Loaded ``[tool.forge]`` configuration.
+
+    Returns:
+        ``(tag, error)`` tuple. On success, ``tag`` is the resolved version and
+        ``error`` is ``None``. On failure, ``tag`` is ``None`` and ``error``
+        describes the issue. Idempotency is handled here: if the tag
+        already exists, returns ``("v...", None)`` so the caller can exit 0
+        before other guards.
+    """
+    tag, declared_err = _declared_tag_or_error(repo_root)
+    if declared_err or tag is None:
+        return None, declared_err or "No release heading found."
+
+    # Model check BEFORE the idempotency short-circuit: "wrong release
+    # model" is a configuration signal independent of tag state — a
+    # stale tag matching the declared version must not mask it.
+    model_err = _wrong_release_model_error(repo_root, cfg)
+    if model_err:
+        return None, model_err
+
+    if _tag_exists(repo_root, tag):
+        # Idempotent case — signal success early.
+        logger.info("%s is already released — nothing to do.", tag)
+        return tag, None
+
+    # Check for stale CHANGELOG: declared version behind the latest tag.
+    latest = latest_v_tag(repo_root)
+    declared = parse_semver(tag)
+    latest_parsed = parse_semver(latest) if latest else None
+    if declared and latest_parsed and declared < latest_parsed:
+        return (
+            None,
+            f"CHANGELOG top heading {tag} is behind the latest tag "
+            f"{latest} — stale checkout or un-bumped heading.",
+        )
+    return tag, None
+
+
 def _cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> int:
     """Create the annotated *tag* on ``HEAD`` and push it to ``origin``.
 
@@ -303,39 +371,38 @@ def main() -> int:
     repo_root = Path.cwd()
     cfg = load_config(repo_root)
 
-    run_git("fetch", "--tags", "--quiet", "origin", cwd=repo_root, check=False)
-    latest = latest_v_tag(repo_root)
+    # Bounded + stdin-less (mirrors the changelog_version step's fetch):
+    # a stalled remote or credential prompt degrades to a stale-tag view
+    # instead of hanging the release command.
+    try:
+        subprocess.run(
+            ["git", "fetch", "--tags", "--quiet", "origin"],
+            cwd=repo_root,
+            capture_output=True,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("Tag fetch timed out — proceeding with local tags.")
 
     errors: list[str] = []
     if args.from_changelog:
-        tag, declared_err = _declared_tag_or_error(repo_root)
-        if declared_err or tag is None:
-            logger.error("%s", declared_err or "No release heading found.")
+        tag, changelog_error = _prepare_from_changelog(repo_root, cfg)
+        if changelog_error:
+            logger.error("%s", changelog_error)
             return 1
-        # Model check BEFORE the idempotency short-circuit: "wrong release
-        # model" is a configuration signal independent of tag state — a
-        # stale tag matching the declared version must not mask it.
-        model_err = _wrong_release_model_error(repo_root, cfg)
-        if model_err:
-            logger.error("%s", model_err)
+        if tag is None:
             return 1
+        # Idempotent case: tag already exists, logged in _prepare_from_changelog.
         if _tag_exists(repo_root, tag):
-            logger.info("%s is already released — nothing to do.", tag)
             return 0
-        declared = parse_semver(tag)
-        latest_parsed = parse_semver(latest) if latest else None
-        if declared and latest_parsed and declared < latest_parsed:
-            errors.append(
-                f"CHANGELOG top heading {tag} is behind the latest tag "
-                f"{latest} — stale checkout or un-bumped heading."
-            )
     else:
+        latest = latest_v_tag(repo_root)
         tag = next_version(latest, args.bump)
 
-    branch_guard = (
-        _detached_head_error(repo_root, cfg.base_branch)
-        if args.from_changelog and is_ci()
-        else _wrong_branch_error(repo_root, cfg.base_branch)
+    branch_guard = _select_branch_guard(
+        repo_root, cfg.base_branch, from_changelog_mode=args.from_changelog
     )
     errors.extend(
         err
@@ -353,8 +420,10 @@ def main() -> int:
         return 1
 
     if args.from_changelog:
+        latest = latest_v_tag(repo_root)
         logger.info("CHANGELOG declares %s (latest tag: %s)", tag, latest or "(none)")
     else:
+        latest = latest_v_tag(repo_root)
         logger.info(
             "Latest tag: %s → next (%s bump): %s", latest or "(none)", args.bump, tag
         )
