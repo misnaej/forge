@@ -44,9 +44,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # SHA-pin actions (tag comment for humans) — tags are movable, SHAs are
-      # not; docs/security.md "Pin direct dependencies" applies to CI actions
-      # too. Dependabot's `github-actions` ecosystem (or `gha-update`) keeps
-      # pinned SHAs current.
+      # not; see docs/security.md "Pin GitHub Actions". To keep pinned SHAs
+      # current, enable Dependabot's `github-actions` ecosystem in your repo
+      # (or run `gha-update`).
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
@@ -121,6 +121,8 @@ jobs:
   upgrade:
     runs-on: ubuntu-latest
     steps:
+      # SHA-pinned per docs/security.md "Pin GitHub Actions" — see the §2
+      # note for the rationale and how to keep the SHAs current.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
