@@ -60,7 +60,10 @@ Pure Reporters MUST NOT have `Write` or `Edit`. Reporter-with-artifact
 agents are the documented exception — `forge-audit-agents` exempts
 them by name via the `_REPORTER_WITH_ARTIFACT_NAMES` constant in the
 forge package (single source of truth — do not duplicate the list
-here).
+here). Regardless of tool set, every reporter (pure or
+with-artifact) is **report-only toward the repo and the PR**: it
+never commits, never pushes, and never posts PR comments — findings
+return to the caller, which owns remediation and posting.
 
 ## Model per role
 
