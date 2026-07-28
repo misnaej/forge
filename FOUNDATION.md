@@ -258,22 +258,25 @@ the consumer's `ruff.toml` as the actual enforcement source — not these defaul
 
 ## 6. Git & PR Workflow
 
-### First step (always)
+### First step (new task)
 
-Start from updated main, then branch: `git checkout main && git pull origin main`,
-then `git checkout -b <type>/<description>`. Branch prefixes: `feat/`, `fix/`,
+Applies when starting a **fresh task from a clean state** — already on a feature
+branch with uncommitted or unmerged work? The next section governs instead. Start from updated
+main, then branch: `git checkout main && git pull origin main`, then `git
+checkout -b <type>/<description>`. Branch prefixes: `feat/`, `fix/`,
 `refactor/`, `test/`, `docs/`, `chore/`. After plan mode, verify with `git branch
 --show-current` before editing. **Never start work from stale main.**
 
 ### A new request mid-branch — confirm, don't reflex-split
 
-When you're on a feature branch and the user asks for something that does **not**
-obviously fit the current work *and* isn't a continuation: (1) remind them what's
-in flight (branch + open PR), (2) confirm they want the new thing now, (3) if yes,
-ask whether it should be its own branch — but **default to the same branch** for a
-small, quick change. **Favor quick development over heavy branch/PR ceremony:** do
-not silently open a new branch/PR for a small ask; reserve a separate branch for
-genuinely large or independently-releasable work. When unsure, stay and ask.
+When you're on a feature branch with uncommitted or unmerged work and the user
+asks for **anything new** — related side task or not: **never automatically open
+a new branch/PR.** For a small, quick change, **default to the same branch** and
+just do it there. For something genuinely large or independently-releasable:
+(1) remind them what's in flight (branch, and PR if one exists), (2) confirm
+they want the new thing now, (3) ask whether it should be its own branch.
+**Favor quick development over heavy branch/PR ceremony.** When unsure, stay
+and ask.
 
 ### Commit messages
 
