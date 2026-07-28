@@ -37,7 +37,7 @@ The token is a fine-grained PAT with read-only contents on the fork.
 3. In the consumer workflow:
    ```yaml
    - name: SSH for forge fork
-     uses: webfactory/ssh-agent@v0.9.0
+     uses: webfactory/ssh-agent@dc588b651fe13675774614f8e6a936a468676387  # v0.9.0
      with:
        ssh-private-key: ${{ secrets.FORGE_DEPLOY_KEY }}
    ```
