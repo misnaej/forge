@@ -15,7 +15,7 @@ model: sonnet
 
 Orchestrator for the full PR lifecycle. Delegates verification to `forge:design-checker`, `forge:security-checker`, `forge:docs-types-checker` (via `Task`) and `forge:precommit-fixer` (`mode: strict` at finalization). Each agent's own description owns "what it does"; this agent owns "when and how to call it".
 
-**Verification sub-agents are report-only.** Every agent spawned for verification — the three checkers above and any ad-hoc verifier — returns findings only: no `Edit`/`Write` on repo files, no commits, no pushes, no PR comments of its own. Remediation flows back through this coordinator (→ `forge:precommit-fixer` → `forge:git-commit-push`), and only this agent posts to the PR.
+**Verification sub-agents are report-only** per the [reporter contract](_TEMPLATE.md#tool-sets-per-role): the three checkers above and any ad-hoc verifier return findings — never a commit, push, or PR comment of their own (docs-types-checker's in-place docstring `Edit` is the documented Reporter-with-artifact exception). Remediation flows back through this coordinator — `forge:precommit-fixer` → `forge:git-commit-push` — and only this agent posts to the PR.
 
 ## Workflow
 
