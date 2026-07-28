@@ -20,7 +20,7 @@ dependencies = [
     # Upper bound: ruff minor releases stabilize new rules that auto-activate
     # under ruff.toml's `select = ["ALL"]`, breaking CI without a code change.
     # Raise the cap deliberately, triaging the newly stable rules.
-    "ruff>=0.6,<0.16",
+    "ruff>=0.16,<0.17",
     "interrogate>=1.5",
     # pip-audit backs the default (non-opt-in) pip_audit pre-commit step, so
     # it ships as a core dependency — same rule as ruff/interrogate. Without

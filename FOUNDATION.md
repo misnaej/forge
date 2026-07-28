@@ -213,6 +213,13 @@ non-blocking; ERRORS must be fixed.
 ## 5. Ruff Configuration
 
 Single config: **`ruff.toml`** at repo root. Strict — `select = ["ALL"]`.
+Under `ALL`, every rule a ruff minor stabilizes auto-activates, so forge pins
+ruff to one minor (`>=X.Y,<X.Y+1`) and raises the cap deliberately, triaging
+the newly stable rules — never an unbounded pin. Baseline ignores for
+`select = ["ALL"]` repos: `COM812` / `ISC001` (conflict with `ruff format`),
+and `CPY001` when the repo has no per-file copyright-header policy (a
+repo-level `LICENSE` is the copyright policy). Repos not wanting ruff ≥0.16's
+Markdown code-block formatting add `exclude = ["*.md"]` under `[format]`.
 
 ### Rules
 - **NO `# noqa` comments.** Fix the code properly. Only exception: `# noqa: E402`

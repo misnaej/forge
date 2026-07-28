@@ -524,16 +524,20 @@ def render_digest(digests: list[ModuleDigest]) -> str:
     lines = [
         "# API Digest",
         "",
-        "A compact index of this codebase's symbols — every top-level "
-        "function and class, with its signature and one-line summary. "
-        "Both public API and internal helpers are indexed; internal "
-        "helpers are tagged _(internal)_. Use it to check whether a "
-        "helper for a task already exists before writing a new one "
-        "(DRY) — reuse candidates are often private.",
+        (
+            "A compact index of this codebase's symbols — every top-level "
+            "function and class, with its signature and one-line summary. "
+            "Both public API and internal helpers are indexed; internal "
+            "helpers are tagged _(internal)_. Use it to check whether a "
+            "helper for a task already exists before writing a new one "
+            "(DRY) — reuse candidates are often private."
+        ),
         "",
-        "> **Generated file — do not edit by hand.** Regenerate with "
-        "`forge-gen-api-digest`; check for drift with "
-        "`forge-gen-api-digest --check`.",
+        (
+            "> **Generated file — do not edit by hand.** Regenerate with "
+            "`forge-gen-api-digest`; check for drift with "
+            "`forge-gen-api-digest --check`."
+        ),
         "",
         f"_{len(digests)} modules, {symbol_count} symbols._",
         "",

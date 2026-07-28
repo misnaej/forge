@@ -6,6 +6,8 @@ select = ["ALL"]
 ignore = [
     "COM812",  # trailing comma — conflicts with ruff format
     "ISC001",  # implicit string concat — conflicts with ruff format
+    "CPY001",  # missing-copyright-notice — forge has no copyright-header
+                # policy; would fire on every file
 ]
 
 [lint.per-file-ignores]
@@ -39,3 +41,4 @@ lines-after-imports = 2
 
 [format]
 docstring-code-format = true
+exclude = ["*.md"]
