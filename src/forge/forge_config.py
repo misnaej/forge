@@ -317,9 +317,11 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
 NATIVE_SECTIONS: tuple[tuple[tuple[str, ...], str], ...] = (
     (
         ("tool", "interrogate"),
-        "Docstring-coverage gate (fail-under, exclude, ignore-*) read by "
-        "verify-forge-docstring-coverage. interrogate's own section — "
-        "forge reads it directly, not a forge wrapper.",
+        (
+            "Docstring-coverage gate (fail-under, exclude, ignore-*) read by "
+            "verify-forge-docstring-coverage. interrogate's own section — "
+            "forge reads it directly, not a forge wrapper."
+        ),
     ),
 )
 

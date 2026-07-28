@@ -287,8 +287,10 @@ def _prepare_from_changelog(
     if declared and latest_parsed and declared < latest_parsed:
         return (
             None,
-            f"CHANGELOG top heading {tag} is behind the latest tag "
-            f"{latest} — stale checkout or un-bumped heading.",
+            (
+                f"CHANGELOG top heading {tag} is behind the latest tag "
+                f"{latest} — stale checkout or un-bumped heading."
+            ),
         )
     return tag, None
 

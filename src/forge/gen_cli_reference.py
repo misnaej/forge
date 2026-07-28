@@ -146,13 +146,17 @@ def render_reference(entries: list[CliEntry]) -> str:
     lines = [
         "# CLI Reference",
         "",
-        "Forge's console-script CLIs are its real public surface. This page "
-        "documents each CLI's command-line interface, captured from its "
-        "`--help` output.",
+        (
+            "Forge's console-script CLIs are its real public surface. This page "
+            "documents each CLI's command-line interface, captured from its "
+            "`--help` output."
+        ),
         "",
-        "> **Generated file — do not edit by hand.** Regenerate with "
-        "`forge-gen-cli-reference`; check for drift with "
-        "`forge-gen-cli-reference --check`.",
+        (
+            "> **Generated file — do not edit by hand.** Regenerate with "
+            "`forge-gen-cli-reference`; check for drift with "
+            "`forge-gen-cli-reference --check`."
+        ),
         "",
     ]
     for entry in entries:

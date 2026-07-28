@@ -337,8 +337,10 @@ def _build_distance_findings(
                     f"D={d_v:.2f} far from main sequence (I={i_v:.2f}, A={a_v:.2f})"
                 ),
                 evidence=(
-                    f"Ca={ca_v} Ce={ce_v} "
-                    f"abstract={node.abstract_classes}/{node.total_classes}",
+                    (
+                        f"Ca={ca_v} Ce={ce_v} "
+                        f"abstract={node.abstract_classes}/{node.total_classes}"
+                    ),
                 ),
             ),
         )

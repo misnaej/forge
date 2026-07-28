@@ -295,8 +295,10 @@ def _render_inactive(dormant: list[tuple[str, str]]) -> str:
     if not dormant:
         return "All mapped CVEs are currently live in pip-audit's report."
     lines = [
-        f"{len(dormant)} mapped CVE(s) not in the current pip-audit report "
-        "(prune candidates — verify before removing):",
+        (
+            f"{len(dormant)} mapped CVE(s) not in the current pip-audit report "
+            "(prune candidates — verify before removing):"
+        ),
         "",
     ]
     lines.extend(f"  {cve} ({package})" for cve, package in dormant)

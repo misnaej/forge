@@ -6,6 +6,8 @@ select = ["ALL"]
 ignore = [
     "COM812",  # trailing comma — conflicts with ruff format
     "ISC001",  # implicit string concat — conflicts with ruff format
+    "CPY001",  # missing-copyright-notice — forge has no copyright-header
+                # policy; would fire on every file
 ]
 
 [lint.per-file-ignores]
@@ -39,3 +41,7 @@ lines-after-imports = 2
 
 [format]
 docstring-code-format = true
+# ruff ≥0.16 formats fenced Python blocks in Markdown by default; agent/skill
+# docs hold illustrative pseudo-Python and src/forge/data/FOUNDATION.md
+# symlinks the repo-root file — formatting would churn shared prose docs.
+exclude = ["*.md"]
