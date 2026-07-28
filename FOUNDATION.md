@@ -261,7 +261,7 @@ the consumer's `ruff.toml` as the actual enforcement source — not these defaul
 ### First step (new task)
 
 Applies when starting a **fresh task from a clean state** — already on a feature
-branch with work in flight? The next section governs instead. Start from updated
+branch with uncommitted or unmerged work? The next section governs instead. Start from updated
 main, then branch: `git checkout main && git pull origin main`, then `git
 checkout -b <type>/<description>`. Branch prefixes: `feat/`, `fix/`,
 `refactor/`, `test/`, `docs/`, `chore/`. After plan mode, verify with `git branch
@@ -272,10 +272,11 @@ checkout -b <type>/<description>`. Branch prefixes: `feat/`, `fix/`,
 When you're on a feature branch with uncommitted or unmerged work and the user
 asks for **anything new** — related side task or not: **never automatically open
 a new branch/PR.** For a small, quick change, **default to the same branch** and
-just do it there. For something genuinely large or independently-releasable: (1)
-remind them what's in flight (branch + open PR), (2) confirm they want the new
-thing now, (3) ask whether it should be its own branch. **Favor quick
-development over heavy branch/PR ceremony.** When unsure, stay and ask.
+just do it there. For something genuinely large or independently-releasable:
+(1) remind them what's in flight (branch, and PR if one exists), (2) confirm
+they want the new thing now, (3) ask whether it should be its own branch.
+**Favor quick development over heavy branch/PR ceremony.** When unsure, stay
+and ask.
 
 ### Commit messages
 
