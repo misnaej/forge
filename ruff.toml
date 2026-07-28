@@ -41,4 +41,7 @@ lines-after-imports = 2
 
 [format]
 docstring-code-format = true
+# ruff ≥0.16 formats fenced Python blocks in Markdown by default; agent/skill
+# docs hold illustrative pseudo-Python and src/forge/data/FOUNDATION.md
+# symlinks the repo-root file — formatting would churn shared prose docs.
 exclude = ["*.md"]

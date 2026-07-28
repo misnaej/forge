@@ -17,9 +17,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    # Upper bound: ruff minor releases stabilize new rules that auto-activate
-    # under ruff.toml's `select = ["ALL"]`, breaking CI without a code change.
-    # Raise the cap deliberately, triaging the newly stable rules.
+    # One-minor pin — cap-and-triage cadence, policy in FOUNDATION.md §5.
     "ruff>=0.16,<0.17",
     "interrogate>=1.5",
     # pip-audit backs the default (non-opt-in) pip_audit pre-commit step, so
