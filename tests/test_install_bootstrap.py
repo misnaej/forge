@@ -5,14 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
+
 from forge import install_bootstrap
 from tests.conftest import CapturedCalls, make_fake_run
 
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def test_steps_in_expected_order() -> None:
@@ -232,3 +232,49 @@ def test_doctor_and_audit_deps_skip_in_ci(
     invoked_clis = {call[0] for call in captured.calls}
     assert "forge-doctor" not in invoked_clis
     assert "forge-audit-deps" not in invoked_clis
+
+
+# ---------------------------------------------------------------------------
+# run_in_process
+# ---------------------------------------------------------------------------
+
+
+def test_run_in_process_swaps_argv_and_restores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`run_in_process` runs `main()` under a clean argv, then restores it."""
+    original_argv = ["forge-resync"]
+    monkeypatch.setattr(install_bootstrap.sys, "argv", original_argv)
+    recorded_argv: list[str] = []
+
+    def _fake_main() -> int:
+        recorded_argv.extend(install_bootstrap.sys.argv)
+        return 0
+
+    monkeypatch.setattr(install_bootstrap, "main", _fake_main)
+    assert install_bootstrap.run_in_process() == 0
+    assert recorded_argv == ["install-forge-bootstrap"]
+    assert install_bootstrap.sys.argv == original_argv
+
+
+def test_run_in_process_restores_argv_when_main_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`sys.argv` is restored via `finally` even when `main()` raises.
+
+    SCENARIO: the bootstrap raises instead of returning an exit code.
+    MOCK SETUP: `install_bootstrap.main` replaced with a raiser.
+    EXPECTED BEHAVIOR: the exception propagates out of `run_in_process`,
+        and `sys.argv` is restored to its pre-call value regardless.
+    """
+    original_argv = ["forge-upgrade"]
+    monkeypatch.setattr(install_bootstrap.sys, "argv", original_argv)
+
+    def _raise_main() -> int:
+        msg = "bootstrap exploded"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(install_bootstrap, "main", _raise_main)
+    with pytest.raises(RuntimeError, match="bootstrap exploded"):
+        install_bootstrap.run_in_process()
+    assert install_bootstrap.sys.argv == original_argv

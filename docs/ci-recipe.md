@@ -175,6 +175,49 @@ Pick a cadence that matches how aggressively you want forge updates:
 | `0 5 * * *`        | Daily. |
 | `0 5 1 * *`        | Monthly. |
 
+### Scheduled resync (drift without a pin change)
+
+An `@main`- or `@dev`-pinned repo drifts even when its pin never moves:
+each forge release changes the canonical content of committed managed
+artifacts (`FOUNDATION.md`, generated docs, hook wrappers). Upgrade ≠
+resync — the workflow above PRs *pin* changes; `forge-resync` PRs the
+*artifact regen*, with a built-in dedup guard (an open
+`chore/forge-resync-*` PR → it reports the URL and stops). In sync →
+exit 0, no PR. Same permissions block as the upgrade workflow.
+
+```yaml
+name: forge-resync
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Mondays, after the upgrade run
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  resync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project + forge-scripts
+        run: pip install -e ".[dev]"
+
+      - name: Resync managed artifacts (PR on drift)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: forge-resync
+```
+
+The resync PR body reminds the reviewer that mechanical regen does not
+surface adoption-required changes — `forge-upgrade --check` lists the
+pending `**Action:**` items for the version range.
+
 ---
 
 ## 4. Tag-on-merge release automation

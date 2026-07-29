@@ -71,7 +71,11 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
 from forge import config, pip_audit_json
-from forge.changelog import changelog_version_findings, stranded_added_versions
+from forge.changelog import (
+    changelog_version_findings,
+    stranded_added_versions,
+    wants_no_version,
+)
 from forge.config import resolve_model_section
 from forge.git_utils import (
     SCOPE_ALL,
@@ -1604,10 +1608,6 @@ def step_vendored_integrity(repo_root: Path) -> StepResult:
     )
 
 
-_SKIP_CHANGELOG_ENV = "SKIP_CHANGELOG_CHECK"
-_TRUTHY = frozenset({"1", "true", "yes", "on"})
-
-
 def _changelog_blocking(repo_root: Path) -> bool:
     """Return whether the changelog steps block the commit (default yes).
 
@@ -1749,10 +1749,14 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
 
     Path policy: ``[tool.forge.changelog].require_paths`` prefixes always
     require an entry (checked first), ``exempt_paths`` prefixes never do,
-    everything else requires one. ``SKIP_CHANGELOG_CHECK=1`` skips the
-    gate for a genuine no-op (mechanical revert). Self-skips without a
-    root ``CHANGELOG.md`` and on the base branch or a detached HEAD (it
-    is a per-PR guard).
+    everything else requires one. The no-version opt-out
+    (:func:`forge.changelog.wants_no_version`) skips the gate on any of
+    three signals: a truthy ``NO_VERSION`` / ``SKIP_CHANGELOG_CHECK``
+    env var (local-only — absent in CI), a delimited ``no-version``
+    token in the branch name, or a ``[no-version]`` tag in a commit
+    message over ``<base>..HEAD`` (the two CI-durable forms). Self-skips
+    without a root ``CHANGELOG.md`` and on the base branch or a detached
+    HEAD (it is a per-PR guard).
 
     Args:
         repo_root: Git repo root.
@@ -1762,13 +1766,6 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
         is ``false``.
     """
     name = "changelog_updated"
-    if os.environ.get(_SKIP_CHANGELOG_ENV, "").strip().lower() in _TRUTHY:
-        return StepResult(
-            name=name,
-            passed=True,
-            output=f"{_SKIP_CHANGELOG_ENV} set — skipped.",
-            skipped=True,
-        )
     changelog = repo_root / "CHANGELOG.md"
     if not changelog.exists():
         return StepResult(
@@ -1781,6 +1778,14 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
             name=name,
             passed=True,
             output="Per-PR guard — base branch or detached HEAD; skipped.",
+            skipped=True,
+        )
+    signal = wants_no_version(repo_root)
+    if signal is not None:
+        return StepResult(
+            name=name,
+            passed=True,
+            output=f"no-version opt-out — {signal}; skipped.",
             skipped=True,
         )
     step_cfg = _forge_step_config(repo_root, "changelog")
@@ -1805,8 +1810,10 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
             output=(
                 f"{len(triggers)} changed file(s) require a CHANGELOG.md entry "
                 f"(first: {triggers[0]}). Add a bullet under the top "
-                "`## vX.Y.Z` heading (docs/consumer-release.md), or set "
-                f"{_SKIP_CHANGELOG_ENV}=1 for a genuine no-op."
+                "`## vX.Y.Z` heading (docs/consumer-release.md). For a "
+                "genuine no-version change, opt out with NO_VERSION=1 "
+                "(local), a `no-version` branch token, or a [no-version] "
+                "commit tag (CI-durable)."
             ),
             non_blocking=not _changelog_blocking(repo_root),
         )

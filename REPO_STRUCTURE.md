@@ -68,6 +68,7 @@ Code.
    - install_labels.py: `install-forge-labels` — GitHub label installer
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
+   - resync.py: `forge-resync` — regenerate forge-managed artifacts and open a dedup-guarded resync PR (companion to `upgrade.py`'s pin-rewrite flow)
    - git_utils.py: shared git helpers and CLI logging setup (public API for consumers: `latest_v_tag`, `parse_semver`, `next_version`, `run_git`, `configure_cli_logging`)
    - changelog.py: shared `## vX.Y.Z` CHANGELOG heading recognition (`release_headings`, `changelog_lacks_entry`) — single source for next_prep, verify_changelog_history, and release; public API for consumers
    - import_graph.py: `forge.import_graph` — shared AST import primitives (`extract_import_targets`, `resolve_module_name`, `closest_known`) used by `audit.deps` and `smart_test.dependencies`
@@ -187,6 +188,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_claude_hooks.py: black-box tests for the `claude-hooks/*.sh` safety hooks (subprocess + JSON stdin)
    - test_claude_settings_schema.py: tests for the shared claude_settings_schema module (scaffold copy, write/read round-trip)
    - test_upgrade.py: tests for upgrade (forge-upgrade CLI)
+   - test_resync.py: tests for resync (forge-resync CLI)
    - test_install_githooks.py: tests for install_githooks
    - test_hook_helpers.py: tests for _hook_helpers shared drift-check helper
    - test_post_merge.py: tests for post_merge (forge-post-merge CLI)

@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from forge.config import load_config
-from forge.git_utils import run_git
+from forge.git_utils import ref_exists, run_git
 
 
 if TYPE_CHECKING:
@@ -23,6 +23,9 @@ if TYPE_CHECKING:
 def _ref_exists(repo_root: Path, ref: str) -> bool:
     """Return whether *ref* resolves to a commit in the repo.
 
+    Thin alias over the shared :func:`forge.git_utils.ref_exists` probe;
+    kept so this module's call sites stay stable.
+
     Args:
         repo_root: Git repo root.
         ref: Any ref or revision expression.
@@ -30,16 +33,7 @@ def _ref_exists(repo_root: Path, ref: str) -> bool:
     Returns:
         ``True`` when ``git rev-parse --verify`` resolves *ref*.
     """
-    return bool(
-        run_git(
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            f"{ref}^{{commit}}",
-            cwd=repo_root,
-            check=False,
-        )
-    )
+    return ref_exists(repo_root, ref)
 
 
 def resolve_base_ref(repo_root: Path, override: str | None = None) -> str:
