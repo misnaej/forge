@@ -746,3 +746,370 @@ def test_read_changelog_returns_packaged_text() -> None:
     text = upgrade._read_changelog()
     assert text is not None
     assert text.startswith("# Changelog")
+
+
+# ---------------------------------------------------------------------------
+# Pin discovery / regex — pyproject.toml, requirements*.txt, environment.yml
+# ---------------------------------------------------------------------------
+
+
+def test_pin_regex_for_pyproject_returns_quoted_regex(tmp_path: Path) -> None:
+    """``pyproject.toml`` routes to the quote-delimited regex."""
+    assert upgrade._pin_regex_for(tmp_path / "pyproject.toml") is upgrade._PIN_RE
+
+
+def test_pin_regex_for_requirements_returns_bare_regex(tmp_path: Path) -> None:
+    """Any other pin-carrying file routes to the bare (unquoted) regex."""
+    regex = upgrade._pin_regex_for(tmp_path / "requirements.txt")
+    assert regex is upgrade._PIN_BARE_RE
+
+
+def test_find_pin_in_requirements_txt(tmp_path: Path) -> None:
+    """A bare pin in requirements.txt is found when no pyproject.toml exists."""
+    (tmp_path / "requirements.txt").write_text(
+        "forge-scripts @ git+https://github.com/misnaej/forge.git@v1.0.0\n",
+    )
+    pin = upgrade.find_pin(tmp_path)
+    assert pin is not None
+    assert pin.path.name == "requirements.txt"
+    assert pin.ref == "v1.0.0"
+
+
+def test_find_pin_in_environment_yml(tmp_path: Path) -> None:
+    """A `pip:` list entry in environment.yml is found."""
+    (tmp_path / "environment.yml").write_text(
+        "name: example\n"
+        "dependencies:\n"
+        "  - python=3.11\n"
+        "  - pip\n"
+        "  - pip:\n"
+        "    - forge-scripts @ git+https://github.com/misnaej/forge.git@dev\n",
+    )
+    pin = upgrade.find_pin(tmp_path)
+    assert pin is not None
+    assert pin.path.name == "environment.yml"
+    assert pin.ref == "dev"
+
+
+def test_find_pin_prefers_pyproject_over_requirements(tmp_path: Path) -> None:
+    """pyproject.toml wins over requirements.txt when both carry a pin."""
+    (tmp_path / "pyproject.toml").write_text(_BASE_PYPROJECT)
+    (tmp_path / "requirements.txt").write_text(
+        "forge-scripts @ git+https://github.com/misnaej/forge.git@dev\n",
+    )
+    pin = upgrade.find_pin(tmp_path)
+    assert pin is not None
+    assert pin.path.name == "pyproject.toml"
+    assert pin.ref == "v1.2.0"
+
+
+def test_find_pin_requirements_sorted_glob_deterministic(tmp_path: Path) -> None:
+    """requirements*.txt candidates are searched in sorted (deterministic) order."""
+    (tmp_path / "requirements-a.txt").write_text("pytest>=8.0\n")
+    (tmp_path / "requirements-b.txt").write_text(
+        "forge-scripts @ git+https://github.com/misnaej/forge.git@dev\n",
+    )
+    pin = upgrade.find_pin(tmp_path)
+    assert pin is not None
+    assert pin.path.name == "requirements-b.txt"
+
+
+def test_find_pin_bare_requirements_no_pin_returns_none(tmp_path: Path) -> None:
+    """requirements.txt without a forge-scripts pin → None."""
+    (tmp_path / "requirements.txt").write_text("pytest>=8.0\n")
+    assert upgrade.find_pin(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# _PIN_BARE_RE — SSH-format last-@ split regression coverage
+# ---------------------------------------------------------------------------
+
+
+def test_find_pin_bare_ssh_format_splits_on_last_at(tmp_path: Path) -> None:
+    """A bare (requirements.txt) SSH-format pin splits on the LAST ``@``.
+
+    Regression for #77 applied to the bare (unquoted) regex path: an
+    SSH URL carries three ``@`` characters (user, host, ref separators),
+    so the url/ref boundary must anchor on the last one.
+    """
+    (tmp_path / "requirements.txt").write_text(
+        "forge-scripts @ git+ssh://git@github.com/misnaej/forge.git@dev\n",
+    )
+    pin = upgrade.find_pin(tmp_path)
+    assert pin is not None
+    assert pin.url == "ssh://git@github.com/misnaej/forge.git"
+    assert pin.ref == "dev"
+
+
+def test_rewrite_pin_bare_ssh_preserves_host_on_rewrite(tmp_path: Path) -> None:
+    """Rewriting a bare SSH pin keeps the full URL; only the ref changes."""
+    (tmp_path / "requirements.txt").write_text(
+        "forge-scripts @ git+ssh://git@github.com/misnaej/forge.git@dev\n",
+    )
+    pin = upgrade.find_pin(tmp_path)
+    assert pin is not None
+    new_text = upgrade._rewrite_pin(pin, "v2.0.0")
+    assert "git+ssh://git@github.com/misnaej/forge.git@v2.0.0" in new_text
+    assert "git+ssh://git@v2.0.0" not in new_text
+
+
+@pytest.mark.parametrize("terminator", [" # comment", ",", "", "  "])
+def test_pin_bare_re_end_of_token_lookahead_stops_at_whitespace(
+    tmp_path: Path,
+    terminator: str,
+) -> None:
+    """Ref lookahead stops at whitespace/comma/EOL without swallowing trailing text.
+
+    Args:
+        terminator: Text appended immediately after the ref on the pin line.
+    """
+    (tmp_path / "requirements.txt").write_text(
+        f"forge-scripts @ git+https://github.com/misnaej/forge.git@dev{terminator}\n",
+    )
+    pin = upgrade.find_pin(tmp_path)
+    assert pin is not None
+    assert pin.ref == "dev"
+
+
+def test_pin_bare_re_no_match_without_ref_separator(tmp_path: Path) -> None:
+    """A pin with no ``@ref`` at all is not recognised as a pin."""
+    (tmp_path / "requirements.txt").write_text(
+        "forge-scripts @ git+https://github.com/misnaej/forge.git\n",
+    )
+    assert upgrade.find_pin(tmp_path) is None
+
+
+def test_rewrite_pin_bare_no_quote_suffix(tmp_path: Path) -> None:
+    """Rewriting a bare (requirements.txt) pin adds no trailing quote character."""
+    (tmp_path / "requirements.txt").write_text(
+        "forge-scripts @ git+https://github.com/misnaej/forge.git@dev\n",
+    )
+    pin = upgrade.find_pin(tmp_path)
+    assert pin is not None
+    new_text = upgrade._rewrite_pin(pin, "v2.0.0")
+    line = next(line for line in new_text.splitlines() if "forge-scripts @" in line)
+    assert '"' not in line
+    assert "'" not in line
+
+
+# ---------------------------------------------------------------------------
+# _write_atomic
+# ---------------------------------------------------------------------------
+
+
+def test_write_atomic_works_on_non_pyproject_file(tmp_path: Path) -> None:
+    """`_write_atomic` replaces any target file's contents, not just pyproject.toml."""
+    target = tmp_path / "requirements.txt"
+    target.write_text("old content\n")
+    upgrade._write_atomic(target, "new content\n")
+    assert target.read_text() == "new content\n"
+
+
+def test_write_atomic_cleans_up_tempfile_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crash mid-write leaves no `*.tmp` sibling and the original untouched.
+
+    SCENARIO: `os.fdopen` raises after `mkstemp` has already created the
+        sibling tempfile.
+    MOCK SETUP: `upgrade.os.fdopen` monkeypatched to raise `OSError`.
+    EXPECTED BEHAVIOR: the tempfile is unlinked, the original file's
+        content is untouched, and the `OSError` propagates.
+    """
+    target = tmp_path / "requirements.txt"
+    target.write_text("original\n")
+
+    def _raise_fdopen(*_a: object, **_kw: object) -> object:
+        msg = "disk full"
+        raise OSError(msg)
+
+    monkeypatch.setattr(upgrade.os, "fdopen", _raise_fdopen)
+
+    with pytest.raises(OSError, match="disk full"):
+        upgrade._write_atomic(target, "new content\n")
+
+    assert target.read_text() == "original\n"
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+# ---------------------------------------------------------------------------
+# Action-item helpers — _recent_action_items / _pending_action_count
+# ---------------------------------------------------------------------------
+
+
+_ACTIONS_CHANGELOG = """# Changelog
+
+## v4.0.0
+
+**Action:** action four.
+
+## v3.0.0
+
+**Action:** action three a.
+
+**Action:** action three b.
+
+## v2.0.0
+
+**Action:** action two.
+
+## v1.0.0
+
+**Action:** action one.
+"""
+
+
+def test_recent_action_items_dedups_versions_respects_max() -> None:
+    """`max_versions` caps distinct versions but keeps every item of a kept version."""
+    items = upgrade._recent_action_items(_ACTIONS_CHANGELOG, max_versions=2)
+    versions = {version for version, _action in items}
+    assert versions == {"v4.0.0", "v3.0.0"}
+    assert ("v3.0.0", "action three a.") in items
+    assert ("v3.0.0", "action three b.") in items
+    assert len(items) == 3  # v4.0.0 x1 + v3.0.0 x2
+
+
+def test_recent_action_items_empty_when_no_markers() -> None:
+    """No `**Action:**` markers anywhere → empty list."""
+    text = "# Changelog\n\n## v1.0.0\n\n### Features\n- a thing\n"
+    assert upgrade._recent_action_items(text) == []
+
+
+def test_pending_action_count_counts_versions_newer_than_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only markers in versions strictly newer than the installed one count."""
+    text = (
+        "# Changelog\n\n"
+        "## v1.8.0\n\n**Action:** a.\n\n"
+        "## v1.6.0\n\n**Action:** b.\n\n"
+        "## v1.4.0\n\n**Action:** c.\n"
+    )
+    monkeypatch.setattr(upgrade.metadata, "version", lambda _name: "1.5.0")
+    assert upgrade._pending_action_count(text) == 2
+
+
+def test_pending_action_count_zero_on_package_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Installed forge-scripts version unavailable → 0, not a crash."""
+
+    def _raise(_name: str) -> str:
+        raise upgrade.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(upgrade.metadata, "version", _raise)
+    text = "## v99.0.0\n\n**Action:** x.\n"
+    assert upgrade._pending_action_count(text) == 0
+
+
+def test_pending_action_count_zero_on_unparseable_installed_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unparseable installed-version string degrades to 0 rather than crashing."""
+    monkeypatch.setattr(upgrade.metadata, "version", lambda _name: "not-a-version")
+    text = "## v99.0.0\n\n**Action:** x.\n"
+    assert upgrade._pending_action_count(text) == 0
+
+
+# ---------------------------------------------------------------------------
+# Output wiring — --check pending-action warning, _print_upgrade_notes
+# ---------------------------------------------------------------------------
+
+
+def test_check_mode_warns_on_pending_action_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`--check --channel main` warns when pending `**Action:**` items exist.
+
+    SCENARIO: `--check` mode with a changelog carrying an `**Action:**`
+        marker in a version newer than the (stubbed) installed forge.
+    MOCK SETUP: `repo_root` → sandbox; `_read_changelog` monkeypatched to
+        a fixed changelog text; `metadata.version` monkeypatched to an
+        older installed version so the marker's version counts as pending.
+    EXPECTED BEHAVIOR: caplog carries a "pending action item" warning.
+    """
+    monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        upgrade,
+        "_read_changelog",
+        lambda: "## v9.0.0\n\n**Action:** upgrade config.\n",
+    )
+    monkeypatch.setattr(upgrade.metadata, "version", lambda _name: "1.0.0")
+
+    argv = ["forge-upgrade", "--check", "--channel", "main"]
+    with patch.object(upgrade.sys, "argv", argv), caplog.at_level("INFO"):
+        rc = upgrade.main()
+    assert rc == 0
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "pending action item" in msgs
+
+
+def test_check_mode_silent_when_no_pending_actions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`--check` stays silent on Action items the installed forge already covers.
+
+    SCENARIO: `--check` mode where the only Action marker belongs to a
+        version the (stubbed) installed forge already covers.
+    MOCK SETUP: `repo_root` → sandbox; `_read_changelog` monkeypatched;
+        `metadata.version` monkeypatched to a version at/after the
+        marker's version.
+    EXPECTED BEHAVIOR: no "pending action item" warning in caplog.
+    """
+    monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        upgrade,
+        "_read_changelog",
+        lambda: "## v1.0.0\n\n**Action:** old news.\n",
+    )
+    monkeypatch.setattr(upgrade.metadata, "version", lambda _name: "2.0.0")
+
+    argv = ["forge-upgrade", "--check", "--channel", "main"]
+    with patch.object(upgrade.sys, "argv", argv), caplog.at_level("INFO"):
+        rc = upgrade.main()
+    assert rc == 0
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "pending action item" not in msgs
+
+
+_ACTION_AND_NOTES_CHANGELOG = """# Changelog
+
+## v2.0.0 — 2026-01-01
+
+### ⚠️ Upgrade notes
+- Breaking: do X before upgrading.
+
+**Action:** do Y.
+"""
+
+
+def test_print_upgrade_notes_includes_action_required_section(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`_print_upgrade_notes` prints an "Action required" section when markers exist."""
+    monkeypatch.setattr(upgrade, "_read_changelog", lambda: _ACTION_AND_NOTES_CHANGELOG)
+    with caplog.at_level("INFO"):
+        upgrade._print_upgrade_notes()
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "Action required" in msgs
+    assert "do Y" in msgs
+
+
+def test_print_upgrade_notes_omits_action_section_when_none(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`_print_upgrade_notes` prints notes, skipping "Action required" markers."""
+    text = "# Changelog\n\n## v1.0.0 — x\n\n### ⚠️ Upgrade notes\n- Breaking: do X.\n"
+    monkeypatch.setattr(upgrade, "_read_changelog", lambda: text)
+    with caplog.at_level("INFO"):
+        upgrade._print_upgrade_notes()
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "do X" in msgs
+    assert "Action required" not in msgs

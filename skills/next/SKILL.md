@@ -54,6 +54,14 @@ Stop immediately and report if any step fails.
 3. **Confirm clean state**
    Run `git branch` and `git status --porcelain`. Report.
 
+   **Managed-artifact drift?** When drift signals appeared during sync
+   (a `check_upstream` warning, stale generated docs, bootstrap-managed
+   files out of date), offer `forge-resync` — safe to run blind: in
+   sync → no-op; an open `chore/forge-resync-*` PR → reports its URL
+   instead of duplicating; real drift → opens a dedup-guarded resync PR
+   on its own branch. The CLI owns all the logic; do not hand-roll the
+   regen/branch/PR loop.
+
 4. **Tidy `.claude/settings.local.json`** — auto-approved one-off
    commands accumulate during work. Consolidate them once per `/next`
    run:

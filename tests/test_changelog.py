@@ -7,6 +7,8 @@ shared by ``verify-forge-changelog-history``, ``forge-next-prep``, and
 
 from __future__ import annotations
 
+import pytest
+
 from forge import changelog
 
 
@@ -218,3 +220,72 @@ def test_top_release_heading_skips_non_version_headings() -> None:
 def test_top_release_heading_none_without_versions() -> None:
     """No recognized release heading → None."""
     assert changelog.top_release_heading("# Changelog\n") is None
+
+
+# ---------------------------------------------------------------------------
+# action_items
+# ---------------------------------------------------------------------------
+
+
+def test_action_items_extracts_marker_under_heading() -> None:
+    """A single ``**Action:**`` line under a heading is attributed to it."""
+    text = "## v1.2.0\n\n**Action:** do the thing.\n"
+    assert changelog.action_items(text) == [("v1.2.0", "do the thing.")]
+
+
+def test_action_items_attributes_to_nearest_governing_heading() -> None:
+    """Two headings each with their own marker, independently in file order."""
+    text = (
+        "## v2.0.0\n"
+        "\n"
+        "**Action:** upgrade config.\n"
+        "\n"
+        "## v1.0.0\n"
+        "\n"
+        "**Action:** migrate data.\n"
+    )
+    assert changelog.action_items(text) == [
+        ("v2.0.0", "upgrade config."),
+        ("v1.0.0", "migrate data."),
+    ]
+
+
+def test_action_items_ignores_markers_above_first_heading() -> None:
+    """A marker line in prose before any release heading is excluded."""
+    text = "**Action:** should not count.\n\n## v1.0.0\n\n- normal bullet\n"
+    assert changelog.action_items(text) == []
+
+
+@pytest.mark.parametrize("bullet", ["- ", "* ", ""])
+def test_action_items_accepts_optional_list_bullet(bullet: str) -> None:
+    """The marker matches with a ``-`` bullet, a ``*`` bullet, or bare.
+
+    Args:
+        bullet: The list-bullet prefix (or empty string) placed before
+            the ``**Action:**`` marker.
+    """
+    text = f"## v1.0.0\n\n{bullet}**Action:** do it.\n"
+    assert changelog.action_items(text) == [("v1.0.0", "do it.")]
+
+
+def test_action_items_returns_empty_when_no_markers() -> None:
+    """Headings with no ``**Action:**`` lines yield an empty list."""
+    text = "## v1.1.0\n\n- a bullet\n\n## v1.0.0\n\n- another bullet\n"
+    assert changelog.action_items(text) == []
+
+
+def test_action_items_ignores_near_miss_marker_text() -> None:
+    """Text resembling the marker but missing the exact bold-colon shape is excluded."""
+    text = (
+        "## v1.0.0\n"
+        "\n"
+        "Action: not bolded, should not match.\n"
+        "**Action**: colon outside bold, should not match.\n"
+    )
+    assert changelog.action_items(text) == []
+
+
+def test_action_items_skips_action_under_unrecognized_heading() -> None:
+    """Markers under unrecognized headings (e.g. `## Unreleased`) are excluded."""
+    text = "## Unreleased\n\n**Action:** should be excluded.\n"
+    assert changelog.action_items(text) == []

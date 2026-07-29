@@ -63,6 +63,15 @@ in spirit; the deliberate divergences are listed at the end.
   a release is cut, top heading and latest tag are **equal** — that
   window is valid; the **first PR after a tag opens the next
   `## vX.Y.Z` heading** (and carries its own entries under it).
+- **`**Action:**` marker for adoption-required entries.** When an entry
+  needs the reader to *do* something — adopt a new capability (new CLI,
+  opt-in step, config key) or react to a contract change — its line
+  starts with `**Action:**` followed by what to do (an optional list
+  bullet before the marker is fine). Tooling extracts these markers:
+  `forge.changelog.action_items` parses them, and `forge-upgrade`
+  surfaces them as a distinct "Action required" section (`--continue`)
+  and a pending count (`--check`). Forward-only — entries without
+  markers behave as before.
 
 ### Per-PR rule
 

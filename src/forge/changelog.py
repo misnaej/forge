@@ -30,6 +30,11 @@ _ANY_HEADING_RE = re.compile(r"^##\s+(\S.*?)\s*$", re.MULTILINE)
 # New-file hunk header of a unified diff: ``@@ -a,b +c,d @@`` → ``c``.
 _HUNK_NEW_START_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
+# An action-required marker line: an optional list bullet, then the
+# ``**Action:**`` marker, then the action text. The marker convention is
+# documented in ``docs/consumer-release.md`` "Changelog convention".
+_ACTION_RE = re.compile(r"^\s*(?:[-*]\s+)?\*\*Action:\*\*\s*(?P<text>\S.*?)\s*$")
+
 
 def release_headings(text: str) -> set[str]:
     """Return the set of ``## v<semver>`` release headings in *text*.
@@ -163,6 +168,37 @@ def changelog_version_findings(text: str, latest_tag: str | None) -> list[str]:
                 f"latest tag {latest_tag}."
             )
     return findings
+
+
+def action_items(text: str) -> list[tuple[str, str]]:
+    """Return ``(version, action)`` pairs for every ``**Action:**`` line.
+
+    The marker convention (``docs/consumer-release.md`` "Changelog
+    convention"): a release entry flags each change a consumer must act
+    on — adopt a new capability, react to a contract change — with a
+    line whose content starts ``**Action:** <what to do>``. This
+    extractor attributes each marker line to its governing ``## vX.Y.Z``
+    heading; marker lines above the first release heading are ignored.
+    Forward-only by construction: entries without markers yield nothing.
+
+    Args:
+        text: Full ``CHANGELOG.md`` contents.
+
+    Returns:
+        ``(version, action_text)`` pairs in file order (newest release
+        first for a conventionally ordered changelog); empty when no
+        marker lines exist.
+    """
+    governing = _governing_versions(text)
+    items: list[tuple[str, str]] = []
+    for index, line in enumerate(text.splitlines()):
+        match = _ACTION_RE.match(line)
+        if match is None:
+            continue
+        version = governing[index]
+        if version is not None:
+            items.append((version, match.group("text")))
+    return items
 
 
 def _governing_versions(text: str) -> list[str | None]:
