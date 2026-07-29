@@ -1,0 +1,8 @@
+# Keeps SHA-pinned GitHub Actions current (docs/security.md "Pin GitHub
+# Actions") — Dependabot PRs bump the pinned SHAs and tag comments.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
