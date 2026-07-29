@@ -3,7 +3,7 @@
 # MOCKING STRATEGY: the upgrade flow shells out and reads CI/auth context;
 # all of it is stubbed so no real pip/git runs.
 #   - subprocess.run: faked to capture the pip/git commands + return codes.
-#   - _bootstrap_main / repo_root: neutralized (no real bootstrap; sandbox root).
+#   - _bootstrap_run / repo_root: neutralized (no real bootstrap; sandbox root).
 #   - git_auth_mode / is_non_interactive: pinned to exercise the CI-gate and
 #     auth-URL-form branches deterministically (see `_stub_run_context`).
 
@@ -272,14 +272,14 @@ def test_continue_calls_bootstrap(
     monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
     captured: dict[str, int] = {"calls": 0}
 
-    def _fake_bootstrap_main() -> int:
+    def _fake_bootstrap_run() -> int:
         captured["calls"] += 1
         return 0
 
     # Bootstrap is now imported at the top of the upgrade module as
-    # ``_bootstrap_main`` — patch that symbol so the test substitutes
+    # ``_bootstrap_run`` — patch that symbol so the test substitutes
     # the right binding.
-    monkeypatch.setattr(upgrade, "_bootstrap_main", _fake_bootstrap_main)
+    monkeypatch.setattr(upgrade, "_bootstrap_run", _fake_bootstrap_run)
     argv = ["forge-upgrade", "--continue"]
     with patch.object(upgrade.sys, "argv", argv), caplog.at_level("INFO"):
         rc = upgrade.main()
@@ -367,7 +367,7 @@ def test_apply_runs_pip_and_bootstrap(
     MOCK SETUP: ``repo_root`` → sandbox; ``_stub_run_context`` pins
         ``git_auth_mode``/``is_non_interactive`` past the CI gate;
         ``subprocess.run`` captures the pip argv (returncode 0);
-        ``_bootstrap_main`` counts its invocations.
+        ``_bootstrap_run`` counts its invocations.
     EXPECTED BEHAVIOR: pin rewritten to ``@main``, pip invoked with
         ``--force-reinstall --no-deps``, bootstrap run exactly once, rc 0.
     """
@@ -389,7 +389,7 @@ def test_apply_runs_pip_and_bootstrap(
         return 0
 
     monkeypatch.setattr(upgrade.subprocess, "run", _fake_run)
-    monkeypatch.setattr(upgrade, "_bootstrap_main", _fake_bootstrap)
+    monkeypatch.setattr(upgrade, "_bootstrap_run", _fake_bootstrap)
 
     argv = ["forge-upgrade", "--apply", "--channel", "main"]
     with patch.object(upgrade.sys, "argv", argv), caplog.at_level("INFO"):
@@ -414,7 +414,7 @@ def test_apply_aborts_if_pip_fails(
     SCENARIO: ``--apply`` where the pip force-reinstall exits non-zero.
     MOCK SETUP: ``repo_root`` → sandbox; ``_stub_run_context`` clears the
         CI gate; ``subprocess.run`` returns ``FakeProc(returncode=1)`` to
-        simulate a pip failure; ``_bootstrap_main`` counts invocations.
+        simulate a pip failure; ``_bootstrap_run`` counts invocations.
     EXPECTED BEHAVIOR: rc 1, bootstrap never called, a "pip install failed"
         log emitted.
     """
@@ -433,7 +433,7 @@ def test_apply_aborts_if_pip_fails(
         return 0
 
     monkeypatch.setattr(upgrade.subprocess, "run", _fake_run)
-    monkeypatch.setattr(upgrade, "_bootstrap_main", _fake_bootstrap)
+    monkeypatch.setattr(upgrade, "_bootstrap_run", _fake_bootstrap)
 
     argv = ["forge-upgrade", "--apply", "--channel", "main"]
     with patch.object(upgrade.sys, "argv", argv), caplog.at_level("INFO"):
@@ -557,7 +557,7 @@ def test_apply_passes_ssh_auth_to_pip_command(
         ssh; the pip install URL form must follow.
     MOCK SETUP: ``repo_root`` → sandbox; ``_stub_run_context`` pins
         ``git_auth_mode`` → ``"ssh"`` past the CI gate; ``subprocess.run``
-        captures the pip argv; ``_bootstrap_main`` stubbed to a no-op.
+        captures the pip argv; ``_bootstrap_run`` stubbed to a no-op.
     EXPECTED BEHAVIOR: the captured pin spec carries a
         ``git+ssh://git@github.com/`` URL.
     """
@@ -573,7 +573,7 @@ def test_apply_passes_ssh_auth_to_pip_command(
         return FakeProc(returncode=0)
 
     monkeypatch.setattr(upgrade.subprocess, "run", _fake_run)
-    monkeypatch.setattr(upgrade, "_bootstrap_main", lambda: 0)
+    monkeypatch.setattr(upgrade, "_bootstrap_run", lambda: 0)
 
     argv = ["forge-upgrade", "--apply", "--channel", "main"]
     with patch.object(upgrade.sys, "argv", argv):
@@ -595,7 +595,7 @@ def test_apply_pip_timeout_default_ci(
     MOCK SETUP: ``repo_root`` → sandbox; ``git_auth_mode`` → ``"ssh"`` and
         ``is_non_interactive`` → ``True`` to select the CI default;
         ``subprocess.run`` captures the ``timeout`` kwarg;
-        ``_bootstrap_main`` stubbed to a no-op.
+        ``_bootstrap_run`` stubbed to a no-op.
     EXPECTED BEHAVIOR: the subprocess receives
         ``timeout == _DEFAULT_PIP_TIMEOUT_CI``.
     """
@@ -612,7 +612,7 @@ def test_apply_pip_timeout_default_ci(
         return FakeProc(returncode=0)
 
     monkeypatch.setattr(upgrade.subprocess, "run", _fake_run)
-    monkeypatch.setattr(upgrade, "_bootstrap_main", lambda: 0)
+    monkeypatch.setattr(upgrade, "_bootstrap_run", lambda: 0)
 
     argv = ["forge-upgrade", "--apply", "--channel", "main"]
     with patch.object(upgrade.sys, "argv", argv):
@@ -631,7 +631,7 @@ def test_apply_pip_timeout_explicit_override(
         the CI default.
     MOCK SETUP: ``repo_root`` → sandbox; ``_stub_run_context`` pins ssh auth
         past the CI gate; ``subprocess.run`` captures the ``timeout`` kwarg;
-        ``_bootstrap_main`` stubbed to a no-op.
+        ``_bootstrap_run`` stubbed to a no-op.
     EXPECTED BEHAVIOR: the subprocess receives ``timeout == 42``.
     """
     pp = tmp_path / "pyproject.toml"
@@ -646,7 +646,7 @@ def test_apply_pip_timeout_explicit_override(
         return FakeProc(returncode=0)
 
     monkeypatch.setattr(upgrade.subprocess, "run", _fake_run)
-    monkeypatch.setattr(upgrade, "_bootstrap_main", lambda: 0)
+    monkeypatch.setattr(upgrade, "_bootstrap_run", lambda: 0)
 
     argv = ["forge-upgrade", "--apply", "--channel", "main", "--pip-timeout", "42"]
     with patch.object(upgrade.sys, "argv", argv):
@@ -665,7 +665,7 @@ def test_apply_returns_124_on_pip_timeout(
         deadline.
     MOCK SETUP: ``repo_root`` → sandbox; ``_stub_run_context`` pins ssh auth
         past the CI gate; ``subprocess.run`` raises ``TimeoutExpired``;
-        ``_bootstrap_main`` records whether it was reached.
+        ``_bootstrap_run`` records whether it was reached.
     EXPECTED BEHAVIOR: rc 124 and bootstrap skipped (pip failure short-
         circuits the flow).
     """
@@ -684,7 +684,7 @@ def test_apply_returns_124_on_pip_timeout(
         return 0
 
     monkeypatch.setattr(upgrade.subprocess, "run", _fake_run)
-    monkeypatch.setattr(upgrade, "_bootstrap_main", _fake_bootstrap)
+    monkeypatch.setattr(upgrade, "_bootstrap_run", _fake_bootstrap)
 
     argv = ["forge-upgrade", "--apply", "--channel", "main", "--pip-timeout", "1"]
     with patch.object(upgrade.sys, "argv", argv):

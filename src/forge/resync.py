@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 
 from forge.config import load_config
 from forge.git_utils import configure_cli_logging, repo_root, require_cli, run_git
-from forge.install_bootstrap import main as _bootstrap_main
+from forge.install_bootstrap import run_in_process as _bootstrap_run
 from forge.run_context import progress_logger
 
 
@@ -120,19 +120,16 @@ def _open_resync_pr_url() -> str | None:
 def _run_bootstrap() -> int:
     """Run ``install-forge-bootstrap`` in-process and return its exit code.
 
-    Same ``sys.argv`` swap as ``forge-upgrade --continue`` — the
-    bootstrap's ``main()`` parses ``sys.argv`` itself.
+    Delegates the argv-swap re-entry to
+    :func:`forge.install_bootstrap.run_in_process` (shared with
+    ``forge-upgrade --continue``); this wrapper only adds the CI
+    progress banner.
 
     Returns:
         The bootstrap's exit code (0 = every step passed or self-skipped).
     """
-    saved_argv = sys.argv
-    sys.argv = ["install-forge-bootstrap"]
-    try:
-        with progress_logger("bootstrap"):
-            return _bootstrap_main()
-    finally:
-        sys.argv = saved_argv
+    with progress_logger("bootstrap"):
+        return _bootstrap_run()
 
 
 def _publish_resync(root: Path, version: str, base_branch: str) -> int:
@@ -154,8 +151,8 @@ def _publish_resync(root: Path, version: str, base_branch: str) -> int:
     """
     start_branch = run_git("branch", "--show-current", cwd=root).strip()
     branch = f"{_BRANCH_PREFIX}{version}"
-    run_git("switch", "-c", branch, cwd=root)
     try:
+        run_git("switch", "-c", branch, cwd=root)
         run_git("add", "-A", cwd=root)
         run_git(
             "commit",

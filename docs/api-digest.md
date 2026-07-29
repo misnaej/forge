@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 650 symbols._
+_62 modules, 654 symbols._
 
 ## `forge`
 
@@ -197,6 +197,9 @@ _62 modules, 650 symbols._
 - `_governing_versions(text: str) -> list[str | None]` _(internal)_ — Map each line in *text* to its governing release version heading.
 - `_iter_added_lines(diff_text: str) -> Iterator[tuple[int, str]]` _(internal)_ — Yield (line_number, content) pairs for each addition in a unified diff.
 - `_stranded_from_added(governing: list[str | None], added_lines: Iterator[tuple[int, str]], tag: tuple[int, int, int] | None) -> list[str]` _(internal)_ — Detect released headings that received new content in a diff.
+- `_env_no_version() -> str | None` _(internal)_ — Return the name of the first truthy opt-out env var, or ``None``.
+- `_resolve_base_ref(repo_root: Path, base_branch: str) -> str` _(internal)_ — Return the first resolvable ref for *base_branch*, local-first.
+- `wants_no_version(repo_root: Path) -> str | None` — Return the fired no-version signal, or ``None`` when none is set.
 - `stranded_added_versions(text: str, diff_text: str, latest_tag: str | None) -> list[str]` — Return released heading versions that *diff_text* adds entries under.
 
 ## `forge.claude_settings_schema`
@@ -481,6 +484,7 @@ _62 modules, 650 symbols._
 - `_run_step(step: Step, *, check_mode: bool, root: Path) -> int` _(internal)_ — Execute one bootstrap step. Return its exit code.
 - `_resolve_steps(skip: Iterable[str]) -> list[Step]` _(internal)_ — Return the ordered step list with *skip* entries removed.
 - `main() -> int` — Run every install / generator step in order. Return non-zero on failure.
+- `run_in_process() -> int` — Re-enter :func:`main` with a clean one-element ``sys.argv``.
 
 ## `forge.install_claude_settings`
 

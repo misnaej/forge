@@ -54,7 +54,7 @@ from forge.git_utils import (
     parse_semver,
     repo_root,
 )
-from forge.install_bootstrap import main as _bootstrap_main
+from forge.install_bootstrap import run_in_process as _bootstrap_run
 from forge.run_context import (
     AuthMode,
     git_auth_mode,
@@ -642,12 +642,7 @@ def _run_phase2() -> int:
     """
     with progress_logger("bootstrap") as note:
         note("install-forge-bootstrap")
-        saved_argv = sys.argv
-        try:
-            sys.argv = ["install-forge-bootstrap"]
-            rc = _bootstrap_main()
-        finally:
-            sys.argv = saved_argv
+        rc = _bootstrap_run()
 
     if rc == 0:
         logger.info("")

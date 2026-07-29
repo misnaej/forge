@@ -12,7 +12,7 @@
 #     dev_branch="main") instead of reading pyproject.toml.
 #   - resync.subprocess.run: faked with the shared FakeProc to simulate
 #     `gh pr list` / `gh pr create` responses.
-#   - resync._bootstrap_main: stubbed to avoid a real bootstrap pass.
+#   - resync._bootstrap_run: stubbed to avoid a real bootstrap pass.
 #   - A stateful counter fake for `_working_tree_dirty` where a test needs
 #     the pre-bootstrap and post-bootstrap dirty checks to disagree.
 
@@ -165,56 +165,26 @@ def test_open_resync_pr_url_none_on_empty_pr_list(
 # ---------------------------------------------------------------------------
 
 
-def test_run_bootstrap_swaps_argv_and_restores(
+def test_run_bootstrap_delegates_to_shared_reentry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`_run_bootstrap` swaps `sys.argv` during the call, then restores it."""
-    original_argv = ["forge-resync"]
-    monkeypatch.setattr(resync.sys, "argv", original_argv)
-    recorded_argv: list[str] = []
+    """`_run_bootstrap` returns the shared re-entry helper's exit code.
 
-    def _fake_bootstrap() -> int:
-        recorded_argv.extend(resync.sys.argv)
-        return 0
-
-    monkeypatch.setattr(resync, "_bootstrap_main", _fake_bootstrap)
-    rc = resync._run_bootstrap()
-    assert rc == 0
-    assert recorded_argv == ["install-forge-bootstrap"]
-    assert resync.sys.argv == original_argv
+    The argv-swap mechanics live in
+    `forge.install_bootstrap.run_in_process` (covered in
+    `test_install_bootstrap.py`); this wrapper only adds the progress
+    banner and passes the code through.
+    """
+    monkeypatch.setattr(resync, "_bootstrap_run", lambda: 0)
+    assert resync._run_bootstrap() == 0
 
 
 def test_run_bootstrap_returns_nonzero_on_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failing bootstrap exit code is passed through unchanged."""
-    monkeypatch.setattr(resync, "_bootstrap_main", lambda: 3)
+    monkeypatch.setattr(resync, "_bootstrap_run", lambda: 3)
     assert resync._run_bootstrap() == 3
-
-
-def test_run_bootstrap_restores_argv_when_bootstrap_raises(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """`sys.argv` is restored via `finally` even when bootstrap raises.
-
-    SCENARIO: `_bootstrap_main` raises instead of returning an exit code.
-    MOCK SETUP: `_bootstrap_main` replaced with a raiser.
-    EXPECTED BEHAVIOR: the exception propagates out of `_run_bootstrap`,
-        and `sys.argv` is restored to its pre-call value regardless.
-    """
-    original_argv = ["forge-resync"]
-    monkeypatch.setattr(resync.sys, "argv", original_argv)
-
-    def _raise_bootstrap() -> int:
-        msg = "bootstrap exploded"
-        raise RuntimeError(msg)
-
-    monkeypatch.setattr(resync, "_bootstrap_main", _raise_bootstrap)
-
-    with pytest.raises(RuntimeError, match="bootstrap exploded"):
-        resync._run_bootstrap()
-
-    assert resync.sys.argv == original_argv
 
 
 # ---------------------------------------------------------------------------

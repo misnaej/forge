@@ -9,14 +9,17 @@ and public API for consumer repos composing their own release flow.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import TYPE_CHECKING
 
-from forge.git_utils import parse_semver
+from forge.config import load_config
+from forge.git_utils import parse_semver, run_git
 
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 
 _HEADING_RE = re.compile(r"^##\s+(v\d+\.\d+\.\d+)\b", re.MULTILINE)
@@ -294,6 +297,92 @@ def _stranded_from_added(
         if parsed is not None and parsed <= tag and version not in stranded:
             stranded.append(version)
     return stranded
+
+
+# --- no-version opt-out -----------------------------------------------------
+
+# Truthy values for the opt-out env vars; a leftover `=0` / `=false`
+# does NOT opt out.
+TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
+
+# `NO_VERSION` is the version-aware name; `SKIP_CHANGELOG_CHECK` is the
+# original changelog-gate spelling, kept for back-compat. Env is
+# LOCAL-ONLY — absent in CI — which is why the branch-token and
+# commit-tag signals below exist.
+NO_VERSION_ENV_VARS = ("NO_VERSION", "SKIP_CHANGELOG_CHECK")
+
+# `no-version` as a whole delimited token in a branch name, bounded by
+# `/`, `-`, or the ends: matches `chore/tidy-no-version` and
+# `no-version/ci-fix`, NOT `fix/no-versioning`.
+_NO_VERSION_BRANCH_RE = re.compile(r"(?:^|[/-])no-version(?:$|[/-])", re.IGNORECASE)
+
+NO_VERSION_COMMIT_MARKER = "[no-version]"
+
+
+def _env_no_version() -> str | None:
+    """Return the name of the first truthy opt-out env var, or ``None``."""
+    for name in NO_VERSION_ENV_VARS:
+        value = os.environ.get(name)
+        if value is not None and value.strip().lower() in TRUTHY_ENV:
+            return name
+    return None
+
+
+def _resolve_base_ref(repo_root: Path, base_branch: str) -> str:
+    """Return the first resolvable ref for *base_branch*, local-first.
+
+    CI checks out a detached ``refs/pull/N/merge`` with no local base
+    branch, but the fetch creates ``origin/<base>`` — the remote
+    fallback keeps commit-tag detection durable there.
+
+    Args:
+        repo_root: Git repo root.
+        base_branch: Configured base-branch name.
+
+    Returns:
+        ``base_branch`` or ``origin/<base_branch>``, whichever resolves
+        first; ``base_branch`` unchanged when neither does.
+    """
+    for ref in (base_branch, f"origin/{base_branch}"):
+        if run_git(
+            "rev-parse", "--verify", "--quiet", ref, cwd=repo_root, check=False
+        ).strip():
+            return ref
+    return base_branch
+
+
+def wants_no_version(repo_root: Path) -> str | None:
+    """Return the fired no-version signal, or ``None`` when none is set.
+
+    The CI-durable opt-out for "this change doesn't deserve a version":
+    three signals, any one suffices —
+
+    1. **env** — ``NO_VERSION`` / ``SKIP_CHANGELOG_CHECK`` truthy
+       (local-only; absent in CI).
+    2. **branch token** — ``no-version`` as a delimited token in the
+       current branch name.
+    3. **commit tag** — ``[no-version]`` (case-insensitive) in any
+       commit message over ``<base>..HEAD``, base resolved local-first
+       then ``origin/<base>`` from ``[tool.forge].base_branch``.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        A short human-readable description of the signal that fired
+        (truthy — usable directly in a skip message), or ``None``.
+    """
+    env_name = _env_no_version()
+    if env_name is not None:
+        return f"{env_name} env var set"
+    branch = run_git("branch", "--show-current", cwd=repo_root, check=False).strip()
+    if branch and _NO_VERSION_BRANCH_RE.search(branch):
+        return f"`no-version` token in branch name {branch!r}"
+    base_ref = _resolve_base_ref(repo_root, load_config(repo_root).base_branch)
+    log = run_git("log", f"{base_ref}..HEAD", "--format=%B", cwd=repo_root, check=False)
+    if NO_VERSION_COMMIT_MARKER in log.lower():
+        return f"{NO_VERSION_COMMIT_MARKER} tag in a commit message ({base_ref}..HEAD)"
+    return None
 
 
 def stranded_added_versions(

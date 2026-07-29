@@ -125,6 +125,19 @@ stranded-entry detection when a tag lands under an open PR) and
 `changelog_updated` (the per-PR entry rule). `forge-release`'s CHANGELOG
 gate remains the final check at cut time.
 
+**No-version opt-out** (`changelog_updated` only): a change that
+genuinely doesn't deserve a version — a mechanical revert, CI-only
+tweak — skips the per-PR entry rule via any one of three signals,
+checked by `forge.changelog.wants_no_version`: a truthy `NO_VERSION`
+(or legacy `SKIP_CHANGELOG_CHECK`) env var — **local-only, absent in
+CI**; a delimited `no-version` token in the branch name
+(`chore/tidy-no-version`, not `fix/no-versioning`); or a
+`[no-version]` tag in any commit message over `<base>..HEAD`. The
+branch and commit forms travel with the push, so the opt-out holds in
+CI. `changelog_version` needs no opt-out: it already accepts
+top-heading == latest-tag as a valid resting state, and a no-version
+branch adds no changelog bullets for its stranded-entry check to flag.
+
 ### Divergences from Keep a Changelog
 
 - **No `## Unreleased` section** — the declared next version plays that
@@ -188,6 +201,8 @@ breaks are MAJOR releases:
 | `forge.changelog.release_headings(text)` | Set of `vX.Y.Z` named in `##` release headings. |
 | `forge.changelog.top_release_heading(text)` | Topmost recognized `vX.Y.Z` release heading, or `None`. |
 | `forge.changelog.changelog_lacks_entry(changelog_text, tag)` | `True` when no `## <tag>` heading is present. |
+| `forge.changelog.action_items(text)` | `(version, action)` pairs for `**Action:**` marker lines, in file order. |
+| `forge.changelog.wants_no_version(repo_root)` | Fired no-version signal description (truthy), or `None` — env / branch-token / commit-tag opt-out. |
 
 Anything not in this table (underscore-prefixed or not) is internal and
 may change in any release.
