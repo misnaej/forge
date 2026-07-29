@@ -3,8 +3,13 @@
 Single source of truth for recognizing ``## vX.Y.Z`` release headings in
 a ``CHANGELOG.md``. Consumed by ``forge-next-prep --promotion-status``
 (missing-entry advisory), ``verify-forge-changelog-history``
-(dropped-entry guard), and ``forge-release`` (pre-tag CHANGELOG gate) —
-and public API for consumer repos composing their own release flow.
+(dropped-entry guard), ``forge-release`` (pre-tag CHANGELOG gate),
+``forge-upgrade`` (``**Action:**`` marker extraction), and
+``forge-precommit``'s ``changelog_updated`` step (the
+:func:`wants_no_version` opt-out) — and public API for consumer repos
+composing their own release flow. Mostly pure string parsing; the
+no-version opt-out section at the bottom is the one git/config-backed
+part (it reads the branch, commit log, and ``[tool.forge]``).
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ import re
 from typing import TYPE_CHECKING
 
 from forge.config import load_config
-from forge.git_utils import parse_semver, run_git
+from forge.git_utils import parse_semver, ref_exists, run_git
 
 
 if TYPE_CHECKING:
@@ -303,37 +308,42 @@ def _stranded_from_added(
 
 # Truthy values for the opt-out env vars; a leftover `=0` / `=false`
 # does NOT opt out.
-TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
+_TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
 
 # `NO_VERSION` is the version-aware name; `SKIP_CHANGELOG_CHECK` is the
 # original changelog-gate spelling, kept for back-compat. Env is
 # LOCAL-ONLY — absent in CI — which is why the branch-token and
 # commit-tag signals below exist.
-NO_VERSION_ENV_VARS = ("NO_VERSION", "SKIP_CHANGELOG_CHECK")
+_NO_VERSION_ENV_VARS = ("NO_VERSION", "SKIP_CHANGELOG_CHECK")
 
 # `no-version` as a whole delimited token in a branch name, bounded by
 # `/`, `-`, or the ends: matches `chore/tidy-no-version` and
 # `no-version/ci-fix`, NOT `fix/no-versioning`.
 _NO_VERSION_BRANCH_RE = re.compile(r"(?:^|[/-])no-version(?:$|[/-])", re.IGNORECASE)
 
-NO_VERSION_COMMIT_MARKER = "[no-version]"
+_NO_VERSION_COMMIT_MARKER = "[no-version]"
 
 
 def _env_no_version() -> str | None:
     """Return the name of the first truthy opt-out env var, or ``None``."""
-    for name in NO_VERSION_ENV_VARS:
+    for name in _NO_VERSION_ENV_VARS:
         value = os.environ.get(name)
-        if value is not None and value.strip().lower() in TRUTHY_ENV:
+        if value is not None and value.strip().lower() in _TRUTHY_ENV:
             return name
     return None
 
 
-def _resolve_base_ref(repo_root: Path, base_branch: str) -> str:
+def _resolve_base_ref(repo_root: Path, base_branch: str) -> str | None:
     """Return the first resolvable ref for *base_branch*, local-first.
 
     CI checks out a detached ``refs/pull/N/merge`` with no local base
     branch, but the fetch creates ``origin/<base>`` — the remote
     fallback keeps commit-tag detection durable there.
+
+    A *base_branch* starting with ``-`` is rejected outright: git would
+    parse it as a flag, not a ref (option injection via a crafted
+    ``[tool.forge].base_branch``), and no real branch name starts with
+    a dash.
 
     Args:
         repo_root: Git repo root.
@@ -341,14 +351,15 @@ def _resolve_base_ref(repo_root: Path, base_branch: str) -> str:
 
     Returns:
         ``base_branch`` or ``origin/<base_branch>``, whichever resolves
-        first; ``base_branch`` unchanged when neither does.
+        first; ``None`` when neither does or *base_branch* is
+        flag-shaped.
     """
+    if not base_branch or base_branch.startswith("-"):
+        return None
     for ref in (base_branch, f"origin/{base_branch}"):
-        if run_git(
-            "rev-parse", "--verify", "--quiet", ref, cwd=repo_root, check=False
-        ).strip():
+        if ref_exists(repo_root, ref):
             return ref
-    return base_branch
+    return None
 
 
 def wants_no_version(repo_root: Path) -> str | None:
@@ -375,13 +386,19 @@ def wants_no_version(repo_root: Path) -> str | None:
     env_name = _env_no_version()
     if env_name is not None:
         return f"{env_name} env var set"
+    # The branch/config reads below may repeat work a caller already did
+    # (step_changelog_updated reads both) — accepted: they are cheap
+    # once-per-commit calls, and threading them in would complicate the
+    # single-arg public signature consumers import.
     branch = run_git("branch", "--show-current", cwd=repo_root, check=False).strip()
     if branch and _NO_VERSION_BRANCH_RE.search(branch):
         return f"`no-version` token in branch name {branch!r}"
     base_ref = _resolve_base_ref(repo_root, load_config(repo_root).base_branch)
+    if base_ref is None:
+        return None
     log = run_git("log", f"{base_ref}..HEAD", "--format=%B", cwd=repo_root, check=False)
-    if NO_VERSION_COMMIT_MARKER in log.lower():
-        return f"{NO_VERSION_COMMIT_MARKER} tag in a commit message ({base_ref}..HEAD)"
+    if _NO_VERSION_COMMIT_MARKER in log.lower():
+        return f"{_NO_VERSION_COMMIT_MARKER} tag in a commit message ({base_ref}..HEAD)"
     return None
 
 

@@ -323,6 +323,39 @@ def test_publish_resync_git_failure_still_switches_back_and_propagates(
     assert git_calls[-1] == ["switch", "main"]  # finally still switches back
 
 
+def test_publish_resync_switch_create_failure_propagates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`switch -c` itself failing still switches back before propagating.
+
+    SCENARIO: the initial `switch -c <branch>` raises (e.g. the branch
+        already exists from a stale prior run).
+    MOCK SETUP: `run_git` recorder reports `"main"` for `show-current`,
+        raises on the `switch -c` call.
+    EXPECTED BEHAVIOR: `subprocess.CalledProcessError` propagates out of
+        `_publish_resync`, and — because `switch -c` is inside the `try`
+        (the widened-try fix) — the `finally` block's switch-back to
+        `"main"` still fires, even though no branch was ever created.
+    """
+    git_calls: list[list[str]] = []
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        git_calls.append(list(args))
+        if args[:2] == ("branch", "--show-current"):
+            return "main"
+        if args[:2] == ("switch", "-c"):
+            raise subprocess.CalledProcessError(1, list(args))
+        return ""
+
+    monkeypatch.setattr(resync, "run_git", _fake_run_git)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        resync._publish_resync(tmp_path, "2.7.0", "main")
+
+    assert git_calls[-1] == ["switch", "main"]  # finally still switches back
+
+
 def test_publish_resync_switches_back_even_when_start_branch_empty(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

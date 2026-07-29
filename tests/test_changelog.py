@@ -488,3 +488,32 @@ def test_wants_no_version_no_signal_returns_none(
     _checkout_branch(git_repo, "feat/plain")
     _commit(git_repo, "feat: add plain thing")
     assert changelog.wants_no_version(git_repo) is None
+
+
+def test_wants_no_version_flag_shaped_base_branch_skips_commit_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flag-shaped `[tool.forge].base_branch` is rejected, not passed to git.
+
+    `_resolve_base_ref` refuses a `base_branch` starting with `-` outright
+    (option injection guard) rather than handing it to `git rev-parse` /
+    `git log`, so the commit-tag signal is skipped entirely — even though
+    the `[no-version]` tag IS present in the commit log. Also asserts no
+    file matching the injected flag's value was created in the repo,
+    confirming git never executed the flag.
+    """
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    init_git_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nbase_branch = "--output=pwned"\n'
+    )
+    subprocess.run(
+        ["git", "add", "pyproject.toml"], cwd=tmp_path, env=GIT_ENV, check=True
+    )
+    _commit(tmp_path, "chore: configure flag-shaped base branch", allow_empty=False)
+    _checkout_branch(tmp_path, "feat/injection")
+    _commit(tmp_path, "feat: add thing [no-version]")
+
+    assert changelog.wants_no_version(tmp_path) is None
+    assert not any(p.name.startswith("pwned") for p in tmp_path.iterdir())
