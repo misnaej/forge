@@ -83,6 +83,7 @@ from forge.git_utils import (
     VALID_SCOPES,
     emit,
     latest_v_tag,
+    merge_base_with_head,
     parse_semver,
     read_local_plugin_version,
     require_cli,
@@ -1693,7 +1694,7 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     findings = changelog_version_findings(text, latest)
     current = run_git("branch", "--show-current", cwd=repo_root, check=False)
     if current and current != cfg.base_branch:
-        merge_base = _merge_base_with(repo_root, cfg.base_branch)
+        merge_base = merge_base_with_head(repo_root, cfg.base_branch)
         if merge_base:
             diff_text = run_git(
                 "diff", merge_base, "--", "CHANGELOG.md", cwd=repo_root, check=False
@@ -1715,27 +1716,6 @@ def step_changelog_version(repo_root: Path) -> StepResult:
         ),
         non_blocking=not _changelog_blocking(repo_root),
     )
-
-
-def _merge_base_with(repo_root: Path, base_branch: str) -> str:
-    """Return the merge-base SHA of ``HEAD`` and *base_branch*, or ``""``.
-
-    Tries the local branch first, then its ``origin/`` tracking ref, so
-    the stranded-entries diff works in clones that only fetched the
-    remote branch.
-
-    Args:
-        repo_root: Git repo root.
-        base_branch: Configured base-branch name.
-
-    Returns:
-        The merge-base SHA, or empty string when neither ref resolves.
-    """
-    for ref in (base_branch, f"origin/{base_branch}"):
-        sha = run_git("merge-base", ref, "HEAD", cwd=repo_root, check=False)
-        if sha:
-            return sha
-    return ""
 
 
 def step_changelog_updated(repo_root: Path) -> StepResult:

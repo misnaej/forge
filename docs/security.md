@@ -102,7 +102,7 @@ config-sourced value concatenated into a ref-shaped token (`run_git("log",
 f"{ref}..HEAD")`) becomes a git option when it starts with `-`
 (`--output=`, `--upload-pack=`, …). Validate such values before use —
 reject leading `-` (no real ref starts with a dash), as
-`forge.changelog._resolve_base_ref` does for `[tool.forge].base_branch`.
+`forge.git_utils.resolve_base_branch_ref` does for `[tool.forge].base_branch`.
 
 ---
 

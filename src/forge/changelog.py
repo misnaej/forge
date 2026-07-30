@@ -19,7 +19,7 @@ import re
 from typing import TYPE_CHECKING
 
 from forge.config import load_config
-from forge.git_utils import parse_semver, ref_exists, run_git
+from forge.git_utils import parse_semver, resolve_base_branch_ref, run_git
 
 
 if TYPE_CHECKING:
@@ -333,35 +333,6 @@ def _env_no_version() -> str | None:
     return None
 
 
-def _resolve_base_ref(repo_root: Path, base_branch: str) -> str | None:
-    """Return the first resolvable ref for *base_branch*, local-first.
-
-    CI checks out a detached ``refs/pull/N/merge`` with no local base
-    branch, but the fetch creates ``origin/<base>`` — the remote
-    fallback keeps commit-tag detection durable there.
-
-    A *base_branch* starting with ``-`` is rejected outright: git would
-    parse it as a flag, not a ref (option injection via a crafted
-    ``[tool.forge].base_branch``), and no real branch name starts with
-    a dash.
-
-    Args:
-        repo_root: Git repo root.
-        base_branch: Configured base-branch name.
-
-    Returns:
-        ``base_branch`` or ``origin/<base_branch>``, whichever resolves
-        first; ``None`` when neither does or *base_branch* is
-        flag-shaped.
-    """
-    if not base_branch or base_branch.startswith("-"):
-        return None
-    for ref in (base_branch, f"origin/{base_branch}"):
-        if ref_exists(repo_root, ref):
-            return ref
-    return None
-
-
 def wants_no_version(repo_root: Path) -> str | None:
     """Return the fired no-version signal, or ``None`` when none is set.
 
@@ -373,8 +344,12 @@ def wants_no_version(repo_root: Path) -> str | None:
     2. **branch token** — ``no-version`` as a delimited token in the
        current branch name.
     3. **commit tag** — ``[no-version]`` (case-insensitive) in any
-       commit message over ``<base>..HEAD``, base resolved local-first
-       then ``origin/<base>`` from ``[tool.forge].base_branch``.
+       commit message over ``<base>..HEAD``, base resolved via
+       :func:`forge.git_utils.resolve_base_branch_ref` (origin-first,
+       local fallback) from ``[tool.forge].base_branch`` — CI checks
+       out a detached ``refs/pull/N/merge`` with no local base branch,
+       but the fetch creates ``origin/<base>``, so detection stays
+       durable there.
 
     Args:
         repo_root: Git repo root.
@@ -393,7 +368,7 @@ def wants_no_version(repo_root: Path) -> str | None:
     branch = run_git("branch", "--show-current", cwd=repo_root, check=False).strip()
     if branch and _NO_VERSION_BRANCH_RE.search(branch):
         return f"`no-version` token in branch name {branch!r}"
-    base_ref = _resolve_base_ref(repo_root, load_config(repo_root).base_branch)
+    base_ref = resolve_base_branch_ref(repo_root, load_config(repo_root).base_branch)
     if base_ref is None:
         return None
     log = run_git("log", f"{base_ref}..HEAD", "--format=%B", cwd=repo_root, check=False)

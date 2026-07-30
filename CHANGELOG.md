@@ -20,6 +20,32 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.28.0 — Unreleased
+
+### ⚠️ Upgrade notes
+- **Diff-scoped checks now compare against `origin/<base_branch>` first.**
+  Every diff-base resolution (ruff / docstring / test-naming /
+  changelog-updated diff scope, the `[no-version]` commit-tag scan, the
+  `changelog_version` stranded-entries check, smart-test change detection)
+  now prefers the remote-tracking `origin/<base_branch>` — the ref a PR
+  actually merges into — falling back to the local `<base_branch>` only
+  when the remote ref is absent (offline / no remote). Previously most
+  checks tried the local base first, so a local base branch behind origin
+  produced false positives (already-merged commits reported as
+  branch-added — e.g. `changelog_version` flagging "stranded" entries on
+  an untouched `CHANGELOG.md`). No action needed beyond `forge-upgrade`;
+  if a check's diff scope changes for you, your local base was stale.
+
+### Fixes
+- **Origin-first diff-base resolution, single source of truth.** The four
+  independent local-first "resolve the base ref" loops
+  (`get_modified_files`, the changelog no-version scan, the
+  stranded-entries merge-base, smart-test) collapsed into one canonical
+  `forge.git_utils.resolve_base_branch_ref` (+ `merge_base_with_head`),
+  origin-first with local fallback and flag-injection guard (a
+  `-`-prefixed `base_branch` is rejected everywhere, closing the gap in
+  `get_modified_files`).
+
 ## v2.22.0 — 2026-07-15
 
 Additive — forge's release-tagging primitives become reusable by consumer

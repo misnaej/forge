@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import subprocess
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import patch
 
@@ -21,6 +22,7 @@ import pytest
 
 from forge import config, precommit
 from forge.pip_audit_json import AuditRun
+from tests.conftest import GIT_ENV, init_single_track_repo
 
 
 if TYPE_CHECKING:
@@ -2745,13 +2747,17 @@ def test_step_smart_test_blocking_when_opted_in(
 
 
 def _fake_run_git_dispatch(
-    *, branch: str = "feat/x", merge_base: str = "", diff: str = ""
+    *, branch: str = "feat/x", diff: str = ""
 ) -> Callable[..., str]:
     """Build a ``run_git`` fake dispatching on the git subcommand.
 
+    ``merge-base`` is not dispatched here — ``step_changelog_version``
+    resolves the merge-base via ``git_utils.merge_base_with_head``, not a
+    raw ``run_git("merge-base", ...)`` call, so callers patch that
+    function directly instead of feeding this fake a ``merge_base=`` value.
+
     Args:
         branch: What ``branch --show-current`` reports.
-        merge_base: What ``merge-base`` reports (empty → unresolvable).
         diff: What ``diff`` reports.
 
     Returns:
@@ -2761,8 +2767,6 @@ def _fake_run_git_dispatch(
     def _fake(*args: str, **_kw: object) -> str:
         if args[:2] == ("branch", "--show-current"):
             return branch
-        if args[0] == "merge-base":
-            return merge_base
         if args[0] == "diff":
             return diff
         return ""
@@ -2820,7 +2824,13 @@ def test_step_changelog_version_passes_clean(
 def test_step_changelog_version_detects_stranded_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Branch diff adds a bullet under the already-tagged top heading → fail."""
+    """Branch diff adds a bullet under the already-tagged top heading → fail.
+
+    MOCK SETUP: `merge_base_with_head` is patched directly (the step now
+    resolves the merge-base via that helper rather than composing
+    `run_git("merge-base", ...)` itself) to return a fixed SHA; `run_git`
+    still handles `branch --show-current` and the `diff` call.
+    """
     text = "## v1.0.0\n\n- new bullet\n"
     diff = (
         "--- a/CHANGELOG.md\n"
@@ -2832,12 +2842,19 @@ def test_step_changelog_version_detects_stranded_entries(
     )
     (tmp_path / "CHANGELOG.md").write_text(text)
     monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
-    monkeypatch.setattr(
-        precommit, "run_git", _fake_run_git_dispatch(merge_base="abc123", diff=diff)
-    )
+    merge_base_calls: list[tuple[object, object]] = []
+
+    def _fake_merge_base_with_head(root: object, base: object) -> str:
+        merge_base_calls.append((root, base))
+        return "abc123"
+
+    monkeypatch.setattr(precommit, "merge_base_with_head", _fake_merge_base_with_head)
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch(diff=diff))
     result = precommit.step_changelog_version(tmp_path)
     assert not result.passed
     assert "stranded" in result.output
+    cfg = config.load_config(tmp_path)
+    assert merge_base_calls == [(tmp_path, cfg.base_branch)]
 
 
 def test_step_changelog_version_nonblocking_when_configured(
@@ -2853,6 +2870,80 @@ def test_step_changelog_version_nonblocking_when_configured(
     result = precommit.step_changelog_version(tmp_path)
     assert not result.passed
     assert result.non_blocking
+
+
+def test_step_changelog_version_stale_local_base_no_false_positive(
+    tmp_path: Path,
+) -> None:
+    """A stale local `main` must not manufacture a stranded-entry false positive.
+
+    SCENARIO: `work`'s local `main` stays on the pre-release commit while
+    `origin/main` advances with the tagged release entry. A feature
+    branch cut straight from `origin/main` is byte-identical to it, so
+    the gate must diff against `origin/main` (the correct merge-base) —
+    diffing against the stale local `main` would show the released
+    bullet as freshly added under the already-tagged heading, the false
+    positive this PR fixes.
+    """
+    work, bare = init_single_track_repo(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.0.0\n")
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "chore: add changelog"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+
+    # A separate clone stands in for "upstream": it finalizes the release
+    # (appends the bullet, tags, pushes) while `work`'s local `main` never
+    # moves — mirroring a developer who branched before pulling the latest
+    # `main`.
+    upstream = tmp_path / "upstream"
+    subprocess.run(
+        ["git", "clone", "-q", str(bare), str(upstream)], env=GIT_ENV, check=True
+    )
+    (upstream / "CHANGELOG.md").write_text("## v1.0.0\n\n- released thing\n")
+    subprocess.run(
+        ["git", "add", "CHANGELOG.md"], cwd=upstream, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "release: v1.0.0"],
+        cwd=upstream,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.0.0", "-m", "v1.0.0"],
+        cwd=upstream,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main", "--tags"],
+        cwd=upstream,
+        env=GIT_ENV,
+        check=True,
+    )
+
+    # `work` fetches the tag and branches from `origin/main` — local `main`
+    # is never updated, so it stays stranded on the pre-release commit.
+    subprocess.run(
+        ["git", "fetch", "-q", "origin", "--tags"], cwd=work, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x", "origin/main"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+
+    result = precommit.step_changelog_version(work)
+    assert result.passed is True
+    assert "stranded" not in result.output
 
 
 def test_step_changelog_updated_env_escape(
@@ -3020,7 +3111,9 @@ def test_step_changelog_version_fetches_tags_unless_ci(
     SCENARIO: gate must be is_ci(), not is_non_interactive() — agent-driven
     runs have a non-tty stdin but no authoritative tag fetch of their own.
     MOCK SETUP: subprocess.run recorded (the fetch is a direct bounded
-    call); run_git faked for branch/merge-base reads.
+    call); run_git faked for the branch read. `merge_base_with_head` is
+    left real — against a non-git `tmp_path` it resolves no base ref and
+    short-circuits to `""`, so no stranded-entries diff is attempted.
     EXPECTED BEHAVIOR: fetch argv appears when is_ci() is False, absent
     when True.
     """

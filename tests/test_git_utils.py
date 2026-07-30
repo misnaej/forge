@@ -21,6 +21,9 @@ from tests.conftest import (
     init_git_repo as _init_git_repo,
 )
 from tests.conftest import (
+    init_single_track_repo as _init_single_track_repo,
+)
+from tests.conftest import (
     make_fake_run,
 )
 
@@ -295,7 +298,7 @@ def test_get_modified_files_feature_branch_aggregates_three_diffs(
         tmp_path,
         current_branch="feat/x",
         diff_outputs={
-            "main...HEAD": "src/a.py\n",
+            "origin/main...HEAD": "src/a.py\n",
             "--cached": "src/b.py\n",
             # plain `git diff --name-only` (no trailing arg) → key is ""
             "": "src/c.py\nsrc/a.py\n",
@@ -314,7 +317,7 @@ def test_get_modified_files_applies_prefix_tuple(
         tmp_path,
         current_branch="feat/x",
         diff_outputs={
-            "main...HEAD": "test/old.py\ntests/new.py\nsrc/foo.py\n",
+            "origin/main...HEAD": "test/old.py\ntests/new.py\nsrc/foo.py\n",
             "--cached": "",
             "": "",
         },
@@ -354,7 +357,7 @@ def test_get_modified_files_threads_repo_root_into_feature_branch_calls(
         monkeypatch,
         tmp_path,
         current_branch="feat/x",
-        diff_outputs={"main...HEAD": "src/a.py\n", "--cached": "", "": ""},
+        diff_outputs={"origin/main...HEAD": "src/a.py\n", "--cached": "", "": ""},
         calls=calls,
     )
     files = git_utils.get_modified_files(repo_root=other_root)
@@ -636,6 +639,210 @@ def test_ref_exists_false_for_missing_ref(tmp_path: Path) -> None:
     """A ref with no matching commit resolves to ``False``."""
     _init_git_repo(tmp_path)
     assert git_utils.ref_exists(tmp_path, "nonexistent_branch_xyz") is False
+
+
+# ---------------------------------------------------------------------------
+# resolve_base_branch_ref
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_base_branch_ref_rejects_empty_base_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty ``base_branch`` is rejected without touching git."""
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "ok\n"})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.resolve_base_branch_ref(tmp_path, "") is None
+    assert calls == []
+
+
+def test_resolve_base_branch_ref_rejects_flag_shaped_base_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `-`-prefixed ``base_branch`` (option injection) is rejected, no git call."""
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "ok\n"})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.resolve_base_branch_ref(tmp_path, "--output=pwned") is None
+    assert calls == []
+
+
+def test_resolve_base_branch_ref_prefers_origin_over_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When both `origin/<base>` and local `<base>` resolve, origin wins."""
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        return type("P", (), {"returncode": 0, "stdout": "ok\n"})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.resolve_base_branch_ref(tmp_path, "main") == "origin/main"
+
+
+def test_resolve_base_branch_ref_falls_back_to_local_when_origin_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`origin/<base>` fails to resolve, local `<base>` does → local is used."""
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        if cmd[-1] == "origin/main^{commit}":
+            return type("P", (), {"returncode": 1, "stdout": ""})()
+        return type("P", (), {"returncode": 0, "stdout": "ok\n"})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.resolve_base_branch_ref(tmp_path, "main") == "main"
+
+
+def test_resolve_base_branch_ref_none_when_neither_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Neither `origin/<base>` nor local `<base>` resolves → `None`."""
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        return type("P", (), {"returncode": 1, "stdout": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.resolve_base_branch_ref(tmp_path, "main") is None
+
+
+def test_resolve_base_branch_ref_root_none_uses_cached_repo_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`root=None` resolves against the cached process-wide `repo_root()`."""
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(git_utils, "repo_root", lambda: tmp_path)
+    assert git_utils.resolve_base_branch_ref(None, "main") == "main"
+
+
+def test_resolve_base_branch_ref_ci_shape_origin_only(tmp_path: Path) -> None:
+    """CI-shaped checkout: local `main` deleted, only `origin/main` resolves.
+
+    Mirrors a CI checkout of a detached ``refs/pull/N/merge``: no local
+    ``main`` branch exists, but the fetch that created the checkout left
+    ``origin/main`` behind.
+    """
+    work, _bare = _init_single_track_repo(tmp_path)
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(["git", "fetch", "-q", "origin"], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "--detach", head_sha],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(["git", "branch", "-D", "main"], cwd=work, env=_GIT_ENV, check=True)
+    assert git_utils.resolve_base_branch_ref(work, "main") == "origin/main"
+
+
+def test_resolve_base_branch_ref_offline_local_only(tmp_path: Path) -> None:
+    """No remote configured → falls back to the local base branch."""
+    _init_git_repo(tmp_path)
+    assert git_utils.resolve_base_branch_ref(tmp_path, "main") == "main"
+
+
+def test_resolve_base_branch_ref_honors_non_main_base_branch(tmp_path: Path) -> None:
+    """A repo whose branch is `develop`, with an `origin` remote, resolves it."""
+    work = tmp_path / "work"
+    bare = tmp_path / "origin.git"
+    work.mkdir()
+    bare.mkdir()
+    for cmd in (
+        ["git", "init", "-q", "-b", "develop"],
+        ["git", "commit", "-q", "--allow-empty", "-m", "initial"],
+    ):
+        subprocess.run(cmd, cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(["git", "init", "--bare", "-q"], cwd=bare, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(bare)],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "develop"], cwd=work, env=_GIT_ENV, check=True
+    )
+    assert git_utils.resolve_base_branch_ref(work, "develop") == "origin/develop"
+
+
+# ---------------------------------------------------------------------------
+# merge_base_with_head
+# ---------------------------------------------------------------------------
+
+
+def test_merge_base_with_head_happy_path_returns_sha(tmp_path: Path) -> None:
+    """A feature branch ahead of main returns the shared merge-base SHA."""
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "feature work"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    expected = subprocess.run(
+        ["git", "merge-base", "main", "HEAD"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    result = git_utils.merge_base_with_head(tmp_path, "main")
+    assert result == expected
+    assert len(result) == 40
+    assert all(c in "0123456789abcdef" for c in result)
+
+
+def test_merge_base_with_head_empty_when_unresolvable(tmp_path: Path) -> None:
+    """An empty `base_branch` never resolves → empty string, not an exception."""
+    _init_git_repo(tmp_path)
+    assert git_utils.merge_base_with_head(tmp_path, "") == ""
+
+
+def test_merge_base_with_head_empty_when_merge_base_fails(tmp_path: Path) -> None:
+    """The base ref resolves, but `git merge-base` itself fails → empty string.
+
+    An orphan branch shares no history with `main`, so `git merge-base`
+    exits non-zero even though `resolve_base_branch_ref` happily resolves
+    `"main"` — the two failure modes (unresolvable ref vs. no common
+    ancestor) must both collapse to `""`, matching the documented
+    Returns contract.
+    """
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "--orphan", "feat/x"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "unrelated history"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.merge_base_with_head(tmp_path, "main") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -1013,7 +1220,7 @@ def test_get_modified_files_honors_custom_base_branch(
         monkeypatch,
         tmp_path,
         current_branch="feat/x",
-        diff_outputs={"develop...HEAD": "src/a.py\n"},
+        diff_outputs={"origin/develop...HEAD": "src/a.py\n"},
     )
     files = git_utils.get_modified_files(repo_root=tmp_path, base_branch="develop")
     assert files == ["src/a.py"]
@@ -1031,3 +1238,37 @@ def test_get_modified_files_on_custom_base_falls_back_to_prev_commit(
     )
     files = git_utils.get_modified_files(repo_root=tmp_path, base_branch="develop")
     assert files == ["src/x.py"]
+
+
+def test_get_modified_files_routes_through_resolve_base_branch_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`get_modified_files` resolves its diff base via `resolve_base_branch_ref`.
+
+    MOCK SETUP: `git_utils.resolve_base_branch_ref` is replaced by a spy
+    returning a sentinel ref; `subprocess.run` is stubbed for `branch
+    --show-current` and the resulting `sentinel/ref...HEAD` diff.
+    EXPECTED BEHAVIOR: the spy is called with `(repo_root, base_branch)`
+    and its sentinel return value is the ref diffed against.
+    """
+    calls: list[tuple[object, object]] = []
+
+    def _spy(root: object, base_branch: object) -> str:
+        calls.append((root, base_branch))
+        return "sentinel/ref"
+
+    monkeypatch.setattr(git_utils, "resolve_base_branch_ref", _spy)
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        if cmd[1:3] == ["branch", "--show-current"]:
+            return type("P", (), {"returncode": 0, "stdout": "feat/x\n"})()
+        if cmd[1:3] == ["diff", "--name-only"]:
+            tail = cmd[-1] if len(cmd) > 3 else ""
+            stdout = "src/a.py\n" if tail == "sentinel/ref...HEAD" else ""
+            return type("P", (), {"returncode": 0, "stdout": stdout})()
+        return type("P", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    files = git_utils.get_modified_files(repo_root=tmp_path, base_branch="main")
+    assert files == ["src/a.py"]
+    assert calls == [(tmp_path, "main")]
