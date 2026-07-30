@@ -19,7 +19,12 @@ import re
 from typing import TYPE_CHECKING
 
 from forge.config import load_config
-from forge.git_utils import parse_semver, resolve_base_branch_ref, run_git
+from forge.git_utils import (
+    parse_semver,
+    resolve_base_branch_ref,
+    resolve_current_branch,
+    run_git,
+)
 
 
 if TYPE_CHECKING:
@@ -311,9 +316,10 @@ def _stranded_from_added(
 _TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
 
 # `NO_VERSION` is the version-aware name; `SKIP_CHANGELOG_CHECK` is the
-# original changelog-gate spelling, kept for back-compat. Env is
-# LOCAL-ONLY — absent in CI — which is why the branch-token and
-# commit-tag signals below exist.
+# original changelog-gate spelling, kept for back-compat. These opt-out
+# vars are LOCAL-ONLY — absent in CI — which is why the branch-token
+# (with its `GITHUB_HEAD_REF` fallback) and commit-tag signals below
+# exist.
 _NO_VERSION_ENV_VARS = ("NO_VERSION", "SKIP_CHANGELOG_CHECK")
 
 # `no-version` as a whole delimited token in a branch name, bounded by
@@ -342,7 +348,11 @@ def wants_no_version(repo_root: Path) -> str | None:
     1. **env** — ``NO_VERSION`` / ``SKIP_CHANGELOG_CHECK`` truthy
        (local-only; absent in CI).
     2. **branch token** — ``no-version`` as a delimited token in the
-       current branch name.
+       current branch name. ``git branch --show-current`` wins when
+       non-empty; on a detached HEAD (a CI ``pull_request`` checkout of
+       ``refs/pull/N/merge``) it is empty, so the PR source branch is
+       read from ``GITHUB_HEAD_REF`` instead — the branch token is
+       CI-durable only through that fallback.
     3. **commit tag** — ``[no-version]`` (case-insensitive) in any
        commit message over ``<base>..HEAD``, base resolved via
        :func:`forge.git_utils.resolve_base_branch_ref` (origin-first,
@@ -365,9 +375,12 @@ def wants_no_version(repo_root: Path) -> str | None:
     # (step_changelog_updated reads both) — accepted: they are cheap
     # once-per-commit calls, and threading them in would complicate the
     # single-arg public signature consumers import.
-    branch = run_git("branch", "--show-current", cwd=repo_root, check=False).strip()
-    if branch and _NO_VERSION_BRANCH_RE.search(branch):
-        return f"`no-version` token in branch name {branch!r}"
+    resolved = resolve_current_branch(repo_root)
+    if resolved is not None:
+        branch, source = resolved
+        if _NO_VERSION_BRANCH_RE.search(branch):
+            origin = " (GITHUB_HEAD_REF)" if source == "GITHUB_HEAD_REF" else ""
+            return f"`no-version` token in branch name {branch!r}{origin}"
     base_ref = resolve_base_branch_ref(repo_root, load_config(repo_root).base_branch)
     if base_ref is None:
         return None

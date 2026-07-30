@@ -37,6 +37,16 @@ versions follow forge's rolling-next convention.
   if a check's diff scope changes for you, your local base was stale.
 
 ### Fixes
+- **`no-version` branch token and `changelog_updated` gate now live in CI.**
+  Branch-name resolution read only `git branch --show-current`, which is
+  empty on a CI `pull_request` checkout (detached `refs/pull/N/merge`) —
+  so the `no-version` branch-token opt-out never fired in CI, and the
+  `changelog_updated` step's per-PR guard skipped the whole gate there.
+  New `forge.git_utils.resolve_current_branch` (single resolver, used by
+  both `forge.changelog.wants_no_version` and the step guard) falls back
+  to `GITHUB_HEAD_REF` (the `pull_request` env var carrying the real PR
+  source branch) when `--show-current` is empty; a non-empty local
+  branch name still wins first, so local behavior is unchanged.
 - **Origin-first diff-base resolution, single source of truth.** The four
   independent local-first "resolve the base ref" loops
   (`get_modified_files`, the changelog no-version scan, the

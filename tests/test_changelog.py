@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import changelog
-from tests.conftest import GIT_ENV, init_git_repo, init_single_track_repo
+from tests.conftest import GIT_ENV, _detach_head, init_git_repo, init_single_track_repo
 
 
 if TYPE_CHECKING:
@@ -399,6 +399,42 @@ def test_wants_no_version_branch_token_non_delimited_no_match(
     assert changelog.wants_no_version(git_repo) is None
 
 
+def test_wants_no_version_github_head_ref_fallback_when_detached(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On a detached HEAD, `GITHUB_HEAD_REF` stands in for the missing branch name."""
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    _detach_head(git_repo)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/x-no-version")
+    signal = changelog.wants_no_version(git_repo)
+    assert signal is not None
+    assert "chore/x-no-version" in signal
+    assert "GITHUB_HEAD_REF" in signal
+
+
+def test_wants_no_version_github_head_ref_without_token_falls_through(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `GITHUB_HEAD_REF` without the `no-version` token doesn't opt out."""
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    _detach_head(git_repo)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/plain")
+    assert changelog.wants_no_version(git_repo) is None
+
+
+def test_wants_no_version_local_branch_wins_over_github_head_ref(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Local branch name takes precedence over GITHUB_HEAD_REF."""
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    _checkout_branch(git_repo, "feat/plain")
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/x-no-version")
+    assert changelog.wants_no_version(git_repo) is None
+
+
 def test_wants_no_version_commit_tag_match(
     git_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -435,6 +471,7 @@ def test_wants_no_version_commit_tag_survives_ci_detached_head(
     """
     monkeypatch.delenv("NO_VERSION", raising=False)
     monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
     work, _bare = init_single_track_repo(tmp_path)
     _checkout_branch(work, "feat/z")
     _commit(work, "fix: something [no-version]")

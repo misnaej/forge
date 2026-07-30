@@ -18,13 +18,14 @@ from tests.conftest import (
     GIT_ENV as _GIT_ENV,
 )
 from tests.conftest import (
+    _detach_head,
+    make_fake_run,
+)
+from tests.conftest import (
     init_git_repo as _init_git_repo,
 )
 from tests.conftest import (
     init_single_track_repo as _init_single_track_repo,
-)
-from tests.conftest import (
-    make_fake_run,
 )
 
 
@@ -778,6 +779,63 @@ def test_resolve_base_branch_ref_honors_non_main_base_branch(tmp_path: Path) -> 
         ["git", "push", "-q", "origin", "develop"], cwd=work, env=_GIT_ENV, check=True
     )
     assert git_utils.resolve_base_branch_ref(work, "develop") == "origin/develop"
+
+
+# ---------------------------------------------------------------------------
+# resolve_current_branch
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_current_branch_prefers_local_show_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checked-out branch resolves via `--show-current`, source `"local"`."""
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.resolve_current_branch(tmp_path) == ("feat/x", "local")
+
+
+def test_resolve_current_branch_falls_back_to_github_head_ref_when_detached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A detached HEAD falls back to `GITHUB_HEAD_REF`, source `"GITHUB_HEAD_REF"`."""
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    _init_git_repo(tmp_path)
+    _detach_head(tmp_path)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/y")
+    assert git_utils.resolve_current_branch(tmp_path) == ("chore/y", "GITHUB_HEAD_REF")
+
+
+def test_resolve_current_branch_none_when_neither_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A detached HEAD with no `GITHUB_HEAD_REF` resolves to `None`."""
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    _init_git_repo(tmp_path)
+    _detach_head(tmp_path)
+    assert git_utils.resolve_current_branch(tmp_path) is None
+
+
+def test_resolve_current_branch_local_wins_over_github_head_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checked-out branch wins even when `GITHUB_HEAD_REF` names another."""
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/y")
+    assert git_utils.resolve_current_branch(tmp_path) == ("feat/x", "local")
 
 
 # ---------------------------------------------------------------------------

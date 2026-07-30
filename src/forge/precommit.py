@@ -88,6 +88,7 @@ from forge.git_utils import (
     parse_semver,
     read_local_plugin_version,
     require_cli,
+    resolve_current_branch,
     run_git,
     stage_modified_paths,
     write_step_log,
@@ -1750,7 +1751,9 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
     token in the branch name, or a ``[no-version]`` tag in a commit
     message over ``<base>..HEAD`` (the two CI-durable forms). Self-skips
     without a root ``CHANGELOG.md`` and on the base branch or a detached
-    HEAD (it is a per-PR guard).
+    HEAD with no ``GITHUB_HEAD_REF`` (it is a per-PR guard; branch
+    resolution via :func:`forge.git_utils.resolve_current_branch` keeps
+    the gate live on CI ``pull_request`` checkouts).
 
     Args:
         repo_root: Git repo root.
@@ -1766,12 +1769,16 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
             name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
         )
     cfg = config.load_config(repo_root)
-    current = run_git("branch", "--show-current", cwd=repo_root, check=False)
+    resolved = resolve_current_branch(repo_root)
+    current = resolved[0] if resolved is not None else ""
     if not current or current == cfg.base_branch:
         return StepResult(
             name=name,
             passed=True,
-            output="Per-PR guard — base branch or detached HEAD; skipped.",
+            output=(
+                "Per-PR guard — base branch, or detached HEAD with no "
+                "GITHUB_HEAD_REF; skipped."
+            ),
             skipped=True,
         )
     signal = wants_no_version(repo_root)

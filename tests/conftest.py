@@ -83,6 +83,21 @@ def init_single_track_repo(base: Path) -> tuple[Path, Path]:
     return work, bare
 
 
+def _detach_head(repo: Path) -> None:
+    """Detach HEAD in *repo* at its current commit (empties ``--show-current``).
+
+    Shared by the ``changelog`` / ``precommit`` real-git suites that exercise
+    the CI ``pull_request`` detached-HEAD path (empty local branch name,
+    ``GITHUB_HEAD_REF`` fallback).
+
+    Args:
+        repo: Git repo working tree.
+    """
+    subprocess.run(
+        ["git", "checkout", "-q", "--detach", "HEAD"], cwd=repo, env=GIT_ENV, check=True
+    )
+
+
 def tag_exists(repo: Path, tag: str) -> bool:
     """Return whether *repo* (work tree or bare) carries *tag*.
 

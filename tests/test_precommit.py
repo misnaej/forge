@@ -22,7 +22,7 @@ import pytest
 
 from forge import config, precommit
 from forge.pip_audit_json import AuditRun
-from tests.conftest import GIT_ENV, init_single_track_repo
+from tests.conftest import GIT_ENV, _detach_head, init_single_track_repo
 
 
 if TYPE_CHECKING:
@@ -2774,6 +2774,26 @@ def _fake_run_git_dispatch(
     return _fake
 
 
+def _fake_resolve_current_branch(
+    branch: str | None, source: str = "local"
+) -> Callable[[Path], tuple[str, str] | None]:
+    """Build a `resolve_current_branch` fake returning a fixed `(branch, source)`.
+
+    Args:
+        branch: Branch name to report, or `None` to simulate the guard
+            seeing no current branch (detached HEAD, no GITHUB_HEAD_REF).
+        source: `"local"` or `"GITHUB_HEAD_REF"`.
+
+    Returns:
+        A callable with `resolve_current_branch`'s signature.
+    """
+
+    def _fake(_repo_root: Path) -> tuple[str, str] | None:
+        return None if branch is None else (branch, source)
+
+    return _fake
+
+
 def test_step_changelog_version_skips_without_changelog(tmp_path: Path) -> None:
     """No CHANGELOG.md → self-skip."""
     result = precommit.step_changelog_version(tmp_path)
@@ -3055,7 +3075,9 @@ def test_step_changelog_updated_env_escape(
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
     monkeypatch.delenv("NO_VERSION", raising=False)
     monkeypatch.setenv("SKIP_CHANGELOG_CHECK", "1")
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
     result = precommit.step_changelog_updated(tmp_path)
     assert result.skipped
     assert "no-version opt-out" in result.output
@@ -3067,7 +3089,9 @@ def test_step_changelog_updated_skips_on_base_branch(
 ) -> None:
     """Per-PR guard — on the base branch it self-skips."""
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch(branch="main"))
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("main")
+    )
     result = precommit.step_changelog_updated(tmp_path)
     assert result.skipped
 
@@ -3079,7 +3103,10 @@ def test_step_changelog_updated_fails_without_entry(
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
     monkeypatch.delenv("NO_VERSION", raising=False)
     monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
     monkeypatch.setattr(
         precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
     )
@@ -3094,7 +3121,12 @@ def test_step_changelog_updated_passes_with_entry(
 ) -> None:
     """Change set includes CHANGELOG.md → pass."""
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
     monkeypatch.setattr(
         precommit.config,
         "select_diff_files",
@@ -3114,7 +3146,12 @@ def test_step_changelog_updated_honors_exempt_and_require_paths(
         'exempt_paths = ["projects/"]\n'
         'require_paths = ["projects/shipped/"]\n'
     )
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
     monkeypatch.setattr(
         precommit.config,
         "select_diff_files",
@@ -3145,7 +3182,9 @@ def test_step_changelog_updated_skips_with_branch_token(
     """
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
     monkeypatch.setattr(
-        precommit, "run_git", _fake_run_git_dispatch(branch="chore/x-no-version")
+        precommit,
+        "resolve_current_branch",
+        _fake_resolve_current_branch("chore/x-no-version"),
     )
     monkeypatch.setattr(
         precommit,
@@ -3171,7 +3210,9 @@ def test_step_changelog_updated_skips_with_commit_tag(
     tag text surfaces verbatim in the output.
     """
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
     monkeypatch.setattr(
         precommit,
         "wants_no_version",
@@ -3195,7 +3236,9 @@ def test_step_changelog_updated_no_signal_gate_still_fails(
     EXPECTED BEHAVIOR: the step does not skip and fails the gate.
     """
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
     monkeypatch.setattr(precommit, "wants_no_version", lambda _r: None)
     monkeypatch.setattr(
         precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
@@ -3203,6 +3246,103 @@ def test_step_changelog_updated_no_signal_gate_still_fails(
     result = precommit.step_changelog_updated(tmp_path)
     assert not result.passed
     assert not result.skipped
+
+
+def _repo_with_undocumented_src_change(tmp_path: Path) -> Path:
+    """Build a repo with a real, undocumented src change on a feature branch.
+
+    ``main`` carries a committed ``CHANGELOG.md``; a ``feat/x`` branch adds
+    a real source file without touching the changelog, then HEAD is
+    detached at that commit — the CI ``pull_request`` checkout shape the
+    detached-HEAD ``step_changelog_updated`` tests below share.
+
+    Args:
+        tmp_path: Pytest ``tmp_path`` fixture directory.
+
+    Returns:
+        The work-tree path, HEAD detached on the feature-branch commit.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.0.0\n")
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "chore: add changelog"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=work, env=GIT_ENV, check=True
+    )
+    (work / "src_change.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "src_change.py"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "feat: add thing"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    _detach_head(work)
+    return work
+
+
+def test_step_changelog_updated_runs_gate_on_detached_head_with_no_version_head_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A detached HEAD's `GITHUB_HEAD_REF` carrying a no-version token skips the gate.
+
+    CI's `pull_request` checkout of `refs/pull/N/merge` detaches HEAD, so
+    `git branch --show-current` is empty; `GITHUB_HEAD_REF` stands in for
+    the PR source branch, and its `no-version` token fires the same
+    opt-out a local checkout of that branch would.
+    """
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    work = _repo_with_undocumented_src_change(tmp_path)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/x-no-version")
+    result = precommit.step_changelog_updated(work)
+    assert result.skipped is True
+    assert "GITHUB_HEAD_REF" in result.output
+    assert "chore/x-no-version" in result.output
+
+
+def test_step_changelog_updated_runs_gate_on_detached_head_without_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Detached HEAD's `GITHUB_HEAD_REF` without no-version token runs the gate.
+
+    No opt-out signal fires, so the step falls through to the real diff
+    against the previous commit — which shows the feature branch's src
+    change without a matching `CHANGELOG.md` entry — and the gate fails
+    exactly as it would for a live local branch.
+    """
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    work = _repo_with_undocumented_src_change(tmp_path)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/plain")
+    result = precommit.step_changelog_updated(work)
+    assert result.skipped is False
+    assert result.passed is False
+
+
+def test_step_changelog_updated_skips_detached_head_with_no_head_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A detached HEAD with no `GITHUB_HEAD_REF` at all self-skips as a per-PR guard.
+
+    Neither `git branch --show-current` nor the `GITHUB_HEAD_REF`
+    fallback yields a branch name, so the step cannot tell which PR this
+    diff belongs to and skips rather than risk a false failure.
+    """
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    work = _repo_with_undocumented_src_change(tmp_path)
+    result = precommit.step_changelog_updated(work)
+    assert result.skipped is True
+    assert "detached HEAD" in result.output
 
 
 def test_step_changelog_version_fetches_tags_unless_ci(
