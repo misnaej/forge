@@ -49,12 +49,16 @@ def resolve_base_ref(repo_root: Path, override: str | None = None) -> str:
     Args:
         repo_root: Git repo root.
         override: Explicit base ref from the caller (``--base``); used
-            verbatim when it resolves, bypassing auto-detection.
+            verbatim when it resolves, bypassing auto-detection. A
+            ``-``-prefixed value is ignored (git would parse it as a
+            flag, not a ref — same option-injection guard as
+            :func:`forge.git_utils.resolve_base_branch_ref`; ``--base``
+            may come from a CI wrapper, not only a human).
 
     Returns:
         A resolvable ref name.
     """
-    if override and _ref_exists(repo_root, override):
+    if override and not override.startswith("-") and _ref_exists(repo_root, override):
         return override
     cfg = load_config(repo_root)
     for branch in (cfg.dev_branch, cfg.base_branch):
