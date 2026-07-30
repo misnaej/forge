@@ -391,6 +391,30 @@ def ref_exists(repo_root: Path, ref: str) -> bool:
     )
 
 
+def merge_in_progress(repo_root: Path) -> bool:
+    """Return whether *repo_root* has an in-progress (uncommitted) merge.
+
+    Resolves ``MERGE_HEAD`` via ``git rev-parse --git-path`` rather than a
+    hardcoded ``.git/MERGE_HEAD`` so linked worktrees and submodules (where
+    the git dir lives elsewhere) are handled; ``--git-path`` may return a
+    relative or absolute path, and the ``/`` join degrades correctly for
+    both. Mid-merge, diff-vs-merge-base checks misattribute the base's
+    changes to the branch (HEAD is still pre-merge), so callers use this to
+    suppress that class of false positive.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``True`` when ``MERGE_HEAD`` exists (mid ``git merge``, before the
+        merge commit).
+    """
+    git_path = run_git(
+        "rev-parse", "--git-path", "MERGE_HEAD", cwd=repo_root, check=False
+    )
+    return bool(git_path) and (repo_root / git_path).exists()
+
+
 def resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None:
     """Return the ref diff-scoped checks should compare against, origin-first.
 

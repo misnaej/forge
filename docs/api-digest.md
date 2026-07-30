@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 655 symbols._
+_62 modules, 656 symbols._
 
 ## `forge`
 
@@ -452,6 +452,7 @@ _62 modules, 655 symbols._
 - `_run_git(*args: str, cwd: Path | None = None) -> str` _(internal)_ — Run a git command and return stdout.
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
+- `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
 - `resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref diff-scoped checks should compare against, origin-first.
 - `merge_base_with_head(root: Path | None, base_branch: str) -> str` — Return the merge-base SHA of ``HEAD`` and the resolved base ref.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.

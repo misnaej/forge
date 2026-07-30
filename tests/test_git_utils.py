@@ -846,6 +846,137 @@ def test_merge_base_with_head_empty_when_merge_base_fails(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
+# merge_in_progress
+# ---------------------------------------------------------------------------
+
+
+def _create_diverged_branches(repo: Path) -> None:
+    """Create ``other`` and ``feat/x`` off ``main``, each touching a distinct file.
+
+    Leaves ``feat/x`` checked out.
+
+    Args:
+        repo: Repository path.
+    """
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "other"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    (repo / "other.txt").write_text("other\n")
+    subprocess.run(["git", "add", "other.txt"], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "other work"],
+        cwd=repo,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    (repo / "feat.txt").write_text("feat\n")
+    subprocess.run(["git", "add", "feat.txt"], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "feat work"], cwd=repo, env=_GIT_ENV, check=True
+    )
+
+
+def test_merge_in_progress_false_on_clean_repo(tmp_path: Path) -> None:
+    """A freshly initialized repo with no merge underway reports False."""
+    _init_git_repo(tmp_path)
+    assert git_utils.merge_in_progress(tmp_path) is False
+
+
+def test_merge_in_progress_true_mid_merge(tmp_path: Path) -> None:
+    """``MERGE_HEAD`` exists mid ``git merge --no-ff --no-commit`` -> True.
+
+    ``--no-ff`` is required: a fast-forward merge never writes
+    ``MERGE_HEAD``, so this reproduces the git state
+    ``step_changelog_version`` actually guards against.
+    """
+    _init_git_repo(tmp_path)
+    _create_diverged_branches(tmp_path)
+    subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "other"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.merge_in_progress(tmp_path) is True
+
+
+def test_merge_in_progress_false_after_merge_commit(tmp_path: Path) -> None:
+    """Completing the merge with a commit clears ``MERGE_HEAD`` -> False."""
+    _init_git_repo(tmp_path)
+    _create_diverged_branches(tmp_path)
+    subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "other"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "--no-edit"], cwd=tmp_path, env=_GIT_ENV, check=True
+    )
+    assert git_utils.merge_in_progress(tmp_path) is False
+
+
+def test_merge_in_progress_worktree_safe(tmp_path: Path) -> None:
+    """A linked worktree mid-merge resolves via its own git-path.
+
+    Not a hardcoded ``.git/MERGE_HEAD``: a linked worktree's ``.git`` is
+    a gitlink *file* pointing at the main repo's ``worktrees/<name>``
+    directory, not a ``.git`` directory — so ``MERGE_HEAD`` never lives
+    at ``<worktree>/.git/MERGE_HEAD``. This proves ``merge_in_progress``
+    resolves the real path via ``--git-path`` rather than assuming that
+    layout.
+    """
+    main_repo = tmp_path / "main_repo"
+    main_repo.mkdir()
+    _init_git_repo(main_repo)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "other"],
+        cwd=main_repo,
+        env=_GIT_ENV,
+        check=True,
+    )
+    (main_repo / "other.txt").write_text("other\n")
+    subprocess.run(["git", "add", "other.txt"], cwd=main_repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "other work"],
+        cwd=main_repo,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=main_repo, env=_GIT_ENV, check=True
+    )
+
+    wt = tmp_path / "wt"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", "feat/wt", str(wt), "main"],
+        cwd=main_repo,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "other"],
+        cwd=wt,
+        env=_GIT_ENV,
+        check=True,
+    )
+
+    assert git_utils.merge_in_progress(wt) is True
+    assert not (wt / ".git" / "MERGE_HEAD").exists()
+
+
+def test_merge_in_progress_false_when_not_a_git_repo(tmp_path: Path) -> None:
+    """A directory that is not a git repo returns False without raising."""
+    assert git_utils.merge_in_progress(tmp_path) is False
+
+
+# ---------------------------------------------------------------------------
 # get_tree_sha
 # ---------------------------------------------------------------------------
 
