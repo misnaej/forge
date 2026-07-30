@@ -146,6 +146,37 @@ def test_resolve_base_ref_falls_to_head_when_nothing_resolves(
     assert result == "HEAD"
 
 
+def test_resolve_base_ref_routes_through_resolve_base_branch_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Resolve_base_ref routes through resolve_base_branch_ref.
+
+    SCENARIO: neither candidate is checked against the filesystem — both
+        resolutions are stubbed, so no real repo state is needed.
+    MOCK SETUP: git_helpers.load_config → ForgeConfig(dev_branch="dev",
+        base_branch="main"); git_helpers.resolve_base_branch_ref replaced
+        by a spy that resolves only on the second (`"main"`) candidate.
+    EXPECTED BEHAVIOR: candidates are tried in `["dev", "main"]` order and
+        the spy's return value for `"main"` is returned verbatim.
+    """
+    monkeypatch.setattr(
+        git_helpers,
+        "load_config",
+        lambda _root: ForgeConfig(dev_branch="dev", base_branch="main"),
+    )
+    calls: list[str] = []
+
+    def _spy(_root: object, branch: str) -> str | None:
+        calls.append(branch)
+        return "sentinel/main" if branch == "main" else None
+
+    monkeypatch.setattr(git_helpers, "resolve_base_branch_ref", _spy)
+    result = git_helpers.resolve_base_ref(tmp_path)
+    assert calls == ["dev", "main"]
+    assert result == "sentinel/main"
+
+
 def test_changed_python_files_committed_file_included(tmp_path: Path) -> None:
     """A .py file committed after the base ref is included in the result."""
     init_git_repo(tmp_path)

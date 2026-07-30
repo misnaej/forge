@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from forge.config import load_config
-from forge.git_utils import ref_exists, run_git
+from forge.git_utils import ref_exists, resolve_base_branch_ref, run_git
 
 
 if TYPE_CHECKING:
@@ -40,10 +40,11 @@ def resolve_base_ref(repo_root: Path, override: str | None = None) -> str:
     """Resolve the ref to diff ``HEAD`` against for change detection.
 
     A feature branch's change set is its delta from where it diverged —
-    the integration branch — so the remote-tracking ``origin/<dev_branch>``
-    is preferred, then its local name, then the base branch, then a plain
-    ``HEAD`` (which yields only working-tree edits when nothing else
-    resolves, e.g. a fresh clone with no remote).
+    the integration branch — so ``dev_branch`` is tried before
+    ``base_branch``, each resolved origin-first (then local fallback) by
+    the canonical :func:`forge.git_utils.resolve_base_branch_ref`. A
+    plain ``HEAD`` is the last resort (yields only working-tree edits
+    when nothing else resolves, e.g. a fresh clone with no remote).
 
     Args:
         repo_root: Git repo root.
@@ -56,15 +57,10 @@ def resolve_base_ref(repo_root: Path, override: str | None = None) -> str:
     if override and _ref_exists(repo_root, override):
         return override
     cfg = load_config(repo_root)
-    candidates = (
-        f"origin/{cfg.dev_branch}",
-        cfg.dev_branch,
-        f"origin/{cfg.base_branch}",
-        cfg.base_branch,
-    )
-    for candidate in candidates:
-        if _ref_exists(repo_root, candidate):
-            return candidate
+    for branch in (cfg.dev_branch, cfg.base_branch):
+        ref = resolve_base_branch_ref(repo_root, branch)
+        if ref is not None:
+            return ref
     return "HEAD"
 
 

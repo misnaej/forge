@@ -495,7 +495,7 @@ def test_wants_no_version_flag_shaped_base_branch_skips_commit_tag(
 ) -> None:
     """A flag-shaped `[tool.forge].base_branch` is rejected, not passed to git.
 
-    `_resolve_base_ref` refuses a `base_branch` starting with `-` outright
+    `resolve_base_branch_ref` refuses a `base_branch` starting with `-` outright
     (option injection guard) rather than handing it to `git rev-parse` /
     `git log`, so the commit-tag signal is skipped entirely — even though
     the `[no-version]` tag IS present in the commit log. Also asserts no
@@ -517,3 +517,27 @@ def test_wants_no_version_flag_shaped_base_branch_skips_commit_tag(
 
     assert changelog.wants_no_version(tmp_path) is None
     assert not any(p.name.startswith("pwned") for p in tmp_path.iterdir())
+
+
+def test_wants_no_version_routes_through_resolve_base_branch_ref(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The commit-tag signal resolves its base via `resolve_base_branch_ref`.
+
+    MOCK SETUP: `changelog.resolve_base_branch_ref` is replaced by a spy
+    returning `None` (no base resolves), so the commit-tag scan is
+    skipped entirely.
+    EXPECTED BEHAVIOR: the spy is called with `(repo_root, "main")` — the
+    single home for the origin-first policy, not a hand-rolled resolution
+    in `changelog`.
+    """
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    calls: list[tuple[object, object]] = []
+
+    def _spy(root: object, base_branch: object) -> None:
+        calls.append((root, base_branch))
+
+    monkeypatch.setattr(changelog, "resolve_base_branch_ref", _spy)
+    assert changelog.wants_no_version(git_repo) is None
+    assert calls == [(git_repo, "main")]

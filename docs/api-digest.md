@@ -198,7 +198,6 @@ _62 modules, 655 symbols._
 - `_iter_added_lines(diff_text: str) -> Iterator[tuple[int, str]]` _(internal)_ — Yield (line_number, content) pairs for each addition in a unified diff.
 - `_stranded_from_added(governing: list[str | None], added_lines: Iterator[tuple[int, str]], tag: tuple[int, int, int] | None) -> list[str]` _(internal)_ — Detect released headings that received new content in a diff.
 - `_env_no_version() -> str | None` _(internal)_ — Return the name of the first truthy opt-out env var, or ``None``.
-- `_resolve_base_ref(repo_root: Path, base_branch: str) -> str | None` _(internal)_ — Return the first resolvable ref for *base_branch*, local-first.
 - `wants_no_version(repo_root: Path) -> str | None` — Return the fired no-version signal, or ``None`` when none is set.
 - `stranded_added_versions(text: str, diff_text: str, latest_tag: str | None) -> list[str]` — Return released heading versions that *diff_text* adds entries under.
 
@@ -453,6 +452,8 @@ _62 modules, 655 symbols._
 - `_run_git(*args: str, cwd: Path | None = None) -> str` _(internal)_ — Run a git command and return stdout.
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
+- `resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref diff-scoped checks should compare against, origin-first.
+- `merge_base_with_head(root: Path | None, base_branch: str) -> str` — Return the merge-base SHA of ``HEAD`` and the resolved base ref.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 - `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
 - `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
@@ -687,7 +688,6 @@ _62 modules, 655 symbols._
 - `step_vendored_integrity(repo_root: Path) -> StepResult` — Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
 - `_changelog_blocking(repo_root: Path) -> bool` _(internal)_ — Return whether the changelog steps block the commit (default yes).
 - `step_changelog_version(repo_root: Path) -> StepResult` — Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
-- `_merge_base_with(repo_root: Path, base_branch: str) -> str` _(internal)_ — Return the merge-base SHA of ``HEAD`` and *base_branch*, or ``""``.
 - `step_changelog_updated(repo_root: Path) -> StepResult` — Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
 - `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).

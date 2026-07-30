@@ -366,11 +366,10 @@ def run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
 def ref_exists(repo_root: Path, ref: str) -> bool:
     """Return whether *ref* resolves to a commit in the repo.
 
-    The shared ref-existence probe — callers layer their own candidate
-    order and fallback policy on top (``forge.changelog``'s local-first
-    base resolution, ``forge.smart_test``'s origin-first diff base).
-    The ``^{commit}`` peel makes it verify commit-ish-ness, not just
-    name existence.
+    The shared ref-existence probe — candidate order and fallback policy
+    live in :func:`resolve_base_branch_ref`, the single diff-base
+    resolver every diff-scoped caller routes through. The ``^{commit}``
+    peel makes it verify commit-ish-ness, not just name existence.
 
     Args:
         repo_root: Git repo root.
@@ -390,6 +389,69 @@ def ref_exists(repo_root: Path, ref: str) -> bool:
             check=False,
         )
     )
+
+
+def resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None:
+    """Return the ref diff-scoped checks should compare against, origin-first.
+
+    The single home for forge's diff-base policy (every diff-scoped
+    caller — ``get_modified_files``, ``forge.changelog``,
+    ``forge.precommit``, ``forge.smart_test`` — routes here): prefer
+    ``origin/<base_branch>``, the authoritative merge target a PR
+    actually lands on, and fall back to the local ``<base_branch>`` only
+    when the remote ref is absent (offline clone, no remote). A local
+    base branch is a convenience cache that silently rots when the
+    developer doesn't pull; diffing against it makes already-merged
+    commits look branch-added. Not a replacement for the origin-*only*
+    probes in the promotion checks (``verify_changelog_history``,
+    ``verify_main_tags``, ``release``) — those must see published state
+    and deliberately have no local fallback.
+
+    A *base_branch* starting with ``-`` is rejected outright: git would
+    parse it as a flag, not a ref (option injection via a crafted
+    ``[tool.forge].base_branch``), and no real branch name starts with a
+    dash.
+
+    Args:
+        root: Git repo root; ``None`` uses the cached process-wide
+            :func:`repo_root`.
+        base_branch: Configured base-branch name.
+
+    Returns:
+        ``origin/<base_branch>`` or ``<base_branch>``, whichever
+        resolves first; ``None`` when neither does or *base_branch* is
+        empty or flag-shaped.
+    """
+    if not base_branch or base_branch.startswith("-"):
+        return None
+    if root is None:
+        root = repo_root()
+    for ref in (f"origin/{base_branch}", base_branch):
+        if ref_exists(root, ref):
+            return ref
+    return None
+
+
+def merge_base_with_head(root: Path | None, base_branch: str) -> str:
+    """Return the merge-base SHA of ``HEAD`` and the resolved base ref.
+
+    Thin companion to :func:`resolve_base_branch_ref` for callers that
+    want the divergence point rather than the ref itself — the
+    origin-first policy stays in exactly one place.
+
+    Args:
+        root: Git repo root; ``None`` uses the cached process-wide
+            :func:`repo_root`.
+        base_branch: Configured base-branch name.
+
+    Returns:
+        The merge-base SHA, or ``""`` when no base ref resolves or the
+        merge-base computation fails (unrelated histories).
+    """
+    ref = resolve_base_branch_ref(root, base_branch)
+    if ref is None:
+        return ""
+    return _run_git("merge-base", ref, "HEAD", cwd=root)
 
 
 def get_tree_sha(repo_root: Path, ref: str) -> str | None:
@@ -572,8 +634,9 @@ def get_modified_files(
     branch, including branch commits, staged files, and unstaged changes.
 
     Strategy:
-        - Feature branch: all files modified vs
-          ``<base_branch>``/``origin/<base_branch>``
+        - Feature branch: all files modified vs the base ref from
+          :func:`resolve_base_branch_ref` — ``origin/<base_branch>``
+          first, local ``<base_branch>`` as offline fallback
           (branch commits + staged + unstaged)
         - Base branch: files modified vs previous commit
 
@@ -598,10 +661,8 @@ def get_modified_files(
     current_branch = _run_git("branch", "--show-current", cwd=repo_root)
 
     if current_branch and current_branch != base_branch:
-        for base in (base_branch, f"origin/{base_branch}"):
-            if not _run_git("rev-parse", "--verify", base, cwd=repo_root):
-                continue
-
+        base = resolve_base_branch_ref(repo_root, base_branch)
+        if base is not None:
             logger.info(
                 "Checking files modified in '%s' compared to '%s'...",
                 current_branch,
