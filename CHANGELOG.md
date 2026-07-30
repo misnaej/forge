@@ -45,6 +45,15 @@ versions follow forge's rolling-next convention.
   origin-first with local fallback and flag-injection guard (a
   `-`-prefixed `base_branch` is rejected everywhere, closing the gap in
   `get_modified_files`).
+- **`changelog_version` no longer flags base-sync merges as stranded.**
+  During an in-progress `git merge origin/<base>` (MERGE_HEAD present),
+  HEAD still predates the merge, so the merge-base is the stale fork
+  point and every CHANGELOG bullet the merge brings in from the base
+  diffed as branch-added — falsely "stranded", blocking the merge
+  commit's pre-commit hook. The stranded-entries diff is now suppressed
+  mid-merge (structural heading checks still run); new
+  `forge.git_utils.merge_in_progress` resolves `MERGE_HEAD` via
+  `git rev-parse --git-path`, so linked worktrees work.
 
 ## v2.22.0 — 2026-07-15
 

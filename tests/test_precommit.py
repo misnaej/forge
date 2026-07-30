@@ -2853,8 +2853,110 @@ def test_step_changelog_version_detects_stranded_entries(
     result = precommit.step_changelog_version(tmp_path)
     assert not result.passed
     assert "stranded" in result.output
+    assert "merge in progress" not in result.output
     cfg = config.load_config(tmp_path)
     assert merge_base_calls == [(tmp_path, cfg.base_branch)]
+
+
+def _setup_tagged_repo_mid_merge(base: Path, feat_changelog: str) -> Path:
+    """Build a tagged single-track repo mid `--no-ff --no-commit` merge on `feat/x`.
+
+    Args:
+        base: Base directory for the test repo.
+        feat_changelog: Changelog content for the feature branch.
+
+    Returns:
+        Path to the work repository.
+    """
+    work, _bare = init_single_track_repo(base)
+    (work / "CHANGELOG.md").write_text("## v1.0.0\n")
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "chore: add changelog"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.0.0", "-m", "v1.0.0"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "--tags"], cwd=work, env=GIT_ENV, check=True
+    )
+
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "other"], cwd=work, env=GIT_ENV, check=True
+    )
+    (work / "other.txt").write_text("other\n")
+    subprocess.run(["git", "add", "other.txt"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "other work"], cwd=work, env=GIT_ENV, check=True
+    )
+
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=work, env=GIT_ENV, check=True
+    )
+    (work / "CHANGELOG.md").write_text(feat_changelog)
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "docs: feat/x changelog"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+
+    subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "other"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    return work
+
+
+def test_step_changelog_version_skips_stranded_diff_during_merge(
+    tmp_path: Path,
+) -> None:
+    """A merge in progress suppresses the stranded-entries diff, not the gate.
+
+    SCENARIO: `feat/x` carries a genuinely stranded-shaped bullet (added
+    under the already-tagged `v1.0.0` heading) — outside a merge this
+    would fail. But `feat/x` is mid `git merge --no-ff --no-commit
+    other`: `HEAD` still predates the merge commit, so the merge-base
+    would be the stale fork point and misattribute `other`'s changes.
+    The step must recognize the in-progress merge and skip only the
+    stranded diff, still passing since no structural finding fires.
+    """
+    work = _setup_tagged_repo_mid_merge(tmp_path, "## v1.0.0\n\n- new bullet\n")
+    result = precommit.step_changelog_version(work)
+    assert result.passed is True
+    assert "Entries added under released heading" not in result.output
+    assert "merge in progress" in result.output
+
+
+def test_step_changelog_version_structural_findings_still_fire_during_merge(
+    tmp_path: Path,
+) -> None:
+    """A merge in progress only suppresses the stranded diff, not structural findings.
+
+    SCENARIO: same mid-merge setup as
+    `test_step_changelog_version_skips_stranded_diff_during_merge`, but
+    `feat/x`'s CHANGELOG carries an invalid `## Unreleased` heading. The
+    stranded-diff suppression must not blanket-pass the step — the
+    heading-validity finding still fires.
+    """
+    work = _setup_tagged_repo_mid_merge(tmp_path, "## Unreleased\n\n## v1.0.0\n")
+    result = precommit.step_changelog_version(work)
+    assert result.passed is False
+    assert "## Unreleased" in result.output
+    assert "merge in progress" in result.output
 
 
 def test_step_changelog_version_nonblocking_when_configured(

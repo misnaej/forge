@@ -84,6 +84,7 @@ from forge.git_utils import (
     emit,
     latest_v_tag,
     merge_base_with_head,
+    merge_in_progress,
     parse_semver,
     read_local_plugin_version,
     require_cli,
@@ -1634,7 +1635,11 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     latest tag, and — on a feature branch — no diff-added entries sit
     under an already-released heading (the stranded-entries race: a tag
     cut under an open PR leaves its bullets attributed to a release that
-    does not contain the code, with no merge conflict to signal it).
+    does not contain the code, with no merge conflict to signal it). The
+    stranded diff is suppressed while a merge is in progress
+    (``MERGE_HEAD`` present): mid-merge, the merge-base is the stale fork
+    point, so the base's own entries would be misattributed to the branch;
+    the structural checks still run.
 
     Self-skips when there is no root ``CHANGELOG.md``, on
     manifest-versioned repos (``verify-forge-plugin-version`` owns the
@@ -1693,26 +1698,35 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     latest = latest_v_tag(repo_root)
     findings = changelog_version_findings(text, latest)
     current = run_git("branch", "--show-current", cwd=repo_root, check=False)
+    notes: list[str] = []
     if current and current != cfg.base_branch:
-        merge_base = merge_base_with_head(repo_root, cfg.base_branch)
-        if merge_base:
-            diff_text = run_git(
-                "diff", merge_base, "--", "CHANGELOG.md", cwd=repo_root, check=False
+        if merge_in_progress(repo_root):
+            # Mid-merge HEAD predates the merge commit, so the merge-base is
+            # the stale fork point and every entry the base contributes would
+            # diff as branch-added. Skip only the stranded diff — the merge
+            # commit's own run and CI validate the settled state.
+            notes.append(
+                "Note: merge in progress — stranded-entries diff skipped "
+                "(validated at the merge commit and by CI)."
             )
-            if diff_text:
-                findings.extend(
-                    f"Entries added under released heading {version} (not ahead "
-                    f"of latest tag {latest}) — stranded; move them under the "
-                    "next `## vX.Y.Z` heading."
-                    for version in stranded_added_versions(text, diff_text, latest)
+        else:
+            merge_base = merge_base_with_head(repo_root, cfg.base_branch)
+            if merge_base:
+                diff_text = run_git(
+                    "diff", merge_base, "--", "CHANGELOG.md", cwd=repo_root, check=False
                 )
+                if diff_text:
+                    findings.extend(
+                        f"Entries added under released heading {version} (not "
+                        f"ahead of latest tag {latest}) — stranded; move them "
+                        "under the next `## vX.Y.Z` heading."
+                        for version in stranded_added_versions(text, diff_text, latest)
+                    )
     return StepResult(
         name=name,
         passed=not findings,
-        output=(
-            "\n".join(findings)
-            if findings
-            else "CHANGELOG release headings consistent with tags."
+        output="\n".join(
+            (findings or ["CHANGELOG release headings consistent with tags."]) + notes
         ),
         non_blocking=not _changelog_blocking(repo_root),
     )
