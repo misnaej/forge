@@ -19,7 +19,12 @@ import re
 from typing import TYPE_CHECKING
 
 from forge.config import load_config
-from forge.git_utils import parse_semver, resolve_base_branch_ref, run_git
+from forge.git_utils import (
+    parse_semver,
+    resolve_base_branch_ref,
+    resolve_current_branch,
+    run_git,
+)
 
 
 if TYPE_CHECKING:
@@ -370,13 +375,12 @@ def wants_no_version(repo_root: Path) -> str | None:
     # (step_changelog_updated reads both) — accepted: they are cheap
     # once-per-commit calls, and threading them in would complicate the
     # single-arg public signature consumers import.
-    branch = run_git("branch", "--show-current", cwd=repo_root, check=False).strip()
-    if branch and _NO_VERSION_BRANCH_RE.search(branch):
-        return f"`no-version` token in branch name {branch!r}"
-    if not branch:
-        head_ref = os.environ.get("GITHUB_HEAD_REF", "").strip()
-        if head_ref and _NO_VERSION_BRANCH_RE.search(head_ref):
-            return f"`no-version` token in branch name {head_ref!r} (GITHUB_HEAD_REF)"
+    resolved = resolve_current_branch(repo_root)
+    if resolved is not None:
+        branch, source = resolved
+        if _NO_VERSION_BRANCH_RE.search(branch):
+            origin = " (GITHUB_HEAD_REF)" if source == "GITHUB_HEAD_REF" else ""
+            return f"`no-version` token in branch name {branch!r}{origin}"
     base_ref = resolve_base_branch_ref(repo_root, load_config(repo_root).base_branch)
     if base_ref is None:
         return None

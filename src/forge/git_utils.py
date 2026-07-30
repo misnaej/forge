@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -361,6 +362,32 @@ def run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
         check=check,
     )
     return proc.stdout.strip()
+
+
+def resolve_current_branch(repo_root: Path) -> tuple[str, str] | None:
+    """Return the current branch name and where it came from, or ``None``.
+
+    The one branch-name resolver for per-PR logic (FOUNDATION §12):
+    ``git branch --show-current`` wins when non-empty; on a detached
+    HEAD — a CI ``pull_request`` checkout of ``refs/pull/N/merge`` —
+    it is empty, so the PR source branch is read from the
+    ``GITHUB_HEAD_REF`` env var instead (``GITHUB_REF_NAME`` is
+    ``N/merge`` on that event, not the branch name).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``(branch, source)`` with source ``"local"`` or
+        ``"GITHUB_HEAD_REF"``, or ``None`` when neither yields a name.
+    """
+    branch = run_git("branch", "--show-current", cwd=repo_root, check=False).strip()
+    if branch:
+        return branch, "local"
+    head_ref = os.environ.get("GITHUB_HEAD_REF", "").strip()
+    if head_ref:
+        return head_ref, "GITHUB_HEAD_REF"
+    return None
 
 
 def ref_exists(repo_root: Path, ref: str) -> bool:

@@ -134,7 +134,10 @@ CI**; a delimited `no-version` token in the branch name
 (`chore/tidy-no-version`, not `fix/no-versioning`); or a
 `[no-version]` tag in any commit message over `<base>..HEAD`. The
 branch and commit forms travel with the push, so the opt-out holds in
-CI. `changelog_version` needs no opt-out: it already accepts
+CI — for the branch-token form specifically, a CI `pull_request`
+checkout is a detached HEAD (`git branch --show-current` is empty), so
+the branch name is read from `GITHUB_HEAD_REF` instead. `changelog_version`
+needs no opt-out: it already accepts
 top-heading == latest-tag as a valid resting state, and a no-version
 branch adds no changelog bullets for its stranded-entry check to flag.
 

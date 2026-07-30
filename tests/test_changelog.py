@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import changelog
-from tests.conftest import GIT_ENV, init_git_repo, init_single_track_repo
+from tests.conftest import GIT_ENV, _detach_head, init_git_repo, init_single_track_repo
 
 
 if TYPE_CHECKING:
@@ -324,17 +324,6 @@ def _checkout_branch(repo: Path, name: str) -> None:
     """
     subprocess.run(
         ["git", "checkout", "-q", "-b", name], cwd=repo, env=GIT_ENV, check=True
-    )
-
-
-def _detach_head(repo: Path) -> None:
-    """Detach HEAD in *repo* at its current commit (empties `--show-current`).
-
-    Args:
-        repo: Git repo working tree.
-    """
-    subprocess.run(
-        ["git", "checkout", "-q", "--detach", "HEAD"], cwd=repo, env=GIT_ENV, check=True
     )
 
 
