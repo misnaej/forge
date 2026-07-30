@@ -853,10 +853,10 @@ def test_merge_base_with_head_empty_when_merge_base_fails(tmp_path: Path) -> Non
 def _create_diverged_branches(repo: Path) -> None:
     """Create ``other`` and ``feat/x`` off ``main``, each touching a distinct file.
 
+    Leaves ``feat/x`` checked out.
+
     Args:
         repo: Repository path.
-
-    Leaves ``feat/x`` checked out.
     """
     subprocess.run(
         ["git", "checkout", "-q", "-b", "other"], cwd=repo, env=_GIT_ENV, check=True
