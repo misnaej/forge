@@ -154,6 +154,8 @@ def test_check_yaml_low_when_pyyaml_missing(
     findings = _check_yaml(f)
     assert len(findings) == 1
     assert findings[0].severity is Severity.LOW
+    assert 'pip install "forge-scripts[audit]"' in findings[0].message
+    assert '-e ".[' not in findings[0].message
 
 
 def test_check_one_dispatches_on_suffix(fake_repo: Path) -> None:

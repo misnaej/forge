@@ -306,7 +306,7 @@ def _check_yaml(path: Path) -> list[Finding]:
                 severity=Severity.LOW,
                 path=rel,
                 line=0,
-                message="YAML parser unavailable (PyYAML not installed); skipped.",
+                message="YAML file skipped: " + missing_dependency_hint("PyYAML"),
             ),
         ]
     try:

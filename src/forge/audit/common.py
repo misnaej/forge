@@ -320,7 +320,9 @@ def missing_dependency_hint(package: str, *, extra: str = "audit") -> str:
     works from a checkout of forge itself.
 
     Args:
-        package: Import name of the missing dependency (e.g. ``vulture``).
+        package: Distribution (pip) name of the missing dependency — the
+            name a user recognizes from install output (e.g. ``vulture``,
+            ``PyYAML``), not the import name where the two diverge.
         extra: forge-scripts extra that provides the package.
 
     Returns:
