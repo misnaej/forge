@@ -3248,6 +3248,150 @@ def test_step_changelog_updated_no_signal_gate_still_fails(
     assert not result.skipped
 
 
+def test_step_changelog_updated_deferred_mode_skips_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deferred mode self-skips a local (non-CI) run regardless of the diff."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\nprecommit_enforce = false\n"
+    )
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "wants_no_version", lambda _r: None)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    monkeypatch.setattr(
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.skipped is True
+    assert "Deferred mode" in result.output
+    assert "at PR wrap-up" in result.output
+
+
+def test_step_changelog_updated_deferred_mode_ci_fails_with_deferred_tone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deferred mode still fails on genuine CI, with deferred-tone wording.
+
+    SCENARIO: ``precommit_enforce = false`` defers the gate locally, but
+    CI must keep failing until the entry lands at PR wrap-up.
+    MOCK SETUP: ``is_ci`` → True (genuine CI, not just non-interactive);
+    ``wants_no_version`` → None (no opt-out); ``select_diff_files`` →
+    a src change with no matching CHANGELOG.md entry.
+    EXPECTED BEHAVIOR: the gate fails (not skipped), the output uses the
+    deferred-mode wording ("deferred mode" / "expected") rather than the
+    enforce-mode opt-out hint ("NO_VERSION=1"), and stays blocking by
+    default.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\nprecommit_enforce = false\n"
+    )
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "wants_no_version", lambda _r: None)
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+    monkeypatch.setattr(
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.passed is False
+    assert result.skipped is False
+    assert "deferred mode" in result.output
+    assert "expected" in result.output
+    assert "NO_VERSION=1" not in result.output
+    assert result.non_blocking is False
+
+
+def test_step_changelog_updated_deferred_mode_ci_nonblocking_when_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deferred-mode CI failure is non-blocking when ``blocking = false``."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\nprecommit_enforce = false\nblocking = false\n"
+    )
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "wants_no_version", lambda _r: None)
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+    monkeypatch.setattr(
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.passed is False
+    assert result.non_blocking is True
+
+
+def test_step_changelog_updated_no_version_optout_wins_over_deferred(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The no-version opt-out is checked before the deferred-mode branch."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\nprecommit_enforce = false\n"
+    )
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(
+        precommit,
+        "wants_no_version",
+        lambda _r: "[no-version] tag in a commit message (main..HEAD)",
+    )
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.skipped is True
+    assert "no-version opt-out" in result.output
+
+
+def test_step_changelog_updated_deferred_mode_gated_on_is_ci_not_non_interactive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deferred mode's local/CI split is gated on ``is_ci()``, not non-interactivity.
+
+    SCENARIO: pins the same wrong-gate regression as
+    ``test_step_changelog_version_fetches_tags_unless_ci`` — an
+    agent-driven local run has a non-tty stdin but is not genuine CI, so
+    the deferred skip must key off ``is_ci()`` alone.
+    MOCK SETUP: ``precommit.is_non_interactive`` is monkeypatched to raise
+    if called at all, so any accidental read of it fails the test loudly
+    instead of silently passing on either backend.
+    EXPECTED BEHAVIOR: ``is_ci() == False`` skips (deferred, local);
+    ``is_ci() == True`` runs the gate and fails on the missing entry.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\nprecommit_enforce = false\n"
+    )
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "wants_no_version", lambda _r: None)
+    monkeypatch.setattr(
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
+    )
+
+    def _unexpected_is_non_interactive() -> bool:
+        msg = "must not be called"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(precommit, "is_non_interactive", _unexpected_is_non_interactive)
+
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.skipped is True
+
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.skipped is False
+    assert result.passed is False
+
+
 def _repo_with_undocumented_src_change(tmp_path: Path) -> Path:
     """Build a repo with a real, undocumented src change on a feature branch.
 

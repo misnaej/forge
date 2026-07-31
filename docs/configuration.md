@@ -564,6 +564,12 @@ following the [consumer changelog convention](consumer-release.md)
 | `blocking` | `true` | Findings fail the commit; `false` downgrades both steps to a WARN. | Staged adoption on a repo with a messy changelog history. |
 | `exempt_paths` | `[]` | Path prefixes `changelog_updated` ignores. | Scratch/experimental dirs whose changes need no entry. |
 | `require_paths` | `[]` | Prefixes that always require an entry, overriding `exempt_paths` (checked first). | A shipped subtree inside an otherwise exempt dir. |
+| `precommit_enforce` | `true` | `false` = deferred mode: local commits (human or agent) self-skip `changelog_updated`; genuine CI keeps failing — with an expected-until-wrap-up message — until the entry lands at PR wrap-up. See the ["Deferred entry timing"](consumer-release.md#enforcement) chain. | High-parallelism repos hitting mid-PR changelog merge conflicts. |
+
+`precommit_enforce` and `blocking` are independent axes — timing vs
+severity. With both `false`, CI's deferred check degrades to a WARN, so
+the "red until wrap-up" guarantee no longer holds; keep `blocking =
+true` when opting into deferred mode.
 
 ## `[tool.forge.badges]` — README status badges
 

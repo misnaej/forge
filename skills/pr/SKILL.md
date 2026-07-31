@@ -123,7 +123,11 @@ Documentation must stay in sync with code. For each item below, update **only if
     is written at release/promotion time instead of per PR (e.g. a
     dual-track plugin repo per
     [`docs/release-process.md`](../../docs/release-process.md)) —
-    follow that repo's own release process.
+    follow that repo's own release process. In deferred-mode repos
+    (`[tool.forge.changelog].precommit_enforce = false`) this step is
+    **mandatory**, not skip-when-absent: the entry was deliberately not
+    written during the PR, so author it here — CI's changelog check
+    stays red until it lands.
 12. **`REPO_STRUCTURE.md`** (when the repo maintains one — see [FOUNDATION §13](../../FOUNDATION.md#13-code_health-convention)) — list new source modules and new test files so the canonical repo map stays accurate. The `repo_structure_check` pre-commit step does not enforce two-way coverage; this update is on the PR author.
 13. **Per-component READMEs** (e.g., subsystem-level `README.md` files, agent definition files) — if their tools, setup, or usage changed.
 14. **Agent-architecture doc** (when `[tool.forge.agent_doc]` is configured, and the PR touched `agents/`, `skills/`, or `claude-hooks/`) — run `verify-forge-agent-doc --diff <target-branch>` for the graph-relevant edges this PR added/removed, and update the configured doc where a delegation, rename, or removal left it stale. `docs-types-checker` owns this at PR review; self-skips otherwise.

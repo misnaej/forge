@@ -1744,7 +1744,16 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
 
     Path policy: ``[tool.forge.changelog].require_paths`` prefixes always
     require an entry (checked first), ``exempt_paths`` prefixes never do,
-    everything else requires one. The no-version opt-out
+    everything else requires one. Timing policy:
+    ``[tool.forge.changelog].precommit_enforce`` (default ``True``) gates
+    every local commit; when ``False`` (deferred mode) local runs — human
+    or agent — self-skip and the entry is written at PR wrap-up, while
+    genuine CI keeps failing (with an expected-until-wrap-up message) so
+    the entry cannot be forgotten. Gated on ``is_ci()`` — NOT
+    ``is_non_interactive()``: agent-driven local commits are the primary
+    audience of the deferred skip and have a non-tty stdin (same
+    reasoning as :func:`step_changelog_version`'s tag-fetch gate). The
+    no-version opt-out
     (:func:`forge.changelog.wants_no_version`) skips the gate on any of
     three signals: a truthy ``NO_VERSION`` / ``SKIP_CHANGELOG_CHECK``
     env var (local-only — absent in CI), a delimited ``no-version``
@@ -1790,6 +1799,19 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
             skipped=True,
         )
     step_cfg = _forge_step_config(repo_root, "changelog")
+    enforce = bool(step_cfg.get("precommit_enforce", True))
+    if not enforce and not is_ci():
+        return StepResult(
+            name=name,
+            passed=True,
+            output=(
+                "Deferred mode ([tool.forge.changelog].precommit_enforce = "
+                "false) — no entry required yet; write the CHANGELOG bullet "
+                "at PR wrap-up (just before merge). CI's changelog check "
+                "stays red until then by design."
+            ),
+            skipped=True,
+        )
     exempt = tuple(_cfg_str_list(step_cfg, "exempt_paths", []))
     require = tuple(_cfg_str_list(step_cfg, "require_paths", []))
     # drop_deleted=False: a deleted file is still a change that may require
@@ -1805,17 +1827,27 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
         )
     ]
     if triggers and "CHANGELOG.md" not in files:
-        return StepResult(
-            name=name,
-            passed=False,
-            output=(
+        if enforce:
+            output = (
                 f"{len(triggers)} changed file(s) require a CHANGELOG.md entry "
                 f"(first: {triggers[0]}). Add a bullet under the top "
                 "`## vX.Y.Z` heading (docs/consumer-release.md). For a "
                 "genuine no-version change, opt out with NO_VERSION=1 "
                 "(local), a `no-version` branch token, or a [no-version] "
                 "commit tag (CI-durable)."
-            ),
+            )
+        else:
+            output = (
+                f"{len(triggers)} changed file(s) and no CHANGELOG.md entry "
+                "yet — deferred mode: the bullet is written at wrap-up, just "
+                "before merge. Add it now to turn this check green (or use a "
+                "no-version opt-out). A red result earlier in the PR is "
+                "expected."
+            )
+        return StepResult(
+            name=name,
+            passed=False,
+            output=output,
             non_blocking=not _changelog_blocking(repo_root),
         )
     return StepResult(
