@@ -124,6 +124,7 @@ def test_check_json_low_when_schema_present_but_jsonschema_missing(
     findings = _check_json(f)
     assert any(fnd.severity is Severity.LOW for fnd in findings)
     assert any("jsonschema` is not installed" in fnd.message for fnd in findings)
+    assert '-e ".[' not in findings[0].message
 
 
 def test_check_toml_clean(fake_repo: Path) -> None:
@@ -153,6 +154,8 @@ def test_check_yaml_low_when_pyyaml_missing(
     findings = _check_yaml(f)
     assert len(findings) == 1
     assert findings[0].severity is Severity.LOW
+    assert 'pip install "forge-scripts[audit]"' in findings[0].message
+    assert '-e ".[' not in findings[0].message
 
 
 def test_check_one_dispatches_on_suffix(fake_repo: Path) -> None:

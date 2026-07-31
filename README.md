@@ -87,7 +87,7 @@ edit `.githooks/pre-commit` directly. No plugin system, no config file.
 | Category | Items |
 |---|---|
 | **CLIs** (pip package, no Claude required) | `install-forge-bootstrap` (one-shot umbrella), `forge-upgrade` (two-phase upgrade flow), `forge-precommit` (full sequence dispatcher), `fix-forge-ruff` (ruff phase), `verify-forge-docstrings`, `verify-forge-docstring-coverage`, `verify-forge-repo-structure`, `verify-forge-test-naming`, `verify-forge-manifest`, `verify-forge-plugin-version`, `verify-forge-cli-wiring`, `forge-continuation-append`, `forge-next-prep`, `forge-config` (config reference + setup advisor — see [`docs/configuration.md`](docs/configuration.md)), `forge-gen-c4` (C4 architecture diagram generator), `install-forge-labels`, `forge-doctor`, `install-forge-githooks`, `install-forge-claude-md` |
-| **Audit-pack CLIs** (pip package, optional `[audit]` extras) | `forge-audit-dup`, `forge-audit-deps`, `forge-audit-suppressions`, `forge-audit-orphans`, `forge-audit-data`, `forge-audit-claims`, `forge-audit-agents` (non-blocking template-conformance audit), `forge-audit-all` — see [`docs/audit-pack.md`](docs/audit-pack.md) |
+| **Audit-pack CLIs** (pip package, no extras required) | `forge-audit-dup`, `forge-audit-deps`, `forge-audit-suppressions`, `forge-audit-orphans`, `forge-audit-data`, `forge-audit-claims`, `forge-audit-agents` (non-blocking template-conformance audit), `forge-audit-all` — see [`docs/audit-pack.md`](docs/audit-pack.md) |
 | **Git hooks** (drop-in, no Claude required) | `.githooks/pre-commit` (dispatcher), `.githooks/post-merge` + `.githooks/post-checkout` (auto-warn on FOUNDATION.md drift) |
 | **Process docs** | `docs/security.md`, `docs/audit-pack.md`, `docs/cli-reference.md` (generated CLI reference), `docs/api-digest.md` (generated index of all top-level functions/classes, public API + internal helpers); foundation engineering principles at `FOUNDATION.md` |
 | **Claude Code plugin** (optional) | Agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, `design-checker`, `docs-types-checker`, `security-checker`, `issue-triage`, `perf-optimizer`, `weekly-summary`, `knowledge-search`, `test-advisor`, `test-writer`); skills (`commit`, `pr`, `next`, `triage`, `weekly`, `fix`, `review`, `test`, `c4`); Claude Code hooks (`block_protected_branches`, `block_force_push`, `block_git_rebase`, `block_pr_merge`, `block_branch_deletion`, `block_no_verify`, `block_install_deps`, `block_claude_attribution`, `block_continuation_delete`, `block_protected_files`, `check_commit_format`, `check_foundation_sync`, `warn_pr_checks`, `block_raw_ruff`, `block_raw_git`) |
@@ -95,8 +95,10 @@ edit `.githooks/pre-commit` directly. No plugin system, no config file.
 Everything in the first three rows is **Claude-independent** — works
 from any shell, CI, or IDE.
 
-The audit-pack CLIs are gated behind extras: `pip install
-forge-scripts[audit]` pulls in `vulture`, `jsonschema`, and `PyYAML`;
+The audit-pack CLIs run out of the box (`vulture`, backing
+`forge-audit-orphans`, is a core dependency). Two optional extras widen
+coverage: `pip install "forge-scripts[audit]"` pulls in `jsonschema` and
+`PyYAML` for `forge-audit-data`'s schema-validation and YAML checks;
 `[audit-tach]` adds `tach` for dependency-graph checks. See
 [`docs/audit-pack.md`](docs/audit-pack.md) for what each audit detects
 and how findings land in `code_health/audit_*.log`.

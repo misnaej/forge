@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge.audit import common, orphans
-from forge.audit.common import Scope, Severity
+from forge.audit.common import Scope, Severity, missing_dependency_hint
 from forge.audit.orphans import (
     OrphansConfig,
     _build_findings,
@@ -105,6 +105,11 @@ def fake_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / "src").mkdir()
     monkeypatch.setattr(common, "repo_root", lambda: tmp_path)
     return tmp_path
+
+
+def test_vulture_missing_hint_matches_common_helper() -> None:
+    """Verify ``VULTURE_MISSING_HINT`` is derived from the common helper."""
+    assert missing_dependency_hint("vulture") == orphans.VULTURE_MISSING_HINT
 
 
 def test_severity_medium_at_or_above_floor() -> None:

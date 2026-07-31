@@ -23,9 +23,16 @@ dependencies = [
     # pip-audit backs the default (non-opt-in) pip_audit pre-commit step, so
     # it ships as a core dependency — same rule as ruff/interrogate. Without
     # it the CVE scan would silently no-op while still appearing in the gate
-    # output, giving false assurance (#71). Opt-in step tools (pyrefly,
-    # vulture) stay in extras precisely because their steps are opt-in.
+    # output, giving false assurance (#71). Opt-in step tools (pyrefly)
+    # stay in extras precisely because their steps are opt-in.
     "pip-audit>=2.7",
+    # vulture backs forge-audit-orphans, a mandatory design-checker Full
+    # Review recipe that hard-fails (SystemExit 1) when vulture is missing —
+    # so a default install must carry it (27 KB pure-Python wheel, zero
+    # transitive deps). jsonschema/PyYAML stay in the [audit] extra because
+    # forge-audit-data degrades to a visible LOW finding without them (same
+    # graceful model as tach) — do not move them by symmetry.
+    "vulture>=2.10",
 ]
 
 [project.scripts]
@@ -76,7 +83,7 @@ forge-audit-all = "forge.audit.all:main"
 
 [project.optional-dependencies]
 test = ["pytest>=8.0"]
-audit = ["vulture>=2.10", "jsonschema>=4.0", "PyYAML>=6.0"]
+audit = ["jsonschema>=4.0", "PyYAML>=6.0"]
 audit-tach = ["tach>=0.30"]
 # Type checker for the opt-in `typecheck` pre-commit step (pyrefly only).
 typecheck = ["pyrefly>=1,<2"]

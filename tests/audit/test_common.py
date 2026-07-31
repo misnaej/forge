@@ -14,6 +14,7 @@ from forge.audit.common import (
     exit_code_for,
     iter_files,
     make_audit_parser,
+    missing_dependency_hint,
     relpath,
     resolve_roots,
     write_log,
@@ -72,6 +73,22 @@ def test_finding_render_with_evidence_indents_block() -> None:
     out = f.render()
     assert "    line one" in out
     assert "    line two" in out
+
+
+def test_missing_dependency_hint_default_extra_formats_pip_install() -> None:
+    """Default ``extra="audit"`` names the package and a consumer-safe pip command."""
+    hint = missing_dependency_hint("vulture")
+    assert "`vulture`" in hint
+    assert 'pip install "forge-scripts[audit]"' in hint
+    assert '-e ".[' not in hint
+
+
+def test_missing_dependency_hint_custom_extra_substitutes_bracket() -> None:
+    """A custom ``extra`` substitutes into the bracket, not just the default."""
+    hint = missing_dependency_hint("jsonschema", extra="docs")
+    assert "`jsonschema`" in hint
+    assert "forge-scripts[docs]" in hint
+    assert '-e ".[' not in hint
 
 
 def test_make_audit_parser_exposes_scope_roots_output() -> None:

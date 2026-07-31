@@ -37,6 +37,18 @@ versions follow forge's rolling-next convention.
   if a check's diff scope changes for you, your local base was stale.
 
 ### Fixes
+- **`forge-audit-orphans` runs on a default install.** `vulture` moved
+  from the `[audit]` extra into core dependencies — the design-checker
+  Full Review mandates the orphans recipe, but a bare
+  `pip install forge-scripts` couldn't run it (hard failure on the
+  missing import). `jsonschema`/`PyYAML` stay in `[audit]`:
+  `forge-audit-data` degrades to a visible LOW finding without them.
+- **Missing-optional-dependency hints now work from consumer repos.**
+  The audit-pack hints said `pip install -e ".[audit]"`, which only
+  works from a forge checkout; they now name
+  `pip install "forge-scripts[audit]"` via a shared
+  `forge.audit.common.missing_dependency_hint` helper (single source of
+  truth so the editable form can't come back).
 - **`no-version` branch token and `changelog_updated` gate now live in CI.**
   Branch-name resolution read only `git branch --show-current`, which is
   empty on a CI `pull_request` checkout (detached `refs/pull/N/merge`) —
