@@ -20,7 +20,7 @@ import os
 import shutil
 import subprocess
 
-from forge.git_utils import repo_root
+from forge.git_utils import forge_install_command, repo_root
 
 
 logger = logging.getLogger(__name__)
@@ -48,8 +48,8 @@ def run_foundation_drift_check(hook_name: str) -> int:
     if shutil.which("install-forge-claude-md") is None:
         logger.error("[forge] %s: install-forge-claude-md not on PATH.", hook_name)
         logger.error(
-            "[forge] Run `pip install forge-scripts` "
-            "(forge contributors: `./dev/setup.sh`) and retry.",
+            "[forge] Run `%s` (or your repo's equivalent) and retry.",
+            forge_install_command(),
         )
         return 1
 

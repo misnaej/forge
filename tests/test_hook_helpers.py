@@ -47,7 +47,7 @@ def test_drift_check_hard_fails_with_remediation_when_cli_missing(
     assert "post-merge" in msgs
     assert "install-forge-claude-md not on PATH" in msgs
     assert "pip install forge-scripts" in msgs
-    assert "./dev/setup.sh" in msgs
+    assert "or your repo's equivalent" in msgs
     assert '-e ".[' not in msgs
 
 

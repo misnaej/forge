@@ -1523,7 +1523,7 @@ def test_require_cli_default_hint_has_no_extra(
         git_utils.require_cli("ruff")
     err = capsys.readouterr().err
     assert "pip install forge-scripts" in err
-    assert "./dev/setup.sh" in err
+    assert "or your repo's equivalent" in err
     assert "[" not in err
     assert exc_info.value.code == 2
 

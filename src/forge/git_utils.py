@@ -247,8 +247,7 @@ def require_cli(
         return
     prefix = caller or "forge"
     line = hint or (
-        f"Run `{forge_install_command(extra)}` "
-        "(forge contributors: `./dev/setup.sh`) and retry."
+        f"Run `{forge_install_command(extra)}` (or your repo's equivalent) and retry."
     )
     sys.stderr.write(
         f"{prefix}: required CLI '{name}' not on PATH.\n  {line}\n",

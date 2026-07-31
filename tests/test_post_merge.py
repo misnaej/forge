@@ -146,7 +146,7 @@ def test_hard_fail_when_install_forge_claude_md_missing(
     msgs = "\n".join(r.getMessage() for r in caplog.records)
     assert "install-forge-claude-md not on PATH" in msgs
     assert "pip install forge-scripts" in msgs
-    assert "./dev/setup.sh" in msgs
+    assert "or your repo's equivalent" in msgs
     assert '-e ".[' not in msgs
 
 
