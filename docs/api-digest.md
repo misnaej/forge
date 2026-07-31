@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 657 symbols._
+_62 modules, 658 symbols._
 
 ## `forge`
 
@@ -93,6 +93,7 @@ _62 modules, 657 symbols._
 - `write_log(name: str, findings: Iterable[Finding], summary: str, *, output: Path | None = None) -> Path` — Write findings + summary to ``code_health/audit_<name>.log``.
 - `exit_code_for(findings: Iterable[Finding]) -> int` — Map findings to a process exit code.
 - `count_by_severity(findings: Iterable[Finding]) -> dict[Severity, int]` — Tally findings per severity tier.
+- `missing_dependency_hint(package: str, *, extra: str = 'audit') -> str` — Format a user-facing hint for a missing optional dependency.
 
 ## `forge.audit.data`
 

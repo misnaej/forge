@@ -124,6 +124,7 @@ def test_check_json_low_when_schema_present_but_jsonschema_missing(
     findings = _check_json(f)
     assert any(fnd.severity is Severity.LOW for fnd in findings)
     assert any("jsonschema` is not installed" in fnd.message for fnd in findings)
+    assert '-e ".[' not in findings[0].message
 
 
 def test_check_toml_clean(fake_repo: Path) -> None:

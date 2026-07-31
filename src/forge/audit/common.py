@@ -308,3 +308,22 @@ def count_by_severity(findings: Iterable[Finding]) -> dict[Severity, int]:
     for f in findings:
         counts[f.severity] += 1
     return counts
+
+
+def missing_dependency_hint(package: str, *, extra: str = "audit") -> str:
+    """Format a user-facing hint for a missing optional dependency.
+
+    Single source of truth for the install command named in every
+    missing-optional-dependency message across the audit pack. The
+    command must be `pip install "forge-scripts[<extra>]"` — valid from
+    any consumer repo — never an editable `-e ".[...]"` form, which only
+    works from a checkout of forge itself.
+
+    Args:
+        package: Import name of the missing dependency (e.g. ``vulture``).
+        extra: forge-scripts extra that provides the package.
+
+    Returns:
+        One-line hint naming the package and its install command.
+    """
+    return f'`{package}` is not installed; run `pip install "forge-scripts[{extra}]"`.'

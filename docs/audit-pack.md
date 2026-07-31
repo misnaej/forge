@@ -27,15 +27,20 @@ articulate the design problem and propose a fix.
 
 ## Installation
 
+Every audit CLI ships with the core install — `pip install
+forge-scripts` is enough to run all of them, including
+`forge-audit-orphans` (`vulture` is a core dependency). The `[audit]`
+extra adds `jsonschema` and `PyYAML` (both MIT) for `forge-audit-data`'s
+schema-validation and YAML checks:
+
 ```bash
-pip install -e ".[audit]"
+pip install "forge-scripts[audit]"
 ```
 
-This installs `vulture`, `jsonschema`, and `PyYAML` (all MIT). For
-declarative module-dependency rules, also install the tach extra:
+For declarative module-dependency rules, also install the tach extra:
 
 ```bash
-pip install -e ".[audit,audit-tach]"
+pip install "forge-scripts[audit,audit-tach]"
 ```
 
 `tach` (MIT) is consulted automatically when a `tach.toml` sits at the
@@ -151,9 +156,9 @@ whether the rule being suppressed hides a design problem:
 
 ### `forge-audit-orphans`
 
-**What.** Wraps `vulture` (optional `[audit]` extra). Reports symbols
-flagged unused with confidence ≥ `--min-confidence` (default 80).
-Fails loudly if `vulture` is not importable.
+**What.** Wraps `vulture` (core dependency — works out of the box).
+Reports symbols flagged unused with confidence ≥ `--min-confidence`
+(default 80). Fails loudly if `vulture` is not importable.
 
 **Severity.**
 
@@ -177,9 +182,8 @@ roots. Skips lock files (`package-lock.json`, `yarn.lock`, …).
 - JSON: must parse. If `<file>.schema.json` sits alongside AND
   `jsonschema` is importable, validate.
 - TOML: must parse (Python 3.11+).
-- YAML: must parse. PyYAML ships with the `[audit]` extra, so it is
-  present in any environment set up per [Installation](#installation);
-  if it is somehow missing, YAML files are skipped gracefully.
+- YAML: must parse. PyYAML ships with the `[audit]` extra; without it,
+  YAML files are skipped with a visible LOW finding.
 
 **Severity.**
 
