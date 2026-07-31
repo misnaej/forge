@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 658 symbols._
+_62 modules, 659 symbols._
 
 ## `forge`
 
@@ -93,7 +93,6 @@ _62 modules, 658 symbols._
 - `write_log(name: str, findings: Iterable[Finding], summary: str, *, output: Path | None = None) -> Path` — Write findings + summary to ``code_health/audit_<name>.log``.
 - `exit_code_for(findings: Iterable[Finding]) -> int` — Map findings to a process exit code.
 - `count_by_severity(findings: Iterable[Finding]) -> dict[Severity, int]` — Tally findings per severity tier.
-- `missing_dependency_hint(package: str, *, extra: str = 'audit') -> str` — Format a user-facing hint for a missing optional dependency.
 
 ## `forge.audit.data`
 
@@ -446,7 +445,9 @@ _62 modules, 658 symbols._
 - `parse_semver(version: str) -> tuple[int, int, int] | None` — Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
 - `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
 - `latest_v_tag(root: Path) -> str | None` — Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
-- `require_cli(name: str, *, caller: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
+- `forge_install_command(extra: str | None = None) -> str` — Format the consumer-valid install command for forge-scripts.
+- `missing_dependency_hint(package: str, *, extra: str | None = None) -> str` — Format a user-facing hint for a missing dependency.
+- `require_cli(name: str, *, caller: str | None = None, extra: str | None = None, hint: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
 - `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.
 - `gh_api(*args: str, timeout: int = 10) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.

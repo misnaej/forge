@@ -126,7 +126,7 @@ convention without checking current code still matches. Asking beats reverting.
   `forge-doctor`, `forge-precommit`) must **fail loudly** when it's missing —
   never silently fall back to a raw tool (`ruff`, `gh`, `git`) or `python -m`. The
   error points at the install command (e.g. `forge-scripts not installed. Run
-  \`pip install -e ".[dev]"\``). The wrappers give consumers a uniform interface
+  \`pip install forge-scripts\``). The wrappers give consumers a uniform interface
   forge can extend (logging, defaults, version checks); silent fallbacks defeat that.
 
 ---

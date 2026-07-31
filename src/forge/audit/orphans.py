@@ -34,12 +34,11 @@ from forge.audit.common import (
     exit_code_for,
     iter_files,
     make_audit_parser,
-    missing_dependency_hint,
     relpath,
     resolve_roots,
     write_log,
 )
-from forge.git_utils import configure_cli_logging
+from forge.git_utils import configure_cli_logging, missing_dependency_hint
 
 
 configure_cli_logging()

@@ -113,7 +113,7 @@ Steps fixed:
 
 Dep pins bumped (if any):
   - <package>: <old> → <new> in <file>
-  REINSTALL REQUIRED: pip install -e ".[dev]"
+  REINSTALL REQUIRED: ./dev/setup.sh (forge; or `pip install -e ".[dev]"`) — consumers: your repo's env refresh (e.g. `pip install -e .`)
 
 Human attention required:
   - <unfixable advisories / secrets / stuck steps>

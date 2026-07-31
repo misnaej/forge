@@ -175,7 +175,49 @@ def latest_v_tag(root: Path) -> str | None:
     return out.splitlines()[0]
 
 
-def require_cli(name: str, *, caller: str | None = None) -> None:
+def forge_install_command(extra: str | None = None) -> str:
+    """Format the consumer-valid install command for forge-scripts.
+
+    Args:
+        extra: Optional forge-scripts extras group (e.g. ``"typecheck"``).
+
+    Returns:
+        ``pip install forge-scripts``, with the bracketed extras group
+        (quoted for shell safety) when *extra* is given.
+    """
+    if extra is None:
+        return "pip install forge-scripts"
+    return f'pip install "forge-scripts[{extra}]"'
+
+
+def missing_dependency_hint(package: str, *, extra: str | None = None) -> str:
+    """Format a user-facing hint for a missing dependency.
+
+    Single source of truth for the install command named in every
+    missing-dependency message forge emits. The command must be valid
+    from any consumer repo — never an editable ``-e ".[...]"`` form,
+    which only works from a checkout of forge itself.
+
+    Args:
+        package: Distribution (pip) name of the missing dependency — the
+            name a user recognizes from install output (e.g. ``vulture``,
+            ``PyYAML``), not the import name where the two diverge.
+        extra: forge-scripts extras group that provides the package, or
+            ``None`` when it ships with the core install.
+
+    Returns:
+        One-line hint naming the package and its install command.
+    """
+    return f"`{package}` is not installed; run `{forge_install_command(extra)}`."
+
+
+def require_cli(
+    name: str,
+    *,
+    caller: str | None = None,
+    extra: str | None = None,
+    hint: str | None = None,
+) -> None:
     """Abort with a clear install hint if *name* isn't on PATH.
 
     Foundation rule (FOUNDATION §2): forge-shipped CLIs (and external
@@ -190,6 +232,13 @@ def require_cli(name: str, *, caller: str | None = None) -> None:
             ``"forge-precommit"``). Used to prefix the error so the user
             knows which tool reported the missing dependency. Defaults
             to ``"forge"``.
+        extra: forge-scripts extras group that provides *name* (e.g.
+            ``"typecheck"`` for ``pyrefly``). Use for tools gated behind
+            a forge-scripts optional-dependency group; omit for tools the
+            core install carries.
+        hint: Full replacement for the default install line. Takes
+            precedence over *extra*. Use for external tools with no
+            forge-scripts relationship (e.g. ``gh``).
 
     Raises:
         SystemExit: If *name* is not on PATH. Exit code is 2 (config error).
@@ -197,10 +246,12 @@ def require_cli(name: str, *, caller: str | None = None) -> None:
     if shutil.which(name) is not None:
         return
     prefix = caller or "forge"
+    line = hint or (
+        f"Run `{forge_install_command(extra)}` "
+        "(forge contributors: `./dev/setup.sh`) and retry."
+    )
     sys.stderr.write(
-        f"{prefix}: required CLI '{name}' not on PATH.\n"
-        f'  Run `pip install -e ".[dev]"` (or your repo\'s equivalent) '
-        "and retry.\n",
+        f"{prefix}: required CLI '{name}' not on PATH.\n  {line}\n",
     )
     raise SystemExit(2)
 

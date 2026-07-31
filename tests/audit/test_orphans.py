@@ -12,13 +12,14 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge.audit import common, orphans
-from forge.audit.common import Scope, Severity, missing_dependency_hint
+from forge.audit.common import Scope, Severity
 from forge.audit.orphans import (
     OrphansConfig,
     _build_findings,
     _severity,
     run,
 )
+from forge.git_utils import missing_dependency_hint
 
 
 if TYPE_CHECKING:
@@ -110,6 +111,16 @@ def fake_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_vulture_missing_hint_matches_common_helper() -> None:
     """Verify ``VULTURE_MISSING_HINT`` is derived from the common helper."""
     assert missing_dependency_hint("vulture") == orphans.VULTURE_MISSING_HINT
+
+
+def test_vulture_missing_hint_has_no_extra_bracket() -> None:
+    """VULTURE_MISSING_HINT names the bare install command, no extras bracket.
+
+    vulture ships with the core install, not an extras group, so a
+    bracketed ``forge-scripts[...]`` form in this hint would send the
+    user to a command that does not install vulture.
+    """
+    assert "[" not in orphans.VULTURE_MISSING_HINT
 
 
 def test_severity_medium_at_or_above_floor() -> None:
