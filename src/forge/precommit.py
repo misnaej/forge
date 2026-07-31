@@ -498,7 +498,7 @@ def step_env_sync(repo_root: Path) -> StepResult:
                     f"console script(s) not registered — {', '.join(missing)}.\n\n"
                     "A [project.scripts] entry was added since you last installed, so "
                     "the gate may run old code. Re-run `./dev/setup.sh` (or "
-                    '`pip install -e ".[dev]"`, or your repo\'s equivalent) to '
+                    "`pip install -e .`, or your repo's equivalent) to "
                     "register the new entry point(s)."
                 ),
                 non_blocking=not blocking,
@@ -1346,7 +1346,7 @@ def step_doctest(repo_root: Path) -> StepResult:
             output="(no source dirs detected — skipped)",
             skipped=True,
         )
-    require_cli("pytest", caller="forge-precommit")
+    require_cli("pytest", caller="forge-precommit", extra="test")
     passed, output = _run(
         ["pytest", "--doctest-modules", "--doctest-continue-on-failure", "--", *paths],
         cwd=repo_root,
@@ -1412,7 +1412,7 @@ def step_typecheck(repo_root: Path) -> StepResult:
                 output="(no modified files in scope — skipped)",
                 skipped=True,
             )
-    require_cli("pyrefly", caller="forge-precommit")
+    require_cli("pyrefly", caller="forge-precommit", extra="typecheck")
     passed, output = _run(["pyrefly", "check", "--", *paths], cwd=repo_root)
     return StepResult(
         name="typecheck", passed=passed, output=output, non_blocking=not blocking

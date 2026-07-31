@@ -37,6 +37,16 @@ versions follow forge's rolling-next convention.
   if a check's diff scope changes for you, your local base was stale.
 
 ### Fixes
+- **Every missing-dependency hint now works from consumer repos.** The
+  remaining `pip install -e ".[dev]"` hints (`require_cli`, the
+  post-merge/post-checkout hook helper) only worked from a forge
+  checkout; they now name consumer-valid commands via
+  `forge.git_utils.missing_dependency_hint` / `forge_install_command`
+  (relocated from `forge.audit.common`). `require_cli` gained per-site
+  precision: `pyrefly` → `forge-scripts[typecheck]`, `pytest` →
+  `forge-scripts[test]`, `gh` → GitHub CLI install link (a pip hint
+  never installed `gh`). Also fixes the v2.27.4 vulture hint, which
+  pointed at the `[audit]` extra that no longer contains vulture.
 - **`forge-audit-orphans` runs on a default install.** `vulture` moved
   from the `[audit]` extra into core dependencies — the design-checker
   Full Review mandates the orphans recipe, but a bare

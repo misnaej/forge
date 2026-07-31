@@ -9,7 +9,7 @@ set -euo pipefail
 
 if ! command -v install-forge-claude-md >/dev/null 2>&1; then
     echo "[forge] install-forge-claude-md not on PATH." >&2
-    echo "[forge] Run \`pip install -e \".[dev]\"\` (or your repo's equivalent)." >&2
+    echo "[forge] Run \`pip install forge-scripts\` (or your repo's equivalent)." >&2
     exit 1
 fi
 

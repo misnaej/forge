@@ -1461,3 +1461,107 @@ def test_get_modified_files_routes_through_resolve_base_branch_ref(
     files = git_utils.get_modified_files(repo_root=tmp_path, base_branch="main")
     assert files == ["src/a.py"]
     assert calls == [(tmp_path, "main")]
+
+
+# ---------------------------------------------------------------------------
+# forge_install_command
+# ---------------------------------------------------------------------------
+
+
+def test_forge_install_command_no_extra_returns_bare_pip_install() -> None:
+    """No extra names the bare core-install command."""
+    assert git_utils.forge_install_command() == "pip install forge-scripts"
+
+
+def test_forge_install_command_with_extra_quotes_bracket() -> None:
+    """An extra names the quoted bracketed extras-group form."""
+    assert (
+        git_utils.forge_install_command("typecheck")
+        == 'pip install "forge-scripts[typecheck]"'
+    )
+
+
+# ---------------------------------------------------------------------------
+# missing_dependency_hint
+# ---------------------------------------------------------------------------
+
+
+def test_missing_dependency_hint_no_extra_names_core_install() -> None:
+    """No ``extra`` names the package and the bare consumer-safe pip command."""
+    hint = git_utils.missing_dependency_hint("vulture")
+    assert "`vulture`" in hint
+    assert "pip install forge-scripts" in hint
+    assert "[" not in hint
+    assert '-e ".[' not in hint
+
+
+def test_missing_dependency_hint_custom_extra_substitutes_bracket() -> None:
+    """A custom ``extra`` substitutes into the bracket, not just the default."""
+    hint = git_utils.missing_dependency_hint("jsonschema", extra="docs")
+    assert "`jsonschema`" in hint
+    assert 'forge-scripts[docs]"' in hint
+    assert '-e ".[' not in hint
+
+
+# ---------------------------------------------------------------------------
+# require_cli
+# ---------------------------------------------------------------------------
+
+
+def test_require_cli_noop_when_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A CLI found on PATH returns None without raising."""
+    monkeypatch.setattr(git_utils.shutil, "which", lambda _name: "/fake/bin")
+    assert git_utils.require_cli("ruff") is None
+
+
+def test_require_cli_default_hint_has_no_extra(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A missing CLI with no ``extra``/``hint`` names the bare install command."""
+    monkeypatch.setattr(git_utils.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit) as exc_info:
+        git_utils.require_cli("ruff")
+    err = capsys.readouterr().err
+    assert "pip install forge-scripts" in err
+    assert "or your repo's equivalent" in err
+    assert "[" not in err
+    assert exc_info.value.code == 2
+
+
+def test_require_cli_extra_threads_into_default_hint(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``extra`` substitutes into the default hint's bracketed extras group."""
+    monkeypatch.setattr(git_utils.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        git_utils.require_cli("pyrefly", extra="typecheck")
+    err = capsys.readouterr().err
+    assert 'pip install "forge-scripts[typecheck]"' in err
+
+
+def test_require_cli_hint_overrides_extra(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An explicit ``hint`` replaces the default line even when ``extra`` is set."""
+    monkeypatch.setattr(git_utils.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        git_utils.require_cli("gh", extra="typecheck", hint="Custom line.")
+    err = capsys.readouterr().err
+    assert "Custom line." in err
+    assert "forge-scripts[typecheck]" not in err
+
+
+def test_require_cli_caller_prefixes_message(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``caller`` prefixes the error; the default prefix is ``"forge"``."""
+    monkeypatch.setattr(git_utils.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        git_utils.require_cli("ruff", caller="forge-precommit")
+    err = capsys.readouterr().err
+    assert err.startswith("forge-precommit: required CLI")
+
+    with pytest.raises(SystemExit):
+        git_utils.require_cli("ruff")
+    err = capsys.readouterr().err
+    assert err.startswith("forge: required CLI")

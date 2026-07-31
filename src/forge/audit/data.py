@@ -42,12 +42,11 @@ from forge.audit.common import (
     exit_code_for,
     iter_files,
     make_audit_parser,
-    missing_dependency_hint,
     relpath,
     resolve_roots,
     write_log,
 )
-from forge.git_utils import configure_cli_logging
+from forge.git_utils import configure_cli_logging, missing_dependency_hint
 
 
 if TYPE_CHECKING:
@@ -226,7 +225,7 @@ def _check_jsonschema(path: Path, data: object) -> list[Finding]:
                 line=0,
                 message=(
                     f"schema present at {schema_path.name} but "
-                    + missing_dependency_hint("jsonschema")
+                    + missing_dependency_hint("jsonschema", extra="audit")
                 ),
             ),
         ]
@@ -306,7 +305,10 @@ def _check_yaml(path: Path) -> list[Finding]:
                 severity=Severity.LOW,
                 path=rel,
                 line=0,
-                message="YAML file skipped: " + missing_dependency_hint("PyYAML"),
+                message=(
+                    "YAML file skipped: "
+                    + missing_dependency_hint("PyYAML", extra="audit")
+                ),
             ),
         ]
     try:

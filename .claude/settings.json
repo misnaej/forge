@@ -14,7 +14,17 @@
   "permissions": {
     "allow": [
       "Bash(forge-doctor)",
+      "Bash(forge-doctor *)",
+      "Bash(forge-precommit)",
       "Bash(forge-precommit *)",
+      "Bash(forge-check-main-tags)",
+      "Bash(forge-check-main-tags *)",
+      "Bash(forge-smart-test *)",
+      "Bash(verify-forge-docstrings *)",
+      "Bash(verify-forge-agent-doc)",
+      "Bash(verify-forge-agent-doc *)",
+      "Bash(verify-forge-changelog-history)",
+      "Bash(verify-forge-repo-structure)",
       "Bash(forge-next-prep *)",
       "Bash(forge-audit-all *)",
       "Bash(forge-audit-claims *)",
@@ -33,6 +43,7 @@
       "Bash(install-forge-claude-md *)",
       "Bash(install-forge-labels)",
       "Bash(python -m pytest *)",
+      "Bash(pytest *)",
       "Bash(git *)",
       "Bash(gh pr *)",
       "Bash(gh issue *)"

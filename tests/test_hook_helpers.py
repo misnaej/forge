@@ -46,7 +46,9 @@ def test_drift_check_hard_fails_with_remediation_when_cli_missing(
     msgs = "\n".join(r.getMessage() for r in caplog.records)
     assert "post-merge" in msgs
     assert "install-forge-claude-md not on PATH" in msgs
-    assert 'pip install -e ".[dev]"' in msgs
+    assert "pip install forge-scripts" in msgs
+    assert "or your repo's equivalent" in msgs
+    assert '-e ".[' not in msgs
 
 
 def test_drift_check_invokes_cli_when_present(
