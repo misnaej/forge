@@ -693,7 +693,7 @@ def test_create_annotated_tag_default_argv(
 
     monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
     git_utils.create_annotated_tag(tmp_path, "v1.0.0")
-    assert captured[-1] == ("tag", "-a", "v1.0.0", "-m", "v1.0.0", "HEAD")
+    assert captured[-1] == ("tag", "-a", "-m", "v1.0.0", "--", "v1.0.0", "HEAD")
 
 
 def test_create_annotated_tag_commit_and_force_prepend_dash_f(
@@ -708,7 +708,16 @@ def test_create_annotated_tag_commit_and_force_prepend_dash_f(
 
     monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
     git_utils.create_annotated_tag(tmp_path, "v1.0.0", commit="abc123", force=True)
-    assert captured[-1] == ("tag", "-f", "-a", "v1.0.0", "-m", "v1.0.0", "abc123")
+    assert captured[-1] == (
+        "tag",
+        "-f",
+        "-a",
+        "-m",
+        "v1.0.0",
+        "--",
+        "v1.0.0",
+        "abc123",
+    )
 
 
 def test_create_annotated_tag_prepends_fallback_identity_when_probe_empty(
@@ -730,8 +739,9 @@ def test_create_annotated_tag_prepends_fallback_identity_when_probe_empty(
         "user.email=forge-release@users.noreply.github.com",
         "tag",
         "-a",
-        "v1.0.0",
         "-m",
+        "v1.0.0",
+        "--",
         "v1.0.0",
         "HEAD",
     )

@@ -405,7 +405,9 @@ def run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
             non-zero. Git's captured stderr is logged before the raise —
             without it, CI logs show only a bare exit code and the actual
             git message ("unable to auto-detect email address", …) is
-            invisible.
+            invisible. Invariant for callers: never pass a
+            credential-bearing arg or URL (e.g. a token-embedded remote)
+            — a failure would echo it verbatim into CI logs.
     """
     try:
         proc = subprocess.run(
@@ -483,7 +485,9 @@ def create_annotated_tag(
         subprocess.CalledProcessError: When git fails for any other
             reason (stderr is logged by :func:`run_git`).
     """
-    args = ["tag", *(["-f"] if force else []), "-a", tag, "-m", tag, commit]
+    # `--` pins tag/commit as positionals so a `-`-prefixed value can
+    # never be parsed as a git option, independent of caller validation.
+    args = ["tag", *(["-f"] if force else []), "-a", "-m", tag, "--", tag, commit]
     run_git(*_fallback_identity_args(repo_root), *args, cwd=repo_root)
 
 
