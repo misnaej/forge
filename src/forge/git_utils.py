@@ -381,7 +381,12 @@ def _run_git(*args: str, cwd: Path | None = None) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
+def run_git(
+    *args: str,
+    cwd: Path | None = None,
+    check: bool = True,
+    log_errors: bool = True,
+) -> str:
     """Run ``git`` with *args* in *cwd* and return stripped stdout.
 
     The explicit-``cwd`` git runner shared by the release CLIs
@@ -396,6 +401,9 @@ def run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
         cwd: Working directory for the git invocation; defaults to the
             current directory.
         check: When ``True``, raise on a non-zero exit.
+        log_errors: When ``False``, suppress the failure log line and
+            just raise — for callers that tolerate an expected failure
+            (e.g. a raced tag push) and own the messaging themselves.
 
     Returns:
         Trimmed stdout.
@@ -419,7 +427,7 @@ def run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
         )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
-        if detail:
+        if log_errors and detail:
             logger.exception(
                 "git %s failed (exit %d): %s", " ".join(args), exc.returncode, detail
             )

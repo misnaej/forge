@@ -318,8 +318,10 @@ def _prepare_from_changelog(
         ``(tag, error)`` tuple. On success, ``tag`` is the resolved version and
         ``error`` is ``None``. On failure, ``tag`` is ``None`` and ``error``
         describes the issue. Idempotency is handled here: if the tag
-        already exists, returns ``("v...", None)`` so the caller can exit 0
-        before other guards.
+        already exists and no entries are stranded under its heading,
+        returns ``("v...", None)`` so the caller can exit 0 before other
+        guards; with stranded entries it returns ``(None, error)`` instead
+        (see :func:`_stranded_entries_error`).
     """
     tag, declared_err = _declared_tag_or_error(repo_root)
     if declared_err or tag is None:
@@ -375,13 +377,19 @@ def _cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> i
         logger.warning("Tagged %s locally — no `origin` remote to push to.", tag)
         return 0
     try:
-        run_git("push", "origin", tag, cwd=repo_root)
-    except subprocess.CalledProcessError:
+        # race_tolerant suppresses run_git's failure log: a raced push is
+        # an expected, benign outcome and must not emit ERROR lines that
+        # alerting would flag. Genuine failures re-surface stderr below.
+        run_git("push", "origin", tag, cwd=repo_root, log_errors=not race_tolerant)
+    except subprocess.CalledProcessError as exc:
         if race_tolerant:
             run_git("fetch", "--tags", "--quiet", "origin", cwd=repo_root, check=False)
             if _tag_exists(repo_root, tag):
                 logger.info("%s appeared concurrently — already released.", tag)
                 return 0
+            detail = (exc.stderr or "").strip()
+            if detail:
+                logger.exception("git push origin %s failed: %s", tag, detail)
         logger.exception("Pushing %s to origin failed.", tag)
         return 1
     logger.info("Tagged and pushed %s", tag)

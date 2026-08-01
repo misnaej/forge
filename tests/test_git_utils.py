@@ -650,6 +650,25 @@ def test_run_git_check_true_failure_logs_git_stderr(
     assert any("Needed a single revision" in r.getMessage() for r in caplog.records)
 
 
+def test_run_git_log_errors_false_suppresses_failure_log(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``log_errors=False`` raises without an ERROR line (tolerated failures)."""
+    _init_git_repo(tmp_path)
+    with (
+        caplog.at_level(logging.ERROR, logger="forge.git_utils"),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        git_utils.run_git(
+            "rev-parse",
+            "--verify",
+            "nonexistent_branch_xyz",
+            cwd=tmp_path,
+            log_errors=False,
+        )
+    assert not caplog.records
+
+
 # ---------------------------------------------------------------------------
 # _fallback_identity_args
 # ---------------------------------------------------------------------------
