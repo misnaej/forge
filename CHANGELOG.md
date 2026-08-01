@@ -56,6 +56,14 @@ versions follow forge's rolling-next convention.
   `forge.git_utils.create_annotated_tag` seam now probes
   `git var GIT_COMMITTER_IDENT` and injects a `forge-release` fallback
   identity only when git has none — a configured identity always wins.
+- **`forge-release --from-changelog` flags stranded changelog entries.**
+  The idempotent no-op ("top heading already tagged → exit 0") also
+  covered the failure chain where a failed/raced tag-cut left later PRs
+  appending entries under an already-released heading — their commits
+  shipped untagged (`X.Y.Z.devN`) while CI stayed green. The no-op now
+  diffs `CHANGELOG.md` against the released tag and exits 1 with a
+  fix-forward message when entries are stranded; no-version merges (which
+  never touch the changelog) still rest at exit 0.
 - **`run_git` surfaces git's stderr on failure.** A failing git call
   previously raised a bare `CalledProcessError` ("exit status 128") with
   git's actual message captured but never logged; every git failure in

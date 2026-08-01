@@ -528,6 +528,73 @@ def test_main_from_changelog_idempotent_when_already_tagged(
     assert not _tag_exists(bare, "v1.2.3")
 
 
+def test_main_from_changelog_flags_stranded_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Entries appended under an already-tagged heading → exit 1, not no-op."""
+    work, _bare = _repo_with_origin(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.2.3\n- released work\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "v1.2.3"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    (work / "CHANGELOG.md").write_text(
+        "## v1.2.3\n- released work\n- stranded feature\n"
+    )
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "stranded"], cwd=work, env=_GIT_ENV, check=True
+    )
+    _single_track_cfg(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
+    monkeypatch.chdir(work)
+    with caplog.at_level(logging.ERROR, logger="forge.release"):
+        assert release.main() == 1
+    assert any("stranded" in r.getMessage() for r in caplog.records)
+
+
+def test_main_from_changelog_idempotent_when_ahead_without_changelog_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Commits after the tag that skip the changelog (no-version) still rest."""
+    work, _bare = _repo_with_origin(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.2.3\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "v1.2.3"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    (work / "ci.txt").write_text("tweak\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "chore [no-version]"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    _single_track_cfg(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
+    monkeypatch.chdir(work)
+    with caplog.at_level(logging.INFO, logger="forge.release"):
+        assert release.main() == 0
+    assert any("already released" in r.getMessage() for r in caplog.records)
+
+
 def test_main_from_changelog_stale_heading_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
