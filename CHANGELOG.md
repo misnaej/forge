@@ -48,6 +48,19 @@ versions follow forge's rolling-next convention.
   `forge-config --list`; chain documented in `docs/consumer-release.md`.
 
 ### Fixes
+- **Annotated tags no longer fail on identity-less CI runners.** All
+  three tag-cutting CLIs (`forge-release`, `forge-next-prep --tag`,
+  `forge-check-main-tags --fix`) died with git exit 128 ("unable to
+  auto-detect email address") on a fresh runner, hidden until the first
+  merge that actually bumps a version. One shared
+  `forge.git_utils.create_annotated_tag` seam now probes
+  `git var GIT_COMMITTER_IDENT` and injects a `forge-release` fallback
+  identity only when git has none — a configured identity always wins.
+- **`run_git` surfaces git's stderr on failure.** A failing git call
+  previously raised a bare `CalledProcessError` ("exit status 128") with
+  git's actual message captured but never logged; every git failure in
+  every forge CLI now logs `git <args> failed (exit <n>): <stderr>`
+  before raising.
 - **Every missing-dependency hint now works from consumer repos.** The
   remaining `pip install -e ".[dev]"` hints (`require_cli`, the
   post-merge/post-checkout hook helper) only worked from a forge

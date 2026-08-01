@@ -673,6 +673,7 @@ def test_cut_release_race_tolerant_push_failure_with_remote_tag(
         return ""
 
     monkeypatch.setattr(release, "run_git", _fake_git)
+    monkeypatch.setattr(release, "create_annotated_tag", lambda *_a, **_kw: None)
     with caplog.at_level(logging.INFO, logger="forge.release"):
         result = release._cut_release(tmp_path, "v1.0.0", race_tolerant=True)
     assert result == 0
@@ -694,6 +695,7 @@ def test_cut_release_push_failure_without_tolerance_returns_one(
         return ""
 
     monkeypatch.setattr(release, "run_git", _fake_git)
+    monkeypatch.setattr(release, "create_annotated_tag", lambda *_a, **_kw: None)
     with caplog.at_level(logging.ERROR, logger="forge.release"):
         result = release._cut_release(tmp_path, "v1.0.0", race_tolerant=False)
     assert result == 1
@@ -713,6 +715,7 @@ def test_cut_release_race_tolerant_push_failure_without_remote_tag(
         return ""  # tag --list and ls-remote report nothing
 
     monkeypatch.setattr(release, "run_git", _fake_git)
+    monkeypatch.setattr(release, "create_annotated_tag", lambda *_a, **_kw: None)
     assert release._cut_release(tmp_path, "v1.0.0", race_tolerant=True) == 1
 
 

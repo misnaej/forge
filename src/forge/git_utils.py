@@ -402,16 +402,89 @@ def run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
 
     Raises:
         subprocess.CalledProcessError: When ``check=True`` and git exits
-            non-zero.
+            non-zero. Git's captured stderr is logged before the raise —
+            without it, CI logs show only a bare exit code and the actual
+            git message ("unable to auto-detect email address", …) is
+            invisible.
     """
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=check,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=check,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        if detail:
+            logger.exception(
+                "git %s failed (exit %d): %s", " ".join(args), exc.returncode, detail
+            )
+        raise
     return proc.stdout.strip()
+
+
+# The identity injected when a runner has none (fresh CI). Module-level
+# so tests can exercise the exact production flags against real git.
+_FALLBACK_IDENTITY = (
+    "-c",
+    "user.name=forge-release",
+    "-c",
+    "user.email=forge-release@users.noreply.github.com",
+)
+
+
+def _fallback_identity_args(repo_root: Path) -> list[str]:
+    """Return ``-c`` identity flags when git has no usable tagger identity.
+
+    ``git var GIT_COMMITTER_IDENT`` evaluates the same chain ``git tag``
+    does (config, ``GIT_COMMITTER_*`` env, auto-detection), so any real
+    identity wins and the fallback only fires where tagging would
+    otherwise die with exit 128 (fresh CI runners). On failure that
+    subcommand writes nothing to stdout (its message goes to stderr), so
+    an empty probe result means "no identity" — a property of ``git
+    var``, not of :func:`run_git`'s ``check=False`` mode.
+
+    Args:
+        repo_root: Repo root for the probe.
+
+    Returns:
+        ``["-c", "user.name=…", "-c", "user.email=…"]`` when no identity
+        is available, else an empty list.
+    """
+    if run_git("var", "GIT_COMMITTER_IDENT", cwd=repo_root, check=False):
+        return []
+    return list(_FALLBACK_IDENTITY)
+
+
+def create_annotated_tag(
+    repo_root: Path,
+    tag: str,
+    *,
+    commit: str = "HEAD",
+    force: bool = False,
+) -> None:
+    """Create annotated *tag* at *commit*, surviving identity-less runners.
+
+    The one tag-creation seam shared by every forge CLI that cuts an
+    annotated tag (``forge-release``, ``forge-next-prep --tag``,
+    ``forge-check-main-tags --fix``). Injects a fallback tagger identity
+    only when git has none (see :func:`_fallback_identity_args`) — an
+    annotated tag requires one, and a fresh CI runner configures none.
+
+    Args:
+        repo_root: Repo root.
+        tag: Tag name to create (also used as the tag message).
+        commit: Commit-ish to tag.
+        force: Pass ``-f`` to relocate an existing tag.
+
+    Raises:
+        subprocess.CalledProcessError: When git fails for any other
+            reason (stderr is logged by :func:`run_git`).
+    """
+    args = ["tag", *(["-f"] if force else []), "-a", tag, "-m", tag, commit]
+    run_git(*_fallback_identity_args(repo_root), *args, cwd=repo_root)
 
 
 def resolve_current_branch(repo_root: Path) -> tuple[str, str] | None:

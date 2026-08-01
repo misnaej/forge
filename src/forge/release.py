@@ -54,6 +54,7 @@ from forge.changelog import changelog_lacks_entry, top_release_heading
 from forge.config import ForgeConfig, load_config
 from forge.git_utils import (
     configure_cli_logging,
+    create_annotated_tag,
     latest_v_tag,
     next_version,
     parse_semver,
@@ -310,7 +311,7 @@ def _cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> i
         ``0`` on success (including a tolerated race), ``1`` when the
         push failed for any other reason.
     """
-    run_git("tag", "-a", tag, "-m", tag, "HEAD", cwd=repo_root)
+    create_annotated_tag(repo_root, tag)
     if not run_git("remote", "get-url", "origin", cwd=repo_root, check=False):
         logger.warning("Tagged %s locally — no `origin` remote to push to.", tag)
         return 0

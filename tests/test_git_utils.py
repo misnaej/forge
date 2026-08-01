@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -623,6 +624,199 @@ def test_run_git_check_false_failure_returns_empty(tmp_path: Path) -> None:
         "rev-parse", "--verify", "nonexistent_branch_xyz", cwd=tmp_path, check=False
     )
     assert result == ""
+
+
+def test_run_git_check_true_failure_logs_git_stderr(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A failing git command logs git's captured stderr before re-raising.
+
+    Without this, CI logs show only a bare non-zero exit code — the
+    investigation behind #242/#243 needed the actual git message
+    ("fatal: ...") to diagnose an identity-less runner, and had only the
+    exit code to go on.
+
+    ``--verify`` is used to prevent git's passthrough mode (which echoes
+    bare unknown names to stdout with exit 0 instead of failing).
+    """
+    _init_git_repo(tmp_path)
+    with (
+        caplog.at_level(logging.ERROR, logger="forge.git_utils"),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        git_utils.run_git(
+            "rev-parse", "--verify", "nonexistent_branch_xyz", cwd=tmp_path
+        )
+    assert any("Needed a single revision" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _fallback_identity_args
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_identity_args_empty_when_identity_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A usable committer identity (non-empty probe) → no fallback flags."""
+    monkeypatch.setattr(git_utils, "run_git", lambda *_a, **_kw: "t <t@t> 0 +0000")
+    assert git_utils._fallback_identity_args(tmp_path) == []
+
+
+def test_fallback_identity_args_returns_forge_release_flags_when_probe_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty ``GIT_COMMITTER_IDENT`` probe → the forge-release ``-c`` flags."""
+    monkeypatch.setattr(git_utils, "run_git", lambda *_a, **_kw: "")
+    assert git_utils._fallback_identity_args(tmp_path) == [
+        "-c",
+        "user.name=forge-release",
+        "-c",
+        "user.email=forge-release@users.noreply.github.com",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# create_annotated_tag
+# ---------------------------------------------------------------------------
+
+
+def test_create_annotated_tag_default_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default call (``commit="HEAD"``, ``force=False``) builds the plain tag argv."""
+    captured: list[tuple[str, ...]] = []
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        captured.append(args)
+        return "t <t@t> 0 +0000" if args[:2] == ("var", "GIT_COMMITTER_IDENT") else ""
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    git_utils.create_annotated_tag(tmp_path, "v1.0.0")
+    assert captured[-1] == ("tag", "-a", "v1.0.0", "-m", "v1.0.0", "HEAD")
+
+
+def test_create_annotated_tag_commit_and_force_prepend_dash_f(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``force=True`` + an explicit ``commit`` prepend ``-f``, use that commit-ish."""
+    captured: list[tuple[str, ...]] = []
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        captured.append(args)
+        return "t <t@t> 0 +0000" if args[:2] == ("var", "GIT_COMMITTER_IDENT") else ""
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    git_utils.create_annotated_tag(tmp_path, "v1.0.0", commit="abc123", force=True)
+    assert captured[-1] == ("tag", "-f", "-a", "v1.0.0", "-m", "v1.0.0", "abc123")
+
+
+def test_create_annotated_tag_prepends_fallback_identity_when_probe_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty identity probe → the ``-c`` flags land ahead of ``tag`` in argv."""
+    captured: list[tuple[str, ...]] = []
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        captured.append(args)
+        return ""
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    git_utils.create_annotated_tag(tmp_path, "v1.0.0")
+    assert captured[-1] == (
+        "-c",
+        "user.name=forge-release",
+        "-c",
+        "user.email=forge-release@users.noreply.github.com",
+        "tag",
+        "-a",
+        "v1.0.0",
+        "-m",
+        "v1.0.0",
+        "HEAD",
+    )
+
+
+def test_create_annotated_tag_succeeds_with_no_git_identity_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: a fresh CI runner with no git identity anywhere (#242 repro).
+
+    MOCK SETUP: ``_fallback_identity_args`` is pinned to return the
+        production ``_FALLBACK_IDENTITY`` flags unconditionally — the
+        identity-less *probe* result cannot be forced portably (a dev
+        machine auto-detects an identity from ``getpwuid``/hostname, and
+        empty-string identity env vars would defeat ``-c`` flags too, so
+        even the fix could not tag). Everything downstream is real git:
+        config sources scrubbed (``HOME``, ``GIT_CONFIG_*``), identity
+        env vars unset, repo history created with inline ``-c`` identity.
+    EXPECTED BEHAVIOR: tag creation does not raise, the ref is a real
+        annotated ``tag`` object, and its tagger is the injected
+        ``forge-release`` identity — proving the production fallback
+        flags satisfy git wherever auto-detection would have failed
+        (``-c`` outranks config and auto-detection, so the assertion is
+        machine-independent).
+    """
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "initial",
+        ],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+
+    monkeypatch.setenv("HOME", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in (
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "EMAIL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(
+        git_utils,
+        "_fallback_identity_args",
+        lambda _root: list(git_utils._FALLBACK_IDENTITY),
+    )
+
+    git_utils.create_annotated_tag(tmp_path, "v1.0.0")
+
+    tag_type = subprocess.run(
+        ["git", "cat-file", "-t", "v1.0.0"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert tag_type == "tag"
+    tagger = subprocess.run(
+        ["git", "for-each-ref", "--format=%(taggername)", "refs/tags/v1.0.0"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert tagger == "forge-release"
 
 
 # ---------------------------------------------------------------------------
