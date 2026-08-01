@@ -69,7 +69,9 @@ versions follow forge's rolling-next convention.
   previously raised a bare `CalledProcessError` ("exit status 128") with
   git's actual message captured but never logged; every git failure in
   every forge CLI now logs `git <args> failed (exit <n>): <stderr>`
-  before raising.
+  before raising (suppressible per call via `log_errors=False` for
+  tolerated failures like a raced tag push, where the caller owns the
+  messaging).
 - **Every missing-dependency hint now works from consumer repos.** The
   remaining `pip install -e ".[dev]"` hints (`require_cli`, the
   post-merge/post-checkout hook helper) only worked from a forge

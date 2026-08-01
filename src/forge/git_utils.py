@@ -410,8 +410,9 @@ def run_git(
 
     Raises:
         subprocess.CalledProcessError: When ``check=True`` and git exits
-            non-zero. Git's captured stderr is logged before the raise —
-            without it, CI logs show only a bare exit code and the actual
+            non-zero. Git's captured stderr is logged before the raise
+            (when ``log_errors`` is ``True``, the default) — without it,
+            CI logs show only a bare exit code and the actual
             git message ("unable to auto-detect email address", …) is
             invisible. Invariant for callers: never pass a
             credential-bearing arg or URL (e.g. a token-embedded remote)

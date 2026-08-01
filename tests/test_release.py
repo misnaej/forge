@@ -786,6 +786,36 @@ def test_cut_release_race_tolerant_push_failure_without_remote_tag(
     assert release._cut_release(tmp_path, "v1.0.0", race_tolerant=True) == 1
 
 
+def test_cut_release_push_wires_log_errors_off_race_tolerant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: the push's ``log_errors`` kwarg must track ``race_tolerant``.
+
+    MOCK SETUP: ``release.run_git`` replaced by a spy recording the
+        ``log_errors`` kwarg of every ``push`` invocation (succeeding, so
+        no failure branches run); ``create_annotated_tag`` stubbed out.
+    EXPECTED BEHAVIOR: ``race_tolerant=True`` passes ``log_errors=False``
+        (a raced push must not emit ERROR lines); ``race_tolerant=False``
+        passes the default ``True``. Inverting the wiring in
+        ``_cut_release`` flips this assertion — the regression pin the
+        suppression mechanism's own unit test cannot provide.
+    """
+    push_log_errors: list[object] = []
+
+    def _fake_git(*args: str, **kw: object) -> str:
+        if args and args[0] == "push":
+            push_log_errors.append(kw.get("log_errors", True))
+        if args and args[0] == "remote":
+            return "https://example.invalid/origin.git"
+        return ""
+
+    monkeypatch.setattr(release, "run_git", _fake_git)
+    monkeypatch.setattr(release, "create_annotated_tag", lambda *_a, **_kw: None)
+    assert release._cut_release(tmp_path, "v1.0.0", race_tolerant=True) == 0
+    assert release._cut_release(tmp_path, "v1.0.0", race_tolerant=False) == 0
+    assert push_log_errors == [False, True]
+
+
 def test_main_from_changelog_model_guard_beats_idempotency(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

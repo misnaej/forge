@@ -387,10 +387,11 @@ def _cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> i
             if _tag_exists(repo_root, tag):
                 logger.info("%s appeared concurrently — already released.", tag)
                 return 0
-            detail = (exc.stderr or "").strip()
-            if detail:
-                logger.exception("git push origin %s failed: %s", tag, detail)
-        logger.exception("Pushing %s to origin failed.", tag)
+        # In race_tolerant mode run_git's own failure log was suppressed,
+        # so append git's message here; one exception log either way.
+        detail = (exc.stderr or exc.stdout or "").strip()
+        suffix = f": {detail}" if race_tolerant and detail else "."
+        logger.exception("Pushing %s to origin failed%s", tag, suffix)
         return 1
     logger.info("Tagged and pushed %s", tag)
     return 0
