@@ -36,6 +36,17 @@ versions follow forge's rolling-next convention.
   an untouched `CHANGELOG.md`). No action needed beyond `forge-upgrade`;
   if a check's diff scope changes for you, your local base was stale.
 
+### Features
+- **Deferred changelog timing — `[tool.forge.changelog].precommit_enforce`.**
+  Default `true` keeps today's behavior (the `changelog_updated` gate
+  fires at every local commit). Set `false` for deferred mode: local
+  commits — human or agent — self-skip the gate (no mid-PR changelog
+  merge conflicts), CI keeps failing with an expected-until-wrap-up
+  message, and the `/pr` wrap-up authors the missing bullet
+  (mandatory, not skip-when-absent) to flip CI green before merge.
+  Orthogonal to `blocking` (timing vs severity). Declared in
+  `forge-config --list`; chain documented in `docs/consumer-release.md`.
+
 ### Fixes
 - **Every missing-dependency hint now works from consumer repos.** The
   remaining `pip install -e ".[dev]"` hints (`require_cli`, the
