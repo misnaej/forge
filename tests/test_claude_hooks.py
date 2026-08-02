@@ -415,6 +415,27 @@ def test_continuation_delete_blocks_plan_directory() -> None:
     assert _run_hook(_CONTINUATION_DELETE, "rm -rf .plan/") == 2
 
 
+def test_continuation_delete_blocks_glob_forms() -> None:
+    """Glob shapes expanding to the directory's contents stay blocked.
+
+    Security review of the anchor rewrite: the shell expands these to the
+    directory's files (taking CONTINUATION.md down) even though the path
+    text does not literally end at `.plan` — the terminator classes must
+    treat glob metacharacters and `/.`-style suffixes as whole-directory
+    deletion, not as named siblings.
+    """
+    assert _run_hook(_CONTINUATION_DELETE, "rm -rf .plan/*") == 2
+    assert _run_hook(_CONTINUATION_DELETE, "rm -rf .plan*") == 2
+    assert _run_hook(_CONTINUATION_DELETE, "rm .plan?") == 2
+    assert _run_hook(_CONTINUATION_DELETE, "rm -rf .plan/{a,b}") == 2
+    assert _run_hook(_CONTINUATION_DELETE, "rm -rf .plan/.") == 2
+
+
+def test_continuation_delete_blocks_dotfile_sibling_by_design() -> None:
+    """A dotfile sibling matches the `/.` form — accepted safe-erring bias."""
+    assert _run_hook(_CONTINUATION_DELETE, "rm .plan/.gitkeep") == 2
+
+
 def test_continuation_delete_blocks_relative_dot_slash_path() -> None:
     """`rm ./.plan` (leading `./`) is still recognized as the `.plan` directory."""
     assert _run_hook(_CONTINUATION_DELETE, "rm ./.plan") == 2
