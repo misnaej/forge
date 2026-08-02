@@ -75,6 +75,17 @@ them.
 
 ### Cutting a release — agent/human boundary
 
+**Automated (recommended): CI is the tag-pusher.** With the
+tag-on-merge job from [`ci-recipe.md`](ci-recipe.md) §4 installed,
+`forge-release --from-changelog` runs on every merge to the base
+branch and cuts the version the top heading declares — idempotent,
+race-tolerant, and (in the recommended gated form) only after the test
+job passes. Nobody pushes release tags by hand; the boundary question
+dissolves because the declared heading, reviewed in its PR, *is* the
+release decision.
+
+**Manual fallback** (no workflow, or an out-of-band cut):
+
 ```bash
 git switch main && git pull --ff-only
 # top `## vX.Y.Z` heading already matches the bump you intend
@@ -84,10 +95,10 @@ forge-release --bump patch|minor|major --dry-run   # confirm the computed tag
 forge-release --bump patch|minor|major             # tag + push — a human runs this
 ```
 
-An agent prepares CHANGELOG entries and runs `--dry-run` only. Pushing
-the tag is the user's action: a `v*` tag *defines* a version the moment
-it lands, and there is no un-publishing it from environments that
-already resolved it.
+On the manual path, an agent prepares CHANGELOG entries and runs
+`--dry-run` only. Pushing the tag is the user's action: a `v*` tag
+*defines* a version the moment it lands, and there is no un-publishing
+it from environments that already resolved it.
 
 ### Concurrent releases serialize through git
 
@@ -113,6 +124,44 @@ gate remains the final check at cut time.
   (`## v1.6.0 — 2026-07-01`), matching what `release_headings`
   recognizes, rather than KaC's bracketed `## [1.6.0] - 2026-07-01`.
 
+## Choosing the bump
+
+The same decision axis governs both forge's own manifest-versioned
+bumps and any single-track repo's `forge-release --bump`, stated
+generically here so every consumer picks the increment the same way.
+
+**First, declare your public surface** — the set of things a consumer
+of *your* repo can rely on: CLIs and their arguments, importable
+APIs, file/output formats, config keys, documented behaviors. Write
+the list down in your repo's docs; everything outside it is internal
+and never drives the bump.
+
+**The axis is *new capability* vs *new option on an existing one* —
+NOT *any visible change*.** The single governing rule: **if a change
+does not break or alter the base behavior of an already-adopted
+capability, it is never a MINOR — it is a PATCH.**
+
+- **PATCH (Z+1)** — a bug fix; a refactor with identical externals; or
+  a new opt-in option layered on an existing capability that leaves
+  its base behavior unchanged (a new flag / mode / config key, inert
+  until set). A bug fix changes observable behavior almost by
+  definition — that alone does not make it MINOR. Also PATCH: doc
+  fixes; internal-only changes.
+- **MINOR (Y+1, Z→0)** — a genuinely **new capability or artifact**
+  that did not exist before, backward-compatible: a new CLI or
+  subcommand, a new public API, a new opt-in check or pipeline stage.
+  A new *option on an existing* capability is PATCH, not MINOR.
+- **MAJOR (X+1, Y→0, Z→0)** — breaking: something in the public
+  surface renamed / removed / signature-incompatible; semantics of an
+  adopted behavior inverted or altered; any upgrade that requires the
+  consumer to act beyond updating the pin.
+
+**When in doubt**, ask the deciding question: *is this a new
+capability, or a new option on an existing one?* Tags are free, but
+inflation cuts both ways: a MINOR on an opt-in knob sends a consumer
+reading `git log vX.Y.Z..vX.(Y+1).0` hunting for a feature that isn't
+there, just as a misleading PATCH hides a real one.
+
 ## Stable public Python import surface
 
 Repos that need a variation `forge-release` doesn't cover can compose
@@ -128,6 +177,7 @@ breaks are MAJOR releases:
 | `forge.git_utils.run_git(*args, cwd=..., check=...)` | Run git, return stripped stdout; raises on failure when `check=True`. |
 | `forge.git_utils.configure_cli_logging()` | Root logger at `INFO`, bare-message formatter; idempotent. |
 | `forge.changelog.release_headings(text)` | Set of `vX.Y.Z` named in `##` release headings. |
+| `forge.changelog.top_release_heading(text)` | Topmost recognized `vX.Y.Z` release heading, or `None`. |
 | `forge.changelog.changelog_lacks_entry(changelog_text, tag)` | `True` when no `## <tag>` heading is present. |
 
 Anything not in this table (underscore-prefixed or not) is internal and

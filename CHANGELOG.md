@@ -20,6 +20,29 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.25.0 — 2026-08-02
+
+Additive — single-track consumer repos gain a CI tag-on-merge release
+mode. No consumer action required.
+
+### Features
+
+- **`forge-release --from-changelog` CI mode + tag-on-merge recipe**
+  (#220): cut exactly the version the `CHANGELOG.md` top heading
+  declares — idempotent (already tagged → exit 0) so a merge-event CI
+  job and a manual cut race safely; under CI the on-branch guard becomes
+  a `HEAD == origin/<base>` tip check (merge-event checkouts are
+  detached). `docs/ci-recipe.md` ships the matching `tag-release`
+  workflow recipe.
+
+### Docs
+
+- **Shared semver decision procedure** (#218):
+  `docs/consumer-release.md` "Choosing the bump" — the
+  new-capability-vs-new-option axis, stated generically so forge's own
+  manifest bumps and consumer `forge-release --bump` choices follow one
+  rule.
+
 ## v2.24.0 — 2026-07-28
 
 Additive — changelog hygiene becomes enforceable (opt-in pre-commit steps

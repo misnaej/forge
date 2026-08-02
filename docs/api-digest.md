@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_61 modules, 632 symbols._
+_61 modules, 637 symbols._
 
 ## `forge`
 
@@ -191,6 +191,7 @@ _61 modules, 632 symbols._
 - `release_headings(text: str) -> set[str]` — Return the set of ``## v<semver>`` release headings in *text*.
 - `changelog_lacks_entry(changelog_text: str, tag: str) -> bool` — Return ``True`` when *changelog_text* has no ``## <tag>`` heading.
 - `_recognized_version(token: str) -> str | None` _(internal)_ — Return the ``vX.Y.Z`` a heading *token* names, or ``None``.
+- `top_release_heading(text: str) -> str | None` — Return the first (topmost) recognized ``vX.Y.Z`` release heading.
 - `changelog_version_findings(text: str, latest_tag: str | None) -> list[str]` — Validate *text*'s release headings against each other and *latest_tag*.
 - `_governing_versions(text: str) -> list[str | None]` _(internal)_ — Map each line in *text* to its governing release version heading.
 - `_iter_added_lines(diff_text: str) -> Iterator[tuple[int, str]]` _(internal)_ — Yield (line_number, content) pairs for each addition in a unified diff.
@@ -584,6 +585,7 @@ _61 modules, 632 symbols._
 - `_emit_promotion_status(repo_root: Path, dev_branch: str, base_branch: str) -> int` _(internal)_ — Fetch tags and log the read-only promotion-status report.
 - `_log_prune_result(repo_root: Path) -> None` _(internal)_ — Prune stale local branches and log the outcome.
 - `main() -> int` — Refresh main, optionally tag the release, prune stale local branches.
+- `_tag_and_report(repo_root: Path, cfg: ForgeConfig, args: argparse.Namespace) -> int` _(internal)_ — Run the post-sync tail: optional tag, optional prune, advisory.
 
 ## `forge.pip_audit_json`
 
@@ -697,8 +699,11 @@ _61 modules, 632 symbols._
 - `_wrong_branch_error(repo_root: Path, base_branch: str) -> str | None` _(internal)_ — Return an error when ``HEAD`` is not on *base_branch*.
 - `_wrong_release_model_error(repo_root: Path, cfg: ForgeConfig) -> str | None` _(internal)_ — Return an error when this repo's release model isn't single-track.
 - `_changelog_gate_error(repo_root: Path, tag: str) -> str | None` _(internal)_ — Return an error when ``CHANGELOG.md`` exists but lacks *tag*'s entry.
-- `_cut_release(repo_root: Path, tag: str) -> None` _(internal)_ — Create the annotated *tag* on ``HEAD`` and push it to ``origin``.
-- `main() -> int` — Cut the next ``vX.Y.Z`` release tag off the latest ``v*`` tag.
+- `_detached_head_error(repo_root: Path, base_branch: str) -> str | None` _(internal)_ — Return an error unless ``HEAD`` is the tip of ``origin/<base_branch>``.
+- `_declared_tag_or_error(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Resolve the tag ``--from-changelog`` should cut.
+- `_tag_exists(repo_root: Path, tag: str) -> bool` _(internal)_ — Return whether *tag* already exists locally or on ``origin``.
+- `_cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> int` _(internal)_ — Create the annotated *tag* on ``HEAD`` and push it to ``origin``.
+- `main() -> int` — Cut the ``vX.Y.Z`` release tag — bumped off the latest tag, or declared.
 
 ## `forge.run_context`
 

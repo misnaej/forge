@@ -196,3 +196,25 @@ def test_stranded_ignores_added_heading_lines_and_blanks() -> None:
 def test_stranded_no_tags_returns_empty() -> None:
     """Without any release tag nothing can be stranded."""
     assert changelog.stranded_added_versions(_STRAND_TEXT, _STRAND_DIFF, None) == []
+
+
+# ---------------------------------------------------------------------------
+# top_release_heading
+# ---------------------------------------------------------------------------
+
+
+def test_top_release_heading_returns_first_version() -> None:
+    """The topmost recognized heading wins, dated form included."""
+    text = "# Changelog\n\n## v1.1.0 — 2026-07-24\n\n## v1.0.0\n"
+    assert changelog.top_release_heading(text) == "v1.1.0"
+
+
+def test_top_release_heading_skips_non_version_headings() -> None:
+    """A stray non-version heading above the top version is skipped."""
+    text = "## Unreleased\n\n## v1.0.0\n"
+    assert changelog.top_release_heading(text) == "v1.0.0"
+
+
+def test_top_release_heading_none_without_versions() -> None:
+    """No recognized release heading → None."""
+    assert changelog.top_release_heading("# Changelog\n") is None

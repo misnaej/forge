@@ -338,8 +338,8 @@ options:
 ## forge-next-prep
 
 ```text
-usage: forge-next-prep [-h] [--tag] [--no-prune-branches] [--promotion-status]
-                       [--target {dev,base}]
+usage: forge-next-prep [-h] [--tag] [--no-prune-branches] [--no-sync]
+                       [--promotion-status] [--target {dev,base}]
 
 Prepare main for the next task: fetch + pull --ff-only, optionally tag the
 rolling-next release, prune stale local branches. Used by the /next skill.
@@ -350,6 +350,12 @@ options:
                        v* tag and push the tag (forge's rolling-next
                        workflow). Off by default.
   --no-prune-branches  Skip the stale-branch prune step.
+  --no-sync            Skip the fetch/checkout/pull steps and operate on the
+                       current HEAD (tags are still fetched for the version
+                       comparison). For CI tag jobs that check out the exact
+                       validated SHA — syncing to the branch tip would re-
+                       introduce the race the pinned checkout exists to
+                       prevent.
   --promotion-status   Read-only: fetch tags, then print the base/dev plugin
                        versions and the ordered list of v* releases pending
                        promotion, and exit. No checkout, pull, tag, or prune.
@@ -444,7 +450,8 @@ options:
 ## forge-release
 
 ```text
-usage: forge-release [-h] --bump {major,minor,patch} [--dry-run]
+usage: forge-release [-h] (--bump {major,minor,patch} | --from-changelog)
+                     [--dry-run]
 
 Cut a vX.Y.Z release tag for a single-track, tag-versioned (setuptools-scm)
 repo: clean tree + on base branch + CHANGELOG entry present, then annotated
@@ -454,6 +461,9 @@ options:
   -h, --help            show this help message and exit
   --bump {major,minor,patch}
                         Semver increment to apply to the latest v* tag.
+  --from-changelog      Cut the version the CHANGELOG.md top heading declares.
+                        Idempotent (already tagged → exit 0); the tag-on-merge
+                        CI mode — see docs/ci-recipe.md.
   --dry-run             Report the tag that would be cut and exit without
                         tagging.
 ```

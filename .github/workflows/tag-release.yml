@@ -1,0 +1,96 @@
+name: tag-release
+
+# Tag-on-merge automation, separated from the read-only CI workflow so
+# `ci.yml` never carries write permissions. Two jobs, one per channel:
+#
+# - tag-dev:  after CI succeeds on a push to dev, cut the rolling-next
+#   tag `.claude-plugin/plugin.json` declares (idempotent no-op when the
+#   version equals the latest tag).
+# - align-main-tags: after CI succeeds on a push to main (a promotion
+#   squash-merge), relocate the promoted minor tag onto main's squash
+#   commit — the same `forge-check-main-tags --fix` step `/next` runs,
+#   now automatic at the moment the promotion lands.
+#
+# Gating uses `workflow_run` because `needs:` cannot cross workflow
+# files: this workflow fires when CI completes, and each job checks the
+# run succeeded, was a `push` event (CI also completes for PR runs,
+# including forks — those must never reach a write job), and targeted
+# its branch. Checkout pins `workflow_run.head_sha` — the exact commit
+# CI validated — never a branch ref that could re-resolve to a newer,
+# unvalidated tip. Actions are SHA-pinned (write-capable workflow).
+# Consumer recipe: docs/ci-recipe.md §4.
+#
+# Activation: GitHub evaluates workflow_run triggers from the workflow
+# definition on the DEFAULT branch (main). Until this file reaches main
+# via a promotion, neither job fires — for any branch. Meanwhile
+# `/next`'s `forge-next-prep --tag` and `forge-check-main-tags --fix`
+# steps remain the (idempotent) manual path.
+
+on:
+  workflow_run:
+    # Must match ci.yml's `name:` exactly — rename both together or
+    # this trigger silently stops firing.
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tag-release-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  tag-dev:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'dev'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the CI-validated commit (full history + tags)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install forge-scripts
+        run: pip install -e .
+
+      - name: Tag the rolling-next release when plugin.json is ahead
+        run: forge-next-prep --tag --no-sync --no-prune-branches
+
+  align-main-tags:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the CI-validated commit (full history + tags)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install forge-scripts
+        run: pip install -e .
+
+      - name: Relocate promoted minor tags onto main's squash commits
+        run: forge-check-main-tags --fix
