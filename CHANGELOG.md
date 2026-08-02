@@ -48,6 +48,14 @@ versions follow forge's rolling-next convention.
   `forge-config --list`; chain documented in `docs/consumer-release.md`.
 
 ### Fixes
+- **`block_continuation_delete` hook no longer blocks sibling `.plan/` files.**
+  The hook matched `rm`/`unlink` anywhere in the command text and any
+  `.plan`-prefixed path — blocking deletion of `.plan/weekly_summary_*.md`,
+  commands merely quoting such text (issue bodies), and interpreter
+  one-liners on sibling files. It now requires the delete in command
+  position (family anchor idiom, plus `xargs` kept deliberately — piped
+  deletion was covered before and deletion is irreversible) and a target
+  that is `CONTINUATION.md` itself or the `.plan` directory as a whole.
 - **Stranded-entries detection no longer false-flags valid restrands.**
   Git renders "insert a new heading above byte-identical entries" as a
   heading rename plus a re-insert of the released heading lower down, so
