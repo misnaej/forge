@@ -58,6 +58,11 @@ versions follow forge's rolling-next convention.
   `forge-config --list`; chain documented in `docs/consumer-release.md`.
 
 ### Fixes
+- **CI skips Dependabot PRs.** Dependabot bumps workflow SHAs but cannot
+  author the rolling-next `plugin.json` bump the `plugin_version` gate
+  demands, so the CI job could never pass on its PRs; the job now skips
+  when Dependabot authors the PR (a skipped required check still
+  satisfies branch protection — human review is the gate on deps PRs).
 - **git-family hook anchors close subshell + flagged-wrapper gaps.** The
   shared `GIT_ANCHOR` in `block_raw_git` / `block_force_push` /
   `block_git_rebase` missed a bare subshell wrapper (`(git push
