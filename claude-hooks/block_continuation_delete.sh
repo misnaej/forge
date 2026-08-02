@@ -21,7 +21,10 @@ COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
 # (shell keywords, eval/trap/nohup/time wrappers, backtick substitution,
 # indirect variables, interpreter one-liners) — a guardrail against
 # honest mistakes, not an adversarial boundary.
-RM_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|xargs)[[:space:]]+)*(rm|unlink)([[:space:]]|$)'
+# The wrapper group also tolerates flag tokens (`xargs -0 rm`,
+# `sudo -n rm`) — without it, any flag breaks the wrapper chain and the
+# verb escapes the anchor.
+RM_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|xargs|-[^[:space:]]+)[[:space:]]+)*(rm|unlink)([[:space:]]|$)'
 if ! echo "$COMMAND" | grep -qE "${RM_ANCHOR}"; then
     exit 0
 fi
@@ -33,7 +36,7 @@ fi
 # preceding-boundary class keeps `foo.plan` out. Ambiguity errs toward
 # blocking: `.plan/.` also matches dotfile siblings (`.plan/.gitkeep`) —
 # rare, and the safe direction for an irreversible delete.
-if echo "$COMMAND" | grep -qE "CONTINUATION\.md|(^|[[:space:]\"'=(/])\.plan(/+([[:space:];&|)\"'\`*?{.]|$)|[[:space:];&|)\"'\`*?{]|$)"; then
+if echo "$COMMAND" | grep -qE "CONTINUATION\.md|(^|[[:space:]\"'=(/\`])\.plan(/+([[:space:];&|)\"'\`*?{.]|$)|[[:space:];&|)\"'\`*?{]|$)"; then
     echo "BLOCKED: refusing to delete .plan/CONTINUATION.md — it is the only file that carries state across a context clear (FOUNDATION §10). Rewrite its sections in place instead of deleting it (see /next Phase 6)." >&2
     exit 2
 fi

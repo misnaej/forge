@@ -436,6 +436,26 @@ def test_continuation_delete_blocks_dotfile_sibling_by_design() -> None:
     assert _run_hook(_CONTINUATION_DELETE, "rm .plan/.gitkeep") == 2
 
 
+def test_continuation_delete_blocks_flagged_wrapper_forms() -> None:
+    """Flag tokens between wrapper and verb must not break the anchor chain.
+
+    Design review of the anchor rewrite: without a flag-tolerant wrapper
+    group, `xargs -0 rm` / `xargs -I{} rm {}` / `sudo -n rm` — all
+    blocked by the pre-rewrite pattern — would silently slip through,
+    and the `-0` form is the realistic space-safe idiom.
+    """
+    assert _run_hook(_CONTINUATION_DELETE, "find .plan -print0 | xargs -0 rm") == 2
+    assert _run_hook(_CONTINUATION_DELETE, "find .plan | xargs -I{} rm {}") == 2
+    assert _run_hook(_CONTINUATION_DELETE, "sudo -n rm -rf .plan") == 2
+
+
+def test_continuation_delete_allows_flag_lookalike_without_delete() -> None:
+    """Flag tolerance must not over-block commands with no delete verb."""
+    assert (
+        _run_hook(_CONTINUATION_DELETE, "git commit -m 'refactor plan handling'") == 0
+    )
+
+
 def test_continuation_delete_blocks_relative_dot_slash_path() -> None:
     """`rm ./.plan` (leading `./`) is still recognized as the `.plan` directory."""
     assert _run_hook(_CONTINUATION_DELETE, "rm ./.plan") == 2
