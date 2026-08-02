@@ -15,6 +15,7 @@ imports from here.
 from __future__ import annotations
 
 import re
+from fnmatch import fnmatch
 from typing import Final
 
 
@@ -31,10 +32,26 @@ HIGH_BLAST_RADIUS_PATHS: Final[tuple[str, ...]] = (
     "agents/",
     "claude-hooks/",
     ".githooks/",
+    "skills/",
+    ".claude-plugin/",
     "pyproject.toml",
     "ruff.toml",
     "FOUNDATION.md",
     "CLAUDE.md",
+)
+
+
+# Globs a diff may consist ENTIRELY of and still qualify as "docs-only"
+# for the light finalization path: no design/security reporter round, no
+# strict whole-tree pre-commit — only path-relevant gates. Consumers add
+# extra globs via ``[tool.forge.pr].docs_only_globs`` (additive; the
+# built-ins always apply). High-blast-radius paths trump these globs:
+# agent/skill/hook markdown IS shipped behavior, never "docs".
+DOCS_ONLY_GLOBS: Final[tuple[str, ...]] = (
+    "CHANGELOG.md",
+    "*.md",
+    "docs/*",
+    "docs/**/*",
 )
 
 
@@ -81,6 +98,34 @@ def touches_high_blast_radius(changed_paths: list[str]) -> list[str]:
                 hits.append(path)
                 break
     return hits
+
+
+def docs_only_diff(
+    changed_paths: list[str],
+    extra_globs: tuple[str, ...] = (),
+) -> bool:
+    """Return whether a diff qualifies for the docs-only light path.
+
+    True only when every changed path matches a docs glob AND no path is
+    high-blast-radius — ``agents/``, ``skills/``, ``claude-hooks/`` and
+    friends are shipped behavior in doc-shaped files, so they always take
+    the full verification round regardless of extension.
+
+    Args:
+        changed_paths: Repo-relative paths from ``git diff --name-only``.
+        extra_globs: Consumer additions from
+            ``[tool.forge.pr].docs_only_globs`` — additive to
+            :data:`DOCS_ONLY_GLOBS`, never replacing them.
+
+    Returns:
+        ``True`` when the light finalization path applies; ``False`` for
+        an empty diff (nothing to classify), any high-blast-radius hit,
+        or any path outside the combined glob set.
+    """
+    if not changed_paths or touches_high_blast_radius(changed_paths):
+        return False
+    globs = DOCS_ONLY_GLOBS + tuple(extra_globs)
+    return all(any(fnmatch(path, g) for g in globs) for path in changed_paths)
 
 
 def delta_decision(

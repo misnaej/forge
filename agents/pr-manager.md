@@ -34,7 +34,7 @@ gh api repos/<owner>/<repo>/pulls/<PR#>/comments
 git diff --stat main...HEAD
 ```
 
-Report: PR status, CI checks, approval state, comment summary. For a "what public symbols moved" overview on Python diffs, read `docs/api-digest.md` (canonical signatures) rather than re-walking the diff.
+Report: PR status, CI checks, approval state, comment summary. For "what public symbols moved," read `docs/api-digest.md` rather than re-walking the diff.
 
 ## Task: Fetch & Categorize Review Comments
 
@@ -42,7 +42,7 @@ Report: PR status, CI checks, approval state, comment summary. For a "what publi
 gh api repos/<owner>/<repo>/pulls/<PR#>/comments --jq '.[] | {id, path, line, body}'
 ```
 
-Categorize each as already-resolved / needs-action / needs-discussion; report all to the main agent with id + file:line + category + content. Do NOT implement fixes — the main agent has the context.
+Categorize each as already-resolved / needs-action / needs-discussion; report all with id + file:line + category + content. Do NOT implement fixes.
 
 ## Task: Write Reply to Comment
 
@@ -91,12 +91,11 @@ Wire auto-close with **bare** `Closes #N` / `Fixes #N` / `Resolves #N` on their 
 
 When asked to verify/finalize a PR:
 
-0. **Read `code_health/` logs first** (written by the pre-commit hook — the latest check results):
+0. **Read `code_health/` logs first** (the latest check results):
    ```bash
    cat ./code_health/{ruff,docstring_verification,test_naming_check,repo_structure_check}.log 2>/dev/null
    ```
-   If `REPO_STRUCTURE.md` exists, consult it to orient — the canonical,
-   drift-verified repo map.
+   Consult `REPO_STRUCTURE.md` (when present) to orient.
 
    **Pre-run reports**: the caller's prompt MAY include pre-run design / security / docs reports — use them and skip steps 1–3 (the fallback for direct invocations).
 
@@ -109,6 +108,11 @@ When asked to verify/finalize a PR:
    changed path is in `HIGH_BLAST_RADIUS_PATHS`: **skip steps 1–3**, post
    a "Delta re-verification" comment (prior verdicts, prior SHA, line/file
    counts) plus a refreshed squash-merge comment.
+
+   **Docs-only light path** (`pr_delta.docs_only_diff`, orchestrated by
+   `/pr` Step 1): when the caller says the PR is docs-only, expect only a
+   docs-types report, run step 4 with the targeted `--only` gate list the
+   caller used, and state the light path in the wrap-up.
 
    ```bash
    gh pr comment list <PR#> --json body --jq '.[].body' | grep -E '^verified-at:' | tail -3

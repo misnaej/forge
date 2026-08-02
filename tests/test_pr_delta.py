@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from forge.pr_delta import (
     DELTA_LINE_THRESHOLD,
+    DOCS_ONLY_GLOBS,
     HIGH_BLAST_RADIUS_PATHS,
     VERIFIED_AT_RE,
     delta_decision,
+    docs_only_diff,
     extract_verified_shas,
     touches_high_blast_radius,
 )
@@ -104,3 +106,43 @@ def test_delta_decision_high_blast_radius_path_forces_full() -> None:
 def test_high_blast_radius_paths_is_non_empty() -> None:
     """Guard against accidental empty constant (would disable the gate)."""
     assert len(HIGH_BLAST_RADIUS_PATHS) > 0
+
+
+def test_docs_only_all_docs_paths_qualify() -> None:
+    """A diff of only changelog/docs/markdown files takes the light path."""
+    assert docs_only_diff(["CHANGELOG.md", "docs/audit-pack.md", "README.md"])
+
+
+def test_docs_only_mixed_code_disqualifies() -> None:
+    """Any source/test file in the diff forces the full round."""
+    assert not docs_only_diff(["CHANGELOG.md", "src/forge/release.py"])
+
+
+def test_docs_only_empty_diff_is_not_docs_only() -> None:
+    """No changed paths → nothing to classify; full round."""
+    assert not docs_only_diff([])
+
+
+def test_docs_only_high_blast_radius_markdown_disqualifies() -> None:
+    """Doc-shaped files under shipped-behavior paths are never docs-only.
+
+    Agent prompts, skills, hooks, and the plugin manifest are executable
+    surface — a `*.md` glob match must not exempt them from the
+    design/security round.
+    """
+    assert not docs_only_diff(["agents/pr-manager.md"])
+    assert not docs_only_diff(["skills/pr/SKILL.md"])
+    assert not docs_only_diff(["CLAUDE.md"])
+    assert not docs_only_diff([".claude-plugin/plugin.json", "CHANGELOG.md"])
+
+
+def test_docs_only_extra_globs_are_additive() -> None:
+    """Consumer globs extend the built-ins; built-ins keep applying."""
+    files = ["CHANGELOG.md", "notes/design.rst"]
+    assert not docs_only_diff(files)
+    assert docs_only_diff(files, extra_globs=("notes/*",))
+
+
+def test_docs_only_globs_include_changelog() -> None:
+    """The built-in set covers the single-track every-PR case."""
+    assert "CHANGELOG.md" in DOCS_ONLY_GLOBS

@@ -109,6 +109,12 @@ So to run all checks over a non-`src` layout, set `source_dirs` /
 `test_dirs` once; reach for a per-tool `.paths` only when one tool needs a
 different scope. `forge-config --list` shows the resolved keys.
 
+## `[tool.forge.pr]` — PR finalization
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `docs_only_globs` | `[]` | Extra globs a PR diff may consist entirely of and still take the `/pr` docs-only light path (skip design/security reporters + strict whole-tree pre-commit; run path-relevant gates only). Additive to the built-in `CHANGELOG.md` / `*.md` / `docs/**` set; high-blast-radius paths (`agents/`, `skills/`, `claude-hooks/`, `.claude-plugin/`, configs) always force the full round. | Your repo keeps prose in a non-`docs/` tree (e.g. `notes/**`). |
+
 ## `[tool.forge.cli_wiring]`
 
 | Key | Default | What it does | Set it when |

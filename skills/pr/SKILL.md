@@ -70,7 +70,26 @@ finalizing (a finalize on a now-stale CI run is misleading).
 
 ## Step 1: Run verification agents (1–3 in parallel)
 
-Before invoking the three reporters, check if the PR is eligible for
+**Docs-only light path — check FIRST, before delta mode.** Classify the
+PR diff with `pr_delta.docs_only_diff` (`git diff --name-only
+origin/<base>...HEAD` against the built-in `DOCS_ONLY_GLOBS` plus
+`[tool.forge.pr].docs_only_globs`; any high-blast-radius path —
+`agents/`, `skills/`, `claude-hooks/`, `.claude-plugin/`, configs —
+disqualifies, since doc-shaped files there ARE shipped behavior). When
+the diff is docs-only:
+
+- **Skip `design-checker` and `security-checker`** (no code surface to
+  review) — run **only `docs-types-checker`** (the docs are the diff).
+- **Step 2 runs targeted gates, not the strict whole-tree battery**:
+  `forge-precommit --only changelog_version,changelog_updated,doc_consistency`
+  (comma-list; add other path-relevant steps as applicable). No
+  `pip_audit`, whole-tree ruff, or docstring-coverage — nothing in-scope
+  changed.
+- Steps 3–4 run as normal (docs sync is the whole point; wrap-up +
+  squash message stay MANDATORY). Tell `pr-manager` the PR took the
+  docs-only path so the wrap-up says so.
+
+Otherwise, check if the PR is eligible for
 **delta mode**. Delta mode reuses the prior wrap-up's findings when the
 diff since is small AND stays out of high-blast-radius areas — full
 decision criteria, thresholds, and SHA-validation regex are defined

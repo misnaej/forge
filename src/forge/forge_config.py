@@ -214,6 +214,14 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "exempt dir). Checked before exempt_paths.",
     ),
     ConfigKey(
+        ("tool", "forge", "pr", "docs_only_globs"),
+        default=[],
+        description="Extra globs a PR diff may consist entirely of and still "
+        "take the docs-only light finalization path (additive to the "
+        "built-in CHANGELOG.md / *.md / docs/** set; high-blast-radius "
+        "paths always force the full round).",
+    ),
+    ConfigKey(
         ("tool", "forge", "changelog", "precommit_enforce"),
         default=True,
         description="Gate changelog_updated at every local commit (default; "
