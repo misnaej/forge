@@ -404,8 +404,9 @@ def stranded_added_versions(
 
     Args:
         text: Full current ``CHANGELOG.md`` contents (the diff's new side).
-        diff_text: Unified diff of ``CHANGELOG.md`` against the base
-            branch (new side must match *text*).
+        diff_text: Unified diff of ``CHANGELOG.md`` against the
+            comparison point — the base branch (pre-commit step) or a
+            released tag (``forge-release``); new side must match *text*.
         latest_tag: Latest ``v*`` tag, or ``None`` (no tags → nothing can
             be stranded; returns empty).
 

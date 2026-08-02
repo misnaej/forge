@@ -128,17 +128,24 @@ def test_maybe_tag_release_creates_and_pushes_new_tag(
         json.dumps({"name": "x", "version": "1.2.10"})
     )
     invoked: list[list[str]] = []
+    created: list[tuple[Path, str, str, bool]] = []
 
     def _fake_git(*args: str, **_kw: object) -> str:
         invoked.append(list(args))
         return ""
 
+    def _fake_create_annotated_tag(
+        repo_root: Path, tag: str, *, commit: str = "HEAD", force: bool = False
+    ) -> None:
+        created.append((repo_root, tag, commit, force))
+
     monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.2.9")
     monkeypatch.setattr(next_prep, "run_git", _fake_git)
+    monkeypatch.setattr(next_prep, "create_annotated_tag", _fake_create_annotated_tag)
     result = next_prep._maybe_tag_release(tmp_path)
     assert result == "v1.2.10"
-    # Tag-create and push were invoked.
-    assert any(c[:2] == ["tag", "-a"] and "v1.2.10" in c for c in invoked)
+    assert created == [(tmp_path, "v1.2.10", "HEAD", False)]
+    # Push was invoked via run_git.
     assert any(c[:2] == ["push", "origin"] and "v1.2.10" in c for c in invoked)
 
 

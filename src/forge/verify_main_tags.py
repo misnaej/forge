@@ -41,6 +41,7 @@ from pathlib import Path
 from forge.config import load_config
 from forge.git_utils import (
     configure_cli_logging,
+    create_annotated_tag,
     parse_semver,
     release_tree_fingerprint,
     run_git,
@@ -173,7 +174,7 @@ def _force_move_tag(repo_root: Path, tag: str, commit_sha: str) -> None:
         tag: Minor tag to move.
         commit_sha: Destination commit on the base branch.
     """
-    run_git("tag", "-f", "-a", tag, "-m", tag, commit_sha, cwd=repo_root)
+    create_annotated_tag(repo_root, tag, commit=commit_sha, force=True)
     run_git("push", "--force", "origin", tag, cwd=repo_root)
 
 
