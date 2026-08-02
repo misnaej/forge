@@ -28,7 +28,6 @@ from forge.git_utils import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -39,9 +38,6 @@ _HEADING_RE = re.compile(r"^##\s+(v\d+\.\d+\.\d+)\b", re.MULTILINE)
 # recognizer, so a stray ``## Unreleased`` or ``## v1.2`` is flagged
 # rather than silently ignored.
 _ANY_HEADING_RE = re.compile(r"^##\s+(\S.*?)\s*$", re.MULTILINE)
-
-# New-file hunk header of a unified diff: ``@@ -a,b +c,d @@`` → ``c``.
-_HUNK_NEW_START_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 # An action-required marker line: an optional list bullet, then the
 # ``**Action:**`` marker, then the action text. The marker convention is
@@ -236,79 +232,6 @@ def _governing_versions(text: str) -> list[str | None]:
     return governing
 
 
-def _iter_added_lines(diff_text: str) -> Iterator[tuple[int, str]]:
-    """Yield (line_number, content) pairs for each addition in a unified diff.
-
-    Parses unified-diff format, tracking hunk headers to maintain accurate
-    line numbers in the new file, and yields only the content of lines
-    starting with ``+`` (excluding ``+++`` file headers and ``-`` deletions).
-
-    Args:
-        diff_text: A unified diff in the standard format (output of
-            ``git diff``, etc.).
-
-    Yields:
-        Tuples of (1-indexed line number in the new file, the added content
-        after the ``+`` prefix).
-    """
-    new_lineno = 0
-    for line in diff_text.splitlines():
-        hunk = _HUNK_NEW_START_RE.match(line)
-        if hunk:
-            new_lineno = int(hunk.group(1)) - 1
-            continue
-        if line.startswith(("+++", "---")):
-            continue
-        if line.startswith("-"):
-            continue
-        # ``\ No newline at end of file`` markers consume no new-file line;
-        # counting one would shift attribution for the rest of the hunk.
-        if line.startswith("\\"):
-            continue
-        new_lineno += 1
-        if line.startswith("+"):
-            yield (new_lineno, line[1:])
-
-
-def _stranded_from_added(
-    governing: list[str | None],
-    added_lines: Iterator[tuple[int, str]],
-    tag: tuple[int, int, int] | None,
-) -> list[str]:
-    """Detect released headings that received new content in a diff.
-
-    Iterates over added lines, looks up each line's governing version from
-    the governing list, and accumulates distinct versions that are at or
-    below *tag* (released before or at the tagging point). Skips blank
-    lines and lines that are themselves headings (only non-heading content
-    counts as "stranded" — a new heading under a released heading is normal).
-
-    Args:
-        governing: Output of :func:`_governing_versions` — a parallel list
-            mapping line numbers to governing versions.
-        added_lines: Iterator of (line_no, content) from
-            :func:`_iter_added_lines`.
-        tag: The parsed semver of the latest release tag, or ``None``.
-
-    Returns:
-        Distinct stranded versions in file order; empty when none.
-    """
-    if tag is None:
-        return []
-    stranded: list[str] = []
-    for lineno, added in added_lines:
-        if not added.strip() or _ANY_HEADING_RE.match(added):
-            continue
-        index = lineno - 1
-        version = governing[index] if 0 <= index < len(governing) else None
-        if version is None:
-            continue
-        parsed = parse_semver(version)
-        if parsed is not None and parsed <= tag and version not in stranded:
-            stranded.append(version)
-    return stranded
-
-
 # --- no-version opt-out -----------------------------------------------------
 
 # Truthy values for the opt-out env vars; a leftover `=0` / `=false`
@@ -390,23 +313,52 @@ def wants_no_version(repo_root: Path) -> str | None:
     return None
 
 
+def _section_content(text: str) -> dict[str, set[str]]:
+    """Map each release version to its normalized non-heading content lines.
+
+    Args:
+        text: Full ``CHANGELOG.md`` contents.
+
+    Returns:
+        Stripped, non-blank, non-heading lines per governing version.
+    """
+    sections: dict[str, set[str]] = {}
+    for line, version in zip(text.splitlines(), _governing_versions(text), strict=True):
+        if version is None:
+            continue
+        stripped = line.strip()
+        if not stripped or _ANY_HEADING_RE.match(line):
+            continue
+        sections.setdefault(version, set()).add(stripped)
+    return sections
+
+
 def stranded_added_versions(
-    text: str, diff_text: str, latest_tag: str | None
+    old_text: str, new_text: str, latest_tag: str | None
 ) -> list[str]:
-    """Return released heading versions that *diff_text* adds entries under.
+    """Return released versions whose sections gained content vs *old_text*.
 
     The stranded-entries race: a release tag is cut while a PR is open,
     so the PR's bullets sit under a now-released ``## vX.Y.Z`` heading —
     no merge conflict signals it, and the global top-vs-tag check passes
-    on equality. This maps each ``+`` line of a unified diff of
-    ``CHANGELOG.md`` to its governing heading in *text* and reports the
-    headings at or below *latest_tag* that received non-heading content.
+    on equality. Detection compares each side's heading→content
+    **membership** rather than attributing raw diff ``+`` lines to the
+    textually-preceding heading: git renders a valid restrand (a new
+    heading inserted above byte-identical entries) as a heading rename
+    plus a re-insert of the old heading lower down, which line
+    attribution false-flags but membership comparison sees as a strict
+    shrink. Accepted biases of set membership: a line merely reworded
+    under a released heading still counts as a gain (false positive —
+    cheap re-run), and a newly added bullet whose text is byte-identical
+    to one already in the same released section collapses into it and
+    goes undetected (narrow false negative, traded for not flagging
+    reorders and restrands).
 
     Args:
-        text: Full current ``CHANGELOG.md`` contents (the diff's new side).
-        diff_text: Unified diff of ``CHANGELOG.md`` against the
-            comparison point — the base branch (pre-commit step) or a
-            released tag (``forge-release``); new side must match *text*.
+        old_text: ``CHANGELOG.md`` contents at the comparison point — the
+            merge base (pre-commit step) or the released tag
+            (``forge-release``).
+        new_text: Full current ``CHANGELOG.md`` contents.
         latest_tag: Latest ``v*`` tag, or ``None`` (no tags → nothing can
             be stranded; returns empty).
 
@@ -416,5 +368,15 @@ def stranded_added_versions(
     tag = parse_semver(latest_tag) if latest_tag is not None else None
     if tag is None:
         return []
-    governing = _governing_versions(text)
-    return _stranded_from_added(governing, _iter_added_lines(diff_text), tag)
+    old_sections = _section_content(old_text)
+    new_sections = _section_content(new_text)
+    stranded: list[str] = []
+    for version in _governing_versions(new_text):
+        if version is None or version in stranded:
+            continue
+        parsed = parse_semver(version)
+        if parsed is None or parsed > tag:
+            continue
+        if new_sections.get(version, set()) - old_sections.get(version, set()):
+            stranded.append(version)
+    return stranded

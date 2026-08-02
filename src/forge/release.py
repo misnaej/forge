@@ -216,17 +216,17 @@ def _stranded_entries_error(repo_root: Path, tag: str) -> str | None:
     later run tagged the heading on the wrong commit, and subsequent PRs
     appended entries under the already-released heading — their commits
     would ship untagged (setuptools-scm ``X.Y.Z.devN``) while CI stays
-    green. The ``CHANGELOG.md`` diff between the tag and ``HEAD`` is
-    classified by :func:`forge.changelog.stranded_added_versions` — the
-    same canonical detector the ``changelog_version`` pre-commit step
-    uses — so a new heading opened above the released one counts as
-    normal, not stranded. A wording fix to already-released text still
-    reads as an addition (accepted bias, same as the pre-commit sibling:
-    a false positive is a cheap re-run; a missed stranding ships
-    features untagged). Depends on ``main()``'s upfront
-    ``git fetch --tags`` having run — a locally-missing tag object
-    (fetch timed out / offline) degrades to no detection rather than a
-    false positive.
+    green. The tag-side and ``HEAD``-side contents are classified by
+    :func:`forge.changelog.stranded_added_versions` — the same canonical
+    membership-based detector the ``changelog_version`` pre-commit step
+    uses — so a restrand (new heading opened above the released one,
+    entries moved out) counts as normal regardless of how git renders
+    the diff. A wording fix to already-released text still counts as a
+    gain (accepted bias, same as the pre-commit sibling: a false
+    positive is a cheap re-run; a missed stranding ships features
+    untagged). Depends on ``main()``'s upfront ``git fetch --tags``
+    having run — a locally-missing tag object (fetch timed out /
+    offline) degrades to no detection rather than a false positive.
 
     Args:
         repo_root: Repo root.
@@ -235,19 +235,16 @@ def _stranded_entries_error(repo_root: Path, tag: str) -> str | None:
     Returns:
         One-line error string when entries are stranded, else ``None``.
     """
-    diff_text = run_git(
-        "diff",
-        tag,
-        "HEAD",
-        "--",
-        "CHANGELOG.md",
+    old_text = run_git(
+        "show",
+        f"{tag}:CHANGELOG.md",
         cwd=repo_root,
         check=False,
     )
-    if not diff_text:
+    if not old_text:
         return None
     text = (repo_root / "CHANGELOG.md").read_text(encoding="utf-8")
-    if not stranded_added_versions(text, diff_text, tag):
+    if not stranded_added_versions(old_text, text, tag):
         return None
     return (
         f"CHANGELOG.md changed since {tag} but the top heading still "

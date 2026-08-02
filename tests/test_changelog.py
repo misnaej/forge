@@ -155,57 +155,59 @@ def test_version_findings_no_tags_skips_tag_checks() -> None:
 # ---------------------------------------------------------------------------
 
 
-_STRAND_TEXT = (
+_STRAND_NEW = (
     "# Changelog\n\n## v0.2.0 — 2026-07-01\n\n- new bullet\n\n## v0.1.0\n\n- old\n"
 )
 
-_STRAND_DIFF = (
-    "--- a/CHANGELOG.md\n"
-    "+++ b/CHANGELOG.md\n"
-    "@@ -1,7 +1,9 @@\n"
-    " # Changelog\n"
-    " \n"
-    " ## v0.2.0 — 2026-07-01\n"
-    " \n"
-    "+- new bullet\n"
-    "+\n"
-    " ## v0.1.0\n"
-    " \n"
-    " - old\n"
-)
+_STRAND_OLD = "# Changelog\n\n## v0.2.0 — 2026-07-01\n\n## v0.1.0\n\n- old\n"
 
 
 def test_stranded_detects_entry_under_released_heading() -> None:
-    """Added bullet under a heading equal to the latest tag → stranded."""
-    result = changelog.stranded_added_versions(_STRAND_TEXT, _STRAND_DIFF, "v0.2.0")
+    """A bullet gained under a heading equal to the latest tag → stranded."""
+    result = changelog.stranded_added_versions(_STRAND_OLD, _STRAND_NEW, "v0.2.0")
     assert result == ["v0.2.0"]
 
 
 def test_stranded_silent_when_heading_leads_tag() -> None:
-    """Same diff but the receiving heading is ahead of the latest tag → clean."""
-    result = changelog.stranded_added_versions(_STRAND_TEXT, _STRAND_DIFF, "v0.1.9")
+    """Same gain but the receiving heading is ahead of the latest tag → clean."""
+    result = changelog.stranded_added_versions(_STRAND_OLD, _STRAND_NEW, "v0.1.9")
     assert result == []
 
 
 def test_stranded_ignores_added_heading_lines_and_blanks() -> None:
-    """A diff that only opens a new heading (plus blanks) strands nothing."""
-    text = "## v0.3.0\n\n## v0.2.0\n\n- old\n"
-    diff = (
-        "--- a/CHANGELOG.md\n"
-        "+++ b/CHANGELOG.md\n"
-        "@@ -1,3 +1,5 @@\n"
-        "+## v0.3.0\n"
-        "+\n"
-        " ## v0.2.0\n"
-        " \n"
-        " - old\n"
-    )
-    assert changelog.stranded_added_versions(text, diff, "v0.2.0") == []
+    """A change that only opens a new heading (plus blanks) strands nothing."""
+    old = "## v0.2.0\n\n- old\n"
+    new = "## v0.3.0\n\n## v0.2.0\n\n- old\n"
+    assert changelog.stranded_added_versions(old, new, "v0.2.0") == []
 
 
 def test_stranded_no_tags_returns_empty() -> None:
     """Without any release tag nothing can be stranded."""
-    assert changelog.stranded_added_versions(_STRAND_TEXT, _STRAND_DIFF, None) == []
+    assert changelog.stranded_added_versions(_STRAND_OLD, _STRAND_NEW, None) == []
+
+
+def test_stranded_restrand_passes_regardless_of_diff_shape() -> None:
+    """Moving entries out of a released heading is never stranded.
+
+    Git renders this exact edit as a heading rename plus a re-insert of
+    the released heading lower down — a shape a line-diff-based detector
+    would misread as new content under the released heading. Membership
+    comparison instead sees the released section's content strictly
+    shrink, so nothing is flagged.
+    """
+    old = "## v1.11.0\n\n### Added\n- feature A\n- feature B\n- feature C\n"
+    new = (
+        "## v1.12.0\n\n### Added\n- feature A\n- feature B\n\n"
+        "## v1.11.0\n\n### Added\n- feature C\n"
+    )
+    assert changelog.stranded_added_versions(old, new, "v1.11.0") == []
+
+
+def test_stranded_flags_entry_moved_into_released_heading() -> None:
+    """An entry relocated from an unreleased into a released section strands."""
+    old = "## v1.12.0\n\n- feature X\n\n## v1.11.0\n\n- feature C\n"
+    new = "## v1.12.0\n\n## v1.11.0\n\n- feature X\n- feature C\n"
+    assert changelog.stranded_added_versions(old, new, "v1.11.0") == ["v1.11.0"]
 
 
 # ---------------------------------------------------------------------------

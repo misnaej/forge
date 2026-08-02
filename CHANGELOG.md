@@ -48,12 +48,23 @@ versions follow forge's rolling-next convention.
   `forge-config --list`; chain documented in `docs/consumer-release.md`.
 
 ### Fixes
+- **Stranded-entries detection no longer false-flags valid restrands.**
+  Git renders "insert a new heading above byte-identical entries" as a
+  heading rename plus a re-insert of the released heading lower down, so
+  the raw diff-line attribution flagged the exact fix-forward the
+  stranded error prescribes. `stranded_added_versions` now compares
+  heading→content **membership** between the base/tag side and HEAD
+  (signature changed to `(old_text, new_text, latest_tag)`; both the
+  `changelog_version` step and `forge-release` fetch the old side via
+  `git show`). Reorders inside a released section also stop flagging;
+  a byte-identical duplicate bullet added post-release is the narrow
+  accepted false negative.
 - **`forge-release --from-changelog` flags stranded changelog entries.**
   The idempotent no-op ("top heading already tagged → exit 0") also
   covered the failure chain where a failed/raced tag-cut left later PRs
   appending entries under an already-released heading — their commits
   shipped untagged (`X.Y.Z.devN`) while CI stayed green. The no-op now
-  classifies the `CHANGELOG.md` diff since the released tag (via the
+  classifies `CHANGELOG.md` contents against the released tag (via the
   same detector as the `changelog_version` step) and exits 1 with a
   fix-forward message; no-version merges (which never touch the
   changelog) still rest at exit 0.
