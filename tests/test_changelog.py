@@ -190,9 +190,10 @@ def test_stranded_restrand_passes_regardless_of_diff_shape() -> None:
     """Moving entries out of a released heading is never stranded.
 
     Git renders this exact edit as a heading rename plus a re-insert of
-    the released heading lower down, which fooled the previous raw-diff
-    attribution into flagging the released section; membership
-    comparison sees its content strictly shrink.
+    the released heading lower down — a shape a line-diff-based detector
+    would misread as new content under the released heading. Membership
+    comparison instead sees the released section's content strictly
+    shrink, so nothing is flagged.
     """
     old = "## v1.11.0\n\n### Added\n- feature A\n- feature B\n- feature C\n"
     new = (

@@ -64,7 +64,7 @@ versions follow forge's rolling-next convention.
   covered the failure chain where a failed/raced tag-cut left later PRs
   appending entries under an already-released heading — their commits
   shipped untagged (`X.Y.Z.devN`) while CI stayed green. The no-op now
-  classifies the `CHANGELOG.md` diff since the released tag (via the
+  classifies `CHANGELOG.md` contents against the released tag (via the
   same detector as the `changelog_version` step) and exits 1 with a
   fix-forward message; no-version merges (which never touch the
   changelog) still rest at exit 0.

@@ -547,11 +547,11 @@ following the [consumer changelog convention](consumer-release.md)
   headings strictly decrease, the latest `v*` tag has an entry, the top
   heading is never *behind* the latest tag (equality is valid — the
   normal state right after a release is cut), and on a feature branch no
-  diff-added entries sit under an already-released heading (the
-  stranded-entries race). Self-skips without a root `CHANGELOG.md`, on
-  manifest-versioned repos (`verify-forge-plugin-version` owns the
-  invariant), and on dual-track repos (changelog is curated at
-  promotion).
+  entries gain content under an already-released heading since the merge
+  base (the stranded-entries race). Self-skips without a root
+  `CHANGELOG.md`, on manifest-versioned repos
+  (`verify-forge-plugin-version` owns the invariant), and on dual-track
+  repos (changelog is curated at promotion).
 - **`changelog_updated`** — the per-PR freshness gate: a change set that
   touches a changelog-requiring path without touching `CHANGELOG.md`
   fails. Self-skips without a `CHANGELOG.md` and on the base branch;

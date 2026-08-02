@@ -1633,14 +1633,14 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     releases rather than only at ``forge-release`` cut time: every ``##``
     heading is a recognized version, headings strictly decrease, the
     latest ``v*`` tag has an entry, the top heading is never behind the
-    latest tag, and — on a feature branch — no diff-added entries sit
-    under an already-released heading (the stranded-entries race: a tag
-    cut under an open PR leaves its bullets attributed to a release that
-    does not contain the code, with no merge conflict to signal it). The
-    stranded diff is suppressed while a merge is in progress
-    (``MERGE_HEAD`` present): mid-merge, the merge-base is the stale fork
-    point, so the base's own entries would be misattributed to the branch;
-    the structural checks still run.
+    latest tag, and — on a feature branch — no entries gained under an
+    already-released heading since the merge base (the stranded-entries
+    race: a tag cut under an open PR leaves its bullets attributed to a
+    release that does not contain the code, with no merge conflict to
+    signal it). The stranded check is suppressed while a merge is in
+    progress (``MERGE_HEAD`` present): mid-merge, the merge-base is the
+    stale fork point, so the base's own entries would be misattributed to
+    the branch; the structural checks still run.
 
     Self-skips when there is no root ``CHANGELOG.md``, on
     manifest-versioned repos (``verify-forge-plugin-version`` owns the
@@ -1704,10 +1704,10 @@ def step_changelog_version(repo_root: Path) -> StepResult:
         if merge_in_progress(repo_root):
             # Mid-merge HEAD predates the merge commit, so the merge-base is
             # the stale fork point and every entry the base contributes would
-            # diff as branch-added. Skip only the stranded diff — the merge
+            # appear as HEAD-gained. Skip only the stranded check — the merge
             # commit's own run and CI validate the settled state.
             notes.append(
-                "Note: merge in progress — stranded-entries diff skipped "
+                "Note: merge in progress — stranded-entries check skipped "
                 "(validated at the merge commit and by CI)."
             )
         else:
