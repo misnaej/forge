@@ -21,6 +21,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from forge.config import load_config
 from forge.git_utils import get_modified_files, repo_root
 
 
@@ -133,7 +134,10 @@ def make_audit_parser(prog: str, description: str) -> argparse.ArgumentParser:
         "--scope",
         choices=[s.value for s in Scope],
         default=Scope.FULL.value,
-        help="Audit scope. 'full' scans roots; 'changed' scans modified files vs main.",
+        help=(
+            "Audit scope. 'full' scans roots; 'changed' scans files "
+            "modified vs the configured base branch."
+        ),
     )
     parser.add_argument(
         "--roots",
@@ -199,7 +203,10 @@ def iter_files(
     """
     if scope is Scope.CHANGED:
         root = repo_root()
-        for rel in get_modified_files(suffix=suffix):
+        base_branch = load_config(root).base_branch
+        for rel in get_modified_files(
+            suffix=suffix, repo_root=root, base_branch=base_branch
+        ):
             abs_path = (root / rel).resolve()
             if abs_path.is_file() and not _is_excluded(abs_path):
                 yield abs_path

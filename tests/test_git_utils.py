@@ -986,3 +986,31 @@ def test_path_escapes_repo_symlink_escape_true(tmp_path: Path) -> None:
     except OSError:
         pytest.skip("symlink creation not permitted on this platform")
     assert git_utils.path_escapes_repo(tmp_path, "link/x.py") is True
+
+
+def test_get_modified_files_honors_custom_base_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """base_branch="develop" diffs against develop, not a hardcoded main."""
+    _stub_branch_path(
+        monkeypatch,
+        tmp_path,
+        current_branch="feat/x",
+        diff_outputs={"develop...HEAD": "src/a.py\n"},
+    )
+    files = git_utils.get_modified_files(repo_root=tmp_path, base_branch="develop")
+    assert files == ["src/a.py"]
+
+
+def test_get_modified_files_on_custom_base_falls_back_to_prev_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sitting on the configured base branch compares against HEAD~1."""
+    _stub_branch_path(
+        monkeypatch,
+        tmp_path,
+        current_branch="develop",
+        diff_outputs={"HEAD~1": "src/x.py\n"},
+    )
+    files = git_utils.get_modified_files(repo_root=tmp_path, base_branch="develop")
+    assert files == ["src/x.py"]

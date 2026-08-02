@@ -591,3 +591,25 @@ def test_tag_staleness_warning_silent_when_tag_current(
     monkeypatch.setattr(next_prep, "read_local_plugin_version", lambda _r: "1.24.1")
     monkeypatch.setattr(next_prep, "latest_v_tag", lambda _r: "v1.24.1")
     assert next_prep.tag_staleness_warning(tmp_path) is None
+
+
+def test_tag_misuse_warning_fires_single_track_no_manifest(tmp_path: Path) -> None:
+    """Single-track repo without plugin.json → warning pointing at forge-release."""
+    warning = next_prep._tag_misuse_warning(tmp_path, ForgeConfig())
+    assert warning is not None
+    assert "forge-release" in warning
+
+
+def test_tag_misuse_warning_silent_with_manifest(tmp_path: Path) -> None:
+    """Plugin manifest present → --tag is the intended pattern, no warning."""
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "x", "version": "1.0.0"})
+    )
+    assert next_prep._tag_misuse_warning(tmp_path, ForgeConfig()) is None
+
+
+def test_tag_misuse_warning_silent_on_dual_track(tmp_path: Path) -> None:
+    """Dual-track config → rolling-next applies even without a local manifest."""
+    cfg = ForgeConfig(dev_branch="dev")
+    assert next_prep._tag_misuse_warning(tmp_path, cfg) is None

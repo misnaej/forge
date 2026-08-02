@@ -32,17 +32,86 @@ Then it computes the tag (`next_version(latest_v_tag(...), bump)`),
 creates it annotated on `HEAD`, and pushes it to `origin`. `--dry-run`
 reports the tag that would be cut and stops.
 
-A typical release is therefore:
-
-```bash
-git switch main && git pull --ff-only
-# author the `## vX.Y.Z` CHANGELOG entry, commit it via a PR
-forge-release --bump minor --dry-run   # confirm the computed tag
-forge-release --bump minor             # tag + push
-```
+The full release recipe — including which steps an agent may run —
+is under ["Cutting a release — agent/human boundary"](#cutting-a-release--agenthuman-boundary)
+below.
 
 No config is required: a repo without `[tool.forge]` defaults to
 single-track on `main`.
+
+## Changelog convention
+
+`forge-release` works with or without a `CHANGELOG.md`, but a repo that
+keeps one should follow **one** convention — this one — so the CHANGELOG
+gate, the release recipe, and any local tooling all agree on what the
+file means. It follows [Keep a Changelog](https://keepachangelog.com/)
+in spirit; the deliberate divergences are listed at the end.
+
+### Format
+
+- One level-2 heading per release: `## vX.Y.Z — YYYY-MM-DD`. The date
+  may be added when the release is cut; `release_headings` recognizes
+  the heading with or without it.
+- Under each release heading, group entries as `### Added` /
+  `### Changed` / `### Fixed` / `### Removed` — create a group when its
+  first entry appears; omit empty groups.
+- **No `## Unreleased` section.** The top heading always names the
+  version **about to be released** — the CHANGELOG *declares* the next
+  version, and the tag `forge-release` cuts *confirms* it. This is the
+  single-track analogue of forge's own rolling-next invariant
+  ([`release-process.md`](release-process.md), forge-only). Right after
+  a release is cut, top heading and latest tag are **equal** — that
+  window is valid; the **first PR after a tag opens the next
+  `## vX.Y.Z` heading** (and carries its own entries under it).
+
+### Per-PR rule
+
+Every PR with a user-facing effect adds its bullet under the top
+`## vX.Y.Z` heading **in that same PR** — never batched into a later
+"release PR". The CHANGELOG is release-ready at all times: cutting a
+release requires no CHANGELOG-only commit beyond (possibly) stamping
+the date. Released headings below the top one are history — never edit
+them.
+
+### Cutting a release — agent/human boundary
+
+```bash
+git switch main && git pull --ff-only
+# top `## vX.Y.Z` heading already matches the bump you intend
+# (retitle it via a normal PR if the accumulated entries warrant a
+# different increment than first declared)
+forge-release --bump patch|minor|major --dry-run   # confirm the computed tag
+forge-release --bump patch|minor|major             # tag + push — a human runs this
+```
+
+An agent prepares CHANGELOG entries and runs `--dry-run` only. Pushing
+the tag is the user's action: a `v*` tag *defines* a version the moment
+it lands, and there is no un-publishing it from environments that
+already resolved it.
+
+### Concurrent releases serialize through git
+
+Two concurrent release branches both edit the same top heading, so git
+forces a merge conflict; whoever resolves it moves their entries under
+the next number. Deterministic ordering with no external coordinator —
+the conflict is the feature, not a nuisance.
+
+### Enforcement
+
+Two opt-in pre-commit steps gate this convention between releases (see
+[`configuration.md`](configuration.md), `[tool.forge.changelog]`):
+`changelog_version` (heading validity, ordering, tag alignment, and
+stranded-entry detection when a tag lands under an open PR) and
+`changelog_updated` (the per-PR entry rule). `forge-release`'s CHANGELOG
+gate remains the final check at cut time.
+
+### Divergences from Keep a Changelog
+
+- **No `## Unreleased` section** — the declared next version plays that
+  role, and the tag gate in `forge-release` checks it mechanically.
+- **Headings are `v`-prefixed and dated with an em dash**
+  (`## v1.6.0 — 2026-07-01`), matching what `release_headings`
+  recognizes, rather than KaC's bracketed `## [1.6.0] - 2026-07-01`.
 
 ## Stable public Python import surface
 

@@ -56,6 +56,15 @@ git rev-list --left-right --count "origin/<base>...HEAD"   # left = behind
   history and re-triggers CI, so surface it and let the user decide.
 - **Up to date, `MERGEABLE`** → proceed to Step 1.
 
+**Stranded-changelog check** (single-track repos with a root
+`CHANGELOG.md`): a release tag cut while this PR was open leaves the
+PR's entries under an already-released heading — nothing conflicts, so
+neither git nor the checks above notice. After the fetch, run
+`forge-precommit --only changelog_version` (self-skips on repos where
+the convention doesn't apply). A `stranded` finding means: bump the top
+`## vX.Y.Z` heading to the next version, move this PR's entries under
+it, commit, and re-run from Step 0.5.
+
 Merging the base re-triggers CI — wait for it to go green again before
 finalizing (a finalize on a now-stale CI run is misleading).
 
@@ -105,10 +114,20 @@ Documentation must stay in sync with code. For each item below, update **only if
 8. **`.plan/<PHASE>_*.md`** — check off completed steps for the phase this PR touches.
 9. **`README.md`** — repo structure, setup, install commands, test commands, status sections, architecture diagram.
 10. **`CLAUDE.md`** — new shared agent behaviors, new protected files, new ruff ignores, new tools, technology stack changes.
-11. **`REPO_STRUCTURE.md`** (when the repo maintains one — see [FOUNDATION §13](../../FOUNDATION.md#13-code_health-convention)) — list new source modules and new test files so the canonical repo map stays accurate. The `repo_structure_check` pre-commit step does not enforce two-way coverage; this update is on the PR author.
-12. **Per-component READMEs** (e.g., subsystem-level `README.md` files, agent definition files) — if their tools, setup, or usage changed.
-13. **Agent-architecture doc** (when `[tool.forge.agent_doc]` is configured, and the PR touched `agents/`, `skills/`, or `claude-hooks/`) — run `verify-forge-agent-doc --diff <target-branch>` for the graph-relevant edges this PR added/removed, and update the configured doc where a delegation, rename, or removal left it stale. `docs-types-checker` owns this at PR review; self-skips otherwise.
-14. **Verify cross-references** — no document should reference a deleted file or outdated path.
+11. **`CHANGELOG.md`** (when the repo keeps one at its root, per-PR
+    convention) — for a PR with a user-facing effect, add its changelog
+    bullet in this PR, following the "Changelog convention" section of
+    [`docs/consumer-release.md`](../../docs/consumer-release.md) (which
+    owns the heading format, grouping, and timing rules). Skip silently
+    when there is no root `CHANGELOG.md`, and on repos whose changelog
+    is written at release/promotion time instead of per PR (e.g. a
+    dual-track plugin repo per
+    [`docs/release-process.md`](../../docs/release-process.md)) —
+    follow that repo's own release process.
+12. **`REPO_STRUCTURE.md`** (when the repo maintains one — see [FOUNDATION §13](../../FOUNDATION.md#13-code_health-convention)) — list new source modules and new test files so the canonical repo map stays accurate. The `repo_structure_check` pre-commit step does not enforce two-way coverage; this update is on the PR author.
+13. **Per-component READMEs** (e.g., subsystem-level `README.md` files, agent definition files) — if their tools, setup, or usage changed.
+14. **Agent-architecture doc** (when `[tool.forge.agent_doc]` is configured, and the PR touched `agents/`, `skills/`, or `claude-hooks/`) — run `verify-forge-agent-doc --diff <target-branch>` for the graph-relevant edges this PR added/removed, and update the configured doc where a delegation, rename, or removal left it stale. `docs-types-checker` owns this at PR review; self-skips otherwise.
+15. **Verify cross-references** — no document should reference a deleted file or outdated path.
 
 A PR that changes code without updating affected docs is not ready to merge.
 
@@ -154,7 +173,7 @@ confirmation, then edit `settings.json` — the change rides in this PR.
 
 ## Step 4: Finalize via `pr-manager` (MANDATORY)
 
-14. Delegate finalization. **Pass the Step 1 reports verbatim in the prompt** so `pr-manager` does not re-run the same three verification agents — see [agents/pr-manager.md "Pre-run reports" note](../../agents/pr-manager.md). Two passes per PR is pure waste.
+16. Delegate finalization. **Pass the Step 1 reports verbatim in the prompt** so `pr-manager` does not re-run the same three verification agents — see [agents/pr-manager.md "Pre-run reports" note](../../agents/pr-manager.md). Two passes per PR is pure waste.
 
     ```
     Agent(subagent_type="pr-manager", prompt="Verify and finalize PR #<number>.
@@ -191,14 +210,14 @@ The squash-merge message becomes the permanent commit message on `main`.
 
 ## Step 5: Post-PR backlog update
 
-15. **`issue-triage`** — Run `post-pr` mode after merge:
+17. **`issue-triage`** — Run `post-pr` mode after merge:
     ```
     Agent(subagent_type="issue-triage", prompt="Run post-pr mode. PR #<number> was just finalized. Detect issues closed by this PR, remove their tier labels, and regenerate the 📋 Backlog Index issue.")
     ```
 
 ## Step 6: Update CONTINUATION state
 
-16. The `pr-manager` agent appends a one-line activity record to `.plan/CONTINUATION.md` automatically (gitignored).
+18. The `pr-manager` agent appends a one-line activity record to `.plan/CONTINUATION.md` automatically (gitignored).
 
 ## Rules
 

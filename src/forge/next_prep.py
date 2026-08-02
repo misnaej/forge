@@ -14,7 +14,10 @@ Operations (in order, each idempotent):
    then ``git pull --ff-only`` — sync to latest.
 3. **Optional auto-tag** (``--tag``): if ``.claude-plugin/plugin.json``
    has a ``version`` strictly ahead of the latest ``v*`` tag, tag the
-   merge commit and push the tag. Forge's rolling-next workflow.
+   merge commit and push the tag. Forge's rolling-next workflow. On a
+   single-track repo with no plugin manifest the flag warns and skips
+   (per-merge tagging is a plugin-repo pattern — ``forge-release`` cuts
+   release tags there).
 4. **Prune stale branches** (``--prune-branches``, default ON): delete
    local branches whose remote shows ``[origin/...: gone]``. Uses
    ``git branch -d`` (safe) — never ``-D``.
@@ -43,7 +46,7 @@ import sys
 from pathlib import Path
 
 from forge.changelog import changelog_lacks_entry
-from forge.config import load_config
+from forge.config import ForgeConfig, load_config
 from forge.git_utils import (
     configure_cli_logging,
     latest_v_tag,
@@ -254,6 +257,36 @@ def tag_staleness_warning(repo_root: Path) -> str | None:
     return (
         f"plugin.json {plugin_ver} is ahead of the latest tag "
         f"{latest or '(none)'} — run `forge-next-prep --tag` to tag this release."
+    )
+
+
+def _tag_misuse_warning(repo_root: Path, cfg: ForgeConfig) -> str | None:
+    """Return a warning when ``--tag`` is used outside the rolling-next model.
+
+    Per-merge tagging is the plugin-repo pattern: the rolling-next
+    manifest names the version to tag. A single-track repo with no
+    ``.claude-plugin/plugin.json`` releases via ``forge-release``
+    instead, so ``--tag`` there is almost always a command copied from
+    forge's own workflow — warn loudly rather than no-op silently.
+
+    Args:
+        repo_root: Repo root.
+        cfg: Loaded ``[tool.forge]`` config.
+
+    Returns:
+        A one-line warning when the repo is single-track
+        (``dev_branch == base_branch``) and has no plugin manifest;
+        ``None`` when ``--tag`` is applicable.
+    """
+    if cfg.dev_branch != cfg.base_branch:
+        return None
+    if read_local_plugin_version(repo_root) is not None:
+        return None
+    return (
+        "--tag skipped: no .claude-plugin/plugin.json and a single-track "
+        "branch model — per-merge tagging is the rolling-next plugin-repo "
+        "pattern. Cut release tags with `forge-release` instead "
+        "(docs/consumer-release.md)."
     )
 
 
@@ -473,11 +506,15 @@ def main() -> int:
         return 1
 
     if args.tag:
-        tag = _maybe_tag_release(repo_root)
-        if tag:
-            logger.info("Tagged and pushed %s", tag)
+        misuse = _tag_misuse_warning(repo_root, cfg)
+        if misuse:
+            logger.warning(misuse)
         else:
-            logger.info("No release tag needed.")
+            tag = _maybe_tag_release(repo_root)
+            if tag:
+                logger.info("Tagged and pushed %s", tag)
+            else:
+                logger.info("No release tag needed.")
 
     if not args.no_prune_branches:
         _log_prune_result(repo_root)

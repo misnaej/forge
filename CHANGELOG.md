@@ -20,6 +20,48 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.24.0 — 2026-07-28
+
+Additive — changelog hygiene becomes enforceable (opt-in pre-commit steps
+plus a canonical consumer convention), and `forge-doctor` learns to spot
+version skew across install surfaces. No consumer action required: the new
+steps are opt-in; everything else is docs/skill guidance and hardening.
+
+### Features
+
+- **Opt-in `changelog_version` + `changelog_updated` pre-commit steps**
+  (#215): verify a repo's `CHANGELOG.md` stays well-formed (heading
+  validity, strictly-decreasing versions, latest-tag entry present) and
+  current (user-facing changes update it on their own branch), enabled via
+  `[tool.forge.precommit] enable`. Ships the pure detection helpers in
+  `forge.changelog` plus fixes for stale local tags, the
+  stranded-changelog race, and a hardcoded `main` in diff scoping.
+- **`forge-doctor` version-skew check** (#199): detects drift across
+  forge's three independently-updated install surfaces — the pip package,
+  the git-hook sidecar, and the cached Claude Code plugin — replacing the
+  easy-to-miss hook-time warning that was blind to the plugin surface.
+
+### Fixes
+
+- **Path-traversal guard on `forge-doctor --plugin-name`** (#201): the
+  flag is now validated as a bare plugin identifier before being joined
+  under `~/.claude/plugins/cache`, so crafted values can no longer point
+  plugin reads at arbitrary directories.
+- **`/next` tag ceremony fenced by repo class** (#213): the skill now
+  branches on repo class first and a runtime guard makes
+  `forge-next-prep --tag` warn-and-skip on single-track, manifest-less
+  repos instead of prescribing forge's rolling-next cadence to everyone.
+
+### Docs
+
+- **Canonical consumer changelog + release convention** (#210):
+  `docs/consumer-release.md` gains the single-track "Changelog convention"
+  — dated `## vX.Y.Z — YYYY-MM-DD` headings with
+  `Added`/`Changed`/`Fixed`/`Removed` groups and no `Unreleased` section.
+- **`/pr` docs-update step adds a CHANGELOG bullet** (#211): PRs with
+  user-facing effect update the changelog on their own branch as part of
+  finalization, never batched at release time.
+
 ## v2.23.0 — 2026-07-22
 
 Additive and internal — a unified engine for change-scoped (diff) file
