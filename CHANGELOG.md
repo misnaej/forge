@@ -37,6 +37,19 @@ versions follow forge's rolling-next convention.
   if a check's diff scope changes for you, your local base was stale.
 
 ### Features
+- **Docs-only light finalization path for `/pr`.** A PR whose diff is
+  entirely docs-shaped (extension-anchored `*.md` / `*.rst` / `*.txt` —
+  extendable via `[tool.forge.pr].docs_only_globs`, additive) now skips the
+  design/security reporter round and the strict whole-tree pre-commit,
+  running only path-relevant gates plus `docs-types-checker` — a
+  one-line changelog PR finalizes in seconds, not minutes. Doc-shaped
+  files under shipped-behavior paths never qualify, and matching is
+  extension-anchored + case-folded (security review: a directory glob
+  would have let `docs/evil.py` take the light path, and case-varied
+  paths collide with real directories on case-insensitive filesystems).
+  `skills/`, `.claude-plugin/`, `.claude/`, and `.github/workflows/`
+  joined `HIGH_BLAST_RADIUS_PATHS`, closing pre-existing delta-mode
+  gaps.
 - **Deferred changelog timing — `[tool.forge.changelog].precommit_enforce`.**
   Default `true` keeps today's behavior (the `changelog_updated` gate
   fires at every local commit). Set `false` for deferred mode: local
@@ -48,6 +61,18 @@ versions follow forge's rolling-next convention.
   `forge-config --list`; chain documented in `docs/consumer-release.md`.
 
 ### Fixes
+- **CI skips Dependabot PRs.** Dependabot bumps workflow SHAs but cannot
+  author the rolling-next `plugin.json` bump the `plugin_version` gate
+  demands, so the CI job could never pass on its PRs; the job now skips
+  when Dependabot authors the PR (a skipped required check still
+  satisfies branch protection — human review is the gate on deps PRs).
+- **git-family hook anchors close subshell + flagged-wrapper gaps.** The
+  shared `GIT_ANCHOR` in `block_raw_git` / `block_force_push` /
+  `block_git_rebase` missed a bare subshell wrapper (`(git push
+  --force)`) and any flag between wrapper and verb (`sudo -n git
+  rebase`); the separator class now includes `(` and the wrapper run
+  tolerates flag tokens — the same two fixes the continuation-delete
+  hook received, keeping the three anchors byte-identical.
 - **`block_continuation_delete` hook no longer blocks sibling `.plan/` files.**
   The hook matched `rm`/`unlink` anywhere in the command text and any
   `.plan`-prefixed path — blocking deletion of `.plan/weekly_summary_*.md`,

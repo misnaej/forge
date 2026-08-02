@@ -26,7 +26,10 @@ fi
 # Known accepted slip-through: `bash -c "git commit ..."` — git sits
 # after a quote, not a separator. Acceptable (matches
 # block_install_deps.sh's xargs slip-through stance).
-GIT_ANCHOR='(^|[;&|])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo)[[:space:]]+)*git[[:space:]]+'
+# The separator class includes `(` (a bare subshell wrapper) and the
+# wrapper run tolerates flag tokens (`sudo -n git ...`), so neither
+# shape slips the anchor.
+GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+'
 if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}(commit|push)\b"; then
     echo "BLOCKED: raw 'git commit' / 'git push' from Bash is forbidden by FOUNDATION §3 mandatory-delegation. Use the forge:git-commit-push agent — it runs pre-commit, signs the commit per the convention, and pushes with the right tracking flags." >&2
     exit 2

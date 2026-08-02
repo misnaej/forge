@@ -328,6 +328,24 @@ def test_force_push_allows_env_prefix_non_force() -> None:
     assert _run_hook(_FORCE_PUSH, "GIT_DIR=/tmp/x git push origin main") == 0
 
 
+def test_force_push_blocks_subshell_and_flagged_wrapper() -> None:
+    """Subshell parens and flag tokens between wrapper and git still block."""
+    assert _run_hook(_FORCE_PUSH, "(git push --force origin main)") == 2
+    assert _run_hook(_FORCE_PUSH, "sudo -n git push -f origin main") == 2
+
+
+def test_rebase_blocks_subshell_and_flagged_wrapper() -> None:
+    """Subshell parens and flag tokens between wrapper and git still block."""
+    assert _run_hook(_REBASE, "(git rebase origin/dev)") == 2
+    assert _run_hook(_REBASE, "sudo -n git rebase origin/dev") == 2
+
+
+def test_raw_git_blocks_subshell_and_flagged_wrapper() -> None:
+    """Subshell parens and flag tokens between wrapper and git still block."""
+    assert _run_hook(_RAW_GIT, "(git commit -m x)") == 2
+    assert _run_hook(_RAW_GIT, "sudo -n git push origin feat") == 2
+
+
 def test_raw_git_blocks_env_var_prefix_push() -> None:
     """`GIT_DIR=x git push` bypassed the raw-git gate before the anchor fix."""
     assert _run_hook(_RAW_GIT, "GIT_DIR=/tmp/x git push origin main") == 2

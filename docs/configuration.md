@@ -109,6 +109,20 @@ So to run all checks over a non-`src` layout, set `source_dirs` /
 `test_dirs` once; reach for a per-tool `.paths` only when one tool needs a
 different scope. `forge-config --list` shows the resolved keys.
 
+## `[tool.forge.pr]` — PR finalization
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `docs_only_globs` | `[]` | Extra globs a PR diff may consist entirely of and still take the `/pr` docs-only light path (skip design/security reporters + strict whole-tree pre-commit; run path-relevant gates only). Additive to the built-in `*.md` / `*.rst` / `*.txt` set; high-blast-radius paths (`agents/`, `skills/`, `claude-hooks/`, `.claude-plugin/`, `.claude/`, `.github/workflows/`, configs) always force the full round. | Your repo keeps prose in another doc format (e.g. `*.adoc`). |
+
+Glob semantics: matching is `fnmatch`, where `*` crosses `/` — so
+`*.md` already covers nested paths, but a directory glob like
+`notes/*` would match **any extension** under it (`notes/evil.py`)
+and open a review bypass. Use extension-anchored globs only. Accepted
+residuals of the light path (docs-types-checker still runs; human PR
+review remains the reviewer of record): symlinked doc files and
+prose-level injection content are not detected by path classification.
+
 ## `[tool.forge.cli_wiring]`
 
 | Key | Default | What it does | Set it when |

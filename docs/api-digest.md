@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 661 symbols._
+_62 modules, 662 symbols._
 
 ## `forge`
 
@@ -624,10 +624,11 @@ _62 modules, 661 symbols._
 
 ## `forge.pr_delta`
 
-> _pr_delta — thresholds and helpers for pr-manager delta-mode short-circuit._
+> _pr_delta — thresholds and helpers for pr-manager finalization short-circuits._
 
 - `extract_verified_shas(text: str) -> list[str]` — Return every ``verified-at:`` SHA referenced in *text*.
 - `touches_high_blast_radius(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`HIGH_BLAST_RADIUS_PATHS`.
+- `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
 
 ## `forge.pr_squash_comment`
