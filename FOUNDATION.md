@@ -213,6 +213,13 @@ non-blocking; ERRORS must be fixed.
 ## 5. Ruff Configuration
 
 Single config: **`ruff.toml`** at repo root. Strict — `select = ["ALL"]`.
+Under `ALL`, every rule a ruff minor stabilizes auto-activates, so forge pins
+ruff to one minor (`>=X.Y,<X.Y+1`) and raises the cap deliberately, triaging
+the newly stable rules — never an unbounded pin. Baseline ignores for
+`select = ["ALL"]` repos: `COM812` / `ISC001` (conflict with `ruff format`),
+and `CPY001` when the repo has no per-file copyright-header policy (a
+repo-level `LICENSE` is the copyright policy). Repos not wanting ruff ≥0.16's
+Markdown code-block formatting add `exclude = ["*.md"]` under `[format]`.
 
 ### Rules
 - **NO `# noqa` comments.** Fix the code properly. Only exception: `# noqa: E402`
@@ -258,22 +265,25 @@ the consumer's `ruff.toml` as the actual enforcement source — not these defaul
 
 ## 6. Git & PR Workflow
 
-### First step (always)
+### First step (new task)
 
-Start from updated main, then branch: `git checkout main && git pull origin main`,
-then `git checkout -b <type>/<description>`. Branch prefixes: `feat/`, `fix/`,
+Applies when starting a **fresh task from a clean state** — already on a feature
+branch with uncommitted or unmerged work? The next section governs instead. Start from updated
+main, then branch: `git checkout main && git pull origin main`, then `git
+checkout -b <type>/<description>`. Branch prefixes: `feat/`, `fix/`,
 `refactor/`, `test/`, `docs/`, `chore/`. After plan mode, verify with `git branch
 --show-current` before editing. **Never start work from stale main.**
 
 ### A new request mid-branch — confirm, don't reflex-split
 
-When you're on a feature branch and the user asks for something that does **not**
-obviously fit the current work *and* isn't a continuation: (1) remind them what's
-in flight (branch + open PR), (2) confirm they want the new thing now, (3) if yes,
-ask whether it should be its own branch — but **default to the same branch** for a
-small, quick change. **Favor quick development over heavy branch/PR ceremony:** do
-not silently open a new branch/PR for a small ask; reserve a separate branch for
-genuinely large or independently-releasable work. When unsure, stay and ask.
+When you're on a feature branch with uncommitted or unmerged work and the user
+asks for **anything new** — related side task or not: **never automatically open
+a new branch/PR.** For a small, quick change, **default to the same branch** and
+just do it there. For something genuinely large or independently-releasable:
+(1) remind them what's in flight (branch, and PR if one exists), (2) confirm
+they want the new thing now, (3) ask whether it should be its own branch.
+**Favor quick development over heavy branch/PR ceremony.** When unsure, stay
+and ask.
 
 ### Commit messages
 

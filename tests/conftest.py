@@ -49,6 +49,61 @@ def init_git_repo(repo: Path) -> None:
         subprocess.run(cmd, cwd=repo, env=GIT_ENV, check=True)
 
 
+def init_single_track_repo(base: Path) -> tuple[Path, Path]:
+    """Initialize a paired work/bare single-track git repository under *base*.
+
+    The single-track counterpart to :func:`init_dual_track_repo`:
+    ``base/work`` on ``main`` only, wired to ``base/origin.git`` with
+    ``main`` pushed. Shared by the ``forge-release`` suites so the
+    work-tree/bare-origin plumbing lives in one place; callers layer
+    their repo-shape payload (files, tags, branches) on top.
+
+    Args:
+        base: Parent directory; must already exist. ``work`` and
+            ``origin.git`` are created inside it.
+
+    Returns:
+        A ``(work, bare)`` tuple of the work-tree and bare-repo paths.
+    """
+    work = base / "work"
+    bare = base / "origin.git"
+    work.mkdir()
+    bare.mkdir()
+    init_git_repo(work)
+    subprocess.run(["git", "init", "--bare", "-q"], cwd=bare, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(bare)],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+    return work, bare
+
+
+def tag_exists(repo: Path, tag: str) -> bool:
+    """Return whether *repo* (work tree or bare) carries *tag*.
+
+    Args:
+        repo: Repo to check.
+        tag: Tag name to look for.
+
+    Returns:
+        ``True`` when git reports the tag in that repo.
+    """
+    result = subprocess.run(
+        ["git", "tag", "--list", tag],
+        cwd=repo,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip() == tag
+
+
 def init_dual_track_repo(base: Path) -> tuple[Path, Path]:
     """Initialize a paired work/bare dual-track git repository under *base*.
 

@@ -20,6 +20,37 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.26.0 — 2026-08-02
+
+Tooling — forge adopts ruff 0.16 under `select = ["ALL"]`; consumer
+repos with the same strict baseline must mirror two config additions
+when the pin reaches them.
+
+### ⚠️ Upgrade notes
+
+- **ruff 0.16 under `select = ["ALL"]` activates newly stable rules**
+  (#226). Mirror forge's `ruff.toml` additions in your own strict-config
+  repo: add `CPY001` to the baseline ignores (per-file copyright headers
+  — a repo-level `LICENSE` is the copyright policy), and add
+  `exclude = ["*.md"]` under `[format]` unless you want ruff formatting
+  Markdown code blocks. Repos not on `select = ["ALL"]` are unaffected.
+
+### Tooling
+
+- **ruff pinned `>=0.16,<0.17`** (#226): cap-and-triage cadence — every
+  newly stable rule triaged on adoption, never an unbounded pin.
+
+### Docs / Tests
+
+- **Verification sub-agents are report-only** (#225): the reporter
+  contract (no commits/pushes/PR comments from checker agents) stated in
+  the agent docs.
+- **Branching guidance softened** (#223): FOUNDATION §6 always-branch
+  rule scoped to fresh tasks from a clean state; mid-branch new requests
+  get confirm-don't-reflex-split guidance.
+- **End-to-end consumer release fixture** (#222): `forge-release` e2e
+  test against a real single-track repo fixture.
+
 ## v2.25.0 — 2026-08-02
 
 Additive — single-track consumer repos gain a CI tag-on-merge release

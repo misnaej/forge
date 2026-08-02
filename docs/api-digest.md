@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_61 modules, 637 symbols._
+_61 modules, 639 symbols._
 
 ## `forge`
 
@@ -702,6 +702,8 @@ _61 modules, 637 symbols._
 - `_detached_head_error(repo_root: Path, base_branch: str) -> str | None` _(internal)_ — Return an error unless ``HEAD`` is the tip of ``origin/<base_branch>``.
 - `_declared_tag_or_error(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Resolve the tag ``--from-changelog`` should cut.
 - `_tag_exists(repo_root: Path, tag: str) -> bool` _(internal)_ — Return whether *tag* already exists locally or on ``origin``.
+- `_select_branch_guard(repo_root: Path, base_branch: str, *, from_changelog_mode: bool) -> str | None` _(internal)_ — Choose the appropriate branch guard for the release mode.
+- `_prepare_from_changelog(repo_root: Path, cfg: ForgeConfig) -> tuple[str | None, str | None]` _(internal)_ — Resolve and validate the tag declared in CHANGELOG.md.
 - `_cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> int` _(internal)_ — Create the annotated *tag* on ``HEAD`` and push it to ``origin``.
 - `main() -> int` — Cut the ``vX.Y.Z`` release tag — bumped off the latest tag, or declared.
 

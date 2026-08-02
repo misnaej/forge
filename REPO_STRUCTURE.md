@@ -195,6 +195,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_manifests.py: tests for plugin manifests
    - test_next_prep.py: tests for next_prep
    - test_release.py: tests for release (forge-release CLI guards + tagging)
+   - test_release_e2e.py: end-to-end single-track consumer release fixture (recipes + changelog steps)
    - test_changelog.py: tests for changelog (release_headings / changelog_lacks_entry)
    - test_pr_delta.py: tests for pr_delta shared thresholds/regex
    - test_pr_squash_comment.py: tests for pr_squash_comment

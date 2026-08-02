@@ -24,6 +24,8 @@ from forge import git_utils, release
 from forge.config import ForgeConfig
 from tests.conftest import GIT_ENV as _GIT_ENV
 from tests.conftest import init_git_repo as _init_git_repo
+from tests.conftest import init_single_track_repo
+from tests.conftest import tag_exists as conftest_tag_exists
 
 
 if TYPE_CHECKING:
@@ -35,9 +37,8 @@ if TYPE_CHECKING:
 def _repo_with_origin(base: Path) -> tuple[Path, Path]:
     """Initialize a work tree + bare origin wired together on ``main`` only.
 
-    Single-track counterpart to ``tests.conftest.init_dual_track_repo``:
-    ``forge-release`` guards refuse a dual-track repo, so its tests need a
-    bare remote without a second branch.
+    Thin alias for :func:`tests.conftest.init_single_track_repo`, kept so
+    this suite's call sites read locally; the plumbing lives in conftest.
 
     Args:
         base: Parent directory; ``work`` and ``origin.git`` are created
@@ -46,23 +47,7 @@ def _repo_with_origin(base: Path) -> tuple[Path, Path]:
     Returns:
         A ``(work, bare)`` tuple of the work-tree and bare-repo paths.
     """
-    work = base / "work"
-    bare = base / "origin.git"
-    work.mkdir()
-    bare.mkdir()
-
-    _init_git_repo(work)
-    subprocess.run(["git", "init", "--bare", "-q"], cwd=bare, env=_GIT_ENV, check=True)
-    subprocess.run(
-        ["git", "remote", "add", "origin", str(bare)],
-        cwd=work,
-        env=_GIT_ENV,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "push", "-q", "origin", "main"], cwd=work, env=_GIT_ENV, check=True
-    )
-    return work, bare
+    return init_single_track_repo(base)
 
 
 def _tag_exists(repo: Path, tag: str) -> bool:
@@ -75,15 +60,7 @@ def _tag_exists(repo: Path, tag: str) -> bool:
     Returns:
         ``True`` when git reports *tag* in that repo.
     """
-    result = subprocess.run(
-        ["git", "tag", "--list", tag],
-        cwd=repo,
-        env=_GIT_ENV,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip() == tag
+    return conftest_tag_exists(repo, tag)
 
 
 # ---------------------------------------------------------------------------

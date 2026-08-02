@@ -104,18 +104,24 @@ def delta_decision(
     if line_count > DELTA_LINE_THRESHOLD:
         return (
             False,
-            f"diff is {line_count} lines (> {DELTA_LINE_THRESHOLD}); "
-            "full re-check required",
+            (
+                f"diff is {line_count} lines (> {DELTA_LINE_THRESHOLD}); "
+                "full re-check required"
+            ),
         )
     hot = touches_high_blast_radius(changed_paths)
     if hot:
         return (
             False,
-            f"diff touches high-blast-radius path(s): {', '.join(hot)}; "
-            "full re-check required",
+            (
+                f"diff touches high-blast-radius path(s): {', '.join(hot)}; "
+                "full re-check required"
+            ),
         )
     return (
         True,
-        f"diff is {line_count} lines under {DELTA_LINE_THRESHOLD}, "
-        "no high-blast-radius paths",
+        (
+            f"diff is {line_count} lines under {DELTA_LINE_THRESHOLD}, "
+            "no high-blast-radius paths"
+        ),
     )
