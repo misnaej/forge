@@ -353,3 +353,124 @@ def test_rebase_blocks_env_var_prefix() -> None:
 def test_rebase_blocks_leading_whitespace() -> None:
     """A rebase with leading whitespace (`   git rebase main`) is blocked."""
     assert _run_hook(_REBASE, "   git rebase main") == 2
+
+
+_CONTINUATION_DELETE = "block_continuation_delete.sh"
+
+
+def test_continuation_delete_allows_sibling_file() -> None:
+    """Deleting a `.plan/` sibling file (not CONTINUATION.md) is allowed (#241).
+
+    The issue's reported false positive: a weekly-summary file living
+    alongside CONTINUATION.md must stay deletable.
+    """
+    assert _run_hook(_CONTINUATION_DELETE, "rm .plan/weekly_summary_2026-07-10.md") == 0
+
+
+def test_continuation_delete_allows_interpreter_one_liner() -> None:
+    """A `python -c` one-liner unlink slips through — documented, accepted gap."""
+    assert (
+        _run_hook(
+            _CONTINUATION_DELETE,
+            "python -c \"import pathlib; pathlib.Path('.plan/w.md').unlink()\"",
+        )
+        == 0
+    )
+
+
+def test_continuation_delete_allows_quoted_prose_mention() -> None:
+    """`rm`/`unlink` wording quoted inside prose (e.g. an issue body) is allowed."""
+    assert (
+        _run_hook(
+            _CONTINUATION_DELETE,
+            'gh issue create --body "blocked rm .plan/weekly.md and unlink"',
+        )
+        == 0
+    )
+
+
+def test_continuation_delete_allows_non_plan_path() -> None:
+    """`rm foo.plan` (a file merely ending in `.plan`) is not the `.plan/` dir."""
+    assert _run_hook(_CONTINUATION_DELETE, "rm foo.plan") == 0
+
+
+def test_continuation_delete_allows_mention_without_delete() -> None:
+    """Mentioning CONTINUATION.md without a delete verb is allowed."""
+    assert _run_hook(_CONTINUATION_DELETE, "echo CONTINUATION.md") == 0
+
+
+def test_continuation_delete_allows_non_delete_action() -> None:
+    """A non-delete action on `.plan` (`ls`) is allowed."""
+    assert _run_hook(_CONTINUATION_DELETE, "ls .plan") == 0
+
+
+def test_continuation_delete_blocks_continuation_md_direct() -> None:
+    """`rm .plan/CONTINUATION.md` — the direct target — is blocked."""
+    assert _run_hook(_CONTINUATION_DELETE, "rm .plan/CONTINUATION.md") == 2
+
+
+def test_continuation_delete_blocks_plan_directory() -> None:
+    """`rm -rf .plan` and its trailing-slash form both take CONTINUATION.md down."""
+    assert _run_hook(_CONTINUATION_DELETE, "rm -rf .plan") == 2
+    assert _run_hook(_CONTINUATION_DELETE, "rm -rf .plan/") == 2
+
+
+def test_continuation_delete_blocks_relative_dot_slash_path() -> None:
+    """`rm ./.plan` (leading `./`) is still recognized as the `.plan` directory."""
+    assert _run_hook(_CONTINUATION_DELETE, "rm ./.plan") == 2
+
+
+def test_continuation_delete_blocks_chained_commands() -> None:
+    """A chained delete is blocked regardless of separator spacing.
+
+    Covers `&&` with a space, `&&` glued directly to the prior token (no
+    space), and `;` — the anchor must not assume whitespace around the
+    separator.
+    """
+    assert _run_hook(_CONTINUATION_DELETE, "echo x && rm .plan") == 2
+    assert _run_hook(_CONTINUATION_DELETE, "rm -rf .plan&&git status") == 2
+    assert _run_hook(_CONTINUATION_DELETE, "rm .plan;echo done") == 2
+
+
+def test_continuation_delete_blocks_subshell() -> None:
+    """`(rm .plan)` — a subshell-wrapped delete — is blocked."""
+    assert _run_hook(_CONTINUATION_DELETE, "(rm .plan)") == 2
+
+
+def test_continuation_delete_blocks_env_var_prefix() -> None:
+    """An inline env assignment before `rm` (`FOO=1 rm ...`) does not bypass."""
+    assert _run_hook(_CONTINUATION_DELETE, "FOO=1 rm .plan/CONTINUATION.md") == 2
+
+
+def test_continuation_delete_blocks_sudo_prefix() -> None:
+    """`sudo rm -rf .plan` is blocked like the unprivileged form."""
+    assert _run_hook(_CONTINUATION_DELETE, "sudo rm -rf .plan") == 2
+
+
+def test_continuation_delete_blocks_unlink_verb() -> None:
+    """`unlink` (not just `rm`) targeting CONTINUATION.md is blocked."""
+    assert _run_hook(_CONTINUATION_DELETE, "unlink .plan/CONTINUATION.md") == 2
+
+
+def test_continuation_delete_blocks_xargs_pipe_regression() -> None:
+    """`find .plan | xargs rm` is blocked — the deliberate anchor addition.
+
+    Unlike the git-hook family idiom (which accepts `xargs` slip-through per
+    block_install_deps.sh's stance), this hook keeps `xargs` in the wrapper
+    list because deletion is irreversible. A future anchor-alignment cleanup
+    that copies the git-hook idiom verbatim would silently regress this case.
+    """
+    assert _run_hook(_CONTINUATION_DELETE, "find .plan -name '*.md' | xargs rm") == 2
+
+
+def test_continuation_delete_blocks_multiline_command_body() -> None:
+    """A multiline command body with `rm .plan/CONTINUATION.md` on its own line blocks.
+
+    Documents current behavior shared with the whole `RM_ANCHOR` family: the
+    `^` anchor matches per-line in grep, not just at string-start, so a
+    delete buried in a multiline body is still caught. Blocked today by
+    design — the safe-erring direction.
+    """
+    assert (
+        _run_hook(_CONTINUATION_DELETE, "line one\nrm .plan/CONTINUATION.md\nline") == 2
+    )
