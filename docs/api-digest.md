@@ -624,7 +624,7 @@ _62 modules, 662 symbols._
 
 ## `forge.pr_delta`
 
-> _pr_delta — thresholds and helpers for pr-manager delta-mode short-circuit._
+> _pr_delta — thresholds and helpers for pr-manager finalization short-circuits._
 
 - `extract_verified_shas(text: str) -> list[str]` — Return every ``verified-at:`` SHA referenced in *text*.
 - `touches_high_blast_radius(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`HIGH_BLAST_RADIUS_PATHS`.

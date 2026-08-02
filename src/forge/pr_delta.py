@@ -1,10 +1,12 @@
-"""pr_delta — thresholds and helpers for pr-manager delta-mode short-circuit.
+"""pr_delta — thresholds and helpers for pr-manager finalization short-circuits.
 
-`forge:pr-manager` short-circuits a full three-agent re-verification when
-the diff since the last verified SHA is small and stays out of
-high-blast-radius areas. The thresholds + the SHA-extraction helper live
-here so the agent prompt, future audit guards, and any consumer wrapper
-read them from one source of truth.
+`forge:pr-manager` (via the `/pr` skill) has two independent ways to skip
+the full three-agent re-verification: **delta mode**, when the diff since
+the last verified SHA is small and stays out of high-blast-radius areas,
+and the **docs-only light path**, when the whole diff is doc-shaped and
+touches no high-blast-radius path. The thresholds, path globs, and the
+SHA-extraction helper live here so the agent prompt, future audit guards,
+and any consumer wrapper read them from one source of truth.
 
 The agent prompt references this module by path; the constants are not
 imported by the agent runtime (agents are markdown). Anything that
@@ -34,6 +36,8 @@ HIGH_BLAST_RADIUS_PATHS: Final[tuple[str, ...]] = (
     ".githooks/",
     "skills/",
     ".claude-plugin/",
+    ".claude/",
+    ".github/workflows/",
     "pyproject.toml",
     "ruff.toml",
     "FOUNDATION.md",
@@ -47,11 +51,16 @@ HIGH_BLAST_RADIUS_PATHS: Final[tuple[str, ...]] = (
 # extra globs via ``[tool.forge.pr].docs_only_globs`` (additive; the
 # built-ins always apply). High-blast-radius paths trump these globs:
 # agent/skill/hook markdown IS shipped behavior, never "docs".
+#
+# Extension-anchored on purpose: ``fnmatch``'s ``*`` crosses ``/``, so
+# ``*.md`` already covers ``docs/**/*.md`` — while a directory glob like
+# ``docs/*`` would match ANY extension nested under it (``docs/evil.py``),
+# a working review bypass. Consumer extra globs inherit the same fnmatch
+# semantics; prefer extension-anchored forms.
 DOCS_ONLY_GLOBS: Final[tuple[str, ...]] = (
-    "CHANGELOG.md",
     "*.md",
-    "docs/*",
-    "docs/**/*",
+    "*.rst",
+    "*.txt",
 )
 
 
@@ -89,12 +98,16 @@ def touches_high_blast_radius(changed_paths: list[str]) -> list[str]:
     """
     hits: list[str] = []
     for path in changed_paths:
+        # Case-folded: on a case-insensitive filesystem (APFS default)
+        # `Agents/x.md` lands in the same on-disk directory as `agents/`,
+        # so exact-case matching would let it dodge the blast-radius list.
+        folded = path.casefold()
         for glob in HIGH_BLAST_RADIUS_PATHS:
             if glob.endswith("/"):
-                if path.startswith(glob):
+                if folded.startswith(glob):
                     hits.append(path)
                     break
-            elif path == glob:
+            elif folded == glob.casefold():
                 hits.append(path)
                 break
     return hits
@@ -111,6 +124,12 @@ def docs_only_diff(
     friends are shipped behavior in doc-shaped files, so they always take
     the full verification round regardless of extension.
 
+    Known residual (documented, accepted): classification sees path
+    strings only — a symlinked ``*.md`` or an injection-shaped prose
+    change is not detected here; the human PR review and the
+    docs-types-checker (which still runs on the light path) remain the
+    reviewers of record for doc content.
+
     Args:
         changed_paths: Repo-relative paths from ``git diff --name-only``.
         extra_globs: Consumer additions from
@@ -124,8 +143,10 @@ def docs_only_diff(
     """
     if not changed_paths or touches_high_blast_radius(changed_paths):
         return False
-    globs = DOCS_ONLY_GLOBS + tuple(extra_globs)
-    return all(any(fnmatch(path, g) for g in globs) for path in changed_paths)
+    globs = tuple(g.casefold() for g in DOCS_ONLY_GLOBS + tuple(extra_globs))
+    return all(
+        any(fnmatch(path.casefold(), g) for g in globs) for path in changed_paths
+    )
 
 
 def delta_decision(

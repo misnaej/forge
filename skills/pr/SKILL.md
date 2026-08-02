@@ -88,6 +88,10 @@ the diff is docs-only:
 - Steps 3–4 run as normal (docs sync is the whole point; wrap-up +
   squash message stay MANDATORY). Tell `pr-manager` the PR took the
   docs-only path so the wrap-up says so.
+- Accepted residuals (documented in `pr_delta.docs_only_diff`): the
+  classifier sees path strings only — symlinked doc files and
+  injection-shaped prose are not detected; docs-types-checker plus the
+  human PR review remain the reviewers of record for doc content.
 
 Otherwise, check if the PR is eligible for
 **delta mode**. Delta mode reuses the prior wrap-up's findings when the

@@ -38,15 +38,18 @@ versions follow forge's rolling-next convention.
 
 ### Features
 - **Docs-only light finalization path for `/pr`.** A PR whose diff is
-  entirely docs-shaped (`CHANGELOG.md`, `*.md`, `docs/**` — extendable
-  via `[tool.forge.pr].docs_only_globs`, additive) now skips the
+  entirely docs-shaped (extension-anchored `*.md` / `*.rst` / `*.txt` —
+  extendable via `[tool.forge.pr].docs_only_globs`, additive) now skips the
   design/security reporter round and the strict whole-tree pre-commit,
   running only path-relevant gates plus `docs-types-checker` — a
   one-line changelog PR finalizes in seconds, not minutes. Doc-shaped
-  files under shipped-behavior paths (`agents/`, `skills/`,
-  `claude-hooks/`, `.claude-plugin/`) never qualify; those two paths
-  also joined `HIGH_BLAST_RADIUS_PATHS`, closing a pre-existing
-  delta-mode gap.
+  files under shipped-behavior paths never qualify, and matching is
+  extension-anchored + case-folded (security review: a directory glob
+  would have let `docs/evil.py` take the light path, and case-varied
+  paths collide with real directories on case-insensitive filesystems).
+  `skills/`, `.claude-plugin/`, `.claude/`, and `.github/workflows/`
+  joined `HIGH_BLAST_RADIUS_PATHS`, closing pre-existing delta-mode
+  gaps.
 - **Deferred changelog timing — `[tool.forge.changelog].precommit_enforce`.**
   Default `true` keeps today's behavior (the `changelog_updated` gate
   fires at every local commit). Set `false` for deferred mode: local
