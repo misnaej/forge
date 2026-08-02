@@ -28,13 +28,15 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
+      # SHA-pinned per docs/security.md "Pin GitHub Actions"; Dependabot
+      # (github-actions ecosystem) keeps the pins current.
       - name: Checkout (full history for setuptools-scm)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
           python-version: '3.13'
           cache: 'pip'

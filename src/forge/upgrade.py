@@ -24,11 +24,13 @@ shortcut via ``--apply``.
 ``forge-upgrade --check`` reports current vs latest without writing
 anything.
 
-Pin detection scope: searches the consumer's ``pyproject.toml`` for
-a ``forge-scripts @ git+...`` line under any
-``[project.optional-dependencies]`` table. Repos that pin via
-``requirements.txt`` / ``setup.cfg`` / a lockfile get a clear "no
-pyproject pin found" message; they continue to upgrade manually.
+Pin detection scope: searches for a ``forge-scripts @ git+...`` line
+in, in order, the consumer's ``pyproject.toml`` (primary),
+``requirements*.txt``, and the ``pip:`` section of a conda
+``environment.yml`` — the first file with a matching line wins, and
+every report names the file the pin was found in. Repos that pin via
+``setup.cfg`` or a lockfile (declining formats) get a clear "no pin
+found" message; they continue to upgrade manually.
 """
 
 from __future__ import annotations
@@ -42,11 +44,17 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from importlib import resources
+from importlib import metadata, resources
 from pathlib import Path
 
-from forge.git_utils import _FORGE_GITHUB_REPO, configure_cli_logging, repo_root
-from forge.install_bootstrap import main as _bootstrap_main
+from forge.changelog import action_items
+from forge.git_utils import (
+    _FORGE_GITHUB_REPO,
+    configure_cli_logging,
+    parse_semver,
+    repo_root,
+)
+from forge.install_bootstrap import run_in_process as _bootstrap_run
 from forge.run_context import (
     AuthMode,
     git_auth_mode,
@@ -113,13 +121,34 @@ _PIN_RE = re.compile(
     r'(?P<suffix>["\'])',
 )
 
+# The unquoted variant for ``requirements*.txt`` lines and
+# ``environment.yml`` ``pip:`` entries (``- forge-scripts @ git+...``).
+# Same last-``@`` url / ref boundary trick as ``_PIN_RE``, but with no
+# closing quote to anchor on, the end-of-token lookahead does that job:
+# the ref must run to whitespace / quote / comma / EOL, which forces the
+# lazy url to backtrack across every earlier ``@`` (SSH user and host
+# separators) until the LAST one splits url from ref. ``,`` is excluded
+# from the ref character class too (not just the lookahead) so a bare
+# trailing comma with nothing after it (ref immediately followed by EOL)
+# isn't swallowed into the ref.
+_PIN_BARE_RE = re.compile(
+    r"(?P<prefix>forge-scripts\s*@\s*git\+)"
+    r"(?P<url>[^\s\"']+?)"
+    r"@(?P<ref>[^@\s\"',]+)"
+    r"(?=[\s\"',]|$)"
+)
+
+# Where the pin search "no pin found" messages point users at.
+_PIN_SEARCH_SCOPE = "pyproject.toml, requirements*.txt, environment.yml"
+
 
 @dataclass(frozen=True)
 class Pin:
-    """A forge-scripts pin parsed from a consumer's ``pyproject.toml``.
+    """A forge-scripts pin parsed from a consumer's pin-carrying file.
 
     Attributes:
-        path: Repo-relative path of the file the pin was found in.
+        path: Path of the file the pin was found in — ``pyproject.toml``,
+            a ``requirements*.txt``, or ``environment.yml``.
         line_no: 1-based line number where the pin appears.
         url: The ``git+...`` URL portion (no ref).
         ref: The current pin target — ``main`` / ``dev`` / ``vX.Y.Z``.
@@ -131,29 +160,69 @@ class Pin:
     ref: str
 
 
+def _pin_regex_for(path: Path) -> re.Pattern[str]:
+    """Return the pin regex matching *path*'s syntax.
+
+    ``pyproject.toml`` pins are quote-delimited TOML strings; the other
+    supported formats carry the pin bare (``requirements*.txt``) or as a
+    YAML list item (``environment.yml`` ``pip:`` section).
+
+    Args:
+        path: A pin-carrying candidate file.
+
+    Returns:
+        :data:`_PIN_RE` for ``pyproject.toml``, :data:`_PIN_BARE_RE`
+        otherwise.
+    """
+    return _PIN_RE if path.name == "pyproject.toml" else _PIN_BARE_RE
+
+
+def _pin_candidate_files(repo_root: Path) -> list[Path]:
+    """Return pin-carrying candidate files in search-priority order.
+
+    ``pyproject.toml`` stays primary; ``requirements*.txt`` (sorted for
+    determinism) and ``environment.yml`` are best-effort fallbacks for
+    repos that declare dependencies elsewhere (e.g. conda-first repos).
+
+    Args:
+        repo_root: Consumer repo root.
+
+    Returns:
+        Existing candidate files, highest priority first.
+    """
+    candidates = [
+        repo_root / "pyproject.toml",
+        *sorted(repo_root.glob("requirements*.txt")),
+        repo_root / "environment.yml",
+    ]
+    return [path for path in candidates if path.is_file()]
+
+
 def find_pin(repo_root: Path) -> Pin | None:
-    """Locate the ``forge-scripts`` pin in *repo_root*'s ``pyproject.toml``.
+    """Locate the ``forge-scripts`` pin in *repo_root*'s dependency files.
+
+    Searches :func:`_pin_candidate_files` in priority order —
+    ``pyproject.toml`` first, then ``requirements*.txt``, then
+    ``environment.yml`` — and returns the first matching line.
 
     Args:
         repo_root: Consumer repo root.
 
     Returns:
         Parsed :class:`Pin` when a matching line is found; ``None`` when
-        ``pyproject.toml`` is absent or carries no ``forge-scripts @
-        git+...`` line.
+        no candidate file carries a ``forge-scripts @ git+...`` line.
     """
-    pyproject = repo_root / "pyproject.toml"
-    if not pyproject.is_file():
-        return None
-    for i, line in enumerate(pyproject.read_text().splitlines(), start=1):
-        match = _PIN_RE.search(line)
-        if match:
-            return Pin(
-                path=pyproject,
-                line_no=i,
-                url=match.group("url"),
-                ref=match.group("ref"),
-            )
+    for path in _pin_candidate_files(repo_root):
+        regex = _pin_regex_for(path)
+        for i, line in enumerate(path.read_text().splitlines(), start=1):
+            match = regex.search(line)
+            if match:
+                return Pin(
+                    path=path,
+                    line_no=i,
+                    url=match.group("url"),
+                    ref=match.group("ref"),
+                )
     return None
 
 
@@ -169,12 +238,16 @@ def _rewrite_pin(pin: Pin, new_ref: str) -> str:
         ``@<ref>`` portion replaced; all other lines are byte-identical
         to the original.
     """
+    regex = _pin_regex_for(pin.path)
     lines = pin.path.read_text().splitlines(keepends=True)
     # splitlines(keepends=True) returns each line with its trailing newline
     # preserved; the pin line keeps its newline too.
     raw = lines[pin.line_no - 1]
-    rewritten = _PIN_RE.sub(
-        lambda m: f"{m.group('prefix')}{m.group('url')}@{new_ref}{m.group('suffix')}",
+    rewritten = regex.sub(
+        lambda m: (
+            f"{m.group('prefix')}{m.group('url')}@{new_ref}"
+            + (m.group("suffix") if "suffix" in m.groupdict() else "")
+        ),
         raw,
     )
     lines[pin.line_no - 1] = rewritten
@@ -272,14 +345,14 @@ def _resolve_target_ref(args: argparse.Namespace, current_ref: str | None) -> st
     resolved = _resolve_target_ref_or_none(args, current_ref)
     if resolved is None:
         sys.stderr.write(
-            "forge-upgrade: no forge-scripts pin found in pyproject.toml and "
-            "neither --to nor --channel given. Specify a target.\n",
+            f"forge-upgrade: no forge-scripts pin found ({_PIN_SEARCH_SCOPE}) "
+            "and neither --to nor --channel given. Specify a target.\n",
         )
         raise SystemExit(2)
     return resolved
 
 
-def _write_pyproject_atomic(path: Path, content: str) -> None:
+def _write_atomic(path: Path, content: str) -> None:
     """Replace *path*'s contents with *content*, atomically.
 
     Writes to a sibling tempfile in the same directory then ``os.replace``s
@@ -333,30 +406,40 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
         # In dry-run mode, surface what we can see + a default target hint
         # without exiting on missing pin / missing flags.
         if pin is None:
-            logger.info("(no forge-scripts pin found in pyproject.toml)")
+            logger.info("(no forge-scripts pin found — searched %s)", _PIN_SEARCH_SCOPE)
         else:
-            logger.info("current pin: %s@%s", pin.url, pin.ref)
+            logger.info("current pin (%s): %s@%s", pin.path.name, pin.url, pin.ref)
         target_hint = _resolve_target_ref_or_none(args, current_ref)
         if target_hint is None:
             logger.info("(no target — pass --channel or --to to see the pip command)")
             return 0, None
         logger.info("would upgrade to: %s", target_hint)
         logger.info("pip command: %s", _pip_command(target_hint))
+        changelog_text = _read_changelog()
+        if changelog_text is not None:
+            pending = _pending_action_count(changelog_text)
+            if pending:
+                logger.warning(
+                    "%d pending action item(s) in versions newer than the "
+                    "installed forge — shown in full on --continue.",
+                    pending,
+                )
         return 0, target_hint
 
     target_ref = _resolve_target_ref(args, current_ref)
 
     if pin is None:
         logger.warning(
-            "no forge-scripts pin found in pyproject.toml — skipping rewrite. "
+            "no forge-scripts pin found (%s) — skipping rewrite. "
             "Run the pip command manually:\n  %s",
+            _PIN_SEARCH_SCOPE,
             _pip_command(target_ref),
         )
         logger.info("Then re-run: forge-upgrade --continue")
         return 0, target_ref
 
     if pin.ref != target_ref:
-        _write_pyproject_atomic(pin.path, _rewrite_pin(pin, target_ref))
+        _write_atomic(pin.path, _rewrite_pin(pin, target_ref))
         logger.info(
             "✓ %s:%d  forge-scripts pin %s → %s",
             pin.path.name,
@@ -445,27 +528,102 @@ def _consumer_upgrade_notes(
     return "\n\n".join(chunks) if chunks else None
 
 
+_ACTIONS_MAX_VERSIONS = 3
+
+
+def _recent_action_items(
+    changelog_text: str, *, max_versions: int = _ACTIONS_MAX_VERSIONS
+) -> list[tuple[str, str]]:
+    """Return ``**Action:**`` items from the newest marker-bearing versions.
+
+    Same blunt top-N bound as :func:`_consumer_upgrade_notes` — the
+    printed header tells the reader to scan only entries newer than
+    their previous version. Forward-only: marker-less entries (every
+    entry predating the convention) contribute nothing.
+
+    Args:
+        changelog_text: Full ``CHANGELOG.md`` contents.
+        max_versions: Cap on distinct marker-bearing versions surfaced,
+            newest-first.
+
+    Returns:
+        ``(version, action)`` pairs, newest version first; empty when no
+        version carries markers.
+    """
+    kept_versions: list[str] = []
+    kept: list[tuple[str, str]] = []
+    for version, action in action_items(changelog_text):
+        if version not in kept_versions:
+            if len(kept_versions) >= max_versions:
+                break
+            kept_versions.append(version)
+        kept.append((version, action))
+    return kept
+
+
+def _pending_action_count(changelog_text: str) -> int:
+    """Count ``**Action:**`` items in versions newer than the installed one.
+
+    The ``--check`` signal: how many adoption / contract items the
+    consumer would need to review if they upgraded now. Versions the
+    installed forge already covers contribute nothing.
+
+    Returns 0 when the installed version cannot be determined — a wrong
+    "nothing pending" beats crashing a read-only check.
+
+    Args:
+        changelog_text: Full ``CHANGELOG.md`` contents.
+
+    Returns:
+        Number of pending action items.
+    """
+    try:
+        installed = parse_semver(metadata.version("forge-scripts"))
+    except metadata.PackageNotFoundError:
+        return 0
+    if installed is None:
+        return 0
+    count = 0
+    for version, _action in action_items(changelog_text):
+        parsed = parse_semver(version)
+        if parsed is not None and parsed > installed:
+            count += 1
+    return count
+
+
 def _print_upgrade_notes() -> None:
     """Surface consumer-action upgrade notes after a successful upgrade.
 
     Reads the packaged changelog and prints the most recent
-    ``⚠️ Upgrade notes`` lanes so the consumer knows what — if anything —
-    they must change in their own repo. No-op when the changelog or its
-    notes are absent.
+    ``⚠️ Upgrade notes`` lanes, then the distinct "Action required"
+    items (``**Action:**`` marker lines — new capabilities to adopt,
+    contract changes to review) that mechanical regen cannot surface.
+    No-op when the changelog is absent; each section prints only when
+    it has content.
     """
     text = _read_changelog()
     if text is None:
         return
     notes = _consumer_upgrade_notes(text)
-    if notes is None:
+    if notes is not None:
+        logger.info("")
+        logger.warning(
+            "Consumer action — review these upgrade notes "
+            "(any newer than your previous forge version):",
+        )
+        for line in notes.splitlines():
+            logger.info("  %s", line)
+    actions = _recent_action_items(text)
+    if actions:
+        logger.info("")
+        logger.warning(
+            "Action required / new capabilities — bootstrap regen does NOT "
+            "adopt these (any newer than your previous forge version):",
+        )
+        for version, action in actions:
+            logger.info("  %s: %s", version, action)
+    if notes is None and not actions:
         return
-    logger.info("")
-    logger.warning(
-        "Consumer action — review these upgrade notes "
-        "(any newer than your previous forge version):",
-    )
-    for line in notes.splitlines():
-        logger.info("  %s", line)
     logger.info("")
     logger.info("Full release history: CHANGELOG.md in the forge repo.")
 
@@ -484,12 +642,7 @@ def _run_phase2() -> int:
     """
     with progress_logger("bootstrap") as note:
         note("install-forge-bootstrap")
-        saved_argv = sys.argv
-        try:
-            sys.argv = ["install-forge-bootstrap"]
-            rc = _bootstrap_main()
-        finally:
-            sys.argv = saved_argv
+        rc = _bootstrap_run()
 
     if rc == 0:
         logger.info("")

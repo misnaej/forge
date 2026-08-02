@@ -2858,11 +2858,15 @@ def test_step_changelog_version_nonblocking_when_configured(
 def test_step_changelog_updated_env_escape(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """SKIP_CHANGELOG_CHECK=1 skips the gate."""
+    """SKIP_CHANGELOG_CHECK=1 skips the gate with the no-version opt-out wording."""
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    monkeypatch.delenv("NO_VERSION", raising=False)
     monkeypatch.setenv("SKIP_CHANGELOG_CHECK", "1")
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     result = precommit.step_changelog_updated(tmp_path)
     assert result.skipped
+    assert "no-version opt-out" in result.output
+    assert "SKIP_CHANGELOG_CHECK" in result.output
 
 
 def test_step_changelog_updated_skips_on_base_branch(
@@ -2878,15 +2882,18 @@ def test_step_changelog_updated_skips_on_base_branch(
 def test_step_changelog_updated_fails_without_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Code changed, CHANGELOG untouched → fail with the skip hint."""
+    """Code changed, CHANGELOG untouched → fail with the opt-out hint."""
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     monkeypatch.setattr(
         precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
     )
     result = precommit.step_changelog_updated(tmp_path)
     assert not result.passed
-    assert "SKIP_CHANGELOG_CHECK=1" in result.output
+    assert "NO_VERSION=1" in result.output
+    assert "[no-version]" in result.output
 
 
 def test_step_changelog_updated_passes_with_entry(
@@ -2927,6 +2934,82 @@ def test_step_changelog_updated_honors_exempt_and_require_paths(
         lambda *_a, **_kw: ["projects/shipped/x.py"],
     )
     assert not precommit.step_changelog_updated(tmp_path).passed
+
+
+def test_step_changelog_updated_skips_with_branch_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `no-version` branch token skips the gate; output names the signal.
+
+    SCENARIO: wants_no_version fires on a branch-token signal.
+    MOCK SETUP: precommit.wants_no_version → a canned branch-token signal,
+    isolating the step's dispatch from wants_no_version's own git-based
+    detection (covered directly with real repos in tests/test_changelog.py).
+    No select_diff_files mock — the step returns on the signal before
+    ever calling it.
+    EXPECTED BEHAVIOR: the step short-circuits skipped, and the signal's
+    branch name surfaces verbatim in the output.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    monkeypatch.setattr(
+        precommit, "run_git", _fake_run_git_dispatch(branch="chore/x-no-version")
+    )
+    monkeypatch.setattr(
+        precommit,
+        "wants_no_version",
+        lambda _r: "`no-version` token in branch name 'chore/x-no-version'",
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.skipped
+    assert "chore/x-no-version" in result.output
+
+
+def test_step_changelog_updated_skips_with_commit_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `[no-version]` commit tag skips the gate; output names the signal.
+
+    SCENARIO: wants_no_version fires on a commit-tag signal.
+    MOCK SETUP: precommit.wants_no_version → a canned commit-tag signal,
+    same isolation rationale as the branch-token test above. No
+    select_diff_files mock — the step returns on the signal before ever
+    calling it.
+    EXPECTED BEHAVIOR: the step short-circuits skipped, and the signal's
+    tag text surfaces verbatim in the output.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(
+        precommit,
+        "wants_no_version",
+        lambda _r: "[no-version] tag in a commit message (main..HEAD)",
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.skipped
+    assert "[no-version]" in result.output
+
+
+def test_step_changelog_updated_no_signal_gate_still_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No no-version signal fired → the gate stays intact and still fails.
+
+    SCENARIO: wants_no_version reports no signal, so the gate must still
+    evaluate the diff and fail on an untouched CHANGELOG.md.
+    MOCK SETUP: precommit.wants_no_version → None (no opt-out); this is
+    the one sibling where select_diff_files is load-bearing — with no
+    signal, the step falls through to it to build the trigger set.
+    EXPECTED BEHAVIOR: the step does not skip and fails the gate.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(precommit, "wants_no_version", lambda _r: None)
+    monkeypatch.setattr(
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert not result.passed
+    assert not result.skipped
 
 
 def test_step_changelog_version_fetches_tags_unless_ci(

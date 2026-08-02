@@ -285,5 +285,25 @@ def main() -> int:
     return min(failed, 99)
 
 
+def run_in_process() -> int:
+    """Re-enter :func:`main` with a clean one-element ``sys.argv``.
+
+    The shared seam for CLIs that run the bootstrap in-process
+    (``forge-upgrade --continue``, ``forge-resync``): :func:`main`
+    parses ``sys.argv`` itself, so the caller's own argv must be
+    swapped out for the duration and restored afterwards — even when
+    the bootstrap raises.
+
+    Returns:
+        The bootstrap's exit code (0 = every step passed or self-skipped).
+    """
+    saved_argv = sys.argv
+    sys.argv = ["install-forge-bootstrap"]
+    try:
+        return main()
+    finally:
+        sys.argv = saved_argv
+
+
 if __name__ == "__main__":
     sys.exit(main())

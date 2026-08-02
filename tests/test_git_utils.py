@@ -622,6 +622,23 @@ def test_run_git_check_false_failure_returns_empty(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# ref_exists
+# ---------------------------------------------------------------------------
+
+
+def test_ref_exists_true_for_existing_branch(tmp_path: Path) -> None:
+    """A ref naming an existing branch resolves to ``True``."""
+    _init_git_repo(tmp_path)
+    assert git_utils.ref_exists(tmp_path, "HEAD") is True
+
+
+def test_ref_exists_false_for_missing_ref(tmp_path: Path) -> None:
+    """A ref with no matching commit resolves to ``False``."""
+    _init_git_repo(tmp_path)
+    assert git_utils.ref_exists(tmp_path, "nonexistent_branch_xyz") is False
+
+
+# ---------------------------------------------------------------------------
 # get_tree_sha
 # ---------------------------------------------------------------------------
 

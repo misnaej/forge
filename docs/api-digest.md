@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_61 modules, 639 symbols._
+_62 modules, 655 symbols._
 
 ## `forge`
 
@@ -193,9 +193,13 @@ _61 modules, 639 symbols._
 - `_recognized_version(token: str) -> str | None` _(internal)_ — Return the ``vX.Y.Z`` a heading *token* names, or ``None``.
 - `top_release_heading(text: str) -> str | None` — Return the first (topmost) recognized ``vX.Y.Z`` release heading.
 - `changelog_version_findings(text: str, latest_tag: str | None) -> list[str]` — Validate *text*'s release headings against each other and *latest_tag*.
+- `action_items(text: str) -> list[tuple[str, str]]` — Return ``(version, action)`` pairs for every ``**Action:**`` line.
 - `_governing_versions(text: str) -> list[str | None]` _(internal)_ — Map each line in *text* to its governing release version heading.
 - `_iter_added_lines(diff_text: str) -> Iterator[tuple[int, str]]` _(internal)_ — Yield (line_number, content) pairs for each addition in a unified diff.
 - `_stranded_from_added(governing: list[str | None], added_lines: Iterator[tuple[int, str]], tag: tuple[int, int, int] | None) -> list[str]` _(internal)_ — Detect released headings that received new content in a diff.
+- `_env_no_version() -> str | None` _(internal)_ — Return the name of the first truthy opt-out env var, or ``None``.
+- `_resolve_base_ref(repo_root: Path, base_branch: str) -> str | None` _(internal)_ — Return the first resolvable ref for *base_branch*, local-first.
+- `wants_no_version(repo_root: Path) -> str | None` — Return the fired no-version signal, or ``None`` when none is set.
 - `stranded_added_versions(text: str, diff_text: str, latest_tag: str | None) -> list[str]` — Return released heading versions that *diff_text* adds entries under.
 
 ## `forge.claude_settings_schema`
@@ -448,6 +452,7 @@ _61 modules, 639 symbols._
 - `gh_api(*args: str, timeout: int = 10) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
 - `_run_git(*args: str, cwd: Path | None = None) -> str` _(internal)_ — Run a git command and return stdout.
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
+- `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 - `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
 - `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
@@ -480,6 +485,7 @@ _61 modules, 639 symbols._
 - `_run_step(step: Step, *, check_mode: bool, root: Path) -> int` _(internal)_ — Execute one bootstrap step. Return its exit code.
 - `_resolve_steps(skip: Iterable[str]) -> list[Step]` _(internal)_ — Return the ordered step list with *skip* entries removed.
 - `main() -> int` — Run every install / generator step in order. Return non-zero on failure.
+- `run_in_process() -> int` — Re-enter :func:`main` with a clean one-element ``sys.argv``.
 
 ## `forge.install_claude_settings`
 
@@ -707,6 +713,17 @@ _61 modules, 639 symbols._
 - `_cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> int` _(internal)_ — Create the annotated *tag* on ``HEAD`` and push it to ``origin``.
 - `main() -> int` — Cut the ``vX.Y.Z`` release tag — bumped off the latest tag, or declared.
 
+## `forge.resync`
+
+> _forge-resync — regenerate managed artifacts and open a resync PR._
+
+- `_forge_version() -> str` _(internal)_ — Return the installed forge-scripts version for branch naming.
+- `_working_tree_dirty(root: Path) -> bool` _(internal)_ — Return ``True`` when the working tree has any pending change.
+- `_open_resync_pr_url() -> str | None` _(internal)_ — Return the URL of an already-open resync PR, or ``None``.
+- `_run_bootstrap() -> int` _(internal)_ — Run ``install-forge-bootstrap`` in-process and return its exit code.
+- `_publish_resync(root: Path, version: str, base_branch: str) -> int` _(internal)_ — Branch, commit, push the regen diff and open the resync PR.
+- `main() -> int` — Run the resync loop; see the module docstring for the steps.
+
 ## `forge.run_context`
 
 > _Detect the runtime context (interactive workstation vs. CI / automation)._
@@ -795,17 +812,21 @@ _61 modules, 639 symbols._
 > _forge-upgrade — one-command consumer upgrade flow._
 
 - `_ref_type(value: str) -> str` _(internal)_ — Argparse type validator for ``--to``.
-- `class Pin` — A forge-scripts pin parsed from a consumer's ``pyproject.toml``.
-- `find_pin(repo_root: Path) -> Pin | None` — Locate the ``forge-scripts`` pin in *repo_root*'s ``pyproject.toml``.
+- `class Pin` — A forge-scripts pin parsed from a consumer's pin-carrying file.
+- `_pin_regex_for(path: Path) -> re.Pattern[str]` _(internal)_ — Return the pin regex matching *path*'s syntax.
+- `_pin_candidate_files(repo_root: Path) -> list[Path]` _(internal)_ — Return pin-carrying candidate files in search-priority order.
+- `find_pin(repo_root: Path) -> Pin | None` — Locate the ``forge-scripts`` pin in *repo_root*'s dependency files.
 - `_rewrite_pin(pin: Pin, new_ref: str) -> str` _(internal)_ — Return the file content with *pin*'s line rewritten to *new_ref*.
 - `_git_url_for(auth_mode: AuthMode, ref: str) -> str` _(internal)_ — Return the ``git+...`` URL pip should resolve for *ref* under *auth_mode*.
 - `_pip_command(ref: str, *, auth_mode: AuthMode = 'https-anonymous') -> str` _(internal)_ — Return the exact ``pip install`` line for a given pin ref.
 - `_resolve_target_ref_or_none(args: argparse.Namespace, current_ref: str | None) -> str | None` _(internal)_ — Resolve the target ref from CLI flags, falling back to current.
 - `_resolve_target_ref(args: argparse.Namespace, current_ref: str | None) -> str` _(internal)_ — Resolve the target ref or exit when undetermined.
-- `_write_pyproject_atomic(path: Path, content: str) -> None` _(internal)_ — Replace *path*'s contents with *content*, atomically.
+- `_write_atomic(path: Path, content: str) -> None` _(internal)_ — Replace *path*'s contents with *content*, atomically.
 - `_run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]` _(internal)_ — Phase 1 — detect the pin, rewrite it, print the pip command.
 - `_read_changelog() -> str | None` _(internal)_ — Return forge's packaged ``CHANGELOG.md`` text, or ``None`` if unavailable.
 - `_consumer_upgrade_notes(changelog_text: str, *, max_versions: int = 3) -> str | None` _(internal)_ — Extract the most recent ``⚠️ Upgrade notes`` lanes from the changelog.
+- `_recent_action_items(changelog_text: str, *, max_versions: int = _ACTIONS_MAX_VERSIONS) -> list[tuple[str, str]]` _(internal)_ — Return ``**Action:**`` items from the newest marker-bearing versions.
+- `_pending_action_count(changelog_text: str) -> int` _(internal)_ — Count ``**Action:**`` items in versions newer than the installed one.
 - `_print_upgrade_notes() -> None` _(internal)_ — Surface consumer-action upgrade notes after a successful upgrade.
 - `_run_phase2() -> int` _(internal)_ — Phase 2 — run install-forge-bootstrap; print plugin reminder.
 - `_run_pip_install(ref: str, *, auth_mode: AuthMode, timeout_seconds: int | None) -> int` _(internal)_ — Run the force-reinstall pip command, wrapped in a progress logger.

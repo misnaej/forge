@@ -555,7 +555,9 @@ following the [consumer changelog convention](consumer-release.md)
 - **`changelog_updated`** — the per-PR freshness gate: a change set that
   touches a changelog-requiring path without touching `CHANGELOG.md`
   fails. Self-skips without a `CHANGELOG.md` and on the base branch;
-  `SKIP_CHANGELOG_CHECK=1` skips one commit (genuine no-ops).
+  genuine no-version changes opt out via env, branch token, or commit
+  tag — see the ["No-version opt-out"](consumer-release.md#enforcement)
+  in `docs/consumer-release.md` for all three signals.
 
 | Key | Default | What it does | Set it when |
 |---|---|---|---|

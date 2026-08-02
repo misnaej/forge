@@ -20,6 +20,42 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.27.0 — 2026-08-02
+
+Adds `forge-resync` and the changelog **Action:** marker convention —
+three consumer actions below.
+
+### Features
+
+- **`forge-resync` CLI + pin discovery** (#228): detect and reconcile a
+  consumer repo whose forge pin lags the latest release — discovers the
+  pin across install surfaces and drives the update; wired into the
+  upgrade flow and CI recipe.
+  - **Action:** adopt `forge-resync` in your scheduled upgrade workflow
+    (or run it once) so pin drift is surfaced instead of silent — see
+    `docs/ci-recipe.md`.
+- **Changelog `**Action:**` marker convention** (#228): release entries
+  flag each consumer-required step with an `**Action:**` line;
+  `forge.changelog.action_items` parses them and `forge-upgrade`
+  surfaces pending actions forward-only.
+  - **Action:** when authoring your own repo's release entries, mark
+    consumer-required steps with `**Action:**` lines so tooling can
+    extract them.
+- **No-version opt-out is the explicit escape** for the per-PR changelog
+  gate: a change that genuinely deserves no version skips
+  `changelog_updated` via `NO_VERSION=1` (local), a delimited
+  `no-version` branch token, or a `[no-version]` commit tag (the two
+  CI-durable forms).
+  - **Action:** repos using the opt-in changelog gates — teach
+    contributors the opt-out signals; anything else now requires a
+    changelog bullet in the same PR.
+
+### Tooling
+
+- **All GitHub Actions SHA-pinned across workflows** (#227): supply-chain
+  hardening — every `uses:` pinned to a full commit SHA with a version
+  comment.
+
 ## v2.26.0 — 2026-08-02
 
 Tooling — forge adopts ruff 0.16 under `select = ["ALL"]`; consumer

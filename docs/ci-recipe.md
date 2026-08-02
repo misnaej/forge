@@ -43,8 +43,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # SHA-pin actions (tag comment for humans) — tags are movable, SHAs are
+      # not; see docs/security.md "Pin GitHub Actions". To keep pinned SHAs
+      # current, enable Dependabot's `github-actions` ecosystem in your repo
+      # (or run `gha-update`).
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
           python-version: "3.11"
 
@@ -117,8 +121,10 @@ jobs:
   upgrade:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # SHA-pinned per docs/security.md "Pin GitHub Actions" — see the §2
+      # note for the rationale and how to keep the SHAs current.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
           python-version: "3.11"
 
@@ -131,7 +137,7 @@ jobs:
         run: forge-upgrade --apply
 
       - name: Open PR if anything changed
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c  # v6.1.0
         with:
           commit-message: "chore: forge-upgrade (automated)"
           title: "chore: forge-upgrade"
@@ -168,6 +174,49 @@ Pick a cadence that matches how aggressively you want forge updates:
 | `0 5 * * 1`        | Once a week (Monday 05:00 UTC) — default in the snippet above. |
 | `0 5 * * *`        | Daily. |
 | `0 5 1 * *`        | Monthly. |
+
+### Scheduled resync (drift without a pin change)
+
+An `@main`- or `@dev`-pinned repo drifts even when its pin never moves:
+each forge release changes the canonical content of committed managed
+artifacts (`FOUNDATION.md`, generated docs, hook wrappers). Upgrade ≠
+resync — the workflow above PRs *pin* changes; `forge-resync` PRs the
+*artifact regen*, with a built-in dedup guard (an open
+`chore/forge-resync-*` PR → it reports the URL and stops). In sync →
+exit 0, no PR. Same permissions block as the upgrade workflow.
+
+```yaml
+name: forge-resync
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Mondays, after the upgrade run
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  resync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project + forge-scripts
+        run: pip install -e ".[dev]"
+
+      - name: Resync managed artifacts (PR on drift)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: forge-resync
+```
+
+The resync PR body reminds the reviewer that mechanical regen does not
+surface adoption-required changes — `forge-upgrade --check` lists the
+pending `**Action:**` items for the version range.
 
 ---
 

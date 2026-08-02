@@ -7,7 +7,17 @@ shared by ``verify-forge-changelog-history``, ``forge-next-prep``, and
 
 from __future__ import annotations
 
+import subprocess
+from typing import TYPE_CHECKING
+
+import pytest
+
 from forge import changelog
+from tests.conftest import GIT_ENV, init_git_repo, init_single_track_repo
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -218,3 +228,292 @@ def test_top_release_heading_skips_non_version_headings() -> None:
 def test_top_release_heading_none_without_versions() -> None:
     """No recognized release heading → None."""
     assert changelog.top_release_heading("# Changelog\n") is None
+
+
+# ---------------------------------------------------------------------------
+# action_items
+# ---------------------------------------------------------------------------
+
+
+def test_action_items_extracts_marker_under_heading() -> None:
+    """A single ``**Action:**`` line under a heading is attributed to it."""
+    text = "## v1.2.0\n\n**Action:** do the thing.\n"
+    assert changelog.action_items(text) == [("v1.2.0", "do the thing.")]
+
+
+def test_action_items_attributes_to_nearest_governing_heading() -> None:
+    """Two headings each with their own marker, independently in file order."""
+    text = (
+        "## v2.0.0\n"
+        "\n"
+        "**Action:** upgrade config.\n"
+        "\n"
+        "## v1.0.0\n"
+        "\n"
+        "**Action:** migrate data.\n"
+    )
+    assert changelog.action_items(text) == [
+        ("v2.0.0", "upgrade config."),
+        ("v1.0.0", "migrate data."),
+    ]
+
+
+def test_action_items_ignores_markers_above_first_heading() -> None:
+    """A marker line in prose before any release heading is excluded."""
+    text = "**Action:** should not count.\n\n## v1.0.0\n\n- normal bullet\n"
+    assert changelog.action_items(text) == []
+
+
+@pytest.mark.parametrize("bullet", ["- ", "* ", ""])
+def test_action_items_accepts_optional_list_bullet(bullet: str) -> None:
+    """The marker matches with a ``-`` bullet, a ``*`` bullet, or bare.
+
+    Args:
+        bullet: The list-bullet prefix (or empty string) placed before
+            the ``**Action:**`` marker.
+    """
+    text = f"## v1.0.0\n\n{bullet}**Action:** do it.\n"
+    assert changelog.action_items(text) == [("v1.0.0", "do it.")]
+
+
+def test_action_items_returns_empty_when_no_markers() -> None:
+    """Headings with no ``**Action:**`` lines yield an empty list."""
+    text = "## v1.1.0\n\n- a bullet\n\n## v1.0.0\n\n- another bullet\n"
+    assert changelog.action_items(text) == []
+
+
+def test_action_items_ignores_near_miss_marker_text() -> None:
+    """Text resembling the marker but missing the exact bold-colon shape is excluded."""
+    text = (
+        "## v1.0.0\n"
+        "\n"
+        "Action: not bolded, should not match.\n"
+        "**Action**: colon outside bold, should not match.\n"
+    )
+    assert changelog.action_items(text) == []
+
+
+def test_action_items_skips_action_under_unrecognized_heading() -> None:
+    """Markers under unrecognized headings (e.g. `## Unreleased`) are excluded."""
+    text = "## Unreleased\n\n**Action:** should be excluded.\n"
+    assert changelog.action_items(text) == []
+
+
+# ---------------------------------------------------------------------------
+# wants_no_version
+# ---------------------------------------------------------------------------
+#
+# Real git repos, not mocks: wants_no_version's branch-token and commit-tag
+# signals are thin wrappers over `git branch --show-current` / `git log`, so
+# a real repo is cheaper to reason about than a `run_git` transcript.
+
+
+@pytest.fixture
+def git_repo(tmp_path: Path) -> Path:
+    """A minimal git repo (`main`, one commit) for `wants_no_version` tests."""
+    init_git_repo(tmp_path)
+    return tmp_path
+
+
+def _checkout_branch(repo: Path, name: str) -> None:
+    """Create and switch to a new branch *name* in *repo*.
+
+    Args:
+        repo: Git repo working tree.
+        name: Branch name to create and check out.
+    """
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", name], cwd=repo, env=GIT_ENV, check=True
+    )
+
+
+def _commit(repo: Path, message: str, *, allow_empty: bool = True) -> None:
+    """Create a commit with *message* in *repo*.
+
+    Args:
+        repo: Git repo working tree.
+        message: Commit message.
+        allow_empty: Whether to pass `--allow-empty`, so tests don't need
+            to stage real file changes just to produce a commit.
+    """
+    args = ["git", "commit", "-q", "-m", message]
+    if allow_empty:
+        args.append("--allow-empty")
+    subprocess.run(args, cwd=repo, env=GIT_ENV, check=True)
+
+
+def test_wants_no_version_env_no_version_truthy(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`NO_VERSION=1` opts out via the env signal."""
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.setenv("NO_VERSION", "1")
+    assert changelog.wants_no_version(git_repo) == "NO_VERSION env var set"
+
+
+def test_wants_no_version_env_skip_changelog_check_truthy(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`SKIP_CHANGELOG_CHECK=1` opts out via the legacy env signal."""
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.setenv("SKIP_CHANGELOG_CHECK", "1")
+    assert changelog.wants_no_version(git_repo) == "SKIP_CHANGELOG_CHECK env var set"
+
+
+@pytest.mark.parametrize("name", ["NO_VERSION", "SKIP_CHANGELOG_CHECK"])
+@pytest.mark.parametrize("value", ["0", "false"])
+def test_wants_no_version_env_falsy_value_does_not_opt_out(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    """A leftover `NO_VERSION=0` / `SKIP_CHANGELOG_CHECK=false` etc. does NOT opt out.
+
+    Args:
+        name: The env var under test (`NO_VERSION` or `SKIP_CHANGELOG_CHECK`).
+        value: The falsy string value assigned to `name`.
+    """
+    other = "SKIP_CHANGELOG_CHECK" if name == "NO_VERSION" else "NO_VERSION"
+    monkeypatch.delenv(other, raising=False)
+    monkeypatch.setenv(name, value)
+    assert changelog.wants_no_version(git_repo) is None
+
+
+def test_wants_no_version_branch_token_delimited_match(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A delimited `no-version` token in the branch name opts out."""
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    _checkout_branch(git_repo, "chore/tidy-no-version")
+    signal = changelog.wants_no_version(git_repo)
+    assert signal is not None
+    assert "chore/tidy-no-version" in signal
+
+
+def test_wants_no_version_branch_token_non_delimited_no_match(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`no-versioning` is not a delimited token — the branch alone doesn't opt out."""
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    _checkout_branch(git_repo, "fix/no-versioning")
+    assert changelog.wants_no_version(git_repo) is None
+
+
+def test_wants_no_version_commit_tag_match(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `[no-version]` tag in a commit message over `base..HEAD` opts out."""
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    _checkout_branch(git_repo, "feat/x")
+    _commit(git_repo, "docs: tweak wording [no-version]")
+    signal = changelog.wants_no_version(git_repo)
+    assert signal is not None
+    assert "[no-version]" in signal
+    assert "main..HEAD" in signal
+
+
+def test_wants_no_version_commit_tag_case_insensitive(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `[no-version]` tag match is case-insensitive."""
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    _checkout_branch(git_repo, "feat/y")
+    _commit(git_repo, "chore: bump deps [NO-VERSION]")
+    assert changelog.wants_no_version(git_repo) is not None
+
+
+def test_wants_no_version_commit_tag_survives_ci_detached_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CI simulation: no local base branch, base resolved via `origin/<base>`.
+
+    Mirrors a CI checkout of a detached `refs/pull/N/merge`: no local
+    `main` branch exists, but the fetch that created the checkout left
+    `origin/main` behind — the commit-tag scan must still find it.
+    """
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    work, _bare = init_single_track_repo(tmp_path)
+    _checkout_branch(work, "feat/z")
+    _commit(work, "fix: something [no-version]")
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(["git", "fetch", "-q", "origin"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(["git", "branch", "-D", "main"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "--detach", head_sha],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    signal = changelog.wants_no_version(work)
+    assert signal is not None
+    assert "origin/main" in signal
+
+
+def test_wants_no_version_respects_configured_base_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`[tool.forge].base_branch = "dev"` walks `dev..HEAD`, not `main..HEAD`."""
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    init_git_repo(tmp_path)
+    _checkout_branch(tmp_path, "dev")
+    (tmp_path / "pyproject.toml").write_text('[tool.forge]\nbase_branch = "dev"\n')
+    subprocess.run(
+        ["git", "add", "pyproject.toml"], cwd=tmp_path, env=GIT_ENV, check=True
+    )
+    _commit(tmp_path, "chore: configure base branch", allow_empty=False)
+    _checkout_branch(tmp_path, "feat/w")
+    _commit(tmp_path, "feat: add thing [no-version]")
+    signal = changelog.wants_no_version(tmp_path)
+    assert signal is not None
+    assert "dev..HEAD" in signal
+
+
+def test_wants_no_version_no_signal_returns_none(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No env, no branch token, no commit tag → None."""
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    _checkout_branch(git_repo, "feat/plain")
+    _commit(git_repo, "feat: add plain thing")
+    assert changelog.wants_no_version(git_repo) is None
+
+
+def test_wants_no_version_flag_shaped_base_branch_skips_commit_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flag-shaped `[tool.forge].base_branch` is rejected, not passed to git.
+
+    `_resolve_base_ref` refuses a `base_branch` starting with `-` outright
+    (option injection guard) rather than handing it to `git rev-parse` /
+    `git log`, so the commit-tag signal is skipped entirely — even though
+    the `[no-version]` tag IS present in the commit log. Also asserts no
+    file matching the injected flag's value was created in the repo,
+    confirming git never executed the flag.
+    """
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    init_git_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nbase_branch = "--output=pwned"\n'
+    )
+    subprocess.run(
+        ["git", "add", "pyproject.toml"], cwd=tmp_path, env=GIT_ENV, check=True
+    )
+    _commit(tmp_path, "chore: configure flag-shaped base branch", allow_empty=False)
+    _checkout_branch(tmp_path, "feat/injection")
+    _commit(tmp_path, "feat: add thing [no-version]")
+
+    assert changelog.wants_no_version(tmp_path) is None
+    assert not any(p.name.startswith("pwned") for p in tmp_path.iterdir())

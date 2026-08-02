@@ -3,20 +3,28 @@
 Single source of truth for recognizing ``## vX.Y.Z`` release headings in
 a ``CHANGELOG.md``. Consumed by ``forge-next-prep --promotion-status``
 (missing-entry advisory), ``verify-forge-changelog-history``
-(dropped-entry guard), and ``forge-release`` (pre-tag CHANGELOG gate) —
-and public API for consumer repos composing their own release flow.
+(dropped-entry guard), ``forge-release`` (pre-tag CHANGELOG gate),
+``forge-upgrade`` (``**Action:**`` marker extraction), and
+``forge-precommit``'s ``changelog_updated`` step (the
+:func:`wants_no_version` opt-out) — and public API for consumer repos
+composing their own release flow. Mostly pure string parsing; the
+no-version opt-out section at the bottom is the one git/config-backed
+part (it reads the branch, commit log, and ``[tool.forge]``).
 """
 
 from __future__ import annotations
 
+import os
 import re
 from typing import TYPE_CHECKING
 
-from forge.git_utils import parse_semver
+from forge.config import load_config
+from forge.git_utils import parse_semver, ref_exists, run_git
 
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 
 _HEADING_RE = re.compile(r"^##\s+(v\d+\.\d+\.\d+)\b", re.MULTILINE)
@@ -29,6 +37,11 @@ _ANY_HEADING_RE = re.compile(r"^##\s+(\S.*?)\s*$", re.MULTILINE)
 
 # New-file hunk header of a unified diff: ``@@ -a,b +c,d @@`` → ``c``.
 _HUNK_NEW_START_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+# An action-required marker line: an optional list bullet, then the
+# ``**Action:**`` marker, then the action text. The marker convention is
+# documented in ``docs/consumer-release.md`` "Changelog convention".
+_ACTION_RE = re.compile(r"^\s*(?:[-*]\s+)?\*\*Action:\*\*\s*(?P<text>\S.*?)\s*$")
 
 
 def release_headings(text: str) -> set[str]:
@@ -165,6 +178,37 @@ def changelog_version_findings(text: str, latest_tag: str | None) -> list[str]:
     return findings
 
 
+def action_items(text: str) -> list[tuple[str, str]]:
+    """Return ``(version, action)`` pairs for every ``**Action:**`` line.
+
+    The marker convention (``docs/consumer-release.md`` "Changelog
+    convention"): a release entry flags each change a consumer must act
+    on — adopt a new capability, react to a contract change — with a
+    line whose content starts ``**Action:** <what to do>``. This
+    extractor attributes each marker line to its governing ``## vX.Y.Z``
+    heading; marker lines above the first release heading are ignored.
+    Forward-only by construction: entries without markers yield nothing.
+
+    Args:
+        text: Full ``CHANGELOG.md`` contents.
+
+    Returns:
+        ``(version, action_text)`` pairs in file order (newest release
+        first for a conventionally ordered changelog); empty when no
+        marker lines exist.
+    """
+    governing = _governing_versions(text)
+    items: list[tuple[str, str]] = []
+    for index, line in enumerate(text.splitlines()):
+        match = _ACTION_RE.match(line)
+        if match is None:
+            continue
+        version = governing[index]
+        if version is not None:
+            items.append((version, match.group("text")))
+    return items
+
+
 def _governing_versions(text: str) -> list[str | None]:
     """Map each line in *text* to its governing release version heading.
 
@@ -258,6 +302,104 @@ def _stranded_from_added(
         if parsed is not None and parsed <= tag and version not in stranded:
             stranded.append(version)
     return stranded
+
+
+# --- no-version opt-out -----------------------------------------------------
+
+# Truthy values for the opt-out env vars; a leftover `=0` / `=false`
+# does NOT opt out.
+_TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
+
+# `NO_VERSION` is the version-aware name; `SKIP_CHANGELOG_CHECK` is the
+# original changelog-gate spelling, kept for back-compat. Env is
+# LOCAL-ONLY — absent in CI — which is why the branch-token and
+# commit-tag signals below exist.
+_NO_VERSION_ENV_VARS = ("NO_VERSION", "SKIP_CHANGELOG_CHECK")
+
+# `no-version` as a whole delimited token in a branch name, bounded by
+# `/`, `-`, or the ends: matches `chore/tidy-no-version` and
+# `no-version/ci-fix`, NOT `fix/no-versioning`.
+_NO_VERSION_BRANCH_RE = re.compile(r"(?:^|[/-])no-version(?:$|[/-])", re.IGNORECASE)
+
+_NO_VERSION_COMMIT_MARKER = "[no-version]"
+
+
+def _env_no_version() -> str | None:
+    """Return the name of the first truthy opt-out env var, or ``None``."""
+    for name in _NO_VERSION_ENV_VARS:
+        value = os.environ.get(name)
+        if value is not None and value.strip().lower() in _TRUTHY_ENV:
+            return name
+    return None
+
+
+def _resolve_base_ref(repo_root: Path, base_branch: str) -> str | None:
+    """Return the first resolvable ref for *base_branch*, local-first.
+
+    CI checks out a detached ``refs/pull/N/merge`` with no local base
+    branch, but the fetch creates ``origin/<base>`` — the remote
+    fallback keeps commit-tag detection durable there.
+
+    A *base_branch* starting with ``-`` is rejected outright: git would
+    parse it as a flag, not a ref (option injection via a crafted
+    ``[tool.forge].base_branch``), and no real branch name starts with
+    a dash.
+
+    Args:
+        repo_root: Git repo root.
+        base_branch: Configured base-branch name.
+
+    Returns:
+        ``base_branch`` or ``origin/<base_branch>``, whichever resolves
+        first; ``None`` when neither does or *base_branch* is
+        flag-shaped.
+    """
+    if not base_branch or base_branch.startswith("-"):
+        return None
+    for ref in (base_branch, f"origin/{base_branch}"):
+        if ref_exists(repo_root, ref):
+            return ref
+    return None
+
+
+def wants_no_version(repo_root: Path) -> str | None:
+    """Return the fired no-version signal, or ``None`` when none is set.
+
+    The CI-durable opt-out for "this change doesn't deserve a version":
+    three signals, any one suffices —
+
+    1. **env** — ``NO_VERSION`` / ``SKIP_CHANGELOG_CHECK`` truthy
+       (local-only; absent in CI).
+    2. **branch token** — ``no-version`` as a delimited token in the
+       current branch name.
+    3. **commit tag** — ``[no-version]`` (case-insensitive) in any
+       commit message over ``<base>..HEAD``, base resolved local-first
+       then ``origin/<base>`` from ``[tool.forge].base_branch``.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        A short human-readable description of the signal that fired
+        (truthy — usable directly in a skip message), or ``None``.
+    """
+    env_name = _env_no_version()
+    if env_name is not None:
+        return f"{env_name} env var set"
+    # The branch/config reads below may repeat work a caller already did
+    # (step_changelog_updated reads both) — accepted: they are cheap
+    # once-per-commit calls, and threading them in would complicate the
+    # single-arg public signature consumers import.
+    branch = run_git("branch", "--show-current", cwd=repo_root, check=False).strip()
+    if branch and _NO_VERSION_BRANCH_RE.search(branch):
+        return f"`no-version` token in branch name {branch!r}"
+    base_ref = _resolve_base_ref(repo_root, load_config(repo_root).base_branch)
+    if base_ref is None:
+        return None
+    log = run_git("log", f"{base_ref}..HEAD", "--format=%B", cwd=repo_root, check=False)
+    if _NO_VERSION_COMMIT_MARKER in log.lower():
+        return f"{_NO_VERSION_COMMIT_MARKER} tag in a commit message ({base_ref}..HEAD)"
+    return None
 
 
 def stranded_added_versions(

@@ -363,6 +363,35 @@ def run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
     return proc.stdout.strip()
 
 
+def ref_exists(repo_root: Path, ref: str) -> bool:
+    """Return whether *ref* resolves to a commit in the repo.
+
+    The shared ref-existence probe — callers layer their own candidate
+    order and fallback policy on top (``forge.changelog``'s local-first
+    base resolution, ``forge.smart_test``'s origin-first diff base).
+    The ``^{commit}`` peel makes it verify commit-ish-ness, not just
+    name existence.
+
+    Args:
+        repo_root: Git repo root.
+        ref: Any ref or revision expression.
+
+    Returns:
+        ``True`` when ``git rev-parse --verify`` resolves *ref* to a
+        commit.
+    """
+    return bool(
+        run_git(
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            f"{ref}^{{commit}}",
+            cwd=repo_root,
+            check=False,
+        )
+    )
+
+
 def get_tree_sha(repo_root: Path, ref: str) -> str | None:
     """Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 
