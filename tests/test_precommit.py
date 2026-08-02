@@ -2747,7 +2747,7 @@ def test_step_smart_test_blocking_when_opted_in(
 
 
 def _fake_run_git_dispatch(
-    *, branch: str = "feat/x", diff: str = ""
+    *, branch: str = "feat/x", base_changelog: str = ""
 ) -> Callable[..., str]:
     """Build a ``run_git`` fake dispatching on the git subcommand.
 
@@ -2758,7 +2758,8 @@ def _fake_run_git_dispatch(
 
     Args:
         branch: What ``branch --show-current`` reports.
-        diff: What ``diff`` reports.
+        base_changelog: What ``show <rev>:CHANGELOG.md`` reports — the
+            old-side contents the stranded membership comparison reads.
 
     Returns:
         A callable with ``run_git``'s signature.
@@ -2767,8 +2768,8 @@ def _fake_run_git_dispatch(
     def _fake(*args: str, **_kw: object) -> str:
         if args[:2] == ("branch", "--show-current"):
             return branch
-        if args[0] == "diff":
-            return diff
+        if args[0] == "show":
+            return base_changelog
         return ""
 
     return _fake
@@ -2844,22 +2845,16 @@ def test_step_changelog_version_passes_clean(
 def test_step_changelog_version_detects_stranded_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Branch diff adds a bullet under the already-tagged top heading → fail.
+    """Branch adds a bullet under the already-tagged top heading → fail.
 
     MOCK SETUP: `merge_base_with_head` is patched directly (the step now
     resolves the merge-base via that helper rather than composing
     `run_git("merge-base", ...)` itself) to return a fixed SHA; `run_git`
-    still handles `branch --show-current` and the `diff` call.
+    handles `branch --show-current` and the `show <rev>:CHANGELOG.md`
+    old-side read for the membership comparison.
     """
     text = "## v1.0.0\n\n- new bullet\n"
-    diff = (
-        "--- a/CHANGELOG.md\n"
-        "+++ b/CHANGELOG.md\n"
-        "@@ -1,1 +1,3 @@\n"
-        " ## v1.0.0\n"
-        "+\n"
-        "+- new bullet\n"
-    )
+    base_changelog = "## v1.0.0\n"
     (tmp_path / "CHANGELOG.md").write_text(text)
     monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
     merge_base_calls: list[tuple[object, object]] = []
@@ -2869,7 +2864,9 @@ def test_step_changelog_version_detects_stranded_entries(
         return "abc123"
 
     monkeypatch.setattr(precommit, "merge_base_with_head", _fake_merge_base_with_head)
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch(diff=diff))
+    monkeypatch.setattr(
+        precommit, "run_git", _fake_run_git_dispatch(base_changelog=base_changelog)
+    )
     result = precommit.step_changelog_version(tmp_path)
     assert not result.passed
     assert "stranded" in result.output

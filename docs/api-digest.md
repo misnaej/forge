@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 662 symbols._
+_62 modules, 661 symbols._
 
 ## `forge`
 
@@ -195,11 +195,10 @@ _62 modules, 662 symbols._
 - `changelog_version_findings(text: str, latest_tag: str | None) -> list[str]` — Validate *text*'s release headings against each other and *latest_tag*.
 - `action_items(text: str) -> list[tuple[str, str]]` — Return ``(version, action)`` pairs for every ``**Action:**`` line.
 - `_governing_versions(text: str) -> list[str | None]` _(internal)_ — Map each line in *text* to its governing release version heading.
-- `_iter_added_lines(diff_text: str) -> Iterator[tuple[int, str]]` _(internal)_ — Yield (line_number, content) pairs for each addition in a unified diff.
-- `_stranded_from_added(governing: list[str | None], added_lines: Iterator[tuple[int, str]], tag: tuple[int, int, int] | None) -> list[str]` _(internal)_ — Detect released headings that received new content in a diff.
 - `_env_no_version() -> str | None` _(internal)_ — Return the name of the first truthy opt-out env var, or ``None``.
 - `wants_no_version(repo_root: Path) -> str | None` — Return the fired no-version signal, or ``None`` when none is set.
-- `stranded_added_versions(text: str, diff_text: str, latest_tag: str | None) -> list[str]` — Return released heading versions that *diff_text* adds entries under.
+- `_section_content(text: str) -> dict[str, set[str]]` _(internal)_ — Map each release version to its normalized non-heading content lines.
+- `stranded_added_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections gained content vs *old_text*.
 
 ## `forge.claude_settings_schema`
 

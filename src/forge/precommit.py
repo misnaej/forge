@@ -1713,15 +1713,22 @@ def step_changelog_version(repo_root: Path) -> StepResult:
         else:
             merge_base = merge_base_with_head(repo_root, cfg.base_branch)
             if merge_base:
-                diff_text = run_git(
-                    "diff", merge_base, "--", "CHANGELOG.md", cwd=repo_root, check=False
+                # Old-side contents at the merge base; empty when the file
+                # didn't exist there (new CHANGELOG) — skip: with no prior
+                # state, "added after the tag" is undeterminable, and the
+                # structural checks above still validate the headings.
+                old_text = run_git(
+                    "show",
+                    f"{merge_base}:CHANGELOG.md",
+                    cwd=repo_root,
+                    check=False,
                 )
-                if diff_text:
+                if old_text:
                     findings.extend(
                         f"Entries added under released heading {version} (not "
                         f"ahead of latest tag {latest}) — stranded; move them "
                         "under the next `## vX.Y.Z` heading."
-                        for version in stranded_added_versions(text, diff_text, latest)
+                        for version in stranded_added_versions(old_text, text, latest)
                     )
     return StepResult(
         name=name,
