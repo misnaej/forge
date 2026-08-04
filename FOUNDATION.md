@@ -334,7 +334,9 @@ asymmetric at review time: the break shows its whole cost in the diff
 the interface that stays wrong. Prefer the break when call sites are
 countable; layer only when the interface is genuinely outside your
 control — a third-party or published contract, or §16's shipped-plugin
-extension case.
+extension case. (Not a reversal of OCP: OCP covers adding genuinely new
+capability without touching stable code; this rule covers compensating
+for an interface you already control and that is wrong.)
 
 **KISS.** The right complexity is what the task requires — no more. Three similar
 lines beat a premature abstraction. No configurability / plugins / indirection for

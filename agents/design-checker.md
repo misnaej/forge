@@ -285,6 +285,11 @@ verified-at: <sha>   (PR #<num>, branch <branch>)
 ### Recipe 6 — Claim verification
 <forge:knowledge-search verdict per extracted claim, severity-mapped>
 
+### Wrapper justification
+<construct-and-delegate diffs found, whether the author justified the
+ layer, and the fix-the-interface alternative per FOUNDATION §7 —
+ or "None — no wrapper-shaped diffs">
+
 ### Repo-specific rules
 <findings against extras passed by the wrapper, if any>
 
@@ -324,8 +329,6 @@ default vs consumer override.
 
 ## Output
 
-The first line of the report MUST be the `verified-at:` header per
-[_TEMPLATE.md "Reporter-agent header contract"](_TEMPLATE.md#reporter-agent-header-contract).
 Use the "Report format" template under each mode (Pre-Write Briefing or
 Full Review) above.
 
@@ -335,7 +338,8 @@ Full Review) above.
 - Be constructive — suggest fixes, not just complaints
 - Prioritize — distinguish CRITICAL / HIGH / MEDIUM / LOW
 - If a recipe surfaced zero findings, state that explicitly in the report
-- Never silently drop the claim-verification stage
+- Never silently drop the claim-verification stage or the
+  wrapper-justification check
 - **Verify before calling a name "stale", "old", "renamed", or
   "leftover".** Before claiming an identifier is an outdated/renamed
   reference, `grep` the codebase to confirm no symbol of that exact
