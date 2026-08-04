@@ -1756,7 +1756,11 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
     every local commit; when ``False`` (deferred mode) local runs — human
     or agent — self-skip and the entry is written at PR wrap-up, while
     genuine CI keeps failing (with an expected-until-wrap-up message) so
-    the entry cannot be forgotten. Gated on ``is_ci()`` — NOT
+    the entry cannot be forgotten — provided ``[tool.forge.changelog].blocking``
+    stays ``True``; with both ``False`` the CI failure degrades to a
+    non-blocking WARN and that guarantee no longer holds, so both the
+    local skip notice and the CI output carry an explicit caveat pointing
+    back at ``blocking = True``. Gated on ``is_ci()`` — NOT
     ``is_non_interactive()``: agent-driven local commits are the primary
     audience of the deferred skip and have a non-tty stdin (same
     reasoning as :func:`step_changelog_version`'s tag-fetch gate). The

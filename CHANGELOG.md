@@ -33,7 +33,7 @@ versions follow forge's rolling-next convention.
   argument-injection hardening `create_annotated_tag` received; a
   dash-prefixed value can never parse as a `git tag --list` option.
 
-## v2.28.0 — 2026-08-02
+## v2.28.0 — 2026-08-04
 
 ### ⚠️ Upgrade notes
 - **Diff-scoped checks now compare against `origin/<base_branch>` first.**
