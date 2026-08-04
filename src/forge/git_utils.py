@@ -670,6 +670,27 @@ def get_tree_sha(repo_root: Path, ref: str) -> str | None:
     return out or None
 
 
+def write_tree(repo_root: Path) -> str | None:
+    """Return the tree SHA of the current **index** via ``git write-tree``.
+
+    The staged-tree counterpart of :func:`get_tree_sha`: pre-commit runs
+    before the commit object exists (``HEAD`` is still the parent), so
+    checks about *what is being committed* must fingerprint the index,
+    not ``HEAD``. ``git write-tree`` refuses while merge conflicts are
+    unresolved — callers get ``None`` then, which conservatively reads
+    as "no usable staged tree".
+
+    Args:
+        repo_root: Working directory for the git invocation.
+
+    Returns:
+        The 40-char tree SHA of the index, or ``None`` when the index
+        cannot be written (e.g. unresolved conflict entries).
+    """
+    out = run_git("write-tree", cwd=repo_root, check=False, log_errors=False)
+    return out.strip() or None
+
+
 # Paths treated as release-channel curated content: excluded from the
 # release fingerprint so a release branch that finalizes them does not
 # break tree-equality with the tagged dev release. The @main CHANGELOG is

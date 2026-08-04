@@ -73,6 +73,7 @@ finalizing (a finalize on a now-stale CI run is misleading).
 **Docs-only light path — check FIRST, before delta mode.** Classify the
 PR diff with `pr_delta.docs_only_diff` (`git diff --name-only
 origin/<base>...HEAD` against the built-in `DOCS_ONLY_GLOBS` plus
+`pr_delta.configured_docs_only_globs(repo_root)`, the reader for
 `[tool.forge.pr].docs_only_globs`; any high-blast-radius path —
 `agents/`, `skills/`, `claude-hooks/`, `.claude-plugin/`, configs —
 disqualifies, since doc-shaped files there ARE shipped behavior). When

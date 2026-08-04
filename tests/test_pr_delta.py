@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from forge.pr_delta import (
     DELTA_LINE_THRESHOLD,
     DOCS_ONLY_GLOBS,
     HIGH_BLAST_RADIUS_PATHS,
     VERIFIED_AT_RE,
+    configured_docs_only_globs,
     delta_decision,
     docs_only_diff,
     extract_verified_shas,
     touches_high_blast_radius,
 )
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_verified_at_re_captures_canonical_form() -> None:
@@ -176,3 +183,27 @@ def test_high_blast_radius_covers_workflows_and_claude_dir() -> None:
     """CI workflow definitions and project-local Claude config are hot paths."""
     assert touches_high_blast_radius([".github/workflows/ci.yml"])
     assert touches_high_blast_radius([".claude/hooks/custom.sh"])
+
+
+def test_configured_docs_only_globs_reads_pyproject(tmp_path: Path) -> None:
+    """A configured `docs_only_globs` list is read back as a tuple of strings."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.pr]\ndocs_only_globs = ["*.adoc", "*.ipynb"]\n'
+    )
+    assert configured_docs_only_globs(tmp_path) == ("*.adoc", "*.ipynb")
+
+
+def test_configured_docs_only_globs_empty_when_missing(tmp_path: Path) -> None:
+    """No pyproject.toml at all → empty tuple, not raise."""
+    assert configured_docs_only_globs(tmp_path) == ()
+
+
+def test_configured_docs_only_globs_ignores_non_string_items(tmp_path: Path) -> None:
+    """Non-string list items are filtered out; a non-list value yields empty."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.pr]\ndocs_only_globs = ["*.adoc", 7]\n'
+    )
+    assert configured_docs_only_globs(tmp_path) == ("*.adoc",)
+
+    (tmp_path / "pyproject.toml").write_text('[tool.forge.pr]\ndocs_only_globs = "x"\n')
+    assert configured_docs_only_globs(tmp_path) == ()

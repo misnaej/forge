@@ -20,7 +20,21 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v2.29.0 — Unreleased
+## v2.30.0 — Unreleased
+
+### Fixes
+- **Promotion merge commits pass pre-commit without human bypass.**
+  Staged catch-up promotions ran today's toolchain against a
+  release-locked historical tree — unfixable by design (the release
+  fingerprint forbids content changes), previously concluded by a human
+  `--no-verify`. `forge-precommit` now detects the promotion-merge
+  context (mid-merge on `release/vX.Y.Z` with the staged tree
+  reproducing the tag's release fingerprint) and skips tree-content
+  steps; CHANGELOG/versioning guards still run, and any divergence
+  beyond `CHANGELOG.md` disengages the suppression so a poisoned tree
+  fails loud.
+
+## v2.29.0 — 2026-08-04
 
 ### Features
 - **"Fix the interface, don't wrap it" — new FOUNDATION §7 principle.**

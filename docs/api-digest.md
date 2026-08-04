@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 662 symbols._
+_62 modules, 665 symbols._
 
 ## `forge`
 
@@ -460,6 +460,7 @@ _62 modules, 662 symbols._
 - `resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref diff-scoped checks should compare against, origin-first.
 - `merge_base_with_head(root: Path | None, base_branch: str) -> str` — Return the merge-base SHA of ``HEAD`` and the resolved base ref.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
+- `write_tree(repo_root: Path) -> str | None` — Return the tree SHA of the current **index** via ``git write-tree``.
 - `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
 - `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
 - `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
@@ -628,6 +629,7 @@ _62 modules, 662 symbols._
 
 - `extract_verified_shas(text: str) -> list[str]` — Return every ``verified-at:`` SHA referenced in *text*.
 - `touches_high_blast_radius(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`HIGH_BLAST_RADIUS_PATHS`.
+- `configured_docs_only_globs(repo_root: Path) -> tuple[str, ...]` — Return the consumer's extra docs-only globs from ``[tool.forge.pr]``.
 - `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
 
@@ -653,7 +655,7 @@ _62 modules, 662 symbols._
 
 - `_color(code: str) -> str` _(internal)_ — Return *code* if stdout is a TTY, else an empty string.
 - `class StepResult` — Outcome of a single pre-commit step.
-- `class StepDef` — A registry entry: a step's name, its function, and whether it runs by default.
+- `class StepDef` — A registry entry: a step's name, function, default state, and content class.
 - `_forge_step_config(repo_root: Path, step: str) -> dict[str, object]` _(internal)_ — Return the ``[tool.forge.<step>]`` table, or ``{}`` when absent.
 - `_resolve_scope(repo_root: Path, step: str) -> str` _(internal)_ — Resolve a step's file-selection scope: per-step override → global → ``"all"``.
 - `_run(cmd: list[str], cwd: Path) -> tuple[bool, str]` _(internal)_ — Run *cmd* and capture combined output.
@@ -699,6 +701,7 @@ _62 modules, 662 symbols._
 - `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
 - `_validate_step_names(names: Sequence[str]) -> None` _(internal)_ — Raise ``ValueError`` listing any *names* that are not registered steps.
 - `_resolve_steps(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepDef]` _(internal)_ — Resolve which steps to run, in registry order.
+- `_release_merge_context(repo_root: Path) -> str | None` _(internal)_ — Return the release tag a promotion merge commit is locked to, or ``None``.
 - `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
 - `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
 - `main() -> int` — CLI entry point.
