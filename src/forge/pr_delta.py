@@ -18,7 +18,13 @@ from __future__ import annotations
 
 import re
 from fnmatch import fnmatch
-from typing import Final
+from typing import TYPE_CHECKING, Final
+
+from forge import config
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 # Maximum line-count diff (insertions + deletions) below which a follow-up
@@ -111,6 +117,29 @@ def touches_high_blast_radius(changed_paths: list[str]) -> list[str]:
                 hits.append(path)
                 break
     return hits
+
+
+def configured_docs_only_globs(repo_root: Path) -> tuple[str, ...]:
+    """Return the consumer's extra docs-only globs from ``[tool.forge.pr]``.
+
+    The Python-side reader for the ``docs_only_globs`` key — callers pass
+    the result to :func:`docs_only_diff` as ``extra_globs`` instead of
+    parsing ``pyproject.toml`` themselves. Additive by contract: the
+    built-in :data:`DOCS_ONLY_GLOBS` always apply regardless of config.
+
+    Args:
+        repo_root: Git repo root containing ``pyproject.toml``.
+
+    Returns:
+        Configured glob strings, or ``()`` when the key (or the file) is
+        absent or malformed.
+    """
+    data = config.read_pyproject_raw(repo_root)
+    pr_cfg = ((data.get("tool") or {}).get("forge") or {}).get("pr") or {}
+    globs = pr_cfg.get("docs_only_globs")
+    if not isinstance(globs, list):
+        return ()
+    return tuple(g for g in globs if isinstance(g, str))
 
 
 def docs_only_diff(

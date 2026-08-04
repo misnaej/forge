@@ -1354,6 +1354,88 @@ def test_release_fingerprint_none_when_tree_is_only_changelog(tmp_path: Path) ->
 
 
 # ---------------------------------------------------------------------------
+# write_tree
+# ---------------------------------------------------------------------------
+
+
+def _create_conflicting_branches(repo: Path) -> None:
+    """Create ``other`` and ``feat/x`` off ``main``, each editing the same line.
+
+    Unlike :func:`_create_diverged_branches` (each branch touches a
+    distinct file, so a merge between them is clean), both branches here
+    edit the same line of ``shared.txt`` — a genuine content conflict, so
+    a subsequent ``git merge`` exits non-zero and leaves the conflict
+    staged-unresolved. Leaves ``feat/x`` checked out.
+
+    Args:
+        repo: Repository path.
+    """
+    (repo / "shared.txt").write_text("base\n")
+    subprocess.run(["git", "add", "shared.txt"], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add shared.txt"],
+        cwd=repo,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "other"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    (repo / "shared.txt").write_text("other change\n")
+    subprocess.run(["git", "add", "shared.txt"], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "other edit"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    (repo / "shared.txt").write_text("feat change\n")
+    subprocess.run(["git", "add", "shared.txt"], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "feat edit"], cwd=repo, env=_GIT_ENV, check=True
+    )
+
+
+def test_write_tree_clean_index_matches_head_tree(tmp_path: Path) -> None:
+    """A freshly committed repo's staged tree equals its ``HEAD`` tree."""
+    _init_git_repo(tmp_path)
+    assert git_utils.write_tree(tmp_path) == git_utils.get_tree_sha(tmp_path, "HEAD")
+
+
+def test_write_tree_reflects_staged_uncommitted_change(tmp_path: Path) -> None:
+    """Staging a new file changes the written tree vs ``HEAD``'s tree."""
+    _init_git_repo(tmp_path)
+    head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
+    (tmp_path / "new.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "new.py"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    assert git_utils.write_tree(tmp_path) != head_tree
+
+
+def test_write_tree_returns_none_on_unresolved_conflict(tmp_path: Path) -> None:
+    """An unresolved merge conflict left staged → ``None`` (``write-tree`` refuses)."""
+    _init_git_repo(tmp_path)
+    _create_conflicting_branches(tmp_path)
+    result = subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "other"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert git_utils.write_tree(tmp_path) is None
+
+
+def test_write_tree_none_when_not_a_git_repo(tmp_path: Path) -> None:
+    """A plain, non-git directory → ``None`` without raising."""
+    assert git_utils.write_tree(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
 # read_plugin_version_at_ref
 # ---------------------------------------------------------------------------
 
