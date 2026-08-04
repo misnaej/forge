@@ -23,6 +23,12 @@ versions follow forge's rolling-next convention.
 ## v2.30.0 — Unreleased
 
 ### Fixes
+- **`forge-pr-squash-comment` no longer rejects messages naming
+  `CLAUDE.md` / `.claude/` paths.** Attribution screening is now
+  phrase-based (`co-authored-by:`, `generated with`, `with claude
+  code`, …) plus a bare-vendor-token backstop that exempts
+  path/filename-shaped tokens — the files forge itself mandates can be
+  cited while a bare "thanks Claude" credit still fails.
 - **Promotion merge commits pass pre-commit without human bypass.**
   Staged catch-up promotions ran today's toolchain against a
   release-locked historical tree — unfixable by design (the release

@@ -137,24 +137,68 @@ def test_validate_word_count_rejects_above_cap() -> None:
     [
         "Generated with Claude",
         "Co-authored-by: Claude <noreply@anthropic.com>",
-        "🤖 AI-generated",
-        "Built with Anthropic",
+        "🤖",
+        "AI-generated info",
         "Assisted by AI on this PR",
+        "Paired with Claude Code today",
+        "This commit was authored by Claude",
     ],
 )
 def test_validate_no_ai_attribution_rejects_known_patterns(blob: str) -> None:
-    """Any AI-attribution pattern in title or bullets raises.
+    """Any AI-attribution phrase in title or bullets raises via the phrase layer.
 
     Args:
-        blob: A string containing a known AI-attribution pattern.
+        blob: A string containing a known AI-attribution phrase.
     """
-    with pytest.raises(mod.ValidationError):
+    with pytest.raises(mod.ValidationError, match="pattern detected"):
         mod._validate_no_ai_attribution(VALID_TITLE, [*VALID_BULLETS, blob])
 
 
 def test_validate_no_ai_attribution_accepts_clean_message() -> None:
     """A message free of attribution patterns passes."""
     mod._validate_no_ai_attribution(VALID_TITLE, VALID_BULLETS)
+
+
+@pytest.mark.parametrize(
+    "blob",
+    [
+        "See CLAUDE.md for the exact policy",
+        "Path is .claude/settings.json",
+        "Regenerate `CLAUDE.md`.",
+        "Wrappers live under .claude",
+        "Hooks live in claude-hooks/block_claude_attribution.sh",
+        "Config lives in anthropic.yml",
+    ],
+)
+def test_validate_no_ai_attribution_accepts_path_shaped_mentions(blob: str) -> None:
+    """A path- or filename-shaped mention of a vendor term does not raise.
+
+    Args:
+        blob: A string containing a path- or filename-shaped vendor mention.
+    """
+    mod._validate_no_ai_attribution(VALID_TITLE, [*VALID_BULLETS, blob])
+
+
+@pytest.mark.parametrize(
+    "blob",
+    [
+        "Thanks Claude.",
+        "(Claude)",
+        "Built with Anthropic",
+        "Thanks Anthropic!",
+    ],
+)
+def test_validate_no_ai_attribution_rejects_bare_vendor_mentions(blob: str) -> None:
+    """A bare (non-path-shaped) vendor mention raises via the token backstop.
+
+    None of these match an :data:`AI_ATTRIBUTION_PATTERNS` phrase — the
+    backstop's ``(in '<token>')`` message detail distinguishes the layer.
+
+    Args:
+        blob: A string containing a bare AI-vendor mention.
+    """
+    with pytest.raises(mod.ValidationError, match=r"\(in '"):
+        mod._validate_no_ai_attribution(VALID_TITLE, [*VALID_BULLETS, blob])
 
 
 # ---------------------------------------------------------------------------
