@@ -20,6 +20,33 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.29.0 — 2026-08-04
+
+### Features
+- **"Fix the interface, don't wrap it" — new FOUNDATION §7 principle.**
+  When a change can be made either by altering an existing interface or
+  by layering a wrapper that compensates for it, alter the interface —
+  the break's cost is bounded and visible in the diff; the layer's cost
+  hides in the interface that stays wrong. Layer only when the interface
+  is genuinely outside your control (§16's shipped-plugin extension case
+  is the sanctioned exception, cross-referenced both ways). Enforced by
+  a new `design-checker` "wrapper justification" judgment check
+  (construct-and-delegate signals; author must justify the layer) and a
+  §1 read-before-proposing red flag. Forge's `_FORGE_GITHUB_REPO`
+  carve-out relocated from FOUNDATION §2 to forge's own CLAUDE.md
+  (forge-specific, not consumer baseline).
+
+### Fixes
+- **Deferred changelog mode warns when its guarantee is void.** With
+  `[tool.forge.changelog]` `precommit_enforce = false` AND
+  `blocking = false`, CI's deferred check degrades to a WARN and the
+  red-until-wrap-up guarantee silently stops holding; both the local
+  skip notice and the CI failure output now carry an explicit ⚠️ caveat
+  pointing at `blocking = true`.
+- **`_tag_exists` pins its tag argument behind `--`** — the same
+  argument-injection hardening `create_annotated_tag` received; a
+  dash-prefixed value can never parse as a `git tag --list` option.
+
 ## v2.28.0 — 2026-08-02
 
 ### ⚠️ Upgrade notes

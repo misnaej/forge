@@ -1756,7 +1756,11 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
     every local commit; when ``False`` (deferred mode) local runs — human
     or agent — self-skip and the entry is written at PR wrap-up, while
     genuine CI keeps failing (with an expected-until-wrap-up message) so
-    the entry cannot be forgotten. Gated on ``is_ci()`` — NOT
+    the entry cannot be forgotten — provided ``[tool.forge.changelog].blocking``
+    stays ``True``; with both ``False`` the CI failure degrades to a
+    non-blocking WARN and that guarantee no longer holds, so both the
+    local skip notice and the CI output carry an explicit caveat pointing
+    back at ``blocking = True``. Gated on ``is_ci()`` — NOT
     ``is_non_interactive()``: agent-driven local commits are the primary
     audience of the deferred skip and have a non-tty stdin (same
     reasoning as :func:`step_changelog_version`'s tag-fetch gate). The
@@ -1808,15 +1812,25 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
     step_cfg = _forge_step_config(repo_root, "changelog")
     enforce = bool(step_cfg.get("precommit_enforce", True))
     if not enforce and not is_ci():
+        output = (
+            "Deferred mode ([tool.forge.changelog].precommit_enforce = "
+            "false) — no entry required yet; write the CHANGELOG bullet "
+            "at PR wrap-up (just before merge). CI's changelog check "
+            "stays red until then by design."
+        )
+        if not _changelog_blocking(repo_root):
+            # Deferred mode's guarantee is CI staying red until the entry
+            # lands; blocking=false degrades that failure to a WARN, so
+            # the guarantee silently stops holding — surface it.
+            output += (
+                "\n⚠️  blocking = false too: CI's deferred check is only a "
+                "WARN, so the red-until-wrap-up guarantee does NOT hold — "
+                "set [tool.forge.changelog].blocking = true."
+            )
         return StepResult(
             name=name,
             passed=True,
-            output=(
-                "Deferred mode ([tool.forge.changelog].precommit_enforce = "
-                "false) — no entry required yet; write the CHANGELOG bullet "
-                "at PR wrap-up (just before merge). CI's changelog check "
-                "stays red until then by design."
-            ),
+            output=output,
             skipped=True,
         )
     exempt = tuple(_cfg_str_list(step_cfg, "exempt_paths", []))
@@ -1851,11 +1865,18 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
                 "no-version opt-out). A red result earlier in the PR is "
                 "expected."
             )
+        blocking = _changelog_blocking(repo_root)
+        if not enforce and not blocking:
+            output += (
+                "\n⚠️  blocking = false too: this failure is only a WARN, so "
+                "the red-until-wrap-up guarantee does NOT hold — set "
+                "[tool.forge.changelog].blocking = true."
+            )
         return StepResult(
             name=name,
             passed=False,
             output=output,
-            non_blocking=not _changelog_blocking(repo_root),
+            non_blocking=not blocking,
         )
     return StepResult(
         name=name,
