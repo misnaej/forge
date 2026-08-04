@@ -21,18 +21,15 @@ and the wrapper's extras.
 ## Source of truth
 
 [FOUNDATION.md](../FOUNDATION.md) owns principles, complexity limits,
-docstring rules. Consumer `CLAUDE.md` may override; when it conflicts,
-**consumer wins** (foundation is the baseline; repos may layer stricter
-rules).
+docstring rules. Consumer `CLAUDE.md` may override; on conflict
+**consumer wins**.
 
 ## Why investigation recipes
 
-Past reviews missed cross-file / semantic issues by reading one file at
-a time. Recipes fix this: every review runs a fixed list of mechanical
-investigations whose output lands in `code_health/audit_*.log` (produced
-by the `forge-audit-*` CLI suite; see
-[`docs/audit-pack.md`](../docs/audit-pack.md)). **Cannot complete a
-review without citing those logs.**
+One-file-at-a-time reading misses cross-file issues. Every review runs
+the fixed mechanical investigations landing in `code_health/audit_*.log`
+(the `forge-audit-*` suite; [`docs/audit-pack.md`](../docs/audit-pack.md)).
+**Cannot complete a review without citing those logs.**
 
 ## Workflow
 
@@ -94,9 +91,9 @@ Pre-write workflow:
 <list duplicates from audit_dup.log that match planned function names>
 
 ### Existing Helpers (REUSE — do not reimplement)
-<list symbols from docs/api-digest.md (public API or internal helpers)
- that already cover the planned work, or "None — no existing helper for
- this task">
+<symbols from docs/api-digest.md already covering the planned work, or
+ "None". Also flag planned code that WRAPS an interface the repo
+ controls — fix-the-interface alternative per FOUNDATION §7>
 
 ### Patterns to Follow
 - **Logging / Error handling / Docstrings / Imports**: <one line each, drawn from the target file>
@@ -231,10 +228,20 @@ Stage 2 procedure:
 The wrapper supplies repo-specific source paths and lexicon hints; if
 none are provided, the script ran with built-in defaults.
 
+### Wrapper justification (judgment check, no CLI)
+
+When a diff adds predominantly construct-and-delegate code, ask
+FOUNDATION §7's upstream question: does this indirection exist because
+the interface underneath is wrong? Signals: a new config type
+overlapping an existing one plus reconciliation code; an entry point
+that only builds X then calls X; the same value stored by two objects;
+an `__all__` name that only forwards. On a hit, require the author to
+state why the wrapped interface cannot change, or what the layer adds
+beyond adaptation. §16 shipped-plugin wrappers are exempt.
+
 ## Repo-specific extras
 
-When called from a per-repo `design-checker` wrapper, the wrapper's
-prompt will include additional rules to apply, e.g.:
+A per-repo wrapper's prompt may add rules to apply, e.g.:
 
 > Additional rules for this repo:
 > - Loggers MUST use `common.logging.get_logger`, not stdlib `logging.getLogger`
@@ -278,6 +285,11 @@ verified-at: <sha>   (PR #<num>, branch <branch>)
 ### Recipe 6 — Claim verification
 <forge:knowledge-search verdict per extracted claim, severity-mapped>
 
+### Wrapper justification
+<construct-and-delegate diffs found, whether the author justified the
+ layer, and the fix-the-interface alternative per FOUNDATION §7 —
+ or "None — no wrapper-shaped diffs">
+
 ### Repo-specific rules
 <findings against extras passed by the wrapper, if any>
 
@@ -317,19 +329,17 @@ default vs consumer override.
 
 ## Output
 
-The first line of the report MUST be the `verified-at:` header per
-[_TEMPLATE.md "Reporter-agent header contract"](_TEMPLATE.md#reporter-agent-header-contract).
 Use the "Report format" template under each mode (Pre-Write Briefing or
 Full Review) above.
 
 ## Success Criteria
 
-- Report only — no file modifications
 - Be specific — cite `file:line` for every finding
 - Be constructive — suggest fixes, not just complaints
 - Prioritize — distinguish CRITICAL / HIGH / MEDIUM / LOW
 - If a recipe surfaced zero findings, state that explicitly in the report
-- Never silently drop the claim-verification stage
+- Never silently drop the claim-verification stage or the
+  wrapper-justification check
 - **Verify before calling a name "stale", "old", "renamed", or
   "leftover".** Before claiming an identifier is an outdated/renamed
   reference, `grep` the codebase to confirm no symbol of that exact

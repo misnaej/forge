@@ -53,9 +53,11 @@ module(s) touched, their direct callers/callees, the README / docstrings /
 `docs/` describing the area, and any related GitHub issue (`gh issue list
 --search` before opening one). If it's more than a handful of files, delegate the
 read to `Explore` — ground truth, not vibe-truth. **Red flags that mean you have
-not read enough:** proposing a new helper without checking it already exists; a
-path that doesn't exist on disk; schema changes without inspecting the current
-schema; a fix based on what a function "should" do rather than what it does.
+not read enough:** proposing a new helper without checking it already exists;
+proposing a wrapper without first checking whether the wrapped interface could
+simply change (§7); a path that doesn't exist on disk; schema changes without
+inspecting the current schema; a fix based on what a function "should" do
+rather than what it does.
 
 ### Plan before executing
 
@@ -115,12 +117,8 @@ convention without checking current code still matches. Asking beats reverting.
   concrete names only — never private employer / client / project / process
   names: forge is shared open content and consumer `CLAUDE.md` / agent prompts
   are read by everyone. Inspiration from private context is fine; fingerprints in
-  the artifact are not. The only carve-out is forge's canonical upstream constant
-  `_FORGE_GITHUB_REPO` (in `src/forge/git_utils.py`, and URLs derived from it),
-  which must name the public upstream — that constant only, not "any public
-  GitHub URL". During a repo move that constant stays at the *functional* location
-  (where the gh API returns 200s) while docs may forward-point at the
-  *aspirational* one — a bounded divergence flagged by a README callout.
+  the artifact are not. (Forge's own single carve-out for its upstream constant
+  lives in its `CLAUDE.md`, not here.)
 - **Foundation CLIs are required, not optional.** Any agent / hook / script / CI
   depending on a forge-shipped CLI (`verify-forge-*`, `install-forge-*`,
   `forge-doctor`, `forge-precommit`) must **fail loudly** when it's missing —
@@ -325,6 +323,20 @@ small seams so logic on top is testable without it.
 **DRY.** Shared logic in one place + referenced, not copied; shared agent
 behaviours in shared docs (this file or consumer `CLAUDE.md`), referenced by
 agents. A fact appears in exactly one place; everywhere else points back.
+
+**Fix the interface, don't wrap it.** When a change can be made either by
+altering an existing interface or by layering a wrapper that compensates
+for it, alter the interface. A wrapper built to make an awkward API
+usable duplicates that API with a reconciliation step attached; the
+awkward shape stays, and every later change pays for both. The costs are
+asymmetric at review time: the break shows its whole cost in the diff
+(converted call sites, one version bump); the layer hides its cost in
+the interface that stays wrong. Prefer the break when call sites are
+countable; layer only when the interface is genuinely outside your
+control — a third-party or published contract, or §16's shipped-plugin
+extension case. (Not a reversal of OCP: OCP covers adding genuinely new
+capability without touching stable code; this rule covers compensating
+for an interface you already control and that is wrong.)
 
 **KISS.** The right complexity is what the task requires — no more. Three similar
 lines beat a premature abstraction. No configurability / plugins / indirection for
@@ -697,7 +709,9 @@ PRs any upgrade diff. Adopt it rather than a custom integration.
 
 Consumers (and forge itself) frequently layer repo-specific extras on a
 foundation-shipped agent, skill, or pre-commit step. One rule covers every case,
-plus three patterns by extension type.
+plus three patterns by extension type. (This is the sanctioned exception to
+§7's fix-the-interface rule: shipped plugin surface is outside the
+consumer's control, so wrapping is the correct move here.)
 
 ### The rule
 
