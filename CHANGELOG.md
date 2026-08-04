@@ -20,7 +20,20 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v2.28.0 — Unreleased
+## v2.29.0 — Unreleased
+
+### Fixes
+- **Deferred changelog mode warns when its guarantee is void.** With
+  `[tool.forge.changelog]` `precommit_enforce = false` AND
+  `blocking = false`, CI's deferred check degrades to a WARN and the
+  red-until-wrap-up guarantee silently stops holding; both the local
+  skip notice and the CI failure output now carry an explicit ⚠️ caveat
+  pointing at `blocking = true`.
+- **`_tag_exists` pins its tag argument behind `--`** — the same
+  argument-injection hardening `create_annotated_tag` received; a
+  dash-prefixed value can never parse as a `git tag --list` option.
+
+## v2.28.0 — 2026-08-02
 
 ### ⚠️ Upgrade notes
 - **Diff-scoped checks now compare against `origin/<base_branch>` first.**
