@@ -265,7 +265,9 @@ def _tag_exists(repo_root: Path, tag: str) -> bool:
     Returns:
         ``True`` when the tag is present in the local repo or the remote.
     """
-    if run_git("tag", "--list", tag, cwd=repo_root, check=False):
+    # `--` pins *tag* as a pattern, not an option — same hardening as
+    # create_annotated_tag's argv.
+    if run_git("tag", "--list", "--", tag, cwd=repo_root, check=False):
         return True
     return bool(
         run_git(

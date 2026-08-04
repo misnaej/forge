@@ -3324,6 +3324,54 @@ def test_step_changelog_updated_deferred_mode_ci_nonblocking_when_configured(
     assert result.non_blocking is True
 
 
+def test_step_changelog_updated_deferred_warns_when_blocking_also_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both keys false → the skip and the CI WARN both carry the caveat.
+
+    Deferred mode's guarantee is CI staying red until the entry lands;
+    blocking=false degrades that to a WARN, so the combination must be
+    surfaced rather than silently voiding the guarantee.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\nprecommit_enforce = false\nblocking = false\n"
+    )
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
+    )
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    local = precommit.step_changelog_updated(tmp_path)
+    assert local.skipped
+    assert "does NOT hold" in local.output
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+    ci = precommit.step_changelog_updated(tmp_path)
+    assert not ci.passed
+    assert ci.non_blocking
+    assert "does NOT hold" in ci.output
+
+
+def test_step_changelog_updated_deferred_no_warning_when_blocking_true(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deferred mode with default blocking carries no guarantee caveat."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\nprecommit_enforce = false\n"
+    )
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
+    )
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    assert "does NOT hold" not in precommit.step_changelog_updated(tmp_path).output
+
+
 def test_step_changelog_updated_no_version_optout_wins_over_deferred(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

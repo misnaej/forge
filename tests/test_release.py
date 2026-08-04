@@ -528,6 +528,21 @@ def test_main_from_changelog_idempotent_when_already_tagged(
     assert not _tag_exists(bare, "v1.2.3")
 
 
+def test_tag_exists_list_uses_separator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The local tag lookup pins the tag as a pattern behind `--`."""
+    calls: list[tuple[str, ...]] = []
+
+    def _fake_git(*args: str, **_kw: object) -> str:
+        calls.append(args)
+        return ""
+
+    monkeypatch.setattr(release, "run_git", _fake_git)
+    release._tag_exists(tmp_path, "v1.2.3")
+    assert calls[0][:3] == ("tag", "--list", "--")
+
+
 def test_main_from_changelog_flags_stranded_entries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -735,8 +750,8 @@ def test_cut_release_race_tolerant_push_failure_with_remote_tag(
             raise subprocess.CalledProcessError(1, ["git", "push"])
         if args[0] == "remote":
             return "https://example.invalid/origin.git"
-        if args[:2] == ("tag", "--list") and len(args) == 3:
-            return args[2]
+        if args[:3] == ("tag", "--list", "--") and len(args) == 4:
+            return args[3]
         return ""
 
     monkeypatch.setattr(release, "run_git", _fake_git)
