@@ -849,6 +849,194 @@ def test_create_annotated_tag_succeeds_with_no_git_identity_configured(
 
 
 # ---------------------------------------------------------------------------
+# create_commit
+# ---------------------------------------------------------------------------
+
+
+def test_create_commit_default_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A usable identity (non-empty probe) → plain ``commit -m`` argv, no ``-c``."""
+    captured: list[tuple[str, ...]] = []
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        captured.append(args)
+        return "t <t@t> 0 +0000" if args[:2] == ("var", "GIT_COMMITTER_IDENT") else ""
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    git_utils.create_commit(tmp_path, "chore: resync")
+    assert captured[-1] == ("commit", "-m", "chore: resync")
+
+
+def test_create_commit_prepends_fallback_identity_when_probe_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty identity probe → the ``-c`` flags land ahead of ``commit`` in argv."""
+    captured: list[tuple[str, ...]] = []
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        captured.append(args)
+        return ""
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    git_utils.create_commit(tmp_path, "chore: resync")
+    assert captured[-1] == (
+        "-c",
+        "user.name=forge-release",
+        "-c",
+        "user.email=forge-release@users.noreply.github.com",
+        "commit",
+        "-m",
+        "chore: resync",
+    )
+
+
+def test_create_commit_passes_message_through_unmodified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A message with spaces and brackets stays one untouched argv element."""
+    captured: list[tuple[str, ...]] = []
+    message = "chore: resync (1.2.3) [no-version]"
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        captured.append(args)
+        return "t <t@t> 0 +0000" if args[:2] == ("var", "GIT_COMMITTER_IDENT") else ""
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    git_utils.create_commit(tmp_path, message)
+    assert captured[-1] == ("commit", "-m", message)
+
+
+def test_create_commit_succeeds_with_no_git_identity_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: a fresh CI runner with no git identity anywhere commits via forge.
+
+    MOCK SETUP: ``_fallback_identity_args`` is pinned to return the
+        production ``_FALLBACK_IDENTITY`` flags unconditionally — the
+        identity-less *probe* result cannot be forced portably (a dev
+        machine auto-detects an identity from ``getpwuid``/hostname, and
+        empty-string identity env vars would defeat ``-c`` flags too, so
+        even the fix could not commit). Everything downstream is real
+        git: config sources scrubbed (``HOME``, ``GIT_CONFIG_*``),
+        identity env vars unset, repo history created with inline ``-c``
+        identity, a file staged.
+    EXPECTED BEHAVIOR: ``create_commit`` does not raise, and the new
+        commit's committer identity is the injected ``forge-release``
+        identity with the exact message passed through — proving the
+        production fallback flags satisfy git wherever auto-detection
+        would have failed (``-c`` outranks config and auto-detection, so
+        the assertion is machine-independent).
+    """
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "initial",
+        ],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+    (tmp_path / "file.txt").write_text("content\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "file.txt"],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+
+    monkeypatch.setenv("HOME", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in (
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "EMAIL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(
+        git_utils,
+        "_fallback_identity_args",
+        lambda _root: list(git_utils._FALLBACK_IDENTITY),
+    )
+
+    message = "chore: resync forge-managed artifacts (1.2.3) [no-version]"
+    git_utils.create_commit(tmp_path, message)
+
+    committer_name = subprocess.run(
+        ["git", "show", "-s", "--format=%cn"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    committer_email = subprocess.run(
+        ["git", "show", "-s", "--format=%ce"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    subject = subprocess.run(
+        ["git", "show", "-s", "--format=%s"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert committer_name == "forge-release"
+    assert committer_email == "forge-release@users.noreply.github.com"
+    assert subject == message
+
+
+def test_create_commit_raises_when_nothing_staged(tmp_path: Path) -> None:
+    """Nothing staged → git exits non-zero and ``create_commit`` propagates it."""
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "initial",
+        ],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+
+    with pytest.raises(subprocess.CalledProcessError):
+        git_utils.create_commit(tmp_path, "chore: nothing to commit")
+
+
+# ---------------------------------------------------------------------------
 # ref_exists
 # ---------------------------------------------------------------------------
 

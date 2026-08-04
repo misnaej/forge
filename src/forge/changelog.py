@@ -245,12 +245,21 @@ _TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
 # exist.
 _NO_VERSION_ENV_VARS = ("NO_VERSION", "SKIP_CHANGELOG_CHECK")
 
-# `no-version` as a whole delimited token in a branch name, bounded by
-# `/`, `-`, or the ends: matches `chore/tidy-no-version` and
-# `no-version/ci-fix`, NOT `fix/no-versioning`.
-_NO_VERSION_BRANCH_RE = re.compile(r"(?:^|[/-])no-version(?:$|[/-])", re.IGNORECASE)
+# The two CI-durable no-version spellings are PUBLIC: writers that emit
+# the signal (e.g. forge-resync branding its branch/commit) import these
+# constants instead of re-spelling the literals, so reader and writer
+# can never drift.
+NO_VERSION_BRANCH_TOKEN = "no-version"  # noqa: S105
 
-_NO_VERSION_COMMIT_MARKER = "[no-version]"
+NO_VERSION_COMMIT_MARKER = "[no-version]"
+
+# The branch token as a whole delimited token, bounded by `/`, `-`, or
+# the ends: matches `chore/tidy-no-version` and `no-version/ci-fix`,
+# NOT `fix/no-versioning`. Derived from the public constant — one
+# spelling.
+_NO_VERSION_BRANCH_RE = re.compile(
+    rf"(?:^|[/-]){re.escape(NO_VERSION_BRANCH_TOKEN)}(?:$|[/-])", re.IGNORECASE
+)
 
 
 def _env_no_version() -> str | None:
@@ -308,8 +317,8 @@ def wants_no_version(repo_root: Path) -> str | None:
     if base_ref is None:
         return None
     log = run_git("log", f"{base_ref}..HEAD", "--format=%B", cwd=repo_root, check=False)
-    if _NO_VERSION_COMMIT_MARKER in log.lower():
-        return f"{_NO_VERSION_COMMIT_MARKER} tag in a commit message ({base_ref}..HEAD)"
+    if NO_VERSION_COMMIT_MARKER in log.lower():
+        return f"{NO_VERSION_COMMIT_MARKER} tag in a commit message ({base_ref}..HEAD)"
     return None
 
 
