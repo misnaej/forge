@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 666 symbols._
+_62 modules, 667 symbols._
 
 ## `forge`
 
@@ -638,6 +638,7 @@ _62 modules, 666 symbols._
 
 > _forge-pr-squash-comment — validate, wrap, and post the squash-merge message._
 
+- `_cites_repo_file(token: str) -> bool` _(internal)_ — Return whether *token* is shaped like a repo path forge mandates.
 - `class ValidationError` — Raised when the input fails a FOUNDATION §6 squash-merge rule.
 - `_validate_title(title: str) -> None` _(internal)_ — Reject titles outside the conventional-commit format.
 - `_validate_bullets(bullets: list[str]) -> None` _(internal)_ — Enforce bullet count + non-empty content.
