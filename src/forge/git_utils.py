@@ -524,6 +524,9 @@ def create_commit(repo_root: Path, message: str) -> None:
         subprocess.CalledProcessError: When git fails for any other
             reason (stderr is logged by :func:`run_git`).
     """
+    # No `--` pin needed (unlike create_annotated_tag's positionals):
+    # `-m` consumes the next argv element as its value unconditionally,
+    # so a `-`-prefixed message can never parse as a separate option.
     run_git(*_fallback_identity_args(repo_root), "commit", "-m", message, cwd=repo_root)
 
 

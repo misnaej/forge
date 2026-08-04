@@ -245,10 +245,12 @@ _TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
 # exist.
 _NO_VERSION_ENV_VARS = ("NO_VERSION", "SKIP_CHANGELOG_CHECK")
 
-# The two CI-durable no-version spellings are PUBLIC: writers that emit
-# the signal (e.g. forge-resync branding its branch/commit) import these
-# constants instead of re-spelling the literals, so reader and writer
-# can never drift.
+# The two CI-durable no-version spellings are package-public (shared by
+# every forge module that emits or reads the signal — not part of the
+# consumer import-surface table in docs/consumer-release.md): writers
+# (e.g. forge-resync branding its branch/commit) import these constants
+# instead of re-spelling the literals, so reader and writer can never
+# drift.
 NO_VERSION_BRANCH_TOKEN = "no-version"  # noqa: S105
 
 NO_VERSION_COMMIT_MARKER = "[no-version]"

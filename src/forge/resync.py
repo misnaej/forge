@@ -11,9 +11,11 @@ cleanup loop deterministically:
 3. Regenerate everything (``install-forge-bootstrap``, non-interactive
    steps self-skip per FOUNDATION §15).
 4. No diff → "in sync", exit 0.
-5. Diff → branch ``chore/forge-resync-<forge-version>``, commit, push,
-   open a PR against ``[tool.forge].base_branch`` via ``gh``, then
-   return to the starting branch.
+5. Diff → branch ``chore/forge-resync-<forge-version>-no-version``,
+   commit, push, open a PR against ``[tool.forge].base_branch`` via
+   ``gh``, then return to the starting branch. The branch and commit
+   both carry the ``no-version`` opt-out signal (mechanical regen has
+   nothing for the changelog to gain).
 
 It only ever pushes its own resync branch — protected branches are
 never written. The PR body flags that mechanical regen does not surface
