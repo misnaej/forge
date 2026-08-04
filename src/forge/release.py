@@ -50,10 +50,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-from forge.changelog import changelog_lacks_entry, top_release_heading
+from forge.changelog import (
+    changelog_lacks_entry,
+    stranded_added_versions,
+    top_release_heading,
+)
 from forge.config import ForgeConfig, load_config
 from forge.git_utils import (
     configure_cli_logging,
+    create_annotated_tag,
     latest_v_tag,
     next_version,
     parse_semver,
@@ -201,6 +206,55 @@ def _declared_tag_or_error(repo_root: Path) -> tuple[str | None, str | None]:
     return declared, None
 
 
+def _stranded_entries_error(repo_root: Path, tag: str) -> str | None:
+    """Return an error when ``CHANGELOG.md`` changed since released *tag*.
+
+    The idempotent no-op ("top heading == existing tag → nothing to do")
+    has two very different causes. A true resting state — nothing merged
+    since the release, or only no-version merges, which never touch the
+    changelog. Or *stranded work*: an earlier tag-cut failed or raced, a
+    later run tagged the heading on the wrong commit, and subsequent PRs
+    appended entries under the already-released heading — their commits
+    would ship untagged (setuptools-scm ``X.Y.Z.devN``) while CI stays
+    green. The tag-side and ``HEAD``-side contents are classified by
+    :func:`forge.changelog.stranded_added_versions` — the same canonical
+    membership-based detector the ``changelog_version`` pre-commit step
+    uses — so a restrand (new heading opened above the released one,
+    entries moved out) counts as normal regardless of how git renders
+    the diff. A wording fix to already-released text still counts as a
+    gain (accepted bias, same as the pre-commit sibling: a false
+    positive is a cheap re-run; a missed stranding ships features
+    untagged). Depends on ``main()``'s upfront ``git fetch --tags``
+    having run — a locally-missing tag object (fetch timed out /
+    offline) degrades to no detection rather than a false positive.
+
+    Args:
+        repo_root: Repo root.
+        tag: The already-released tag the top heading still declares.
+
+    Returns:
+        One-line error string when entries are stranded, else ``None``.
+    """
+    old_text = run_git(
+        "show",
+        f"{tag}:CHANGELOG.md",
+        cwd=repo_root,
+        check=False,
+    )
+    if not old_text:
+        return None
+    text = (repo_root / "CHANGELOG.md").read_text(encoding="utf-8")
+    if not stranded_added_versions(old_text, text, tag):
+        return None
+    return (
+        f"CHANGELOG.md changed since {tag} but the top heading still "
+        f"declares {tag} — entries are stranded under an already-released "
+        "heading and their commits would ship untagged. Open the next "
+        "`## vX.Y.Z` heading, move the stranded entries under it, and "
+        "merge; the next tag-release run will cut it."
+    )
+
+
 def _tag_exists(repo_root: Path, tag: str) -> bool:
     """Return whether *tag* already exists locally or on ``origin``.
 
@@ -261,8 +315,10 @@ def _prepare_from_changelog(
         ``(tag, error)`` tuple. On success, ``tag`` is the resolved version and
         ``error`` is ``None``. On failure, ``tag`` is ``None`` and ``error``
         describes the issue. Idempotency is handled here: if the tag
-        already exists, returns ``("v...", None)`` so the caller can exit 0
-        before other guards.
+        already exists and no entries are stranded under its heading,
+        returns ``("v...", None)`` so the caller can exit 0 before other
+        guards; with stranded entries it returns ``(None, error)`` instead
+        (see :func:`_stranded_entries_error`).
     """
     tag, declared_err = _declared_tag_or_error(repo_root)
     if declared_err or tag is None:
@@ -276,6 +332,9 @@ def _prepare_from_changelog(
         return None, model_err
 
     if _tag_exists(repo_root, tag):
+        stranded = _stranded_entries_error(repo_root, tag)
+        if stranded:
+            return None, stranded
         # Idempotent case — signal success early.
         logger.info("%s is already released — nothing to do.", tag)
         return tag, None
@@ -310,19 +369,26 @@ def _cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> i
         ``0`` on success (including a tolerated race), ``1`` when the
         push failed for any other reason.
     """
-    run_git("tag", "-a", tag, "-m", tag, "HEAD", cwd=repo_root)
+    create_annotated_tag(repo_root, tag)
     if not run_git("remote", "get-url", "origin", cwd=repo_root, check=False):
         logger.warning("Tagged %s locally — no `origin` remote to push to.", tag)
         return 0
     try:
-        run_git("push", "origin", tag, cwd=repo_root)
-    except subprocess.CalledProcessError:
+        # race_tolerant suppresses run_git's failure log: a raced push is
+        # an expected, benign outcome and must not emit ERROR lines that
+        # alerting would flag. Genuine failures re-surface stderr below.
+        run_git("push", "origin", tag, cwd=repo_root, log_errors=not race_tolerant)
+    except subprocess.CalledProcessError as exc:
         if race_tolerant:
             run_git("fetch", "--tags", "--quiet", "origin", cwd=repo_root, check=False)
             if _tag_exists(repo_root, tag):
                 logger.info("%s appeared concurrently — already released.", tag)
                 return 0
-        logger.exception("Pushing %s to origin failed.", tag)
+        # In race_tolerant mode run_git's own failure log was suppressed,
+        # so append git's message here; one exception log either way.
+        detail = (exc.stderr or exc.stdout or "").strip()
+        suffix = f": {detail}" if race_tolerant and detail else "."
+        logger.exception("Pushing %s to origin failed%s", tag, suffix)
         return 1
     logger.info("Tagged and pushed %s", tag)
     return 0

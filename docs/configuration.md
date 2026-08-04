@@ -109,6 +109,20 @@ So to run all checks over a non-`src` layout, set `source_dirs` /
 `test_dirs` once; reach for a per-tool `.paths` only when one tool needs a
 different scope. `forge-config --list` shows the resolved keys.
 
+## `[tool.forge.pr]` — PR finalization
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `docs_only_globs` | `[]` | Extra globs a PR diff may consist entirely of and still take the `/pr` docs-only light path (skip design/security reporters + strict whole-tree pre-commit; run path-relevant gates only). Additive to the built-in `*.md` / `*.rst` / `*.txt` set; high-blast-radius paths (`agents/`, `skills/`, `claude-hooks/`, `.claude-plugin/`, `.claude/`, `.github/workflows/`, configs) always force the full round. | Your repo keeps prose in another doc format (e.g. `*.adoc`). |
+
+Glob semantics: matching is `fnmatch`, where `*` crosses `/` — so
+`*.md` already covers nested paths, but a directory glob like
+`notes/*` would match **any extension** under it (`notes/evil.py`)
+and open a review bypass. Use extension-anchored globs only. Accepted
+residuals of the light path (docs-types-checker still runs; human PR
+review remains the reviewer of record): symlinked doc files and
+prose-level injection content are not detected by path classification.
+
 ## `[tool.forge.cli_wiring]`
 
 | Key | Default | What it does | Set it when |
@@ -547,11 +561,11 @@ following the [consumer changelog convention](consumer-release.md)
   headings strictly decrease, the latest `v*` tag has an entry, the top
   heading is never *behind* the latest tag (equality is valid — the
   normal state right after a release is cut), and on a feature branch no
-  diff-added entries sit under an already-released heading (the
-  stranded-entries race). Self-skips without a root `CHANGELOG.md`, on
-  manifest-versioned repos (`verify-forge-plugin-version` owns the
-  invariant), and on dual-track repos (changelog is curated at
-  promotion).
+  entries gain content under an already-released heading since the merge
+  base (the stranded-entries race). Self-skips without a root
+  `CHANGELOG.md`, on manifest-versioned repos
+  (`verify-forge-plugin-version` owns the invariant), and on dual-track
+  repos (changelog is curated at promotion).
 - **`changelog_updated`** — the per-PR freshness gate: a change set that
   touches a changelog-requiring path without touching `CHANGELOG.md`
   fails. Self-skips without a `CHANGELOG.md` and on the base branch;
@@ -564,6 +578,12 @@ following the [consumer changelog convention](consumer-release.md)
 | `blocking` | `true` | Findings fail the commit; `false` downgrades both steps to a WARN. | Staged adoption on a repo with a messy changelog history. |
 | `exempt_paths` | `[]` | Path prefixes `changelog_updated` ignores. | Scratch/experimental dirs whose changes need no entry. |
 | `require_paths` | `[]` | Prefixes that always require an entry, overriding `exempt_paths` (checked first). | A shipped subtree inside an otherwise exempt dir. |
+| `precommit_enforce` | `true` | `false` = deferred mode: local commits (human or agent) self-skip `changelog_updated`; genuine CI keeps failing — with an expected-until-wrap-up message — until the entry lands at PR wrap-up. See the ["Deferred entry timing"](consumer-release.md#enforcement) chain. | High-parallelism repos hitting mid-PR changelog merge conflicts. |
+
+`precommit_enforce` and `blocking` are independent axes — timing vs
+severity. With both `false`, CI's deferred check degrades to a WARN, so
+the "red until wrap-up" guarantee no longer holds; keep `blocking =
+true` when opting into deferred mode.
 
 ## `[tool.forge.badges]` — README status badges
 

@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -174,7 +175,49 @@ def latest_v_tag(root: Path) -> str | None:
     return out.splitlines()[0]
 
 
-def require_cli(name: str, *, caller: str | None = None) -> None:
+def forge_install_command(extra: str | None = None) -> str:
+    """Format the consumer-valid install command for forge-scripts.
+
+    Args:
+        extra: Optional forge-scripts extras group (e.g. ``"typecheck"``).
+
+    Returns:
+        ``pip install forge-scripts``, with the bracketed extras group
+        (quoted for shell safety) when *extra* is given.
+    """
+    if extra is None:
+        return "pip install forge-scripts"
+    return f'pip install "forge-scripts[{extra}]"'
+
+
+def missing_dependency_hint(package: str, *, extra: str | None = None) -> str:
+    """Format a user-facing hint for a missing dependency.
+
+    Single source of truth for the install command named in every
+    missing-dependency message forge emits. The command must be valid
+    from any consumer repo — never an editable ``-e ".[...]"`` form,
+    which only works from a checkout of forge itself.
+
+    Args:
+        package: Distribution (pip) name of the missing dependency — the
+            name a user recognizes from install output (e.g. ``vulture``,
+            ``PyYAML``), not the import name where the two diverge.
+        extra: forge-scripts extras group that provides the package, or
+            ``None`` when it ships with the core install.
+
+    Returns:
+        One-line hint naming the package and its install command.
+    """
+    return f"`{package}` is not installed; run `{forge_install_command(extra)}`."
+
+
+def require_cli(
+    name: str,
+    *,
+    caller: str | None = None,
+    extra: str | None = None,
+    hint: str | None = None,
+) -> None:
     """Abort with a clear install hint if *name* isn't on PATH.
 
     Foundation rule (FOUNDATION §2): forge-shipped CLIs (and external
@@ -189,6 +232,13 @@ def require_cli(name: str, *, caller: str | None = None) -> None:
             ``"forge-precommit"``). Used to prefix the error so the user
             knows which tool reported the missing dependency. Defaults
             to ``"forge"``.
+        extra: forge-scripts extras group that provides *name* (e.g.
+            ``"typecheck"`` for ``pyrefly``). Use for tools gated behind
+            a forge-scripts optional-dependency group; omit for tools the
+            core install carries.
+        hint: Full replacement for the default install line. Takes
+            precedence over *extra*. Use for external tools with no
+            forge-scripts relationship (e.g. ``gh``).
 
     Raises:
         SystemExit: If *name* is not on PATH. Exit code is 2 (config error).
@@ -196,10 +246,11 @@ def require_cli(name: str, *, caller: str | None = None) -> None:
     if shutil.which(name) is not None:
         return
     prefix = caller or "forge"
+    line = hint or (
+        f"Run `{forge_install_command(extra)}` (or your repo's equivalent) and retry."
+    )
     sys.stderr.write(
-        f"{prefix}: required CLI '{name}' not on PATH.\n"
-        f'  Run `pip install -e ".[dev]"` (or your repo\'s equivalent) '
-        "and retry.\n",
+        f"{prefix}: required CLI '{name}' not on PATH.\n  {line}\n",
     )
     raise SystemExit(2)
 
@@ -330,7 +381,12 @@ def _run_git(*args: str, cwd: Path | None = None) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
+def run_git(
+    *args: str,
+    cwd: Path | None = None,
+    check: bool = True,
+    log_errors: bool = True,
+) -> str:
     """Run ``git`` with *args* in *cwd* and return stripped stdout.
 
     The explicit-``cwd`` git runner shared by the release CLIs
@@ -345,32 +401,138 @@ def run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
         cwd: Working directory for the git invocation; defaults to the
             current directory.
         check: When ``True``, raise on a non-zero exit.
+        log_errors: When ``False``, suppress the failure log line and
+            just raise — for callers that tolerate an expected failure
+            (e.g. a raced tag push) and own the messaging themselves.
 
     Returns:
         Trimmed stdout.
 
     Raises:
         subprocess.CalledProcessError: When ``check=True`` and git exits
-            non-zero.
+            non-zero. Git's captured stderr is logged before the raise
+            (when ``log_errors`` is ``True``, the default) — without it,
+            CI logs show only a bare exit code and the actual
+            git message ("unable to auto-detect email address", …) is
+            invisible. Invariant for callers: never pass a
+            credential-bearing arg or URL (e.g. a token-embedded remote)
+            — a failure would echo it verbatim into CI logs.
     """
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=check,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=check,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        if log_errors and detail:
+            logger.exception(
+                "git %s failed (exit %d): %s", " ".join(args), exc.returncode, detail
+            )
+        raise
     return proc.stdout.strip()
+
+
+# The identity injected when a runner has none (fresh CI). Module-level
+# so tests can exercise the exact production flags against real git.
+_FALLBACK_IDENTITY = (
+    "-c",
+    "user.name=forge-release",
+    "-c",
+    "user.email=forge-release@users.noreply.github.com",
+)
+
+
+def _fallback_identity_args(repo_root: Path) -> list[str]:
+    """Return ``-c`` identity flags when git has no usable tagger identity.
+
+    ``git var GIT_COMMITTER_IDENT`` evaluates the same chain ``git tag``
+    does (config, ``GIT_COMMITTER_*`` env, auto-detection), so any real
+    identity wins and the fallback only fires where tagging would
+    otherwise die with exit 128 (fresh CI runners). On failure that
+    subcommand writes nothing to stdout (its message goes to stderr), so
+    an empty probe result means "no identity" — a property of ``git
+    var``, not of :func:`run_git`'s ``check=False`` mode.
+
+    Args:
+        repo_root: Repo root for the probe.
+
+    Returns:
+        ``["-c", "user.name=…", "-c", "user.email=…"]`` when no identity
+        is available, else an empty list.
+    """
+    if run_git("var", "GIT_COMMITTER_IDENT", cwd=repo_root, check=False):
+        return []
+    return list(_FALLBACK_IDENTITY)
+
+
+def create_annotated_tag(
+    repo_root: Path,
+    tag: str,
+    *,
+    commit: str = "HEAD",
+    force: bool = False,
+) -> None:
+    """Create annotated *tag* at *commit*, surviving identity-less runners.
+
+    The one tag-creation seam shared by every forge CLI that cuts an
+    annotated tag (``forge-release``, ``forge-next-prep --tag``,
+    ``forge-check-main-tags --fix``). Injects a fallback tagger identity
+    only when git has none (see :func:`_fallback_identity_args`) — an
+    annotated tag requires one, and a fresh CI runner configures none.
+
+    Args:
+        repo_root: Repo root.
+        tag: Tag name to create (also used as the tag message).
+        commit: Commit-ish to tag.
+        force: Pass ``-f`` to relocate an existing tag.
+
+    Raises:
+        subprocess.CalledProcessError: When git fails for any other
+            reason (stderr is logged by :func:`run_git`).
+    """
+    # `--` pins tag/commit as positionals so a `-`-prefixed value can
+    # never be parsed as a git option, independent of caller validation.
+    args = ["tag", *(["-f"] if force else []), "-a", "-m", tag, "--", tag, commit]
+    run_git(*_fallback_identity_args(repo_root), *args, cwd=repo_root)
+
+
+def resolve_current_branch(repo_root: Path) -> tuple[str, str] | None:
+    """Return the current branch name and where it came from, or ``None``.
+
+    The one branch-name resolver for per-PR logic (FOUNDATION §12):
+    ``git branch --show-current`` wins when non-empty; on a detached
+    HEAD — a CI ``pull_request`` checkout of ``refs/pull/N/merge`` —
+    it is empty, so the PR source branch is read from the
+    ``GITHUB_HEAD_REF`` env var instead (``GITHUB_REF_NAME`` is
+    ``N/merge`` on that event, not the branch name).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``(branch, source)`` with source ``"local"`` or
+        ``"GITHUB_HEAD_REF"``, or ``None`` when neither yields a name.
+    """
+    branch = run_git("branch", "--show-current", cwd=repo_root, check=False).strip()
+    if branch:
+        return branch, "local"
+    head_ref = os.environ.get("GITHUB_HEAD_REF", "").strip()
+    if head_ref:
+        return head_ref, "GITHUB_HEAD_REF"
+    return None
 
 
 def ref_exists(repo_root: Path, ref: str) -> bool:
     """Return whether *ref* resolves to a commit in the repo.
 
-    The shared ref-existence probe — callers layer their own candidate
-    order and fallback policy on top (``forge.changelog``'s local-first
-    base resolution, ``forge.smart_test``'s origin-first diff base).
-    The ``^{commit}`` peel makes it verify commit-ish-ness, not just
-    name existence.
+    The shared ref-existence probe — candidate order and fallback policy
+    live in :func:`resolve_base_branch_ref`, the single diff-base
+    resolver every diff-scoped caller routes through. The ``^{commit}``
+    peel makes it verify commit-ish-ness, not just name existence.
 
     Args:
         repo_root: Git repo root.
@@ -390,6 +552,93 @@ def ref_exists(repo_root: Path, ref: str) -> bool:
             check=False,
         )
     )
+
+
+def merge_in_progress(repo_root: Path) -> bool:
+    """Return whether *repo_root* has an in-progress (uncommitted) merge.
+
+    Resolves ``MERGE_HEAD`` via ``git rev-parse --git-path`` rather than a
+    hardcoded ``.git/MERGE_HEAD`` so linked worktrees and submodules (where
+    the git dir lives elsewhere) are handled; ``--git-path`` may return a
+    relative or absolute path, and the ``/`` join degrades correctly for
+    both. Mid-merge, diff-vs-merge-base checks misattribute the base's
+    changes to the branch (HEAD is still pre-merge), so callers use this to
+    suppress that class of false positive.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``True`` when ``MERGE_HEAD`` exists (mid ``git merge``, before the
+        merge commit).
+    """
+    git_path = run_git(
+        "rev-parse", "--git-path", "MERGE_HEAD", cwd=repo_root, check=False
+    )
+    return bool(git_path) and (repo_root / git_path).exists()
+
+
+def resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None:
+    """Return the ref diff-scoped checks should compare against, origin-first.
+
+    The single home for forge's diff-base policy (every diff-scoped
+    caller — ``get_modified_files``, ``forge.changelog``,
+    ``forge.precommit``, ``forge.smart_test`` — routes here): prefer
+    ``origin/<base_branch>``, the authoritative merge target a PR
+    actually lands on, and fall back to the local ``<base_branch>`` only
+    when the remote ref is absent (offline clone, no remote). A local
+    base branch is a convenience cache that silently rots when the
+    developer doesn't pull; diffing against it makes already-merged
+    commits look branch-added. Not a replacement for the origin-*only*
+    probes in the promotion checks (``verify_changelog_history``,
+    ``verify_main_tags``, ``release``) — those must see published state
+    and deliberately have no local fallback.
+
+    A *base_branch* starting with ``-`` is rejected outright: git would
+    parse it as a flag, not a ref (option injection via a crafted
+    ``[tool.forge].base_branch``), and no real branch name starts with a
+    dash.
+
+    Args:
+        root: Git repo root; ``None`` uses the cached process-wide
+            :func:`repo_root`.
+        base_branch: Configured base-branch name.
+
+    Returns:
+        ``origin/<base_branch>`` or ``<base_branch>``, whichever
+        resolves first; ``None`` when neither does or *base_branch* is
+        empty or flag-shaped.
+    """
+    if not base_branch or base_branch.startswith("-"):
+        return None
+    if root is None:
+        root = repo_root()
+    for ref in (f"origin/{base_branch}", base_branch):
+        if ref_exists(root, ref):
+            return ref
+    return None
+
+
+def merge_base_with_head(root: Path | None, base_branch: str) -> str:
+    """Return the merge-base SHA of ``HEAD`` and the resolved base ref.
+
+    Thin companion to :func:`resolve_base_branch_ref` for callers that
+    want the divergence point rather than the ref itself — the
+    origin-first policy stays in exactly one place.
+
+    Args:
+        root: Git repo root; ``None`` uses the cached process-wide
+            :func:`repo_root`.
+        base_branch: Configured base-branch name.
+
+    Returns:
+        The merge-base SHA, or ``""`` when no base ref resolves or the
+        merge-base computation fails (unrelated histories).
+    """
+    ref = resolve_base_branch_ref(root, base_branch)
+    if ref is None:
+        return ""
+    return _run_git("merge-base", ref, "HEAD", cwd=root)
 
 
 def get_tree_sha(repo_root: Path, ref: str) -> str | None:
@@ -572,8 +821,9 @@ def get_modified_files(
     branch, including branch commits, staged files, and unstaged changes.
 
     Strategy:
-        - Feature branch: all files modified vs
-          ``<base_branch>``/``origin/<base_branch>``
+        - Feature branch: all files modified vs the base ref from
+          :func:`resolve_base_branch_ref` — ``origin/<base_branch>``
+          first, local ``<base_branch>`` as offline fallback
           (branch commits + staged + unstaged)
         - Base branch: files modified vs previous commit
 
@@ -598,10 +848,8 @@ def get_modified_files(
     current_branch = _run_git("branch", "--show-current", cwd=repo_root)
 
     if current_branch and current_branch != base_branch:
-        for base in (base_branch, f"origin/{base_branch}"):
-            if not _run_git("rev-parse", "--verify", base, cwd=repo_root):
-                continue
-
+        base = resolve_base_branch_ref(repo_root, base_branch)
+        if base is not None:
             logger.info(
                 "Checking files modified in '%s' compared to '%s'...",
                 current_branch,

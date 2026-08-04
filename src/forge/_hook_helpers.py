@@ -20,7 +20,7 @@ import os
 import shutil
 import subprocess
 
-from forge.git_utils import repo_root
+from forge.git_utils import forge_install_command, repo_root
 
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def run_foundation_drift_check(hook_name: str) -> int:
     """Run ``install-forge-claude-md --check --quiet``.
 
     Hard-fails (returns ``1``) when the CLI is not on PATH so the
-    contributor learns they need to ``pip install -e ".[dev]"``.
+    user learns forge-scripts is missing from the active environment.
 
     Args:
         hook_name: The calling hook's short name (``"post-merge"`` /
@@ -47,7 +47,10 @@ def run_foundation_drift_check(hook_name: str) -> int:
     """
     if shutil.which("install-forge-claude-md") is None:
         logger.error("[forge] %s: install-forge-claude-md not on PATH.", hook_name)
-        logger.error('[forge] Run `pip install -e ".[dev]"` and retry.')
+        logger.error(
+            "[forge] Run `%s` (or your repo's equivalent) and retry.",
+            forge_install_command(),
+        )
         return 1
 
     proc = subprocess.run(

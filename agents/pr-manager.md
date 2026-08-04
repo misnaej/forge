@@ -23,11 +23,7 @@ Branches by task — see the `## Task: <name>` sections. The caller's prompt nam
 
 ## Output
 
-Per-task report templates live in each `## Task: <name>` section below. Common shapes:
-
-- **Fetch / Categorize**: structured comment list — id + file:line + category + content.
-- **Verification (Wrap-up)**: two PR comments — a wrap-up (summary + recommendation) and a squash-merge comment (validated + fence-wrapped via `forge-pr-squash-comment`).
-- **Reply / Description / Issue creation**: gh-side artifact posted; return the URL or comment id.
+Per-task report templates live in each `## Task: <name>` section below. Common shapes: **Fetch / Categorize** — structured comment list (id + file:line + category + content); **Verification (Wrap-up)** — two PR comments, wrap-up plus squash-merge (validated + fence-wrapped via `forge-pr-squash-comment`); **Reply / Description / Issue creation** — gh-side artifact posted, return the URL or comment id.
 
 ## Task: Fetch & Summarize PR
 
@@ -38,7 +34,7 @@ gh api repos/<owner>/<repo>/pulls/<PR#>/comments
 git diff --stat main...HEAD
 ```
 
-Report: PR status, CI checks, approval state, comment summary. For a "what public symbols moved" overview on Python diffs, read `docs/api-digest.md` (canonical signatures) rather than re-walking the diff.
+Report: PR status, CI checks, approval state, comment summary. For "what public symbols moved," read `docs/api-digest.md` rather than re-walking the diff.
 
 ## Task: Fetch & Categorize Review Comments
 
@@ -46,7 +42,7 @@ Report: PR status, CI checks, approval state, comment summary. For a "what publi
 gh api repos/<owner>/<repo>/pulls/<PR#>/comments --jq '.[] | {id, path, line, body}'
 ```
 
-Categorize each as already-resolved / needs-action / needs-discussion; report all to the main agent with id + file:line + category + content. Do NOT implement fixes — the main agent has the context.
+Categorize each as already-resolved / needs-action / needs-discussion; report all with id + file:line + category + content. Do NOT implement fixes.
 
 ## Task: Write Reply to Comment
 
@@ -95,26 +91,28 @@ Wire auto-close with **bare** `Closes #N` / `Fixes #N` / `Resolves #N` on their 
 
 When asked to verify/finalize a PR:
 
-0. **Read `code_health/` logs first** (written by the pre-commit hook — the latest check results):
+0. **Read `code_health/` logs first** (the latest check results):
    ```bash
    cat ./code_health/{ruff,docstring_verification,test_naming_check,repo_structure_check}.log 2>/dev/null
    ```
-   If `REPO_STRUCTURE.md` exists, consult it to orient — the canonical,
-   drift-verified repo map.
+   Consult `REPO_STRUCTURE.md` (when present) to orient.
 
-   **Pre-run reports**: when invoked via `/pr`, the caller's prompt MAY include pre-run design / security / docs reports. If present, skip steps 1–3 and use them directly (steps 1–3 are the fallback for direct invocations).
+   **Pre-run reports**: the caller's prompt MAY include pre-run design / security / docs reports — use them and skip steps 1–3 (the fallback for direct invocations).
 
-   **Delta-mode short-circuit.** All criteria — thresholds, high-blast-radius
-   paths, SHA regex — live in `pr_delta.py` (the SSoT; never hardcode here);
-   the `verified-at:` contract is in
-   [_TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract). Delta-mode
-   applies when every Step-1 reporter already has a `verified-at:` SHA in the
-   PR comments, all are reachable from HEAD, the diff since is within
-   `DELTA_LINE_THRESHOLD`, and no changed path is in `HIGH_BLAST_RADIUS_PATHS`.
-   When it applies, **skip steps 1–3** and post a "Delta re-verification"
-   comment (carry the prior Design/Security/Docs verdicts, cite the prior SHA,
-   note the line/file counts) plus a refreshed squash-merge comment. Otherwise
-   run the full 1–3 sequence.
+   **Delta-mode short-circuit.** Criteria (thresholds, high-blast-radius
+   paths, SHA regex) live in `pr_delta.py` (SSoT; never hardcode); the
+   `verified-at:` contract is in
+   [_TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract). When every
+   Step-1 reporter has a HEAD-reachable `verified-at:` SHA in the PR
+   comments, the diff since is within `DELTA_LINE_THRESHOLD`, and no
+   changed path is in `HIGH_BLAST_RADIUS_PATHS`: **skip steps 1–3**, post
+   a "Delta re-verification" comment (prior verdicts, prior SHA, line/file
+   counts) plus a refreshed squash-merge comment.
+
+   **Docs-only light path** (`pr_delta.docs_only_diff`, orchestrated by
+   `/pr` Step 1): when the caller says the PR is docs-only, expect only a
+   docs-types report, run step 4 with the targeted `--only` gate list the
+   caller used, and state the light path in the wrap-up.
 
    ```bash
    gh pr comment list <PR#> --json body --jq '.[].body' | grep -E '^verified-at:' | tail -3
@@ -124,13 +122,14 @@ When asked to verify/finalize a PR:
    substitute raw grep output into a shell command**); double-quote it in
    every `git` command.
 
-**Base-sync gate — before the numbered steps.** A PR behind/conflicting with its base is not finalizable (green CI on a stale base ≠ merges now). `git fetch origin --quiet`, then `gh pr view <PR#> --json mergeable,baseRefName` + `git rev-list --left-right --count origin/<base>...HEAD` (left = behind). If `CONFLICTING`, **stop and report** — the caller resolves (CHANGELOG per `docs/release-process.md` §5) and re-invokes. If behind but clean, note it; merging the base is **confirm-first, never silent**.
+**Base-sync gate — before the numbered steps.** A PR behind/conflicting with its base is not finalizable. `git fetch origin --quiet`, then `gh pr view <PR#> --json mergeable,baseRefName` + `git rev-list --left-right --count origin/<base>...HEAD` (left = behind). `CONFLICTING` → **stop and report**; the caller resolves (CHANGELOG per `docs/release-process.md` §5) and re-invokes. Behind but clean → note it; merging the base is **confirm-first, never silent**.
 
 1. **Call `design-checker`** via Task tool - get design compliance report (skip if pre-run report provided OR delta-mode applies)
 2. **Call `security-checker`** via Task tool - get security review report (skip if pre-run report provided OR delta-mode applies)
 3. **Call `docs-types-checker`** via Task tool - get documentation report (skip if pre-run report provided OR delta-mode applies)
 4. **Call `precommit-fixer`** in `mode: strict` to clear all pre-commit failures (ALWAYS — docstring changes affect line lengths; `strict` also escalates remaining `pip_audit` advisories)
-5. **Check issue closing** - verify PR properly references issues it addresses (use the PR's actual base, not hardcoded `main`):
+5. **Deferred-changelog authoring** — when the repo sets `[tool.forge.changelog].precommit_enforce = false` and the PR diff has no `CHANGELOG.md` entry, authoring one now is MANDATORY (not skip-when-absent): write the bullet per `docs/consumer-release.md`, commit via `forge:git-commit-push`, and surface "wrote CHANGELOG bullet: <text>" in the wrap-up so the reviewer sees it. This turns CI's expected-red changelog check green before merge.
+6. **Check issue closing** - verify PR properly references issues it addresses (use the PR's actual base, not hardcoded `main`):
    ```bash
    gh pr view <PR#> --json body,title,baseRefName
    base=$(gh pr view <PR#> --json baseRefName --jq .baseRefName)
@@ -139,8 +138,8 @@ When asked to verify/finalize a PR:
    - Check PR description for `Closes #N`, `Fixes #N`, `Resolves #N` keywords
    - Check commit messages for issue references
    - If issues are addressed but not properly referenced for auto-closing, warn user
-6. **MANDATORY: Write and post squash-merge message as a separate PR comment** (see "Task: Write Squash-Merge Message" above). This is NOT optional — every wrap-up MUST include it.
-7. **Post wrap-up comment** via `gh pr comment <PR#> --body "..."` with sections: **Design Check**, **Security Review**, **Documentation Check** (each the reporter's summary), **Issue Management** (auto-close references or warnings), **Code Quality** (✅/❌ per `code_health/` log: ruff, test_naming, repo_structure, docstring_verification), and **Recommendation** (Ready for merge / Needs work / Security concerns).
+7. **MANDATORY: Write and post squash-merge message as a separate PR comment** (see "Task: Write Squash-Merge Message" above). This is NOT optional — every wrap-up MUST include it.
+8. **Post wrap-up comment** via `gh pr comment <PR#> --body "..."` with sections: **Design Check**, **Security Review**, **Documentation Check** (each the reporter's summary), **Issue Management** (auto-close references or warnings), **Code Quality** (✅/❌ per `code_health/` log: ruff, test_naming, repo_structure, docstring_verification), and **Recommendation** (Ready for merge / Needs work / Security concerns).
 
 ## Task: Issue Management
 

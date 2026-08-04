@@ -168,7 +168,11 @@ def main() -> int:
         logger.error("--repo must be OWNER/REPO (got %r)", args.repo)
         return 1
 
-    require_cli("gh", caller="install-forge-labels")
+    require_cli(
+        "gh",
+        caller="install-forge-labels",
+        hint="Install the GitHub CLI (https://cli.github.com) and retry.",
+    )
     # Verify gh is authenticated.
     auth = subprocess.run(
         ["gh", "auth", "status"], capture_output=True, text=True, check=False

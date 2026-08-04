@@ -26,6 +26,11 @@ concurrency:
 
 jobs:
   ci:
+    # Dependabot PRs bump workflow SHAs but cannot author the rolling-next
+    # plugin.json bump the plugin_version gate demands, so the full
+    # sequence can never pass for them. A skipped job satisfies required
+    # status checks; the human reviewing the deps PR is the gate.
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       # SHA-pinned per docs/security.md "Pin GitHub Actions"; Dependabot

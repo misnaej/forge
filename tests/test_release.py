@@ -528,6 +528,73 @@ def test_main_from_changelog_idempotent_when_already_tagged(
     assert not _tag_exists(bare, "v1.2.3")
 
 
+def test_main_from_changelog_flags_stranded_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Entries appended under an already-tagged heading → exit 1, not no-op."""
+    work, _bare = _repo_with_origin(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.2.3\n- released work\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "v1.2.3"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    (work / "CHANGELOG.md").write_text(
+        "## v1.2.3\n- released work\n- stranded feature\n"
+    )
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "stranded"], cwd=work, env=_GIT_ENV, check=True
+    )
+    _single_track_cfg(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
+    monkeypatch.chdir(work)
+    with caplog.at_level(logging.ERROR, logger="forge.release"):
+        assert release.main() == 1
+    assert any("stranded" in r.getMessage() for r in caplog.records)
+
+
+def test_main_from_changelog_idempotent_when_ahead_without_changelog_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Commits after the tag that skip the changelog (no-version) still rest."""
+    work, _bare = _repo_with_origin(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.2.3\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "v1.2.3"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    (work / "ci.txt").write_text("tweak\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "chore [no-version]"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    _single_track_cfg(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
+    monkeypatch.chdir(work)
+    with caplog.at_level(logging.INFO, logger="forge.release"):
+        assert release.main() == 0
+    assert any("already released" in r.getMessage() for r in caplog.records)
+
+
 def test_main_from_changelog_stale_heading_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -673,6 +740,7 @@ def test_cut_release_race_tolerant_push_failure_with_remote_tag(
         return ""
 
     monkeypatch.setattr(release, "run_git", _fake_git)
+    monkeypatch.setattr(release, "create_annotated_tag", lambda *_a, **_kw: None)
     with caplog.at_level(logging.INFO, logger="forge.release"):
         result = release._cut_release(tmp_path, "v1.0.0", race_tolerant=True)
     assert result == 0
@@ -694,6 +762,7 @@ def test_cut_release_push_failure_without_tolerance_returns_one(
         return ""
 
     monkeypatch.setattr(release, "run_git", _fake_git)
+    monkeypatch.setattr(release, "create_annotated_tag", lambda *_a, **_kw: None)
     with caplog.at_level(logging.ERROR, logger="forge.release"):
         result = release._cut_release(tmp_path, "v1.0.0", race_tolerant=False)
     assert result == 1
@@ -713,7 +782,38 @@ def test_cut_release_race_tolerant_push_failure_without_remote_tag(
         return ""  # tag --list and ls-remote report nothing
 
     monkeypatch.setattr(release, "run_git", _fake_git)
+    monkeypatch.setattr(release, "create_annotated_tag", lambda *_a, **_kw: None)
     assert release._cut_release(tmp_path, "v1.0.0", race_tolerant=True) == 1
+
+
+def test_cut_release_push_wires_log_errors_off_race_tolerant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: the push's ``log_errors`` kwarg must track ``race_tolerant``.
+
+    MOCK SETUP: ``release.run_git`` replaced by a spy recording the
+        ``log_errors`` kwarg of every ``push`` invocation (succeeding, so
+        no failure branches run); ``create_annotated_tag`` stubbed out.
+    EXPECTED BEHAVIOR: ``race_tolerant=True`` passes ``log_errors=False``
+        (a raced push must not emit ERROR lines); ``race_tolerant=False``
+        passes the default ``True``. Inverting the wiring in
+        ``_cut_release`` flips this assertion — the regression pin the
+        suppression mechanism's own unit test cannot provide.
+    """
+    push_log_errors: list[object] = []
+
+    def _fake_git(*args: str, **kw: object) -> str:
+        if args and args[0] == "push":
+            push_log_errors.append(kw.get("log_errors", True))
+        if args and args[0] == "remote":
+            return "https://example.invalid/origin.git"
+        return ""
+
+    monkeypatch.setattr(release, "run_git", _fake_git)
+    monkeypatch.setattr(release, "create_annotated_tag", lambda *_a, **_kw: None)
+    assert release._cut_release(tmp_path, "v1.0.0", race_tolerant=True) == 0
+    assert release._cut_release(tmp_path, "v1.0.0", race_tolerant=False) == 0
+    assert push_log_errors == [False, True]
 
 
 def test_main_from_changelog_model_guard_beats_idempotency(

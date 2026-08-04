@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -18,10 +19,14 @@ from tests.conftest import (
     GIT_ENV as _GIT_ENV,
 )
 from tests.conftest import (
+    _detach_head,
+    make_fake_run,
+)
+from tests.conftest import (
     init_git_repo as _init_git_repo,
 )
 from tests.conftest import (
-    make_fake_run,
+    init_single_track_repo as _init_single_track_repo,
 )
 
 
@@ -295,7 +300,7 @@ def test_get_modified_files_feature_branch_aggregates_three_diffs(
         tmp_path,
         current_branch="feat/x",
         diff_outputs={
-            "main...HEAD": "src/a.py\n",
+            "origin/main...HEAD": "src/a.py\n",
             "--cached": "src/b.py\n",
             # plain `git diff --name-only` (no trailing arg) → key is ""
             "": "src/c.py\nsrc/a.py\n",
@@ -314,7 +319,7 @@ def test_get_modified_files_applies_prefix_tuple(
         tmp_path,
         current_branch="feat/x",
         diff_outputs={
-            "main...HEAD": "test/old.py\ntests/new.py\nsrc/foo.py\n",
+            "origin/main...HEAD": "test/old.py\ntests/new.py\nsrc/foo.py\n",
             "--cached": "",
             "": "",
         },
@@ -354,7 +359,7 @@ def test_get_modified_files_threads_repo_root_into_feature_branch_calls(
         monkeypatch,
         tmp_path,
         current_branch="feat/x",
-        diff_outputs={"main...HEAD": "src/a.py\n", "--cached": "", "": ""},
+        diff_outputs={"origin/main...HEAD": "src/a.py\n", "--cached": "", "": ""},
         calls=calls,
     )
     files = git_utils.get_modified_files(repo_root=other_root)
@@ -621,6 +626,228 @@ def test_run_git_check_false_failure_returns_empty(tmp_path: Path) -> None:
     assert result == ""
 
 
+def test_run_git_check_true_failure_logs_git_stderr(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A failing git command logs git's captured stderr before re-raising.
+
+    Without this, CI logs show only a bare non-zero exit code — the
+    investigation behind #242/#243 needed the actual git message
+    ("fatal: ...") to diagnose an identity-less runner, and had only the
+    exit code to go on.
+
+    ``--verify`` is used to prevent git's passthrough mode (which echoes
+    bare unknown names to stdout with exit 0 instead of failing).
+    """
+    _init_git_repo(tmp_path)
+    with (
+        caplog.at_level(logging.ERROR, logger="forge.git_utils"),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        git_utils.run_git(
+            "rev-parse", "--verify", "nonexistent_branch_xyz", cwd=tmp_path
+        )
+    assert any("Needed a single revision" in r.getMessage() for r in caplog.records)
+
+
+def test_run_git_log_errors_false_suppresses_failure_log(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``log_errors=False`` raises without an ERROR line (tolerated failures)."""
+    _init_git_repo(tmp_path)
+    with (
+        caplog.at_level(logging.ERROR, logger="forge.git_utils"),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        git_utils.run_git(
+            "rev-parse",
+            "--verify",
+            "nonexistent_branch_xyz",
+            cwd=tmp_path,
+            log_errors=False,
+        )
+    assert not caplog.records
+
+
+# ---------------------------------------------------------------------------
+# _fallback_identity_args
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_identity_args_empty_when_identity_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A usable committer identity (non-empty probe) → no fallback flags."""
+    monkeypatch.setattr(git_utils, "run_git", lambda *_a, **_kw: "t <t@t> 0 +0000")
+    assert git_utils._fallback_identity_args(tmp_path) == []
+
+
+def test_fallback_identity_args_returns_forge_release_flags_when_probe_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty ``GIT_COMMITTER_IDENT`` probe → the forge-release ``-c`` flags."""
+    monkeypatch.setattr(git_utils, "run_git", lambda *_a, **_kw: "")
+    assert git_utils._fallback_identity_args(tmp_path) == [
+        "-c",
+        "user.name=forge-release",
+        "-c",
+        "user.email=forge-release@users.noreply.github.com",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# create_annotated_tag
+# ---------------------------------------------------------------------------
+
+
+def test_create_annotated_tag_default_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default call (``commit="HEAD"``, ``force=False``) builds the plain tag argv."""
+    captured: list[tuple[str, ...]] = []
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        captured.append(args)
+        return "t <t@t> 0 +0000" if args[:2] == ("var", "GIT_COMMITTER_IDENT") else ""
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    git_utils.create_annotated_tag(tmp_path, "v1.0.0")
+    assert captured[-1] == ("tag", "-a", "-m", "v1.0.0", "--", "v1.0.0", "HEAD")
+
+
+def test_create_annotated_tag_commit_and_force_prepend_dash_f(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``force=True`` + an explicit ``commit`` prepend ``-f``, use that commit-ish."""
+    captured: list[tuple[str, ...]] = []
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        captured.append(args)
+        return "t <t@t> 0 +0000" if args[:2] == ("var", "GIT_COMMITTER_IDENT") else ""
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    git_utils.create_annotated_tag(tmp_path, "v1.0.0", commit="abc123", force=True)
+    assert captured[-1] == (
+        "tag",
+        "-f",
+        "-a",
+        "-m",
+        "v1.0.0",
+        "--",
+        "v1.0.0",
+        "abc123",
+    )
+
+
+def test_create_annotated_tag_prepends_fallback_identity_when_probe_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty identity probe → the ``-c`` flags land ahead of ``tag`` in argv."""
+    captured: list[tuple[str, ...]] = []
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        captured.append(args)
+        return ""
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    git_utils.create_annotated_tag(tmp_path, "v1.0.0")
+    assert captured[-1] == (
+        "-c",
+        "user.name=forge-release",
+        "-c",
+        "user.email=forge-release@users.noreply.github.com",
+        "tag",
+        "-a",
+        "-m",
+        "v1.0.0",
+        "--",
+        "v1.0.0",
+        "HEAD",
+    )
+
+
+def test_create_annotated_tag_succeeds_with_no_git_identity_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: a fresh CI runner with no git identity anywhere (#242 repro).
+
+    MOCK SETUP: ``_fallback_identity_args`` is pinned to return the
+        production ``_FALLBACK_IDENTITY`` flags unconditionally — the
+        identity-less *probe* result cannot be forced portably (a dev
+        machine auto-detects an identity from ``getpwuid``/hostname, and
+        empty-string identity env vars would defeat ``-c`` flags too, so
+        even the fix could not tag). Everything downstream is real git:
+        config sources scrubbed (``HOME``, ``GIT_CONFIG_*``), identity
+        env vars unset, repo history created with inline ``-c`` identity.
+    EXPECTED BEHAVIOR: tag creation does not raise, the ref is a real
+        annotated ``tag`` object, and its tagger is the injected
+        ``forge-release`` identity — proving the production fallback
+        flags satisfy git wherever auto-detection would have failed
+        (``-c`` outranks config and auto-detection, so the assertion is
+        machine-independent).
+    """
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "initial",
+        ],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+
+    monkeypatch.setenv("HOME", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in (
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "EMAIL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(
+        git_utils,
+        "_fallback_identity_args",
+        lambda _root: list(git_utils._FALLBACK_IDENTITY),
+    )
+
+    git_utils.create_annotated_tag(tmp_path, "v1.0.0")
+
+    tag_type = subprocess.run(
+        ["git", "cat-file", "-t", "v1.0.0"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert tag_type == "tag"
+    tagger = subprocess.run(
+        ["git", "for-each-ref", "--format=%(taggername)", "refs/tags/v1.0.0"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert tagger == "forge-release"
+
+
 # ---------------------------------------------------------------------------
 # ref_exists
 # ---------------------------------------------------------------------------
@@ -636,6 +863,398 @@ def test_ref_exists_false_for_missing_ref(tmp_path: Path) -> None:
     """A ref with no matching commit resolves to ``False``."""
     _init_git_repo(tmp_path)
     assert git_utils.ref_exists(tmp_path, "nonexistent_branch_xyz") is False
+
+
+# ---------------------------------------------------------------------------
+# resolve_base_branch_ref
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_base_branch_ref_rejects_empty_base_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty ``base_branch`` is rejected without touching git."""
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "ok\n"})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.resolve_base_branch_ref(tmp_path, "") is None
+    assert calls == []
+
+
+def test_resolve_base_branch_ref_rejects_flag_shaped_base_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `-`-prefixed ``base_branch`` (option injection) is rejected, no git call."""
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "ok\n"})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.resolve_base_branch_ref(tmp_path, "--output=pwned") is None
+    assert calls == []
+
+
+def test_resolve_base_branch_ref_prefers_origin_over_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When both `origin/<base>` and local `<base>` resolve, origin wins."""
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        return type("P", (), {"returncode": 0, "stdout": "ok\n"})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.resolve_base_branch_ref(tmp_path, "main") == "origin/main"
+
+
+def test_resolve_base_branch_ref_falls_back_to_local_when_origin_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`origin/<base>` fails to resolve, local `<base>` does → local is used."""
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        if cmd[-1] == "origin/main^{commit}":
+            return type("P", (), {"returncode": 1, "stdout": ""})()
+        return type("P", (), {"returncode": 0, "stdout": "ok\n"})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.resolve_base_branch_ref(tmp_path, "main") == "main"
+
+
+def test_resolve_base_branch_ref_none_when_neither_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Neither `origin/<base>` nor local `<base>` resolves → `None`."""
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        return type("P", (), {"returncode": 1, "stdout": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.resolve_base_branch_ref(tmp_path, "main") is None
+
+
+def test_resolve_base_branch_ref_root_none_uses_cached_repo_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`root=None` resolves against the cached process-wide `repo_root()`."""
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(git_utils, "repo_root", lambda: tmp_path)
+    assert git_utils.resolve_base_branch_ref(None, "main") == "main"
+
+
+def test_resolve_base_branch_ref_ci_shape_origin_only(tmp_path: Path) -> None:
+    """CI-shaped checkout: local `main` deleted, only `origin/main` resolves.
+
+    Mirrors a CI checkout of a detached ``refs/pull/N/merge``: no local
+    ``main`` branch exists, but the fetch that created the checkout left
+    ``origin/main`` behind.
+    """
+    work, _bare = _init_single_track_repo(tmp_path)
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(["git", "fetch", "-q", "origin"], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "--detach", head_sha],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(["git", "branch", "-D", "main"], cwd=work, env=_GIT_ENV, check=True)
+    assert git_utils.resolve_base_branch_ref(work, "main") == "origin/main"
+
+
+def test_resolve_base_branch_ref_offline_local_only(tmp_path: Path) -> None:
+    """No remote configured → falls back to the local base branch."""
+    _init_git_repo(tmp_path)
+    assert git_utils.resolve_base_branch_ref(tmp_path, "main") == "main"
+
+
+def test_resolve_base_branch_ref_honors_non_main_base_branch(tmp_path: Path) -> None:
+    """A repo whose branch is `develop`, with an `origin` remote, resolves it."""
+    work = tmp_path / "work"
+    bare = tmp_path / "origin.git"
+    work.mkdir()
+    bare.mkdir()
+    for cmd in (
+        ["git", "init", "-q", "-b", "develop"],
+        ["git", "commit", "-q", "--allow-empty", "-m", "initial"],
+    ):
+        subprocess.run(cmd, cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(["git", "init", "--bare", "-q"], cwd=bare, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(bare)],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "develop"], cwd=work, env=_GIT_ENV, check=True
+    )
+    assert git_utils.resolve_base_branch_ref(work, "develop") == "origin/develop"
+
+
+# ---------------------------------------------------------------------------
+# resolve_current_branch
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_current_branch_prefers_local_show_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checked-out branch resolves via `--show-current`, source `"local"`."""
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.resolve_current_branch(tmp_path) == ("feat/x", "local")
+
+
+def test_resolve_current_branch_falls_back_to_github_head_ref_when_detached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A detached HEAD falls back to `GITHUB_HEAD_REF`, source `"GITHUB_HEAD_REF"`."""
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    _init_git_repo(tmp_path)
+    _detach_head(tmp_path)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/y")
+    assert git_utils.resolve_current_branch(tmp_path) == ("chore/y", "GITHUB_HEAD_REF")
+
+
+def test_resolve_current_branch_none_when_neither_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A detached HEAD with no `GITHUB_HEAD_REF` resolves to `None`."""
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    _init_git_repo(tmp_path)
+    _detach_head(tmp_path)
+    assert git_utils.resolve_current_branch(tmp_path) is None
+
+
+def test_resolve_current_branch_local_wins_over_github_head_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checked-out branch wins even when `GITHUB_HEAD_REF` names another."""
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/y")
+    assert git_utils.resolve_current_branch(tmp_path) == ("feat/x", "local")
+
+
+# ---------------------------------------------------------------------------
+# merge_base_with_head
+# ---------------------------------------------------------------------------
+
+
+def test_merge_base_with_head_happy_path_returns_sha(tmp_path: Path) -> None:
+    """A feature branch ahead of main returns the shared merge-base SHA."""
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "feature work"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    expected = subprocess.run(
+        ["git", "merge-base", "main", "HEAD"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    result = git_utils.merge_base_with_head(tmp_path, "main")
+    assert result == expected
+    assert len(result) == 40
+    assert all(c in "0123456789abcdef" for c in result)
+
+
+def test_merge_base_with_head_empty_when_unresolvable(tmp_path: Path) -> None:
+    """An empty `base_branch` never resolves → empty string, not an exception."""
+    _init_git_repo(tmp_path)
+    assert git_utils.merge_base_with_head(tmp_path, "") == ""
+
+
+def test_merge_base_with_head_empty_when_merge_base_fails(tmp_path: Path) -> None:
+    """The base ref resolves, but `git merge-base` itself fails → empty string.
+
+    An orphan branch shares no history with `main`, so `git merge-base`
+    exits non-zero even though `resolve_base_branch_ref` happily resolves
+    `"main"` — the two failure modes (unresolvable ref vs. no common
+    ancestor) must both collapse to `""`, matching the documented
+    Returns contract.
+    """
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "--orphan", "feat/x"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "unrelated history"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.merge_base_with_head(tmp_path, "main") == ""
+
+
+# ---------------------------------------------------------------------------
+# merge_in_progress
+# ---------------------------------------------------------------------------
+
+
+def _create_diverged_branches(repo: Path) -> None:
+    """Create ``other`` and ``feat/x`` off ``main``, each touching a distinct file.
+
+    Leaves ``feat/x`` checked out.
+
+    Args:
+        repo: Repository path.
+    """
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "other"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    (repo / "other.txt").write_text("other\n")
+    subprocess.run(["git", "add", "other.txt"], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "other work"],
+        cwd=repo,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    (repo / "feat.txt").write_text("feat\n")
+    subprocess.run(["git", "add", "feat.txt"], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "feat work"], cwd=repo, env=_GIT_ENV, check=True
+    )
+
+
+def test_merge_in_progress_false_on_clean_repo(tmp_path: Path) -> None:
+    """A freshly initialized repo with no merge underway reports False."""
+    _init_git_repo(tmp_path)
+    assert git_utils.merge_in_progress(tmp_path) is False
+
+
+def test_merge_in_progress_true_mid_merge(tmp_path: Path) -> None:
+    """``MERGE_HEAD`` exists mid ``git merge --no-ff --no-commit`` -> True.
+
+    ``--no-ff`` is required: a fast-forward merge never writes
+    ``MERGE_HEAD``, so this reproduces the git state
+    ``step_changelog_version`` actually guards against.
+    """
+    _init_git_repo(tmp_path)
+    _create_diverged_branches(tmp_path)
+    subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "other"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.merge_in_progress(tmp_path) is True
+
+
+def test_merge_in_progress_false_after_merge_commit(tmp_path: Path) -> None:
+    """Completing the merge with a commit clears ``MERGE_HEAD`` -> False."""
+    _init_git_repo(tmp_path)
+    _create_diverged_branches(tmp_path)
+    subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "other"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "--no-edit"], cwd=tmp_path, env=_GIT_ENV, check=True
+    )
+    assert git_utils.merge_in_progress(tmp_path) is False
+
+
+def test_merge_in_progress_worktree_safe(tmp_path: Path) -> None:
+    """A linked worktree mid-merge resolves via its own git-path.
+
+    Not a hardcoded ``.git/MERGE_HEAD``: a linked worktree's ``.git`` is
+    a gitlink *file* pointing at the main repo's ``worktrees/<name>``
+    directory, not a ``.git`` directory — so ``MERGE_HEAD`` never lives
+    at ``<worktree>/.git/MERGE_HEAD``. This proves ``merge_in_progress``
+    resolves the real path via ``--git-path`` rather than assuming that
+    layout.
+    """
+    main_repo = tmp_path / "main_repo"
+    main_repo.mkdir()
+    _init_git_repo(main_repo)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "other"],
+        cwd=main_repo,
+        env=_GIT_ENV,
+        check=True,
+    )
+    (main_repo / "other.txt").write_text("other\n")
+    subprocess.run(["git", "add", "other.txt"], cwd=main_repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "other work"],
+        cwd=main_repo,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=main_repo, env=_GIT_ENV, check=True
+    )
+
+    wt = tmp_path / "wt"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", "feat/wt", str(wt), "main"],
+        cwd=main_repo,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "other"],
+        cwd=wt,
+        env=_GIT_ENV,
+        check=True,
+    )
+
+    assert git_utils.merge_in_progress(wt) is True
+    assert not (wt / ".git" / "MERGE_HEAD").exists()
+
+
+def test_merge_in_progress_false_when_not_a_git_repo(tmp_path: Path) -> None:
+    """A directory that is not a git repo returns False without raising."""
+    assert git_utils.merge_in_progress(tmp_path) is False
 
 
 # ---------------------------------------------------------------------------
@@ -1013,7 +1632,7 @@ def test_get_modified_files_honors_custom_base_branch(
         monkeypatch,
         tmp_path,
         current_branch="feat/x",
-        diff_outputs={"develop...HEAD": "src/a.py\n"},
+        diff_outputs={"origin/develop...HEAD": "src/a.py\n"},
     )
     files = git_utils.get_modified_files(repo_root=tmp_path, base_branch="develop")
     assert files == ["src/a.py"]
@@ -1031,3 +1650,141 @@ def test_get_modified_files_on_custom_base_falls_back_to_prev_commit(
     )
     files = git_utils.get_modified_files(repo_root=tmp_path, base_branch="develop")
     assert files == ["src/x.py"]
+
+
+def test_get_modified_files_routes_through_resolve_base_branch_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`get_modified_files` resolves its diff base via `resolve_base_branch_ref`.
+
+    MOCK SETUP: `git_utils.resolve_base_branch_ref` is replaced by a spy
+    returning a sentinel ref; `subprocess.run` is stubbed for `branch
+    --show-current` and the resulting `sentinel/ref...HEAD` diff.
+    EXPECTED BEHAVIOR: the spy is called with `(repo_root, base_branch)`
+    and its sentinel return value is the ref diffed against.
+    """
+    calls: list[tuple[object, object]] = []
+
+    def _spy(root: object, base_branch: object) -> str:
+        calls.append((root, base_branch))
+        return "sentinel/ref"
+
+    monkeypatch.setattr(git_utils, "resolve_base_branch_ref", _spy)
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        if cmd[1:3] == ["branch", "--show-current"]:
+            return type("P", (), {"returncode": 0, "stdout": "feat/x\n"})()
+        if cmd[1:3] == ["diff", "--name-only"]:
+            tail = cmd[-1] if len(cmd) > 3 else ""
+            stdout = "src/a.py\n" if tail == "sentinel/ref...HEAD" else ""
+            return type("P", (), {"returncode": 0, "stdout": stdout})()
+        return type("P", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    files = git_utils.get_modified_files(repo_root=tmp_path, base_branch="main")
+    assert files == ["src/a.py"]
+    assert calls == [(tmp_path, "main")]
+
+
+# ---------------------------------------------------------------------------
+# forge_install_command
+# ---------------------------------------------------------------------------
+
+
+def test_forge_install_command_no_extra_returns_bare_pip_install() -> None:
+    """No extra names the bare core-install command."""
+    assert git_utils.forge_install_command() == "pip install forge-scripts"
+
+
+def test_forge_install_command_with_extra_quotes_bracket() -> None:
+    """An extra names the quoted bracketed extras-group form."""
+    assert (
+        git_utils.forge_install_command("typecheck")
+        == 'pip install "forge-scripts[typecheck]"'
+    )
+
+
+# ---------------------------------------------------------------------------
+# missing_dependency_hint
+# ---------------------------------------------------------------------------
+
+
+def test_missing_dependency_hint_no_extra_names_core_install() -> None:
+    """No ``extra`` names the package and the bare consumer-safe pip command."""
+    hint = git_utils.missing_dependency_hint("vulture")
+    assert "`vulture`" in hint
+    assert "pip install forge-scripts" in hint
+    assert "[" not in hint
+    assert '-e ".[' not in hint
+
+
+def test_missing_dependency_hint_custom_extra_substitutes_bracket() -> None:
+    """A custom ``extra`` substitutes into the bracket, not just the default."""
+    hint = git_utils.missing_dependency_hint("jsonschema", extra="docs")
+    assert "`jsonschema`" in hint
+    assert 'forge-scripts[docs]"' in hint
+    assert '-e ".[' not in hint
+
+
+# ---------------------------------------------------------------------------
+# require_cli
+# ---------------------------------------------------------------------------
+
+
+def test_require_cli_noop_when_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A CLI found on PATH returns None without raising."""
+    monkeypatch.setattr(git_utils.shutil, "which", lambda _name: "/fake/bin")
+    assert git_utils.require_cli("ruff") is None
+
+
+def test_require_cli_default_hint_has_no_extra(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A missing CLI with no ``extra``/``hint`` names the bare install command."""
+    monkeypatch.setattr(git_utils.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit) as exc_info:
+        git_utils.require_cli("ruff")
+    err = capsys.readouterr().err
+    assert "pip install forge-scripts" in err
+    assert "or your repo's equivalent" in err
+    assert "[" not in err
+    assert exc_info.value.code == 2
+
+
+def test_require_cli_extra_threads_into_default_hint(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``extra`` substitutes into the default hint's bracketed extras group."""
+    monkeypatch.setattr(git_utils.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        git_utils.require_cli("pyrefly", extra="typecheck")
+    err = capsys.readouterr().err
+    assert 'pip install "forge-scripts[typecheck]"' in err
+
+
+def test_require_cli_hint_overrides_extra(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An explicit ``hint`` replaces the default line even when ``extra`` is set."""
+    monkeypatch.setattr(git_utils.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        git_utils.require_cli("gh", extra="typecheck", hint="Custom line.")
+    err = capsys.readouterr().err
+    assert "Custom line." in err
+    assert "forge-scripts[typecheck]" not in err
+
+
+def test_require_cli_caller_prefixes_message(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``caller`` prefixes the error; the default prefix is ``"forge"``."""
+    monkeypatch.setattr(git_utils.shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        git_utils.require_cli("ruff", caller="forge-precommit")
+    err = capsys.readouterr().err
+    assert err.startswith("forge-precommit: required CLI")
+
+    with pytest.raises(SystemExit):
+        git_utils.require_cli("ruff")
+    err = capsys.readouterr().err
+    assert err.startswith("forge: required CLI")

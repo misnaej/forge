@@ -13,7 +13,7 @@ Scope:
     * ``.toml`` — verify the file parses (Python 3.11+; older interpreters
       skip TOML files).
     * ``.yaml`` / ``.yml`` — verify the file parses (requires PyYAML;
-      skipped silently when PyYAML is not installed).
+      skipped with a LOW finding when PyYAML is not installed).
     * Optional schema check: when ``<file>.schema.json`` sits next to a
       ``.json`` and ``jsonschema`` is importable, validate.
 
@@ -46,7 +46,7 @@ from forge.audit.common import (
     resolve_roots,
     write_log,
 )
-from forge.git_utils import configure_cli_logging
+from forge.git_utils import configure_cli_logging, missing_dependency_hint
 
 
 if TYPE_CHECKING:
@@ -224,8 +224,8 @@ def _check_jsonschema(path: Path, data: object) -> list[Finding]:
                 path=rel,
                 line=0,
                 message=(
-                    f"schema present at {schema_path.name} but `jsonschema` "
-                    'is not installed (`pip install -e ".[audit]"`).'
+                    f"schema present at {schema_path.name} but "
+                    + missing_dependency_hint("jsonschema", extra="audit")
                 ),
             ),
         ]
@@ -305,7 +305,10 @@ def _check_yaml(path: Path) -> list[Finding]:
                 severity=Severity.LOW,
                 path=rel,
                 line=0,
-                message="YAML parser unavailable (PyYAML not installed); skipped.",
+                message=(
+                    "YAML file skipped: "
+                    + missing_dependency_hint("PyYAML", extra="audit")
+                ),
             ),
         ]
     try:

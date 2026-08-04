@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import subprocess
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import patch
 
@@ -21,6 +22,7 @@ import pytest
 
 from forge import config, precommit
 from forge.pip_audit_json import AuditRun
+from tests.conftest import GIT_ENV, _detach_head, init_single_track_repo
 
 
 if TYPE_CHECKING:
@@ -2745,14 +2747,19 @@ def test_step_smart_test_blocking_when_opted_in(
 
 
 def _fake_run_git_dispatch(
-    *, branch: str = "feat/x", merge_base: str = "", diff: str = ""
+    *, branch: str = "feat/x", base_changelog: str = ""
 ) -> Callable[..., str]:
     """Build a ``run_git`` fake dispatching on the git subcommand.
 
+    ``merge-base`` is not dispatched here — ``step_changelog_version``
+    resolves the merge-base via ``git_utils.merge_base_with_head``, not a
+    raw ``run_git("merge-base", ...)`` call, so callers patch that
+    function directly instead of feeding this fake a ``merge_base=`` value.
+
     Args:
         branch: What ``branch --show-current`` reports.
-        merge_base: What ``merge-base`` reports (empty → unresolvable).
-        diff: What ``diff`` reports.
+        base_changelog: What ``show <rev>:CHANGELOG.md`` reports — the
+            old-side contents the stranded membership comparison reads.
 
     Returns:
         A callable with ``run_git``'s signature.
@@ -2761,11 +2768,29 @@ def _fake_run_git_dispatch(
     def _fake(*args: str, **_kw: object) -> str:
         if args[:2] == ("branch", "--show-current"):
             return branch
-        if args[0] == "merge-base":
-            return merge_base
-        if args[0] == "diff":
-            return diff
+        if args[0] == "show":
+            return base_changelog
         return ""
+
+    return _fake
+
+
+def _fake_resolve_current_branch(
+    branch: str | None, source: str = "local"
+) -> Callable[[Path], tuple[str, str] | None]:
+    """Build a `resolve_current_branch` fake returning a fixed `(branch, source)`.
+
+    Args:
+        branch: Branch name to report, or `None` to simulate the guard
+            seeing no current branch (detached HEAD, no GITHUB_HEAD_REF).
+        source: `"local"` or `"GITHUB_HEAD_REF"`.
+
+    Returns:
+        A callable with `resolve_current_branch`'s signature.
+    """
+
+    def _fake(_repo_root: Path) -> tuple[str, str] | None:
+        return None if branch is None else (branch, source)
 
     return _fake
 
@@ -2820,24 +2845,135 @@ def test_step_changelog_version_passes_clean(
 def test_step_changelog_version_detects_stranded_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Branch diff adds a bullet under the already-tagged top heading → fail."""
+    """Branch adds a bullet under the already-tagged top heading → fail.
+
+    MOCK SETUP: `merge_base_with_head` is patched directly (the step now
+    resolves the merge-base via that helper rather than composing
+    `run_git("merge-base", ...)` itself) to return a fixed SHA; `run_git`
+    handles `branch --show-current` and the `show <rev>:CHANGELOG.md`
+    old-side read for the membership comparison.
+    """
     text = "## v1.0.0\n\n- new bullet\n"
-    diff = (
-        "--- a/CHANGELOG.md\n"
-        "+++ b/CHANGELOG.md\n"
-        "@@ -1,1 +1,3 @@\n"
-        " ## v1.0.0\n"
-        "+\n"
-        "+- new bullet\n"
-    )
+    base_changelog = "## v1.0.0\n"
     (tmp_path / "CHANGELOG.md").write_text(text)
     monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    merge_base_calls: list[tuple[object, object]] = []
+
+    def _fake_merge_base_with_head(root: object, base: object) -> str:
+        merge_base_calls.append((root, base))
+        return "abc123"
+
+    monkeypatch.setattr(precommit, "merge_base_with_head", _fake_merge_base_with_head)
     monkeypatch.setattr(
-        precommit, "run_git", _fake_run_git_dispatch(merge_base="abc123", diff=diff)
+        precommit, "run_git", _fake_run_git_dispatch(base_changelog=base_changelog)
     )
     result = precommit.step_changelog_version(tmp_path)
     assert not result.passed
     assert "stranded" in result.output
+    assert "merge in progress" not in result.output
+    cfg = config.load_config(tmp_path)
+    assert merge_base_calls == [(tmp_path, cfg.base_branch)]
+
+
+def _setup_tagged_repo_mid_merge(base: Path, feat_changelog: str) -> Path:
+    """Build a tagged single-track repo mid `--no-ff --no-commit` merge on `feat/x`.
+
+    Args:
+        base: Base directory for the test repo.
+        feat_changelog: Changelog content for the feature branch.
+
+    Returns:
+        Path to the work repository.
+    """
+    work, _bare = init_single_track_repo(base)
+    (work / "CHANGELOG.md").write_text("## v1.0.0\n")
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "chore: add changelog"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.0.0", "-m", "v1.0.0"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "--tags"], cwd=work, env=GIT_ENV, check=True
+    )
+
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "other"], cwd=work, env=GIT_ENV, check=True
+    )
+    (work / "other.txt").write_text("other\n")
+    subprocess.run(["git", "add", "other.txt"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "other work"], cwd=work, env=GIT_ENV, check=True
+    )
+
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=work, env=GIT_ENV, check=True
+    )
+    (work / "CHANGELOG.md").write_text(feat_changelog)
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "docs: feat/x changelog"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+
+    subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "other"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    return work
+
+
+def test_step_changelog_version_skips_stranded_diff_during_merge(
+    tmp_path: Path,
+) -> None:
+    """A merge in progress suppresses the stranded-entries diff, not the gate.
+
+    SCENARIO: `feat/x` carries a genuinely stranded-shaped bullet (added
+    under the already-tagged `v1.0.0` heading) — outside a merge this
+    would fail. But `feat/x` is mid `git merge --no-ff --no-commit
+    other`: `HEAD` still predates the merge commit, so the merge-base
+    would be the stale fork point and misattribute `other`'s changes.
+    The step must recognize the in-progress merge and skip only the
+    stranded diff, still passing since no structural finding fires.
+    """
+    work = _setup_tagged_repo_mid_merge(tmp_path, "## v1.0.0\n\n- new bullet\n")
+    result = precommit.step_changelog_version(work)
+    assert result.passed is True
+    assert "Entries added under released heading" not in result.output
+    assert "merge in progress" in result.output
+
+
+def test_step_changelog_version_structural_findings_still_fire_during_merge(
+    tmp_path: Path,
+) -> None:
+    """A merge in progress only suppresses the stranded diff, not structural findings.
+
+    SCENARIO: same mid-merge setup as
+    `test_step_changelog_version_skips_stranded_diff_during_merge`, but
+    `feat/x`'s CHANGELOG carries an invalid `## Unreleased` heading. The
+    stranded-diff suppression must not blanket-pass the step — the
+    heading-validity finding still fires.
+    """
+    work = _setup_tagged_repo_mid_merge(tmp_path, "## Unreleased\n\n## v1.0.0\n")
+    result = precommit.step_changelog_version(work)
+    assert result.passed is False
+    assert "## Unreleased" in result.output
+    assert "merge in progress" in result.output
 
 
 def test_step_changelog_version_nonblocking_when_configured(
@@ -2855,6 +2991,80 @@ def test_step_changelog_version_nonblocking_when_configured(
     assert result.non_blocking
 
 
+def test_step_changelog_version_stale_local_base_no_false_positive(
+    tmp_path: Path,
+) -> None:
+    """A stale local `main` must not manufacture a stranded-entry false positive.
+
+    SCENARIO: `work`'s local `main` stays on the pre-release commit while
+    `origin/main` advances with the tagged release entry. A feature
+    branch cut straight from `origin/main` is byte-identical to it, so
+    the gate must diff against `origin/main` (the correct merge-base) —
+    diffing against the stale local `main` would show the released
+    bullet as freshly added under the already-tagged heading, the false
+    positive this PR fixes.
+    """
+    work, bare = init_single_track_repo(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.0.0\n")
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "chore: add changelog"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+
+    # A separate clone stands in for "upstream": it finalizes the release
+    # (appends the bullet, tags, pushes) while `work`'s local `main` never
+    # moves — mirroring a developer who branched before pulling the latest
+    # `main`.
+    upstream = tmp_path / "upstream"
+    subprocess.run(
+        ["git", "clone", "-q", str(bare), str(upstream)], env=GIT_ENV, check=True
+    )
+    (upstream / "CHANGELOG.md").write_text("## v1.0.0\n\n- released thing\n")
+    subprocess.run(
+        ["git", "add", "CHANGELOG.md"], cwd=upstream, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "release: v1.0.0"],
+        cwd=upstream,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.0.0", "-m", "v1.0.0"],
+        cwd=upstream,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main", "--tags"],
+        cwd=upstream,
+        env=GIT_ENV,
+        check=True,
+    )
+
+    # `work` fetches the tag and branches from `origin/main` — local `main`
+    # is never updated, so it stays stranded on the pre-release commit.
+    subprocess.run(
+        ["git", "fetch", "-q", "origin", "--tags"], cwd=work, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x", "origin/main"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+
+    result = precommit.step_changelog_version(work)
+    assert result.passed is True
+    assert "stranded" not in result.output
+
+
 def test_step_changelog_updated_env_escape(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2862,7 +3072,9 @@ def test_step_changelog_updated_env_escape(
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
     monkeypatch.delenv("NO_VERSION", raising=False)
     monkeypatch.setenv("SKIP_CHANGELOG_CHECK", "1")
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
     result = precommit.step_changelog_updated(tmp_path)
     assert result.skipped
     assert "no-version opt-out" in result.output
@@ -2874,7 +3086,9 @@ def test_step_changelog_updated_skips_on_base_branch(
 ) -> None:
     """Per-PR guard — on the base branch it self-skips."""
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch(branch="main"))
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("main")
+    )
     result = precommit.step_changelog_updated(tmp_path)
     assert result.skipped
 
@@ -2886,7 +3100,10 @@ def test_step_changelog_updated_fails_without_entry(
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
     monkeypatch.delenv("NO_VERSION", raising=False)
     monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
     monkeypatch.setattr(
         precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
     )
@@ -2901,7 +3118,12 @@ def test_step_changelog_updated_passes_with_entry(
 ) -> None:
     """Change set includes CHANGELOG.md → pass."""
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
     monkeypatch.setattr(
         precommit.config,
         "select_diff_files",
@@ -2921,7 +3143,12 @@ def test_step_changelog_updated_honors_exempt_and_require_paths(
         'exempt_paths = ["projects/"]\n'
         'require_paths = ["projects/shipped/"]\n'
     )
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
     monkeypatch.setattr(
         precommit.config,
         "select_diff_files",
@@ -2952,7 +3179,9 @@ def test_step_changelog_updated_skips_with_branch_token(
     """
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
     monkeypatch.setattr(
-        precommit, "run_git", _fake_run_git_dispatch(branch="chore/x-no-version")
+        precommit,
+        "resolve_current_branch",
+        _fake_resolve_current_branch("chore/x-no-version"),
     )
     monkeypatch.setattr(
         precommit,
@@ -2978,7 +3207,9 @@ def test_step_changelog_updated_skips_with_commit_tag(
     tag text surfaces verbatim in the output.
     """
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
     monkeypatch.setattr(
         precommit,
         "wants_no_version",
@@ -3002,7 +3233,9 @@ def test_step_changelog_updated_no_signal_gate_still_fails(
     EXPECTED BEHAVIOR: the step does not skip and fails the gate.
     """
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
     monkeypatch.setattr(precommit, "wants_no_version", lambda _r: None)
     monkeypatch.setattr(
         precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
@@ -3010,6 +3243,247 @@ def test_step_changelog_updated_no_signal_gate_still_fails(
     result = precommit.step_changelog_updated(tmp_path)
     assert not result.passed
     assert not result.skipped
+
+
+def test_step_changelog_updated_deferred_mode_skips_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deferred mode self-skips a local (non-CI) run regardless of the diff."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\nprecommit_enforce = false\n"
+    )
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "wants_no_version", lambda _r: None)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    monkeypatch.setattr(
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.skipped is True
+    assert "Deferred mode" in result.output
+    assert "at PR wrap-up" in result.output
+
+
+def test_step_changelog_updated_deferred_mode_ci_fails_with_deferred_tone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deferred mode still fails on genuine CI, with deferred-tone wording.
+
+    SCENARIO: ``precommit_enforce = false`` defers the gate locally, but
+    CI must keep failing until the entry lands at PR wrap-up.
+    MOCK SETUP: ``is_ci`` → True (genuine CI, not just non-interactive);
+    ``wants_no_version`` → None (no opt-out); ``select_diff_files`` →
+    a src change with no matching CHANGELOG.md entry.
+    EXPECTED BEHAVIOR: the gate fails (not skipped), the output uses the
+    deferred-mode wording ("deferred mode" / "expected") rather than the
+    enforce-mode opt-out hint ("NO_VERSION=1"), and stays blocking by
+    default.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\nprecommit_enforce = false\n"
+    )
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "wants_no_version", lambda _r: None)
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+    monkeypatch.setattr(
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.passed is False
+    assert result.skipped is False
+    assert "deferred mode" in result.output
+    assert "expected" in result.output
+    assert "NO_VERSION=1" not in result.output
+    assert result.non_blocking is False
+
+
+def test_step_changelog_updated_deferred_mode_ci_nonblocking_when_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deferred-mode CI failure is non-blocking when ``blocking = false``."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\nprecommit_enforce = false\nblocking = false\n"
+    )
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "wants_no_version", lambda _r: None)
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+    monkeypatch.setattr(
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.passed is False
+    assert result.non_blocking is True
+
+
+def test_step_changelog_updated_no_version_optout_wins_over_deferred(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The no-version opt-out is checked before the deferred-mode branch."""
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\nprecommit_enforce = false\n"
+    )
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(
+        precommit,
+        "wants_no_version",
+        lambda _r: "[no-version] tag in a commit message (main..HEAD)",
+    )
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.skipped is True
+    assert "no-version opt-out" in result.output
+
+
+def test_step_changelog_updated_deferred_mode_gated_on_is_ci_not_non_interactive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deferred mode's local/CI split is gated on ``is_ci()``, not non-interactivity.
+
+    SCENARIO: pins the same wrong-gate regression as
+    ``test_step_changelog_version_fetches_tags_unless_ci`` — an
+    agent-driven local run has a non-tty stdin but is not genuine CI, so
+    the deferred skip must key off ``is_ci()`` alone.
+    MOCK SETUP: ``precommit.is_non_interactive`` is monkeypatched to raise
+    if called at all, so any accidental read of it fails the test loudly
+    instead of silently passing on either backend.
+    EXPECTED BEHAVIOR: ``is_ci() == False`` skips (deferred, local);
+    ``is_ci() == True`` runs the gate and fails on the missing entry.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.changelog]\nprecommit_enforce = false\n"
+    )
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "wants_no_version", lambda _r: None)
+    monkeypatch.setattr(
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
+    )
+
+    def _unexpected_is_non_interactive() -> bool:
+        msg = "must not be called"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(precommit, "is_non_interactive", _unexpected_is_non_interactive)
+
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.skipped is True
+
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.skipped is False
+    assert result.passed is False
+
+
+def _repo_with_undocumented_src_change(tmp_path: Path) -> Path:
+    """Build a repo with a real, undocumented src change on a feature branch.
+
+    ``main`` carries a committed ``CHANGELOG.md``; a ``feat/x`` branch adds
+    a real source file without touching the changelog, then HEAD is
+    detached at that commit — the CI ``pull_request`` checkout shape the
+    detached-HEAD ``step_changelog_updated`` tests below share.
+
+    Args:
+        tmp_path: Pytest ``tmp_path`` fixture directory.
+
+    Returns:
+        The work-tree path, HEAD detached on the feature-branch commit.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.0.0\n")
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "chore: add changelog"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=work, env=GIT_ENV, check=True
+    )
+    (work / "src_change.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "src_change.py"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "feat: add thing"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    _detach_head(work)
+    return work
+
+
+def test_step_changelog_updated_runs_gate_on_detached_head_with_no_version_head_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A detached HEAD's `GITHUB_HEAD_REF` carrying a no-version token skips the gate.
+
+    CI's `pull_request` checkout of `refs/pull/N/merge` detaches HEAD, so
+    `git branch --show-current` is empty; `GITHUB_HEAD_REF` stands in for
+    the PR source branch, and its `no-version` token fires the same
+    opt-out a local checkout of that branch would.
+    """
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    work = _repo_with_undocumented_src_change(tmp_path)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/x-no-version")
+    result = precommit.step_changelog_updated(work)
+    assert result.skipped is True
+    assert "GITHUB_HEAD_REF" in result.output
+    assert "chore/x-no-version" in result.output
+
+
+def test_step_changelog_updated_runs_gate_on_detached_head_without_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Detached HEAD's `GITHUB_HEAD_REF` without no-version token runs the gate.
+
+    No opt-out signal fires, so the step falls through to the real diff
+    against the previous commit — which shows the feature branch's src
+    change without a matching `CHANGELOG.md` entry — and the gate fails
+    exactly as it would for a live local branch.
+    """
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    work = _repo_with_undocumented_src_change(tmp_path)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/plain")
+    result = precommit.step_changelog_updated(work)
+    assert result.skipped is False
+    assert result.passed is False
+
+
+def test_step_changelog_updated_skips_detached_head_with_no_head_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A detached HEAD with no `GITHUB_HEAD_REF` at all self-skips as a per-PR guard.
+
+    Neither `git branch --show-current` nor the `GITHUB_HEAD_REF`
+    fallback yields a branch name, so the step cannot tell which PR this
+    diff belongs to and skips rather than risk a false failure.
+    """
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    work = _repo_with_undocumented_src_change(tmp_path)
+    result = precommit.step_changelog_updated(work)
+    assert result.skipped is True
+    assert "detached HEAD" in result.output
 
 
 def test_step_changelog_version_fetches_tags_unless_ci(
@@ -3020,7 +3494,9 @@ def test_step_changelog_version_fetches_tags_unless_ci(
     SCENARIO: gate must be is_ci(), not is_non_interactive() — agent-driven
     runs have a non-tty stdin but no authoritative tag fetch of their own.
     MOCK SETUP: subprocess.run recorded (the fetch is a direct bounded
-    call); run_git faked for branch/merge-base reads.
+    call); run_git faked for the branch read. `merge_base_with_head` is
+    left real — against a non-git `tmp_path` it resolves no base ref and
+    short-circuits to `""`, so no stranded-entries diff is attempted.
     EXPECTED BEHAVIOR: fetch argv appears when is_ci() is False, absent
     when True.
     """

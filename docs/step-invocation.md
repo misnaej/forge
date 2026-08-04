@@ -97,6 +97,16 @@ rationale). This is what threads `repo_root` correctly, drops deletions
 uniformly, and guards against repo-escaping paths, so a new diff-scoped step
 gets all three guarantees for free instead of re-deriving them.
 
+The diff **base** is origin-authoritative and equally centralized: every
+diff-scoped consumer (`select_diff_files` via `get_modified_files`, the
+changelog no-version scan, the stranded-entries merge-base, smart-test's
+change detection) resolves it through
+[`forge.git_utils.resolve_base_branch_ref`](../src/forge/git_utils.py) —
+`origin/<base_branch>` preferred (the ref a PR actually merges into),
+local `<base_branch>` only as an offline fallback. Do not hand-roll a
+base-ref candidate loop in a step; a stale local base makes already-merged
+commits look branch-added.
+
 ## Promotion path
 
 A direct-invoked tool is promoted to a forge CLI **the moment it gains

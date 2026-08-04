@@ -83,9 +83,12 @@ from forge.git_utils import (
     VALID_SCOPES,
     emit,
     latest_v_tag,
+    merge_base_with_head,
+    merge_in_progress,
     parse_semver,
     read_local_plugin_version,
     require_cli,
+    resolve_current_branch,
     run_git,
     stage_modified_paths,
     write_step_log,
@@ -495,7 +498,7 @@ def step_env_sync(repo_root: Path) -> StepResult:
                     f"console script(s) not registered — {', '.join(missing)}.\n\n"
                     "A [project.scripts] entry was added since you last installed, so "
                     "the gate may run old code. Re-run `./dev/setup.sh` (or "
-                    '`pip install -e ".[dev]"`, or your repo\'s equivalent) to '
+                    "`pip install -e .`, or your repo's equivalent) to "
                     "register the new entry point(s)."
                 ),
                 non_blocking=not blocking,
@@ -1343,7 +1346,7 @@ def step_doctest(repo_root: Path) -> StepResult:
             output="(no source dirs detected — skipped)",
             skipped=True,
         )
-    require_cli("pytest", caller="forge-precommit")
+    require_cli("pytest", caller="forge-precommit", extra="test")
     passed, output = _run(
         ["pytest", "--doctest-modules", "--doctest-continue-on-failure", "--", *paths],
         cwd=repo_root,
@@ -1409,7 +1412,7 @@ def step_typecheck(repo_root: Path) -> StepResult:
                 output="(no modified files in scope — skipped)",
                 skipped=True,
             )
-    require_cli("pyrefly", caller="forge-precommit")
+    require_cli("pyrefly", caller="forge-precommit", extra="typecheck")
     passed, output = _run(["pyrefly", "check", "--", *paths], cwd=repo_root)
     return StepResult(
         name="typecheck", passed=passed, output=output, non_blocking=not blocking
@@ -1630,10 +1633,14 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     releases rather than only at ``forge-release`` cut time: every ``##``
     heading is a recognized version, headings strictly decrease, the
     latest ``v*`` tag has an entry, the top heading is never behind the
-    latest tag, and — on a feature branch — no diff-added entries sit
-    under an already-released heading (the stranded-entries race: a tag
-    cut under an open PR leaves its bullets attributed to a release that
-    does not contain the code, with no merge conflict to signal it).
+    latest tag, and — on a feature branch — no entries gained under an
+    already-released heading since the merge base (the stranded-entries
+    race: a tag cut under an open PR leaves its bullets attributed to a
+    release that does not contain the code, with no merge conflict to
+    signal it). The stranded check is suppressed while a merge is in
+    progress (``MERGE_HEAD`` present): mid-merge, the merge-base is the
+    stale fork point, so the base's own entries would be misattributed to
+    the branch; the structural checks still run.
 
     Self-skips when there is no root ``CHANGELOG.md``, on
     manifest-versioned repos (``verify-forge-plugin-version`` owns the
@@ -1692,50 +1699,45 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     latest = latest_v_tag(repo_root)
     findings = changelog_version_findings(text, latest)
     current = run_git("branch", "--show-current", cwd=repo_root, check=False)
+    notes: list[str] = []
     if current and current != cfg.base_branch:
-        merge_base = _merge_base_with(repo_root, cfg.base_branch)
-        if merge_base:
-            diff_text = run_git(
-                "diff", merge_base, "--", "CHANGELOG.md", cwd=repo_root, check=False
+        if merge_in_progress(repo_root):
+            # Mid-merge HEAD predates the merge commit, so the merge-base is
+            # the stale fork point and every entry the base contributes would
+            # appear as HEAD-gained. Skip only the stranded check — the merge
+            # commit's own run and CI validate the settled state.
+            notes.append(
+                "Note: merge in progress — stranded-entries check skipped "
+                "(validated at the merge commit and by CI)."
             )
-            if diff_text:
-                findings.extend(
-                    f"Entries added under released heading {version} (not ahead "
-                    f"of latest tag {latest}) — stranded; move them under the "
-                    "next `## vX.Y.Z` heading."
-                    for version in stranded_added_versions(text, diff_text, latest)
+        else:
+            merge_base = merge_base_with_head(repo_root, cfg.base_branch)
+            if merge_base:
+                # Old-side contents at the merge base; empty when the file
+                # didn't exist there (new CHANGELOG) — skip: with no prior
+                # state, "added after the tag" is undeterminable, and the
+                # structural checks above still validate the headings.
+                old_text = run_git(
+                    "show",
+                    f"{merge_base}:CHANGELOG.md",
+                    cwd=repo_root,
+                    check=False,
                 )
+                if old_text:
+                    findings.extend(
+                        f"Entries added under released heading {version} (not "
+                        f"ahead of latest tag {latest}) — stranded; move them "
+                        "under the next `## vX.Y.Z` heading."
+                        for version in stranded_added_versions(old_text, text, latest)
+                    )
     return StepResult(
         name=name,
         passed=not findings,
-        output=(
-            "\n".join(findings)
-            if findings
-            else "CHANGELOG release headings consistent with tags."
+        output="\n".join(
+            (findings or ["CHANGELOG release headings consistent with tags."]) + notes
         ),
         non_blocking=not _changelog_blocking(repo_root),
     )
-
-
-def _merge_base_with(repo_root: Path, base_branch: str) -> str:
-    """Return the merge-base SHA of ``HEAD`` and *base_branch*, or ``""``.
-
-    Tries the local branch first, then its ``origin/`` tracking ref, so
-    the stranded-entries diff works in clones that only fetched the
-    remote branch.
-
-    Args:
-        repo_root: Git repo root.
-        base_branch: Configured base-branch name.
-
-    Returns:
-        The merge-base SHA, or empty string when neither ref resolves.
-    """
-    for ref in (base_branch, f"origin/{base_branch}"):
-        sha = run_git("merge-base", ref, "HEAD", cwd=repo_root, check=False)
-        if sha:
-            return sha
-    return ""
 
 
 def step_changelog_updated(repo_root: Path) -> StepResult:
@@ -1749,14 +1751,25 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
 
     Path policy: ``[tool.forge.changelog].require_paths`` prefixes always
     require an entry (checked first), ``exempt_paths`` prefixes never do,
-    everything else requires one. The no-version opt-out
+    everything else requires one. Timing policy:
+    ``[tool.forge.changelog].precommit_enforce`` (default ``True``) gates
+    every local commit; when ``False`` (deferred mode) local runs — human
+    or agent — self-skip and the entry is written at PR wrap-up, while
+    genuine CI keeps failing (with an expected-until-wrap-up message) so
+    the entry cannot be forgotten. Gated on ``is_ci()`` — NOT
+    ``is_non_interactive()``: agent-driven local commits are the primary
+    audience of the deferred skip and have a non-tty stdin (same
+    reasoning as :func:`step_changelog_version`'s tag-fetch gate). The
+    no-version opt-out
     (:func:`forge.changelog.wants_no_version`) skips the gate on any of
     three signals: a truthy ``NO_VERSION`` / ``SKIP_CHANGELOG_CHECK``
     env var (local-only — absent in CI), a delimited ``no-version``
     token in the branch name, or a ``[no-version]`` tag in a commit
     message over ``<base>..HEAD`` (the two CI-durable forms). Self-skips
     without a root ``CHANGELOG.md`` and on the base branch or a detached
-    HEAD (it is a per-PR guard).
+    HEAD with no ``GITHUB_HEAD_REF`` (it is a per-PR guard; branch
+    resolution via :func:`forge.git_utils.resolve_current_branch` keeps
+    the gate live on CI ``pull_request`` checkouts).
 
     Args:
         repo_root: Git repo root.
@@ -1772,12 +1785,16 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
             name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
         )
     cfg = config.load_config(repo_root)
-    current = run_git("branch", "--show-current", cwd=repo_root, check=False)
+    resolved = resolve_current_branch(repo_root)
+    current = resolved[0] if resolved is not None else ""
     if not current or current == cfg.base_branch:
         return StepResult(
             name=name,
             passed=True,
-            output="Per-PR guard — base branch or detached HEAD; skipped.",
+            output=(
+                "Per-PR guard — base branch, or detached HEAD with no "
+                "GITHUB_HEAD_REF; skipped."
+            ),
             skipped=True,
         )
     signal = wants_no_version(repo_root)
@@ -1789,6 +1806,19 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
             skipped=True,
         )
     step_cfg = _forge_step_config(repo_root, "changelog")
+    enforce = bool(step_cfg.get("precommit_enforce", True))
+    if not enforce and not is_ci():
+        return StepResult(
+            name=name,
+            passed=True,
+            output=(
+                "Deferred mode ([tool.forge.changelog].precommit_enforce = "
+                "false) — no entry required yet; write the CHANGELOG bullet "
+                "at PR wrap-up (just before merge). CI's changelog check "
+                "stays red until then by design."
+            ),
+            skipped=True,
+        )
     exempt = tuple(_cfg_str_list(step_cfg, "exempt_paths", []))
     require = tuple(_cfg_str_list(step_cfg, "require_paths", []))
     # drop_deleted=False: a deleted file is still a change that may require
@@ -1804,17 +1834,27 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
         )
     ]
     if triggers and "CHANGELOG.md" not in files:
-        return StepResult(
-            name=name,
-            passed=False,
-            output=(
+        if enforce:
+            output = (
                 f"{len(triggers)} changed file(s) require a CHANGELOG.md entry "
                 f"(first: {triggers[0]}). Add a bullet under the top "
                 "`## vX.Y.Z` heading (docs/consumer-release.md). For a "
                 "genuine no-version change, opt out with NO_VERSION=1 "
                 "(local), a `no-version` branch token, or a [no-version] "
                 "commit tag (CI-durable)."
-            ),
+            )
+        else:
+            output = (
+                f"{len(triggers)} changed file(s) and no CHANGELOG.md entry "
+                "yet — deferred mode: the bullet is written at wrap-up, just "
+                "before merge. Add it now to turn this check green (or use a "
+                "no-version opt-out). A red result earlier in the PR is "
+                "expected."
+            )
+        return StepResult(
+            name=name,
+            passed=False,
+            output=output,
             non_blocking=not _changelog_blocking(repo_root),
         )
     return StepResult(

@@ -211,7 +211,11 @@ def main() -> int:
     parser.parse_args()
 
     root = repo_root()
-    require_cli("gh", caller="forge-resync")
+    require_cli(
+        "gh",
+        caller="forge-resync",
+        hint="Install the GitHub CLI (https://cli.github.com) and retry.",
+    )
 
     if _working_tree_dirty(root):
         logger.error(

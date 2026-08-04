@@ -50,9 +50,9 @@ Special Cases:
 
 File Selection Strategy:
     Automatically detects which files to check, trying in order:
-    1. Files modified compared to 'main' branch (if it exists)
-    2. Files modified compared to 'origin/main' (if it exists)
-    3. Files modified in last commit (fallback)
+    1. Files modified compared to the base branch, resolved origin-first
+       ('origin/<base>' preferred, local '<base>' as offline fallback)
+    2. Files modified in last commit (fallback)
 
 Usage:
     # Check modified files (compared to base branch or last commit)

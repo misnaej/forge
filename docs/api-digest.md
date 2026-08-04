@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 655 symbols._
+_62 modules, 662 symbols._
 
 ## `forge`
 
@@ -195,12 +195,10 @@ _62 modules, 655 symbols._
 - `changelog_version_findings(text: str, latest_tag: str | None) -> list[str]` — Validate *text*'s release headings against each other and *latest_tag*.
 - `action_items(text: str) -> list[tuple[str, str]]` — Return ``(version, action)`` pairs for every ``**Action:**`` line.
 - `_governing_versions(text: str) -> list[str | None]` _(internal)_ — Map each line in *text* to its governing release version heading.
-- `_iter_added_lines(diff_text: str) -> Iterator[tuple[int, str]]` _(internal)_ — Yield (line_number, content) pairs for each addition in a unified diff.
-- `_stranded_from_added(governing: list[str | None], added_lines: Iterator[tuple[int, str]], tag: tuple[int, int, int] | None) -> list[str]` _(internal)_ — Detect released headings that received new content in a diff.
 - `_env_no_version() -> str | None` _(internal)_ — Return the name of the first truthy opt-out env var, or ``None``.
-- `_resolve_base_ref(repo_root: Path, base_branch: str) -> str | None` _(internal)_ — Return the first resolvable ref for *base_branch*, local-first.
 - `wants_no_version(repo_root: Path) -> str | None` — Return the fired no-version signal, or ``None`` when none is set.
-- `stranded_added_versions(text: str, diff_text: str, latest_tag: str | None) -> list[str]` — Return released heading versions that *diff_text* adds entries under.
+- `_section_content(text: str) -> dict[str, set[str]]` _(internal)_ — Map each release version to its normalized non-heading content lines.
+- `stranded_added_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections gained content vs *old_text*.
 
 ## `forge.claude_settings_schema`
 
@@ -446,13 +444,21 @@ _62 modules, 655 symbols._
 - `parse_semver(version: str) -> tuple[int, int, int] | None` — Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
 - `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
 - `latest_v_tag(root: Path) -> str | None` — Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
-- `require_cli(name: str, *, caller: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
+- `forge_install_command(extra: str | None = None) -> str` — Format the consumer-valid install command for forge-scripts.
+- `missing_dependency_hint(package: str, *, extra: str | None = None) -> str` — Format a user-facing hint for a missing dependency.
+- `require_cli(name: str, *, caller: str | None = None, extra: str | None = None, hint: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
 - `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.
 - `gh_api(*args: str, timeout: int = 10) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
 - `_run_git(*args: str, cwd: Path | None = None) -> str` _(internal)_ — Run a git command and return stdout.
-- `run_git(*args: str, cwd: Path | None = None, check: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
+- `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
+- `_fallback_identity_args(repo_root: Path) -> list[str]` _(internal)_ — Return ``-c`` identity flags when git has no usable tagger identity.
+- `create_annotated_tag(repo_root: Path, tag: str, *, commit: str = 'HEAD', force: bool = False) -> None` — Create annotated *tag* at *commit*, surviving identity-less runners.
+- `resolve_current_branch(repo_root: Path) -> tuple[str, str] | None` — Return the current branch name and where it came from, or ``None``.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
+- `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
+- `resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref diff-scoped checks should compare against, origin-first.
+- `merge_base_with_head(root: Path | None, base_branch: str) -> str` — Return the merge-base SHA of ``HEAD`` and the resolved base ref.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 - `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
 - `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
@@ -618,10 +624,11 @@ _62 modules, 655 symbols._
 
 ## `forge.pr_delta`
 
-> _pr_delta — thresholds and helpers for pr-manager delta-mode short-circuit._
+> _pr_delta — thresholds and helpers for pr-manager finalization short-circuits._
 
 - `extract_verified_shas(text: str) -> list[str]` — Return every ``verified-at:`` SHA referenced in *text*.
 - `touches_high_blast_radius(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`HIGH_BLAST_RADIUS_PATHS`.
+- `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
 
 ## `forge.pr_squash_comment`
@@ -687,7 +694,6 @@ _62 modules, 655 symbols._
 - `step_vendored_integrity(repo_root: Path) -> StepResult` — Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
 - `_changelog_blocking(repo_root: Path) -> bool` _(internal)_ — Return whether the changelog steps block the commit (default yes).
 - `step_changelog_version(repo_root: Path) -> StepResult` — Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
-- `_merge_base_with(repo_root: Path, base_branch: str) -> str` _(internal)_ — Return the merge-base SHA of ``HEAD`` and *base_branch*, or ``""``.
 - `step_changelog_updated(repo_root: Path) -> StepResult` — Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
 - `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
@@ -707,6 +713,7 @@ _62 modules, 655 symbols._
 - `_changelog_gate_error(repo_root: Path, tag: str) -> str | None` _(internal)_ — Return an error when ``CHANGELOG.md`` exists but lacks *tag*'s entry.
 - `_detached_head_error(repo_root: Path, base_branch: str) -> str | None` _(internal)_ — Return an error unless ``HEAD`` is the tip of ``origin/<base_branch>``.
 - `_declared_tag_or_error(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Resolve the tag ``--from-changelog`` should cut.
+- `_stranded_entries_error(repo_root: Path, tag: str) -> str | None` _(internal)_ — Return an error when ``CHANGELOG.md`` changed since released *tag*.
 - `_tag_exists(repo_root: Path, tag: str) -> bool` _(internal)_ — Return whether *tag* already exists locally or on ``origin``.
 - `_select_branch_guard(repo_root: Path, base_branch: str, *, from_changelog_mode: bool) -> str | None` _(internal)_ — Choose the appropriate branch guard for the release mode.
 - `_prepare_from_changelog(repo_root: Path, cfg: ForgeConfig) -> tuple[str | None, str | None]` _(internal)_ — Resolve and validate the tag declared in CHANGELOG.md.

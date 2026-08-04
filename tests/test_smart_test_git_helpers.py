@@ -71,6 +71,40 @@ def test_resolve_base_ref_override_missing_falls_through(
     assert result == "main"
 
 
+def test_resolve_base_ref_flag_shaped_override_falls_through(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `-`-prefixed override (option injection) is ignored, not passed to git.
+
+    SCENARIO: caller supplies ``--base --output=pwned``; no remote; local
+        ``dev`` does not exist.
+    MOCK SETUP: git_helpers.load_config → ForgeConfig(dev_branch="dev",
+        base_branch="main"); repo has only ``main``.
+        git_helpers._ref_exists replaced by a spy recording every ref it
+        is asked about, so the flag-shaped override never reaching git is
+        directly observable rather than just inferred from the result.
+    EXPECTED BEHAVIOR: falls through to ``"main"`` (the ``base_branch``
+        local candidate) and the spy is never called with the flag value.
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        git_helpers,
+        "load_config",
+        lambda _root: ForgeConfig(dev_branch="dev", base_branch="main"),
+    )
+    calls: list[str] = []
+
+    def _spy(_root: Path, ref: str) -> bool:
+        calls.append(ref)
+        return True
+
+    monkeypatch.setattr(git_helpers, "_ref_exists", _spy)
+    result = git_helpers.resolve_base_ref(tmp_path, override="--output=pwned")
+    assert result == "main"
+    assert "--output=pwned" not in calls
+
+
 def test_resolve_base_ref_prefers_origin_dev_over_local_dev(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -144,6 +178,37 @@ def test_resolve_base_ref_falls_to_head_when_nothing_resolves(
     )
     result = git_helpers.resolve_base_ref(tmp_path)
     assert result == "HEAD"
+
+
+def test_resolve_base_ref_routes_through_resolve_base_branch_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`resolve_base_ref` routes through `resolve_base_branch_ref`.
+
+    SCENARIO: neither candidate is checked against the filesystem — both
+        resolutions are stubbed, so no real repo state is needed.
+    MOCK SETUP: git_helpers.load_config → ForgeConfig(dev_branch="dev",
+        base_branch="main"); git_helpers.resolve_base_branch_ref replaced
+        by a spy that resolves only on the second (`"main"`) candidate.
+    EXPECTED BEHAVIOR: candidates are tried in `["dev", "main"]` order and
+        the spy's return value for `"main"` is returned verbatim.
+    """
+    monkeypatch.setattr(
+        git_helpers,
+        "load_config",
+        lambda _root: ForgeConfig(dev_branch="dev", base_branch="main"),
+    )
+    calls: list[str] = []
+
+    def _spy(_root: object, branch: str) -> str | None:
+        calls.append(branch)
+        return "sentinel/main" if branch == "main" else None
+
+    monkeypatch.setattr(git_helpers, "resolve_base_branch_ref", _spy)
+    result = git_helpers.resolve_base_ref(tmp_path)
+    assert calls == ["dev", "main"]
+    assert result == "sentinel/main"
 
 
 def test_changed_python_files_committed_file_included(tmp_path: Path) -> None:

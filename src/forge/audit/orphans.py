@@ -14,11 +14,10 @@ Severity:
     * MEDIUM — confidence ≥ 95% (very likely dead)
     * LOW    — confidence in [80%, 95%) (probably dead, double-check)
 
-Requires the ``[audit]`` extra:
-
-    pip install -e ".[audit]"
-
-When ``vulture`` is not importable, the script fails loudly with that hint.
+``vulture`` ships as a core forge-scripts dependency (the design-checker
+Full Review mandates this audit, so a default install must be able to run
+it). The import stays guarded anyway: if ``vulture`` is somehow missing
+(broken install), the script fails loudly with an install hint.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ from forge.audit.common import (
     resolve_roots,
     write_log,
 )
-from forge.git_utils import configure_cli_logging
+from forge.git_utils import configure_cli_logging, missing_dependency_hint
 
 
 configure_cli_logging()
@@ -48,11 +47,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MIN_CONFIDENCE = 80
 HIGH_CONFIDENCE_FLOOR = 95
-VULTURE_MISSING_HINT = (
-    "vulture is not installed. Run:\n"
-    '    pip install -e ".[audit]"\n'
-    "(or your project's equivalent) and retry."
-)
+VULTURE_MISSING_HINT = missing_dependency_hint("vulture")
 
 
 @dataclass(frozen=True)
@@ -75,7 +70,7 @@ def _load_vulture() -> object:
         The imported ``vulture`` module.
     """
     try:
-        import vulture  # noqa: PLC0415 — optional dep, must be guarded
+        import vulture  # noqa: PLC0415 — guarded broken-install signal
     except ImportError:
         sys.stderr.write(f"forge-audit-orphans: {VULTURE_MISSING_HINT}\n")
         raise SystemExit(1) from None

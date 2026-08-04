@@ -24,7 +24,10 @@ _block() {
 # tolerates a leading run of `VAR=val` assignments and a `command`/`env`/
 # `exec`/`builtin`/`sudo` wrapper, so `GIT_DIR=x git rebase` can't slip the
 # gate (shared verbatim with block_force_push.sh / block_raw_git.sh).
-GIT_ANCHOR='(^|[;&|])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo)[[:space:]]+)*git[[:space:]]+'
+# The separator class includes `(` (a bare subshell wrapper) and the
+# wrapper run tolerates flag tokens (`sudo -n git ...`), so neither
+# shape slips the anchor.
+GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+'
 if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}rebase\b"; then
     _block "git rebase"
 fi

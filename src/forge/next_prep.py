@@ -49,6 +49,7 @@ from forge.changelog import changelog_lacks_entry
 from forge.config import ForgeConfig, load_config
 from forge.git_utils import (
     configure_cli_logging,
+    create_annotated_tag,
     latest_v_tag,
     parse_semver,
     read_local_plugin_version,
@@ -310,7 +311,7 @@ def _maybe_tag_release(repo_root: Path) -> str | None:
     if not _is_newer(plugin_ver, latest):
         return None
     tag = f"v{plugin_ver}"
-    run_git("tag", "-a", tag, "-m", tag, "HEAD", cwd=repo_root)
+    create_annotated_tag(repo_root, tag)
     run_git("push", "origin", tag, cwd=repo_root)
     return tag
 

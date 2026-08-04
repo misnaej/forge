@@ -125,6 +125,19 @@ stranded-entry detection when a tag lands under an open PR) and
 `changelog_updated` (the per-PR entry rule). `forge-release`'s CHANGELOG
 gate remains the final check at cut time.
 
+**Deferred entry timing** (`[tool.forge.changelog].precommit_enforce =
+false`): by default `changelog_updated` gates every local commit, which
+on high-parallelism repos means resolving changelog conflicts mid-PR.
+Deferred mode moves the write to the end of the PR; the guarantee chain
+becomes: (1) during development, local commits — human or agent —
+self-skip the gate while CI's changelog check stays red, clearly
+messaged as *expected until wrap-up*; (2) at PR wrap-up, the `/pr`
+flow's `pr-manager` **authors** the missing bullet (mandatory, not
+skip-when-absent); (3) the merge gate: CI's `changelog_updated` must be
+green before merge, so a skipped wrap-up is impossible to miss.
+`precommit_enforce` is orthogonal to `blocking` (timing vs severity) —
+see [`configuration.md`](configuration.md).
+
 **No-version opt-out** (`changelog_updated` only): a change that
 genuinely doesn't deserve a version — a mechanical revert, CI-only
 tweak — skips the per-PR entry rule via any one of three signals,
@@ -134,7 +147,10 @@ CI**; a delimited `no-version` token in the branch name
 (`chore/tidy-no-version`, not `fix/no-versioning`); or a
 `[no-version]` tag in any commit message over `<base>..HEAD`. The
 branch and commit forms travel with the push, so the opt-out holds in
-CI. `changelog_version` needs no opt-out: it already accepts
+CI — for the branch-token form specifically, a CI `pull_request`
+checkout is a detached HEAD (`git branch --show-current` is empty), so
+the branch name is read from `GITHUB_HEAD_REF` instead. `changelog_version`
+needs no opt-out: it already accepts
 top-heading == latest-tag as a valid resting state, and a no-version
 branch adds no changelog bullets for its stranded-entry check to flag.
 

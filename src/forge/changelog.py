@@ -19,11 +19,15 @@ import re
 from typing import TYPE_CHECKING
 
 from forge.config import load_config
-from forge.git_utils import parse_semver, ref_exists, run_git
+from forge.git_utils import (
+    parse_semver,
+    resolve_base_branch_ref,
+    resolve_current_branch,
+    run_git,
+)
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -34,9 +38,6 @@ _HEADING_RE = re.compile(r"^##\s+(v\d+\.\d+\.\d+)\b", re.MULTILINE)
 # recognizer, so a stray ``## Unreleased`` or ``## v1.2`` is flagged
 # rather than silently ignored.
 _ANY_HEADING_RE = re.compile(r"^##\s+(\S.*?)\s*$", re.MULTILINE)
-
-# New-file hunk header of a unified diff: ``@@ -a,b +c,d @@`` → ``c``.
-_HUNK_NEW_START_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 # An action-required marker line: an optional list bullet, then the
 # ``**Action:**`` marker, then the action text. The marker convention is
@@ -231,79 +232,6 @@ def _governing_versions(text: str) -> list[str | None]:
     return governing
 
 
-def _iter_added_lines(diff_text: str) -> Iterator[tuple[int, str]]:
-    """Yield (line_number, content) pairs for each addition in a unified diff.
-
-    Parses unified-diff format, tracking hunk headers to maintain accurate
-    line numbers in the new file, and yields only the content of lines
-    starting with ``+`` (excluding ``+++`` file headers and ``-`` deletions).
-
-    Args:
-        diff_text: A unified diff in the standard format (output of
-            ``git diff``, etc.).
-
-    Yields:
-        Tuples of (1-indexed line number in the new file, the added content
-        after the ``+`` prefix).
-    """
-    new_lineno = 0
-    for line in diff_text.splitlines():
-        hunk = _HUNK_NEW_START_RE.match(line)
-        if hunk:
-            new_lineno = int(hunk.group(1)) - 1
-            continue
-        if line.startswith(("+++", "---")):
-            continue
-        if line.startswith("-"):
-            continue
-        # ``\ No newline at end of file`` markers consume no new-file line;
-        # counting one would shift attribution for the rest of the hunk.
-        if line.startswith("\\"):
-            continue
-        new_lineno += 1
-        if line.startswith("+"):
-            yield (new_lineno, line[1:])
-
-
-def _stranded_from_added(
-    governing: list[str | None],
-    added_lines: Iterator[tuple[int, str]],
-    tag: tuple[int, int, int] | None,
-) -> list[str]:
-    """Detect released headings that received new content in a diff.
-
-    Iterates over added lines, looks up each line's governing version from
-    the governing list, and accumulates distinct versions that are at or
-    below *tag* (released before or at the tagging point). Skips blank
-    lines and lines that are themselves headings (only non-heading content
-    counts as "stranded" — a new heading under a released heading is normal).
-
-    Args:
-        governing: Output of :func:`_governing_versions` — a parallel list
-            mapping line numbers to governing versions.
-        added_lines: Iterator of (line_no, content) from
-            :func:`_iter_added_lines`.
-        tag: The parsed semver of the latest release tag, or ``None``.
-
-    Returns:
-        Distinct stranded versions in file order; empty when none.
-    """
-    if tag is None:
-        return []
-    stranded: list[str] = []
-    for lineno, added in added_lines:
-        if not added.strip() or _ANY_HEADING_RE.match(added):
-            continue
-        index = lineno - 1
-        version = governing[index] if 0 <= index < len(governing) else None
-        if version is None:
-            continue
-        parsed = parse_semver(version)
-        if parsed is not None and parsed <= tag and version not in stranded:
-            stranded.append(version)
-    return stranded
-
-
 # --- no-version opt-out -----------------------------------------------------
 
 # Truthy values for the opt-out env vars; a leftover `=0` / `=false`
@@ -311,9 +239,10 @@ def _stranded_from_added(
 _TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
 
 # `NO_VERSION` is the version-aware name; `SKIP_CHANGELOG_CHECK` is the
-# original changelog-gate spelling, kept for back-compat. Env is
-# LOCAL-ONLY — absent in CI — which is why the branch-token and
-# commit-tag signals below exist.
+# original changelog-gate spelling, kept for back-compat. These opt-out
+# vars are LOCAL-ONLY — absent in CI — which is why the branch-token
+# (with its `GITHUB_HEAD_REF` fallback) and commit-tag signals below
+# exist.
 _NO_VERSION_ENV_VARS = ("NO_VERSION", "SKIP_CHANGELOG_CHECK")
 
 # `no-version` as a whole delimited token in a branch name, bounded by
@@ -333,35 +262,6 @@ def _env_no_version() -> str | None:
     return None
 
 
-def _resolve_base_ref(repo_root: Path, base_branch: str) -> str | None:
-    """Return the first resolvable ref for *base_branch*, local-first.
-
-    CI checks out a detached ``refs/pull/N/merge`` with no local base
-    branch, but the fetch creates ``origin/<base>`` — the remote
-    fallback keeps commit-tag detection durable there.
-
-    A *base_branch* starting with ``-`` is rejected outright: git would
-    parse it as a flag, not a ref (option injection via a crafted
-    ``[tool.forge].base_branch``), and no real branch name starts with
-    a dash.
-
-    Args:
-        repo_root: Git repo root.
-        base_branch: Configured base-branch name.
-
-    Returns:
-        ``base_branch`` or ``origin/<base_branch>``, whichever resolves
-        first; ``None`` when neither does or *base_branch* is
-        flag-shaped.
-    """
-    if not base_branch or base_branch.startswith("-"):
-        return None
-    for ref in (base_branch, f"origin/{base_branch}"):
-        if ref_exists(repo_root, ref):
-            return ref
-    return None
-
-
 def wants_no_version(repo_root: Path) -> str | None:
     """Return the fired no-version signal, or ``None`` when none is set.
 
@@ -371,10 +271,18 @@ def wants_no_version(repo_root: Path) -> str | None:
     1. **env** — ``NO_VERSION`` / ``SKIP_CHANGELOG_CHECK`` truthy
        (local-only; absent in CI).
     2. **branch token** — ``no-version`` as a delimited token in the
-       current branch name.
+       current branch name. ``git branch --show-current`` wins when
+       non-empty; on a detached HEAD (a CI ``pull_request`` checkout of
+       ``refs/pull/N/merge``) it is empty, so the PR source branch is
+       read from ``GITHUB_HEAD_REF`` instead — the branch token is
+       CI-durable only through that fallback.
     3. **commit tag** — ``[no-version]`` (case-insensitive) in any
-       commit message over ``<base>..HEAD``, base resolved local-first
-       then ``origin/<base>`` from ``[tool.forge].base_branch``.
+       commit message over ``<base>..HEAD``, base resolved via
+       :func:`forge.git_utils.resolve_base_branch_ref` (origin-first,
+       local fallback) from ``[tool.forge].base_branch`` — CI checks
+       out a detached ``refs/pull/N/merge`` with no local base branch,
+       but the fetch creates ``origin/<base>``, so detection stays
+       durable there.
 
     Args:
         repo_root: Git repo root.
@@ -390,10 +298,13 @@ def wants_no_version(repo_root: Path) -> str | None:
     # (step_changelog_updated reads both) — accepted: they are cheap
     # once-per-commit calls, and threading them in would complicate the
     # single-arg public signature consumers import.
-    branch = run_git("branch", "--show-current", cwd=repo_root, check=False).strip()
-    if branch and _NO_VERSION_BRANCH_RE.search(branch):
-        return f"`no-version` token in branch name {branch!r}"
-    base_ref = _resolve_base_ref(repo_root, load_config(repo_root).base_branch)
+    resolved = resolve_current_branch(repo_root)
+    if resolved is not None:
+        branch, source = resolved
+        if _NO_VERSION_BRANCH_RE.search(branch):
+            origin = " (GITHUB_HEAD_REF)" if source == "GITHUB_HEAD_REF" else ""
+            return f"`no-version` token in branch name {branch!r}{origin}"
+    base_ref = resolve_base_branch_ref(repo_root, load_config(repo_root).base_branch)
     if base_ref is None:
         return None
     log = run_git("log", f"{base_ref}..HEAD", "--format=%B", cwd=repo_root, check=False)
@@ -402,22 +313,52 @@ def wants_no_version(repo_root: Path) -> str | None:
     return None
 
 
+def _section_content(text: str) -> dict[str, set[str]]:
+    """Map each release version to its normalized non-heading content lines.
+
+    Args:
+        text: Full ``CHANGELOG.md`` contents.
+
+    Returns:
+        Stripped, non-blank, non-heading lines per governing version.
+    """
+    sections: dict[str, set[str]] = {}
+    for line, version in zip(text.splitlines(), _governing_versions(text), strict=True):
+        if version is None:
+            continue
+        stripped = line.strip()
+        if not stripped or _ANY_HEADING_RE.match(line):
+            continue
+        sections.setdefault(version, set()).add(stripped)
+    return sections
+
+
 def stranded_added_versions(
-    text: str, diff_text: str, latest_tag: str | None
+    old_text: str, new_text: str, latest_tag: str | None
 ) -> list[str]:
-    """Return released heading versions that *diff_text* adds entries under.
+    """Return released versions whose sections gained content vs *old_text*.
 
     The stranded-entries race: a release tag is cut while a PR is open,
     so the PR's bullets sit under a now-released ``## vX.Y.Z`` heading —
     no merge conflict signals it, and the global top-vs-tag check passes
-    on equality. This maps each ``+`` line of a unified diff of
-    ``CHANGELOG.md`` to its governing heading in *text* and reports the
-    headings at or below *latest_tag* that received non-heading content.
+    on equality. Detection compares each side's heading→content
+    **membership** rather than attributing raw diff ``+`` lines to the
+    textually-preceding heading: git renders a valid restrand (a new
+    heading inserted above byte-identical entries) as a heading rename
+    plus a re-insert of the old heading lower down, which line
+    attribution false-flags but membership comparison sees as a strict
+    shrink. Accepted biases of set membership: a line merely reworded
+    under a released heading still counts as a gain (false positive —
+    cheap re-run), and a newly added bullet whose text is byte-identical
+    to one already in the same released section collapses into it and
+    goes undetected (narrow false negative, traded for not flagging
+    reorders and restrands).
 
     Args:
-        text: Full current ``CHANGELOG.md`` contents (the diff's new side).
-        diff_text: Unified diff of ``CHANGELOG.md`` against the base
-            branch (new side must match *text*).
+        old_text: ``CHANGELOG.md`` contents at the comparison point — the
+            merge base (pre-commit step) or the released tag
+            (``forge-release``).
+        new_text: Full current ``CHANGELOG.md`` contents.
         latest_tag: Latest ``v*`` tag, or ``None`` (no tags → nothing can
             be stranded; returns empty).
 
@@ -427,5 +368,15 @@ def stranded_added_versions(
     tag = parse_semver(latest_tag) if latest_tag is not None else None
     if tag is None:
         return []
-    governing = _governing_versions(text)
-    return _stranded_from_added(governing, _iter_added_lines(diff_text), tag)
+    old_sections = _section_content(old_text)
+    new_sections = _section_content(new_text)
+    stranded: list[str] = []
+    for version in _governing_versions(new_text):
+        if version is None or version in stranded:
+            continue
+        parsed = parse_semver(version)
+        if parsed is None or parsed > tag:
+            continue
+        if new_sections.get(version, set()) - old_sections.get(version, set()):
+            stranded.append(version)
+    return stranded

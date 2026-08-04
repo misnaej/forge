@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import changelog
-from tests.conftest import GIT_ENV, init_git_repo, init_single_track_repo
+from tests.conftest import GIT_ENV, _detach_head, init_git_repo, init_single_track_repo
 
 
 if TYPE_CHECKING:
@@ -155,57 +155,59 @@ def test_version_findings_no_tags_skips_tag_checks() -> None:
 # ---------------------------------------------------------------------------
 
 
-_STRAND_TEXT = (
+_STRAND_NEW = (
     "# Changelog\n\n## v0.2.0 — 2026-07-01\n\n- new bullet\n\n## v0.1.0\n\n- old\n"
 )
 
-_STRAND_DIFF = (
-    "--- a/CHANGELOG.md\n"
-    "+++ b/CHANGELOG.md\n"
-    "@@ -1,7 +1,9 @@\n"
-    " # Changelog\n"
-    " \n"
-    " ## v0.2.0 — 2026-07-01\n"
-    " \n"
-    "+- new bullet\n"
-    "+\n"
-    " ## v0.1.0\n"
-    " \n"
-    " - old\n"
-)
+_STRAND_OLD = "# Changelog\n\n## v0.2.0 — 2026-07-01\n\n## v0.1.0\n\n- old\n"
 
 
 def test_stranded_detects_entry_under_released_heading() -> None:
-    """Added bullet under a heading equal to the latest tag → stranded."""
-    result = changelog.stranded_added_versions(_STRAND_TEXT, _STRAND_DIFF, "v0.2.0")
+    """A bullet gained under a heading equal to the latest tag → stranded."""
+    result = changelog.stranded_added_versions(_STRAND_OLD, _STRAND_NEW, "v0.2.0")
     assert result == ["v0.2.0"]
 
 
 def test_stranded_silent_when_heading_leads_tag() -> None:
-    """Same diff but the receiving heading is ahead of the latest tag → clean."""
-    result = changelog.stranded_added_versions(_STRAND_TEXT, _STRAND_DIFF, "v0.1.9")
+    """Same gain but the receiving heading is ahead of the latest tag → clean."""
+    result = changelog.stranded_added_versions(_STRAND_OLD, _STRAND_NEW, "v0.1.9")
     assert result == []
 
 
 def test_stranded_ignores_added_heading_lines_and_blanks() -> None:
-    """A diff that only opens a new heading (plus blanks) strands nothing."""
-    text = "## v0.3.0\n\n## v0.2.0\n\n- old\n"
-    diff = (
-        "--- a/CHANGELOG.md\n"
-        "+++ b/CHANGELOG.md\n"
-        "@@ -1,3 +1,5 @@\n"
-        "+## v0.3.0\n"
-        "+\n"
-        " ## v0.2.0\n"
-        " \n"
-        " - old\n"
-    )
-    assert changelog.stranded_added_versions(text, diff, "v0.2.0") == []
+    """A change that only opens a new heading (plus blanks) strands nothing."""
+    old = "## v0.2.0\n\n- old\n"
+    new = "## v0.3.0\n\n## v0.2.0\n\n- old\n"
+    assert changelog.stranded_added_versions(old, new, "v0.2.0") == []
 
 
 def test_stranded_no_tags_returns_empty() -> None:
     """Without any release tag nothing can be stranded."""
-    assert changelog.stranded_added_versions(_STRAND_TEXT, _STRAND_DIFF, None) == []
+    assert changelog.stranded_added_versions(_STRAND_OLD, _STRAND_NEW, None) == []
+
+
+def test_stranded_restrand_passes_regardless_of_diff_shape() -> None:
+    """Moving entries out of a released heading is never stranded.
+
+    Git renders this exact edit as a heading rename plus a re-insert of
+    the released heading lower down — a shape a line-diff-based detector
+    would misread as new content under the released heading. Membership
+    comparison instead sees the released section's content strictly
+    shrink, so nothing is flagged.
+    """
+    old = "## v1.11.0\n\n### Added\n- feature A\n- feature B\n- feature C\n"
+    new = (
+        "## v1.12.0\n\n### Added\n- feature A\n- feature B\n\n"
+        "## v1.11.0\n\n### Added\n- feature C\n"
+    )
+    assert changelog.stranded_added_versions(old, new, "v1.11.0") == []
+
+
+def test_stranded_flags_entry_moved_into_released_heading() -> None:
+    """An entry relocated from an unreleased into a released section strands."""
+    old = "## v1.12.0\n\n- feature X\n\n## v1.11.0\n\n- feature C\n"
+    new = "## v1.12.0\n\n## v1.11.0\n\n- feature X\n- feature C\n"
+    assert changelog.stranded_added_versions(old, new, "v1.11.0") == ["v1.11.0"]
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +401,42 @@ def test_wants_no_version_branch_token_non_delimited_no_match(
     assert changelog.wants_no_version(git_repo) is None
 
 
+def test_wants_no_version_github_head_ref_fallback_when_detached(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On a detached HEAD, `GITHUB_HEAD_REF` stands in for the missing branch name."""
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    _detach_head(git_repo)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/x-no-version")
+    signal = changelog.wants_no_version(git_repo)
+    assert signal is not None
+    assert "chore/x-no-version" in signal
+    assert "GITHUB_HEAD_REF" in signal
+
+
+def test_wants_no_version_github_head_ref_without_token_falls_through(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `GITHUB_HEAD_REF` without the `no-version` token doesn't opt out."""
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    _detach_head(git_repo)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/plain")
+    assert changelog.wants_no_version(git_repo) is None
+
+
+def test_wants_no_version_local_branch_wins_over_github_head_ref(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Local branch name takes precedence over GITHUB_HEAD_REF."""
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    _checkout_branch(git_repo, "feat/plain")
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/x-no-version")
+    assert changelog.wants_no_version(git_repo) is None
+
+
 def test_wants_no_version_commit_tag_match(
     git_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -435,6 +473,7 @@ def test_wants_no_version_commit_tag_survives_ci_detached_head(
     """
     monkeypatch.delenv("NO_VERSION", raising=False)
     monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
     work, _bare = init_single_track_repo(tmp_path)
     _checkout_branch(work, "feat/z")
     _commit(work, "fix: something [no-version]")
@@ -495,7 +534,7 @@ def test_wants_no_version_flag_shaped_base_branch_skips_commit_tag(
 ) -> None:
     """A flag-shaped `[tool.forge].base_branch` is rejected, not passed to git.
 
-    `_resolve_base_ref` refuses a `base_branch` starting with `-` outright
+    `resolve_base_branch_ref` refuses a `base_branch` starting with `-` outright
     (option injection guard) rather than handing it to `git rev-parse` /
     `git log`, so the commit-tag signal is skipped entirely — even though
     the `[no-version]` tag IS present in the commit log. Also asserts no
@@ -517,3 +556,27 @@ def test_wants_no_version_flag_shaped_base_branch_skips_commit_tag(
 
     assert changelog.wants_no_version(tmp_path) is None
     assert not any(p.name.startswith("pwned") for p in tmp_path.iterdir())
+
+
+def test_wants_no_version_routes_through_resolve_base_branch_ref(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The commit-tag signal resolves its base via `resolve_base_branch_ref`.
+
+    MOCK SETUP: `changelog.resolve_base_branch_ref` is replaced by a spy
+    returning `None` (no base resolves), so the commit-tag scan is
+    skipped entirely.
+    EXPECTED BEHAVIOR: the spy is called with `(repo_root, "main")` — the
+    single home for the origin-first policy, not a hand-rolled resolution
+    in `changelog`.
+    """
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    calls: list[tuple[object, object]] = []
+
+    def _spy(root: object, base_branch: object) -> None:
+        calls.append((root, base_branch))
+
+    monkeypatch.setattr(changelog, "resolve_base_branch_ref", _spy)
+    assert changelog.wants_no_version(git_repo) is None
+    assert calls == [(git_repo, "main")]

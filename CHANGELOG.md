@@ -20,6 +20,152 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.28.0 — 2026-08-02
+
+### ⚠️ Upgrade notes
+- **Diff-scoped checks now compare against `origin/<base_branch>` first.**
+  Every diff-base resolution (ruff / docstring / test-naming /
+  changelog-updated diff scope, the `[no-version]` commit-tag scan, the
+  `changelog_version` stranded-entries check, smart-test change detection)
+  now prefers the remote-tracking `origin/<base_branch>` — the ref a PR
+  actually merges into — falling back to the local `<base_branch>` only
+  when the remote ref is absent (offline / no remote). Previously most
+  checks tried the local base first, so a local base branch behind origin
+  produced false positives (already-merged commits reported as
+  branch-added — e.g. `changelog_version` flagging "stranded" entries on
+  an untouched `CHANGELOG.md`). No action needed beyond `forge-upgrade`;
+  if a check's diff scope changes for you, your local base was stale.
+
+### Features
+- **Docs-only light finalization path for `/pr`.** A PR whose diff is
+  entirely docs-shaped (extension-anchored `*.md` / `*.rst` / `*.txt` —
+  extendable via `[tool.forge.pr].docs_only_globs`, additive) now skips the
+  design/security reporter round and the strict whole-tree pre-commit,
+  running only path-relevant gates plus `docs-types-checker` — a
+  one-line changelog PR finalizes in seconds, not minutes. Doc-shaped
+  files under shipped-behavior paths never qualify, and matching is
+  extension-anchored + case-folded (security review: a directory glob
+  would have let `docs/evil.py` take the light path, and case-varied
+  paths collide with real directories on case-insensitive filesystems).
+  `skills/`, `.claude-plugin/`, `.claude/`, and `.github/workflows/`
+  joined `HIGH_BLAST_RADIUS_PATHS`, closing pre-existing delta-mode
+  gaps.
+- **Deferred changelog timing — `[tool.forge.changelog].precommit_enforce`.**
+  Default `true` keeps today's behavior (the `changelog_updated` gate
+  fires at every local commit). Set `false` for deferred mode: local
+  commits — human or agent — self-skip the gate (no mid-PR changelog
+  merge conflicts), CI keeps failing with an expected-until-wrap-up
+  message, and the `/pr` wrap-up authors the missing bullet
+  (mandatory, not skip-when-absent) to flip CI green before merge.
+  Orthogonal to `blocking` (timing vs severity). Declared in
+  `forge-config --list`; chain documented in `docs/consumer-release.md`.
+
+### Fixes
+- **CI skips Dependabot PRs.** Dependabot bumps workflow SHAs but cannot
+  author the rolling-next `plugin.json` bump the `plugin_version` gate
+  demands, so the CI job could never pass on its PRs; the job now skips
+  when Dependabot authors the PR (a skipped required check still
+  satisfies branch protection — human review is the gate on deps PRs).
+- **git-family hook anchors close subshell + flagged-wrapper gaps.** The
+  shared `GIT_ANCHOR` in `block_raw_git` / `block_force_push` /
+  `block_git_rebase` missed a bare subshell wrapper (`(git push
+  --force)`) and any flag between wrapper and verb (`sudo -n git
+  rebase`); the separator class now includes `(` and the wrapper run
+  tolerates flag tokens — the same two fixes the continuation-delete
+  hook received, keeping the three anchors byte-identical.
+- **`block_continuation_delete` hook no longer blocks sibling `.plan/` files.**
+  The hook matched `rm`/`unlink` anywhere in the command text and any
+  `.plan`-prefixed path — blocking deletion of `.plan/weekly_summary_*.md`,
+  commands merely quoting such text (issue bodies), and interpreter
+  one-liners on sibling files. It now requires the delete in command
+  position (family anchor idiom, plus `xargs` kept deliberately — piped
+  deletion was covered before and deletion is irreversible) and a target
+  that is `CONTINUATION.md` itself or the `.plan` directory as a whole.
+- **Stranded-entries detection no longer false-flags valid restrands.**
+  Git renders "insert a new heading above byte-identical entries" as a
+  heading rename plus a re-insert of the released heading lower down, so
+  the raw diff-line attribution flagged the exact fix-forward the
+  stranded error prescribes. `stranded_added_versions` now compares
+  heading→content **membership** between the base/tag side and HEAD
+  (signature changed to `(old_text, new_text, latest_tag)`; both the
+  `changelog_version` step and `forge-release` fetch the old side via
+  `git show`). Reorders inside a released section also stop flagging;
+  a byte-identical duplicate bullet added post-release is the narrow
+  accepted false negative.
+- **`forge-release --from-changelog` flags stranded changelog entries.**
+  The idempotent no-op ("top heading already tagged → exit 0") also
+  covered the failure chain where a failed/raced tag-cut left later PRs
+  appending entries under an already-released heading — their commits
+  shipped untagged (`X.Y.Z.devN`) while CI stayed green. The no-op now
+  classifies `CHANGELOG.md` contents against the released tag (via the
+  same detector as the `changelog_version` step) and exits 1 with a
+  fix-forward message; no-version merges (which never touch the
+  changelog) still rest at exit 0.
+- **Annotated tags no longer fail on identity-less CI runners.** All
+  three tag-cutting CLIs (`forge-release`, `forge-next-prep --tag`,
+  `forge-check-main-tags --fix`) died with git exit 128 ("unable to
+  auto-detect email address") on a fresh runner, hidden until the first
+  merge that actually bumps a version. One shared
+  `forge.git_utils.create_annotated_tag` seam now probes
+  `git var GIT_COMMITTER_IDENT` and injects a `forge-release` fallback
+  identity only when git has none — a configured identity always wins.
+- **`run_git` surfaces git's stderr on failure.** A failing git call
+  previously raised a bare `CalledProcessError` ("exit status 128") with
+  git's actual message captured but never logged; every git failure in
+  every forge CLI now logs `git <args> failed (exit <n>): <stderr>`
+  before raising (suppressible per call via `log_errors=False` for
+  tolerated failures like a raced tag push, where the caller owns the
+  messaging).
+- **Every missing-dependency hint now works from consumer repos.** The
+  remaining `pip install -e ".[dev]"` hints (`require_cli`, the
+  post-merge/post-checkout hook helper) only worked from a forge
+  checkout; they now name consumer-valid commands via
+  `forge.git_utils.missing_dependency_hint` / `forge_install_command`
+  (relocated from `forge.audit.common`). `require_cli` gained per-site
+  precision: `pyrefly` → `forge-scripts[typecheck]`, `pytest` →
+  `forge-scripts[test]`, `gh` → GitHub CLI install link (a pip hint
+  never installed `gh`). Also fixes the v2.27.4 vulture hint, which
+  pointed at the `[audit]` extra that no longer contains vulture.
+- **`forge-audit-orphans` runs on a default install.** `vulture` moved
+  from the `[audit]` extra into core dependencies — the design-checker
+  Full Review mandates the orphans recipe, but a bare
+  `pip install forge-scripts` couldn't run it (hard failure on the
+  missing import). `jsonschema`/`PyYAML` stay in `[audit]`:
+  `forge-audit-data` degrades to a visible LOW finding without them.
+- **Missing-optional-dependency hints now work from consumer repos.**
+  The audit-pack hints said `pip install -e ".[audit]"`, which only
+  works from a forge checkout; they now name
+  `pip install "forge-scripts[audit]"` via a shared
+  `forge.audit.common.missing_dependency_hint` helper (single source of
+  truth so the editable form can't come back).
+- **`no-version` branch token and `changelog_updated` gate now live in CI.**
+  Branch-name resolution read only `git branch --show-current`, which is
+  empty on a CI `pull_request` checkout (detached `refs/pull/N/merge`) —
+  so the `no-version` branch-token opt-out never fired in CI, and the
+  `changelog_updated` step's per-PR guard skipped the whole gate there.
+  New `forge.git_utils.resolve_current_branch` (single resolver, used by
+  both `forge.changelog.wants_no_version` and the step guard) falls back
+  to `GITHUB_HEAD_REF` (the `pull_request` env var carrying the real PR
+  source branch) when `--show-current` is empty; a non-empty local
+  branch name still wins first, so local behavior is unchanged.
+- **Origin-first diff-base resolution, single source of truth.** The four
+  independent local-first "resolve the base ref" loops
+  (`get_modified_files`, the changelog no-version scan, the
+  stranded-entries merge-base, smart-test) collapsed into one canonical
+  `forge.git_utils.resolve_base_branch_ref` (+ `merge_base_with_head`),
+  origin-first with local fallback and flag-injection guard (a
+  `-`-prefixed `base_branch` is rejected everywhere, closing the gap in
+  `get_modified_files`).
+- **`changelog_version` no longer flags base-sync merges as stranded.**
+  During an in-progress `git merge origin/<base>` (MERGE_HEAD present),
+  HEAD still predates the merge, so the merge-base is the stale fork
+  point and every CHANGELOG bullet the merge brings in from the base
+  diffed as branch-added — falsely "stranded", blocking the merge
+  commit's pre-commit hook. The stranded-entries diff is now suppressed
+  mid-merge (structural heading checks still run); new
+  `forge.git_utils.merge_in_progress` resolves `MERGE_HEAD` via
+  `git rev-parse --git-path`, so linked worktrees work.
+
 ## v2.27.0 — 2026-08-02
 
 Adds `forge-resync` and the changelog **Action:** marker convention —

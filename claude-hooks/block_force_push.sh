@@ -18,7 +18,10 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 # `command git push -f`, and `foo; git  push -f` all still hit the gate. The
 # ${GIT_ANCHOR} idiom is shared verbatim with block_raw_git.sh /
 # block_git_rebase.sh (all three had the narrower anchor).
-GIT_ANCHOR='(^|[;&|])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo)[[:space:]]+)*git[[:space:]]+'
+# The separator class includes `(` (a bare subshell wrapper) and the
+# wrapper run tolerates flag tokens (`sudo -n git ...`), so neither
+# shape slips the anchor.
+GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+'
 if ! echo "$COMMAND" | grep -qE "${GIT_ANCHOR}push\b"; then
     exit 0
 fi
