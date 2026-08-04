@@ -186,6 +186,12 @@ def test_validate_no_ai_attribution_accepts_path_shaped_mentions(blob: str) -> N
         "(Claude)",
         "Built with Anthropic",
         "Thanks Anthropic!",
+        "See generated-with/claude for context",
+        "Made-by.claude helped here",
+        "credit/anthropic.ai assisted",
+        "Refactored via Claude.ai suggestions",
+        "Built with Anthropic.Claude",
+        "This was co.authored.by.Claude",
     ],
 )
 def test_validate_no_ai_attribution_rejects_bare_vendor_mentions(blob: str) -> None:

@@ -89,8 +89,11 @@ MAX_WORDS: Final[int] = 50
 # (`CLAUDE.md`, `.claude/agents/...`) that a squash message must be able
 # to cite. Bare tokens are handled by the path-aware backstop in
 # `_validate_no_ai_attribution`. (`claude-hooks/block_claude_attribution.sh`
-# enforces the same policy on the git-hook side with its own regex —
-# independent enforcement points, deliberately not synced.)
+# enforces the same policy with its own regex, but only on hand-typed
+# `git`/`gh` Bash commands — content flowing through this CLI's internal
+# subprocess calls is gated HERE only, so this validator cannot lean on
+# the hook as a backstop. Phrase-list parity with the hook via the
+# `forge-gen-commit-types`-style sync mechanism is a tracked follow-up.)
 AI_ATTRIBUTION_PATTERNS: Final[tuple[str, ...]] = (
     "co-authored-by:",
     "🤖",
@@ -103,10 +106,34 @@ AI_ATTRIBUTION_PATTERNS: Final[tuple[str, ...]] = (
 )
 
 # Bare vendor tokens rejected by the backstop unless the containing
-# whitespace token is path/filename-shaped (contains `/` or `.`), so
-# `CLAUDE.md`, `.claude/agents/x.md`, and `anthropic.yml` pass while a
-# trailing "thanks Claude" credit still fails.
+# whitespace token is shaped like a file forge itself would cite:
+# a `.claude`/`claude-hooks` dotdir/dir prefix, or a known repo file
+# extension. Deliberately NOT "contains any `/` or `.`" — that blanket
+# form exempts credit disguises like `generated-with/claude` or
+# `made-by.claude` (security review, PR #270).
 _VENDOR_TOKENS: Final[tuple[str, ...]] = ("claude", "anthropic")
+
+_CITABLE_PREFIXES: Final[tuple[str, ...]] = (".claude", "claude-hooks")
+
+_CITABLE_EXTENSIONS: Final[frozenset[str]] = frozenset(
+    {"md", "py", "sh", "yml", "yaml", "toml", "json", "txt", "rst"}
+)
+
+
+def _cites_repo_file(token: str) -> bool:
+    """Return whether *token* is shaped like a repo path forge mandates.
+
+    Args:
+        token: One whitespace-delimited, punctuation-stripped token.
+
+    Returns:
+        ``True`` for tokens with a forge-mandated dir prefix
+        (``.claude``, ``claude-hooks``) or a known file extension —
+        the shapes a squash message legitimately cites.
+    """
+    return token.startswith(_CITABLE_PREFIXES) or (
+        token.rpartition(".")[2] in _CITABLE_EXTENSIONS
+    )
 
 
 class ValidationError(ValueError):
@@ -181,9 +208,9 @@ def _validate_no_ai_attribution(title: str, bullets: list[str]) -> None:
     """Reject Claude / AI attribution per FOUNDATION §2.
 
     Two layers: attribution *phrases* anywhere in the text, then a
-    bare-vendor-token backstop that exempts path/filename-shaped tokens
-    — a squash message must be able to name `CLAUDE.md` or
-    `.claude/agents/x.md` (files forge itself mandates) while a bare
+    bare-vendor-token backstop that exempts tokens shaped like files
+    forge mandates (:func:`_cites_repo_file`) — a squash message must
+    be able to name `CLAUDE.md` or `.claude/agents/x.md` while a bare
     "thanks Claude" credit still fails.
 
     Args:
@@ -192,8 +219,8 @@ def _validate_no_ai_attribution(title: str, bullets: list[str]) -> None:
 
     Raises:
         ValidationError: When the text contains a phrase from
-            :data:`AI_ATTRIBUTION_PATTERNS`, or a vendor token outside a
-            path-shaped context (case-insensitive).
+            :data:`AI_ATTRIBUTION_PATTERNS`, or a vendor token outside
+            a repo-file-shaped context (case-insensitive).
     """
     blob = "\n".join([title, *bullets]).lower()
     for pat in AI_ATTRIBUTION_PATTERNS:
@@ -208,9 +235,16 @@ def _validate_no_ai_attribution(title: str, bullets: list[str]) -> None:
         # Sentence punctuation must not disguise a bare mention as
         # path-shaped: "Claude." is a credit, "claude.md" is a file,
         # ".claude" is a dotdir — so quotes strip from both ends but
-        # `.,!?…` only from the right, where prose puts them.
-        token = raw.strip("`\"'()[]{}<>*_~").rstrip(".,!?;:—-")
-        if "/" in token or "." in token:
+        # `.,!?…` only from the right, where prose puts them. Stripped
+        # to a fixpoint: interleavings like "`CLAUDE.md`." shed the
+        # trailing dot AND the then-exposed backtick.
+        token = raw
+        while True:
+            stripped = token.strip("`\"'()[]{}<>*_~").rstrip(".,!?;:—-")
+            if stripped == token:
+                break
+            token = stripped
+        if _cites_repo_file(token):
             continue
         for vendor in _VENDOR_TOKENS:
             if vendor in token:
