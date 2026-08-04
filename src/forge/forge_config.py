@@ -219,7 +219,9 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         description="Extra globs a PR diff may consist entirely of and still "
         "take the docs-only light finalization path (additive to the "
         "built-in extension-anchored *.md / *.rst / *.txt set; "
-        "high-blast-radius paths always force the full round).",
+        "high-blast-radius paths always force the full round). Prefer "
+        "extension-anchored globs; a catch-all like '*' widens the "
+        "review-skip to every non-blast-radius path.",
     ),
     ConfigKey(
         ("tool", "forge", "changelog", "precommit_enforce"),
