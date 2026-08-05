@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 666 symbols._
+_62 modules, 667 symbols._
 
 ## `forge`
 
@@ -452,8 +452,9 @@ _62 modules, 666 symbols._
 - `gh_api(*args: str, timeout: int = 10) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
 - `_run_git(*args: str, cwd: Path | None = None) -> str` _(internal)_ — Run a git command and return stdout.
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
-- `_fallback_identity_args(repo_root: Path) -> list[str]` _(internal)_ — Return ``-c`` identity flags when git has no usable tagger identity.
+- `_fallback_identity_args(repo_root: Path) -> list[str]` _(internal)_ — Return ``-c`` identity flags when git has no usable committer identity.
 - `create_annotated_tag(repo_root: Path, tag: str, *, commit: str = 'HEAD', force: bool = False) -> None` — Create annotated *tag* at *commit*, surviving identity-less runners.
+- `create_commit(repo_root: Path, message: str) -> None` — Commit the staged index, surviving identity-less runners.
 - `resolve_current_branch(repo_root: Path) -> tuple[str, str] | None` — Return the current branch name and where it came from, or ``None``.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
 - `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.

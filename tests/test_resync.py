@@ -5,6 +5,9 @@
 # git/gh/bootstrap process ever runs.
 #   - resync.run_git: replaced with a recorder that returns canned stdout
 #     per subcommand (never touches a real repo).
+#   - resync.create_commit: replaced with a recorder (or a raiser, to
+#     exercise the commit-failure path) so the actual commit step never
+#     shells out to git either.
 #   - resync.require_cli: replaced with a no-op (or a raiser, to exercise
 #     the missing-gh abort) so PATH lookups never matter.
 #   - resync.repo_root: pinned to a tmp_path sandbox.
@@ -202,13 +205,15 @@ def test_publish_resync_happy_path(
     SCENARIO: happy-path resync publish — dirty tree already regenerated,
         no existing PR.
     MOCK SETUP: `run_git` recorder captures every git invocation and
-        reports `"main"` for `branch --show-current`; `subprocess.run`
-        (gh) records its argv and returns a `FakeProc` carrying the
-        created PR's URL on stdout.
-    EXPECTED BEHAVIOR: `switch -c chore/forge-resync-<ver>`, `add -A`,
-        a commit with the "chore: resync..." message, `push -u origin
-        <branch>`, a `gh pr create --base main ...` call, then a final
-        `switch` back to `"main"`; returns 0.
+        reports `"main"` for `branch --show-current`; `create_commit`
+        replaced with a recorder capturing `(root, message)`;
+        `subprocess.run` (gh) records its argv and returns a `FakeProc`
+        carrying the created PR's URL on stdout.
+    EXPECTED BEHAVIOR: `switch -c chore/forge-resync-<ver>-no-version`,
+        `add -A`, a `create_commit` call with the "chore: resync..."
+        message (marker included), `push -u origin <branch>`, a `gh pr
+        create --base main ...` call, then a final `switch` back to
+        `"main"`; returns 0.
     """
     git_calls: list[list[str]] = []
 
@@ -218,6 +223,11 @@ def test_publish_resync_happy_path(
             return "main"
         return ""
 
+    commit_calls: list[tuple[object, ...]] = []
+
+    def _fake_create_commit(*args: object) -> None:
+        commit_calls.append(args)
+
     gh_calls: list[list[str]] = []
 
     def _fake_subprocess_run(cmd: list[str], **_kw: object) -> FakeProc:
@@ -225,20 +235,21 @@ def test_publish_resync_happy_path(
         return FakeProc(0, stdout="https://github.com/x/y/pull/9")
 
     monkeypatch.setattr(resync, "run_git", _fake_run_git)
+    monkeypatch.setattr(resync, "create_commit", _fake_create_commit)
     monkeypatch.setattr(resync.subprocess, "run", _fake_subprocess_run)
 
     with caplog.at_level("INFO"):
         rc = resync._publish_resync(tmp_path, "2.7.0", "main")
 
     assert rc == 0
-    branch = "chore/forge-resync-2.7.0"
+    branch = f"chore/forge-resync-2.7.0-{resync.NO_VERSION_BRANCH_TOKEN}"
     assert ["switch", "-c", branch] in git_calls
     assert ["add", "-A"] in git_calls
-    assert any(
-        c[:2] == ["commit", "-m"]
-        and "chore: resync forge-managed artifacts (2.7.0)" in c
-        for c in git_calls
+    commit_message = (
+        f"chore: resync forge-managed artifacts (2.7.0) "
+        f"{resync.NO_VERSION_COMMIT_MARKER}"
     )
+    assert commit_calls == [(tmp_path, commit_message)]
     assert ["push", "-u", "origin", branch] in git_calls
     assert git_calls[-1] == ["switch", "main"]  # returns to start branch
 
@@ -263,7 +274,8 @@ def test_publish_resync_gh_create_failure_leaves_branch_pushed_returns_1(
 
     SCENARIO: the branch push succeeds but `gh pr create` exits non-zero.
     MOCK SETUP: `run_git` recorder reports `"main"` for `show-current`;
-        `subprocess.run` (gh) returns `FakeProc(1, stderr="boom")`.
+        `create_commit` replaced with a no-op recorder; `subprocess.run`
+        (gh) returns `FakeProc(1, stderr="boom")`.
     EXPECTED BEHAVIOR: returns 1, an error naming the branch is logged,
         and the `finally`-block switch-back to `"main"` still runs.
     """
@@ -275,7 +287,12 @@ def test_publish_resync_gh_create_failure_leaves_branch_pushed_returns_1(
             return "main"
         return ""
 
+    commit_calls: list[tuple[object, ...]] = []
+
     monkeypatch.setattr(resync, "run_git", _fake_run_git)
+    monkeypatch.setattr(
+        resync, "create_commit", lambda *args: commit_calls.append(args)
+    )
     monkeypatch.setattr(
         resync.subprocess,
         "run",
@@ -286,7 +303,7 @@ def test_publish_resync_gh_create_failure_leaves_branch_pushed_returns_1(
         rc = resync._publish_resync(tmp_path, "2.7.0", "main")
 
     assert rc == 1
-    branch = "chore/forge-resync-2.7.0"
+    branch = f"chore/forge-resync-2.7.0-{resync.NO_VERSION_BRANCH_TOKEN}"
     assert any(branch in r.getMessage() for r in caplog.records)
     assert git_calls[-1] == ["switch", "main"]  # finally still switches back
 
@@ -297,10 +314,10 @@ def test_publish_resync_git_failure_still_switches_back_and_propagates(
 ) -> None:
     """A git step failing mid-publish still switches back before propagating.
 
-    SCENARIO: `commit` raises `subprocess.CalledProcessError` (e.g. nothing
-        to commit / hook rejection).
-    MOCK SETUP: `run_git` recorder reports `"main"` for `show-current`,
-        raises on the `commit` call, and would otherwise no-op.
+    SCENARIO: `create_commit` raises `subprocess.CalledProcessError` (e.g.
+        nothing to commit / hook rejection).
+    MOCK SETUP: `run_git` recorder reports `"main"` for `show-current` and
+        would otherwise no-op; `create_commit` replaced with a raiser.
     EXPECTED BEHAVIOR: `subprocess.CalledProcessError` propagates out of
         `_publish_resync` (the `Raises:` contract), and the `finally`
         block's switch-back to `"main"` still fires before it does.
@@ -311,11 +328,13 @@ def test_publish_resync_git_failure_still_switches_back_and_propagates(
         git_calls.append(list(args))
         if args[:2] == ("branch", "--show-current"):
             return "main"
-        if args[0] == "commit":
-            raise subprocess.CalledProcessError(1, list(args))
         return ""
 
+    def _fake_create_commit(_root: object, message: str) -> None:
+        raise subprocess.CalledProcessError(1, ["commit", "-m", message])
+
     monkeypatch.setattr(resync, "run_git", _fake_run_git)
+    monkeypatch.setattr(resync, "create_commit", _fake_create_commit)
 
     with pytest.raises(subprocess.CalledProcessError):
         resync._publish_resync(tmp_path, "2.7.0", "main")
@@ -332,7 +351,8 @@ def test_publish_resync_switch_create_failure_propagates(
     SCENARIO: the initial `switch -c <branch>` raises (e.g. the branch
         already exists from a stale prior run).
     MOCK SETUP: `run_git` recorder reports `"main"` for `show-current`,
-        raises on the `switch -c` call.
+        raises on the `switch -c` call; `create_commit` replaced with a
+        no-op recorder (never reached, since `switch -c` fails first).
     EXPECTED BEHAVIOR: `subprocess.CalledProcessError` propagates out of
         `_publish_resync`, and — because `switch -c` is inside the `try`
         (the widened-try fix) — the `finally` block's switch-back to
@@ -348,12 +368,18 @@ def test_publish_resync_switch_create_failure_propagates(
             raise subprocess.CalledProcessError(1, list(args))
         return ""
 
+    commit_calls: list[tuple[object, ...]] = []
+
     monkeypatch.setattr(resync, "run_git", _fake_run_git)
+    monkeypatch.setattr(
+        resync, "create_commit", lambda *args: commit_calls.append(args)
+    )
 
     with pytest.raises(subprocess.CalledProcessError):
         resync._publish_resync(tmp_path, "2.7.0", "main")
 
     assert git_calls[-1] == ["switch", "main"]  # finally still switches back
+    assert commit_calls == []
 
 
 def test_publish_resync_switches_back_even_when_start_branch_empty(
@@ -369,7 +395,12 @@ def test_publish_resync_switches_back_even_when_start_branch_empty(
             return ""
         return ""
 
+    commit_calls: list[tuple[object, ...]] = []
+
     monkeypatch.setattr(resync, "run_git", _fake_run_git)
+    monkeypatch.setattr(
+        resync, "create_commit", lambda *args: commit_calls.append(args)
+    )
     monkeypatch.setattr(
         resync.subprocess,
         "run",

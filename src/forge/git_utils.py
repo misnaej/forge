@@ -447,12 +447,19 @@ _FALLBACK_IDENTITY = (
 
 
 def _fallback_identity_args(repo_root: Path) -> list[str]:
-    """Return ``-c`` identity flags when git has no usable tagger identity.
+    """Return ``-c`` identity flags when git has no usable committer identity.
+
+    The identity seam of forge's git-write layer: every forge call that
+    creates a git object requiring an ident (``git tag -a`` via
+    :func:`create_annotated_tag`, ``git commit`` via
+    :func:`create_commit`) routes through this probe so identity-less
+    runners (fresh CI) never die with exit 128. New identity-requiring
+    write sites must use those seams, not raw :func:`run_git`.
 
     ``git var GIT_COMMITTER_IDENT`` evaluates the same chain ``git tag``
-    does (config, ``GIT_COMMITTER_*`` env, auto-detection), so any real
-    identity wins and the fallback only fires where tagging would
-    otherwise die with exit 128 (fresh CI runners). On failure that
+    and ``git commit`` do (config, ``GIT_COMMITTER_*`` env,
+    auto-detection), so any real identity wins and the fallback only
+    fires where the write would otherwise fail. On failure that
     subcommand writes nothing to stdout (its message goes to stderr), so
     an empty probe result means "no identity" — a property of ``git
     var``, not of :func:`run_git`'s ``check=False`` mode.
@@ -498,6 +505,29 @@ def create_annotated_tag(
     # never be parsed as a git option, independent of caller validation.
     args = ["tag", *(["-f"] if force else []), "-a", "-m", tag, "--", tag, commit]
     run_git(*_fallback_identity_args(repo_root), *args, cwd=repo_root)
+
+
+def create_commit(repo_root: Path, message: str) -> None:
+    """Commit the staged index, surviving identity-less runners.
+
+    The one commit seam for forge CLIs that write commits
+    programmatically (``forge-resync``) — the commit twin of
+    :func:`create_annotated_tag`. Injects a fallback committer identity
+    only when git has none (see :func:`_fallback_identity_args`); a
+    commit requires one, and a fresh CI runner configures none.
+
+    Args:
+        repo_root: Repo root.
+        message: Commit message.
+
+    Raises:
+        subprocess.CalledProcessError: When git fails for any other
+            reason (stderr is logged by :func:`run_git`).
+    """
+    # No `--` pin needed (unlike create_annotated_tag's positionals):
+    # `-m` consumes the next argv element as its value unconditionally,
+    # so a `-`-prefixed message can never parse as a separate option.
+    run_git(*_fallback_identity_args(repo_root), "commit", "-m", message, cwd=repo_root)
 
 
 def resolve_current_branch(repo_root: Path) -> tuple[str, str] | None:

@@ -23,6 +23,14 @@ versions follow forge's rolling-next convention.
 ## v2.30.0 — Unreleased
 
 ### Fixes
+- **`forge-resync` works end-to-end on fresh CI runners and gated
+  consumers.** Its commit now routes through the git-write layer's
+  identity seam (`git_utils.create_commit`, the commit twin of
+  `create_annotated_tag`), so identity-less runners no longer die with
+  exit 128; and its branch/commit carry the `no-version` token and
+  `[no-version]` marker (public `forge.changelog` constants, regex
+  derived from the same spelling), so the `changelog_updated` gate no
+  longer blocks the resync commit it ships.
 - **`forge-pr-squash-comment` no longer rejects messages naming
   `CLAUDE.md` / `.claude/` paths.** Attribution screening is now
   phrase-based (`co-authored-by:`, `generated with`, `with claude
