@@ -13,7 +13,7 @@ backstop (``_VENDOR_TOKENS`` + the citable-path exemption in
 ``_cites_repo_file``) stays Python-only: the hook has no equivalent of
 the path-shape exemption, and porting the bare tokens verbatim would
 false-positive on legitimate ``CLAUDE.md`` / ``.claude/`` path mentions
-in commit messages — the exact bug #266 removed.
+in commit messages.
 
 The shell file carries a managed-block marker:
 
@@ -35,8 +35,9 @@ Usage:
 Exit Codes:
     0: The block was written (default), or is already in sync
        (``--check``).
-    1: ``--check`` detected drift, or the hook lacks the managed-block
-       markers.
+    1: The hook file is missing, ``--check`` detected drift, or the
+       block can't be regenerated (missing managed-block markers, or a
+       canonical phrase containing a single quote).
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ import sys
 from typing import Final
 
 from forge.git_utils import configure_cli_logging, repo_root
+from forge.managed_block import BlockSpec, check_or_write, rewrite_block
 from forge.pr_squash_comment import AI_ATTRIBUTION_PATTERNS
 
 
@@ -56,13 +58,6 @@ logger = logging.getLogger(__name__)
 
 
 HOOK_PATH: Final[str] = "claude-hooks/block_claude_attribution.sh"
-
-_MANAGED_BLOCK_RE: Final[re.Pattern[str]] = re.compile(
-    r"(# FORGE_ATTRIBUTION_PATTERNS_BEGIN[^\n]*\n(?:#[^\n]*\n)*)"
-    r"^ATTRIBUTION_PATTERNS='[^']*'\s*\n"
-    r"(.*?# FORGE_ATTRIBUTION_PATTERNS_END)",
-    re.DOTALL | re.MULTILINE,
-)
 
 
 def _alternation() -> str:
@@ -76,6 +71,7 @@ def _alternation() -> str:
     Returns:
         Pipe-joined string of escaped phrases — the exact body of the
         shell variable ``ATTRIBUTION_PATTERNS``.
+
     """
     return "|".join(re.escape(p) for p in AI_ATTRIBUTION_PATTERNS)
 
@@ -93,40 +89,36 @@ def _expected_line() -> str:
 def _rewrite(content: str) -> str:
     """Return *content* with the managed block updated to the canonical line.
 
+    Thin per-tuple wrapper over
+    :func:`forge.managed_block.rewrite_block` — the block grammar and
+    the single-quote guard live in the shared engine.
+
     Args:
         content: Current text of ``block_claude_attribution.sh``.
 
     Returns:
-        The text with the ``ATTRIBUTION_PATTERNS`` line inside the
-        marker block replaced. Everything outside the block (and the
-        marker lines themselves) is byte-preserved.
+        The text with the block's assignment replaced.
 
     Raises:
-        ValueError: When the managed-block markers are missing or
-            malformed in *content*.
+        ValueError: When the markers are missing or a phrase would break
+            the shell quoting (propagated from the engine).
     """
-    expected = _expected_line()
-    new_content, n = _MANAGED_BLOCK_RE.subn(
-        lambda m: f"{m.group(1)}{expected}{m.group(2)}",
+    return rewrite_block(
         content,
-        count=1,
+        marker="FORGE_ATTRIBUTION_PATTERNS",
+        var_name="ATTRIBUTION_PATTERNS",
+        value=_alternation(),
     )
-    if n == 0:
-        msg = (
-            "FORGE_ATTRIBUTION_PATTERNS_BEGIN / END markers not found in "
-            f"{HOOK_PATH} — cannot regenerate."
-        )
-        raise ValueError(msg)
-    return new_content
 
 
 def main() -> int:
     """Entry point for ``forge-gen-attribution-patterns``.
 
     Returns:
-        ``0`` when the hook is written or already in sync; ``1`` when
-        ``--check`` detects drift or the hook lacks the managed-block
-        markers.
+        ``0`` when the hook is written or already in sync; ``1`` when the
+        hook file is missing, ``--check`` detects drift, or the block
+        can't be regenerated (missing managed-block markers, or a
+        canonical phrase containing a single quote).
     """
     parser = argparse.ArgumentParser(
         prog="forge-gen-attribution-patterns",
@@ -145,37 +137,16 @@ def main() -> int:
         ),
     )
     args = parser.parse_args()
-
-    path = repo_root() / HOOK_PATH
-    if not path.is_file():
-        logger.error("missing %s — nothing to regenerate.", path)
-        return 1
-
-    current = path.read_text()
-    try:
-        expected_content = _rewrite(current)
-    except ValueError:
-        logger.exception("cannot regenerate %s", HOOK_PATH)
-        return 1
-
-    if args.check:
-        if current == expected_content:
-            logger.info("OK: %s alternation is in sync.", HOOK_PATH)
-            return 0
-        logger.error(
-            "DRIFT: %s alternation does not match the canonical "
-            "AI_ATTRIBUTION_PATTERNS tuple. Run "
-            "`forge-gen-attribution-patterns` to regenerate.",
-            HOOK_PATH,
-        )
-        return 1
-
-    if current == expected_content:
-        logger.info("OK: %s already in sync — no write.", HOOK_PATH)
-        return 0
-    path.write_text(expected_content)
-    logger.info("✓ regenerated %s", HOOK_PATH)
-    return 0
+    return check_or_write(
+        repo_root() / HOOK_PATH,
+        spec=BlockSpec(
+            marker="FORGE_ATTRIBUTION_PATTERNS",
+            var_name="ATTRIBUTION_PATTERNS",
+            value=_alternation(),
+            label=HOOK_PATH,
+        ),
+        check=args.check,
+    )
 
 
 if __name__ == "__main__":

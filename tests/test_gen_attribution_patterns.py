@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from forge import gen_attribution_patterns
+from forge.managed_block import rewrite_block
 from forge.pr_squash_comment import AI_ATTRIBUTION_PATTERNS
 
 
@@ -187,3 +188,19 @@ def test_main_returns_one_when_hook_missing(
         rc = gen_attribution_patterns.main()
     assert rc == 1
     assert any("missing" in r.getMessage().lower() for r in caplog.records)
+
+
+def test_rewrite_block_raises_on_single_quote_value() -> None:
+    """A value containing `'` raises instead of corrupting the shell string.
+
+    `re.escape` guards regex semantics only; the engine's quote guard is
+    what stops a future phrase with an apostrophe from breaking out of
+    the hook's single-quoted assignment.
+    """
+    with pytest.raises(ValueError, match="single quote"):
+        rewrite_block(
+            "# X_BEGIN\nV='old'\n# X_END",
+            marker="X",
+            var_name="V",
+            value="don't do this",
+        )

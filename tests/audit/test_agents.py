@@ -487,6 +487,28 @@ def test_effective_reporter_sets_unions_artifact_reporters(tmp_path: Path) -> No
     ) | {"custom-artifact-reporter"}
 
 
+def test_effective_reporter_sets_shipped_name_cannot_gain_artifact_exemption(
+    tmp_path: Path,
+) -> None:
+    """A shipped reporter name in consumer artifact config is ignored.
+
+    The artifact set REMOVES the Write/Edit check, so letting consumer
+    config add a shipped reporter (e.g. `design-checker`) would be a
+    coverage-shrink vector despite the additive framing. Only genuinely
+    new custom names are accepted.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.audit_agents]\n"
+        'reporter_with_artifact_agents = ["design-checker", "my-artifact"]\n'
+    )
+    _reporters, artifact_reporters = audit_agents._effective_reporter_sets(tmp_path)
+    assert "my-artifact" in artifact_reporters
+    assert artifact_reporters == frozenset(
+        audit_agents._REPORTER_WITH_ARTIFACT_NAMES
+    ) | {"my-artifact"}
+    assert "design-checker" not in artifact_reporters
+
+
 def test_effective_reporter_sets_non_list_value_degrades_to_shipped_only(
     tmp_path: Path,
 ) -> None:

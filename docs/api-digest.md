@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 674 symbols._
+_64 modules, 679 symbols._
 
 ## `forge`
 
@@ -35,6 +35,7 @@ _63 modules, 674 symbols._
 - `_check_word_count(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag agent bodies above the length budget.
 - `_check_frontmatter(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag missing required frontmatter keys.
 - `_check_description_shape(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag descriptions that read as role labels rather than routing triggers.
+- `_sanitize_fragment(text: str, limit: int = 40) -> str` _(internal)_ — Return consumer-authored *text* made safe for a code_health log line.
 - `_is_reporter_agent(agent: AgentDoc, reporters: frozenset[str]) -> bool` _(internal)_ — Return True when *agent* is in the effective reporter set.
 - `_check_reporter_tools(agent: AgentDoc, reporters: frozenset[str], artifact_reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Flag reporter agents holding mutating tools (`Write`/`Edit`).
 - `_check_reporter_verified_at(agent: AgentDoc, reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Flag reporter agents missing the ``verified-at:`` header instruction.
@@ -594,6 +595,15 @@ _63 modules, 674 symbols._
 - `inject(readme: str, block: str) -> str` — Insert or replace the managed badge block in *readme* (drift-aware).
 - `_get_readme_path(root: Path) -> tuple[Path | None, int]` _(internal)_ — Load and validate the README path from config.
 - `main() -> int` — CLI entry point.
+
+## `forge.managed_block`
+
+> _Shared engine for marker-delimited managed blocks in shell hooks._
+
+- `class BlockSpec` — Specification for a managed block in a shell hook.
+- `_block_re(marker: str, var_name: str) -> re.Pattern[str]` _(internal)_ — Compile the managed-block pattern for *marker* / *var_name*.
+- `rewrite_block(content: str, *, marker: str, var_name: str, value: str) -> str` — Return *content* with the managed assignment set to *value*.
+- `check_or_write(path: Path, *, spec: BlockSpec, check: bool) -> int` — Run the shared check-or-write flow for one managed block.
 
 ## `forge.next_prep`
 

@@ -38,11 +38,11 @@ from __future__ import annotations
 
 import argparse
 import logging
-import re
 import sys
 from typing import Final
 
 from forge.git_utils import configure_cli_logging, repo_root
+from forge.managed_block import BlockSpec, check_or_write, rewrite_block
 from forge.pr_squash_comment import CONVENTIONAL_COMMIT_TYPES
 
 
@@ -51,13 +51,6 @@ logger = logging.getLogger(__name__)
 
 
 HOOK_PATH: Final[str] = "claude-hooks/check_commit_format.sh"
-
-_MANAGED_BLOCK_RE: Final[re.Pattern[str]] = re.compile(
-    r"(# FORGE_COMMIT_TYPES_BEGIN[^\n]*\n.*?)"
-    r"^CONVENTIONAL_TYPES='[^']*'\s*\n"
-    r"(.*?# FORGE_COMMIT_TYPES_END)",
-    re.DOTALL | re.MULTILINE,
-)
 
 
 def _alternation() -> str:
@@ -83,32 +76,26 @@ def _expected_line() -> str:
 def _rewrite(content: str) -> str:
     """Return *content* with the managed block updated to the canonical line.
 
+    Thin per-tuple wrapper over
+    :func:`forge.managed_block.rewrite_block` — the block grammar lives
+    in the shared engine, so it cannot drift from the other generators.
+
     Args:
         content: Current text of ``check_commit_format.sh``.
 
     Returns:
-        The text with the ``CONVENTIONAL_TYPES`` line inside the
-        ``# FORGE_COMMIT_TYPES_BEGIN`` / ``# FORGE_COMMIT_TYPES_END``
-        block replaced. Everything outside the block (and the marker
-        lines themselves) is byte-preserved.
+        The text with the block's assignment replaced.
 
     Raises:
-        ValueError: When the managed block markers are missing or
-            malformed in *content*.
+        ValueError: When the managed-block markers are missing or
+            malformed in *content* (propagated from the engine).
     """
-    expected = _expected_line()
-    new_content, n = _MANAGED_BLOCK_RE.subn(
-        lambda m: f"{m.group(1)}{expected}{m.group(2)}",
+    return rewrite_block(
         content,
-        count=1,
+        marker="FORGE_COMMIT_TYPES",
+        var_name="CONVENTIONAL_TYPES",
+        value=_alternation(),
     )
-    if n == 0:
-        msg = (
-            "FORGE_COMMIT_TYPES_BEGIN / END markers not found in "
-            "claude-hooks/check_commit_format.sh — cannot regenerate."
-        )
-        raise ValueError(msg)
-    return new_content
 
 
 def main() -> int:
@@ -137,37 +124,16 @@ def main() -> int:
         ),
     )
     args = parser.parse_args()
-
-    path = repo_root() / HOOK_PATH
-    if not path.is_file():
-        logger.error("missing %s — nothing to regenerate.", path)
-        return 1
-
-    current = path.read_text()
-    try:
-        expected_content = _rewrite(current)
-    except ValueError:
-        logger.exception("cannot regenerate %s", HOOK_PATH)
-        return 1
-
-    if args.check:
-        if current == expected_content:
-            logger.info("OK: %s alternation is in sync.", HOOK_PATH)
-            return 0
-        logger.error(
-            "DRIFT: %s alternation does not match the canonical "
-            "CONVENTIONAL_COMMIT_TYPES tuple. Run `forge-gen-commit-types` "
-            "to regenerate.",
-            HOOK_PATH,
-        )
-        return 1
-
-    if current == expected_content:
-        logger.info("OK: %s already in sync — no write.", HOOK_PATH)
-        return 0
-    path.write_text(expected_content)
-    logger.info("✓ regenerated %s", HOOK_PATH)
-    return 0
+    return check_or_write(
+        repo_root() / HOOK_PATH,
+        spec=BlockSpec(
+            marker="FORGE_COMMIT_TYPES",
+            var_name="CONVENTIONAL_TYPES",
+            value=_alternation(),
+            label=HOOK_PATH,
+        ),
+        check=args.check,
+    )
 
 
 if __name__ == "__main__":

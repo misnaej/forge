@@ -324,6 +324,26 @@ def _check_description_shape(agent: AgentDoc) -> list[Finding]:
     return []
 
 
+def _sanitize_fragment(text: str, limit: int = 40) -> str:
+    """Return consumer-authored *text* made safe for a code_health log line.
+
+    ``code_health/*.log`` files are trusted ground truth for other forge
+    agents (FOUNDATION §13), and dual-root discovery now scans
+    consumer-authored ``.claude/agents/*.md`` — so frontmatter-derived
+    strings must not pass free-form prose into the log. ``repr`` quotes
+    and escapes control characters; the cap bounds crafted long values.
+
+    Args:
+        text: Untrusted string from an agent file's frontmatter.
+        limit: Maximum characters kept before an ellipsis.
+
+    Returns:
+        Repr-quoted, length-capped rendering of *text*.
+    """
+    clipped = text if len(text) <= limit else text[:limit] + "…"
+    return repr(clipped)
+
+
 def _is_reporter_agent(agent: AgentDoc, reporters: frozenset[str]) -> bool:
     """Return True when *agent* is in the effective reporter set.
 
@@ -380,8 +400,9 @@ def _check_reporter_tools(
             path=agent.path,
             line=0,
             message=(
-                f"reporter holds mutating tool '{tool}' — reporters should be "
-                "Read/Grep/Glob-only (see _TEMPLATE.md 'Tool sets per role')"
+                f"reporter holds mutating tool {_sanitize_fragment(tool)} — "
+                "reporters should be Read/Grep/Glob-only (see _TEMPLATE.md "
+                "'Tool sets per role')"
             ),
         )
         for tool in tools
@@ -619,6 +640,13 @@ def _effective_reporter_sets(
     cannot accidentally un-classify forge's own agents. Non-list values
     and non-string items degrade silently to no addition.
 
+    Asymmetry guard: adding a name to ``reporter_agents`` only ADDS
+    scrutiny, so any name is accepted; adding one to
+    ``reporter_with_artifact_agents`` REMOVES the Write/Edit check, so
+    shipped reporter names are ignored there — a consumer can grant the
+    artifact exemption only to its own custom reporters, never
+    re-classify a shipped canonical one.
+
     Args:
         repo_root_path: Repo root (for the ``pyproject.toml`` read).
 
@@ -636,7 +664,7 @@ def _effective_reporter_sets(
     return (
         frozenset(REPORTER_AGENT_NAMES) | _names("reporter_agents"),
         frozenset(_REPORTER_WITH_ARTIFACT_NAMES)
-        | _names("reporter_with_artifact_agents"),
+        | (_names("reporter_with_artifact_agents") - frozenset(REPORTER_AGENT_NAMES)),
     )
 
 

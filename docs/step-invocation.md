@@ -39,7 +39,7 @@ fail-loudly contract). A pass-through wrapper buys none of that back.
 
 | Mechanism | When | Steps |
 |---|---|---|
-| Forge CLI subprocess | Criteria 1 or 2 above | `ruff` (`fix-forge-ruff`), `docstring_verification`, `docstring_coverage`, `test_naming_check`, `repo_structure_check`, `manifest_json`, `commit_types_parity`, `c4`, `api_digest_check`, `cli_wiring`, `agent_doc`, `plugin_version`, `smart_test`, `changelog_history`, `doc_consistency`, `cve_usage`, `regen_docs` |
+| Forge CLI subprocess | Criteria 1 or 2 above | `ruff` (`fix-forge-ruff`), `docstring_verification`, `docstring_coverage`, `test_naming_check`, `repo_structure_check`, `manifest_json`, `commit_types_parity`, `attribution_parity`, `c4`, `api_digest_check`, `cli_wiring`, `agent_doc`, `plugin_version`, `smart_test`, `changelog_history`, `doc_consistency`, `cve_usage`, `regen_docs` |
 | Third-party binary, direct | Good standalone CLI, no forge-added orchestration | `typecheck` (`pyrefly`), `doctest` (`pytest`) |
 | In-process forge module | Wrapping logic without a CLI-worthy surface | `pip_audit` (`forge.pip_audit_json`) |
 | Pure in-process check | No external tool at all — plain Python over the repo tree / git metadata | `env_sync`, `release_tag_guard`, `vendored_integrity` |
