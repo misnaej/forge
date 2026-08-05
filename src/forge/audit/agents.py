@@ -4,14 +4,16 @@ Works in **two contexts**:
 
 - **Forge itself**: audits the foundation agents under ``agents/`` and
   reports against ``FOUNDATION.md``.
-- **Consumer repos that adopt forge**: same CLI, same checks — points
-  at the consumer's repo-root ``agents/`` and ``FOUNDATION.md``
-  (synced into the consumer by ``install-forge-claude-md``). Consumer
-  agents are audited identically.
+- **Consumer repos that adopt forge**: same CLI, same checks — scans
+  ``.claude/agents/`` (where Claude Code loads consumer agents) unioned
+  with repo-root ``agents/``, against the consumer's ``FOUNDATION.md``
+  (synced by ``install-forge-claude-md``). ``--roots`` overrides the
+  default union; consumer reporter agents are classified via
+  ``[tool.forge.audit_agents]`` (additive to the shipped lists).
 
-Audits every ``agents/*.md`` (skipping ``_TEMPLATE.md`` and other
-underscore-prefixed files) against the structural and length policy
-documented in ``agents/_TEMPLATE.md``. Writes
+Audits every ``*.md`` under the scan roots (skipping ``_TEMPLATE.md``
+and other underscore-prefixed files) against the structural and length
+policy documented in ``agents/_TEMPLATE.md``. Writes
 ``code_health/audit_agents.log`` with one row per agent plus
 per-finding details.
 
@@ -49,6 +51,7 @@ from forge.audit.common import (
     make_audit_parser,
     write_log,
 )
+from forge.config import read_tool_forge_section
 from forge.git_utils import configure_cli_logging, repo_root
 
 
@@ -321,8 +324,8 @@ def _check_description_shape(agent: AgentDoc) -> list[Finding]:
     return []
 
 
-def _is_reporter_agent(agent: AgentDoc) -> bool:
-    """Return True when *agent* is in :data:`REPORTER_AGENT_NAMES`.
+def _is_reporter_agent(agent: AgentDoc, reporters: frozenset[str]) -> bool:
+    """Return True when *agent* is in the effective reporter set.
 
     Name-based classification avoids false negatives on descriptions
     containing "Verify and fix" (docs-types-checker) or "does not fix"
@@ -331,14 +334,21 @@ def _is_reporter_agent(agent: AgentDoc) -> bool:
 
     Args:
         agent: Parsed agent doc.
+        reporters: Effective reporter names — the shipped
+            :data:`REPORTER_AGENT_NAMES` plus any consumer additions
+            (see :func:`_effective_reporter_sets`).
 
     Returns:
-        ``True`` when the agent's filename stem is in the allowlist.
+        ``True`` when the agent's filename stem is in the set.
     """
-    return Path(agent.path).stem in REPORTER_AGENT_NAMES
+    return Path(agent.path).stem in reporters
 
 
-def _check_reporter_tools(agent: AgentDoc) -> list[Finding]:
+def _check_reporter_tools(
+    agent: AgentDoc,
+    reporters: frozenset[str],
+    artifact_reporters: frozenset[str],
+) -> list[Finding]:
     """Flag reporter agents holding mutating tools (`Write`/`Edit`).
 
     Reporter-with-artifact agents (see :data:`_REPORTER_WITH_ARTIFACT_NAMES`)
@@ -349,14 +359,16 @@ def _check_reporter_tools(agent: AgentDoc) -> list[Finding]:
 
     Args:
         agent: Parsed agent doc.
+        reporters: Effective reporter names.
+        artifact_reporters: Effective reporter-with-artifact names.
 
     Returns:
         One MEDIUM finding per forbidden tool present on a non-exempt
         reporter.
     """
-    if not _is_reporter_agent(agent):
+    if not _is_reporter_agent(agent, reporters):
         return []
-    if Path(agent.path).stem in _REPORTER_WITH_ARTIFACT_NAMES:
+    if Path(agent.path).stem in artifact_reporters:
         return []
     tools = agent.frontmatter.get("tools", ())
     if not isinstance(tools, tuple):
@@ -377,7 +389,9 @@ def _check_reporter_tools(agent: AgentDoc) -> list[Finding]:
     ]
 
 
-def _check_reporter_verified_at(agent: AgentDoc) -> list[Finding]:
+def _check_reporter_verified_at(
+    agent: AgentDoc, reporters: frozenset[str]
+) -> list[Finding]:
     """Flag reporter agents missing the ``verified-at:`` header instruction.
 
     Reporters must instruct the runtime to emit a ``verified-at:`` line
@@ -387,12 +401,13 @@ def _check_reporter_verified_at(agent: AgentDoc) -> list[Finding]:
 
     Args:
         agent: Parsed agent doc.
+        reporters: Effective reporter names.
 
     Returns:
         One MEDIUM finding when the agent is a reporter but its body
         does not mention ``verified-at:``.
     """
-    if not _is_reporter_agent(agent):
+    if not _is_reporter_agent(agent, reporters):
         return []
     if "verified-at:" in agent.body:
         return []
@@ -559,30 +574,85 @@ class AgentsConfig:
     output: Path | None = None
 
 
-def _iter_agent_files(repo_root_path: Path) -> list[Path]:
-    """Return every public agent markdown file under ``agents/``.
+# Default agent-definition roots, unioned: ``agents/`` is forge's own
+# plugin layout; ``.claude/agents/`` is where Claude Code loads consumer
+# agents (FOUNDATION §3/§16 name it for wrappers). A repo with both —
+# a consumer vendoring agents — gets both audited.
+_DEFAULT_AGENT_DIRS = ("agents", ".claude/agents")
+
+
+def _iter_agent_files(
+    repo_root_path: Path, roots: list[Path] | None = None
+) -> list[Path]:
+    """Return every public agent markdown file under the scan roots.
 
     Filters out ``_TEMPLATE.md`` and other underscore-prefixed files —
     those are template / documentation, not actual agents.
 
     Args:
         repo_root_path: Repo root.
+        roots: Explicit scan roots (from ``--roots``); ``None`` or empty
+            scans the :data:`_DEFAULT_AGENT_DIRS` union.
 
     Returns:
-        Sorted list of absolute paths to agent files.
+        Sorted, de-duplicated list of absolute paths to agent files.
     """
-    agents_dir = repo_root_path / "agents"
-    if not agents_dir.is_dir():
-        return []
-    return sorted(p for p in agents_dir.glob("*.md") if not p.name.startswith("_"))
+    dirs = roots or [repo_root_path / d for d in _DEFAULT_AGENT_DIRS]
+    files = {
+        p
+        for d in dirs
+        if d.is_dir()
+        for p in d.glob("*.md")
+        if not p.name.startswith("_")
+    }
+    return sorted(files)
 
 
-def _per_agent_findings(agent: AgentDoc, foundation_ngrams: set[str]) -> list[Finding]:
+def _effective_reporter_sets(
+    repo_root_path: Path,
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Return the effective reporter / reporter-with-artifact name sets.
+
+    Consumer additions from ``[tool.forge.audit_agents]``
+    (``reporter_agents`` / ``reporter_with_artifact_agents``) are
+    **unioned onto** the shipped tuples — additive only, so a consumer
+    cannot accidentally un-classify forge's own agents. Non-list values
+    and non-string items degrade silently to no addition.
+
+    Args:
+        repo_root_path: Repo root (for the ``pyproject.toml`` read).
+
+    Returns:
+        Tuple ``(reporters, artifact_reporters)``.
+    """
+    cfg = read_tool_forge_section(repo_root_path, "audit_agents")
+
+    def _names(key: str) -> frozenset[str]:
+        value = cfg.get(key)
+        if not isinstance(value, list):
+            return frozenset()
+        return frozenset(v for v in value if isinstance(v, str))
+
+    return (
+        frozenset(REPORTER_AGENT_NAMES) | _names("reporter_agents"),
+        frozenset(_REPORTER_WITH_ARTIFACT_NAMES)
+        | _names("reporter_with_artifact_agents"),
+    )
+
+
+def _per_agent_findings(
+    agent: AgentDoc,
+    foundation_ngrams: set[str],
+    reporters: frozenset[str],
+    artifact_reporters: frozenset[str],
+) -> list[Finding]:
     """Run every per-agent check and return the combined finding list.
 
     Args:
         agent: Parsed agent.
         foundation_ngrams: Pre-computed FOUNDATION n-grams.
+        reporters: Effective reporter names.
+        artifact_reporters: Effective reporter-with-artifact names.
 
     Returns:
         Flat list of findings, in check order.
@@ -591,8 +661,8 @@ def _per_agent_findings(agent: AgentDoc, foundation_ngrams: set[str]) -> list[Fi
     findings.extend(_check_word_count(agent))
     findings.extend(_check_frontmatter(agent))
     findings.extend(_check_description_shape(agent))
-    findings.extend(_check_reporter_tools(agent))
-    findings.extend(_check_reporter_verified_at(agent))
+    findings.extend(_check_reporter_tools(agent, reporters, artifact_reporters))
+    findings.extend(_check_reporter_verified_at(agent, reporters))
     findings.extend(_check_required_sections(agent))
     findings.extend(_check_foundation_restatements(agent, foundation_ngrams))
     return findings
@@ -637,7 +707,7 @@ def _render_summary(agents: list[AgentDoc], findings: list[Finding]) -> str:
     return header + "\n" + "\n".join(rows)
 
 
-def run(scope: Scope, _roots: list[Path], config: AgentsConfig) -> int:
+def run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int:
     """Walk every agent file and emit findings to ``code_health/audit_agents.log``.
 
     ``scope`` is accepted for parity with other ``forge-audit-*`` CLIs but
@@ -646,8 +716,8 @@ def run(scope: Scope, _roots: list[Path], config: AgentsConfig) -> int:
 
     Args:
         scope: Audit scope (ignored).
-        _roots: Resolved scan roots (ignored — agents always live under
-            ``agents/``).
+        roots: Explicit scan roots from ``--roots``; empty scans the
+            default union of ``agents/`` and ``.claude/agents/``.
         config: Audit configuration (output path override).
 
     Returns:
@@ -680,16 +750,24 @@ def run(scope: Scope, _roots: list[Path], config: AgentsConfig) -> int:
     foundation_text = foundation_path.read_text(encoding="utf-8")
     foundation_ngrams = _ngrams(_tokens(foundation_text), SHARED_TOKEN_MIN)
 
-    agent_paths = _iter_agent_files(root)
+    agent_paths = _iter_agent_files(root, roots)
     if not agent_paths:
-        logger.info("No agent files under %s/agents", root)
+        scanned = (
+            ", ".join(str(r) for r in roots)
+            if roots
+            else " and ".join(f"{root}/{d}" for d in _DEFAULT_AGENT_DIRS)
+        )
+        logger.info("No agent files under %s", scanned)
         write_log("agents", [], "No agent files found.", output=config.output)
         return 0
     agents = [_parse_agent(p, root) for p in agent_paths]
 
+    reporters, artifact_reporters = _effective_reporter_sets(root)
     findings = []
     for agent in agents:
-        findings.extend(_per_agent_findings(agent, foundation_ngrams))
+        findings.extend(
+            _per_agent_findings(agent, foundation_ngrams, reporters, artifact_reporters)
+        )
     findings.extend(_cross_agent_duplicate_findings(agents))
 
     summary = _render_summary(agents, findings)
@@ -714,7 +792,9 @@ def main() -> int:
     args = parser.parse_args()
     scope = Scope(args.scope)
     config = AgentsConfig(output=args.output)
-    return run(scope, [], config)
+    root = repo_root()
+    roots = [(root / r).resolve() for r in (args.roots or []) if (root / r).is_dir()]
+    return run(scope, roots, config)
 
 
 if __name__ == "__main__":

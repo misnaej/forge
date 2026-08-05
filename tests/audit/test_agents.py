@@ -145,7 +145,11 @@ def test_check_reporter_tools_flags_write_edit() -> None:
         "tools": ("Read", "Edit", "Write"),
     }
     doc = _agent_doc(frontmatter=fm, path="agents/security-checker.md")
-    findings = audit_agents._check_reporter_tools(doc)
+    findings = audit_agents._check_reporter_tools(
+        doc,
+        frozenset(audit_agents.REPORTER_AGENT_NAMES),
+        frozenset(audit_agents._REPORTER_WITH_ARTIFACT_NAMES),
+    )
     assert {f.severity for f in findings} == {Severity.MEDIUM}
     assert any("'Edit'" in f.message for f in findings)
     assert any("'Write'" in f.message for f in findings)
@@ -158,7 +162,14 @@ def test_check_reporter_tools_skips_actor() -> None:
         "tools": ("Read", "Edit", "Write"),
     }
     doc = _agent_doc(frontmatter=fm, path="agents/git-commit-push.md")
-    assert audit_agents._check_reporter_tools(doc) == []
+    assert (
+        audit_agents._check_reporter_tools(
+            doc,
+            frozenset(audit_agents.REPORTER_AGENT_NAMES),
+            frozenset(audit_agents._REPORTER_WITH_ARTIFACT_NAMES),
+        )
+        == []
+    )
 
 
 def test_check_reporter_tools_skips_reporter_with_artifact() -> None:
@@ -169,20 +180,32 @@ def test_check_reporter_tools_skips_reporter_with_artifact() -> None:
             "tools": ("Read", "Edit", "Write"),
         }
         doc = _agent_doc(frontmatter=fm, path=f"agents/{name}.md")
-        assert audit_agents._check_reporter_tools(doc) == []
+        assert (
+            audit_agents._check_reporter_tools(
+                doc,
+                frozenset(audit_agents.REPORTER_AGENT_NAMES),
+                frozenset(audit_agents._REPORTER_WITH_ARTIFACT_NAMES),
+            )
+            == []
+        )
 
 
 def test_is_reporter_agent_matches_allowlist() -> None:
     """Filename stem in REPORTER_AGENT_NAMES → True."""
+    reporters = frozenset(audit_agents.REPORTER_AGENT_NAMES)
     for name in audit_agents.REPORTER_AGENT_NAMES:
-        assert audit_agents._is_reporter_agent(_agent_doc(path=f"agents/{name}.md"))
+        assert audit_agents._is_reporter_agent(
+            _agent_doc(path=f"agents/{name}.md"), reporters
+        )
 
 
 def test_is_reporter_agent_rejects_other_names() -> None:
     """Names outside the allowlist → False, even with reporter-shaped desc."""
     fm = {"description": "Reviews and reports on the diff."}
     doc = _agent_doc(frontmatter=fm, path="agents/pr-manager.md")
-    assert not audit_agents._is_reporter_agent(doc)
+    assert not audit_agents._is_reporter_agent(
+        doc, frozenset(audit_agents.REPORTER_AGENT_NAMES)
+    )
 
 
 def test_check_reporter_verified_at_flags_missing_header() -> None:
@@ -191,7 +214,9 @@ def test_check_reporter_verified_at_flags_missing_header() -> None:
         body="## Output\nplain report with no contract\n",
         path="agents/design-checker.md",
     )
-    findings = audit_agents._check_reporter_verified_at(doc)
+    findings = audit_agents._check_reporter_verified_at(
+        doc, frozenset(audit_agents.REPORTER_AGENT_NAMES)
+    )
     assert len(findings) == 1
     assert findings[0].severity == Severity.MEDIUM
     assert "verified-at" in findings[0].message
@@ -201,13 +226,23 @@ def test_check_reporter_verified_at_passes_when_header_present() -> None:
     """Body containing `verified-at:` yields zero findings."""
     body = "## Output\nFirst line: verified-at: <sha> (PR #N, branch x)\n"
     doc = _agent_doc(body=body, path="agents/security-checker.md")
-    assert audit_agents._check_reporter_verified_at(doc) == []
+    assert (
+        audit_agents._check_reporter_verified_at(
+            doc, frozenset(audit_agents.REPORTER_AGENT_NAMES)
+        )
+        == []
+    )
 
 
 def test_check_reporter_verified_at_skips_non_reporter() -> None:
     """Agents not in REPORTER_AGENT_NAMES are not subject to the contract."""
     doc = _agent_doc(body="no verified-at here\n", path="agents/pr-manager.md")
-    assert audit_agents._check_reporter_verified_at(doc) == []
+    assert (
+        audit_agents._check_reporter_verified_at(
+            doc, frozenset(audit_agents.REPORTER_AGENT_NAMES)
+        )
+        == []
+    )
 
 
 def test_check_required_sections_flags_missing() -> None:
@@ -375,3 +410,199 @@ def test_run_records_critical_finding_when_foundation_missing(
     log = (tmp_path / "code_health" / "audit_agents.log").read_text()
     assert "CRITICAL" in log
     assert "FOUNDATION.md not found" in log
+
+
+# ---------------------------------------------------------------------------
+# _iter_agent_files — default-dir union vs explicit --roots scoping
+# ---------------------------------------------------------------------------
+
+
+def test_iter_agent_files_unions_default_dirs(tmp_path: Path) -> None:
+    """No explicit roots → both default dirs (agents/, .claude/agents/) scanned."""
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / "shipped.md").write_text("# Shipped\n")
+    (tmp_path / ".claude" / "agents").mkdir(parents=True)
+    (tmp_path / ".claude" / "agents" / "consumer.md").write_text("# Consumer\n")
+
+    paths = audit_agents._iter_agent_files(tmp_path)
+
+    names = {p.name for p in paths}
+    assert names == {"shipped.md", "consumer.md"}
+
+
+def test_iter_agent_files_explicit_roots_scopes_to_given_roots(
+    tmp_path: Path,
+) -> None:
+    """Explicit `roots` restrict the scan to exactly those directories."""
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / "shipped.md").write_text("# Shipped\n")
+    custom = tmp_path / "custom"
+    custom.mkdir()
+    (custom / "only.md").write_text("# Only\n")
+
+    paths = audit_agents._iter_agent_files(tmp_path, [custom])
+
+    assert paths == [custom / "only.md"]
+
+
+def test_iter_agent_files_empty_roots_list_falls_back_to_defaults(
+    tmp_path: Path,
+) -> None:
+    """An empty `roots` list (falsy) falls back to the default dir union."""
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / "shipped.md").write_text("# Shipped\n")
+
+    paths = audit_agents._iter_agent_files(tmp_path, [])
+
+    assert paths == [tmp_path / "agents" / "shipped.md"]
+
+
+# ---------------------------------------------------------------------------
+# _effective_reporter_sets — consumer [tool.forge.audit_agents] union
+# ---------------------------------------------------------------------------
+
+
+def test_effective_reporter_sets_unions_consumer_config_onto_shipped(
+    tmp_path: Path,
+) -> None:
+    """A consumer `reporter_agents` list is unioned onto the shipped tuple."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.audit_agents]\nreporter_agents = ["custom-reporter"]\n'
+    )
+    reporters, _artifact_reporters = audit_agents._effective_reporter_sets(tmp_path)
+    assert reporters == frozenset(audit_agents.REPORTER_AGENT_NAMES) | {
+        "custom-reporter"
+    }
+
+
+def test_effective_reporter_sets_unions_artifact_reporters(tmp_path: Path) -> None:
+    """A consumer `reporter_with_artifact_agents` list unions onto the shipped set."""
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.audit_agents]\n"
+        'reporter_with_artifact_agents = ["custom-artifact-reporter"]\n'
+    )
+    _reporters, artifact_reporters = audit_agents._effective_reporter_sets(tmp_path)
+    assert artifact_reporters == frozenset(
+        audit_agents._REPORTER_WITH_ARTIFACT_NAMES
+    ) | {"custom-artifact-reporter"}
+
+
+def test_effective_reporter_sets_non_list_value_degrades_to_shipped_only(
+    tmp_path: Path,
+) -> None:
+    """A non-list `reporter_agents` value (e.g. a bare string) adds nothing."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.audit_agents]\nreporter_agents = "oops"\n'
+    )
+    reporters, _artifact_reporters = audit_agents._effective_reporter_sets(tmp_path)
+    assert reporters == frozenset(audit_agents.REPORTER_AGENT_NAMES)
+
+
+def test_effective_reporter_sets_non_string_items_dropped(tmp_path: Path) -> None:
+    """Non-string items in the consumer list are dropped, strings kept."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.audit_agents]\nreporter_agents = [1, 2, "valid-name"]\n'
+    )
+    reporters, _artifact_reporters = audit_agents._effective_reporter_sets(tmp_path)
+    assert reporters == frozenset(audit_agents.REPORTER_AGENT_NAMES) | {"valid-name"}
+
+
+def test_effective_reporter_sets_missing_config_returns_shipped_defaults(
+    tmp_path: Path,
+) -> None:
+    """No `[tool.forge.audit_agents]` section → exactly the shipped defaults."""
+    reporters, artifact_reporters = audit_agents._effective_reporter_sets(tmp_path)
+    assert reporters == frozenset(audit_agents.REPORTER_AGENT_NAMES)
+    assert artifact_reporters == frozenset(audit_agents._REPORTER_WITH_ARTIFACT_NAMES)
+
+
+# ---------------------------------------------------------------------------
+# run() roots param — default union vs explicit scoping
+# ---------------------------------------------------------------------------
+
+
+def test_run_roots_param_empty_scans_default_union(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`run(scope, [], config)` scans the default agents/ + .claude/agents/ union."""
+    (tmp_path / "FOUNDATION.md").write_text("Foundation text.")
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / "shipped.md").write_text("# Shipped\n\n## Workflow\nx\n")
+    (tmp_path / ".claude" / "agents").mkdir(parents=True)
+    (tmp_path / ".claude" / "agents" / "consumer.md").write_text(
+        "# Consumer\n\n## Workflow\nx\n"
+    )
+    monkeypatch.setattr("forge.audit.agents.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("forge.audit.common.repo_root", lambda: tmp_path)
+
+    rc = audit_agents.run(
+        audit_agents.Scope.FULL,
+        [],
+        audit_agents.AgentsConfig(output=tmp_path / "log.log"),
+    )
+
+    assert rc == 0
+    log = (tmp_path / "log.log").read_text()
+    assert "| shipped" in log
+    assert "| consumer" in log
+
+
+def test_run_roots_param_explicit_scopes_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`run(scope, [custom], config)` scans only the explicit root."""
+    (tmp_path / "FOUNDATION.md").write_text("Foundation text.")
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / "shipped.md").write_text("# Shipped\n\n## Workflow\nx\n")
+    custom = tmp_path / "custom"
+    custom.mkdir()
+    (custom / "only.md").write_text("# Only\n\n## Workflow\nx\n")
+    monkeypatch.setattr("forge.audit.agents.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("forge.audit.common.repo_root", lambda: tmp_path)
+
+    rc = audit_agents.run(
+        audit_agents.Scope.FULL,
+        [custom],
+        audit_agents.AgentsConfig(output=tmp_path / "log.log"),
+    )
+
+    assert rc == 0
+    log = (tmp_path / "log.log").read_text()
+    assert "| only" in log
+    assert "| shipped" not in log
+
+
+# ---------------------------------------------------------------------------
+# main() --roots argument resolution
+# ---------------------------------------------------------------------------
+
+
+def test_main_resolves_roots_arg_dropping_nonexistent_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`main()` resolves `--roots` to absolute paths, dropping nonexistent dirs.
+
+    SCENARIO: a consumer passes `--roots` naming one real and one
+        missing directory; only the real one reaches `run()`.
+    MOCK SETUP: `audit_agents.run` is patched to a recorder capturing its
+        `roots` argument instead of doing a real scan; `repo_root` is
+        patched to `tmp_path`. `sys.argv` requests both an existing
+        (`keepme`) and a nonexistent (`missing`) directory.
+    EXPECTED BEHAVIOR: the recorded `roots` list contains only the
+        resolved absolute path to `keepme`.
+    """
+    (tmp_path / "keepme").mkdir()
+    recorded: dict[str, object] = {}
+
+    def _fake_run(scope: object, roots: list, config: object) -> int:
+        recorded["roots"] = roots
+        return 0
+
+    monkeypatch.setattr("forge.audit.agents.repo_root", lambda: tmp_path)
+    monkeypatch.setattr(audit_agents, "run", _fake_run)
+
+    with patch("sys.argv", ["forge-audit-agents", "--roots", "keepme", "missing"]):
+        rc = audit_agents.main()
+
+    assert rc == 0
+    assert recorded["roots"] == [(tmp_path / "keepme").resolve()]

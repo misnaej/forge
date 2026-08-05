@@ -163,11 +163,14 @@ def test_attribution_blocks_plain_generated_with_claude() -> None:
     )
 
 
-def test_attribution_blocks_short_separator_before_claude() -> None:
-    """A short separator (`the `, 4 chars) between the verb and claude blocks.
+def test_attribution_blocks_generated_with_arbitrary_suffix() -> None:
+    """`generated with the claude model` blocks.
 
-    Documents the `.{0,4}` bound: `generated with the claude model` matches
-    because ` the ` is exactly four characters; this is intended.
+    The mechanism is the managed-block phrase alternation
+    (`ATTRIBUTION_PATTERNS`, mirrored from
+    `AI_ATTRIBUTION_PATTERNS`): the bare phrase `generated with` is one
+    of the alternatives, so any text containing it matches regardless
+    of what follows.
     """
     assert (
         _run_hook(_ATTRIBUTION, 'git commit -m "x\n\ngenerated with the claude model"')
@@ -175,15 +178,20 @@ def test_attribution_blocks_short_separator_before_claude() -> None:
     )
 
 
-def test_attribution_allows_benign_generated_prose() -> None:
-    """Benign prose ("generated with care") does not false-positive.
+def test_attribution_blocks_benign_generated_prose_by_design() -> None:
+    """Benign prose ("generated with care") is blocked too — by design.
 
-    `claude` is not within the `.{0,4}` window after the verb, so the
-    deliberately tiny bound keeps ordinary commit prose unblocked.
+    The phrase alternation matches the bare substring `generated with`
+    with no lookahead for `claude`, so it over-blocks relative to a
+    hypothetical narrower regex. This is the deliberate parity
+    trade-off with the Python phrase list
+    (`forge.pr_squash_comment.AI_ATTRIBUTION_PATTERNS`, same bare-phrase
+    match) — a false positive here is cheap to work around: reword the
+    prose, or use the `!` escape hatch for a human-run command.
     """
     assert (
         _run_hook(_ATTRIBUTION, 'git commit -m "this code was generated with care"')
-        == 0
+        == 2
     )
 
 

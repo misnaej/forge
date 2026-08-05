@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 667 symbols._
+_63 modules, 674 symbols._
 
 ## `forge`
 
@@ -35,19 +35,20 @@ _62 modules, 667 symbols._
 - `_check_word_count(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag agent bodies above the length budget.
 - `_check_frontmatter(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag missing required frontmatter keys.
 - `_check_description_shape(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag descriptions that read as role labels rather than routing triggers.
-- `_is_reporter_agent(agent: AgentDoc) -> bool` _(internal)_ — Return True when *agent* is in :data:`REPORTER_AGENT_NAMES`.
-- `_check_reporter_tools(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag reporter agents holding mutating tools (`Write`/`Edit`).
-- `_check_reporter_verified_at(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag reporter agents missing the ``verified-at:`` header instruction.
+- `_is_reporter_agent(agent: AgentDoc, reporters: frozenset[str]) -> bool` _(internal)_ — Return True when *agent* is in the effective reporter set.
+- `_check_reporter_tools(agent: AgentDoc, reporters: frozenset[str], artifact_reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Flag reporter agents holding mutating tools (`Write`/`Edit`).
+- `_check_reporter_verified_at(agent: AgentDoc, reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Flag reporter agents missing the ``verified-at:`` header instruction.
 - `_check_required_sections(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag missing canonical H2 sections.
 - `_tokens(text: str) -> list[str]` _(internal)_ — Return whitespace-split lowercase tokens of *text*.
 - `_ngrams(tokens: list[str], n: int) -> set[str]` _(internal)_ — Return the set of *n*-token windows from *tokens*.
 - `_check_foundation_restatements(agent: AgentDoc, foundation_ngrams: set[str]) -> list[Finding]` _(internal)_ — Flag substrings of ``SHARED_TOKEN_MIN`` tokens shared with FOUNDATION.
 - `_cross_agent_duplicate_findings(agents: list[AgentDoc]) -> list[Finding]` _(internal)_ — Flag n-grams that appear in two or more agent files.
 - `class AgentsConfig` — Configuration for ``forge-audit-agents``.
-- `_iter_agent_files(repo_root_path: Path) -> list[Path]` _(internal)_ — Return every public agent markdown file under ``agents/``.
-- `_per_agent_findings(agent: AgentDoc, foundation_ngrams: set[str]) -> list[Finding]` _(internal)_ — Run every per-agent check and return the combined finding list.
+- `_iter_agent_files(repo_root_path: Path, roots: list[Path] | None = None) -> list[Path]` _(internal)_ — Return every public agent markdown file under the scan roots.
+- `_effective_reporter_sets(repo_root_path: Path) -> tuple[frozenset[str], frozenset[str]]` _(internal)_ — Return the effective reporter / reporter-with-artifact name sets.
+- `_per_agent_findings(agent: AgentDoc, foundation_ngrams: set[str], reporters: frozenset[str], artifact_reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Run every per-agent check and return the combined finding list.
 - `_render_summary(agents: list[AgentDoc], findings: list[Finding]) -> str` _(internal)_ — Render the per-agent summary table for the log header.
-- `run(scope: Scope, _roots: list[Path], config: AgentsConfig) -> int` — Walk every agent file and emit findings to ``code_health/audit_agents.log``.
+- `run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int` — Walk every agent file and emit findings to ``code_health/audit_agents.log``.
 - `main() -> int` — CLI entry point for ``forge-audit-agents``.
 
 ## `forge.audit.all`
@@ -217,6 +218,7 @@ _62 modules, 667 symbols._
 - `class ForgeConfig` — Repo configuration sourced from ``[tool.forge]``.
   - `dual_track(self) -> bool` — Return ``True`` when base and dev are distinct branches.
 - `read_pyproject_raw(repo_root: Path) -> dict` — Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
+- `read_tool_forge_section(repo_root: Path, section: str = '') -> dict` — Return a ``[tool.forge.<section>]`` table, or ``{}`` when absent.
 - `_read_toml_file(path: Path) -> dict | None` _(internal)_ — Parse a standalone TOML file, degrading to ``None`` on any failure.
 - `resolve_model_section(repo_root: Path) -> dict | None` — Locate the C4 model table — external file or inline pyproject.
 - `load_config(repo_root: Path) -> ForgeConfig` — Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.
@@ -304,6 +306,15 @@ _62 modules, 667 symbols._
 - `count_symbols(digests: list[ModuleDigest]) -> int` — Return the total number of top-level symbols across all modules.
 - `render_digest(digests: list[ModuleDigest]) -> str` — Render the full API digest markdown document.
 - `main() -> int` — Generate or verify the API digest doc.
+
+## `forge.gen_attribution_patterns`
+
+> _Generate the AI-attribution alternation in ``block_claude_attribution.sh``._
+
+- `_alternation() -> str` _(internal)_ — Render ``AI_ATTRIBUTION_PATTERNS`` as a ``|``-joined regex alternation.
+- `_expected_line() -> str` _(internal)_ — Return the canonical ``ATTRIBUTION_PATTERNS='...'`` shell line.
+- `_rewrite(content: str) -> str` _(internal)_ — Return *content* with the managed block updated to the canonical line.
+- `main() -> int` — Entry point for ``forge-gen-attribution-patterns``.
 
 ## `forge.gen_c4`
 
@@ -674,6 +685,7 @@ _62 modules, 667 symbols._
 - `step_repo_structure(repo_root: Path) -> StepResult` — Run ``verify-forge-repo-structure``; hard-fail if missing (FOUNDATION §2).
 - `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
+- `step_attribution_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-attribution-patterns --check`` — managed-block parity guard.
 - `step_c4(repo_root: Path) -> StepResult` — Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
 - `step_api_digest_check(repo_root: Path) -> StepResult` — Run ``forge-gen-api-digest --check`` — api-digest drift guard (opt-in).
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.

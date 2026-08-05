@@ -308,6 +308,29 @@ def test_step_commit_types_parity_hard_fails_when_cli_missing(
     assert exc_info.value.code == 2
 
 
+def test_step_attribution_parity_skipped_when_hook_absent(
+    tmp_path: Path,
+) -> None:
+    """step_attribution_parity is skipped when the shell hook file is absent."""
+    result = precommit.step_attribution_parity(tmp_path)
+    assert result.skipped
+    assert result.passed
+
+
+def test_step_attribution_parity_hard_fails_when_cli_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """step_attribution_parity exits 2 if forge-gen-attribution-patterns missing."""
+    hooks_dir = tmp_path / "claude-hooks"
+    hooks_dir.mkdir()
+    (hooks_dir / "block_claude_attribution.sh").write_text("#!/usr/bin/env bash\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit) as exc_info:
+        precommit.step_attribution_parity(tmp_path)
+    assert exc_info.value.code == 2
+
+
 def test_step_manifest_json_shells_out_to_verify_forge_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

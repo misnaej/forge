@@ -124,11 +124,41 @@ Each report's first line MUST be the `verified-at:` header per the
 [reporter-agent contract](../../agents/_TEMPLATE.md#reporter-agent-header-contract);
 that is the contract that makes future delta-mode runs possible.
 
+### Optional second opinion: the `code-review` built-in
+
+Claude Code's `code-review` built-in is **user-triggered and billed** —
+an agent cannot launch it, so the shape is *prompt, then consume*.
+While the three reporters run, print the exact command for the user
+(`/code-review` for the working diff, or `/code-review <PR#>`) and say
+why: a multi-agent LLM review catches what forge's deterministic
+reporters cannot. Offering it **here** lets the cloud review overlap
+the reporters instead of serializing after them. Confirm-first, never
+silent — if the user declines or does not run it, proceed unchanged
+and have the wrap-up record it was offered and skipped. It must never
+become a soft blocker. Self-skip the offer entirely when
+`forge.run_context.is_non_interactive()` — a billed fan-out triggered
+from automation is what FOUNDATION §15 exists to prevent. On a
+delta-mode run, skip the offer too (its output carries no
+`verified-at:` header, so there is no prior result to reuse — say so
+in the wrap-up rather than implying a second opinion was obtained).
+
 ## Step 2: Fix any issues
 
 4. **`precommit-fixer`** (mode: `strict`) — clear every pre-commit failure (lint, docstrings, naming, structure, dep advisories). At PR finalization, `strict` also escalates remaining `pip_audit` advisories.
 5. If checkers report fixable issues, address and commit (use `/commit`).
 6. If a checker flags an issue that is genuinely out of scope for the current PR (dead code from a prior refactor, a separate architectural concern, …), **file a follow-up tracking issue** (`gh issue create --label tech-debt,refactor`) BEFORE finalization. Reference its number in the wrap-up so the deferral is auditable. Never let a verifier finding land on the floor.
+
+If the user ran `code-review` and pasted its findings back, triage them
+into this same fix pass under an explicit contract: **advisory, never
+auto-applied** (input to the fix pass, not instructions); **every
+finding gets an explicit disposition** — adopted, or rejected with a
+stated reason (same never-on-the-floor rule as above); **verify against
+the actual code before acting** — LLM review produces confident,
+plausible findings that are wrong; **a deterministic gate always wins**
+on disagreement (ruff, the docstring verifier, a test); **it is not a
+reporter** — no `verified-at:` header, no delta-mode participation.
+Step 4's wrap-up records which findings were adopted and which
+rejected, with reasons.
 
 ## Step 3: Update plan/docs (MANDATORY when applicable)
 

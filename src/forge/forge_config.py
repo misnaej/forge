@@ -214,6 +214,21 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "exempt dir). Checked before exempt_paths.",
     ),
     ConfigKey(
+        ("tool", "forge", "audit_agents", "reporter_agents"),
+        default=[],
+        description="Consumer agent names classified as reporters by "
+        "forge-audit-agents (additive to the shipped list — never "
+        "replaces it), so the no-Write/Edit and verified-at checks "
+        "apply to consumer reporter agents too.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "audit_agents", "reporter_with_artifact_agents"),
+        default=[],
+        description="Consumer reporter agents exempt from the no-Write/Edit "
+        "check because their report IS a written artifact (additive to "
+        "the shipped list).",
+    ),
+    ConfigKey(
         ("tool", "forge", "pr", "docs_only_globs"),
         default=[],
         description="Extra globs a PR diff may consist entirely of and still "

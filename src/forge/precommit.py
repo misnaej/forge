@@ -198,8 +198,7 @@ def _forge_step_config(repo_root: Path, step: str) -> dict[str, object]:
     Returns:
         The subsection dict, or ``{}`` when any level is missing.
     """
-    data = config.read_pyproject_raw(repo_root)
-    return ((data.get("tool") or {}).get("forge") or {}).get(step) or {}
+    return config.read_tool_forge_section(repo_root, step)
 
 
 def _resolve_scope(repo_root: Path, step: str) -> str:
@@ -758,6 +757,38 @@ def step_commit_types_parity(repo_root: Path) -> StepResult:
     require_cli("forge-gen-commit-types", caller="forge-precommit")
     passed, output = _run(["forge-gen-commit-types", "--check"], cwd=repo_root)
     return StepResult(name="commit_types_parity", passed=passed, output=output)
+
+
+def step_attribution_parity(repo_root: Path) -> StepResult:
+    """Run ``forge-gen-attribution-patterns --check`` — managed-block parity guard.
+
+    Verifies the AI-attribution alternation in
+    ``claude-hooks/block_claude_attribution.sh`` matches the canonical
+    ``AI_ATTRIBUTION_PATTERNS`` tuple in ``forge.pr_squash_comment`` —
+    the same mechanism as :func:`step_commit_types_parity`. Self-skips
+    when the hook file is absent (consumer repos without the forge
+    Claude-plugin layout).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` mirroring the CLI exit code, or a skipped result
+        when ``claude-hooks/block_claude_attribution.sh`` is absent.
+
+    Raises:
+        SystemExit: If ``forge-gen-attribution-patterns`` is not on PATH.
+    """
+    if not (repo_root / "claude-hooks" / "block_claude_attribution.sh").is_file():
+        return StepResult(
+            name="attribution_parity",
+            passed=True,
+            output="(no claude-hooks/block_claude_attribution.sh — skipped)",
+            skipped=True,
+        )
+    require_cli("forge-gen-attribution-patterns", caller="forge-precommit")
+    passed, output = _run(["forge-gen-attribution-patterns", "--check"], cwd=repo_root)
+    return StepResult(name="attribution_parity", passed=passed, output=output)
 
 
 def step_c4(repo_root: Path) -> StepResult:
@@ -1961,6 +1992,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("cli_wiring", step_cli_wiring, tree_content=True),
     StepDef("agent_doc", step_agent_doc, tree_content=True),
     StepDef("commit_types_parity", step_commit_types_parity, tree_content=True),
+    StepDef("attribution_parity", step_attribution_parity, tree_content=True),
     StepDef("plugin_version", step_plugin_version, tree_content=False),
     StepDef("release_tag_guard", step_release_tag_guard, tree_content=False),
     StepDef("changelog_history", step_changelog_history, tree_content=False),

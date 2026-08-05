@@ -283,6 +283,21 @@ options:
   --check              Verify docs/api-digest.md is in sync; do not write.
 ```
 
+## forge-gen-attribution-patterns
+
+```text
+usage: forge-gen-attribution-patterns [-h] [--check]
+
+Regenerate the AI-attribution alternation in claude-
+hooks/block_claude_attribution.sh from the canonical AI_ATTRIBUTION_PATTERNS
+tuple in forge.pr_squash_comment.
+
+options:
+  -h, --help  show this help message and exit
+  --check     Verify the managed block matches the canonical alternation
+              without writing. Exit 1 on drift.
+```
+
 ## forge-gen-c4
 
 ```text
@@ -466,6 +481,18 @@ options:
                         CI mode — see docs/ci-recipe.md.
   --dry-run             Report the tag that would be cut and exit without
                         tagging.
+```
+
+## forge-resync
+
+```text
+usage: forge-resync [-h]
+
+Regenerate forge-managed artifacts and open a dedup-guarded resync PR when
+they drifted.
+
+options:
+  -h, --help  show this help message and exit
 ```
 
 ## forge-slow-tests-report

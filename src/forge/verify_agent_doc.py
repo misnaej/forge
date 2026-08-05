@@ -42,6 +42,7 @@ import sys
 import tomllib
 from typing import TYPE_CHECKING
 
+from forge.config import read_tool_forge_section
 from forge.git_utils import capturing_to_step_log, configure_cli_logging, repo_root
 
 
@@ -72,11 +73,7 @@ def _config_doc_path(root: Path) -> str | None:
         The repo-relative path string under ``[tool.forge.agent_doc].path``,
         or ``None`` when the key (or its table) is absent.
     """
-    pyproject = root / "pyproject.toml"
-    if not pyproject.is_file():
-        return None
-    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    table = data.get("tool", {}).get("forge", {}).get("agent_doc", {})
+    table = read_tool_forge_section(root, "agent_doc")
     path = table.get("path")
     return path if isinstance(path, str) and path else None
 

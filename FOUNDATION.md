@@ -721,6 +721,12 @@ precedence over the plugin-shipped versions, making the canonical `forge:<X>`
 invocation unreachable. Always use a distinct name. (Same rule as §3, extended to
 skills and pre-commit logic.)
 
+A shipped skill or agent name must also not collide with a **Claude Code
+built-in** command (`review`, `code-review`, `security-review`, `init`, `run`,
+`simplify`, …). The built-in wins the bare invocation, and no repo-level
+documentation can rebind it — resolve the collision by naming, never by
+instruction.
+
 ### Pattern A — agent wrapper
 
 Consumer creates `.claude/agents/<base>-<scope>.md` that delegates via the `Task`

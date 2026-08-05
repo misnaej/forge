@@ -558,8 +558,7 @@ def _check_step_tools(repo_root: Path) -> list[CheckResult]:
         failing when the tool is missing. Empty when no such step is
         enabled.
     """
-    raw = config.read_pyproject_raw(repo_root)
-    precommit = ((raw.get("tool") or {}).get("forge") or {}).get("precommit") or {}
+    precommit = config.read_tool_forge_section(repo_root, "precommit")
     enabled = precommit.get("enable")
     if not isinstance(enabled, list):
         return []

@@ -188,6 +188,33 @@ def read_pyproject_raw(repo_root: Path) -> dict:
         return {}
 
 
+def read_tool_forge_section(repo_root: Path, section: str = "") -> dict:
+    """Return a ``[tool.forge.<section>]`` table, or ``{}`` when absent.
+
+    The single navigation point for the ``tool → forge → <section>``
+    lookup (FOUNDATION §12) — every module that previously hand-rolled
+    the two-level ``.get`` chain routes here. An empty *section* returns
+    the whole ``[tool.forge]`` table. Forgiving like
+    :func:`read_pyproject_raw`: any missing level degrades to ``{}``.
+
+    Args:
+        repo_root: Git repo root containing ``pyproject.toml``.
+        section: Subsection name (e.g. ``"precommit"``, ``"pr"``), or
+            empty for the whole ``[tool.forge]`` table.
+
+    Returns:
+        The requested table, or ``{}`` when any level is missing or not
+        a table.
+    """
+    forge = (read_pyproject_raw(repo_root).get("tool") or {}).get("forge") or {}
+    if not isinstance(forge, dict):
+        return {}
+    if not section:
+        return forge
+    sub = forge.get(section) or {}
+    return sub if isinstance(sub, dict) else {}
+
+
 DEFAULT_C4_MODEL_FILE = "c4.toml"
 
 
@@ -231,9 +258,7 @@ def resolve_model_section(repo_root: Path) -> dict | None:
         The model table dict, or ``None`` when C4 generation is not opted
         into (no section, no file, and no inline ``system``).
     """
-    section = (
-        read_pyproject_raw(repo_root).get("tool", {}).get("forge", {}).get("c4", {})
-    )
+    section = read_tool_forge_section(repo_root, "c4")
     configured = section.get("config")
     if configured:
         candidate = (repo_root / configured).resolve()
@@ -268,7 +293,7 @@ def load_config(repo_root: Path) -> ForgeConfig:
         single-branch flow. Override ``dev_branch`` in
         ``[tool.forge]`` to opt in.
     """
-    section = read_pyproject_raw(repo_root).get("tool", {}).get("forge", {})
+    section = read_tool_forge_section(repo_root)
     source_dirs = (
         list(section["source_dirs"])
         if "source_dirs" in section
@@ -355,7 +380,7 @@ def resolve_tool_roots(
         Existing in-repo directory paths to scan, de-duplicated. ``[]`` when
         nothing resolves (the caller decides whether that is a skip).
     """
-    forge = read_pyproject_raw(repo_root).get("tool", {}).get("forge", {})
+    forge = read_tool_forge_section(repo_root)
     tool_section = forge.get(tool)
     if isinstance(tool_section, dict):
         granular = tool_section.get("paths")
