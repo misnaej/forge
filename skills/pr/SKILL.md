@@ -199,7 +199,7 @@ network tools (`curl`/`wget`), destructive commands (`rm -rf`), or
 anything that touches secrets. List the candidates, get user
 confirmation, then edit `settings.json` — the change rides in this PR.
 
-## Step 3.9: Print a run summary to the terminal (before delegating)
+## Step 3.9: Print a run summary to the terminal (MANDATORY, before delegating)
 
 Subagent reports are not shown to the user — only the main agent's own
 text reaches the terminal. Before delegating to `pr-manager`, print a
@@ -215,7 +215,9 @@ This is "what happened during this run" — NOT a restatement of the PR
 description or the wrap-up comment (both owned by `pr-manager`). It
 runs **before** delegation because that is the last point where the
 user can redirect finalization cheaply, and it is the context they
-need to judge the wrap-up that follows.
+need to judge the wrap-up that follows. (On the delta-mode
+short-circuit — Step 1 straight to Step 4 — this step is skipped with
+the rest of Steps 2–3.5; summarize the delta decision instead.)
 
 ## Step 4: Finalize via `pr-manager` (MANDATORY)
 
@@ -269,5 +271,6 @@ The squash-merge message becomes the permanent commit message on `main`.
 
 - Do NOT auto-merge unless the user explicitly asks.
 - Both the squash-merge message and wrap-up comment are MANDATORY — `pr-manager` enforces this.
+- The Step 3.9 terminal run summary is MANDATORY on the full path (skipped only by the delta-mode short-circuit) — subagent reports never reach the user; this is the run's only terminal-visible account.
 - NEVER add Claude/AI attribution in any PR content.
 - If `$ARGUMENTS` contains a PR number, use it instead of auto-detecting.
