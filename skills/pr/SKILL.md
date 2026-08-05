@@ -199,6 +199,24 @@ network tools (`curl`/`wget`), destructive commands (`rm -rf`), or
 anything that touches secrets. List the candidates, get user
 confirmation, then edit `settings.json` — the change rides in this PR.
 
+## Step 3.9: Print a run summary to the terminal (before delegating)
+
+Subagent reports are not shown to the user — only the main agent's own
+text reaches the terminal. Before delegating to `pr-manager`, print a
+**short** orientation summary of this finalization run:
+
+- What the PR changes and why (one or two sentences).
+- The commits on the branch (`git log origin/<base>..HEAD --oneline`).
+- Each verifier finding and its disposition (fixed in `<sha>` /
+  deferred to `#<issue>` / accepted, with one clause of reasoning).
+- Anything deliberately deferred, with its tracking issue number.
+
+This is "what happened during this run" — NOT a restatement of the PR
+description or the wrap-up comment (both owned by `pr-manager`). It
+runs **before** delegation because that is the last point where the
+user can redirect finalization cheaply, and it is the context they
+need to judge the wrap-up that follows.
+
 ## Step 4: Finalize via `pr-manager` (MANDATORY)
 
 16. Delegate finalization. **Pass the Step 1 reports verbatim in the prompt** so `pr-manager` does not re-run the same three verification agents — see [agents/pr-manager.md "Pre-run reports" note](../../agents/pr-manager.md). Two passes per PR is pure waste.
