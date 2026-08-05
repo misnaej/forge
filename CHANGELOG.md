@@ -22,6 +22,24 @@ versions follow forge's rolling-next convention.
 
 ## v2.30.0 — Unreleased
 
+### Features
+- **`/pr` prints a terminal run summary before delegating to
+  `pr-manager`.** Subagent reports never reach the user's terminal, so
+  the first human-readable account of a finalization previously
+  appeared only on the PR page. The new pre-delegation step summarizes
+  the run — changes, branch commits, per-finding disposition,
+  deferrals — at the last point where finalization can be redirected
+  cheaply. `pr-manager`'s doc now states its report is
+  orchestrator-facing and must be relayed to be seen.
+- **`/next` resumes a `Requires:`-linked sequence after a merge.** A
+  new phase scans the recent merge window for closed issues and
+  proposes the single open issue whose `Requires:` line they satisfy
+  (confirm-first, never auto-selected; issue numbers validated as bare
+  integers — PR bodies are untrusted). Task-selection bypasses are now
+  one ordered precedence rule: explicit issue argument > user-named
+  carry-over > inferred successor; the explicit-argument path also
+  stops detouring through `recommend-next`.
+
 ### Fixes
 - **`forge-resync` works end-to-end on fresh CI runners and gated
   consumers.** Its commit now routes through the git-write layer's
