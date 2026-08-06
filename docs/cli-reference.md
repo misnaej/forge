@@ -286,16 +286,7 @@ options:
 ## forge-gen-attribution-patterns
 
 ```text
-usage: forge-gen-attribution-patterns [-h] [--check]
-
-Regenerate the AI-attribution alternation in claude-
-hooks/block_claude_attribution.sh from the canonical AI_ATTRIBUTION_PATTERNS
-tuple in forge.pr_squash_comment.
-
-options:
-  -h, --help  show this help message and exit
-  --check     Verify the managed block matches the canonical alternation
-              without writing. Exit 1 on drift.
+(--help unavailable for forge-gen-attribution-patterns)
 ```
 
 ## forge-gen-c4

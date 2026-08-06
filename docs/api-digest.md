@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_64 modules, 679 symbols._
+_62 modules, 670 symbols._
 
 ## `forge`
 
@@ -308,15 +308,6 @@ _64 modules, 679 symbols._
 - `render_digest(digests: list[ModuleDigest]) -> str` — Render the full API digest markdown document.
 - `main() -> int` — Generate or verify the API digest doc.
 
-## `forge.gen_attribution_patterns`
-
-> _Generate the AI-attribution alternation in ``block_claude_attribution.sh``._
-
-- `_alternation() -> str` _(internal)_ — Render ``AI_ATTRIBUTION_PATTERNS`` as a ``|``-joined regex alternation.
-- `_expected_line() -> str` _(internal)_ — Return the canonical ``ATTRIBUTION_PATTERNS='...'`` shell line.
-- `_rewrite(content: str) -> str` _(internal)_ — Return *content* with the managed block updated to the canonical line.
-- `main() -> int` — Entry point for ``forge-gen-attribution-patterns``.
-
 ## `forge.gen_c4`
 
 > _Generate a C4 architecture model as Structurizr DSL._
@@ -596,15 +587,6 @@ _64 modules, 679 symbols._
 - `_get_readme_path(root: Path) -> tuple[Path | None, int]` _(internal)_ — Load and validate the README path from config.
 - `main() -> int` — CLI entry point.
 
-## `forge.managed_block`
-
-> _Shared engine for marker-delimited managed blocks in shell hooks._
-
-- `class BlockSpec` — Specification for a managed block in a shell hook.
-- `_block_re(marker: str, var_name: str) -> re.Pattern[str]` _(internal)_ — Compile the managed-block pattern for *marker* / *var_name*.
-- `rewrite_block(content: str, *, marker: str, var_name: str, value: str) -> str` — Return *content* with the managed assignment set to *value*.
-- `check_or_write(path: Path, *, spec: BlockSpec, check: bool) -> int` — Run the shared check-or-write flow for one managed block.
-
 ## `forge.next_prep`
 
 > _forge-next-prep — prepare main for the next task (fetch, pull, tag, prune)._
@@ -695,7 +677,6 @@ _64 modules, 679 symbols._
 - `step_repo_structure(repo_root: Path) -> StepResult` — Run ``verify-forge-repo-structure``; hard-fail if missing (FOUNDATION §2).
 - `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
-- `step_attribution_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-attribution-patterns --check`` — managed-block parity guard.
 - `step_c4(repo_root: Path) -> StepResult` — Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
 - `step_api_digest_check(repo_root: Path) -> StepResult` — Run ``forge-gen-api-digest --check`` — api-digest drift guard (opt-in).
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.

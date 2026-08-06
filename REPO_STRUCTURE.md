@@ -55,10 +55,8 @@ Code.
      digest generator
    - gen_c4.py: `forge-gen-c4` — emits a C4 architecture model from the import graph + a `[tool.forge.c4]` / `c4.toml` model skeleton; `--format dsl` (Structurizr + managed README block), `--format html` (self-contained offline **per-view tabbed** Mermaid view laid out by the **ELK** engine, vendored `mermaid.min.js` + ELK loader, dagre fallback; `direction`/`edges` config; any-element `[[relationship]]` endpoints), `--format pdf` (vector PDF via an already-installed headless browser) / `--format svg` (one vector SVG per view, same browser path), `--format mermaid` (raw); `--check` drift mode backs the opt-in `c4` pre-commit step; opt-in, self-skips when unconfigured
    - gen_commit_types.py: `forge-gen-commit-types` — generates the conventional-commit type list managed block (parity with pr_squash_comment)
-   - gen_attribution_patterns.py: `forge-gen-attribution-patterns` — generates the AI-attribution alternation managed block in `claude-hooks/block_claude_attribution.sh` (parity with pr_squash_comment's `AI_ATTRIBUTION_PATTERNS`); backs the `attribution_parity` pre-commit step
    - gen_common.py: shared drift-check helper for the `forge-gen-*`
      doc generators
-   - managed_block.py: shared marker-delimited managed-block engine (block grammar + check-or-write flow) used by `gen_commit_types` and `gen_attribution_patterns` so the grammar cannot drift between them
    - doctor.py: `forge-doctor` — environment diagnostics
    - install_githooks.py: `install-forge-githooks` — git hook installer (managed marker carries `body-sha` only — never the forge version, so wrappers stay byte-stable across bumps; the version lives in the gitignored `.forge-hook-version` sidecar; modified wrappers survive refresh)
    - post_merge.py: `forge-post-merge` — managed post-merge git-hook entrypoint (foundation drift check + backgrounded self-refresh of hook wrappers)
@@ -178,7 +176,6 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_doctor.py: tests for doctor
    - test_fix_ruff.py: tests for fix_ruff
    - test_gen_api_digest.py: tests for gen_api_digest
-   - test_gen_attribution_patterns.py: tests for gen_attribution_patterns
    - test_gen_c4.py: tests for gen_c4 (C4 / Structurizr DSL generator)
    - test_gen_cli_reference.py: tests for gen_cli_reference
    - test_gen_commit_types.py: tests for gen_commit_types
