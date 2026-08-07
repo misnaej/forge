@@ -23,7 +23,7 @@ Branches by task — see the `## Task: <name>` sections. The caller's prompt nam
 
 ## Output
 
-Per-task report templates live in each `## Task: <name>` section below. Common shapes: **Fetch / Categorize** — structured comment list (id + file:line + category + content); **Verification (Wrap-up)** — two PR comments, wrap-up plus squash-merge (validated + fence-wrapped via `forge-pr-squash-comment`); **Reply / Description / Issue creation** — gh-side artifact posted, return the URL or comment id.
+Per-task report templates live in each `## Task: <name>` section below. Common shapes: **Fetch / Categorize** — structured comment list (id + file:line + category + content); **Verification (Wrap-up)** — two PR comments, wrap-up plus squash-merge (validated + fence-wrapped via `forge-pr-squash-comment`); **Reply / Description / Issue creation** — gh-side artifact posted, return the URL or comment id. This report reaches the **orchestrator** (the calling agent), never the user's terminal directly — a caller that wants the user to see it must relay it (the `/pr` skill prints its own pre-delegation run summary for exactly this reason).
 
 ## Task: Fetch & Summarize PR
 

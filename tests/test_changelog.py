@@ -7,6 +7,7 @@ shared by ``verify-forge-changelog-history``, ``forge-next-prep``, and
 
 from __future__ import annotations
 
+import re
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -302,6 +303,33 @@ def test_action_items_skips_action_under_unrecognized_heading() -> None:
 
 
 # ---------------------------------------------------------------------------
+# NO_VERSION_BRANCH_TOKEN / NO_VERSION_COMMIT_MARKER constants
+# ---------------------------------------------------------------------------
+#
+# Public because writers (e.g. forge-resync branding its own branch/commit)
+# import them instead of re-spelling the literals — these tests pin the
+# spelling so reader (wants_no_version) and writer can never drift apart.
+
+
+def test_no_version_branch_token_value() -> None:
+    """`NO_VERSION_BRANCH_TOKEN` is the public `"no-version"` spelling."""
+    assert changelog.NO_VERSION_BRANCH_TOKEN == "no-version"  # noqa: S105
+
+
+def test_no_version_commit_marker_value() -> None:
+    """`NO_VERSION_COMMIT_MARKER` is the public `"[no-version]"` spelling."""
+    assert changelog.NO_VERSION_COMMIT_MARKER == "[no-version]"
+
+
+def test_no_version_branch_re_derived_from_token_constant() -> None:
+    """`_NO_VERSION_BRANCH_RE` is built from the public token, not a re-spelling."""
+    assert (
+        re.escape(changelog.NO_VERSION_BRANCH_TOKEN)
+        in changelog._NO_VERSION_BRANCH_RE.pattern
+    )
+
+
+# ---------------------------------------------------------------------------
 # wants_no_version
 # ---------------------------------------------------------------------------
 #
@@ -399,6 +427,38 @@ def test_wants_no_version_branch_token_non_delimited_no_match(
     monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
     _checkout_branch(git_repo, "fix/no-versioning")
     assert changelog.wants_no_version(git_repo) is None
+
+
+def test_wants_no_version_matches_resync_branch_and_commit_shape(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact shapes forge-resync emits actually fire `wants_no_version`.
+
+    forge-resync brands its branch
+    `chore/forge-resync-{version}-{NO_VERSION_BRANCH_TOKEN}` and its
+    commit `chore: resync forge-managed artifacts ({version})
+    {NO_VERSION_COMMIT_MARKER}` — pin both against the real detector, not
+    just the constants, so a spelling drift between resync and changelog
+    breaks a test instead of silently disabling resync's own opt-out.
+    """
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+
+    branch = f"chore/forge-resync-1.2.3-{changelog.NO_VERSION_BRANCH_TOKEN}"
+    _checkout_branch(git_repo, branch)
+    branch_signal = changelog.wants_no_version(git_repo)
+    assert branch_signal is not None
+    assert branch in branch_signal
+
+    _checkout_branch(git_repo, "feat/other")
+    _commit(
+        git_repo,
+        f"chore: resync forge-managed artifacts (1.2.3) "
+        f"{changelog.NO_VERSION_COMMIT_MARKER}",
+    )
+    commit_signal = changelog.wants_no_version(git_repo)
+    assert commit_signal is not None
+    assert changelog.NO_VERSION_COMMIT_MARKER in commit_signal
 
 
 def test_wants_no_version_github_head_ref_fallback_when_detached(

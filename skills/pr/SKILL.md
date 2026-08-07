@@ -73,6 +73,7 @@ finalizing (a finalize on a now-stale CI run is misleading).
 **Docs-only light path — check FIRST, before delta mode.** Classify the
 PR diff with `pr_delta.docs_only_diff` (`git diff --name-only
 origin/<base>...HEAD` against the built-in `DOCS_ONLY_GLOBS` plus
+`pr_delta.configured_docs_only_globs(repo_root)`, the reader for
 `[tool.forge.pr].docs_only_globs`; any high-blast-radius path —
 `agents/`, `skills/`, `claude-hooks/`, `.claude-plugin/`, configs —
 disqualifies, since doc-shaped files there ARE shipped behavior). When
@@ -198,6 +199,26 @@ network tools (`curl`/`wget`), destructive commands (`rm -rf`), or
 anything that touches secrets. List the candidates, get user
 confirmation, then edit `settings.json` — the change rides in this PR.
 
+## Step 3.9: Print a run summary to the terminal (MANDATORY, before delegating)
+
+Subagent reports are not shown to the user — only the main agent's own
+text reaches the terminal. Before delegating to `pr-manager`, print a
+**short** orientation summary of this finalization run:
+
+- What the PR changes and why (one or two sentences).
+- The commits on the branch (`git log origin/<base>..HEAD --oneline`).
+- Each verifier finding and its disposition (fixed in `<sha>` /
+  deferred to `#<issue>` / accepted, with one clause of reasoning).
+- Anything deliberately deferred, with its tracking issue number.
+
+This is "what happened during this run" — NOT a restatement of the PR
+description or the wrap-up comment (both owned by `pr-manager`). It
+runs **before** delegation because that is the last point where the
+user can redirect finalization cheaply, and it is the context they
+need to judge the wrap-up that follows. (On the delta-mode
+short-circuit — Step 1 straight to Step 4 — this step is skipped with
+the rest of Steps 2–3.5; summarize the delta decision instead.)
+
 ## Step 4: Finalize via `pr-manager` (MANDATORY)
 
 16. Delegate finalization. **Pass the Step 1 reports verbatim in the prompt** so `pr-manager` does not re-run the same three verification agents — see [agents/pr-manager.md "Pre-run reports" note](../../agents/pr-manager.md). Two passes per PR is pure waste.
@@ -250,5 +271,6 @@ The squash-merge message becomes the permanent commit message on `main`.
 
 - Do NOT auto-merge unless the user explicitly asks.
 - Both the squash-merge message and wrap-up comment are MANDATORY — `pr-manager` enforces this.
+- The Step 3.9 terminal run summary is MANDATORY on the full path (skipped only by the delta-mode short-circuit) — subagent reports never reach the user; this is the run's only terminal-visible account.
 - NEVER add Claude/AI attribution in any PR content.
 - If `$ARGUMENTS` contains a PR number, use it instead of auto-detecting.

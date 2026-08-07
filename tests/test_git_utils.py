@@ -849,6 +849,194 @@ def test_create_annotated_tag_succeeds_with_no_git_identity_configured(
 
 
 # ---------------------------------------------------------------------------
+# create_commit
+# ---------------------------------------------------------------------------
+
+
+def test_create_commit_default_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A usable identity (non-empty probe) → plain ``commit -m`` argv, no ``-c``."""
+    captured: list[tuple[str, ...]] = []
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        captured.append(args)
+        return "t <t@t> 0 +0000" if args[:2] == ("var", "GIT_COMMITTER_IDENT") else ""
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    git_utils.create_commit(tmp_path, "chore: resync")
+    assert captured[-1] == ("commit", "-m", "chore: resync")
+
+
+def test_create_commit_prepends_fallback_identity_when_probe_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty identity probe → the ``-c`` flags land ahead of ``commit`` in argv."""
+    captured: list[tuple[str, ...]] = []
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        captured.append(args)
+        return ""
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    git_utils.create_commit(tmp_path, "chore: resync")
+    assert captured[-1] == (
+        "-c",
+        "user.name=forge-release",
+        "-c",
+        "user.email=forge-release@users.noreply.github.com",
+        "commit",
+        "-m",
+        "chore: resync",
+    )
+
+
+def test_create_commit_passes_message_through_unmodified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A message with spaces and brackets stays one untouched argv element."""
+    captured: list[tuple[str, ...]] = []
+    message = "chore: resync (1.2.3) [no-version]"
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        captured.append(args)
+        return "t <t@t> 0 +0000" if args[:2] == ("var", "GIT_COMMITTER_IDENT") else ""
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    git_utils.create_commit(tmp_path, message)
+    assert captured[-1] == ("commit", "-m", message)
+
+
+def test_create_commit_succeeds_with_no_git_identity_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: a fresh CI runner with no git identity anywhere commits via forge.
+
+    MOCK SETUP: ``_fallback_identity_args`` is pinned to return the
+        production ``_FALLBACK_IDENTITY`` flags unconditionally — the
+        identity-less *probe* result cannot be forced portably (a dev
+        machine auto-detects an identity from ``getpwuid``/hostname, and
+        empty-string identity env vars would defeat ``-c`` flags too, so
+        even the fix could not commit). Everything downstream is real
+        git: config sources scrubbed (``HOME``, ``GIT_CONFIG_*``),
+        identity env vars unset, repo history created with inline ``-c``
+        identity, a file staged.
+    EXPECTED BEHAVIOR: ``create_commit`` does not raise, and the new
+        commit's committer identity is the injected ``forge-release``
+        identity with the exact message passed through — proving the
+        production fallback flags satisfy git wherever auto-detection
+        would have failed (``-c`` outranks config and auto-detection, so
+        the assertion is machine-independent).
+    """
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "initial",
+        ],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+    (tmp_path / "file.txt").write_text("content\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "file.txt"],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+
+    monkeypatch.setenv("HOME", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in (
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "EMAIL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(
+        git_utils,
+        "_fallback_identity_args",
+        lambda _root: list(git_utils._FALLBACK_IDENTITY),
+    )
+
+    message = "chore: resync forge-managed artifacts (1.2.3) [no-version]"
+    git_utils.create_commit(tmp_path, message)
+
+    committer_name = subprocess.run(
+        ["git", "show", "-s", "--format=%cn"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    committer_email = subprocess.run(
+        ["git", "show", "-s", "--format=%ce"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    subject = subprocess.run(
+        ["git", "show", "-s", "--format=%s"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert committer_name == "forge-release"
+    assert committer_email == "forge-release@users.noreply.github.com"
+    assert subject == message
+
+
+def test_create_commit_raises_when_nothing_staged(tmp_path: Path) -> None:
+    """Nothing staged → git exits non-zero and ``create_commit`` propagates it."""
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "initial",
+        ],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=True,
+    )
+
+    with pytest.raises(subprocess.CalledProcessError):
+        git_utils.create_commit(tmp_path, "chore: nothing to commit")
+
+
+# ---------------------------------------------------------------------------
 # ref_exists
 # ---------------------------------------------------------------------------
 
@@ -1351,6 +1539,88 @@ def test_release_fingerprint_none_when_tree_is_only_changelog(tmp_path: Path) ->
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
     _commit_all(tmp_path, "changelog only")
     assert git_utils.release_tree_fingerprint(tmp_path, "HEAD") is None
+
+
+# ---------------------------------------------------------------------------
+# write_tree
+# ---------------------------------------------------------------------------
+
+
+def _create_conflicting_branches(repo: Path) -> None:
+    """Create ``other`` and ``feat/x`` off ``main``, each editing the same line.
+
+    Unlike :func:`_create_diverged_branches` (each branch touches a
+    distinct file, so a merge between them is clean), both branches here
+    edit the same line of ``shared.txt`` — a genuine content conflict, so
+    a subsequent ``git merge`` exits non-zero and leaves the conflict
+    staged-unresolved. Leaves ``feat/x`` checked out.
+
+    Args:
+        repo: Repository path.
+    """
+    (repo / "shared.txt").write_text("base\n")
+    subprocess.run(["git", "add", "shared.txt"], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add shared.txt"],
+        cwd=repo,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "other"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    (repo / "shared.txt").write_text("other change\n")
+    subprocess.run(["git", "add", "shared.txt"], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "other edit"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    (repo / "shared.txt").write_text("feat change\n")
+    subprocess.run(["git", "add", "shared.txt"], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "feat edit"], cwd=repo, env=_GIT_ENV, check=True
+    )
+
+
+def test_write_tree_clean_index_matches_head_tree(tmp_path: Path) -> None:
+    """A freshly committed repo's staged tree equals its ``HEAD`` tree."""
+    _init_git_repo(tmp_path)
+    assert git_utils.write_tree(tmp_path) == git_utils.get_tree_sha(tmp_path, "HEAD")
+
+
+def test_write_tree_reflects_staged_uncommitted_change(tmp_path: Path) -> None:
+    """Staging a new file changes the written tree vs ``HEAD``'s tree."""
+    _init_git_repo(tmp_path)
+    head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
+    (tmp_path / "new.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "new.py"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    assert git_utils.write_tree(tmp_path) != head_tree
+
+
+def test_write_tree_returns_none_on_unresolved_conflict(tmp_path: Path) -> None:
+    """An unresolved merge conflict left staged → ``None`` (``write-tree`` refuses)."""
+    _init_git_repo(tmp_path)
+    _create_conflicting_branches(tmp_path)
+    result = subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "other"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert git_utils.write_tree(tmp_path) is None
+
+
+def test_write_tree_none_when_not_a_git_repo(tmp_path: Path) -> None:
+    """A plain, non-git directory → ``None`` without raising."""
+    assert git_utils.write_tree(tmp_path) is None
 
 
 # ---------------------------------------------------------------------------

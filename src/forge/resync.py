@@ -11,9 +11,11 @@ cleanup loop deterministically:
 3. Regenerate everything (``install-forge-bootstrap``, non-interactive
    steps self-skip per FOUNDATION §15).
 4. No diff → "in sync", exit 0.
-5. Diff → branch ``chore/forge-resync-<forge-version>``, commit, push,
-   open a PR against ``[tool.forge].base_branch`` via ``gh``, then
-   return to the starting branch.
+5. Diff → branch ``chore/forge-resync-<forge-version>-no-version``,
+   commit, push, open a PR against ``[tool.forge].base_branch`` via
+   ``gh``, then return to the starting branch. The branch and commit
+   both carry the ``no-version`` opt-out signal (mechanical regen has
+   nothing for the changelog to gain).
 
 It only ever pushes its own resync branch — protected branches are
 never written. The PR body flags that mechanical regen does not surface
@@ -33,8 +35,15 @@ import sys
 from importlib import metadata
 from typing import TYPE_CHECKING
 
+from forge.changelog import NO_VERSION_BRANCH_TOKEN, NO_VERSION_COMMIT_MARKER
 from forge.config import load_config
-from forge.git_utils import configure_cli_logging, repo_root, require_cli, run_git
+from forge.git_utils import (
+    configure_cli_logging,
+    create_commit,
+    repo_root,
+    require_cli,
+    run_git,
+)
 from forge.install_bootstrap import run_in_process as _bootstrap_run
 from forge.run_context import progress_logger
 
@@ -150,15 +159,18 @@ def _publish_resync(root: Path, version: str, base_branch: str) -> int:
             ``finally`` block has switched back to the starting branch.
     """
     start_branch = run_git("branch", "--show-current", cwd=root).strip()
-    branch = f"{_BRANCH_PREFIX}{version}"
+    # Branch token + commit marker: a mechanical regen is the textbook
+    # no-version change, and each spelling feeds a different reader of
+    # forge.changelog.wants_no_version (branch scan vs commit-tag scan),
+    # so the changelog_updated gate never blocks resync's own commit.
+    branch = f"{_BRANCH_PREFIX}{version}-{NO_VERSION_BRANCH_TOKEN}"
     try:
         run_git("switch", "-c", branch, cwd=root)
         run_git("add", "-A", cwd=root)
-        run_git(
-            "commit",
-            "-m",
-            f"chore: resync forge-managed artifacts ({version})",
-            cwd=root,
+        create_commit(
+            root,
+            f"chore: resync forge-managed artifacts ({version}) "
+            f"{NO_VERSION_COMMIT_MARKER}",
         )
         run_git("push", "-u", "origin", branch, cwd=root)
         proc = subprocess.run(

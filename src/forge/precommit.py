@@ -87,11 +87,13 @@ from forge.git_utils import (
     merge_in_progress,
     parse_semver,
     read_local_plugin_version,
+    release_tree_fingerprint,
     require_cli,
     resolve_current_branch,
     run_git,
     stage_modified_paths,
     write_step_log,
+    write_tree,
 )
 from forge.git_utils import repo_root as get_repo_root
 from forge.run_context import is_ci, is_non_interactive
@@ -151,22 +153,33 @@ class StepResult:
 
 @dataclass(frozen=True)
 class StepDef:
-    """A registry entry: a step's name, its function, and whether it runs by default.
+    """A registry entry: a step's name, function, default state, and content class.
 
-    Co-locating the three properties keeps the step registry a single
-    source of truth — a name can't drift between a separate ordered list
-    and a separate default-on set. ``default_on=False`` marks an opt-in
-    step that runs only when listed in ``[tool.forge.precommit] enable``
-    (or ``--only``).
+    Co-locating the properties keeps the step registry a single source of
+    truth — a name can't drift between a separate ordered list and a
+    separate default-on set, and a step's era-sensitivity can't drift
+    from its registration. ``default_on=False`` marks an opt-in step that
+    runs only when listed in ``[tool.forge.precommit] enable`` (or
+    ``--only``). ``tree_content`` is set explicitly on every entry (no
+    default) so each new step makes the release-lock call deliberately.
 
     Attributes:
         name: Step identifier used in config, CLI flags, and the log slug.
         fn: The ``step_*`` callable producing this step's ``StepResult``.
         default_on: Whether the step is part of the default sequence.
+        tree_content: True when the step validates or mutates tree
+            content with the *current* toolchain — suppressed during a
+            promotion merge whose staged tree is release-locked to a
+            historical tag (see :func:`_release_merge_context`), where
+            such checks are unsatisfiable by design and fixes would
+            poison the release fingerprint. False for steps about the
+            environment, versioning guards, or ``CHANGELOG.md`` — the
+            one file a release merge may legitimately change.
     """
 
     name: str
     fn: StepFn
+    tree_content: bool
     default_on: bool = True
 
 
@@ -1936,32 +1949,46 @@ def _print_step_line(result: StepResult) -> None:
 # follow because they mutate + re-stage files before any validator sees the
 # diff (regen_docs refreshes generated docs, ruff reformats source).
 _STEP_REGISTRY: tuple[StepDef, ...] = (
-    StepDef("auto_rebuild", step_auto_rebuild),
-    StepDef("env_sync", step_env_sync),
-    StepDef("regen_docs", step_regen_docs),
-    StepDef("ruff", step_ruff),
-    StepDef("docstring_verification", step_docstrings),
-    StepDef("docstring_coverage", step_docstring_coverage),
-    StepDef("test_naming_check", step_test_naming),
-    StepDef("repo_structure_check", step_repo_structure),
-    StepDef("manifest_json", step_manifest_json),
-    StepDef("cli_wiring", step_cli_wiring),
-    StepDef("agent_doc", step_agent_doc),
-    StepDef("commit_types_parity", step_commit_types_parity),
-    StepDef("plugin_version", step_plugin_version),
-    StepDef("release_tag_guard", step_release_tag_guard),
-    StepDef("changelog_history", step_changelog_history),
-    StepDef("vendored_integrity", step_vendored_integrity),
-    StepDef("pip_audit", step_pip_audit),
-    StepDef("cve_usage", step_cve_usage),
-    StepDef("doctest", step_doctest, default_on=False),
-    StepDef("typecheck", step_typecheck, default_on=False),
-    StepDef("doc_consistency", step_doc_consistency, default_on=False),
-    StepDef("c4", step_c4, default_on=False),
-    StepDef("api_digest_check", step_api_digest_check, default_on=False),
-    StepDef("smart_test", step_smart_test, default_on=False),
-    StepDef("changelog_version", step_changelog_version, default_on=False),
-    StepDef("changelog_updated", step_changelog_updated, default_on=False),
+    StepDef("auto_rebuild", step_auto_rebuild, tree_content=False),
+    StepDef("env_sync", step_env_sync, tree_content=False),
+    StepDef("regen_docs", step_regen_docs, tree_content=True),
+    StepDef("ruff", step_ruff, tree_content=True),
+    StepDef("docstring_verification", step_docstrings, tree_content=True),
+    StepDef("docstring_coverage", step_docstring_coverage, tree_content=True),
+    StepDef("test_naming_check", step_test_naming, tree_content=True),
+    StepDef("repo_structure_check", step_repo_structure, tree_content=True),
+    StepDef("manifest_json", step_manifest_json, tree_content=True),
+    StepDef("cli_wiring", step_cli_wiring, tree_content=True),
+    StepDef("agent_doc", step_agent_doc, tree_content=True),
+    StepDef("commit_types_parity", step_commit_types_parity, tree_content=True),
+    StepDef("plugin_version", step_plugin_version, tree_content=False),
+    StepDef("release_tag_guard", step_release_tag_guard, tree_content=False),
+    StepDef("changelog_history", step_changelog_history, tree_content=False),
+    StepDef("vendored_integrity", step_vendored_integrity, tree_content=True),
+    StepDef("pip_audit", step_pip_audit, tree_content=False),
+    StepDef("cve_usage", step_cve_usage, tree_content=True),
+    StepDef("doctest", step_doctest, tree_content=True, default_on=False),
+    StepDef("typecheck", step_typecheck, tree_content=True, default_on=False),
+    StepDef(
+        "doc_consistency", step_doc_consistency, tree_content=True, default_on=False
+    ),
+    StepDef("c4", step_c4, tree_content=True, default_on=False),
+    StepDef(
+        "api_digest_check", step_api_digest_check, tree_content=True, default_on=False
+    ),
+    StepDef("smart_test", step_smart_test, tree_content=True, default_on=False),
+    StepDef(
+        "changelog_version",
+        step_changelog_version,
+        tree_content=False,
+        default_on=False,
+    ),
+    StepDef(
+        "changelog_updated",
+        step_changelog_updated,
+        tree_content=False,
+        default_on=False,
+    ),
 )
 
 _DEFAULT_ON: frozenset[str] = frozenset(d.name for d in _STEP_REGISTRY if d.default_on)
@@ -2023,6 +2050,60 @@ def _resolve_steps(
     return [d for d in _STEP_REGISTRY if d.name in chosen]
 
 
+# A promotion PR's head branch (the `promote` skill): the name pins exactly
+# which release tag the staged tree must reproduce for the era-gap
+# suppression to engage.
+_RELEASE_BRANCH_RE = re.compile(r"^release/(v\d+\.\d+\.\d+)$")
+
+
+def _release_merge_context(repo_root: Path) -> str | None:
+    """Return the release tag a promotion merge commit is locked to, or ``None``.
+
+    Detects the one commit where content gates are unsatisfiable by
+    design: the merge commit of a ``release/vX.Y.Z`` promotion branch
+    (release-process.md §5). Its tree is release-locked — the fingerprint
+    guards require byte-equality with the promoted tag outside
+    ``CHANGELOG.md`` — so running *today's* toolchain against that
+    historical tree can only fail (rules adopted since the tag) or
+    corrupt it (auto-fixes diverge the fingerprint). All three must hold:
+
+    1. a merge is in progress (``MERGE_HEAD`` present);
+    2. the current branch names a promotion (``release/vX.Y.Z``);
+    3. the **staged** tree's release fingerprint equals the tag's —
+       compared via :func:`forge.git_utils.release_tree_fingerprint` on
+       the ``git write-tree`` result, since pre-commit runs before the
+       merge commit exists.
+
+    Condition 3 is the safety invariant: a staged tree touched beyond
+    ``CHANGELOG.md`` (e.g. by an auto-fixer) breaks the fingerprint
+    match, so suppression disengages and the gate fails loud instead of
+    committing a poisoned release.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        The matched tag (``vX.Y.Z``) when the staged merge reproduces
+        that release, ``None`` otherwise.
+    """
+    if not merge_in_progress(repo_root):
+        return None
+    resolved = resolve_current_branch(repo_root)
+    if resolved is None:
+        return None
+    match = _RELEASE_BRANCH_RE.match(resolved[0])
+    if match is None:
+        return None
+    tag = match.group(1)
+    staged_tree = write_tree(repo_root)
+    if staged_tree is None:
+        return None
+    tag_fp = release_tree_fingerprint(repo_root, tag)
+    if tag_fp is None or release_tree_fingerprint(repo_root, staged_tree) != tag_fp:
+        return None
+    return tag
+
+
 def run_all(
     repo_root: Path | None = None,
     *,
@@ -2038,6 +2119,11 @@ def run_all(
     ``step_env_sync``'s freshness gate would block on it); ``step_regen_docs``
     and ``step_ruff`` follow and mutate + re-stage files (regenerated docs,
     ruff fixes) before any validator sees the diff; the rest verify only.
+
+    During a promotion merge whose staged tree is release-locked
+    (:func:`_release_merge_context`), ``tree_content`` steps are skipped
+    without running — the tree already passed its own era's gate at
+    tagging time and cannot be changed here anyway.
 
     Args:
         repo_root: Override the auto-detected git repo root. Useful in tests.
@@ -2055,7 +2141,23 @@ def run_all(
     root = repo_root if repo_root is not None else get_repo_root()
     results: list[StepResult] = []
     this_module = sys.modules[__name__]
+    release_lock = _release_merge_context(root)
     for step_def in _resolve_steps(root, skip=skip, only=only):
+        if release_lock is not None and step_def.tree_content:
+            result = StepResult(
+                name=step_def.name,
+                passed=True,
+                output=(
+                    f"(promotion merge reproduces {release_lock} — "
+                    "release-locked tree, content check skipped)"
+                ),
+                skipped=True,
+            )
+            if print_progress:
+                _print_step_line(result)
+            _write_log(root, result)
+            results.append(result)
+            continue
         # Resolve each step by name through the module namespace rather than
         # calling ``step_def.fn`` directly. The registry captured the
         # original function objects at import time, so a test that does

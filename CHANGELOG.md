@@ -20,6 +20,52 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v2.30.0 — 2026-08-05
+
+### Features
+- **`/pr` prints a terminal run summary before delegating to
+  `pr-manager`.** Subagent reports never reach the user's terminal, so
+  the first human-readable account of a finalization previously
+  appeared only on the PR page. The new pre-delegation step summarizes
+  the run — changes, branch commits, per-finding disposition,
+  deferrals — at the last point where finalization can be redirected
+  cheaply. `pr-manager`'s doc now states its report is
+  orchestrator-facing and must be relayed to be seen.
+- **`/next` resumes a `Requires:`-linked sequence after a merge.** A
+  new phase scans the recent merge window for closed issues and
+  proposes the single open issue whose `Requires:` line they satisfy
+  (confirm-first, never auto-selected; issue numbers validated as bare
+  integers — PR bodies are untrusted). Task-selection bypasses are now
+  one ordered precedence rule: explicit issue argument > user-named
+  carry-over > inferred successor; the explicit-argument path also
+  stops detouring through `recommend-next`.
+
+### Fixes
+- **`forge-resync` works end-to-end on fresh CI runners and gated
+  consumers.** Its commit now routes through the git-write layer's
+  identity seam (`git_utils.create_commit`, the commit twin of
+  `create_annotated_tag`), so identity-less runners no longer die with
+  exit 128; and its branch/commit carry the `no-version` token and
+  `[no-version]` marker (public `forge.changelog` constants, regex
+  derived from the same spelling), so the `changelog_updated` gate no
+  longer blocks the resync commit it ships.
+- **`forge-pr-squash-comment` no longer rejects messages naming
+  `CLAUDE.md` / `.claude/` paths.** Attribution screening is now
+  phrase-based (`co-authored-by:`, `generated with`, `with claude
+  code`, …) plus a bare-vendor-token backstop that exempts
+  path/filename-shaped tokens — the files forge itself mandates can be
+  cited while a bare "thanks Claude" credit still fails.
+- **Promotion merge commits pass pre-commit without human bypass.**
+  Staged catch-up promotions ran today's toolchain against a
+  release-locked historical tree — unfixable by design (the release
+  fingerprint forbids content changes), previously concluded by a human
+  `--no-verify`. `forge-precommit` now detects the promotion-merge
+  context (mid-merge on `release/vX.Y.Z` with the staged tree
+  reproducing the tag's release fingerprint) and skips tree-content
+  steps; CHANGELOG/versioning guards still run, and any divergence
+  beyond `CHANGELOG.md` disengages the suppression so a poisoned tree
+  fails loud.
+
 ## v2.29.0 — 2026-08-04
 
 ### Features

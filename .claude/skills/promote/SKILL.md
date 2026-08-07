@@ -116,6 +116,17 @@ The release branch ends up diverging from the `v$NEW` tag only by the
 curated `CHANGELOG.md` entry, which the post-merge tag relocation tolerates
 via the **release fingerprint** (`docs/release-process.md` §2, §5).
 
+**Era-gap suppression (merge-commit gate):** the merge commit's
+pre-commit run detects the promotion context (mid-merge on
+`release/vX.Y.Z` with the staged tree reproducing the `v$NEW`
+fingerprint) and skips tree-content steps (ruff, docstrings, typecheck,
+…) — the historical tree already passed its own era's gate and cannot be
+"fixed" without poisoning the fingerprint. CHANGELOG/versioning guards
+still run. If the gate fails anyway, the staged tree has diverged beyond
+`CHANGELOG.md` — inspect with `git diff --cached "v$NEW^{commit}"` and
+restore the stray paths from the tag; never conclude the merge with
+`--no-verify`.
+
 ### CHANGELOG.md conflicts — never resolve blindly (the one exception)
 
 `CHANGELOG.md` is the **single exception** to "resolve toward dev": `main`
