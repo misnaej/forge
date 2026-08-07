@@ -485,3 +485,28 @@ def test_touches_changed_false_when_no_unit_in_changed_set() -> None:
 def test_touches_changed_false_for_empty_units() -> None:
     """False when the units iterable is empty, regardless of changed set."""
     assert _touches_changed({"src/a.py"}, []) is False
+
+
+def test_run_changed_scope_findings_are_subset_of_full_scope(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Units covered by an unchanged exact-dup group stay excluded.
+
+    Regression: ``covered`` was computed from the scope-FILTERED exact
+    groups, so an exact pair living entirely in unchanged files re-entered
+    near-dup candidacy in CHANGED scope — reporting a near-duplicate (once
+    per group member) that FULL scope structurally cannot produce.
+    """
+    _write(fake_repo / "src" / "a.py", IDENTICAL_BODY_A)
+    _write(fake_repo / "src" / "b.py", IDENTICAL_BODY_B)
+    _write(fake_repo / "src" / "c.py", NEAR_DUP_BODY)
+    _fake_changed(monkeypatch, ["src/c.py"])
+    code = run(
+        Scope.CHANGED,
+        [fake_repo / "src"],
+        DupConfig(min_tokens=5, shingle_size=3, threshold=0.5),
+    )
+    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    assert "near-duplicate (" not in log_text
+    assert "exact body duplicate" not in log_text
+    assert code == 0

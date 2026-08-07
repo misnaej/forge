@@ -5,6 +5,11 @@ description: Full PR finalization flow, verification-first - design check, secur
 
 # PR Finalization Flow
 
+**Entry is automatic, not invitation-only**: per FOUNDATION §6
+"Verification starts itself", enter this flow as soon as a branch's
+implementation commits are done — never idle at "ready to finalize?"
+with verification unrun.
+
 ## Step 0: Detect the PR — defer creation until after verification
 
 Check for an existing PR on the current branch:

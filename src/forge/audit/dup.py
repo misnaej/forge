@@ -624,10 +624,18 @@ def run(scope: Scope, roots: list[Path], config: DupConfig) -> int:
                     ),
                 )
 
-    exact_groups = _group_by_hash(units)
-    if changed is not None:
-        exact_groups = [g for g in exact_groups if _touches_changed(changed, g)]
-    exact_findings, covered = _build_exact_findings(exact_groups)
+    # `covered` must come from ALL exact groups, not the scope-filtered
+    # subset: a unit explained by an unchanged-files-only exact group is
+    # still not a near-dup / name-collision candidate, else CHANGED scope
+    # reports pairs FULL scope structurally cannot (once per group member).
+    all_exact_groups = _group_by_hash(units)
+    _, covered = _build_exact_findings(all_exact_groups)
+    exact_groups = (
+        all_exact_groups
+        if changed is None
+        else [g for g in all_exact_groups if _touches_changed(changed, g)]
+    )
+    exact_findings, _ = _build_exact_findings(exact_groups)
 
     near_pairs = _find_near_dups(units, covered, threshold=config.threshold)
     if changed is not None:

@@ -311,6 +311,12 @@ and ask.
   → post wrap-up + squash message. The wrap-up comment needs a PR to live on,
   so posting stays last; a **draft PR** is the escape hatch when the PR
   should be visible earlier.
+- **Verification starts itself.** The moment a branch's implementation
+  commits are done, run the finalization reviews — automatically, without
+  stopping to offer or ask. The reviews are read-only; nothing about them
+  needs permission. Stopping at "ready to finalize?" with verification unrun
+  is stopping too early — only genuinely outward-facing or destructive steps
+  pause for the user.
 - **The wrap-up never waits on CI.** Its value is the review verdicts; CI
   green is a separate signal on its own schedule. Post as soon as the checks
   are done, and state plainly when CI has not completed — an unqualified
@@ -589,6 +595,14 @@ A cross-cutting principle. Reviewed by `forge:design-checker`.
   library module — and every other reference is a pointer back, **never a copy**.
 - Flag any agent prompt or doc that re-states a rule already documented elsewhere
   instead of linking to it.
+- **Process feedback ships into the rule surface, not agent memory.** When the
+  user corrects a workflow or states a working rule, write it where every agent
+  and contributor inherits it: the repo's `CLAUDE.md` for repo-specific rules,
+  the relevant skill/agent doc for workflow steps, and — when the gap is in
+  foundation-shipped content — an **upstream issue/PR against forge** (consumers
+  must not patch shipped files locally; upgrades overwrite them). Personal agent
+  memory holds only what cannot ship: individual preferences and private
+  context.
 
 Applies to: design principles (here), repo-specific safety rules (consumer
 `CLAUDE.md`), shared agent behaviours, and tool conventions (ruff config,

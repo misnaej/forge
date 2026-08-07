@@ -20,6 +20,38 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.1.0 — Unreleased
+
+### Features
+- **`design-checker` pre-write briefing asks where new code belongs.** The
+  API-digest step now asks two questions — *does this already exist* and
+  *where does it belong* (nearest-relative modules by digest path,
+  domain-token grep, catch-all-package smell, C4 model consult when
+  present) — and the briefing gains a "Where this belongs" section.
+  FOUNDATION §1 adds the matching red flags: creating a new module when an
+  existing one is the natural home, and adopting an issue's suggested
+  name/path as a directive instead of a hypothesis.
+- **`/memory-audit` skill.** Reconciles the agent's persistent memory
+  against the repo's rule surface — contradictions, duplicates of shipped
+  rules, stale references — report-first, confirm-first. Pairs with the new
+  FOUNDATION §12 rule that process feedback ships into the rule surface
+  (consumer `CLAUDE.md`, skills, or an upstream forge issue), never into
+  private agent memory.
+- **Verification starts itself.** FOUNDATION §6 and the `/commit` + `/pr`
+  skills now state that finalization reviews launch automatically the
+  moment a branch's implementation commits are done — an agent must not
+  idle at "ready to finalize?" with verification unrun.
+
+### Fixes
+- **`forge-audit-dup --scope changed` finds prior art.** Changed scope
+  previously compared changed units only against each other, so an existing
+  twin in an unchanged file was invisible. It now indexes the full tree and
+  filters findings to those involving a changed-file unit; changed files
+  outside the index roots are indexed too, and the covered-set is computed
+  from all exact groups so changed-scope findings stay a strict subset of
+  full-scope findings. The function-granularity limitation (inline blocks
+  are invisible) is now documented.
+
 ## v3.0.0 — Unreleased
 
 ### ⚠️ Upgrade notes
