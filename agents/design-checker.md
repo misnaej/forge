@@ -54,23 +54,35 @@ Pre-write workflow:
    cat ./code_health/audit_dup.log 2>/dev/null
    ```
    Cross-check planned new function names against the dup log so the
-   author doesn't write a third copy of an existing helper. If logs are
-   stale or absent, run `forge-audit-dup --scope changed`.
+   author doesn't write a third copy of an existing helper. If stale or
+   absent, run `forge-audit-dup --scope changed` — changed scope is
+   prior-art aware (changed units matched against a full-tree index),
+   so an existing twin in an unchanged file is found.
 
-3. **Read the API digest** (if present):
+3. **Read the API digest** (if present; regenerate with
+   `forge-gen-api-digest` if absent) — ask it TWO questions:
    ```bash
    cat ./docs/api-digest.md 2>/dev/null
    ```
-   The digest indexes every top-level function and class — public API
-   and internal helpers (the latter tagged `(internal)`) — with its
-   signature and one-line summary. Scan it for a helper/function that
-   already covers the planned work — if one exists, the author should
-   reuse it rather than write a new one (proactive DRY). Reuse
-   candidates are very often private helpers, so check internal symbols
-   too. This complements the `audit_dup.log` cross-check: the dup log
-   catches copies that were already written; the digest prevents the
-   new copy before it exists. If the digest is absent, regenerate it
-   with `forge-gen-api-digest`.
+   The digest indexes every top-level function and class — internal
+   helpers tagged `(internal)` — with module path, signature, and
+   one-line summary.
+
+   - **Does this already exist?** Scan for a helper covering the
+     planned work — reuse beats a new copy (proactive DRY); reuse
+     candidates are very often private helpers. Complements step 2:
+     the dup log catches copies already written; the digest prevents
+     the next one.
+   - **Where does it belong?** For every planned NEW file or top-level
+     symbol, find the nearest relatives by module path (grep the
+     domain token — `*html*`, `*cache*`, …) and name the candidate
+     home(s). A new module in a catch-all package (`common`, `utils`)
+     while a cohesive sibling family exists is a finding, not a
+     default. An issue's suggested name/path is a hypothesis to
+     validate against the layout, never a directive (FOUNDATION §1).
+     When `docs/architecture.dsl` (C4) exists, check placement against
+     its containers/components — the model is drift-gated; prose is
+     not. Both artifacts are conditional-on-present.
 
 4. **Read the target file** to identify existing patterns:
    - Logging style, error handling, docstring format
@@ -94,6 +106,11 @@ Pre-write workflow:
 <symbols from docs/api-digest.md already covering the planned work, or
  "None". Also flag planned code that WRAPS an interface the repo
  controls — fix-the-interface alternative per FOUNDATION §7>
+
+### Where this belongs (only when the plan adds a file / top-level symbol)
+<candidate home modules from digest paths + domain-token grep; flag
+ catch-all placement and issue-suggested paths adopted unvalidated;
+ cite the C4 model when present. Or "No new files planned">
 
 ### Patterns to Follow
 - **Logging / Error handling / Docstrings / Imports**: <one line each, drawn from the target file>
@@ -163,7 +180,7 @@ Read `code_health/audit_deps.log`. Findings:
 - **Distance from main sequence** `D = |A + I − 1|` — MEDIUM above default 0.7.
 - **Tach violations** when `tach.toml` + `tach` present — HIGH.
 
-Also read `code_health/audit_deps_tree.log` (when present) before proposing a fix — see where the module sits in the import graph. Maps to Martin's ADP / SDP / SAP.
+Read `code_health/audit_deps_tree.log` (when present) before proposing a fix. Maps to Martin's ADP / SDP / SAP.
 
 ### Recipe 3 — Suppression critique
 
@@ -174,11 +191,11 @@ Read `code_health/audit_suppressions.log`. For each entry, articulate **whether 
 - `E501` → missing helper, over-long signature
 - `C901` → function doing too much
 
-Bare `# noqa` (no code) is HIGH — it silences *every* rule on the line. Recommend replacing with a specific rule code.
+Bare `# noqa` (no code) is HIGH — it silences every rule on the line; recommend a specific rule code.
 
 ### Recipe 4 — Orphan detection
 
-Read `code_health/audit_orphans.log`. ≥95% confidence (MEDIUM) is very likely dead. Lower confidence needs verification — vulture is blind to dynamic dispatch / plugin entry points / runtime introspection.
+Read `code_health/audit_orphans.log`. ≥95% confidence (MEDIUM) is very likely dead; lower confidence needs verification — vulture is blind to dynamic dispatch and entry points.
 
 ### Recipe 5 — Data integrity
 
@@ -190,43 +207,15 @@ Read `code_health/audit_data.log`:
 
 ### Recipe 6 — Claim extraction + verification (Stage 2)
 
-Read `code_health/audit_claims.log`. The script extracts every line in
-a docstring or comment that:
-
-- Contains a comparison/causation/equation pattern, AND
-- Contains at least one term from the active lexicon (built-in + repo
-  `forge-audit-claims.toml`).
-
-Findings are REVIEW severity — extraction only. **You then delegate
-batched verification to the `forge:knowledge-search` agent.**
-
-Stage 2 procedure:
-
-1. If `audit_claims.log` has zero findings, skip.
-2. Otherwise, build one batched query:
-   ```text
-   Task → forge:knowledge-search
-
-     query: |
-       Verify these N domain claims extracted from the codebase.
-       For each claim return one of: SUPPORTED / CONTRADICTED / UNCERTAIN
-       with a verbatim quote from the cited source.
-     sources: |
-       local:docs/**/*.md
-       local:README*.md
-       local:<methodology-doc>            # from the wrapper
-       pubmed                              # if wrapper enables it
-       web                                 # fallback
-     claims: |
-       <paste the structured list from audit_claims.log,
-        one CLAIM line per entry>
-   ```
-3. Render `forge:knowledge-search`'s verdict into the "Claim verification"
-   section of the Design Check Report. CONTRADICTED entries → CRITICAL.
-   UNCERTAIN → MEDIUM. SUPPORTED → no finding (informational only).
-
-The wrapper supplies repo-specific source paths and lexicon hints; if
-none are provided, the script ran with built-in defaults.
+Read `code_health/audit_claims.log` (comparison / causation / equation
+lines matching the active lexicon — built-in + repo
+`forge-audit-claims.toml`; REVIEW severity, extraction only). Zero
+findings → skip Stage 2. Otherwise delegate ONE batched
+`Task → forge:knowledge-search` query: paste the CLAIM lines, ask
+SUPPORTED / CONTRADICTED / UNCERTAIN per claim with a verbatim source
+quote; sources are local docs (`docs/**/*.md`, `README*`) plus any
+wrapper-supplied paths / backends. Render verdicts into the report:
+CONTRADICTED → CRITICAL, UNCERTAIN → MEDIUM, SUPPORTED → informational.
 
 ### Wrapper justification (judgment check, no CLI)
 
@@ -266,24 +255,11 @@ verified-at: <sha>   (PR #<num>, branch <branch>)
 <Overall: Good / Minor Issues / Needs Attention>
 <Recipe results: which audits clean, which surfaced findings>
 
-### Recipe 1 — Duplicates
-<findings from audit_dup.log; HIGH/CRITICAL entries with file:line>
-
-### Recipe 2 — Dependencies
-<cycles + D-outliers from audit_deps.log>
-
-### Recipe 3 — Suppressions
-<noqa/type-ignore critique from audit_suppressions.log,
- with the "does this hide a design problem?" analysis per entry>
-
-### Recipe 4 — Orphans
-<dead-code candidates from audit_orphans.log>
-
-### Recipe 5 — Data integrity
-<CSV/JSON/TOML/YAML/schema findings from audit_data.log>
-
-### Recipe 6 — Claim verification
-<forge:knowledge-search verdict per extracted claim, severity-mapped>
+### Recipe 1..6 findings
+<one subsection per recipe (Duplicates / Dependencies / Suppressions /
+ Orphans / Data integrity / Claim verification): substantive findings
+ with file:line — suppressions carry the "does this hide a design
+ problem?" analysis — or an explicit "clean">
 
 ### Wrapper justification
 <construct-and-delegate diffs found, whether the author justified the
@@ -340,10 +316,7 @@ Full Review) above.
 - If a recipe surfaced zero findings, state that explicitly in the report
 - Never silently drop the claim-verification stage or the
   wrapper-justification check
-- **Verify before calling a name "stale", "old", "renamed", or
-  "leftover".** Before claiming an identifier is an outdated/renamed
-  reference, `grep` the codebase to confirm no symbol of that exact
-  name still exists. A name that resolves to a real, distinct class or
-  function is current — not stale — even if a similarly-named symbol
-  also exists. Flagging a live symbol as "old name" is a false
-  positive; do the lookup first.
+- **Verify before calling a name "stale" / "old" / "leftover"**: `grep`
+  first — a name resolving to a real, distinct symbol is current even
+  when a similar name also exists; flagging a live symbol is a false
+  positive.

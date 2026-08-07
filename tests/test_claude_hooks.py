@@ -9,14 +9,68 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
+
+import pytest
+
+from tests.conftest import GIT_ENV, init_git_repo
 
 
 _HOOKS_DIR = Path(__file__).resolve().parents[1] / "claude-hooks"
 
 
-def _run_hook(name: str, command: str, *, agent_type: str = "") -> int:
+def _run_hook_proc(
+    name: str,
+    command: str,
+    *,
+    agent_type: str = "",
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run a claude-hook with *command* as the tool_input and return the process.
+
+    Args:
+        name: Hook filename under ``claude-hooks/`` (e.g.
+            ``"block_claude_attribution.sh"``).
+        command: The ``Bash`` tool command the hook inspects.
+        agent_type: Optional ``agent_type`` payload field — set to
+            ``"forge:git-commit-push"`` to exercise the sanctioned-agent
+            bypass path.
+        cwd: Directory to run the hook from. Hooks that resolve state via
+            ``git rev-parse --show-toplevel`` need a real git repo here.
+        env: Optional environment for the hook process — lets a test set a
+            standalone env var (e.g. ``FORGE_SKIP_WRAPUP_GATE``) rather than
+            embedding it in *command*. ``None`` inherits the caller's
+            environment (the default `subprocess.run` behavior).
+
+    Returns:
+        The completed subprocess (exit code + captured stdout/stderr).
+    """
+    tool_input: dict[str, object] = {"tool_input": {"command": command}}
+    if agent_type:
+        tool_input["agent_type"] = agent_type
+    payload = json.dumps(tool_input)
+    return subprocess.run(
+        ["bash", str(_HOOKS_DIR / name)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=cwd,
+        env=env,
+    )
+
+
+def _run_hook(
+    name: str,
+    command: str,
+    *,
+    agent_type: str = "",
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> int:
     """Run a claude-hook with *command* as the tool_input and return its exit code.
 
     Args:
@@ -26,22 +80,47 @@ def _run_hook(name: str, command: str, *, agent_type: str = "") -> int:
         agent_type: Optional ``agent_type`` payload field — set to
             ``"forge:git-commit-push"`` to exercise the sanctioned-agent
             bypass path.
+        cwd: Directory to run the hook from — see `_run_hook_proc`.
+        env: Optional environment for the hook process — see `_run_hook_proc`.
 
     Returns:
         The hook's process exit code — ``0`` (allow) or ``2`` (block).
     """
-    tool_input: dict[str, object] = {"tool_input": {"command": command}}
-    if agent_type:
-        tool_input["agent_type"] = agent_type
-    payload = json.dumps(tool_input)
-    proc = subprocess.run(
-        ["bash", str(_HOOKS_DIR / name)],
-        input=payload,
+    return _run_hook_proc(
+        name, command, agent_type=agent_type, cwd=cwd, env=env
+    ).returncode
+
+
+@pytest.fixture
+def git_repo_with_commit(tmp_path: Path) -> tuple[Path, str]:
+    """A tmp git repo with one commit, for hooks that shell out to `git rev-parse`.
+
+    Returns:
+        The repo root path and its HEAD commit's full sha.
+    """
+    init_git_repo(tmp_path)
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        env=GIT_ENV,
         capture_output=True,
         text=True,
-        check=False,
-    )
-    return proc.returncode
+        check=True,
+    ).stdout.strip()
+    return tmp_path, sha
+
+
+def _write_wrapup(repo: Path, sha: str) -> None:
+    """Write a minimal `code_health/pr_wrapup.md` naming *sha* in `verified-at:`.
+
+    Args:
+        repo: Repo root to write under — matches the hook's
+            `--show-toplevel` resolution.
+        sha: Commit sha (full or short) to embed in the `verified-at:` line.
+    """
+    code_health = repo / "code_health"
+    code_health.mkdir(parents=True, exist_ok=True)
+    (code_health / "pr_wrapup.md").write_text(f"# PR Wrap-up\n\nverified-at: {sha}\n")
 
 
 _PROTECTED = "block_protected_branches.sh"
@@ -537,4 +616,153 @@ def test_continuation_delete_blocks_multiline_command_body() -> None:
     """
     assert (
         _run_hook(_CONTINUATION_DELETE, "line one\nrm .plan/CONTINUATION.md\nline") == 2
+    )
+
+
+_UNVERIFIED_PR_CREATE = "block_unverified_pr_create.sh"
+
+
+def test_unverified_pr_create_ignores_non_pr_create_command() -> None:
+    """A command that isn't `gh pr create` is allowed — no git state is touched."""
+    assert _run_hook(_UNVERIFIED_PR_CREATE, "git status") == 0
+
+
+def test_unverified_pr_create_blocks_missing_wrapup(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """`gh pr create` with no authored `code_health/pr_wrapup.md` is blocked (§6)."""
+    repo, _sha = git_repo_with_commit
+    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
+    assert proc.returncode == 2
+    assert "authored wrap-up" in proc.stderr
+
+
+def test_unverified_pr_create_allows_full_sha_match(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A wrap-up whose `verified-at:` line names the full current HEAD sha passes."""
+    repo, sha = git_repo_with_commit
+    _write_wrapup(repo, sha)
+    assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo) == 0
+
+
+def test_unverified_pr_create_allows_short_sha_match(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """The hook also accepts the 7-char short-sha form in `verified-at:`."""
+    repo, sha = git_repo_with_commit
+    _write_wrapup(repo, sha[:7])
+    assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo) == 0
+
+
+def test_unverified_pr_create_blocks_stale_sha(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A wrap-up naming a different commit than current HEAD is blocked."""
+    repo, _sha = git_repo_with_commit
+    _write_wrapup(repo, "0" * 40)
+    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
+    assert proc.returncode == 2
+    assert "does not name current HEAD" in proc.stderr
+
+
+def test_unverified_pr_create_blocks_after_separator(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """`git status && gh pr create` — the separator-chained form — is still blocked.
+
+    No wrap-up is authored here, so the assertion documents the outer
+    separator-anchored match, not the sha-comparison branch.
+    """
+    repo, _sha = git_repo_with_commit
+    assert (
+        _run_hook(
+            _UNVERIFIED_PR_CREATE, "git status && gh pr create --title x", cwd=repo
+        )
+        == 2
+    )
+
+
+def test_unverified_pr_create_allows_text_mention() -> None:
+    """`echo gh pr create` (plain space, no separator) is a text mention, not a call.
+
+    Mirrors `block_pr_merge.sh`'s convention: a bare space ahead of `gh` is
+    not a shell separator, so quoting/echoing the command text is harmless.
+    """
+    assert _run_hook(_UNVERIFIED_PR_CREATE, "echo gh pr create") == 0
+
+
+def test_unverified_pr_create_allows_skip_gate_env_prefix(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """`FORGE_SKIP_WRAPUP_GATE=1 gh pr create` bypasses the gate — even with no wrap-up.
+
+    The skip check runs after the create-match but before the missing-file
+    check, so this must pass with `code_health/pr_wrapup.md` absent — the
+    sanctioned user-requested bypass documented in the hook's header comment.
+    """
+    repo, _sha = git_repo_with_commit
+    assert (
+        _run_hook(
+            _UNVERIFIED_PR_CREATE,
+            "FORGE_SKIP_WRAPUP_GATE=1 gh pr create --title x",
+            cwd=repo,
+        )
+        == 0
+    )
+
+
+def test_unverified_pr_create_allows_skip_gate_standalone_env_var(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """The gate also honors `FORGE_SKIP_WRAPUP_GATE=1` set as a real env var.
+
+    Not embedded in the command string this time — passed to the hook's own
+    process environment, the other sanctioned form the hook checks
+    (`[ "${FORGE_SKIP_WRAPUP_GATE:-}" = "1" ]`).
+    """
+    repo, _sha = git_repo_with_commit
+    assert (
+        _run_hook(
+            _UNVERIFIED_PR_CREATE,
+            "gh pr create --title x",
+            cwd=repo,
+            env={**os.environ, "FORGE_SKIP_WRAPUP_GATE": "1"},
+        )
+        == 0
+    )
+
+
+def test_unverified_pr_create_allows_non_git_cwd_with_wrapup(tmp_path: Path) -> None:
+    """Outside any git repo, the hook falls back to `.` and still needs a wrap-up.
+
+    The file check runs first (`REPO_ROOT` falls back to `.` when `git
+    rev-parse --show-toplevel` fails outside a repo); once the wrap-up file
+    exists, `HEAD_SHA` then comes back empty too, and the hook exits 0
+    before ever comparing `verified-at:` — the git-less fallback the hook's
+    tail comment documents.
+    """
+    (tmp_path / "code_health").mkdir()
+    (tmp_path / "code_health" / "pr_wrapup.md").write_text("verified-at: deadbeef\n")
+    assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=tmp_path) == 0
+
+
+def test_unverified_pr_create_blocks_token_mention_in_argument(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A --title merely MENTIONING the skip token does not bypass the gate.
+
+    Regression: the embedded skip form was an unanchored substring grep, so
+    PR prose discussing `FORGE_SKIP_WRAPUP_GATE=1` (plausible in this repo)
+    silently disabled the gate. The token must sit at command position,
+    directly prefixing the create invocation.
+    """
+    repo, _sha = git_repo_with_commit
+    assert (
+        _run_hook(
+            _UNVERIFIED_PR_CREATE,
+            'gh pr create --title "docs mention FORGE_SKIP_WRAPUP_GATE=1"',
+            cwd=repo,
+        )
+        == 2
     )

@@ -18,7 +18,9 @@ from forge.audit.dup import (
     _jaccard,
     _normalize_body,
     _shingles,
+    _summary,
     _tokenize_body,
+    _touches_changed,
     extract_units,
     run,
 )
@@ -64,6 +66,15 @@ def helper(x, y):
     return [item for item in (x, y) if item is not None]
 """
 
+UNRELATED_BODY = """
+def compute_total(items):
+    \"\"\"Sum values in a list.\"\"\"
+    total = 0
+    for item in items:
+        total += item
+    return total
+"""
+
 
 @pytest.fixture
 def fake_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -86,6 +97,15 @@ def _write(path: Path, text: str) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text.lstrip(), encoding="utf-8")
+
+
+def _fake_changed(monkeypatch: pytest.MonkeyPatch, paths: list[str]) -> None:
+    """Patch get_modified_files so CHANGED scope reports exactly ``paths``.
+
+    Args:
+        paths: Modified-file paths the patched function should report.
+    """
+    monkeypatch.setattr(common, "get_modified_files", lambda **_: paths)
 
 
 def test_normalize_body_strips_docstring() -> None:
@@ -263,3 +283,230 @@ def test_codeunit_dataclass_roundtrip() -> None:
     )
     assert u.bare_name == "f"
     assert isinstance(u, CodeUnit)
+
+
+def test_run_changed_scope_finds_prior_art_in_unchanged_file(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A changed file's exact duplicate in an *unchanged* file is found.
+
+    Regression: previously changed files were compared only against each
+    other, so a changed file duplicating an unchanged one went unreported.
+    """
+    _write(fake_repo / "src" / "a.py", IDENTICAL_BODY_A)
+    _write(fake_repo / "src" / "b.py", IDENTICAL_BODY_B)
+    _fake_changed(monkeypatch, ["src/b.py"])
+    code = run(
+        Scope.CHANGED, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3)
+    )
+    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    assert "[HIGH]" in log_text
+    assert "exact body duplicate" in log_text
+    assert code == 1
+
+
+def test_run_changed_scope_excludes_finding_with_no_changed_unit(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A duplicate pair with neither side changed is filtered out."""
+    _write(fake_repo / "src" / "a.py", IDENTICAL_BODY_A)
+    _write(fake_repo / "src" / "b.py", IDENTICAL_BODY_B)
+    _write(fake_repo / "src" / "c.py", UNRELATED_BODY)
+    _fake_changed(monkeypatch, ["src/c.py"])
+    code = run(
+        Scope.CHANGED, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3)
+    )
+    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    assert "exact body duplicate" not in log_text
+    assert code == 0
+
+
+def test_run_changed_scope_includes_near_dup_when_one_side_changed(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A near-duplicate pair is reported when one side is changed."""
+    _write(fake_repo / "src" / "a.py", IDENTICAL_BODY_A)
+    _write(fake_repo / "src" / "b.py", NEAR_DUP_BODY)
+    _fake_changed(monkeypatch, ["src/b.py"])
+    code = run(
+        Scope.CHANGED,
+        [fake_repo / "src"],
+        DupConfig(min_tokens=5, shingle_size=3, threshold=0.5),
+    )
+    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    assert "near-duplicate (" in log_text
+    assert code == 1
+
+
+def test_run_changed_scope_excludes_near_dup_with_no_changed_unit(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A near-duplicate pair with neither side changed is filtered out."""
+    _write(fake_repo / "src" / "a.py", IDENTICAL_BODY_A)
+    _write(fake_repo / "src" / "b.py", NEAR_DUP_BODY)
+    _write(fake_repo / "src" / "c.py", UNRELATED_BODY)
+    _fake_changed(monkeypatch, ["src/c.py"])
+    code = run(
+        Scope.CHANGED,
+        [fake_repo / "src"],
+        DupConfig(min_tokens=5, shingle_size=3, threshold=0.5),
+    )
+    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    assert "near-duplicate (" not in log_text
+    assert code == 0
+
+
+def test_run_changed_scope_includes_name_collision_when_changed(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A name-collision group is reported when one side is changed."""
+    _write(fake_repo / "src" / "a.py", IDENTICAL_BODY_A)
+    _write(fake_repo / "src" / "c.py", DIFFERENT_BODY)
+    _fake_changed(monkeypatch, ["src/c.py"])
+    code = run(
+        Scope.CHANGED, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3)
+    )
+    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    assert "name collision" in log_text
+    assert code == 0
+
+
+def test_run_changed_scope_excludes_name_collision_with_no_changed_unit(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A name-collision group with neither side changed is filtered out."""
+    _write(fake_repo / "src" / "a.py", IDENTICAL_BODY_A)
+    _write(fake_repo / "src" / "c.py", DIFFERENT_BODY)
+    _write(fake_repo / "src" / "d.py", UNRELATED_BODY)
+    _fake_changed(monkeypatch, ["src/d.py"])
+    code = run(
+        Scope.CHANGED, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3)
+    )
+    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    assert "name collision" not in log_text
+    assert code == 0
+
+
+def test_run_changed_scope_empty_changeset_short_circuits(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty changeset returns immediately without a full-tree walk.
+
+    ``extract_units`` is patched to raise if called, proving the early
+    return happens before the full-tree indexing loop runs.
+    """
+    _write(fake_repo / "src" / "a.py", IDENTICAL_BODY_A)
+    _fake_changed(monkeypatch, [])
+
+    def _fail_if_called(*_args: object, **_kwargs: object) -> list[CodeUnit]:
+        """Fail the test if the full-tree walk is reached.
+
+        Args:
+            *_args: Unused positional arguments (unreachable — this stub
+                always raises before accepting them).
+            **_kwargs: Unused keyword arguments (unreachable, same reason).
+        """
+        msg = "extract_units called — full-tree walk not short-circuited"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("forge.audit.dup.extract_units", _fail_if_called)
+    code = run(
+        Scope.CHANGED, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3)
+    )
+    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    assert code == 0
+    assert (
+        "Matched 0 changed-file unit(s) against a 0-unit full-tree index. "
+        "Found 0 exact-duplicate group(s), 0 near-duplicate pair(s), "
+        "0 name-collision group(s)."
+    ) in log_text
+
+
+def test_run_changed_scope_indexes_file_outside_roots(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A changed file outside ``roots`` is still indexed and matched.
+
+    Regression: ``iter_files`` in CHANGED scope ignores ``roots`` entirely,
+    so a changed file can sit outside the directories being scanned. It
+    must still be extracted and checked against the full-tree index.
+    """
+    _write(fake_repo / "src" / "a.py", IDENTICAL_BODY_A)
+    _write(fake_repo / "other" / "outside.py", IDENTICAL_BODY_B)
+    _fake_changed(monkeypatch, ["other/outside.py"])
+    code = run(
+        Scope.CHANGED, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3)
+    )
+    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    assert "exact body duplicate" in log_text
+    assert code == 1
+
+
+def test_summary_full_scope_uses_scanned_wording() -> None:
+    """FULL-scope summary opens with the plain scanned-unit count."""
+    text = _summary(10, 1, 2, 3)
+    assert text.startswith("Scanned 10 function units.")
+
+
+def test_summary_changed_scope_uses_matched_wording() -> None:
+    """CHANGED-scope summary opens with the matched-against-index wording."""
+    text = _summary(10, 1, 2, 3, n_changed=3)
+    assert text.startswith(
+        "Matched 3 changed-file unit(s) against a 10-unit full-tree index."
+    )
+
+
+def test_touches_changed_true_when_one_unit_in_changed_set() -> None:
+    """True when at least one unit's path is in the changed set."""
+    unit = CodeUnit(
+        path="src/a.py",
+        line=1,
+        qualified_name="f",
+        bare_name="f",
+        body_hash="x",
+        token_count=1,
+    )
+    assert _touches_changed({"src/a.py"}, [unit]) is True
+
+
+def test_touches_changed_false_when_no_unit_in_changed_set() -> None:
+    """False when no unit's path is in the changed set."""
+    unit = CodeUnit(
+        path="src/a.py",
+        line=1,
+        qualified_name="f",
+        bare_name="f",
+        body_hash="x",
+        token_count=1,
+    )
+    assert _touches_changed({"src/other.py"}, [unit]) is False
+
+
+def test_touches_changed_false_for_empty_units() -> None:
+    """False when the units iterable is empty, regardless of changed set."""
+    assert _touches_changed({"src/a.py"}, []) is False
+
+
+def test_run_changed_scope_findings_are_subset_of_full_scope(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Units covered by an unchanged exact-dup group stay excluded.
+
+    Regression: ``covered`` was computed from the scope-FILTERED exact
+    groups, so an exact pair living entirely in unchanged files re-entered
+    near-dup candidacy in CHANGED scope — reporting a near-duplicate (once
+    per group member) that FULL scope structurally cannot produce.
+    """
+    _write(fake_repo / "src" / "a.py", IDENTICAL_BODY_A)
+    _write(fake_repo / "src" / "b.py", IDENTICAL_BODY_B)
+    _write(fake_repo / "src" / "c.py", NEAR_DUP_BODY)
+    _fake_changed(monkeypatch, ["src/c.py"])
+    code = run(
+        Scope.CHANGED,
+        [fake_repo / "src"],
+        DupConfig(min_tokens=5, shingle_size=3, threshold=0.5),
+    )
+    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    assert "near-duplicate (" not in log_text
+    assert "exact body duplicate" not in log_text
+    assert code == 0

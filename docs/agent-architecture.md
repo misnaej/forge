@@ -187,6 +187,7 @@ graph LR
   main_agent{{"Main agent<br/>orchestrator"}}
   human -->|drives| main_agent
   hk_block_pr_merge[/"block_pr_merge<br/>hook"/]
+  hk_block_unverified_pr_create[/"block_unverified_pr_create<br/>hook"/]
   design_checker["⚖️ design-checker<br/>AI agent"]
   docs_types_checker["⚖️ docs-types-checker<br/>AI agent"]
   cli_forge_continuation_append[("forge-continuation-append<br/>CLI")]
@@ -213,9 +214,12 @@ graph LR
   pr_manager -->|invokes| cli_forge_pr_squash_comment
   pr_manager -->|invokes| cli_forge_continuation_append
   pr_manager -.->|guarded by| hk_block_pr_merge
+  pr_manager -.->|guarded by| hk_block_unverified_pr_create
+  sk_pr -.->|guarded by| hk_block_unverified_pr_create
   class human person
   class main_agent orchestrator
   class hk_block_pr_merge hook
+  class hk_block_unverified_pr_create hook
   class design_checker agent
   class design_checker reporter
   class docs_types_checker agent
@@ -334,4 +338,27 @@ graph LR
   class sk_weekly skill
   class weekly_summary agent
   class weekly_summary mutator
+```
+
+## Maintenance
+
+```mermaid
+graph LR
+  classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12
+  classDef agent fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+  classDef skill fill:#ffedd5,stroke:#ea580c,color:#7c2d12
+  classDef hook fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef cli fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef policy fill:#f1f5f9,stroke:#64748b,color:#334155
+  classDef orchestrator fill:#c7d2fe,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
+  classDef reporter stroke-dasharray:5 3
+  classDef mutator stroke-width:3px
+  human(["Developer<br/>person"])
+  main_agent{{"Main agent<br/>orchestrator"}}
+  human -->|drives| main_agent
+  sk_memory_audit(["/memory-audit<br/>skill"])
+  main_agent -->|runs| sk_memory_audit
+  class human person
+  class main_agent orchestrator
+  class sk_memory_audit skill
 ```

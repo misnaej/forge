@@ -25,6 +25,19 @@ format. Severity heuristics:
 Maps to Robert C. Martin's CRP / CCP (Common Reuse + Common Closure):
 helpers that share a body share a reason to change and a reason to be
 reused — they belong in one place.
+
+Scope semantics — changed scope is prior-art aware: the full tree is
+always indexed, and in ``CHANGED`` scope findings are filtered to those
+involving at least one changed-file unit. A changed unit therefore
+matches an existing implementation in an *unchanged* file — the
+prior-art case — instead of changed files being compared only against
+each other.
+
+Known limitation — function granularity: units are whole
+``FunctionDef`` / ``AsyncFunctionDef`` bodies. A duplicated block
+*inside* a larger function produces no unit of its own, so it is
+invisible to every pass here; only extracting the block into a function
+makes it detectable.
 """
 
 from __future__ import annotations
@@ -504,6 +517,7 @@ def _summary(
     n_exact: int,
     n_near: int,
     n_name: int,
+    n_changed: int | None = None,
 ) -> str:
     """Render the one-paragraph audit summary.
 
@@ -512,12 +526,20 @@ def _summary(
         n_exact: Exact-duplicate group count.
         n_near: Near-duplicate pair count.
         n_name: Name-collision group count.
+        n_changed: Changed-file unit count in ``CHANGED`` scope; ``None``
+            in ``FULL`` scope.
 
     Returns:
         One-line summary suitable for the log header.
     """
+    scanned = (
+        f"Matched {n_changed} changed-file unit(s) against a "
+        f"{n_units}-unit full-tree index."
+        if n_changed is not None
+        else f"Scanned {n_units} function units."
+    )
     return (
-        f"Scanned {n_units} function units. "
+        f"{scanned} "
         f"Found {n_exact} exact-duplicate group(s), "
         f"{n_near} near-duplicate pair(s), "
         f"{n_name} name-collision group(s)."
@@ -541,19 +563,46 @@ class DupConfig:
     output: Path | None = None
 
 
+def _touches_changed(changed: set[str], units: Iterable[CodeUnit]) -> bool:
+    """Return whether any unit lives in a changed file.
+
+    Args:
+        changed: Repo-relative paths of changed files.
+        units: Units of one candidate group / pair.
+
+    Returns:
+        True when at least one unit's path is in ``changed``.
+    """
+    return any(u.path in changed for u in units)
+
+
 def run(scope: Scope, roots: list[Path], config: DupConfig) -> int:
     """Execute the full duplicate-detection pipeline.
 
+    The full tree is always indexed; ``CHANGED`` scope filters findings to
+    those involving a changed-file unit (prior-art semantics — see module
+    docstring) rather than narrowing the scan itself.
+
     Args:
         scope: ``FULL`` or ``CHANGED``.
-        roots: Directories to walk for ``FULL`` scope.
+        roots: Directories to walk for the full-tree index.
         config: Tunable knobs (token threshold, Jaccard, shingle size, output).
 
     Returns:
         Process exit code (0 = clean or only LOW findings, 1 otherwise).
     """
+    changed: set[str] | None = None
+    changed_abs: list[Path] = []
+    if scope is Scope.CHANGED:
+        changed_abs = list(iter_files(Scope.CHANGED, roots))
+        changed = {relpath(p) for p in changed_abs}
+        if not changed:
+            summary = _summary(0, 0, 0, 0, n_changed=0)
+            write_log("dup", [], summary, output=config.output)
+            return 0
+
     units: list[CodeUnit] = []
-    for path in iter_files(scope, roots):
+    for path in iter_files(Scope.FULL, roots):
         units.extend(
             extract_units(
                 path,
@@ -561,18 +610,54 @@ def run(scope: Scope, roots: list[Path], config: DupConfig) -> int:
                 shingle_size=config.shingle_size,
             ),
         )
+    if changed is not None:
+        # A changed file can sit outside the index roots (iter_files in
+        # CHANGED scope ignores roots); index it too so its units exist.
+        indexed = {u.path for u in units}
+        for path in changed_abs:
+            if relpath(path) not in indexed:
+                units.extend(
+                    extract_units(
+                        path,
+                        min_tokens=config.min_tokens,
+                        shingle_size=config.shingle_size,
+                    ),
+                )
 
-    exact_groups = _group_by_hash(units)
-    exact_findings, covered = _build_exact_findings(exact_groups)
+    # `covered` must come from ALL exact groups, not the scope-filtered
+    # subset: a unit explained by an unchanged-files-only exact group is
+    # still not a near-dup / name-collision candidate, else CHANGED scope
+    # reports pairs FULL scope structurally cannot (once per group member).
+    all_exact_groups = _group_by_hash(units)
+    _, covered = _build_exact_findings(all_exact_groups)
+    exact_groups = (
+        all_exact_groups
+        if changed is None
+        else [g for g in all_exact_groups if _touches_changed(changed, g)]
+    )
+    exact_findings, _ = _build_exact_findings(exact_groups)
 
     near_pairs = _find_near_dups(units, covered, threshold=config.threshold)
+    if changed is not None:
+        near_pairs = [t for t in near_pairs if _touches_changed(changed, (t[0], t[1]))]
     near_findings = _build_near_findings(near_pairs)
 
     name_groups = _find_name_collisions(units, covered)
+    if changed is not None:
+        name_groups = [g for g in name_groups if _touches_changed(changed, g)]
     name_findings = _build_name_findings(name_groups)
 
+    n_changed = (
+        sum(1 for u in units if u.path in changed) if changed is not None else None
+    )
     findings = exact_findings + near_findings + name_findings
-    summary = _summary(len(units), len(exact_groups), len(near_pairs), len(name_groups))
+    summary = _summary(
+        len(units),
+        len(exact_groups),
+        len(near_pairs),
+        len(name_groups),
+        n_changed=n_changed,
+    )
     write_log("dup", findings, summary, output=config.output)
     return exit_code_for(findings)
 
@@ -585,7 +670,11 @@ def main() -> int:
     """
     parser = make_audit_parser(
         prog="forge-audit-dup",
-        description="Detect duplicate / near-duplicate / name-colliding functions.",
+        description=(
+            "Detect duplicate / near-duplicate / name-colliding functions. "
+            "Changed scope matches changed-file units against a full-tree "
+            "index, so prior art in unchanged files is found."
+        ),
     )
     parser.add_argument(
         "--min-tokens",
