@@ -54,10 +54,13 @@ module(s) touched, their direct callers/callees, the README / docstrings /
 --search` before opening one). If it's more than a handful of files, delegate the
 read to `Explore` — ground truth, not vibe-truth. **Red flags that mean you have
 not read enough:** proposing a new helper without checking it already exists;
-proposing a wrapper without first checking whether the wrapped interface could
-simply change (§7); a path that doesn't exist on disk; schema changes without
-inspecting the current schema; a fix based on what a function "should" do
-rather than what it does.
+creating a new module/file when an existing module is the natural home (prefer
+extending or relocating within an existing module over minting a new one, §7);
+adopting an issue's *suggested* name/path as a directive instead of a
+hypothesis to validate against the current layout; proposing a wrapper without
+first checking whether the wrapped interface could simply change (§7); a path
+that doesn't exist on disk; schema changes without inspecting the current
+schema; a fix based on what a function "should" do rather than what it does.
 
 ### Plan before executing
 

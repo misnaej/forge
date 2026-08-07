@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 670 symbols._
+_62 modules, 671 symbols._
 
 ## `forge`
 
@@ -154,8 +154,9 @@ _62 modules, 670 symbols._
 - `_build_exact_findings(groups: list[list[CodeUnit]]) -> tuple[list[Finding], set[int]]` _(internal)_ — Render exact-duplicate groups as ``Finding`` records.
 - `_build_near_findings(pairs: list[tuple[CodeUnit, CodeUnit, float]]) -> list[Finding]` _(internal)_ — Render near-duplicate pairs as ``Finding`` records.
 - `_build_name_findings(groups: list[list[CodeUnit]]) -> list[Finding]` _(internal)_ — Render name-collision groups as informational findings.
-- `_summary(n_units: int, n_exact: int, n_near: int, n_name: int) -> str` _(internal)_ — Render the one-paragraph audit summary.
+- `_summary(n_units: int, n_exact: int, n_near: int, n_name: int, n_changed: int | None = None) -> str` _(internal)_ — Render the one-paragraph audit summary.
 - `class DupConfig` — Tunable knobs for the duplicate-detection pipeline.
+- `_touches_changed(changed: set[str], units: Iterable[CodeUnit]) -> bool` _(internal)_ — Return whether any unit lives in a changed file.
 - `run(scope: Scope, roots: list[Path], config: DupConfig) -> int` — Execute the full duplicate-detection pipeline.
 - `main() -> int` — CLI entry point for ``forge-audit-dup``.
 
