@@ -62,7 +62,7 @@ Reply format (per FOUNDATION §6 "PR review comments"):
 
 ## Task: Write PR Description
 
-Section list, word cap, and the `## In plain English` lead rules all live in [FOUNDATION §6 "PR descriptions"](../FOUNDATION.md#6-git--pr-workflow) — follow them; do not restate here.
+Section list, word cap, and the plain-English `## Summary` lead rules all live in [FOUNDATION §6 "PR descriptions"](../FOUNDATION.md#6-git--pr-workflow) — follow them; do not restate here.
 
 Wire auto-close with **bare** `Closes #N` / `Fixes #N` / `Resolves #N` on their own line (no bold, no list-item prefix — GitHub's parser rejects those). `Addresses #N` is partial-completion (does NOT auto-close).
 

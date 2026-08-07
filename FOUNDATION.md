@@ -290,13 +290,13 @@ and ask.
 
 ### PR descriptions
 
-- Max 300 words. Sections: In plain English / Changes / Testing / Breaking
+- Max 300 words. Sections: Summary / Changes / Testing / Breaking
   Changes (omit if none). Update if scope shifts.
-- **`## In plain English` leads every PR description** (it replaces the usual
-  `Summary`), written for the reader who uses the product but not the
-  codebase: no class/function names or internals; lead with the consequence
-  for that reader, not the mechanism; and say plainly when results stop being
-  comparable across the change. Technical detail belongs under `Changes`.
+- **The `## Summary` lead is written in plain English** for the reader who
+  uses the product but not the codebase: no class/function names or
+  internals; lead with the consequence for that reader, not the mechanism;
+  and say plainly when results stop being comparable across the change.
+  Technical detail belongs under `Changes`.
 
 ### PR finalization — verify first, never block on CI
 

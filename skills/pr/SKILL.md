@@ -275,8 +275,8 @@ Verification is done and fixes are committed. Three cases:
    `git log origin/<base>..HEAD --oneline`), then create the PR
    (description rules: FOUNDATION §6 "PR descriptions"):
    ```bash
-   gh pr create --title "<type>: <description>" --body "## In plain English
-   <2–4 sentences per FOUNDATION §6 \"PR descriptions\">
+   gh pr create --title "<type>: <description>" --body "## Summary
+   <2–4 plain-English sentences per FOUNDATION §6 \"PR descriptions\">
 
    ## Changes
    <bullets — technical detail lives here>
