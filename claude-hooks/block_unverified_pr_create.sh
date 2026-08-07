@@ -24,7 +24,10 @@ if ! echo "$COMMAND" | grep -qE '(^|[[:space:]]*[|;&]+[[:space:]]*)gh +pr +creat
     exit 0
 fi
 
-if echo "$COMMAND" | grep -q 'FORGE_SKIP_WRAPUP_GATE=1' \
+# The embedded skip form must sit at command position, directly prefixing
+# the create invocation — a free-text mention (e.g. in a --title/--body
+# that discusses this hook) must NOT trip the bypass.
+if echo "$COMMAND" | grep -qE '(^|[[:space:]]*[|;&]+[[:space:]]*)FORGE_SKIP_WRAPUP_GATE=1[[:space:]]+gh[[:space:]]+pr[[:space:]]+create\b' \
     || [ "${FORGE_SKIP_WRAPUP_GATE:-}" = "1" ]; then
     exit 0
 fi

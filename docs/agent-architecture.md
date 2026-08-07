@@ -187,6 +187,7 @@ graph LR
   main_agent{{"Main agent<br/>orchestrator"}}
   human -->|drives| main_agent
   hk_block_pr_merge[/"block_pr_merge<br/>hook"/]
+  hk_block_unverified_pr_create[/"block_unverified_pr_create<br/>hook"/]
   design_checker["⚖️ design-checker<br/>AI agent"]
   docs_types_checker["⚖️ docs-types-checker<br/>AI agent"]
   cli_forge_continuation_append[("forge-continuation-append<br/>CLI")]
@@ -213,9 +214,12 @@ graph LR
   pr_manager -->|invokes| cli_forge_pr_squash_comment
   pr_manager -->|invokes| cli_forge_continuation_append
   pr_manager -.->|guarded by| hk_block_pr_merge
+  pr_manager -.->|guarded by| hk_block_unverified_pr_create
+  sk_pr -.->|guarded by| hk_block_unverified_pr_create
   class human person
   class main_agent orchestrator
   class hk_block_pr_merge hook
+  class hk_block_unverified_pr_create hook
   class design_checker agent
   class design_checker reporter
   class docs_types_checker agent

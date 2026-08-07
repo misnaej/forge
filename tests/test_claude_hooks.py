@@ -745,3 +745,24 @@ def test_unverified_pr_create_allows_non_git_cwd_with_wrapup(tmp_path: Path) -> 
     (tmp_path / "code_health").mkdir()
     (tmp_path / "code_health" / "pr_wrapup.md").write_text("verified-at: deadbeef\n")
     assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=tmp_path) == 0
+
+
+def test_unverified_pr_create_blocks_token_mention_in_argument(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A --title merely MENTIONING the skip token does not bypass the gate.
+
+    Regression: the embedded skip form was an unanchored substring grep, so
+    PR prose discussing `FORGE_SKIP_WRAPUP_GATE=1` (plausible in this repo)
+    silently disabled the gate. The token must sit at command position,
+    directly prefixing the create invocation.
+    """
+    repo, _sha = git_repo_with_commit
+    assert (
+        _run_hook(
+            _UNVERIFIED_PR_CREATE,
+            'gh pr create --title "docs mention FORGE_SKIP_WRAPUP_GATE=1"',
+            cwd=repo,
+        )
+        == 2
+    )

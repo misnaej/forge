@@ -103,6 +103,8 @@ When asked to verify/finalize a PR:
 
    **Pre-run reports**: the caller's prompt MAY include pre-run design / security / docs reports — use them and skip steps 1–3 (the fallback for direct invocations).
 
+   **Pre-authored wrap-up** (`/pr` Step 3.92 path): when `code_health/pr_wrapup.md` exists and its `verified-at:` names `HEAD`, do NOT recompose — post its body as the wrap-up, refreshing only the CI Status line to the status as of posting.
+
    **Delta-mode short-circuit.** Criteria (thresholds, high-blast-radius
    paths, SHA regex) live in `pr_delta.py` (SSoT; never hardcode); the
    `verified-at:` contract is in
