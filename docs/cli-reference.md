@@ -468,6 +468,18 @@ options:
                         tagging.
 ```
 
+## forge-resync
+
+```text
+usage: forge-resync [-h]
+
+Regenerate forge-managed artifacts and open a dedup-guarded resync PR when
+they drifted.
+
+options:
+  -h, --help  show this help message and exit
+```
+
 ## forge-slow-tests-report
 
 ```text

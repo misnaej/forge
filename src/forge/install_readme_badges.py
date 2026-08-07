@@ -35,7 +35,7 @@ import re
 import urllib.parse
 from typing import TYPE_CHECKING
 
-from forge.config import read_pyproject_raw
+from forge.config import read_pyproject_raw, read_tool_forge_section
 from forge.git_utils import configure_cli_logging, run_git
 from forge.git_utils import repo_root as get_repo_root
 from forge.upgrade import find_pin
@@ -252,7 +252,7 @@ def build_badges(root: Path) -> list[str]:
         missing inputs (no remote, no license, …) are omitted.
     """
     data = read_pyproject_raw(root)
-    badges_cfg = data.get("tool", {}).get("forge", {}).get("badges", {})
+    badges_cfg = read_tool_forge_section(root, "badges")
     workflow = badges_cfg.get("workflow") if isinstance(badges_cfg, dict) else None
     slug = _git_remote_slug(root)
     candidates = [
@@ -321,7 +321,7 @@ def _get_readme_path(root: Path) -> tuple[Path | None, int]:
         configuration error prevents proceeding (caller should exit with
         that code).
     """
-    cfg = read_pyproject_raw(root).get("tool", {}).get("forge", {}).get("badges", {})
+    cfg = read_tool_forge_section(root, "badges")
     if not (isinstance(cfg, dict) and cfg.get("enabled") is True):
         logger.info("[tool.forge.badges] enabled is not true — skipped.")
         return None, 0

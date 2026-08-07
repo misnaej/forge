@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 667 symbols._
+_62 modules, 670 symbols._
 
 ## `forge`
 
@@ -35,19 +35,21 @@ _62 modules, 667 symbols._
 - `_check_word_count(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag agent bodies above the length budget.
 - `_check_frontmatter(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag missing required frontmatter keys.
 - `_check_description_shape(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag descriptions that read as role labels rather than routing triggers.
-- `_is_reporter_agent(agent: AgentDoc) -> bool` _(internal)_ — Return True when *agent* is in :data:`REPORTER_AGENT_NAMES`.
-- `_check_reporter_tools(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag reporter agents holding mutating tools (`Write`/`Edit`).
-- `_check_reporter_verified_at(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag reporter agents missing the ``verified-at:`` header instruction.
+- `_sanitize_fragment(text: str, limit: int = 40) -> str` _(internal)_ — Return consumer-authored *text* made safe for a code_health log line.
+- `_is_reporter_agent(agent: AgentDoc, reporters: frozenset[str]) -> bool` _(internal)_ — Return True when *agent* is in the effective reporter set.
+- `_check_reporter_tools(agent: AgentDoc, reporters: frozenset[str], artifact_reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Flag reporter agents holding mutating tools (`Write`/`Edit`).
+- `_check_reporter_verified_at(agent: AgentDoc, reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Flag reporter agents missing the ``verified-at:`` header instruction.
 - `_check_required_sections(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag missing canonical H2 sections.
 - `_tokens(text: str) -> list[str]` _(internal)_ — Return whitespace-split lowercase tokens of *text*.
 - `_ngrams(tokens: list[str], n: int) -> set[str]` _(internal)_ — Return the set of *n*-token windows from *tokens*.
 - `_check_foundation_restatements(agent: AgentDoc, foundation_ngrams: set[str]) -> list[Finding]` _(internal)_ — Flag substrings of ``SHARED_TOKEN_MIN`` tokens shared with FOUNDATION.
 - `_cross_agent_duplicate_findings(agents: list[AgentDoc]) -> list[Finding]` _(internal)_ — Flag n-grams that appear in two or more agent files.
 - `class AgentsConfig` — Configuration for ``forge-audit-agents``.
-- `_iter_agent_files(repo_root_path: Path) -> list[Path]` _(internal)_ — Return every public agent markdown file under ``agents/``.
-- `_per_agent_findings(agent: AgentDoc, foundation_ngrams: set[str]) -> list[Finding]` _(internal)_ — Run every per-agent check and return the combined finding list.
+- `_iter_agent_files(repo_root_path: Path, roots: list[Path] | None = None) -> list[Path]` _(internal)_ — Return every public agent markdown file under the scan roots.
+- `_effective_reporter_sets(repo_root_path: Path) -> tuple[frozenset[str], frozenset[str]]` _(internal)_ — Return the effective reporter / reporter-with-artifact name sets.
+- `_per_agent_findings(agent: AgentDoc, foundation_ngrams: set[str], reporters: frozenset[str], artifact_reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Run every per-agent check and return the combined finding list.
 - `_render_summary(agents: list[AgentDoc], findings: list[Finding]) -> str` _(internal)_ — Render the per-agent summary table for the log header.
-- `run(scope: Scope, _roots: list[Path], config: AgentsConfig) -> int` — Walk every agent file and emit findings to ``code_health/audit_agents.log``.
+- `run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int` — Walk every agent file and emit findings to ``code_health/audit_agents.log``.
 - `main() -> int` — CLI entry point for ``forge-audit-agents``.
 
 ## `forge.audit.all`
@@ -217,6 +219,7 @@ _62 modules, 667 symbols._
 - `class ForgeConfig` — Repo configuration sourced from ``[tool.forge]``.
   - `dual_track(self) -> bool` — Return ``True`` when base and dev are distinct branches.
 - `read_pyproject_raw(repo_root: Path) -> dict` — Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
+- `read_tool_forge_section(repo_root: Path, section: str = '') -> dict` — Return a ``[tool.forge.<section>]`` table, or ``{}`` when absent.
 - `_read_toml_file(path: Path) -> dict | None` _(internal)_ — Parse a standalone TOML file, degrading to ``None`` on any failure.
 - `resolve_model_section(repo_root: Path) -> dict | None` — Locate the C4 model table — external file or inline pyproject.
 - `load_config(repo_root: Path) -> ForgeConfig` — Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.

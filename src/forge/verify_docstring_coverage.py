@@ -112,6 +112,9 @@ def _badge_enabled(data: dict) -> bool:
         Value of ``[tool.forge.docstring_coverage].badge`` or ``False``
         when the key is missing.
     """
+    # Deliberate exception to config.read_tool_forge_section: this
+    # navigates an already-parsed dict shared with _interrogate_config,
+    # so routing through the helper would re-read pyproject.toml.
     section = data.get("tool", {}).get("forge", {}).get("docstring_coverage", {})
     return bool(section.get("badge", False))
 

@@ -62,7 +62,7 @@ Reply format (per FOUNDATION §6 "PR review comments"):
 
 ## Task: Write PR Description
 
-Rules in [FOUNDATION §6 "PR descriptions"](../FOUNDATION.md#6-git--pr-workflow). Sections: **Summary** (2–3 sentences: what + why) / **Changes** / **Testing** / **Breaking Changes** (omit if none).
+Section list, word cap, and the plain-English `## Summary` lead rules all live in [FOUNDATION §6 "PR descriptions"](../FOUNDATION.md#6-git--pr-workflow) — follow them; do not restate here.
 
 Wire auto-close with **bare** `Closes #N` / `Fixes #N` / `Resolves #N` on their own line (no bold, no list-item prefix — GitHub's parser rejects those). `Addresses #N` is partial-completion (does NOT auto-close).
 
@@ -139,7 +139,7 @@ When asked to verify/finalize a PR:
    - Check commit messages for issue references
    - If issues are addressed but not properly referenced for auto-closing, warn user
 7. **MANDATORY: Write and post squash-merge message as a separate PR comment** (see "Task: Write Squash-Merge Message" above). This is NOT optional — every wrap-up MUST include it.
-8. **Post wrap-up comment** via `gh pr comment <PR#> --body "..."` with sections: **Design Check**, **Security Review**, **Documentation Check** (each the reporter's summary), **Issue Management** (auto-close references or warnings), **Code Quality** (✅/❌ per `code_health/` log: ruff, test_naming, repo_structure, docstring_verification), and **Recommendation** (Ready for merge / Needs work / Security concerns).
+8. **Post wrap-up comment** via `gh pr comment <PR#> --body "..."` with sections: **Design Check**, **Security Review**, **Documentation Check** (each the reporter's summary), **Issue Management** (auto-close references or warnings), **Code Quality** (✅/❌ per `code_health/` log: ruff, test_naming, repo_structure, docstring_verification), **CI Status** (as of posting — never wait for CI; state plainly when it has not completed, per FOUNDATION §6 "PR finalization"), and **Recommendation** (Ready for merge / Needs work / Security concerns).
 
 ## Task: Issue Management
 

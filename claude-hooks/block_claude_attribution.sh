@@ -19,8 +19,13 @@ fi
 # adjacent-words form missed every one of these. The bound is deliberately
 # tiny (≤4 chars: a bracket, ` the `, ` a `, `by `) so benign prose like
 # "generated with care" never false-positives. `🤖 generated` catches the
-# robot-emoji signature the harness emits directly.
-if echo "$COMMAND" | grep -qiE 'co-authored-by.*(claude|anthropic)|generated (with|by) .{0,4}claude|🤖 generated'; then
+# robot-emoji signature the harness emits directly. The remaining
+# alternatives mirror the newer credit phrasings in
+# forge.pr_squash_comment.AI_ATTRIBUTION_PATTERNS — when that tuple
+# gains a phrase, add its vendor-qualified form here by hand (this hook
+# is tuned for raw commit-message noise, so it stays deliberately
+# narrower than the Python list).
+if echo "$COMMAND" | grep -qiE 'co-authored-by.*(claude|anthropic)|generated (with|by) .{0,4}claude|🤖 generated|assisted by ai|ai-generated|with claude code|authored by claude'; then
     echo "BLOCKED: Claude attribution is forbidden in commits and PRs. Remove any Co-Authored-By, 'Generated with Claude', or AI references." >&2
     exit 2
 fi

@@ -135,6 +135,13 @@ prose-level injection content are not detected by path classification.
 |---|---|---|---|
 | `path` | unset (step self-skips) | Repo-relative path of a hand-maintained agent-architecture doc; setting it opts into the `agent_doc` pre-commit step (`verify-forge-agent-doc`: full agent/skill coverage, no dangling hook/CLI/skill references). | You keep an agent-architecture doc and want drift caught at commit time. |
 
+## `[tool.forge.audit_agents]`
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `reporter_agents` | `[]` | Consumer agent names classified as reporters by `forge-audit-agents`, additive to the shipped list — never replaces it — so the no-`Write`/`Edit` and `verified-at:` checks also apply to your own reporter agents. | You ship a consumer agent under `.claude/agents/` that follows the reporter pattern and want it held to the same template checks as forge's own reporters. |
+| `reporter_with_artifact_agents` | `[]` | Consumer reporter agents exempt from the no-`Write`/`Edit` check because their report IS a written artifact, additive to the shipped list. | Your consumer reporter (like forge's own `docs-types-checker`) legitimately writes/edits the doc it reports on. |
+
 ## `[tool.forge.hooks]` — Claude Code safety hooks
 
 Read by the **shell** safety hooks (not the Python config surface), so

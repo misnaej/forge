@@ -38,9 +38,17 @@ on:
   push:
     branches: [main, dev]
   pull_request:
+    # ready_for_review added to the default set so a draft PR (the /pr
+    # skill's early-visibility escape hatch) gets its first CI run the
+    # moment it is marked ready.
+    types: [opened, synchronize, reopened, ready_for_review]
 
 jobs:
   test:
+    # Draft PRs skip CI: /pr's verification-first flow runs the same checks
+    # locally before publishing, so CI on an unfinished draft is waste. A
+    # skipped job satisfies required status checks.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       # SHA-pin actions (tag comment for humans) — tags are movable, SHAs are

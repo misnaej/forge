@@ -17,6 +17,7 @@ from forge.config import (
     filter_under_roots,
     load_config,
     read_pyproject_raw,
+    read_tool_forge_section,
     resolve_tool_roots,
     select_diff_files,
     tracked_files_under_roots,
@@ -161,6 +162,67 @@ def test_read_pyproject_raw_empty_on_missing_or_malformed(tmp_path: Path) -> Non
     assert read_pyproject_raw(tmp_path) == {}
     (tmp_path / "pyproject.toml").write_text("not [ valid toml @@@")
     assert read_pyproject_raw(tmp_path) == {}
+
+
+def test_read_tool_forge_section_empty_section_returns_whole_table(
+    tmp_path: Path,
+) -> None:
+    """An empty ``section`` argument returns the whole ``[tool.forge]`` table."""
+    _forge_toml(tmp_path, 'base_branch = "main"\ndev_branch = "dev"')
+    assert read_tool_forge_section(tmp_path) == {
+        "base_branch": "main",
+        "dev_branch": "dev",
+    }
+
+
+def test_read_tool_forge_section_named_section_returns_subsection_dict(
+    tmp_path: Path,
+) -> None:
+    """A named ``section`` returns just that ``[tool.forge.<section>]`` table."""
+    _forge_toml(tmp_path, '[tool.forge.precommit]\nmode = "strict"')
+    assert read_tool_forge_section(tmp_path, "precommit") == {"mode": "strict"}
+
+
+def test_read_tool_forge_section_missing_section_returns_empty_dict(
+    tmp_path: Path,
+) -> None:
+    """A ``section`` absent from ``[tool.forge]`` degrades to ``{}``."""
+    _forge_toml(tmp_path, 'base_branch = "main"')
+    assert read_tool_forge_section(tmp_path, "precommit") == {}
+
+
+def test_read_tool_forge_section_missing_tool_forge_returns_empty_dict(
+    tmp_path: Path,
+) -> None:
+    """No ``[tool.forge]`` table at all degrades to ``{}``."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "foo"\n')
+    assert read_tool_forge_section(tmp_path) == {}
+    assert read_tool_forge_section(tmp_path, "precommit") == {}
+
+
+def test_read_tool_forge_section_non_dict_forge_degrades_to_empty(
+    tmp_path: Path,
+) -> None:
+    """A non-table ``[tool] forge = "oops"`` value degrades to ``{}``."""
+    (tmp_path / "pyproject.toml").write_text('[tool]\nforge = "oops"\n')
+    assert read_tool_forge_section(tmp_path) == {}
+    assert read_tool_forge_section(tmp_path, "precommit") == {}
+
+
+def test_read_tool_forge_section_non_dict_subsection_degrades_to_empty(
+    tmp_path: Path,
+) -> None:
+    """A non-table ``[tool.forge] badges = "oops"`` subsection degrades to ``{}``."""
+    _forge_toml(tmp_path, 'badges = "oops"')
+    assert read_tool_forge_section(tmp_path, "badges") == {}
+
+
+def test_read_tool_forge_section_missing_pyproject_returns_empty_dict(
+    tmp_path: Path,
+) -> None:
+    """No ``pyproject.toml`` at all degrades to ``{}``."""
+    assert read_tool_forge_section(tmp_path) == {}
+    assert read_tool_forge_section(tmp_path, "precommit") == {}
 
 
 # ---------------------------------------------------------------------------

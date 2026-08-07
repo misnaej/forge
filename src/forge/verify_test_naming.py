@@ -45,7 +45,7 @@ from pathlib import Path
 
 from forge.config import (
     load_config,
-    read_pyproject_raw,
+    read_tool_forge_section,
     select_diff_files,
     tracked_files_under_roots,
 )
@@ -560,7 +560,7 @@ def _test_scan_roots(repo_root: Path) -> list[str]:
     Returns:
         Repo-relative test-directory roots to scope the tracked set against.
     """
-    forge = read_pyproject_raw(repo_root).get("tool", {}).get("forge", {})
+    forge = read_tool_forge_section(repo_root)
     tool = forge.get("test_naming_check")
     if isinstance(tool, dict) and isinstance(tool.get("paths"), list):
         return [str(p) for p in tool["paths"]]

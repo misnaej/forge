@@ -20,6 +20,59 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.0.0 — 2026-08-07
+
+### ⚠️ Upgrade notes
+- **Skill renamed: `review` → `pr-comments`.** Claude Code ships a
+  built-in `/review` that wins the bare invocation, making
+  `forge:review` unreachable — and repo-level documentation cannot
+  rebind it. Invoke `/forge:pr-comments` for handle-review-feedback;
+  update any consumer `CLAUDE.md` binding table or runbook naming
+  `forge:review`. FOUNDATION §16 now forbids shipped names colliding
+  with Claude Code built-ins.
+- **`forge-audit-agents` now audits consumer repos.** Discovery scans
+  `agents/` AND `.claude/agents/` (previously forge's own layout only,
+  so consumers permanently saw "0 findings"). Consumers will see real
+  findings on first run — the step is non-blocking by design (reports
+  only, exit 0). `--roots` is now honored; consumer reporter agents
+  can be classified via `[tool.forge.audit_agents].reporter_agents` /
+  `reporter_with_artifact_agents` (additive to the shipped lists).
+
+### Features
+- **`/pr` offers the `code-review` built-in as a second opinion.**
+  Prompt-then-consume: the skill prints the command while forge's
+  reporters run (user-triggered and billed — confirm-first, never a
+  soft blocker, self-skips non-interactive runs and delta mode);
+  pasted findings enter the fix pass under an explicit triage contract
+  (advisory, per-finding disposition, verify-before-acting,
+  deterministic gates win).
+- **`block_claude_attribution.sh` catches newer credit phrasings.** The
+  hook gained hand-tuned alternatives for `ai-generated`, `assisted by
+  ai`, and the vendor-credit phrases the Python validator already
+  rejected — previously a raw `git commit -m "ai-generated fix"` passed
+  the hook. The hook stays deliberately narrower than the Python phrase
+  list (tuned for raw commit-message noise; benign prose like
+  "generated with care" still passes).
+- **PR finalization is verification-first and never waits on CI.**
+  FOUNDATION §6 gains a "PR finalization" policy: reporters + the strict
+  pre-commit pass run against the local tree *before* the PR is
+  published (draft escape hatch for early visibility), and the wrap-up
+  posts as soon as checks finish, stating plainly when CI is still
+  running. `/pr` restructured to match (deferred PR creation, git-only
+  base-sync variant, publish step). The shipped CI recipe now skips
+  draft PRs and triggers on `ready_for_review`.
+- **PR descriptions lead with a plain-English `Summary`.** FOUNDATION §6
+  now requires the lead section be written for the reader who uses the
+  product, not the codebase — consequence first, no internals, and a
+  plain statement when results stop being comparable across the change.
+
+### Refactor
+- **`config.read_tool_forge_section`** — the one `[tool.forge.<section>]`
+  reader; eleven hand-rolled lookup sites across `precommit`,
+  `pr_delta`, `doctor`, `install_readme_badges`, `verify_agent_doc`,
+  `verify_test_naming`, `smart_test`, and `config` itself now route
+  through it.
+
 ## v2.30.0 — 2026-08-05
 
 ### Features

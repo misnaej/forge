@@ -1,5 +1,5 @@
 ---
-name: review
+name: pr-comments
 description: Fetch and address PR review comments - pr-manager categorizes comments, then implement fixes and post replies. Use when the user wants to handle PR review feedback.
 ---
 

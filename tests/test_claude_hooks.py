@@ -164,11 +164,7 @@ def test_attribution_blocks_plain_generated_with_claude() -> None:
 
 
 def test_attribution_blocks_short_separator_before_claude() -> None:
-    """A short separator (`the `, 4 chars) between the verb and claude blocks.
-
-    Documents the `.{0,4}` bound: `generated with the claude model` matches
-    because ` the ` is exactly four characters; this is intended.
-    """
+    """`generated with the claude model` blocks via the `.{0,4}` separator bound."""
     assert (
         _run_hook(_ATTRIBUTION, 'git commit -m "x\n\ngenerated with the claude model"')
         == 2
@@ -176,15 +172,24 @@ def test_attribution_blocks_short_separator_before_claude() -> None:
 
 
 def test_attribution_allows_benign_generated_prose() -> None:
-    """Benign prose ("generated with care") does not false-positive.
+    """`generated with care` passes — no vendor term near the verb."""
+    assert _run_hook(_ATTRIBUTION, 'git commit -m "x\n\ngenerated with care"') == 0
 
-    `claude` is not within the `.{0,4}` window after the verb, so the
-    deliberately tiny bound keeps ordinary commit prose unblocked.
+
+def test_attribution_blocks_newer_credit_phrasings() -> None:
+    """`ai-generated`, `assisted by ai`, and vendor-credit phrases block.
+
+    These alternatives mirror the newer entries in
+    `forge.pr_squash_comment.AI_ATTRIBUTION_PATTERNS` (added by hand —
+    this hook stays deliberately narrower than the Python list).
     """
-    assert (
-        _run_hook(_ATTRIBUTION, 'git commit -m "this code was generated with care"')
-        == 0
-    )
+    for body in (
+        "ai-generated fix",
+        "assisted by AI throughout",
+        "built with claude code",
+        "authored by claude",
+    ):
+        assert _run_hook(_ATTRIBUTION, f'git commit -m "x\n\n{body}"') == 2
 
 
 def test_attribution_ignores_non_history_commands() -> None:
