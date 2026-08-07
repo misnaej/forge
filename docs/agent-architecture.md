@@ -194,10 +194,10 @@ graph LR
   sk_pr(["/pr<br/>skill"])
   pr_manager["pr-manager<br/>AI agent"]
   precommit_fixer["⚖️ precommit-fixer<br/>AI agent"]
-  sk_review(["/review<br/>skill"])
+  sk_pr_comments(["/pr-comments<br/>skill"])
   security_checker["⚖️ security-checker<br/>AI agent"]
   main_agent -->|runs| sk_pr
-  main_agent -->|runs| sk_review
+  main_agent -->|runs| sk_pr_comments
   pr_manager -->|delegates| design_checker
   pr_manager -->|delegates| security_checker
   pr_manager -->|delegates| docs_types_checker
@@ -209,7 +209,7 @@ graph LR
   sk_pr -->|invokes| docs_types_checker
   sk_pr -->|invokes| precommit_fixer
   sk_pr -->|invokes| pr_manager
-  sk_review -->|invokes| pr_manager
+  sk_pr_comments -->|invokes| pr_manager
   pr_manager -->|invokes| cli_forge_pr_squash_comment
   pr_manager -->|invokes| cli_forge_continuation_append
   pr_manager -.->|guarded by| hk_block_pr_merge
@@ -227,7 +227,7 @@ graph LR
   class pr_manager mutator
   class precommit_fixer agent
   class precommit_fixer mutator
-  class sk_review skill
+  class sk_pr_comments skill
   class security_checker agent
   class security_checker reporter
 ```

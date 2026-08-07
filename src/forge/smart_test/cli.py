@@ -59,8 +59,7 @@ def _smart_test_config(repo_root: Path) -> dict[str, object]:
     Returns:
         The ``[tool.forge.smart_test]`` subsection dict, or ``{}`` when absent.
     """
-    data = _config.read_pyproject_raw(repo_root)
-    return ((data.get("tool") or {}).get("forge") or {}).get("smart_test") or {}
+    return _config.read_tool_forge_section(repo_root, "smart_test")
 
 
 def _depth_from_commit(repo_root: Path, cfg: dict[str, object]) -> str | None:

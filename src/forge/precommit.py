@@ -198,8 +198,7 @@ def _forge_step_config(repo_root: Path, step: str) -> dict[str, object]:
     Returns:
         The subsection dict, or ``{}`` when any level is missing.
     """
-    data = config.read_pyproject_raw(repo_root)
-    return ((data.get("tool") or {}).get("forge") or {}).get(step) or {}
+    return config.read_tool_forge_section(repo_root, step)
 
 
 def _resolve_scope(repo_root: Path, step: str) -> str:

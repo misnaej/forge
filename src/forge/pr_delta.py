@@ -134,8 +134,7 @@ def configured_docs_only_globs(repo_root: Path) -> tuple[str, ...]:
         Configured glob strings, or ``()`` when the key (or the file) is
         absent or malformed.
     """
-    data = config.read_pyproject_raw(repo_root)
-    pr_cfg = ((data.get("tool") or {}).get("forge") or {}).get("pr") or {}
+    pr_cfg = config.read_tool_forge_section(repo_root, "pr")
     globs = pr_cfg.get("docs_only_globs")
     if not isinstance(globs, list):
         return ()

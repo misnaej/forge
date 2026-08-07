@@ -13,6 +13,9 @@ on:
   push:
     branches: [main, dev]
   pull_request:
+    # ready_for_review added to the default trigger set so a draft opened
+    # via /pr's escape hatch gets its first CI run when marked ready.
+    types: [opened, synchronize, reopened, ready_for_review]
 
 # Defense-in-depth: workflow only reads (no artifact uploads, no PR comments,
 # no label mutations). Tagging lives in the separate tag-release.yml
@@ -30,7 +33,14 @@ jobs:
     # plugin.json bump the plugin_version gate demands, so the full
     # sequence can never pass for them. A skipped job satisfies required
     # status checks; the human reviewing the deps PR is the gate.
-    if: github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]'
+    # Draft PRs (the /pr skill's early-visibility escape hatch) skip too:
+    # verification-first finalization runs the checks locally before
+    # publishing, so CI on an unfinished draft is pure waste — the
+    # ready_for_review trigger runs it when the draft goes live.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.draft == false &&
+       github.event.pull_request.user.login != 'dependabot[bot]')
     runs-on: ubuntu-latest
     steps:
       # SHA-pinned per docs/security.md "Pin GitHub Actions"; Dependabot
