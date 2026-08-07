@@ -42,7 +42,7 @@ import sys
 import tomllib
 from typing import TYPE_CHECKING
 
-from forge.config import read_tool_forge_section
+from forge.config import AGENT_DEFINITION_DIRS, read_tool_forge_section
 from forge.git_utils import capturing_to_step_log, configure_cli_logging, repo_root
 
 
@@ -91,7 +91,7 @@ def _roster(root: Path) -> dict[str, set[str]]:
     """
     agents = {
         p.stem
-        for d in ("agents", ".claude/agents")
+        for d in AGENT_DEFINITION_DIRS
         for p in (root / d).glob("*.md")
         if not p.stem.startswith("_")
     }
@@ -211,7 +211,7 @@ def _diff_report(root: Path, base: str) -> list[str]:
     if base.startswith("-"):
         logger.error("agent_doc --diff: %r is not a valid base ref.", base)
         return []
-    paths = ["agents", ".claude/agents", "skills", ".claude/skills", "claude-hooks"]
+    paths = [*AGENT_DEFINITION_DIRS, "skills", ".claude/skills", "claude-hooks"]
     try:
         diff = subprocess.run(
             ["git", "-C", str(root), "diff", "--end-of-options", base, "--", *paths],

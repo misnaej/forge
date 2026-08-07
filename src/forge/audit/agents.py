@@ -51,7 +51,7 @@ from forge.audit.common import (
     make_audit_parser,
     write_log,
 )
-from forge.config import read_tool_forge_section
+from forge.config import AGENT_DEFINITION_DIRS, read_tool_forge_section
 from forge.git_utils import configure_cli_logging, repo_root
 
 
@@ -595,13 +595,6 @@ class AgentsConfig:
     output: Path | None = None
 
 
-# Default agent-definition roots, unioned: ``agents/`` is forge's own
-# plugin layout; ``.claude/agents/`` is where Claude Code loads consumer
-# agents (FOUNDATION §3/§16 name it for wrappers). A repo with both —
-# a consumer vendoring agents — gets both audited.
-_DEFAULT_AGENT_DIRS = ("agents", ".claude/agents")
-
-
 def _iter_agent_files(
     repo_root_path: Path, roots: list[Path] | None = None
 ) -> list[Path]:
@@ -613,12 +606,12 @@ def _iter_agent_files(
     Args:
         repo_root_path: Repo root.
         roots: Explicit scan roots (from ``--roots``); ``None`` or empty
-            scans the :data:`_DEFAULT_AGENT_DIRS` union.
+            scans the :data:`forge.config.AGENT_DEFINITION_DIRS` union.
 
     Returns:
         Sorted, de-duplicated list of absolute paths to agent files.
     """
-    dirs = roots or [repo_root_path / d for d in _DEFAULT_AGENT_DIRS]
+    dirs = roots or [repo_root_path / d for d in AGENT_DEFINITION_DIRS]
     files = {
         p
         for d in dirs
@@ -783,7 +776,7 @@ def run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int:
         scanned = (
             ", ".join(str(r) for r in roots)
             if roots
-            else " and ".join(f"{root}/{d}" for d in _DEFAULT_AGENT_DIRS)
+            else " and ".join(f"{root}/{d}" for d in AGENT_DEFINITION_DIRS)
         )
         logger.info("No agent files under %s", scanned)
         write_log("agents", [], "No agent files found.", output=config.output)

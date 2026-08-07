@@ -274,9 +274,7 @@ Verification is done and fixes are committed. Three cases:
    (description rules: FOUNDATION §6 "PR descriptions"):
    ```bash
    gh pr create --title "<type>: <description>" --body "## In plain English
-   <2–4 sentences for the reader who uses the product, not the codebase —
-   consequence first, no internals; note plainly if results stop being
-   comparable across the change>
+   <2–4 sentences per FOUNDATION §6 \"PR descriptions\">
 
    ## Changes
    <bullets — technical detail lives here>

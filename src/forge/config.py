@@ -67,6 +67,14 @@ DEFAULT_DEV_BRANCH = "main"
 DEFAULT_SOURCE_DIRS = ("src",)
 DEFAULT_TEST_DIRS = ("tests",)
 
+# Where agent definitions live, unioned: ``agents/`` is forge's own plugin
+# layout; ``.claude/agents/`` is where Claude Code loads consumer agents
+# (FOUNDATION §3/§16 name it for wrappers). A repo with both — a consumer
+# vendoring agents — gets both scanned. Shared by every layout-aware tool
+# (`forge-audit-agents`, `verify-forge-agent-doc`) so a new agent-root type
+# is one edit here, not one per tool.
+AGENT_DEFINITION_DIRS = ("agents", ".claude/agents")
+
 
 def detect_source_dirs(repo_root: Path) -> list[str]:
     """Smart-detect the repo's source roots when ``source_dirs`` is unset.

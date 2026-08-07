@@ -257,6 +257,91 @@ def test_check_required_sections_flags_missing() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _sanitize_fragment — trust-boundary guard for code_health/audit_agents.log
+#
+# Consumer-authored `.claude/agents/*.md` frontmatter reaches the log via
+# this helper, and code_health/*.log is trusted ground truth for other
+# forge agents (FOUNDATION §13). These cases exercise the injection and
+# truncation contract directly.
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_fragment_escapes_embedded_newline() -> None:
+    r"""A crafted value with an embedded newline is neutralized.
+
+    A raw newline in a log line lets a crafted frontmatter value forge a
+    fake finding row. `repr()` renders it as the two-character escape
+    `\\n`, not an actual line break, so the injected text stays inside
+    one log line.
+    """
+    payload = "Edit\nINJECTED: fake finding"
+    result = audit_agents._sanitize_fragment(payload)
+    assert "\\n" in result
+    assert "\n" not in result
+
+
+def test_sanitize_fragment_escapes_ansi_control_sequence() -> None:
+    r"""A crafted value with an ANSI escape sequence is neutralized.
+
+    Raw control bytes (e.g. terminal color codes) could make a log line
+    misrender or hide content when viewed in a terminal. `repr()`
+    escapes the control byte to its printable `\\x1b` form.
+    """
+    payload = "\x1b[31mEdit"
+    result = audit_agents._sanitize_fragment(payload)
+    assert "\\x1b" in result
+    assert "\x1b" not in result
+
+
+def test_sanitize_fragment_truncates_over_limit_with_ellipsis() -> None:
+    """A value beyond the default 40-char limit is clipped with an ellipsis.
+
+    Matches the implementation's exact contract: the first `limit`
+    characters plus a trailing `…` marker, then `repr()`-quoted — so an
+    unbounded crafted value can't blow out the log line length.
+    """
+    payload = "x" * 50
+    result = audit_agents._sanitize_fragment(payload)
+    expected = repr(payload[:40] + "…")
+    assert result == expected
+    assert "x" * 41 not in result  # the 41st original char never appears
+
+
+def test_sanitize_fragment_leaves_short_value_unclipped() -> None:
+    """A value at or under the limit is repr-quoted without an ellipsis."""
+    payload = "Read"
+    result = audit_agents._sanitize_fragment(payload)
+    assert result == repr(payload)
+    assert "…" not in result
+
+
+def test_check_reporter_tools_crafted_decoy_never_reaches_message() -> None:
+    """A crafted, injection-shaped decoy tool name is filtered, not logged.
+
+    Mirrors `test_check_reporter_tools_flags_write_edit` but adds a decoy
+    tool that *looks* like `"Edit"` plus an injected fake-finding line.
+    `_check_reporter_tools` matches tool names by exact equality against
+    `REPORTER_FORBIDDEN_TOOLS`, so the decoy never matches and never
+    reaches `_sanitize_fragment` / the finding message — only the
+    genuine `"Edit"` entry does, quoted as plain `repr()` output.
+    """
+    fm = {
+        "description": "Reviews PR diffs for security issues.",
+        "tools": ("Read", "Edit", "Edit\nINJECTED: fake finding"),
+    }
+    doc = _agent_doc(frontmatter=fm, path="agents/security-checker.md")
+    findings = audit_agents._check_reporter_tools(
+        doc,
+        frozenset(audit_agents.REPORTER_AGENT_NAMES),
+        frozenset(audit_agents._REPORTER_WITH_ARTIFACT_NAMES),
+    )
+    assert len(findings) == 1
+    assert findings[0].message.count("mutating tool") == 1
+    assert "'Edit'" in findings[0].message
+    assert "INJECTED" not in findings[0].message
+
+
+# ---------------------------------------------------------------------------
 # Shared-substring detection
 # ---------------------------------------------------------------------------
 
@@ -616,7 +701,7 @@ def test_main_resolves_roots_arg_dropping_nonexistent_dirs(
     (tmp_path / "keepme").mkdir()
     recorded: dict[str, object] = {}
 
-    def _fake_run(scope: object, roots: list, config: object) -> int:
+    def _fake_run(scope: object, roots: list[Path], config: object) -> int:
         recorded["roots"] = roots
         return 0
 
