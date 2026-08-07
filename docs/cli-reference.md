@@ -283,12 +283,6 @@ options:
   --check              Verify docs/api-digest.md is in sync; do not write.
 ```
 
-## forge-gen-attribution-patterns
-
-```text
-(--help unavailable for forge-gen-attribution-patterns)
-```
-
 ## forge-gen-c4
 
 ```text
