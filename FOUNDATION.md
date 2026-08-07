@@ -307,10 +307,13 @@ and ask.
   security / docs reporters + strict pre-commit pass) run against the local
   tree about to be pushed, so findings are fixed in the PR's own commits —
   not follow-ups — and the changelog version heading settles before the
-  branch is published. Order: verify locally → fix → commit → push → open PR
-  → post wrap-up + squash message. The wrap-up comment needs a PR to live on,
-  so posting stays last; a **draft PR** is the escape hatch when the PR
-  should be visible earlier.
+  branch is published. Order: verify locally → fix → commit → **author the
+  wrap-up + squash message** → push → open PR → post them. The wrap-up is
+  written before the PR exists (only its posting needs a PR); the
+  `block_unverified_pr_create` hook blocks `gh pr create` until the authored
+  wrap-up names the current `HEAD` (skippable via `FORGE_SKIP_WRAPUP_GATE=1`
+  — on explicit user request only). A **draft PR** is the escape hatch when
+  the PR should be visible earlier.
 - **Verification starts itself.** The moment a branch's implementation
   commits are done, run the finalization reviews — automatically, without
   stopping to offer or ask. The reviews are read-only; nothing about them

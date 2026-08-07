@@ -269,9 +269,26 @@ need to judge the wrap-up that follows. (On the delta-mode
 short-circuit — Step 1 straight to Step 4 — this step is skipped with
 the rest of Steps 2–3.5; summarize the delta decision instead.)
 
+## Step 3.92: Author the wrap-up BEFORE the PR exists (MANDATORY)
+
+The wrap-up and squash-merge message are **written now**, from the Step 1
+reports and fix dispositions — publication is the last act, and nothing
+about authoring needs a PR. Delegate to `pr-manager` ("author wrap-up"
+task): it composes the full wrap-up comment body (all Step 4 sections,
+including CI Status marked "pending — PR not yet published") and the
+squash-merge message, and writes the wrap-up to
+**`code_health/pr_wrapup.md`**, first line `verified-at: <HEAD sha>`.
+
+The `block_unverified_pr_create` hook enforces this: `gh pr create` is
+blocked unless `code_health/pr_wrapup.md` names the current `HEAD` —
+authoring at one SHA and publishing another re-runs this step. When the
+user explicitly asks to skip the gate, prefix the create command with
+`FORGE_SKIP_WRAPUP_GATE=1` — never on the agent's own judgment.
+
 ## Step 3.95: Publish — push, then open (or ready) the PR
 
-Verification is done and fixes are committed. Three cases:
+Verification is done, fixes are committed, and the wrap-up is authored
+(Step 3.92 — the create hook checks it). Three cases:
 
 1. **PR already open** → nothing to create; confirm the branch is pushed
    (`git-commit-push` pushes by default — check `git status`).
@@ -295,32 +312,24 @@ Verification is done and fixes are committed. Three cases:
 3. **Draft opened in Step 0** → `gh pr ready <PR#>` — unless the user asked
    to keep it draft.
 
-## Step 4: Finalize via `pr-manager` (MANDATORY)
+## Step 4: Post via `pr-manager` (MANDATORY)
 
-16. Delegate finalization. **Pass the Step 1 reports verbatim in the prompt** so `pr-manager` does not re-run the same three verification agents — see [agents/pr-manager.md "Pre-run reports" note](../../agents/pr-manager.md). Two passes per PR is pure waste.
+16. Delegate posting. The wrap-up and squash message were **authored in
+    Step 3.92** — `pr-manager` posts them; it does NOT re-run the
+    verification agents (pass the Step 1 reports verbatim only if 3.92
+    was somehow skipped — see [agents/pr-manager.md "Pre-run
+    reports"](../../agents/pr-manager.md)).
 
     ```
-    Agent(subagent_type="pr-manager", prompt="Verify and finalize PR #<number>.
-
-    Pre-run reports (use these; do NOT re-invoke the agents):
-
-    ## design-checker report
-    <verbatim output from Step 1 design-checker>
-
-    ## security-checker report
-    <verbatim output from Step 1 security-checker>
-
-    ## docs-types-checker report
-    <verbatim output from Step 1 docs-types-checker>
-
-    Check for issue closing, post wrap-up comment and squash-merge message.")
+    Agent(subagent_type="forge:pr-manager", prompt="Post the finalization
+    comments for PR #<number>. The wrap-up body is in
+    code_health/pr_wrapup.md (authored pre-publication at this HEAD);
+    refresh its CI Status line to the status as of posting — never wait
+    for CI; when CI has not completed, say so plainly (FOUNDATION §6).
+    Post it, then post the squash-merge message via
+    forge-pr-squash-comment, check issue-closing wiring, and append the
+    CONTINUATION record.")
     ```
-
-The agent will:
-- Report CI status as of posting — never wait for CI; when CI has not
-  completed, the wrap-up says so plainly (FOUNDATION §6 "PR finalization")
-- Post a wrap-up comment with all check summaries
-- Post a squash-merge message as a separate PR comment
 
 ### Squash-merge message hard rules
 

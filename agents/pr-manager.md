@@ -87,6 +87,10 @@ Wire auto-close with **bare** `Closes #N` / `Fixes #N` / `Resolves #N` on their 
 
    3–5 `--bullet`s. On a validation failure the CLI exits non-zero naming the rule — fix the message until it passes. `--dry-run` previews; `--patch <comment-id>` (instead of `--pr`) rewrites an existing comment.
 
+## Task: Author Wrap-up (pre-publication)
+
+Called by `/pr` Step 3.92 **before the PR exists**: compose the full wrap-up body (sections per step 8 below; CI Status = "pending — PR not yet published") plus the squash-merge message from the caller's reports, and write the wrap-up to `code_health/pr_wrapup.md`, first line `verified-at: <HEAD sha>`. Post nothing — the `block_unverified_pr_create` hook reads this file to admit `gh pr create`; posting happens in the later posting task.
+
 ## Task: Verification (Wrap-up)
 
 When asked to verify/finalize a PR:

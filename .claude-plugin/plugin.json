@@ -35,6 +35,11 @@
           },
           {
             "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_unverified_pr_create.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_branch_deletion.sh",
             "timeout": 5
           },

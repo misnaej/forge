@@ -41,6 +41,14 @@ versions follow forge's rolling-next convention.
   skills now state that finalization reviews launch automatically the
   moment a branch's implementation commits are done — an agent must not
   idle at "ready to finalize?" with verification unrun.
+- **Wrap-up before PR — hook-enforced.** The wrap-up + squash message are
+  authored *before* the PR exists (`/pr` Step 3.92 writes
+  `code_health/pr_wrapup.md`, first line `verified-at: <HEAD>`); the new
+  `block_unverified_pr_create` hook blocks `gh pr create` unless that file
+  names the current `HEAD`, so a tree cannot be published with its
+  verification record stale or skipped. Posting still happens after
+  creation — only the authoring moves earlier. Skippable on explicit user
+  request (`FORGE_SKIP_WRAPUP_GATE=1`).
 
 ### Fixes
 - **`forge-audit-dup --scope changed` finds prior art.** Changed scope
