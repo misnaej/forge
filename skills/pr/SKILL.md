@@ -1,36 +1,29 @@
 ---
 name: pr
-description: Full PR finalization flow - design check, security check, docs check, precommit-fixer (strict), plan/docs updates, then pr-manager posts wrap-up + squash-merge message. Use when the user wants to finalize a PR.
+description: Full PR finalization flow, verification-first - design check, security check, docs check, precommit-fixer (strict), plan/docs updates, then publish the PR and have pr-manager post wrap-up + squash-merge message. Use when the user wants to finalize a PR.
 ---
 
 # PR Finalization Flow
 
-## Step 0: Ensure PR exists
+## Step 0: Detect the PR — defer creation until after verification
 
-Check for existing PR on the current branch:
+Check for an existing PR on the current branch:
 ```bash
 gh pr view --json number --jq '.number' 2>/dev/null
 ```
 
-If none, create one:
-1. Analyze the diff:
-   ```bash
-   git diff --stat main...HEAD
-   git log main..HEAD --oneline
-   ```
-2. Create the PR with title + body based on the changes:
-   ```bash
-   gh pr create --title "<type>: <description>" --body "## Summary
-   <bullets>
+If `$ARGUMENTS` contains a PR number, use that instead of auto-detecting. Then:
 
-   ## Test plan
-   - [ ] Design checker passes
-   - [ ] Security checker passes
-   - [ ] Documentation checker passes
-   - [ ] Tests pass"
-   ```
-
-If `$ARGUMENTS` contains a PR number, use that instead of auto-detecting.
+- **PR exists** → proceed; Steps 1–3 verify the local tree, and fixes land as
+  commits on the branch.
+- **No PR yet** → do **NOT** create it here. Per FOUNDATION §6 "PR
+  finalization", verification runs first against the tree about to be pushed,
+  so findings are fixed in the PR's own commits and the CHANGELOG version
+  heading settles before the branch is published. The PR is created in
+  Step 3.95.
+- **Draft escape hatch** — the user wants the PR visible now → create it as a
+  draft (`gh pr create --draft`, body per the Step 3.95 template) and mark it
+  ready in Step 3.95.
 
 ## Step 0.5: Base-sync gate
 
@@ -38,22 +31,32 @@ A PR that is behind — or in conflict with — its base branch is not
 ready to finalize: a green CI run on a stale base does not mean the PR
 merges cleanly now (parallel PRs may have taken the version, edited the
 CHANGELOG, or moved the merge-base). **Check before reviewing, never
-silently merge:**
+silently merge.** Which variant depends on Step 0:
 
-```bash
-git fetch origin --quiet
-gh pr view <PR#> --json baseRefName,mergeable,mergeStateStatus \
-  --jq '{base: .baseRefName, mergeable, state: .mergeStateStatus}'
-git rev-list --left-right --count "origin/<base>...HEAD"   # left = behind
-```
+- **PR exists** (`gh`-based):
+  ```bash
+  git fetch origin --quiet
+  gh pr view <PR#> --json baseRefName,mergeable,mergeStateStatus \
+    --jq '{base: .baseRefName, mergeable, state: .mergeStateStatus}'
+  git rev-list --left-right --count "origin/<base>...HEAD"   # left = behind
+  ```
+- **No PR yet** (git-only — there is nothing for `gh` to inspect):
+  ```bash
+  git fetch origin --quiet
+  git rev-list --left-right --count "origin/<base>...HEAD"   # left = behind
+  git merge-tree --write-tree "origin/<base>" HEAD >/dev/null \
+    || echo CONFLICTING
+  ```
+  `<base>` is the branch the PR will target (`[tool.forge].dev_branch` when
+  set and the branch is feature work, else the repo default branch).
 
 - **`mergeable: CONFLICTING`** → **stop**. Do not finalize. Resolve by
   merging the base in (`git merge origin/<base>`, resolve conflicts —
   CHANGELOG per `docs/release-process.md` §5), then re-run from Step 0.5.
 - **Behind but clean** (left count > 0, not conflicting) → merging the
   base in is **confirm-first** (never silent): it refreshes the branch so
-  the wrap-up's "CI green" reflects the real merge result, but it mutates
-  history and re-triggers CI, so surface it and let the user decide.
+  verification reflects the real merge result, but it mutates history and
+  re-triggers CI, so surface it and let the user decide.
 - **Up to date, `MERGEABLE`** → proceed to Step 1.
 
 **Stranded-changelog check** (single-track repos with a root
@@ -65,8 +68,9 @@ the convention doesn't apply). A `stranded` finding means: bump the top
 `## vX.Y.Z` heading to the next version, move this PR's entries under
 it, commit, and re-run from Step 0.5.
 
-Merging the base re-triggers CI — wait for it to go green again before
-finalizing (a finalize on a now-stale CI run is misleading).
+Merging the base re-triggers CI. Do **not** wait for it: per FOUNDATION §6
+"PR finalization", the wrap-up never blocks on CI — it posts as soon as the
+checks are done and states CI's status plainly.
 
 ## Step 1: Run verification agents (1–3 in parallel)
 
@@ -95,7 +99,9 @@ the diff is docs-only:
   human PR review remain the reviewers of record for doc content.
 
 Otherwise, check if the PR is eligible for
-**delta mode**. Delta mode reuses the prior wrap-up's findings when the
+**delta mode** (needs an existing PR — its inputs are prior wrap-up
+comments; on a first run with no PR yet, skip the delta check and run the
+reporters). Delta mode reuses the prior wrap-up's findings when the
 diff since is small AND stays out of high-blast-radius areas — full
 decision criteria, thresholds, and SHA-validation regex are defined
 once in the forge package and consumed by the `pr-manager` agent —
@@ -159,6 +165,13 @@ on disagreement (ruff, the docstring verifier, a test); **it is not a
 reporter** — no `verified-at:` header, no delta-mode participation.
 Step 4's wrap-up records which findings were adopted and which
 rejected, with reasons.
+
+**Reporter SHAs after fixes.** Mechanical fixes from `precommit-fixer`
+(lint, formatting, docstrings) do not invalidate the reporters' verdicts —
+their pre-fix `verified-at:` SHA is accepted by design, with delta mode's
+line/blast-radius thresholds as the backstop. A fix that goes beyond
+mechanical (a code change addressing a checker finding) re-runs the
+affected reporter, so its `verified-at:` matches the tree being pushed.
 
 ## Step 3: Update plan/docs (MANDATORY when applicable)
 
@@ -249,6 +262,34 @@ need to judge the wrap-up that follows. (On the delta-mode
 short-circuit — Step 1 straight to Step 4 — this step is skipped with
 the rest of Steps 2–3.5; summarize the delta decision instead.)
 
+## Step 3.95: Publish — push, then open (or ready) the PR
+
+Verification is done and fixes are committed. Three cases:
+
+1. **PR already open** → nothing to create; confirm the branch is pushed
+   (`git-commit-push` pushes by default — check `git status`).
+2. **No PR yet** → push the branch (`git push -u origin <branch>` if
+   untracked), analyze the diff (`git diff --stat origin/<base>...HEAD`,
+   `git log origin/<base>..HEAD --oneline`), then create the PR
+   (description rules: FOUNDATION §6 "PR descriptions"):
+   ```bash
+   gh pr create --title "<type>: <description>" --body "## In plain English
+   <2–4 sentences for the reader who uses the product, not the codebase —
+   consequence first, no internals; note plainly if results stop being
+   comparable across the change>
+
+   ## Changes
+   <bullets — technical detail lives here>
+
+   ## Test plan
+   - [ ] Design checker passes
+   - [ ] Security checker passes
+   - [ ] Documentation checker passes
+   - [ ] Tests pass"
+   ```
+3. **Draft opened in Step 0** → `gh pr ready <PR#>` — unless the user asked
+   to keep it draft.
+
 ## Step 4: Finalize via `pr-manager` (MANDATORY)
 
 16. Delegate finalization. **Pass the Step 1 reports verbatim in the prompt** so `pr-manager` does not re-run the same three verification agents — see [agents/pr-manager.md "Pre-run reports" note](../../agents/pr-manager.md). Two passes per PR is pure waste.
@@ -271,7 +312,8 @@ the rest of Steps 2–3.5; summarize the delta decision instead.)
     ```
 
 The agent will:
-- Confirm CI status
+- Report CI status as of posting — never wait for CI; when CI has not
+  completed, the wrap-up says so plainly (FOUNDATION §6 "PR finalization")
 - Post a wrap-up comment with all check summaries
 - Post a squash-merge message as a separate PR comment
 

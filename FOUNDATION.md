@@ -290,7 +290,32 @@ and ask.
 
 ### PR descriptions
 
-- Max 300 words. Sections: Summary / Changes / Testing / Breaking Changes (omit if none). Update if scope shifts.
+- Max 300 words. Sections: In plain English / Changes / Testing / Breaking
+  Changes (omit if none). Update if scope shifts.
+- **`## In plain English` leads every PR description** (it replaces the usual
+  `Summary`), written for the reader who uses the product but not the
+  codebase: no class/function names or internals; lead with the consequence
+  for that reader, not the mechanism; and say plainly when results stop being
+  comparable across the change. Technical detail belongs under `Changes`.
+
+### PR finalization — verify first, never block on CI
+
+- **Verification precedes publication.** The finalization reviews (design /
+  security / docs reporters + strict pre-commit pass) run against the local
+  tree about to be pushed, so findings are fixed in the PR's own commits —
+  not follow-ups — and the changelog version heading settles before the
+  branch is published. Order: verify locally → fix → commit → push → open PR
+  → post wrap-up + squash message. The wrap-up comment needs a PR to live on,
+  so posting stays last; a **draft PR** is the escape hatch when the PR
+  should be visible earlier.
+- **The wrap-up never waits on CI.** Its value is the review verdicts; CI
+  green is a separate signal on its own schedule. Post as soon as the checks
+  are done, and state plainly when CI has not completed — an unqualified
+  wrap-up reads as "all green", a false claim.
+- Why: a wrap-up posted at one SHA and read at another describes a tree that
+  no longer exists. The `verified-at:` header (reporter contract,
+  `agents/_TEMPLATE.md`) makes such drift detectable; verifying the tree
+  being pushed closes the gap by construction.
 
 ### Squash-merge messages (mandatory at PR finalization)
 
