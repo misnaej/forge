@@ -136,7 +136,9 @@ usage: forge-audit-dup [-h] [--scope {full,changed}] [--roots [ROOTS ...]]
                        [--jaccard-threshold JACCARD_THRESHOLD]
                        [--shingle-size SHINGLE_SIZE]
 
-Detect duplicate / near-duplicate / name-colliding functions.
+Detect duplicate / near-duplicate / name-colliding functions. Changed scope
+matches changed-file units against a full-tree index, so prior art in
+unchanged files is found.
 
 options:
   -h, --help            show this help message and exit

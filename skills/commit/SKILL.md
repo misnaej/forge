@@ -23,6 +23,13 @@ Run the standard commit workflow:
 4. **Update CONTINUATION state** for significant commits:
    - `git-commit-push` agent appends a one-line activity record to `.plan/CONTINUATION.md` automatically (gitignored).
 
+5. **Continue into verification when the branch's work is done.** If this
+   commit completes the branch's planned implementation, do NOT stop here —
+   go straight into the `/pr` flow's verification steps (FOUNDATION §6
+   "Verification starts itself"): the reviews are read-only and need no
+   permission. Skip only when the user said the work continues (more commits
+   coming) or explicitly deferred finalization.
+
 ## Push behavior
 
 **Push by default** after commit succeeds. Skip the push only when:
