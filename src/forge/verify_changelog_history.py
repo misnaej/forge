@@ -34,34 +34,18 @@ from pathlib import Path
 
 from forge.changelog import release_headings
 from forge.config import load_config
-from forge.git_utils import configure_cli_logging, parse_semver, run_git
+from forge.git_utils import (
+    configure_cli_logging,
+    is_ancestor,
+    parse_semver,
+    run_git,
+)
 
 
 configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 _CHANGELOG = "CHANGELOG.md"
-
-
-def _base_is_ancestor(repo_root: Path, base_ref: str) -> bool:
-    """Return ``True`` when *base_ref* is an ancestor of ``HEAD``.
-
-    Determined without an exit-code-only git call (``run_git`` returns
-    stdout): the merge-base of *base_ref* and ``HEAD`` equals *base_ref*'s
-    own commit exactly when *base_ref* is reachable from ``HEAD`` — i.e.
-    the branch has merged the base branch in. False on a plain dev-based
-    branch whose promotions are squash commits (base not an ancestor).
-
-    Args:
-        repo_root: Repo root for the git invocation.
-        base_ref: Base branch ref (e.g. ``origin/main``).
-
-    Returns:
-        ``True`` when *base_ref* resolves and is an ancestor of ``HEAD``.
-    """
-    base_sha = run_git("rev-parse", base_ref, cwd=repo_root, check=False)
-    merge_base = run_git("merge-base", base_ref, "HEAD", cwd=repo_root, check=False)
-    return bool(base_sha) and base_sha == merge_base
 
 
 def main() -> int:
@@ -98,7 +82,7 @@ def main() -> int:
     run_git(
         "fetch", "--quiet", "origin", "--", cfg.base_branch, cwd=repo_root, check=False
     )
-    if not _base_is_ancestor(repo_root, base_ref):
+    if not is_ancestor(repo_root, base_ref, "HEAD"):
         logger.info(
             "(%s is not an ancestor of HEAD — not a promotion context, skipped)",
             base_ref,

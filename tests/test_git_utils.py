@@ -2197,3 +2197,71 @@ def test_require_cli_caller_prefixes_message(
         git_utils.require_cli("ruff")
     err = capsys.readouterr().err
     assert err.startswith("forge: required CLI")
+
+
+# ---------------------------------------------------------------------------
+# is_ancestor
+# ---------------------------------------------------------------------------
+
+
+def test_is_ancestor_returncode_zero_is_true(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exit 0 from ``git merge-base --is-ancestor`` means ancestor → ``True``.
+
+    Pins the exact argv and ``cwd`` threading: the shared probe every
+    reachability caller routes through must invoke git with the ancestor
+    and descendant refs in that order, and run it in the given ``root``.
+    """
+    captured: list[tuple[list[str], object]] = []
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> object:
+        captured.append((cmd, kwargs.get("cwd")))
+        return type("P", (), {"returncode": 0})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.is_ancestor(tmp_path, "v1.0.0", "main") is True
+    assert captured == [
+        (["git", "merge-base", "--is-ancestor", "v1.0.0", "main"], tmp_path)
+    ]
+
+
+def test_is_ancestor_returncode_nonzero_is_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-zero exit (unreachable or unresolvable ref) → ``False``."""
+    monkeypatch.setattr(
+        git_utils.subprocess,
+        "run",
+        lambda *_a, **_kw: type("P", (), {"returncode": 1})(),
+    )
+    assert git_utils.is_ancestor(tmp_path, "v1.0.0", "main") is False
+
+
+def test_is_ancestor_real_repo_true_for_reachable_commit(tmp_path: Path) -> None:
+    """A real repo: HEAD's parent is an ancestor of HEAD."""
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "second"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.is_ancestor(tmp_path, "HEAD~1", "HEAD") is True
+
+
+def test_is_ancestor_real_repo_false_for_unreachable_ref(tmp_path: Path) -> None:
+    """A real repo: an unresolvable ref is treated as not-an-ancestor."""
+    _init_git_repo(tmp_path)
+    assert git_utils.is_ancestor(tmp_path, "nonexistent_branch_xyz", "HEAD") is False
+
+
+def test_is_ancestor_rejects_flag_shaped_refs() -> None:
+    """Dash-prefixed refs return False without any git invocation.
+
+    A leading `-` would parse as a git option (option injection); the
+    guard lives at the shared primitive so every caller inherits it,
+    mirroring `resolve_base_branch_ref`.
+    """
+    assert git_utils.is_ancestor(None, "-v1.0.0", "HEAD") is False
+    assert git_utils.is_ancestor(None, "v1.0.0", "--all") is False

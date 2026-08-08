@@ -82,6 +82,7 @@ from forge.git_utils import (
     SCOPE_DIFF,
     VALID_SCOPES,
     emit,
+    is_ancestor,
     latest_v_tag,
     merge_base_with_head,
     merge_in_progress,
@@ -89,6 +90,7 @@ from forge.git_utils import (
     read_local_plugin_version,
     release_tree_fingerprint,
     require_cli,
+    resolve_base_branch_ref,
     resolve_current_branch,
     run_git,
     stage_modified_paths,
@@ -1667,6 +1669,30 @@ def _changelog_blocking(repo_root: Path) -> bool:
     return bool(_forge_step_config(repo_root, "changelog").get("blocking", True))
 
 
+def _tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool:
+    """Return whether *tag* is reachable from the base branch but not HEAD.
+
+    The stale-branch signature for ``changelog_version``: the branch is
+    merely behind a base that has been tagged since — nothing the author
+    staged is wrong, and only a base merge can make the check pass.
+
+    Args:
+        repo_root: Git repo root.
+        tag: The latest ``v*`` tag.
+        base_branch: Configured base-branch name.
+
+    Returns:
+        True for the stale-branch case; False otherwise (including when
+        the base ref cannot be resolved).
+    """
+    base_ref = resolve_base_branch_ref(repo_root, base_branch)
+    if base_ref is None:
+        return False
+    return is_ancestor(repo_root, tag, base_ref) and not is_ancestor(
+        repo_root, tag, "HEAD"
+    )
+
+
 def step_changelog_version(repo_root: Path) -> StepResult:
     """Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
 
@@ -1772,6 +1798,28 @@ def step_changelog_version(repo_root: Path) -> StepResult:
                         "under the next `## vX.Y.Z` heading."
                         for version in stranded_added_versions(old_text, text, latest)
                     )
+    # Stale-branch trap: when the failing findings are tag-shaped AND the
+    # tag lives on the base but not on HEAD, the branch is merely behind —
+    # no staged change can fix it, and the intuitive escapes (hand-added
+    # headings read as edits to released sections; [no-version] is
+    # branch-durable) are rejected by this same gate. Name the one real cure.
+    tag_shaped = latest is not None and any(
+        f"{latest} has no" in f or "behind the latest tag" in f for f in findings
+    )
+    if (
+        tag_shaped
+        and latest is not None
+        and _tag_only_on_base(repo_root, latest, cfg.base_branch)
+    ):
+        findings.append(
+            f"Stale branch: tag {latest} exists on the base branch "
+            f"'{cfg.base_branch}' but not on this branch — no commit can "
+            "pass until the base is merged in. Cure: "
+            f"`git merge origin/{cfg.base_branch}` (never rebase). Dirty "
+            f"tree: `git stash -u` then merge, then `git stash pop`. "
+            "Hand-adding the missing headings or a [no-version] marker "
+            "will not work — both are rejected by this gate."
+        )
     return StepResult(
         name=name,
         passed=not findings,
