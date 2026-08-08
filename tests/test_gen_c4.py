@@ -71,7 +71,6 @@ from forge.gen_c4 import (
     _svg_view_path,
     _tag_class_lines,
     _tag_classdef_lines,
-    _under_prefix,
     _visibility_fields,
     _visible_config,
     _warn_unknown_relationships,
@@ -137,13 +136,6 @@ def test_slug_makes_safe_identifiers() -> None:
     assert _slug("Config + shared") == "config_shared"
     assert _slug("4 horsemen").startswith("x")
     assert _slug("***") == ""
-
-
-def test_under_prefix_respects_dotted_boundaries() -> None:
-    """_under_prefix matches a prefix and its dotted children, not lexical ones."""
-    assert _under_prefix("forge.audit", "forge.audit")
-    assert _under_prefix("forge.audit.deps", "forge.audit")
-    assert not _under_prefix("forge.auditor", "forge.audit")
 
 
 def test_assign_components_longest_prefix_wins() -> None:

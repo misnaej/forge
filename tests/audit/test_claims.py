@@ -18,6 +18,7 @@ from forge.audit.claims import (
     run,
 )
 from forge.audit.common import Scope, Severity
+from tests.audit.conftest import make_fake_repo
 
 
 if TYPE_CHECKING:
@@ -26,15 +27,12 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def fake_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Create an empty repo root and point common at it.
+    """Create an empty repo root and point common + claims at it.
 
     Returns:
         The repo root path.
     """
-    (tmp_path / "src").mkdir()
-    monkeypatch.setattr(common, "repo_root", lambda: tmp_path)
-    monkeypatch.setattr(claims, "repo_root", lambda: tmp_path)
-    return tmp_path
+    return make_fake_repo(tmp_path, monkeypatch, common, claims)
 
 
 def _write(path: Path, text: str) -> None:

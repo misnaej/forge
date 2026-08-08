@@ -259,6 +259,40 @@ speed/coverage trade-off: FOUNDATION §17.
 | `coverage_json` | _(unset)_ | Path to a `coverage json --show-contexts` export (recorded with `pytest --cov-context=test`) for `coverage_validate`. Also settable per-run via `--coverage-json`. A stale export under-selects — regenerate on `full` runs. | You enabled `coverage_validate`. |
 | `commit_directive_re` | `\[(?:depth-(?P<n>[0-2])\|(?P<full>full))\]` | Regex for `--from-commit-message` to read a depth directive from `HEAD`'s message (named groups `n` / `full`). | Your CI tags commits with a different directive syntax. |
 
+## `[tool.forge.layering]` — opt-in layer-composition gate
+
+Drives [`forge-audit-layering`](cli-reference.md#forge-audit-layering) and
+the optional `layering` pre-commit step. **Off by default** — the audit
+reports nothing and the step self-skips unless at least one
+`[[tool.forge.layering.layer]]` table exists. The contract is *positive*:
+each direct child of a layer's package must reach every layer named in
+`composes_all_of` through its transitive internal-import closure —
+"must be built on X", which import-permission tools cannot express.
+Pre-existing violations report as LOW and never block (the diff is the
+baseline); a violation in an **added or renamed** module fails the step.
+The layer tables are the enforcement source; a C4 model
+(`[tool.forge.c4]`) describing the same packages stays the *descriptive*
+view — keep the two aligned when both exist.
+
+```toml
+[[tool.forge.layering.layer]]
+name = "pipelines"
+package = "myproj.pipelines"
+composes_all_of = ["domain"]
+exempt = ["legacy_import_job"]   # visible, per-child exemptions
+
+[[tool.forge.layering.layer]]
+name = "domain"
+package = "myproj.domain"
+```
+
+| Key (per layer) | What it does |
+|---|---|
+| `name` | Layer name, referenced by other layers' `composes_all_of`. |
+| `package` | Dotted package prefix owning the layer's modules. |
+| `composes_all_of` | Layer names each direct child must compose (reach in its import closure). Omit for layers that are only *targets*. |
+| `exempt` | Direct-child names excluded from evaluation — rendered as REVIEW findings so exemptions stay visible. |
+
 ## `[tool.forge.env_sync]` — install-freshness gate (default-on)
 
 Runs **first** in the default sequence. A deadly-fast, in-process

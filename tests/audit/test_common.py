@@ -181,3 +181,37 @@ def test_exit_code_for_returns_one_on_high_or_above() -> None:
         ),
     ]
     assert exit_code_for(findings) == 1
+
+
+def test_under_module_prefix_respects_dotted_boundaries() -> None:
+    """Matches the prefix and its dotted children, never lexical near-misses."""
+    assert common.under_module_prefix("forge.audit", "forge.audit")
+    assert common.under_module_prefix("forge.audit.deps", "forge.audit")
+    assert not common.under_module_prefix("forge.auditor", "forge.audit")
+
+
+def test_sanitize_log_text_escapes_control_characters() -> None:
+    """Newlines and ANSI escapes are repr-escaped; tab and text pass through.
+
+    Guards the FOUNDATION §13 trust boundary: untrusted content (git
+    filenames, config-supplied layer names) must not forge log lines.
+    """
+    assert common.sanitize_log_text("a\nb") == "a\\nb"
+    assert common.sanitize_log_text("\x1b[31mred") == "\\x1b[31mred"
+    assert common.sanitize_log_text("keep\ttab") == "keep\ttab"
+    assert common.sanitize_log_text("plain") == "plain"
+
+
+def test_finding_render_keeps_injected_newline_on_one_line() -> None:
+    """A crafted message cannot spoof a second finding line in the log."""
+    finding = Finding(
+        audit="layering",
+        severity=Severity.HIGH,
+        path="src/x.py",
+        line=1,
+        message="bad\n[HIGH] pyproject.toml:1 fake injected finding",
+    )
+    rendered = finding.render()
+    assert rendered.count("[HIGH]") == 2  # escaped text, not a real line
+    lines = [ln for ln in rendered.splitlines() if ln.strip()]
+    assert len(lines) == 1
