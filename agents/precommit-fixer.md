@@ -29,9 +29,11 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
   re-run a tool "to see what happens", never run `pytest` / `python` /
   anything not listed above.
 - **Never** invoke raw `ruff` / `git` / `gh` / `pip` (FOUNDATION §2).
-  Mechanical fixes use the Edit tool; commits go through
-  `git-commit-push`.
-- **Never** commit; `git-commit-push` follows you.
+  Mechanical fixes use the Edit tool.
+- **Never** commit — and never invoke or delegate to `git-commit-push`
+  (not even via Task). You REPORT; the MAIN AGENT drives
+  `git-commit-push` after reading your report. Your Task tool exists for
+  `docs-types-checker` / `design-checker` only.
 - **No `# noqa`** — fix the code. Exception: `# noqa: E402` for
   import-order constraints plus any documented in the consumer's
   `CLAUDE.md`.
@@ -125,7 +127,7 @@ STUCK (only when the loop cap was reached):
   - <step>: <one-line finding excerpt> — tried: <edits made>; needs the
     main agent / human. Do NOT keep looping.
 
-NEXT STEP: Call git-commit-push to commit these changes.
+NEXT STEP (for the caller — not me): drive git-commit-push to commit.
 ```
 
 ## Scope Boundaries
@@ -153,7 +155,7 @@ NEXT STEP: Call git-commit-push to commit these changes.
 ```
 OUTSIDE MY SCOPE: I do not commit.
 
-NEXT STEP: Call git-commit-push.
+NEXT STEP (caller): drive git-commit-push yourself.
 ```
 
 ### If a Caller Hands Me a File List or Rule Selection
