@@ -78,11 +78,11 @@ Code.
    - common.py: shared helpers (scope enum, file iteration)
    - all.py: `forge-audit-all` — run every audit check
    - agents.py: `forge-audit-agents` — agent-template conformance audit (word count, FOUNDATION restatements, missing sections; non-blocking)
-   - layering.py: `forge-audit-layering` — positive layer-composition contracts (`[[tool.forge.layering.layer]]` `composes_all_of`, per direct child over the transitive import closure); blocking only on added/moved modules; backs the opt-in `layering` pre-commit step
    - claims.py: `forge-audit-claims` — documentation claim verification
    - data.py: `forge-audit-data` — data file audit
    - deps.py: `forge-audit-deps` — dependency audit
    - dup.py: `forge-audit-dup` — duplicate code detection
+   - layering.py: `forge-audit-layering` — positive layer-composition contracts (`[[tool.forge.layering.layer]]` `composes_all_of`, per direct child over the transitive import closure); blocking only on added/moved modules; backs the opt-in `layering` pre-commit step
    - orphans.py: `forge-audit-orphans` — dead code detection
    - suppressions.py: `forge-audit-suppressions` — noqa/ignore audit
 

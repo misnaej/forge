@@ -10,6 +10,7 @@ from forge.audit import common, layering
 from forge.audit.common import Scope, Severity
 from forge.audit.deps import ModuleNode
 from forge.audit.layering import LayeringConfig, LayerSpec, evaluate, parse_layers, run
+from tests.audit.conftest import make_fake_repo
 
 
 if TYPE_CHECKING:
@@ -58,10 +59,7 @@ def fake_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     Returns:
         The repo root path.
     """
-    (tmp_path / "src").mkdir()
-    monkeypatch.setattr(layering, "repo_root", lambda: tmp_path)
-    monkeypatch.setattr(common, "repo_root", lambda: tmp_path)
-    return tmp_path
+    return make_fake_repo(tmp_path, monkeypatch, layering, common)
 
 
 def _write(path: Path, text: str) -> None:
@@ -630,3 +628,40 @@ def test_parse_layers_rejects_string_composes_all_of() -> None:
     assert specs == []
     assert len(errors) == 1
     assert "must be arrays" in errors[0]
+
+
+def test_run_changed_scope_low_survives_via_non_anchor_child_member(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Editing a non-anchor module of a violating child keeps its LOW finding.
+
+    Regression: the CHANGED filter compared only the finding's anchor path
+    (the child's alphabetically-first module) against the changed set, so a
+    baseline finding vanished whenever the developer touched any *other*
+    module of the same child. Membership is per child, mirroring
+    forge-audit-dup's prior-art semantics.
+    """
+    _write_pyproject(fake_repo, TWO_LAYER_TOML)
+    _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
+    _write(
+        fake_repo / "src" / "myproj" / "pipelines" / "jobs" / "alpha.py",
+        PLAIN_MODULE,
+    )
+    _write(
+        fake_repo / "src" / "myproj" / "pipelines" / "jobs" / "beta.py",
+        PLAIN_MODULE,
+    )
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    monkeypatch.setattr(
+        layering,
+        "select_diff_files",
+        lambda _root: ["src/myproj/pipelines/jobs/beta.py"],
+    )
+    code = run(Scope.CHANGED, [fake_repo / "src"], LayeringConfig())
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert "[LOW]" in log_text
+    assert "child 'jobs'" in log_text
+    assert code == 0

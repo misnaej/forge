@@ -173,7 +173,7 @@ _63 modules, 684 symbols._
 - `_closure(graph: dict[str, set[str]], start: set[str]) -> set[str]` _(internal)_ — Return the transitive import closure of ``start`` (inclusive).
 - `_child_finding_anchor(mods: set[str], modules: dict[str, ModuleNode]) -> tuple[str, int]` _(internal)_ — Pick a stable file anchor for a child-level finding.
 - `evaluate(layers: list[LayerSpec], modules: dict[str, ModuleNode], graph: dict[str, set[str]], *, escalate_paths: set[str]) -> list[Finding]` — Evaluate every layer contract over the module graph.
-- `_summary(n_layers: int, n_children: int, findings: list[Finding]) -> str` _(internal)_ — Render the one-paragraph audit summary.
+- `_summary(n_layers: int, n_children: int, findings: list[Finding], *, n_config_errors: int = 0) -> str` _(internal)_ — Render the one-paragraph audit summary.
 - `run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int` — Execute the layering audit.
 - `main() -> int` — CLI entry point for ``forge-audit-layering``.
 

@@ -293,23 +293,29 @@ def _summary(
     n_layers: int,
     n_children: int,
     findings: list[Finding],
+    *,
+    n_config_errors: int = 0,
 ) -> str:
     """Render the one-paragraph audit summary.
 
     Args:
         n_layers: Number of configured layers.
         n_children: Number of evaluated direct children.
-        findings: Final findings list.
+        findings: Final findings list (config errors included).
+        n_config_errors: HIGH findings that are config errors, not
+            added/moved-module violations — counted separately so the
+            summary does not misattribute them.
 
     Returns:
         One-line summary for the log header.
     """
-    n_block = sum(1 for f in findings if f.severity is Severity.HIGH)
+    n_block = sum(1 for f in findings if f.severity is Severity.HIGH) - n_config_errors
     n_base = sum(1 for f in findings if f.severity is Severity.LOW)
+    errors_clause = f" {n_config_errors} config error(s)." if n_config_errors else ""
     return (
         f"Evaluated {n_children} direct child(ren) across {n_layers} "
         f"layer(s). {n_block} blocking violation(s) on added/moved modules, "
-        f"{n_base} pre-existing (baseline, non-blocking)."
+        f"{n_base} pre-existing (baseline, non-blocking).{errors_clause}"
     )
 
 
@@ -352,14 +358,19 @@ def run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int:
     findings = evaluate(layers, modules, graph, escalate_paths=escalate)
 
     if scope is Scope.CHANGED:
-        changed = set(select_diff_files(root))
-        by_child_paths = {
-            m.path for m in modules.values() if m.path in changed
-        } | escalate
+        # Keep a finding when ANY module of its child was touched (child
+        # membership, not just the anchor path — mirrors dup's
+        # _touches_changed semantics); HIGH findings always survive.
+        changed = set(select_diff_files(root)) | escalate
+        touched_anchors: set[str] = set()
+        for spec in layers:
+            for mods in _direct_children(spec, modules).values():
+                if {modules[m].path for m in mods} & changed:
+                    touched_anchors.add(_child_finding_anchor(mods, modules)[0])
         findings = [
             f
             for f in findings
-            if f.path in by_child_paths or f.severity is Severity.HIGH
+            if f.path in touched_anchors or f.severity is Severity.HIGH
         ]
 
     findings = [
@@ -379,7 +390,7 @@ def run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int:
     write_log(
         "layering",
         findings,
-        _summary(len(layers), n_children, findings),
+        _summary(len(layers), n_children, findings, n_config_errors=len(errors)),
         output=config.output,
     )
     return exit_code_for(findings)

@@ -289,18 +289,14 @@ default vs consumer override.
 
 ### I WILL
 
-- Run every Investigation Recipe and cite each audit log
+- Run every Investigation Recipe, cite each audit log and `file:line`
 - Delegate claim verification to `forge:knowledge-search`
-- Cite `file:line` for every finding
-- Recommend specific fixes
-- Apply repo-specific extras from the wrapper
+- Recommend specific fixes; apply the wrapper's repo-specific extras
 
 ### I WILL NOT (report and stop)
 
-- Make code or documentation changes → **report only**
-- Commit anything → **Use `forge:git-commit-push`**
-- Propose raising complexity limits or adding ruff ignores (those
-  require explicit user approval)
+- Make code/doc changes or commit → **report only** (`forge:git-commit-push` commits)
+- Propose raising complexity limits or adding ruff ignores (user approval required)
 - Re-define principles — always cite FOUNDATION.md or consumer CLAUDE.md
 - Skip a recipe because its log is missing — run the audit script first
 
