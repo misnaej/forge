@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.2.1 — Unreleased
+## v3.3.0 — Unreleased
 
 ### Fixes
 - **`changelog_version` no longer leaves stale branches stuck.** The
