@@ -1,6 +1,6 @@
 ---
 name: precommit-fixer
-description: Read forge-precommit reports in code_health/ and dispatch fixes per failure type. Orchestrates docs-types-checker for docstrings, Edit for mechanical fixes, design-checker for complexity. The single allowed CLI is forge-precommit (with --fix when fixing). Use before commit to clear pre-commit failures in one pass.
+description: Read forge-precommit reports in code_health/ and dispatch fixes per failure type. Orchestrates docs-types-checker for docstrings, Edit for mechanical fixes, design-checker for complexity. forge-precommit is the only loop driver (hard cap three runs). Use before commit to clear pre-commit failures in one pass.
 tools:
   - Bash
   - Read
@@ -63,7 +63,7 @@ the install hint. Never fall back to raw `ruff` / `python -m`.
 
 ### Phase 2 — Dispatch the residue
 
-`ruff.log` already reflects the post-fix state — anything left is not auto-fixable. Dispatch by step:
+`ruff.log` already reflects the post-fix state — anything left is not auto-fixable. (If exactly one log is stale/missing, refresh it with its step CLI — once — instead of a full re-run.) Dispatch by step:
 
 | `code_health/` log | Action |
 |---|---|

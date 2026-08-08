@@ -9,7 +9,7 @@ drops curated ``## vX.Y.Z`` entries from origin/<base>.
 # real ``pyproject.toml``, mirroring the Group F pattern in
 # ``test_verify_main_tags.py``. ``sys.argv`` is patched to the CLI name so
 # argparse does not interpret pytest's own arguments. Group B
-# (``_base_is_ancestor``) is pure real-git, no config needed. Group C tests
+# (the shared ``is_ancestor`` probe) is pure real-git, no config needed. Group C tests
 # that exercise fetch/ancestor checks require a real dual-track repo with a
 # bare origin; tests that exit before any git call need only a
 # ``chdir(tmp_path)``. Monkeypatch targets use the consuming namespace
@@ -47,7 +47,7 @@ def _setup_main_as_ancestor_repo(
     ``main`` and pushes it to origin.  Then creates a ``release/v1.2.0``
     branch as a direct child of that commit and writes *local_changelog* to
     ``CHANGELOG.md`` there.  Since HEAD descends from ``origin/main``'s tip,
-    ``_base_is_ancestor`` returns ``True`` — the promotion-context trigger
+    ``is_ancestor`` returns ``True`` — the promotion-context trigger
     fires.
 
     Args:
@@ -95,12 +95,12 @@ def _setup_main_as_ancestor_repo(
 
 
 # ---------------------------------------------------------------------------
-# Group B — _base_is_ancestor (real git)
+# Group B — is_ancestor promotion-context semantics (real git)
 # ---------------------------------------------------------------------------
 
 
-def test_base_is_ancestor_true_and_false(tmp_path: Path) -> None:
-    """``_base_is_ancestor`` returns True/False correctly with real git commits.
+def test_is_ancestor_gates_promotion_context_true_and_false(tmp_path: Path) -> None:
+    """The shared ``is_ancestor`` probe drives the promotion-context gate.
 
     SCENARIO: Three commits — A (initial), C (on 'side' branch diverging from
     A), B (on 'main', child of A).  HEAD is on main at B.  The 'side' branch
@@ -146,10 +146,10 @@ def test_base_is_ancestor_true_and_false(tmp_path: Path) -> None:
     )
 
     # 'base-commit' (A) is an ancestor of HEAD (B): merge-base(A, B) = A.
-    assert verify_changelog_history._base_is_ancestor(tmp_path, "base-commit") is True
+    assert verify_changelog_history.is_ancestor(tmp_path, "base-commit", "HEAD") is True
 
     # 'side' (C) is NOT an ancestor of HEAD (B): merge-base(C, B) = A ≠ C.
-    assert verify_changelog_history._base_is_ancestor(tmp_path, "side") is False
+    assert verify_changelog_history.is_ancestor(tmp_path, "side", "HEAD") is False
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +281,7 @@ def test_passes_when_all_base_headings_present(
         origin/main CHANGELOG has ``## v1.0.0`` and ``## v1.1.0``; the
         release branch adds ``## v1.2.0`` but keeps both prior headings.
         HEAD is one commit ahead of origin/main (direct child), so
-        ``_base_is_ancestor`` returns True.
+        ``is_ancestor`` returns True.
     EXPECTED BEHAVIOR: returns 0; caplog contains "preserved".
     """
     local_content = "## v1.2.0\n\n## v1.1.0\n\n## v1.0.0\n"

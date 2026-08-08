@@ -1798,11 +1798,11 @@ def step_changelog_version(repo_root: Path) -> StepResult:
                         "under the next `## vX.Y.Z` heading."
                         for version in stranded_added_versions(old_text, text, latest)
                     )
-    # Stale-branch trap (#-free per §8; see docs/consumer-release.md): when
-    # the failing findings are tag-shaped AND the tag lives on the base but
-    # not on HEAD, the branch is merely behind — no staged change can fix
-    # it, and the intuitive escapes (hand-added headings, [no-version])
-    # are rejected by this same gate. Name the one real cure.
+    # Stale-branch trap: when the failing findings are tag-shaped AND the
+    # tag lives on the base but not on HEAD, the branch is merely behind —
+    # no staged change can fix it, and the intuitive escapes (hand-added
+    # headings read as edits to released sections; [no-version] is
+    # branch-durable) are rejected by this same gate. Name the one real cure.
     tag_shaped = latest is not None and any(
         f"{latest} has no" in f or "behind the latest tag" in f for f in findings
     )

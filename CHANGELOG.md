@@ -23,8 +23,9 @@ versions follow forge's rolling-next convention.
 ## v3.2.1 — Unreleased
 
 ### Fixes
-- **`changelog_version` no longer traps stale branches.** When the check
-  fails only because the latest tag lives on the base branch but not on
+- **`changelog_version` no longer leaves stale branches stuck.** The
+  check still blocks, but when it fails only because the latest tag
+  lives on the base branch but not on
   the feature branch (the branch is merely behind — nothing staged is
   wrong), the failure now says so and names the one real cure: merge the
   base in (`git merge origin/<base>`, stash dance for a dirty tree, never

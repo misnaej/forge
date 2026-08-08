@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 686 symbols._
+_63 modules, 685 symbols._
 
 ## `forge`
 
@@ -886,7 +886,6 @@ _63 modules, 686 symbols._
 
 > _verify-forge-changelog-history — guard main's curated CHANGELOG history._
 
-- `_base_is_ancestor(repo_root: Path, base_ref: str) -> bool` _(internal)_ — Return ``True`` when *base_ref* is an ancestor of ``HEAD``.
 - `main() -> int` — Fail when the working tree's CHANGELOG drops a curated ``@base`` entry.
 
 ## `forge.verify_cli_wiring`

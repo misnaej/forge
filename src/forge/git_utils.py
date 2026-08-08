@@ -876,8 +876,13 @@ def is_ancestor(
         descendant_ref: Ref whose history is searched.
 
     Returns:
-        True when reachable; False on unreachable or unresolvable refs.
+        True when reachable; False on unreachable, unresolvable, or
+        flag-shaped refs (a leading ``-`` would parse as a git option —
+        same guard as :func:`resolve_base_branch_ref`, held at the shared
+        primitive so every future caller inherits it).
     """
+    if ancestor_ref.startswith("-") or descendant_ref.startswith("-"):
+        return False
     return (
         subprocess.run(
             ["git", "merge-base", "--is-ancestor", ancestor_ref, descendant_ref],

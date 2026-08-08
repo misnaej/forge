@@ -2254,3 +2254,14 @@ def test_is_ancestor_real_repo_false_for_unreachable_ref(tmp_path: Path) -> None
     """A real repo: an unresolvable ref is treated as not-an-ancestor."""
     _init_git_repo(tmp_path)
     assert git_utils.is_ancestor(tmp_path, "nonexistent_branch_xyz", "HEAD") is False
+
+
+def test_is_ancestor_rejects_flag_shaped_refs() -> None:
+    """Dash-prefixed refs return False without any git invocation.
+
+    A leading `-` would parse as a git option (option injection); the
+    guard lives at the shared primitive so every caller inherits it,
+    mirroring `resolve_base_branch_ref`.
+    """
+    assert git_utils.is_ancestor(None, "-v1.0.0", "HEAD") is False
+    assert git_utils.is_ancestor(None, "v1.0.0", "--all") is False
