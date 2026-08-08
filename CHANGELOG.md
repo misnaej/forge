@@ -20,6 +20,24 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.2.0 — Unreleased
+
+### Features
+- **`forge-audit-layering` + opt-in `layering` pre-commit step.** Layer
+  admission rules stop being prose: `[[tool.forge.layering.layer]]`
+  declares a *positive* `composes_all_of` clause — every direct child of
+  the layer's package must reach each named layer through its transitive
+  internal-import closure ("must be built on X", which permission-only
+  tools cannot express). Evaluated per direct child over the whole
+  closure, not per module. The diff is the baseline: pre-existing
+  violations report LOW and never block; a violation in an added/renamed
+  module is HIGH and fails the step — the gate fires on exactly the
+  commit that decides placement. Exemptions are per-child and rendered
+  visibly. Joins `forge-audit-all` and design-checker's recipes
+  (Recipe 7); `under_module_prefix` is now the one shared prefix matcher
+  (`gen_c4` imports it), and `git_utils.added_or_moved_files` is the
+  narrow added/renamed companion to `get_modified_files`.
+
 ## v3.1.0 — Unreleased
 
 ### Features

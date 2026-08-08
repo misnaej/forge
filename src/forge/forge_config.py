@@ -247,6 +247,14 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "to blocking — severity vs timing.",
     ),
     ConfigKey(
+        ("tool", "forge", "layering", "layer"),
+        "unset (audit + step skipped)",
+        "Array of layer tables (name, package, composes_all_of, exempt) for "
+        "forge-audit-layering: every direct child of a layer's package must "
+        "reach each composes_all_of layer in its import closure. Blocking "
+        "only for added/moved modules.",
+    ),
+    ConfigKey(
         ("tool", "forge", "smart_test", "precommit_depth"),
         "unset (step skipped)",
         "Depth the smart_test pre-commit step runs on commit (0/1/2/full). "

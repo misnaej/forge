@@ -46,7 +46,7 @@ options:
 
 ```text
 usage: forge-audit-all [-h] [--scope {full,changed}] [--roots [ROOTS ...]]
-                       [--only [{suppressions,agents,dup,deps,orphans,data,claims} ...]]
+                       [--only [{suppressions,agents,dup,deps,orphans,data,claims,layering} ...]]
                        [--output OUTPUT]
 
 Run every forge-audit-* script and aggregate results.
@@ -55,7 +55,7 @@ options:
   -h, --help            show this help message and exit
   --scope {full,changed}
   --roots [ROOTS ...]
-  --only [{suppressions,agents,dup,deps,orphans,data,claims} ...]
+  --only [{suppressions,agents,dup,deps,orphans,data,claims,layering} ...]
                         Run only these sub-audits (default: all).
   --output OUTPUT       Override summary log path (default:
                         code_health/audit_summary.log).
@@ -157,6 +157,27 @@ options:
                         (default: 0.85).
   --shingle-size SHINGLE_SIZE
                         K-gram shingle window (default: 5).
+```
+
+## forge-audit-layering
+
+```text
+usage: forge-audit-layering [-h] [--scope {full,changed}]
+                            [--roots [ROOTS ...]] [--output OUTPUT]
+
+Enforce layer-composition contracts: every direct child of a configured layer
+must compose the layers named in its composes_all_of clause. Blocking only for
+added/moved modules.
+
+options:
+  -h, --help            show this help message and exit
+  --scope {full,changed}
+                        Audit scope. 'full' scans roots; 'changed' scans files
+                        modified vs the configured base branch.
+  --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
+                        if omitted.
+  --output OUTPUT       Override log path. Defaults to
+                        code_health/audit_<name>.log.
 ```
 
 ## forge-audit-orphans

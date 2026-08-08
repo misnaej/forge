@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_62 modules, 671 symbols._
+_63 modules, 683 symbols._
 
 ## `forge`
 
@@ -87,6 +87,7 @@ _62 modules, 671 symbols._
 - `class Severity` — Finding severity tier.
 - `class Finding` — One audit observation with provenance.
   - `render(self) -> str` — Render this finding as a single block in the log file.
+- `under_module_prefix(module: str, prefix: str) -> bool` — Return whether *module* equals *prefix* or is a dotted child of it.
 - `make_audit_parser(prog: str, description: str) -> argparse.ArgumentParser` — Build the shared CLI surface for an audit script.
 - `resolve_roots(roots: list[str] | None) -> list[Path]` — Resolve the effective scan roots.
 - `_is_excluded(path: Path) -> bool` _(internal)_ — Return ``True`` if ``path`` lies under any default-excluded directory.
@@ -159,6 +160,21 @@ _62 modules, 671 symbols._
 - `_touches_changed(changed: set[str], units: Iterable[CodeUnit]) -> bool` _(internal)_ — Return whether any unit lives in a changed file.
 - `run(scope: Scope, roots: list[Path], config: DupConfig) -> int` — Execute the full duplicate-detection pipeline.
 - `main() -> int` — CLI entry point for ``forge-audit-dup``.
+
+## `forge.audit.layering`
+
+> _forge-audit-layering: enforce layer-composition contracts._
+
+- `class LayerSpec` — One configured layer contract.
+- `class LayeringConfig` — Tunable knobs for the layering audit.
+- `parse_layers(raw: dict[str, object]) -> tuple[list[LayerSpec], list[str]]` — Parse ``[tool.forge.layering]`` into layer specs.
+- `_direct_children(layer: LayerSpec, modules: dict[str, ModuleNode]) -> dict[str, set[str]]` _(internal)_ — Group a layer's modules by direct child of its package.
+- `_closure(graph: dict[str, set[str]], start: set[str]) -> set[str]` _(internal)_ — Return the transitive import closure of ``start`` (inclusive).
+- `_child_finding_anchor(mods: set[str], modules: dict[str, ModuleNode]) -> tuple[str, int]` _(internal)_ — Pick a stable file anchor for a child-level finding.
+- `evaluate(layers: list[LayerSpec], modules: dict[str, ModuleNode], graph: dict[str, set[str]], *, escalate_paths: set[str]) -> list[Finding]` — Evaluate every layer contract over the module graph.
+- `_summary(n_layers: int, n_children: int, findings: list[Finding]) -> str` _(internal)_ — Render the one-paragraph audit summary.
+- `run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int` — Execute the layering audit.
+- `main() -> int` — CLI entry point for ``forge-audit-layering``.
 
 ## `forge.audit.orphans`
 
@@ -339,7 +355,6 @@ _62 modules, 671 symbols._
 - `load_c4_config(root: Path) -> C4Config | None` — Load the C4 model skeleton for the repo.
 - `_visible_config(config: C4Config, edges: set[tuple[str, str]], *, include_tags: tuple[str, ...] = (), exclude_tags: tuple[str, ...] = ()) -> tuple[C4Config, set[tuple[str, str]]]` _(internal)_ — Drop deactivated / tag-filtered elements and their dangling edges.
 - `assign_components(modules: list[str], components: tuple[Component, ...]) -> tuple[dict[str, str], list[str]]` — Map each module to a component by longest-prefix match.
-- `_under_prefix(module: str, prefix: str) -> bool` _(internal)_ — Return whether *module* equals *prefix* or is a dotted child of it.
 - `derive_component_edges(graph: dict[str, set[str]], assigned: dict[str, str]) -> set[tuple[str, str]]` — Collapse module-level import edges to component-level edges.
 - `_resolve_endpoint(name: str, ids: _IdMaps, system: str) -> str | None` _(internal)_ — Resolve a relationship endpoint name to its DSL/Mermaid identifier.
 - `_externals_with_declared_incoming(config: C4Config) -> set[str]` _(internal)_ — Return external names that are the destination of a declared edge.
@@ -470,6 +485,7 @@ _62 modules, 671 symbols._
 - `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
 - `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
+- `added_or_moved_files(*, repo_root: Path | None = None, base_branch: str = 'main', suffix: str = '.py') -> list[str]` — Return files ADDED or RENAMED vs the base branch (``--diff-filter=AR``).
 - `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None, base_branch: str = 'main') -> list[str]` — Get list of modified files from git.
 - `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
 - `get_untracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get untracked, non-gitignored files matching the suffix/prefix filters.
@@ -679,6 +695,7 @@ _62 modules, 671 symbols._
 - `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
 - `step_c4(repo_root: Path) -> StepResult` — Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
+- `step_layering(repo_root: Path) -> StepResult` — Run ``forge-audit-layering`` — layer-composition gate.
 - `step_api_digest_check(repo_root: Path) -> StepResult` — Run ``forge-gen-api-digest --check`` — api-digest drift guard (opt-in).
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
 - `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.

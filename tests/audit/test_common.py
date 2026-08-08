@@ -181,3 +181,10 @@ def test_exit_code_for_returns_one_on_high_or_above() -> None:
         ),
     ]
     assert exit_code_for(findings) == 1
+
+
+def test_under_module_prefix_respects_dotted_boundaries() -> None:
+    """Matches the prefix and its dotted children, never lexical near-misses."""
+    assert common.under_module_prefix("forge.audit", "forge.audit")
+    assert common.under_module_prefix("forge.audit.deps", "forge.audit")
+    assert not common.under_module_prefix("forge.auditor", "forge.audit")

@@ -789,6 +789,36 @@ def step_c4(repo_root: Path) -> StepResult:
     return StepResult(name="c4", passed=passed, output=output)
 
 
+def step_layering(repo_root: Path) -> StepResult:
+    """Run ``forge-audit-layering`` — layer-composition gate.
+
+    Enforces ``[tool.forge.layering]`` composes_all_of contracts. Exits
+    non-zero only for violations on added/moved modules (the diff is the
+    baseline — pre-existing violations report as LOW and never block).
+    Self-skips when no layers are configured.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` mirroring the CLI exit code, or a skipped result
+        when ``[tool.forge.layering]`` is absent.
+
+    Raises:
+        SystemExit: If ``forge-audit-layering`` is not on PATH.
+    """
+    if not config.read_tool_forge_section(repo_root, "layering").get("layer"):
+        return StepResult(
+            name="layering",
+            passed=True,
+            output="(no [tool.forge.layering] layers — skipped)",
+            skipped=True,
+        )
+    require_cli("forge-audit-layering", caller="forge-precommit")
+    passed, output = _run(["forge-audit-layering", "--scope", "changed"], cwd=repo_root)
+    return StepResult(name="layering", passed=passed, output=output)
+
+
 # The api-digest doc path — shared by the non-blocking auto-writer
 # (:data:`_REGEN_DOCS`) and the opt-in blocking drift gate
 # (:func:`step_api_digest_check`) so the two never disagree on which file
@@ -1976,6 +2006,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
         "api_digest_check", step_api_digest_check, tree_content=True, default_on=False
     ),
     StepDef("smart_test", step_smart_test, tree_content=True, default_on=False),
+    StepDef("layering", step_layering, tree_content=True, default_on=False),
     StepDef(
         "changelog_version",
         step_changelog_version,

@@ -119,6 +119,24 @@ class Finding:
         return f"{head}\n{body}\n\n"
 
 
+def under_module_prefix(module: str, prefix: str) -> bool:
+    """Return whether *module* equals *prefix* or is a dotted child of it.
+
+    The one prefix matcher shared by every module-grouping consumer
+    (``forge-gen-c4`` components, ``forge-audit-layering`` layers) — a
+    ``forge.audit`` prefix matches ``forge.audit`` and ``forge.audit.deps``
+    but not ``forge.auditor``.
+
+    Args:
+        module: Dotted module name (e.g. ``"forge.audit.deps"``).
+        prefix: Dotted package prefix (e.g. ``"forge.audit"``).
+
+    Returns:
+        True when *module* is *prefix* itself or nested beneath it.
+    """
+    return module == prefix or module.startswith(f"{prefix}.")
+
+
 def make_audit_parser(prog: str, description: str) -> argparse.ArgumentParser:
     """Build the shared CLI surface for an audit script.
 
