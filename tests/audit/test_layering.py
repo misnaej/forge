@@ -578,12 +578,15 @@ def test_run_changed_scope_high_survives_when_anchor_not_in_changed_or_escalate(
     fake_repo: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A HIGH finding survives the CHANGED filter via the severity OR-clause.
+    """A HIGH finding survives the CHANGED filter regardless of anchor path.
 
     The finding's anchor is the child's alphabetically-first module ("a"),
-    but only the non-anchor module ("b") is added/moved, and neither is in
-    the (empty) changed-file set — the finding must still survive because
-    it is HIGH, independent of path membership.
+    but only the non-anchor module ("b") is added/moved. With the
+    child-membership filter, the escalated member also satisfies
+    membership, so today TWO conditions keep this finding alive; the
+    severity OR-clause remains as deliberate defense-in-depth for any
+    future refactor that decouples the escalate set from the changed set.
+    This test pins the outcome (HIGH survives), not which clause fires.
     """
     _write_pyproject(fake_repo, TWO_LAYER_TOML)
     _write(fake_repo / "src" / "myproj" / "pipelines" / "x" / "a.py", PLAIN_MODULE)
@@ -665,3 +668,39 @@ def test_run_changed_scope_low_survives_via_non_anchor_child_member(
     assert "[LOW]" in log_text
     assert "child 'jobs'" in log_text
     assert code == 0
+
+
+def test_summary_separates_config_errors_from_blocking_violations() -> None:
+    """The summary never misattributes config errors as added/moved blocks.
+
+    Mirrors dup's direct `_summary` tests: with one real HIGH violation and
+    one config-error HIGH in the list, the blocking count stays 1 and the
+    config errors get their own clause.
+    """
+    findings = [
+        layering.Finding(
+            audit="layering",
+            severity=Severity.HIGH,
+            path="src/p/child.py",
+            line=1,
+            message="does not compose layer 'domain' [added/moved module]",
+        ),
+        layering.Finding(
+            audit="layering",
+            severity=Severity.HIGH,
+            path="pyproject.toml",
+            line=1,
+            message="layer 'a': composes_all_of names undefined layer 'x'",
+        ),
+        layering.Finding(
+            audit="layering",
+            severity=Severity.LOW,
+            path="src/p/other.py",
+            line=1,
+            message="does not compose layer 'domain'",
+        ),
+    ]
+    summary = layering._summary(2, 3, findings, n_config_errors=1)
+    assert "1 blocking violation(s) on added/moved modules" in summary
+    assert "1 pre-existing" in summary
+    assert "1 config error(s)." in summary
