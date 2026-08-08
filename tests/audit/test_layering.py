@@ -616,3 +616,17 @@ def test_run_clean_tree_valid_config_exits_zero(
     )
     assert code == 0
     assert "# findings: 0" in log_text
+
+
+def test_parse_layers_rejects_string_composes_all_of() -> None:
+    """A bare string for composes_all_of is a clear config error, not char-split.
+
+    Regression: tuple("domain") silently produced per-character "undefined
+    layer" noise instead of naming the actual mistake.
+    """
+    specs, errors = parse_layers(
+        {"layer": [{"name": "a", "package": "p", "composes_all_of": "domain"}]},
+    )
+    assert specs == []
+    assert len(errors) == 1
+    assert "must be arrays" in errors[0]

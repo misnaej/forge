@@ -38,6 +38,16 @@ versions follow forge's rolling-next convention.
   (`gen_c4` imports it), and `git_utils.added_or_moved_files` is the
   narrow added/renamed companion to `get_modified_files`.
 
+### Fixes
+- **Audit logs cannot be forged by untrusted content.** `Finding.render()`
+  now control-character-escapes path, message, and evidence
+  (`sanitize_log_text`) before writing `code_health/audit_*.log` — a git
+  filename or config-supplied string (e.g. a layer name) containing a
+  newline or ANSI escape can no longer inject a spoofed finding line into
+  logs agents treat as trusted ground truth. All audit scripts inherit
+  the fix; malformed `composes_all_of`/`exempt` values also fail with a
+  clear config error instead of char-splitting.
+
 ## v3.1.0 — Unreleased
 
 ### Features

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 683 symbols._
+_63 modules, 684 symbols._
 
 ## `forge`
 
@@ -85,6 +85,7 @@ _63 modules, 683 symbols._
 
 - `class Scope` — Audit scope selector.
 - `class Severity` — Finding severity tier.
+- `sanitize_log_text(text: str) -> str` — Escape control characters so a value cannot forge log lines.
 - `class Finding` — One audit observation with provenance.
   - `render(self) -> str` — Render this finding as a single block in the log file.
 - `under_module_prefix(module: str, prefix: str) -> bool` — Return whether *module* equals *prefix* or is a dotted child of it.

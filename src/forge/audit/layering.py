@@ -122,12 +122,20 @@ def parse_layers(raw: dict[str, object]) -> tuple[list[LayerSpec], list[str]]:
         if not isinstance(entry, dict) or "name" not in entry or "package" not in entry:
             errors.append(f"layer #{i + 1}: needs 'name' and 'package' keys")
             continue
+        composes = entry.get("composes_all_of", [])
+        exempt = entry.get("exempt", [])
+        if not isinstance(composes, list) or not isinstance(exempt, list):
+            errors.append(
+                f"layer #{i + 1}: 'composes_all_of' and 'exempt' must be "
+                f"arrays of layer/child names",
+            )
+            continue
         specs.append(
             LayerSpec(
                 name=str(entry["name"]),
                 package=str(entry["package"]),
-                composes_all_of=tuple(entry.get("composes_all_of", [])),
-                exempt=tuple(entry.get("exempt", [])),
+                composes_all_of=tuple(composes),
+                exempt=tuple(exempt),
             ),
         )
     known = {s.name for s in specs}
