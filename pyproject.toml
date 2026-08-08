@@ -131,10 +131,37 @@ enabled = true
 path = "docs/agent-architecture.md"
 
 [tool.forge.precommit]
-# Forge dogfoods its own opt-in steps: typecheck (see [tool.forge.typecheck])
-# and c4 (architecture-diagram drift guard — keeps docs/architecture.dsl + the
-# README C4 block in sync with the import graph; self-skips without [tool.forge.c4]).
-enable = ["typecheck", "c4"]
+# Forge dogfoods its own opt-in steps: typecheck (see [tool.forge.typecheck]),
+# c4 (architecture-diagram drift guard — keeps docs/architecture.dsl + the
+# README C4 block in sync with the import graph; self-skips without
+# [tool.forge.c4]), and layering (see [tool.forge.layering]).
+enable = ["typecheck", "c4", "layering"]
+
+# Forge dogfoods its own layering gate. Two contracts: every audit script
+# composes the shared audit seam (audit.common — the log format / scope /
+# severity contract every forge-audit-* must speak), and smart_test's
+# graph-facing children compose forge.import_graph. The three exempt
+# smart_test children are deliberately graph-independent support modules
+# (coverage-JSON parsing, git plumbing, pytest invocation) — visible
+# exemptions, re-reviewed whenever one starts doing graph work.
+[[tool.forge.layering.layer]]
+name = "audit-common"
+package = "forge.audit.common"
+
+[[tool.forge.layering.layer]]
+name = "import-graph"
+package = "forge.import_graph"
+
+[[tool.forge.layering.layer]]
+name = "audit"
+package = "forge.audit"
+composes_all_of = ["audit-common"]
+
+[[tool.forge.layering.layer]]
+name = "smart-test"
+package = "forge.smart_test"
+composes_all_of = ["import-graph"]
+exempt = ["coverage", "git_helpers", "runner"]
 
 [tool.forge.env_sync]
 # Dogfood step_auto_rebuild: when a pulled change adds a [project.scripts] CLI

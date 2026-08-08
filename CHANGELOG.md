@@ -36,7 +36,9 @@ versions follow forge's rolling-next convention.
   visibly. Joins `forge-audit-all` and design-checker's recipes
   (Recipe 7); `under_module_prefix` is now the one shared prefix matcher
   (`gen_c4` imports it), and `git_utils.added_or_moved_files` is the
-  narrow added/renamed companion to `get_modified_files`.
+  narrow added/renamed companion to `get_modified_files`. Forge adopts
+  the gate itself: audit scripts must compose `audit.common`,
+  smart-test's graph-facing children must compose `forge.import_graph`.
 
 ### Fixes
 - **Audit logs cannot be forged by untrusted content.** `Finding.render()`
