@@ -17,12 +17,17 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
 
 ## Absolute Rules
 
-- **Allowed CLIs** (each owns one phase, SRP):
-  - `forge-precommit` — full sequence for normal cycles
-  - `fix-forge-ruff` — ruff phase alone (refresh `ruff.log`)
-  - `verify-forge-docstrings`, `verify-forge-repo-structure`,
-    `verify-forge-test-naming`, `verify-forge-manifest`,
-    `verify-forge-plugin-version` — each refreshes its own `code_health/*.log`
+- **Allowed CLIs**: `forge-precommit` — the ONLY loop driver, **hard cap
+  THREE invocations per run** (refresh → re-verify → final) — and, at
+  most once each, an individual step CLI (`fix-forge-ruff`,
+  `verify-forge-docstrings`, `verify-forge-repo-structure`,
+  `verify-forge-test-naming`, `verify-forge-manifest`,
+  `verify-forge-plugin-version`) to refresh ONE stale/missing log before
+  dispatch. Never for re-verification, never in a loop.
+- **The logs are the only evidence.** Diagnose exclusively from
+  `code_health/*.log`. Never diagnose from ad-hoc command output, never
+  re-run a tool "to see what happens", never run `pytest` / `python` /
+  anything not listed above.
 - **Never** invoke raw `ruff` / `git` / `gh` / `pip` (FOUNDATION §2).
   Mechanical fixes use the Edit tool; commits go through
   `git-commit-push`.
@@ -91,9 +96,7 @@ graph by hand.
 forge-precommit
 ```
 
-Confirms Phase 2 Edits cleared the residue. The ruff step runs format + check --fix again, so any whitespace / format drift introduced by your Edits is also picked up automatically. If a blocking step still fails, repeat Phase 2 on that step's log.
-
-Stop after 3 loops on the same step without progress; report the stuck step.
+Confirms Phase 2 Edits cleared the residue (the ruff step re-runs format + fix, so Edit-introduced drift is picked up). If a blocking step still fails: ONE more Phase 2 pass on that step's log, then the FINAL `forge-precommit`. That is the whole loop — **three `forge-precommit` runs maximum, ever**. Hitting the cap with a step still failing, or seeing the same finding set twice in a row, means you are stuck: STOP immediately and emit the `STUCK` block below. More loops are noise, not progress.
 
 `pip_audit.log` residue after all fixable advisories were bumped:
 - `normal` → success; surface advisories in the report.
@@ -117,6 +120,10 @@ Dep pins bumped (if any):
 
 Human attention required:
   - <unfixable advisories / secrets / stuck steps>
+
+STUCK (only when the loop cap was reached):
+  - <step>: <one-line finding excerpt> — tried: <edits made>; needs the
+    main agent / human. Do NOT keep looping.
 
 NEXT STEP: Call git-commit-push to commit these changes.
 ```

@@ -3143,6 +3143,122 @@ def test_step_changelog_version_stale_local_base_no_false_positive(
     assert "stranded" not in result.output
 
 
+# ---------------------------------------------------------------------------
+# step_changelog_version — stale-branch guidance (_tag_only_on_base)
+# ---------------------------------------------------------------------------
+
+
+def test_step_changelog_version_stale_branch_guidance_when_tag_only_on_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tag-shaped finding + `_tag_only_on_base` True appends the stale-branch cure.
+
+    SCENARIO: CHANGELOG.md is missing the latest tag's heading (a
+    tag-shaped finding — "has no `## v1.0.0` heading"), and the tag lives
+    on the base branch but not on this one. The gate must name the one
+    real cure (merging the base in) rather than let the author flail at
+    hand-editing headings.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.1.0\n")
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(precommit, "_tag_only_on_base", lambda *_a, **_kw: True)
+    result = precommit.step_changelog_version(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+    assert "Stale branch:" in result.output
+    assert "git merge origin/main" in result.output
+    assert "will not work" in result.output
+
+
+def test_step_changelog_version_no_stale_guidance_when_tag_not_only_on_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same tag-shaped finding but `_tag_only_on_base` False → plain finding only.
+
+    SCENARIO: identical CHANGELOG/tag setup to the stale-branch case, but
+    the tag is reachable from HEAD too (or from neither ref) — not the
+    stale-branch signature. The finding still fails the gate; only the
+    extra "Stale branch:" guidance is withheld.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.1.0\n")
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(precommit, "_tag_only_on_base", lambda *_a, **_kw: False)
+    result = precommit.step_changelog_version(tmp_path)
+    assert not result.passed
+    assert "Stale branch:" not in result.output
+    assert "v1.0.0" in result.output
+
+
+def test_step_changelog_version_no_stale_guidance_for_non_tag_shaped_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-tag-shaped finding never gets stale-branch guidance.
+
+    Even when `_tag_only_on_base` is True.
+
+    SCENARIO: the latest tag's heading IS present (no "has no" finding)
+    and the top heading is not behind the tag, but headings are
+    non-decreasing (a duplicate heading) — a structural finding unrelated
+    to tag reachability. `_tag_only_on_base` is stubbed True to prove the
+    guidance is gated on `tag_shaped`, not merely called unconditionally.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n\n## v1.0.0\n")
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+    monkeypatch.setattr(precommit, "_tag_only_on_base", lambda *_a, **_kw: True)
+    result = precommit.step_changelog_version(tmp_path)
+    assert not result.passed
+    assert "not strictly decreasing" in result.output
+    assert "Stale branch:" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# _tag_only_on_base
+# ---------------------------------------------------------------------------
+
+
+def test_tag_only_on_base_false_when_base_ref_unresolvable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No resolvable base ref → False, without calling `is_ancestor` at all."""
+    monkeypatch.setattr(precommit, "resolve_base_branch_ref", lambda *_a, **_kw: None)
+
+    def _unexpected_is_ancestor(*_a: object, **_kw: object) -> bool:
+        msg = "is_ancestor must not be called when the base ref is unresolvable"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(precommit, "is_ancestor", _unexpected_is_ancestor)
+    assert precommit._tag_only_on_base(tmp_path, "v1.0.0", "main") is False
+
+
+def test_tag_only_on_base_true_when_tag_on_base_but_not_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tag reachable from base but not HEAD → True (the stale-branch signature)."""
+    monkeypatch.setattr(
+        precommit, "resolve_base_branch_ref", lambda *_a, **_kw: "origin/main"
+    )
+
+    def _fake_is_ancestor(_root: object, _tag: str, descendant_ref: str) -> bool:
+        return descendant_ref == "origin/main"
+
+    monkeypatch.setattr(precommit, "is_ancestor", _fake_is_ancestor)
+    assert precommit._tag_only_on_base(tmp_path, "v1.0.0", "main") is True
+
+
+def test_tag_only_on_base_false_when_tag_on_both_base_and_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tag reachable from both base and HEAD → False (branch is up to date)."""
+    monkeypatch.setattr(
+        precommit, "resolve_base_branch_ref", lambda *_a, **_kw: "origin/main"
+    )
+    monkeypatch.setattr(precommit, "is_ancestor", lambda *_a, **_kw: True)
+    assert precommit._tag_only_on_base(tmp_path, "v1.0.0", "main") is False
+
+
 def test_step_changelog_updated_env_escape(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -20,6 +20,24 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.2.1 — Unreleased
+
+### Fixes
+- **`changelog_version` no longer traps stale branches.** When the check
+  fails only because the latest tag lives on the base branch but not on
+  the feature branch (the branch is merely behind — nothing staged is
+  wrong), the failure now says so and names the one real cure: merge the
+  base in (`git merge origin/<base>`, stash dance for a dirty tree, never
+  rebase) — and states explicitly that hand-added headings and
+  `[no-version]` will not work. `git_utils.is_ancestor` is the new shared
+  reachability probe.
+- **`precommit-fixer` cannot loop forever.** The agent's process is now
+  hard-capped: three `forge-precommit` runs per invocation, individual
+  step CLIs allowed once each only to refresh a single stale log,
+  diagnosis exclusively from `code_health/*.log` (never ad-hoc command
+  output), and a repeated finding set means stop-and-report via a
+  dedicated `STUCK` block instead of another loop.
+
 ## v3.2.0 — Unreleased
 
 ### Features
