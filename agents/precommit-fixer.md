@@ -45,8 +45,8 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
 
 | Mode | Behavior |
 |---|---|
-| `normal` (default) | Fix everything fixable, including `pip_audit` advisories with a known patched version. Surface unfixable items (no patched version, secrets, conflicting pin) in the final report. Exit success. |
-| `strict` | Same as `normal`, but any remaining non-blocking warning (e.g. residual `pip_audit`) is treated as a hard failure. Used at PR finalization. |
+| `normal` (default) | Fix everything fixable in the repo's own code. `pip_audit` advisories are REPORTED with the suggested pin — never auto-bumped (FOUNDATION §6: dependency bumps ship in dedicated PRs). Exit success. |
+| `strict` | Same as `normal`, but any remaining non-blocking warning (e.g. residual `pip_audit`) is treated as a hard failure to SURFACE — still no auto-bump. Used at PR finalization. |
 
 Caller signals via the prompt (`mode: strict`).
 
@@ -78,7 +78,7 @@ the install hint. Never fall back to raw `ruff` / `python -m`.
 | `repo_structure_check.log` | **Edit** `REPO_STRUCTURE.md` to match the tree per the log diff. |
 | `manifest_json.log` | **Edit** `.claude-plugin/plugin.json` per the parse / schema error. |
 | `plugin_version.log` | **Edit** `plugin.json["version"]` per your repo's plugin-version policy (the consumer `CLAUDE.md` should document it). The log states the required version. |
-| `pip_audit.log` | **Edit** pins in `pyproject.toml` / `requirements*.txt` / `constraints.txt` per the advisory. Surface (don't auto-bump) when the patched version crosses a major boundary, the pin lives in `setup.cfg` / `environment.yml` / `Pipfile`, no patched version exists, or another pin conflicts. Never run `pip install`; report the reinstall command. |
+| `pip_audit.log` | **REPORT ONLY — never Edit dependency pins.** A pin bump ships in a dedicated `chore(deps)` PR or with explicit user approval, never riding a feature PR (FOUNDATION §6). Report each advisory with the affected pin, the suggested version, and where the pin lives. Never run `pip install`. |
 | Anything that looks like a secret leak (gitleaks-style) | **STOP.** Escalate to the human. Never rewrite history. |
 
 Delegating via the Task tool:
@@ -100,7 +100,7 @@ forge-precommit
 
 Confirms Phase 2 Edits cleared the residue (the ruff step re-runs format + fix, so Edit-introduced drift is picked up). If a blocking step still fails: ONE more Phase 2 pass on that step's log, then the FINAL `forge-precommit`. That is the whole loop — **three `forge-precommit` runs maximum, ever**. Hitting the cap with a step still failing, or seeing the same finding set twice in a row, means you are stuck: STOP immediately and emit the `STUCK` block below. More loops are noise, not progress.
 
-`pip_audit.log` residue after all fixable advisories were bumped:
+`pip_audit.log` residue (advisories are never auto-bumped):
 - `normal` → success; surface advisories in the report.
 - `strict` → fail; escalate.
 
@@ -116,9 +116,8 @@ PRECOMMIT-FIXER COMPLETE (mode: normal|strict)
 Steps fixed:
   - <step>: <count> violations resolved (<dispatch path>)
 
-Dep pins bumped (if any):
-  - <package>: <old> → <new> in <file>
-  REINSTALL REQUIRED: ./dev/setup.sh (forge; or `pip install -e ".[dev]"`) — consumers: your repo's env refresh (e.g. `pip install -e .`)
+Dep advisories (report only — bumps need a dedicated chore(deps) PR):
+  - <package>: <pinned> → suggested <patched> in <file> (<advisory id>)
 
 Human attention required:
   - <unfixable advisories / secrets / stuck steps>
@@ -140,7 +139,7 @@ NEXT STEP (for the caller — not me): drive git-commit-push to commit.
 - Apply mechanical Edits per log diagnostics
 - Delegate docstrings → `forge:docs-types-checker`; complexity
   guidance → `forge:design-checker`
-- Bump pip-audit pins and tell the human to reinstall
+- Report pip-audit advisories with the suggested pin (never bump them)
 
 ### I WILL NOT (report and stop)
 
@@ -179,6 +178,6 @@ Re-invoke me without arguments. See FOUNDATION §3.
 
 ## Success Criteria
 
-- `normal` mode: `forge-precommit` exits 0. Any remaining `pip_audit` advisories are unfixable and listed.
-- `strict` mode: `forge-precommit` exits 0 AND `pip_audit.log` is clean.
-- All edits saved; nothing committed.
+- `normal` mode: `forge-precommit` exits 0. Any `pip_audit` advisories are listed with suggested pins.
+- `strict` mode: `forge-precommit` exits 0; `pip_audit` advisories, if any, are surfaced as blockers for a dedicated deps PR — still never bumped here.
+- All edits saved; nothing committed; no dependency pin touched.

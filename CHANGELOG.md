@@ -37,7 +37,11 @@ versions follow forge's rolling-next convention.
   step CLIs allowed once each only to refresh a single stale log,
   diagnosis exclusively from `code_health/*.log` (never ad-hoc command
   output), and a repeated finding set means stop-and-report via a
-  dedicated `STUCK` block instead of another loop.
+  dedicated `STUCK` block instead of another loop. It also no longer
+  drives `git-commit-push` (the main agent does, off its report) and no
+  longer auto-bumps dependency pins — advisories are reported with the
+  suggested pin, and bumps ship in a dedicated `chore(deps)` PR per the
+  new FOUNDATION §6 "Dependency bumps ship alone" rule.
 
 ## v3.2.0 — Unreleased
 
