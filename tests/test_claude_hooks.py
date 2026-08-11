@@ -771,16 +771,18 @@ def test_unverified_pr_create_blocks_token_mention_in_argument(
 def test_unverified_pr_create_allows_release_branch_without_wrapup(
     git_repo_with_commit: tuple[Path, str],
 ) -> None:
-    """A `release/vX.Y.Z` branch self-exempts — no wrap-up needed (era-locked).
+    """A `release/vX.Y.Z` branch whose tree reproduces tag `vX.Y.Z` self-exempts.
 
-    Mirrors the era-gap suppression's promotion-context detection (branch
-    name only, per the hook's header comment): the `/promote` flow has no
-    Step 3.92, so gating on `code_health/pr_wrapup.md` would permanently
-    block every promotion PR.
+    The exemption demands provenance, not just naming (per the hook's header
+    comment): the `vX.Y.Z` tag must exist AND HEAD's tree must reproduce it.
+    Tagging HEAD before branching satisfies both, so no wrap-up is needed —
+    the `/promote` flow has no Step 3.92; its verification is the
+    release-fingerprint check instead.
     """
-    repo, _sha = git_repo_with_commit
+    repo, sha = git_repo_with_commit
+    subprocess.run(["git", "tag", "v1.2.3", sha], cwd=repo, env=GIT_ENV, check=True)
     subprocess.run(
-        ["git", "switch", "-c", "release/v1.2.3"],
+        ["git", "checkout", "-q", "-b", "release/v1.2.3"],
         cwd=repo,
         env=GIT_ENV,
         check=True,
@@ -799,7 +801,7 @@ def test_unverified_pr_create_blocks_release_branch_suffix(
     """
     repo, _sha = git_repo_with_commit
     subprocess.run(
-        ["git", "switch", "-c", "release/v1.2.3-rc1"],
+        ["git", "checkout", "-q", "-b", "release/v1.2.3-rc1"],
         cwd=repo,
         env=GIT_ENV,
         check=True,
@@ -807,3 +809,78 @@ def test_unverified_pr_create_blocks_release_branch_suffix(
     proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
     assert proc.returncode == 2
     assert "authored wrap-up" in proc.stderr
+
+
+def test_unverified_pr_create_blocks_spoofed_release_branch(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A branch merely NAMED `release/vX.Y.Z` with no matching tag is not exempt.
+
+    Regression for the naming-only exemption this replaced: without a
+    `v9.9.9` tag to reproduce, the hook withholds the exemption and falls
+    through to the normal (missing-wrap-up) gate.
+    """
+    repo, _sha = git_repo_with_commit
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "release/v9.9.9"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
+    assert proc.returncode == 2
+    assert "promotion exemption withheld" in proc.stderr
+
+
+def test_unverified_pr_create_allows_release_branch_changelog_only_divergence(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A tree diverging from its tag ONLY in `CHANGELOG.md` stays exempt.
+
+    `CHANGELOG.md` is the one tolerated divergence (the curated release-notes
+    entry written after tagging) — the hook diffs `tag..HEAD` excluding it.
+    """
+    repo, sha = git_repo_with_commit
+    subprocess.run(["git", "tag", "v1.2.3", sha], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "release/v1.2.3"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    (repo / "CHANGELOG.md").write_text("## v1.2.3\n\n- release notes\n")
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "changelog"], cwd=repo, env=GIT_ENV, check=True
+    )
+    assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo) == 0
+
+
+def test_unverified_pr_create_blocks_release_branch_non_changelog_divergence(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A tree diverging from its tag in a file OTHER than `CHANGELOG.md` is not exempt.
+
+    The excluded-path diff (`':(exclude)CHANGELOG.md'`) is scoped to that one
+    file — any other post-tag edit means the tree no longer reproduces the
+    release, so the promotion exemption is withheld.
+    """
+    repo, sha = git_repo_with_commit
+    subprocess.run(["git", "tag", "v1.2.3", sha], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "release/v1.2.3"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    (repo / "other.txt").write_text("post-tag change\n")
+    subprocess.run(["git", "add", "other.txt"], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "unrelated change"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
+    assert proc.returncode == 2
+    assert "promotion exemption withheld" in proc.stderr

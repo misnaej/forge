@@ -24,11 +24,12 @@ versions follow forge's rolling-next convention.
 
 ### Fixes
 - **The wrap-up gate no longer blocks promotion PRs.**
-  `block_unverified_pr_create` self-exempts on `release/vX.Y.Z` branches:
-  an era-locked release tree has no `/pr` reporter wrap-up — its
-  verification is the release-fingerprint check the promotion-merge
-  pre-commit gate already enforces. Suffixed branch names
-  (`release/vX.Y.Z-rc1`) stay gated.
+  `block_unverified_pr_create` self-exempts on `release/vX.Y.Z` branches
+  **with provenance**: the matching tag must exist and `HEAD`'s tree must
+  reproduce it modulo `CHANGELOG.md` (the curated entry). An era-locked
+  release tree has no `/pr` reporter wrap-up — its verification is the
+  release fingerprint. A branch merely *named* `release/*`, or a
+  suffixed name (`release/vX.Y.Z-rc1`), stays gated.
 
 ## v3.4.1 — Unreleased
 

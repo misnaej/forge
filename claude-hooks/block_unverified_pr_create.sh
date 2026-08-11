@@ -15,11 +15,12 @@
 #     on the agent's own judgment.
 #
 # Promotion PRs self-exempt: a release/vX.Y.Z branch is an era-locked
-# tree whose verification is the release-fingerprint check (the
-# promotion-merge pre-commit gate), not a /pr reporter wrap-up — the
-# /promote flow has no Step 3.92. Same promotion-context detection the
-# era-gap suppression uses: branch name only; the fingerprint guard
-# elsewhere keeps the tree honest.
+# tree whose verification is the release-fingerprint check, not a /pr
+# reporter wrap-up — the /promote flow has no Step 3.92. The exemption
+# demands provenance, not just naming: the vX.Y.Z tag must exist AND
+# HEAD's tree must reproduce it modulo CHANGELOG.md (the curated entry
+# is the one tolerated divergence). A branch merely NAMED release/*
+# whose content diverges falls through to the normal gate.
 set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
@@ -41,7 +42,12 @@ fi
 
 BRANCH=$(git branch --show-current 2>/dev/null || true)
 if echo "$BRANCH" | grep -qE '^release/v[0-9]+\.[0-9]+\.[0-9]+$'; then
-    exit 0
+    TAG="${BRANCH#release/}"
+    if git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null 2>&1 \
+        && [ -z "$(git diff --name-only "$TAG" HEAD -- . ':(exclude)CHANGELOG.md')" ]; then
+        exit 0
+    fi
+    echo "NOTE: branch is named $BRANCH but its tree does not reproduce tag $TAG (mod CHANGELOG.md) — promotion exemption withheld, normal wrap-up gate applies." >&2
 fi
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
