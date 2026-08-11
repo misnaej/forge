@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -9,7 +10,14 @@ import pytest
 from forge.audit import common, layering
 from forge.audit.common import Scope, Severity
 from forge.audit.deps import ModuleNode
-from forge.audit.layering import LayeringConfig, LayerSpec, evaluate, parse_layers, run
+from forge.audit.layering import (
+    LayeringConfig,
+    LayerSpec,
+    evaluate,
+    main,
+    parse_layers,
+    run,
+)
 from tests.audit.conftest import make_fake_repo
 
 
@@ -704,3 +712,132 @@ def test_summary_separates_config_errors_from_blocking_violations() -> None:
     assert "1 blocking violation(s) on added/moved modules" in summary
     assert "1 pre-existing" in summary
     assert "1 config error(s)." in summary
+
+
+# ---------------------------------------------------------------------------
+# main — root resolution (regression #295: mirrored test packages evaluated
+# as layer children when DEFAULT_ROOTS included test dirs)
+# ---------------------------------------------------------------------------
+
+
+ZEROSHOT_MODULE = (
+    '"""Zero-shot module composing nothing (regression #295 shape)."""\n\nVALUE = 1\n'
+)
+
+BIOSEQ_CORE_MODULE = '"""bioseq target-layer module."""\n\nVALUE = 1\n'
+
+ZEROSHOT_BIOSEQ_TOML = (
+    "[tool.forge]\n"
+    'source_dirs = ["src"]\n'
+    'test_dirs = ["test"]\n'
+    "\n"
+    "[[tool.forge.layering.layer]]\n"
+    'name = "bioseq"\n'
+    'package = "bioseq"\n'
+    "\n"
+    "[[tool.forge.layering.layer]]\n"
+    'name = "zeroshot"\n'
+    'package = "zeroshot"\n'
+    'composes_all_of = ["bioseq"]\n'
+)
+
+ZEROSHOT_BIOSEQ_PATHS_TOML = (
+    "[tool.forge.layering]\n"
+    'paths = ["codebase"]\n'
+    "\n"
+    "[[tool.forge.layering.layer]]\n"
+    'name = "bioseq"\n'
+    'package = "bioseq"\n'
+    "\n"
+    "[[tool.forge.layering.layer]]\n"
+    'name = "zeroshot"\n'
+    'package = "zeroshot"\n'
+    'composes_all_of = ["bioseq"]\n'
+)
+
+
+def test_main_no_roots_excludes_mirrored_test_package(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No ``--roots``: only source-side modules are evaluated as layer children.
+
+    Regression: DEFAULT_ROOTS included test dirs, so a `test/` package
+    mirroring a source namespace (`test/zeroshot/`) was scanned alongside
+    `src/zeroshot/` and evaluated as a `zeroshot` layer child too, producing
+    spurious findings anchored at a test path. `main()` now routes a
+    roots-less invocation through `resolve_tool_roots(root, "layering")`
+    (source_dirs only, no `include_tests`), so `test/zeroshot/helper.py` is
+    never scanned — while the genuine src-side violation (`zeroshot` not
+    composing `bioseq`) still surfaces.
+    """
+    _write_pyproject(fake_repo, ZEROSHOT_BIOSEQ_TOML)
+    _write(fake_repo / "src" / "zeroshot" / "mod.py", ZEROSHOT_MODULE)
+    _write(fake_repo / "src" / "bioseq" / "core.py", BIOSEQ_CORE_MODULE)
+    _write(fake_repo / "test" / "zeroshot" / "helper.py", ZEROSHOT_MODULE)
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    monkeypatch.setattr(sys, "argv", ["forge-audit-layering"])
+
+    assert main() == 0
+
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert "test/zeroshot" not in log_text
+    assert "[LOW] src/zeroshot/mod.py" in log_text
+    assert "does not compose layer 'bioseq'" in log_text
+
+
+def test_main_explicit_roots_overrides_source_only_resolution(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit ``--roots test`` stays the highest override, above resolve_tool_roots.
+
+    Same tree as the no-``--roots`` regression case, but pointed explicitly
+    at `test/`: the mirrored `test/zeroshot/helper.py` module IS scanned and
+    evaluated as a layer child, proving `--roots` bypasses the source-only
+    routing entirely rather than being merged with it.
+    """
+    _write_pyproject(fake_repo, ZEROSHOT_BIOSEQ_TOML)
+    _write(fake_repo / "src" / "zeroshot" / "mod.py", ZEROSHOT_MODULE)
+    _write(fake_repo / "src" / "bioseq" / "core.py", BIOSEQ_CORE_MODULE)
+    _write(fake_repo / "test" / "zeroshot" / "helper.py", ZEROSHOT_MODULE)
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    monkeypatch.setattr(sys, "argv", ["forge-audit-layering", "--roots", "test"])
+
+    assert main() == 0
+
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert "[LOW] test/zeroshot/helper.py" in log_text
+    assert "does not compose layer 'bioseq'" in log_text
+
+
+def test_main_no_roots_granular_paths_key_beats_auto_detect(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``[tool.forge.layering].paths`` is honored with ``source_dirs`` unset.
+
+    `resolve_tool_roots`'s granular per-tool override outranks
+    `[tool.forge].source_dirs` / auto-detect. Here `source_dirs` is unset
+    and the fixture-created (empty) `src/` is the only thing auto-detect
+    would find, so a finding anchored under `codebase/` — a directory name
+    auto-detect never considers — is only possible if the resolution
+    actually reached the `paths = ["codebase"]` key.
+    """
+    _write_pyproject(fake_repo, ZEROSHOT_BIOSEQ_PATHS_TOML)
+    _write(fake_repo / "codebase" / "zeroshot" / "mod.py", ZEROSHOT_MODULE)
+    _write(fake_repo / "codebase" / "bioseq" / "core.py", BIOSEQ_CORE_MODULE)
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    monkeypatch.setattr(sys, "argv", ["forge-audit-layering"])
+
+    assert main() == 0
+
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert "[LOW] codebase/zeroshot/mod.py" in log_text
+    assert "does not compose layer 'bioseq'" in log_text

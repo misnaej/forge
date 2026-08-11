@@ -286,6 +286,12 @@ name = "domain"
 package = "myproj.domain"
 ```
 
+Scan roots are **source-only** by default: `[tool.forge.layering].paths`
+→ `[tool.forge].source_dirs` → smart auto-detect (the shared
+`resolve_tool_roots` seam) — test directories are never scanned unless
+named via explicit `--roots`, so a test package mirroring a source
+namespace is not evaluated as a layer child.
+
 | Key (per layer) | What it does |
 |---|---|
 | `name` | Layer name, referenced by other layers' `composes_all_of`. |
