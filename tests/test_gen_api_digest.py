@@ -10,11 +10,14 @@ from typing import TYPE_CHECKING
 
 from forge.gen_api_digest import (
     DOC_RELPATH,
+    ModuleDigest,
+    Symbol,
     build_digest,
     detect_roots,
     extract_symbols,
     format_signature,
     main,
+    query_symbols,
     render_digest,
 )
 from tests.conftest import GIT_ENV as _GIT_ENV
@@ -409,6 +412,112 @@ def test_main_check_returns_one_on_drift(
     with caplog.at_level(logging.ERROR):
         assert main() == 1
     assert any("out of sync" in record.getMessage() for record in caplog.records)
+
+
+def _sample_query_digests() -> list[ModuleDigest]:
+    """Build a small module digest list for query_symbols tests.
+
+    Returns:
+        One module with a public function and a private (internal) one,
+        mirroring SAMPLE_MODULE's public_helper / _private_helper pair.
+    """
+    return [
+        ModuleDigest(
+            dotted="sample.thing",
+            summary="Sample module for digest tests.",
+            symbols=(
+                Symbol(
+                    kind="function",
+                    signature="public_helper(value: int) -> str",
+                    summary="Return a string for value.",
+                    methods=(),
+                    internal=False,
+                ),
+                Symbol(
+                    kind="function",
+                    signature="_private_helper(value: int) -> str",
+                    summary="Private helper — indexed and marked internal.",
+                    methods=(),
+                    internal=True,
+                ),
+            ),
+        ),
+    ]
+
+
+def test_query_symbols_matches_symbol_name() -> None:
+    """A pattern matching a symbol's signature returns one formatted line."""
+    lines = query_symbols(_sample_query_digests(), "public_helper")
+    assert lines == [
+        "sample.thing: public_helper(value: int) -> str — Return a string for value."
+    ]
+
+
+def test_query_symbols_case_insensitive_on_module_path() -> None:
+    """A pattern matching the module's dotted path is case-insensitive."""
+    lines = query_symbols(_sample_query_digests(), "SAMPLE.THING")
+    assert len(lines) == 2  # both symbols share the matched module path
+
+
+def test_query_symbols_case_insensitive_on_summary_text() -> None:
+    """A pattern matching a symbol's summary text is case-insensitive."""
+    lines = query_symbols(_sample_query_digests(), "RETURN A STRING")
+    assert lines == [
+        "sample.thing: public_helper(value: int) -> str — Return a string for value."
+    ]
+
+
+def test_query_symbols_tags_internal_symbol() -> None:
+    """A matched internal symbol's line carries the ` (internal)` tag."""
+    lines = query_symbols(_sample_query_digests(), "_private_helper")
+    assert len(lines) == 1
+    assert " (internal)" in lines[0]
+    assert lines[0].startswith(
+        "sample.thing: _private_helper(value: int) -> str (internal)"
+    )
+
+
+def test_query_symbols_no_match_returns_empty_list() -> None:
+    """A pattern matching nothing returns an empty list."""
+    assert query_symbols(_sample_query_digests(), "nonexistent_symbol_xyz") == []
+
+
+def test_main_symbol_returns_zero_and_prints_matches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--symbol with a match prints digest lines and exits 0."""
+    _build_repo_with_module(tmp_path)
+    monkeypatch.setattr("forge.gen_api_digest.repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["forge-gen-api-digest", "--symbol", "public_helper"]
+    )
+
+    assert main() == 0
+
+    out = capsys.readouterr().out
+    assert "sample.thing: public_helper" in out
+
+
+def test_main_symbol_returns_one_when_no_match(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """--symbol with no match prints nothing, logs, and exits 1."""
+    _build_repo_with_module(tmp_path)
+    monkeypatch.setattr("forge.gen_api_digest.repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["forge-gen-api-digest", "--symbol", "nonexistent_symbol_xyz"]
+    )
+
+    with caplog.at_level(logging.INFO):
+        assert main() == 1
+
+    assert any(
+        "No digest entry matches" in record.getMessage() for record in caplog.records
+    )
 
 
 def test_main_check_returns_one_when_doc_missing(

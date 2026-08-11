@@ -49,47 +49,19 @@ Pre-write workflow:
    ```
    If stale or absent, ask the main agent to call `forge:precommit-fixer` to refresh `code_health/`. Do not invoke `forge-precommit` or `ruff` yourself.
 
-2. **Read duplicate-detection log** (if present):
-   ```bash
-   cat ./code_health/audit_dup.log 2>/dev/null
-   ```
-   Cross-check planned new function names against the dup log so the
-   author doesn't write a third copy of an existing helper. If stale or
-   absent, run `forge-audit-dup --scope changed` — changed scope is
-   prior-art aware (changed units matched against a full-tree index),
-   so an existing twin in an unchanged file is found.
+2. **Existence + placement belong to `forge:prior-art`** — when the
+   plan creates a new file or top-level symbol, require its
+   `prior-art-searched:` report (REUSE / EXTEND / NEW with layer
+   context) instead of re-deriving those answers here; a missing report
+   is itself a briefing finding. This briefing keeps only what
+   prior-art does not cover: violations, patterns, wrapper checks.
 
-3. **Read the API digest** (if present; regenerate with
-   `forge-gen-api-digest` if absent) — ask it TWO questions:
-   ```bash
-   cat ./docs/api-digest.md 2>/dev/null
-   ```
-   The digest indexes every top-level function and class — internal
-   helpers tagged `(internal)` — with module path, signature, and
-   one-line summary.
-
-   - **Does this already exist?** Scan for a helper covering the
-     planned work — reuse beats a new copy (proactive DRY); reuse
-     candidates are very often private helpers. Complements step 2:
-     the dup log catches copies already written; the digest prevents
-     the next one.
-   - **Where does it belong?** For every planned NEW file or top-level
-     symbol, find the nearest relatives by module path (grep the
-     domain token — `*html*`, `*cache*`, …) and name the candidate
-     home(s). A new module in a catch-all package (`common`, `utils`)
-     while a cohesive sibling family exists is a finding, not a
-     default. An issue's suggested name/path is a hypothesis to
-     validate against the layout, never a directive (FOUNDATION §1).
-     When `docs/architecture.dsl` (C4) exists, check placement against
-     its containers/components — the model is drift-gated; prose is
-     not. Both artifacts are conditional-on-present.
-
-4. **Read the target file** to identify existing patterns:
+3. **Read the target file** to identify existing patterns:
    - Logging style, error handling, docstring format
    - Import organization
    - Class/function structure conventions
 
-5. **Return a concise briefing** (format below) — not a full review.
+4. **Return a concise briefing** (format below) — not a full review.
 
 #### Pre-Write Report Format
 
@@ -99,18 +71,11 @@ Pre-write workflow:
 ### Existing Violations (MUST FIX)
 <list violations from ruff/docstring logs, or "None - file is clean">
 
-### Existing Duplicates (DO NOT add a new copy)
-<list duplicates from audit_dup.log that match planned function names>
-
-### Existing Helpers (REUSE — do not reimplement)
-<symbols from docs/api-digest.md already covering the planned work, or
- "None". Also flag planned code that WRAPS an interface the repo
- controls — fix-the-interface alternative per FOUNDATION §7>
-
-### Where this belongs (only when the plan adds a file / top-level symbol)
-<candidate home modules from digest paths + domain-token grep; flag
- catch-all placement and issue-suggested paths adopted unvalidated;
- cite the C4 model when present. Or "No new files planned">
+### Prior-art status (when the plan adds a file / top-level symbol)
+<the forge:prior-art report's verdict line + digest hash, or "MISSING —
+ run forge:prior-art before writing" as a finding. Also flag planned
+ code that WRAPS an interface the repo controls — fix-the-interface
+ alternative per FOUNDATION §7>
 
 ### Patterns to Follow
 - **Logging / Error handling / Docstrings / Imports**: <one line each, drawn from the target file>

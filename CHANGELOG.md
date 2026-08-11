@@ -20,6 +20,23 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.4.0 — Unreleased
+
+### Features
+- **`forge:prior-art` agent — the creation gate.** Runs BEFORE any new
+  file or top-level symbol is written (new first row in FOUNDATION §3's
+  delegation table) and answers the two questions that decide
+  duplication: does this already exist, and where does it belong.
+  Verdicts REUSE / EXTEND / NEW carry layer context (an un-importable
+  "reuse" is called out; EXTEND — move the shared helper down a layer —
+  is first-class). The refusal contract makes it auditable: no verdict
+  without named queries, their results, and a hash of the digest read
+  (`prior-art-searched:` header, checked by `forge-audit-agents` like
+  `verified-at:`). `/pr` refuses to author a wrap-up for a file-adding
+  diff without the block. `forge-gen-api-digest --symbol <regex>` is
+  the agent's cheap live query surface. `design-checker`'s pre-write
+  briefing sheds its existence/placement steps to a pointer.
+
 ## v3.3.0 — Unreleased
 
 ### Fixes

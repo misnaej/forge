@@ -89,7 +89,7 @@ Wire auto-close with **bare** `Closes #N` / `Fixes #N` / `Resolves #N` on their 
 
 ## Task: Author Wrap-up (pre-publication)
 
-Called by `/pr` Step 3.92 **before the PR exists**: compose the full wrap-up body (sections per step 8 below; CI Status = "pending — PR not yet published") plus the squash-merge message from the caller's reports, and write the wrap-up to `code_health/pr_wrapup.md`, first line `verified-at: <HEAD sha>`. Post nothing — the `block_unverified_pr_create` hook reads this file to admit `gh pr create`; posting happens in the later posting task.
+Called by `/pr` Step 3.92 **before the PR exists**: compose the full wrap-up body (sections per step 8 below; CI Status = "pending — PR not yet published") plus the squash-merge message from the caller's reports, and write the wrap-up to `code_health/pr_wrapup.md`, first line `verified-at: <HEAD sha>`. When the diff **adds files** (`git diff --name-only --diff-filter=A origin/<base>...HEAD`), the body MUST include the `prior-art-searched:` block from the caller's `forge:prior-art` report — REFUSE to author without it (per `/pr` Step 3.92's prior-art gate). Post nothing — the `block_unverified_pr_create` hook reads this file to admit `gh pr create`; posting happens in the later posting task.
 
 ## Task: Verification (Wrap-up)
 
@@ -156,21 +156,15 @@ To create an issue: **report the proposed title + body to the user BEFORE creati
 ## Scope Boundaries
 
 ### I WILL:
-- Fetch and categorize PR comments
-- Write PR descriptions and squash-merge messages
-- Post wrap-up comments with verification results
-- Delegate verification to design-checker, security-checker, docs-types-checker
-- Search and link related issues
-- Create issues (with user approval)
+- Fetch/categorize comments; write descriptions + squash messages; post
+  wrap-ups; delegate verification; link issues; create issues (with approval)
 
 ### I WILL NOT (report and stop):
-- **Merge PRs** → Merging is the user's call only. Produce the squash-merge
-  message + wrap-up comment, then stop. The `block_pr_merge.sh` hook enforces
-  this; never try to call `gh pr merge` or hit the merge API endpoint.
-- Implement code fixes → **Report to main agent, it implements**
-- Fix linting issues / docstrings / naming / structure / dep advisories → **Use `precommit-fixer`** (orchestrates docs-types-checker; dispatches off `code_health/` reports)
-- Commit changes → **Use `git-commit-push`**
-- Write tests → **Use `test-writer`**
+- **Merge PRs** → user's call only; produce squash message + wrap-up, stop
+  (`block_pr_merge.sh` enforces; never `gh pr merge` or the merge API)
+- Implement code fixes → **report; the main agent implements**
+- Fix lint / docstrings / naming / structure / advisories → **`precommit-fixer`**
+- Commit → **`git-commit-push`**; write tests → **`test-writer`**
 
 ### When PR Comments Need Code Changes:
 Report `PR COMMENTS CATEGORIZED` with the count + list (IDs, files, descriptions) and `OUTSIDE MY SCOPE: I cannot implement code fixes`. The main agent then implements → `precommit-fixer` → `git-commit-push`, and calls back per comment: `pr-manager: "Reply to comment <ID> with commit <hash>: <what was done>"`.
