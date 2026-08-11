@@ -20,6 +20,16 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.4.2 — Unreleased
+
+### Fixes
+- **The wrap-up gate no longer blocks promotion PRs.**
+  `block_unverified_pr_create` self-exempts on `release/vX.Y.Z` branches:
+  an era-locked release tree has no `/pr` reporter wrap-up — its
+  verification is the release-fingerprint check the promotion-merge
+  pre-commit gate already enforces. Suffixed branch names
+  (`release/vX.Y.Z-rc1`) stay gated.
+
 ## v3.4.1 — Unreleased
 
 ### Fixes

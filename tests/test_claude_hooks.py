@@ -766,3 +766,44 @@ def test_unverified_pr_create_blocks_token_mention_in_argument(
         )
         == 2
     )
+
+
+def test_unverified_pr_create_allows_release_branch_without_wrapup(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A `release/vX.Y.Z` branch self-exempts — no wrap-up needed (era-locked).
+
+    Mirrors the era-gap suppression's promotion-context detection (branch
+    name only, per the hook's header comment): the `/promote` flow has no
+    Step 3.92, so gating on `code_health/pr_wrapup.md` would permanently
+    block every promotion PR.
+    """
+    repo, _sha = git_repo_with_commit
+    subprocess.run(
+        ["git", "switch", "-c", "release/v1.2.3"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo) == 0
+
+
+def test_unverified_pr_create_blocks_release_branch_suffix(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """`release/v1.2.3-rc1` does not match the anchored `release/vX.Y.Z` regex.
+
+    Regression guard for the exemption's anchoring: a suffixed branch name
+    (e.g. a release-candidate) must fall through to the normal wrap-up gate
+    rather than silently exempting itself.
+    """
+    repo, _sha = git_repo_with_commit
+    subprocess.run(
+        ["git", "switch", "-c", "release/v1.2.3-rc1"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
+    assert proc.returncode == 2
+    assert "authored wrap-up" in proc.stderr

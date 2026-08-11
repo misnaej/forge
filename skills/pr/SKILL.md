@@ -284,6 +284,8 @@ blocked unless `code_health/pr_wrapup.md` names the current `HEAD` —
 authoring at one SHA and publishing another re-runs this step. When the
 user explicitly asks to skip the gate, prefix the create command with
 `FORGE_SKIP_WRAPUP_GATE=1` — never on the agent's own judgment.
+Promotion PRs (`release/vX.Y.Z` branches) self-exempt — their
+verification is the release fingerprint, not a reporter wrap-up.
 
 **Prior-art gate (file-adding diffs).** When
 `git diff --name-only --diff-filter=A origin/<base>...HEAD` shows added

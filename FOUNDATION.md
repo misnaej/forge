@@ -324,7 +324,9 @@ pin; they do not edit pins.
   written before the PR exists (only its posting needs a PR); the
   `block_unverified_pr_create` hook blocks `gh pr create` until the authored
   wrap-up names the current `HEAD` (skippable via `FORGE_SKIP_WRAPUP_GATE=1`
-  — on explicit user request only). A **draft PR** is the escape hatch when
+  — on explicit user request only; promotion PRs from `release/vX.Y.Z`
+  branches self-exempt — an era-locked tree's verification is its release
+  fingerprint). A **draft PR** is the escape hatch when
   the PR should be visible earlier.
 - **Verification starts itself.** The moment a branch's implementation
   commits are done, run the finalization reviews — automatically, without
