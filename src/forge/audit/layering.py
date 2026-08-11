@@ -58,7 +58,12 @@ from forge.audit.common import (
     write_log,
 )
 from forge.audit.deps import build_module_graph
-from forge.config import load_config, read_tool_forge_section, select_diff_files
+from forge.config import (
+    load_config,
+    read_tool_forge_section,
+    resolve_tool_roots,
+    select_diff_files,
+)
 from forge.git_utils import added_or_moved_files, configure_cli_logging, repo_root
 
 
@@ -411,9 +416,20 @@ def main() -> int:
         ),
     )
     args = parser.parse_args()
+    root = repo_root()
+    # Layer contracts are source-tree properties: the generic audit
+    # DEFAULT_ROOTS include test dirs, and a test package mirroring a
+    # source namespace would be evaluated as a layer child (spurious
+    # findings). Route through the shared source-only resolution
+    # ([tool.forge.layering].paths → source_dirs → auto-detect) instead;
+    # explicit --roots stays the highest override.
+    if args.roots:
+        roots = resolve_roots(args.roots)
+    else:
+        roots = [(root / r).resolve() for r in resolve_tool_roots(root, "layering")]
     return run(
         Scope(args.scope),
-        resolve_roots(args.roots),
+        roots,
         LayeringConfig(output=args.output),
     )
 

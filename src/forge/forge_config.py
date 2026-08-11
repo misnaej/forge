@@ -247,6 +247,12 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "to blocking — severity vs timing.",
     ),
     ConfigKey(
+        ("tool", "forge", "layering", "paths"),
+        "unset (source_dirs → auto-detect)",
+        "Granular scan-root override for forge-audit-layering (source-only "
+        "resolution; test dirs are never scanned unless named via --roots).",
+    ),
+    ConfigKey(
         ("tool", "forge", "layering", "layer"),
         "unset (audit + step skipped)",
         "Array of layer tables (name, package, composes_all_of, exempt) for "

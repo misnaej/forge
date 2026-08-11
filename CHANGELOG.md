@@ -20,6 +20,18 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.4.1 — Unreleased
+
+### Fixes
+- **`forge-audit-layering` no longer scans test directories by default.**
+  The generic audit default roots include `test/`/`tests/`, so a test
+  package mirroring a source namespace was evaluated as a layer child —
+  spurious findings on repos with mirrored test layouts. Root resolution
+  now routes through the shared source-only seam
+  (`[tool.forge.layering].paths` → `[tool.forge].source_dirs` → smart
+  auto-detect); explicit `--roots` remains the highest override and can
+  still name test dirs deliberately.
+
 ## v3.4.0 — Unreleased
 
 ### Features
