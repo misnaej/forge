@@ -859,6 +859,41 @@ def _parse_files(
     return files
 
 
+def is_ancestor(
+    root: Path | None,
+    ancestor_ref: str,
+    descendant_ref: str,
+) -> bool:
+    """Return whether *ancestor_ref* is an ancestor of *descendant_ref*.
+
+    The shared ``git merge-base --is-ancestor`` probe — reachability
+    questions ("is this tag on that branch?") route here instead of
+    hand-rolled merge-base comparisons.
+
+    Args:
+        root: Git repo root; ``None`` uses the cached :func:`repo_root`.
+        ancestor_ref: Candidate ancestor (tag, sha, or branch).
+        descendant_ref: Ref whose history is searched.
+
+    Returns:
+        True when reachable; False on unreachable, unresolvable, or
+        flag-shaped refs (a leading ``-`` would parse as a git option —
+        same guard as :func:`resolve_base_branch_ref`, held at the shared
+        primitive so every future caller inherits it).
+    """
+    if ancestor_ref.startswith("-") or descendant_ref.startswith("-"):
+        return False
+    return (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor_ref, descendant_ref],
+            cwd=root,
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
 def added_or_moved_files(
     *,
     repo_root: Path | None = None,

@@ -286,6 +286,16 @@ they want the new thing now, (3) ask whether it should be its own branch.
 **Favor quick development over heavy branch/PR ceremony.** When unsure, stay
 and ask.
 
+### Dependency bumps ship alone
+
+A dependency pin change (version floor, cap, new pin — security advisory
+or not) never rides a feature/fix PR: it lands in its own dedicated
+`chore(deps)` PR, or stays a reported advisory until the user approves.
+Why: a pin bump has its own blast radius (env rebuilds, transitive
+changes, independent rollback) and hides in an unrelated diff. Agents —
+including `forge:precommit-fixer` — report advisories with the suggested
+pin; they do not edit pins.
+
 ### Commit messages
 
 - Max 50 words. Focus on what + why. **No Claude/AI attribution.**
