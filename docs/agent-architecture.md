@@ -197,6 +197,7 @@ graph LR
   cli_forge_continuation_append[("forge-continuation-append<br/>CLI")]
   cli_forge_pr_squash_comment[("forge-pr-squash-comment<br/>CLI")]
   sk_pr(["/pr<br/>skill"])
+  prior_art["prior-art<br/>AI agent"]
   pr_manager["pr-manager<br/>AI agent"]
   precommit_fixer["⚖️ precommit-fixer<br/>AI agent"]
   sk_pr_comments(["/pr-comments<br/>skill"])
@@ -220,10 +221,13 @@ graph LR
   pr_manager -.->|guarded by| hk_block_pr_merge
   pr_manager -.->|guarded by| hk_block_unverified_pr_create
   sk_pr -.->|guarded by| hk_block_unverified_pr_create
+  sk_pr -.->|retroactive prior-art check, file-adding diffs| prior_art
   class human person
   class main_agent orchestrator
   class hk_block_pr_merge hook
   class hk_block_unverified_pr_create hook
+  class prior_art agent
+  class prior_art reporter
   class design_checker agent
   class design_checker reporter
   class docs_types_checker agent

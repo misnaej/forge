@@ -570,6 +570,10 @@ def query_symbols(digests: list[ModuleDigest], pattern: str) -> list[str]:
     Returns:
         ``"<module>: <signature> — <summary>"`` lines, source order.
     """
+    # The pattern is developer/agent-supplied on a local CLI with no
+    # unattended callers — a pathological regex can only hang the caller's
+    # own terminal. Revisit with a timeout before wiring --symbol into any
+    # CI or network-facing path.
     rx = re.compile(pattern, re.IGNORECASE)
     lines: list[str] = []
     for mod in digests:
