@@ -20,6 +20,36 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.2.0 — 2026-08-08
+
+### Features
+- **`forge-audit-layering` + opt-in `layering` pre-commit step.** Layer
+  admission rules stop being prose: `[[tool.forge.layering.layer]]`
+  declares a *positive* `composes_all_of` clause — every direct child of
+  the layer's package must reach each named layer through its transitive
+  internal-import closure ("must be built on X", which permission-only
+  tools cannot express). Evaluated per direct child over the whole
+  closure, not per module. The diff is the baseline: pre-existing
+  violations report LOW and never block; a violation in an added/renamed
+  module is HIGH and fails the step — the gate fires on exactly the
+  commit that decides placement. Exemptions are per-child and rendered
+  visibly. Joins `forge-audit-all` and design-checker's recipes
+  (Recipe 7); `under_module_prefix` is now the one shared prefix matcher
+  (`gen_c4` imports it), and `git_utils.added_or_moved_files` is the
+  narrow added/renamed companion to `get_modified_files`. Forge adopts
+  the gate itself: audit scripts must compose `audit.common`,
+  smart-test's graph-facing children must compose `forge.import_graph`.
+
+### Fixes
+- **Audit logs cannot be forged by untrusted content.** `Finding.render()`
+  now control-character-escapes path, message, and evidence
+  (`sanitize_log_text`) before writing `code_health/audit_*.log` — a git
+  filename or config-supplied string (e.g. a layer name) containing a
+  newline or ANSI escape can no longer inject a spoofed finding line into
+  logs agents treat as trusted ground truth. All audit scripts inherit
+  the fix; malformed `composes_all_of`/`exempt` values also fail with a
+  clear config error instead of char-splitting.
+
 ## v3.1.0 — 2026-08-07
 
 ### Features

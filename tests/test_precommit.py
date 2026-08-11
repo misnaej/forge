@@ -1529,6 +1529,84 @@ def test_step_typecheck_diff_scope_skips_when_all_modified_files_deleted(
     assert "(no modified files in scope — skipped)" in result.output
 
 
+# ---------------------------------------------------------------------------
+# step_layering
+# ---------------------------------------------------------------------------
+
+
+def test_step_layering_no_config_skips_before_require_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No `[tool.forge.layering]` layers skips cleanly without reaching `require_cli`.
+
+    MOCK SETUP: the CLI is absent from PATH — asserting no `SystemExit` is
+    raised proves the skip check runs before `require_cli`.
+    """
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    result = precommit.step_layering(tmp_path)
+    assert result.skipped
+    assert result.passed
+    assert "(no [tool.forge.layering] layers — skipped)" in result.output
+
+
+def test_step_layering_configured_clean_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A configured layer runs `forge-audit-layering --scope changed`."""
+    _write_pyproject(
+        tmp_path,
+        '[[tool.forge.layering.layer]]\nname = "domain"\npackage = "myproj.domain"\n',
+    )
+    _present(monkeypatch)
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return True, "clean"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    result = precommit.step_layering(tmp_path)
+    assert captured["cmd"] == ["forge-audit-layering", "--scope", "changed"]
+    assert result.passed
+    assert not result.skipped
+    assert not result.non_blocking
+
+
+def test_step_layering_violation_fails_blocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A HIGH violation fails the step; layering has no non-blocking knob."""
+    _write_pyproject(
+        tmp_path,
+        '[[tool.forge.layering.layer]]\nname = "domain"\npackage = "myproj.domain"\n',
+    )
+    _present(monkeypatch)
+    monkeypatch.setattr(
+        precommit, "_run", lambda _cmd, **_kw: (False, "HIGH violation")
+    )
+    result = precommit.step_layering(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+
+
+def test_step_layering_configured_missing_cli_exits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An opted-in-but-absent `forge-audit-layering` binary fails loudly."""
+    _write_pyproject(
+        tmp_path,
+        '[[tool.forge.layering.layer]]\nname = "domain"\npackage = "myproj.domain"\n',
+    )
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        precommit.step_layering(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# step_api_digest_check
+# ---------------------------------------------------------------------------
+
+
 def test_step_api_digest_check_passes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

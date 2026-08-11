@@ -62,7 +62,7 @@ from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
-from forge.audit.common import Scope
+from forge.audit.common import Scope, under_module_prefix
 from forge.audit.deps import build_module_graph
 from forge.config import resolve_model_section, resolve_tool_roots
 from forge.gen_common import check_doc_drift
@@ -1044,7 +1044,7 @@ def assign_components(
     unmatched: list[str] = []
     for module in modules:
         match = next(
-            (name for prefix, name in pairs if _under_prefix(module, prefix)),
+            (name for prefix, name in pairs if under_module_prefix(module, prefix)),
             None,
         )
         if match is None:
@@ -1052,21 +1052,6 @@ def assign_components(
         else:
             assigned[module] = match
     return assigned, sorted(unmatched)
-
-
-def _under_prefix(module: str, prefix: str) -> bool:
-    """Return whether *module* equals *prefix* or is a dotted child of it.
-
-    Args:
-        module: Dotted module name (e.g. ``"forge.audit.deps"``).
-        prefix: Configured component prefix (e.g. ``"forge.audit"``).
-
-    Returns:
-        True when *module* is *prefix* itself or nested beneath it, so a
-        ``forge.audit`` prefix matches ``forge.audit`` and
-        ``forge.audit.deps`` but not ``forge.auditor``.
-    """
-    return module == prefix or module.startswith(f"{prefix}.")
 
 
 def derive_component_edges(
@@ -2966,7 +2951,7 @@ def _dead_prefixes(
         (comp.name, prefix)
         for comp in components
         for prefix in comp.prefixes
-        if not any(_under_prefix(module, prefix) for module in modules)
+        if not any(under_module_prefix(module, prefix) for module in modules)
     ]
 
 

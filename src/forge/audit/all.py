@@ -34,6 +34,7 @@ SUB_AUDITS: tuple[str, ...] = (
     "orphans",
     "data",
     "claims",
+    "layering",
 )
 
 

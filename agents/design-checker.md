@@ -156,6 +156,7 @@ All audit scripts ship with forge under
 | **4. Orphans** | `code_health/audit_orphans.log` | `forge-audit-orphans --scope full` |
 | **5. Data integrity** | `code_health/audit_data.log` | `forge-audit-data --roots . --scope full` |
 | **6. Claims** | `code_health/audit_claims.log` | `forge-audit-claims --scope full` |
+| **7. Layering** | `code_health/audit_layering.log` | `forge-audit-layering --scope full` |
 | **All in one** | `code_health/audit_summary.log` | `forge-audit-all --scope full` |
 
 Convenience: invoking `forge-audit-all` runs every sub-script and
@@ -163,14 +164,11 @@ aggregates a summary line per audit.
 
 ### Recipe 1 — Duplicate detection
 
-Read `code_health/audit_dup.log`. Severity classes:
-
-- **CRITICAL** — same body in 3+ files (SSoT violation); recommend canonical home + delete the others.
-- **HIGH** — same body in 2 files; check if one site is an orchestration module that should not hold pure helpers.
-- **MEDIUM** — near-duplicates (Jaccard ≥ 0.85 after identifier folding); recommend a parametric helper.
-- **LOW** — name collisions or same-file near-dups; flag for human verification (may be intentional polymorphism).
-
-Maps to Martin's CRP / CCP.
+Read `code_health/audit_dup.log`. Severities: **CRITICAL** same body in
+3+ files (recommend canonical home, delete the rest); **HIGH** same body
+in 2 files; **MEDIUM** near-duplicates (recommend a parametric helper);
+**LOW** name collisions / same-file near-dups (may be intentional —
+verify). Maps to Martin's CRP / CCP.
 
 ### Recipe 2 — Dependency analysis
 
@@ -184,12 +182,7 @@ Read `code_health/audit_deps_tree.log` (when present) before proposing a fix. Ma
 
 ### Recipe 3 — Suppression critique
 
-Read `code_health/audit_suppressions.log`. For each entry, articulate **whether suppressing the rule hides a design problem**:
-
-- `PLR0913` → missing dataclass / config object
-- `F841` → dead code, missing wiring
-- `E501` → missing helper, over-long signature
-- `C901` → function doing too much
+Read `code_health/audit_suppressions.log`. For each entry, articulate **whether suppressing the rule hides a design problem** (`PLR0913` → missing config object; `F841` → dead code; `E501` → missing helper; `C901` → function doing too much).
 
 Bare `# noqa` (no code) is HIGH — it silences every rule on the line; recommend a specific rule code.
 
@@ -216,6 +209,14 @@ SUPPORTED / CONTRADICTED / UNCERTAIN per claim with a verbatim source
 quote; sources are local docs (`docs/**/*.md`, `README*`) plus any
 wrapper-supplied paths / backends. Render verdicts into the report:
 CONTRADICTED → CRITICAL, UNCERTAIN → MEDIUM, SUPPORTED → informational.
+
+### Recipe 7 — Layering
+
+Read `code_health/audit_layering.log` (config-gated — self-reports when
+no `[tool.forge.layering]` layers exist). HIGH = an added/moved module
+violating `composes_all_of` (placement being decided wrong *now*);
+LOW = pre-existing baseline; REVIEW = visible exemption. Mechanics:
+[`docs/audit-pack.md`](../docs/audit-pack.md).
 
 ### Wrapper justification (judgment check, no CLI)
 
@@ -255,9 +256,9 @@ verified-at: <sha>   (PR #<num>, branch <branch>)
 <Overall: Good / Minor Issues / Needs Attention>
 <Recipe results: which audits clean, which surfaced findings>
 
-### Recipe 1..6 findings
+### Recipe 1..7 findings
 <one subsection per recipe (Duplicates / Dependencies / Suppressions /
- Orphans / Data integrity / Claim verification): substantive findings
+ Orphans / Data integrity / Claims / Layering): substantive findings
  with file:line — suppressions carry the "does this hide a design
  problem?" analysis — or an explicit "clean">
 
@@ -288,18 +289,14 @@ default vs consumer override.
 
 ### I WILL
 
-- Run every Investigation Recipe and cite each audit log
+- Run every Investigation Recipe, cite each audit log and `file:line`
 - Delegate claim verification to `forge:knowledge-search`
-- Cite `file:line` for every finding
-- Recommend specific fixes
-- Apply repo-specific extras from the wrapper
+- Recommend specific fixes; apply the wrapper's repo-specific extras
 
 ### I WILL NOT (report and stop)
 
-- Make code or documentation changes → **report only**
-- Commit anything → **Use `forge:git-commit-push`**
-- Propose raising complexity limits or adding ruff ignores (those
-  require explicit user approval)
+- Make code/doc changes or commit → **report only** (`forge:git-commit-push` commits)
+- Propose raising complexity limits or adding ruff ignores (user approval required)
 - Re-define principles — always cite FOUNDATION.md or consumer CLAUDE.md
 - Skip a recipe because its log is missing — run the audit script first
 

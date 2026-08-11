@@ -56,6 +56,7 @@ repo root.
 | `forge-audit-orphans`       | unused symbols (vulture wrapper) | YAGNI |
 | `forge-audit-data`          | CSV / JSON / TOML / YAML integrity + jsonschema | data invariants |
 | `forge-audit-claims`        | docstring/comment claims for verification by `forge:knowledge-search` | domain truthfulness |
+| `forge-audit-layering`      | positive layer-composition contracts (`composes_all_of`); blocking only on added/moved modules | SDP / SAP, layer admission |
 | `forge-audit-all`           | run everything; aggregate summary | — |
 
 Every CLI accepts `--scope full|changed`, `--roots <dirs>`, `--output <path>`.
@@ -234,6 +235,28 @@ and external sources, mapping verdicts to severity:
 
 **Catches.** A factual claim repeated consistently across several
 files but stated logically backwards.
+
+### `forge-audit-layering`
+
+**What.** Enforces `[[tool.forge.layering.layer]]` composition
+contracts over the internal import graph (the `build_module_graph`
+seam shared with `forge-audit-deps` / `forge-gen-c4`). For every
+**direct child** of a layer's package, the child's transitive
+internal-import closure must intersect each layer named in
+`composes_all_of` — a *positive* requirement ("must be built on X")
+that permission-only tools cannot express. Config reference:
+[`docs/configuration.md`](configuration.md#toolforgelayering--opt-in-layer-composition-gate).
+
+**Severities.** Pre-existing violations are LOW (baseline, exit 0);
+violations in a child containing an **added/renamed** module (vs the
+configured base branch) are HIGH and exit non-zero — the optional
+`layering` pre-commit step therefore blocks on exactly the commit that
+decides placement. Exempt children render as REVIEW so exemptions stay
+visible. Config errors (undefined `composes_all_of` target) are HIGH.
+
+**Catches.** A new module hand-rolling a fourth copy of shared logic
+in a layer that cannot import the canonical home — placed where the
+duplication is guaranteed to survive.
 
 ### `forge-audit-all`
 

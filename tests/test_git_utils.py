@@ -1193,6 +1193,145 @@ def test_resolve_base_branch_ref_honors_non_main_base_branch(tmp_path: Path) -> 
 
 
 # ---------------------------------------------------------------------------
+# added_or_moved_files
+# ---------------------------------------------------------------------------
+
+
+def test_added_or_moved_files_routes_through_resolve_base_branch_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The diff base is resolved via `resolve_base_branch_ref`, not inlined.
+
+    MOCK SETUP: `git_utils.resolve_base_branch_ref` is replaced by a spy
+    returning a sentinel ref; `subprocess.run` is stubbed for the resulting
+    `git diff ... sentinel/ref` call.
+    EXPECTED BEHAVIOR: the spy is called with `(repo_root, base_branch)`
+    and its sentinel return value is the ref diffed against.
+    """
+    calls: list[tuple[object, object]] = []
+
+    def _spy(root: object, base_branch: object) -> str:
+        calls.append((root, base_branch))
+        return "sentinel/ref"
+
+    monkeypatch.setattr(git_utils, "resolve_base_branch_ref", _spy)
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        if cmd[-1] == "sentinel/ref":
+            return type("P", (), {"returncode": 0, "stdout": "src/a.py\n"})()
+        return type("P", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    files = git_utils.added_or_moved_files(repo_root=tmp_path, base_branch="main")
+    assert files == ["src/a.py"]
+    assert calls == [(tmp_path, "main")]
+
+
+def test_added_or_moved_files_unresolvable_base_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unresolvable base branch short-circuits to `[]` before any git diff.
+
+    No `subprocess.run` stub is installed — a call past the early return
+    would hit real git and fail (or hang), so this proves the short-circuit.
+    """
+    monkeypatch.setattr(git_utils, "resolve_base_branch_ref", lambda *_a, **_kw: None)
+    assert git_utils.added_or_moved_files(base_branch="main") == []
+
+
+@pytest.mark.parametrize(
+    ("suffix", "expected"),
+    [
+        (".py", ["src/a.py"]),
+        (".toml", ["pyproject.toml"]),
+    ],
+)
+def test_added_or_moved_files_filters_by_suffix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    suffix: str,
+    expected: list[str],
+) -> None:
+    """Only files matching `suffix` survive a mixed-extension diff.
+
+    Args:
+        suffix: Extension filter passed to `added_or_moved_files`.
+        expected: Filtered paths expected back.
+    """
+    monkeypatch.setattr(
+        git_utils, "resolve_base_branch_ref", lambda *_a, **_kw: "origin/main"
+    )
+    monkeypatch.setattr(
+        git_utils.subprocess,
+        "run",
+        lambda *_a, **_kw: type(
+            "P",
+            (),
+            {"returncode": 0, "stdout": "src/a.py\npyproject.toml\nREADME.md\n"},
+        )(),
+    )
+    files = git_utils.added_or_moved_files(repo_root=tmp_path, suffix=suffix)
+    assert files == expected
+
+
+def test_added_or_moved_files_empty_output_returns_empty_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty diff output yields `[]`, not `[""]`."""
+    monkeypatch.setattr(
+        git_utils, "resolve_base_branch_ref", lambda *_a, **_kw: "origin/main"
+    )
+    monkeypatch.setattr(
+        git_utils.subprocess,
+        "run",
+        lambda *_a, **_kw: type("P", (), {"returncode": 0, "stdout": ""})(),
+    )
+    assert git_utils.added_or_moved_files(repo_root=tmp_path) == []
+
+
+def test_added_or_moved_files_uses_diff_filter_ar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The git invocation carries the exact `--diff-filter=AR` flag."""
+    monkeypatch.setattr(
+        git_utils, "resolve_base_branch_ref", lambda *_a, **_kw: "origin/main"
+    )
+    captured: dict[str, list[str]] = {}
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        captured["cmd"] = cmd
+        return type("P", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    git_utils.added_or_moved_files(repo_root=tmp_path)
+    assert captured["cmd"] == [
+        "git",
+        "diff",
+        "--name-only",
+        "--diff-filter=AR",
+        "origin/main",
+    ]
+
+
+def test_added_or_moved_files_repo_root_threads_to_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The explicit `repo_root` is passed as `cwd` to the git subprocess call."""
+    monkeypatch.setattr(
+        git_utils, "resolve_base_branch_ref", lambda *_a, **_kw: "origin/main"
+    )
+    calls: list[tuple[list[str], object]] = []
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> object:
+        calls.append((cmd, kwargs.get("cwd")))
+        return type("P", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    git_utils.added_or_moved_files(repo_root=tmp_path)
+    assert calls[0][1] == tmp_path
+
+
+# ---------------------------------------------------------------------------
 # resolve_current_branch
 # ---------------------------------------------------------------------------
 

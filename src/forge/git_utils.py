@@ -859,6 +859,39 @@ def _parse_files(
     return files
 
 
+def added_or_moved_files(
+    *,
+    repo_root: Path | None = None,
+    base_branch: str = "main",
+    suffix: str = ".py",
+) -> list[str]:
+    """Return files ADDED or RENAMED vs the base branch (``--diff-filter=AR``).
+
+    The narrow companion to :func:`get_modified_files` for gates that fire
+    on *placement decisions* rather than edits (a new or moved module is
+    where layering is decided — ``forge-audit-layering`` escalates on
+    exactly this set). Compares the working tree against the ref from
+    :func:`resolve_base_branch_ref`, so committed and staged additions are
+    seen; untracked files are not (they appear once staged, i.e. by
+    commit time).
+
+    Args:
+        repo_root: Directory to run git in. Defaults to the cached
+            process-wide :func:`repo_root`.
+        base_branch: Configured base-branch name.
+        suffix: File suffix filter. Defaults to ``.py``.
+
+    Returns:
+        Repo-relative paths of added/renamed files, empty when the base
+        ref cannot be resolved.
+    """
+    base = resolve_base_branch_ref(repo_root, base_branch)
+    if base is None:
+        return []
+    out = _run_git("diff", "--name-only", "--diff-filter=AR", base, cwd=repo_root)
+    return [line for line in (out or "").splitlines() if line.endswith(suffix)]
+
+
 def get_modified_files(
     *,
     suffix: str = ".py",

@@ -86,6 +86,31 @@ class Severity(StrEnum):
     REVIEW = "review"
 
 
+_FIRST_PRINTABLE = 32  # ord(" ") — C0 control characters sit below
+
+
+def sanitize_log_text(text: str) -> str:
+    """Escape control characters so a value cannot forge log lines.
+
+    ``code_health/*.log`` files are trusted ground truth for agents
+    (FOUNDATION §13), while finding paths and messages can carry
+    untrusted content — git filenames, or config-supplied strings like
+    layer names. A newline or ANSI escape embedded there could inject a
+    spoofed finding line; escaping to ``repr``-style sequences keeps
+    every finding on its own line. Tabs and printable text pass through.
+
+    Args:
+        text: Raw text destined for a log line.
+
+    Returns:
+        The text with every control character (except tab) escaped.
+    """
+    return "".join(
+        ch if ch == "\t" or ord(ch) >= _FIRST_PRINTABLE else repr(ch)[1:-1]
+        for ch in text
+    )
+
+
 @dataclass(frozen=True)
 class Finding:
     """One audit observation with provenance.
@@ -109,14 +134,40 @@ class Finding:
     def render(self) -> str:
         """Render this finding as a single block in the log file.
 
+        Path, message, and evidence are control-character-escaped via
+        :func:`sanitize_log_text` — untrusted content cannot inject a
+        spoofed finding line.
+
         Returns:
             Multi-line string ending with a blank line.
         """
-        head = f"[{self.severity.value.upper()}] {self.path}:{self.line} {self.message}"
+        head = (
+            f"[{self.severity.value.upper()}] "
+            f"{sanitize_log_text(self.path)}:{self.line} "
+            f"{sanitize_log_text(self.message)}"
+        )
         if not self.evidence:
             return head + "\n\n"
-        body = "\n".join(f"    {line}" for line in self.evidence)
+        body = "\n".join(f"    {sanitize_log_text(line)}" for line in self.evidence)
         return f"{head}\n{body}\n\n"
+
+
+def under_module_prefix(module: str, prefix: str) -> bool:
+    """Return whether *module* equals *prefix* or is a dotted child of it.
+
+    The one prefix matcher shared by every module-grouping consumer
+    (``forge-gen-c4`` components, ``forge-audit-layering`` layers) — a
+    ``forge.audit`` prefix matches ``forge.audit`` and ``forge.audit.deps``
+    but not ``forge.auditor``.
+
+    Args:
+        module: Dotted module name (e.g. ``"forge.audit.deps"``).
+        prefix: Dotted package prefix (e.g. ``"forge.audit"``).
+
+    Returns:
+        True when *module* is *prefix* itself or nested beneath it.
+    """
+    return module == prefix or module.startswith(f"{prefix}.")
 
 
 def make_audit_parser(prog: str, description: str) -> argparse.ArgumentParser:
