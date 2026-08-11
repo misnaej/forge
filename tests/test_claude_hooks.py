@@ -884,3 +884,34 @@ def test_unverified_pr_create_blocks_release_branch_non_changelog_divergence(
     proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
     assert proc.returncode == 2
     assert "promotion exemption withheld" in proc.stderr
+
+
+def test_unverified_pr_create_provenance_check_is_cwd_independent(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A non-CHANGELOG divergence is detected even from a subdirectory cwd.
+
+    Regression: the divergence diff used a cwd-relative `.` pathspec, so a
+    hook invocation from a subdirectory silently narrowed the check —
+    files diverging elsewhere in the tree became invisible and a
+    tag-diverged branch wrongly earned the exemption. The top-anchored
+    pathspecs make the check cwd-independent.
+    """
+    repo, sha = git_repo_with_commit
+    subprocess.run(["git", "tag", "v1.2.3", sha], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "release/v1.2.3"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    (repo / "outside.txt").write_text("diverges\n", encoding="utf-8")
+    subprocess.run(["git", "add", "outside.txt"], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "diverge"], cwd=repo, env=GIT_ENV, check=True
+    )
+    subdir = repo / "sub"
+    subdir.mkdir()
+    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=subdir)
+    assert proc.returncode == 2
+    assert "promotion exemption withheld" in proc.stderr

@@ -43,8 +43,11 @@ fi
 BRANCH=$(git branch --show-current 2>/dev/null || true)
 if echo "$BRANCH" | grep -qE '^release/v[0-9]+\.[0-9]+\.[0-9]+$'; then
     TAG="${BRANCH#release/}"
+    # Top-anchored pathspecs (':/', ':(exclude,top)') — a bare '.' is
+    # cwd-relative and would silently narrow the divergence check when
+    # the hook fires from a subdirectory.
     if git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null 2>&1 \
-        && [ -z "$(git diff --name-only "$TAG" HEAD -- . ':(exclude)CHANGELOG.md')" ]; then
+        && [ -z "$(git diff --name-only "$TAG" HEAD -- ':/' ':(exclude,top)CHANGELOG.md')" ]; then
         exit 0
     fi
     echo "NOTE: branch is named $BRANCH but its tree does not reproduce tag $TAG (mod CHANGELOG.md) — promotion exemption withheld, normal wrap-up gate applies." >&2

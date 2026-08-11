@@ -21,7 +21,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from forge.config import load_config, read_tool_forge_section
+from forge.config import declared_layout_dirs, load_config
 from forge.git_utils import get_modified_files, repo_root
 
 
@@ -225,11 +225,9 @@ def resolve_roots(roots: list[str] | None) -> list[Path]:
     root = repo_root()
     if roots:
         return [(root / r).resolve() for r in roots if (root / r).is_dir()]
-    declared = read_tool_forge_section(root).get("source_dirs")
-    if isinstance(declared, list) and declared:
-        cfg = load_config(root)
-        dirs = [*cfg.source_dirs, *cfg.test_dirs]
-        return [(root / r).resolve() for r in dirs if (root / r).is_dir()]
+    declared = declared_layout_dirs(root)
+    if declared is not None:
+        return [(root / r).resolve() for r in declared]
     return [(root / r).resolve() for r in DEFAULT_ROOTS if (root / r).is_dir()]
 
 
