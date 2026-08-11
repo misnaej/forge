@@ -96,6 +96,12 @@ _REPORTER_WITH_ARTIFACT_NAMES = (
     "weekly-summary",  # writes .plan/weekly_summary_*.md (Write)
 )
 
+# Pre-write reporters: no mutating tools, but their evidence header is
+# `prior-art-searched:` (digest hash + query count) rather than a git
+# SHA — they fire before any diff exists. See _TEMPLATE.md "Pre-write
+# agent header contract".
+PRIOR_ART_AGENT_NAMES = ("prior-art",)
+
 # Description shape heuristics. Role-label descriptions tend to start
 # with "Agent for" or "<Name> agent that"; everything else is treated
 # as trigger-shaped.
@@ -428,9 +434,42 @@ def _check_reporter_verified_at(
         One MEDIUM finding when the agent is a reporter but its body
         does not mention ``verified-at:``.
     """
-    if not _is_reporter_agent(agent, reporters):
+    return _check_header_contract(
+        agent,
+        reporters,
+        header="verified-at:",
+        rationale=(
+            "blocks pr-manager delta-mode (see _TEMPLATE.md "
+            "'Reporter-agent header contract')"
+        ),
+    )
+
+
+def _check_header_contract(
+    agent: AgentDoc,
+    names: frozenset[str],
+    *,
+    header: str,
+    rationale: str,
+) -> list[Finding]:
+    """Flag an agent in *names* whose body never mentions *header*.
+
+    The shared substring-grep behind both header contracts
+    (``verified-at:`` for reporters, ``prior-art-searched:`` for
+    pre-write agents) — one mechanism, two vocabularies.
+
+    Args:
+        agent: Parsed agent doc.
+        names: Agent names bound to this contract.
+        header: Required header substring.
+        rationale: Consequence clause appended to the finding message.
+
+    Returns:
+        One MEDIUM finding when bound and missing; else empty.
+    """
+    if not _is_reporter_agent(agent, names):
         return []
-    if "verified-at:" in agent.body:
+    if header in agent.body:
         return []
     return [
         Finding(
@@ -439,9 +478,7 @@ def _check_reporter_verified_at(
             path=agent.path,
             line=0,
             message=(
-                "reporter does not instruct emitting `verified-at:` header — "
-                "blocks pr-manager delta-mode (see _TEMPLATE.md "
-                "'Reporter-agent header contract')"
+                f"agent does not instruct emitting `{header}` header — {rationale}"
             ),
         )
     ]
@@ -682,8 +719,22 @@ def _per_agent_findings(
     findings.extend(_check_word_count(agent))
     findings.extend(_check_frontmatter(agent))
     findings.extend(_check_description_shape(agent))
-    findings.extend(_check_reporter_tools(agent, reporters, artifact_reporters))
+    prior_art = frozenset(PRIOR_ART_AGENT_NAMES)
+    findings.extend(
+        _check_reporter_tools(agent, reporters | prior_art, artifact_reporters)
+    )
     findings.extend(_check_reporter_verified_at(agent, reporters))
+    findings.extend(
+        _check_header_contract(
+            agent,
+            prior_art,
+            header="prior-art-searched:",
+            rationale=(
+                "the /pr consumption gate and the refusal contract depend on "
+                "it (see _TEMPLATE.md 'Pre-write agent header contract')"
+            ),
+        )
+    )
     findings.extend(_check_required_sections(agent))
     findings.extend(_check_foundation_restatements(agent, foundation_ngrams))
     return findings

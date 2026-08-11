@@ -285,6 +285,15 @@ authoring at one SHA and publishing another re-runs this step. When the
 user explicitly asks to skip the gate, prefix the create command with
 `FORGE_SKIP_WRAPUP_GATE=1` — never on the agent's own judgment.
 
+**Prior-art gate (file-adding diffs).** When
+`git diff --name-only --diff-filter=A origin/<base>...HEAD` shows added
+source files, the wrap-up MUST embed a `prior-art-searched:` block (the
+`forge:prior-art` report for those additions — FOUNDATION §3 requires
+it BEFORE writing; run it retroactively now if it was skipped, and say
+so). Authoring refuses to complete without it: a file-adding PR with no
+recorded prior-art search is exactly the placement failure the agent
+exists to prevent.
+
 ## Step 3.95: Publish — push, then open (or ready) the PR
 
 Verification is done, fixes are committed, and the wrap-up is authored

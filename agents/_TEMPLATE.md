@@ -118,6 +118,22 @@ that omit the header force a full re-run on every follow-up commit.
 `forge-audit-agents` greps each reporter for the `verified-at:`
 substring. Missing it fails the audit step.
 
+## Pre-write agent header contract
+
+A pre-write reporter (currently `prior-art`) fires before any diff or
+SHA exists, so it anchors to its **evidence** instead of a commit: the
+first body line is
+
+```
+prior-art-searched: digest=<first 12 hex of sha256 of docs/api-digest.md> queries=<count>
+```
+
+The hash makes a stale index-read detectable (re-hash and compare); the
+query count asserts the search actually ran. The `/pr` flow refuses to
+finalize a file-adding diff whose authored wrap-up lacks this block, and
+`forge-audit-agents` greps the agent doc for the `prior-art-searched:`
+substring the same way it greps reporters for `verified-at:`.
+
 ## Forbidden patterns
 
 - **Restating FOUNDATION rules inline.** Subagents auto-load CLAUDE.md
