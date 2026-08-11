@@ -245,6 +245,98 @@ def test_check_reporter_verified_at_skips_non_reporter() -> None:
     )
 
 
+def test_check_header_contract_flags_named_agent_missing_header() -> None:
+    """An agent in *names* whose body lacks *header* yields one MEDIUM finding."""
+    doc = _agent_doc(
+        body="## Output\nplain report, no header at all\n",
+        path="agents/prior-art.md",
+    )
+    findings = audit_agents._check_header_contract(
+        doc,
+        frozenset(audit_agents.PRIOR_ART_AGENT_NAMES),
+        header="prior-art-searched:",
+        rationale="the refusal contract depends on it",
+    )
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.MEDIUM
+    assert "prior-art-searched:" in findings[0].message
+    assert "the refusal contract depends on it" in findings[0].message
+
+
+def test_check_header_contract_passes_when_header_present() -> None:
+    """An agent whose body contains *header* yields zero findings."""
+    doc = _agent_doc(
+        body="## Output\nprior-art-searched: <hash> (3 queries)\n",
+        path="agents/prior-art.md",
+    )
+    findings = audit_agents._check_header_contract(
+        doc,
+        frozenset(audit_agents.PRIOR_ART_AGENT_NAMES),
+        header="prior-art-searched:",
+        rationale="the refusal contract depends on it",
+    )
+    assert findings == []
+
+
+def test_check_header_contract_skips_agent_outside_names() -> None:
+    """An agent not in *names* is exempt regardless of body content."""
+    doc = _agent_doc(
+        body="## Output\nno header of any kind here\n",
+        path="agents/pr-manager.md",
+    )
+    findings = audit_agents._check_header_contract(
+        doc,
+        frozenset(audit_agents.PRIOR_ART_AGENT_NAMES),
+        header="prior-art-searched:",
+        rationale="the refusal contract depends on it",
+    )
+    assert findings == []
+
+
+def test_check_reporter_verified_at_uses_shared_header_contract_helper() -> None:
+    """_check_reporter_verified_at still flags a reporter missing verified-at:.
+
+    Regression guard for the shared-helper wiring: `_check_reporter_verified_at`
+    now delegates to `_check_header_contract`, so this exercises that the
+    delegation preserves the original reporter contract rather than
+    duplicating it as a separate check.
+    """
+    doc = _agent_doc(
+        body="## Output\nno contract header present\n",
+        path="agents/design-checker.md",
+    )
+    findings = audit_agents._check_reporter_verified_at(
+        doc, frozenset(audit_agents.REPORTER_AGENT_NAMES)
+    )
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.MEDIUM
+    assert "verified-at:" in findings[0].message
+
+
+def test_check_reporter_tools_flags_prior_art_agent_holding_write() -> None:
+    """A prior-art agent doc with Write in tools gets the reporter-tools MEDIUM.
+
+    Regression on the REAL wiring: `_per_agent_findings` is called with only
+    the BASE reporter set — the prior-art union happens inside it. Dropping
+    `| prior_art` from `_per_agent_findings` makes this fail, which a
+    caller-supplied union could not detect.
+    """
+    fm = {
+        "description": "Searches the API digest before a new helper is written.",
+        "tools": ("Read", "Grep", "Write"),
+    }
+    doc = _agent_doc(frontmatter=fm, path="agents/prior-art.md")
+    findings = audit_agents._per_agent_findings(
+        doc,
+        set(),
+        frozenset(audit_agents.REPORTER_AGENT_NAMES),
+        frozenset(audit_agents._REPORTER_WITH_ARTIFACT_NAMES),
+    )
+    tool_findings = [f for f in findings if "'Write'" in f.message]
+    assert tool_findings
+    assert {f.severity for f in tool_findings} == {Severity.MEDIUM}
+
+
 def test_check_required_sections_flags_missing() -> None:
     """Body missing required H2s yields one LOW per missing section."""
     body = "# Agent\n\nparagraph\n\n## Workflow\nstep\n"

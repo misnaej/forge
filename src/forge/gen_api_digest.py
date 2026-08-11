@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import ast
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -554,12 +555,44 @@ def render_digest(digests: list[ModuleDigest]) -> str:
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
-def main() -> int:
-    """Generate or verify the API digest doc.
+def query_symbols(digests: list[ModuleDigest], pattern: str) -> list[str]:
+    """Return digest lines whose symbol or module matches *pattern*.
+
+    The cheap exact-query surface for the ``forge:prior-art`` agent —
+    one regex against live source instead of scanning the whole
+    committed digest. Matching is case-insensitive over the module's
+    dotted path, each symbol's signature, and its summary.
+
+    Args:
+        digests: Built module digests.
+        pattern: Regular expression (searched, not fully matched).
 
     Returns:
-        Exit code: ``0`` when the doc was written or is in sync, ``1``
-        when ``--check`` detected drift or a missing doc.
+        ``"<module>: <signature> — <summary>"`` lines, source order.
+    """
+    # The pattern is developer/agent-supplied on a local CLI with no
+    # unattended callers — a pathological regex can only hang the caller's
+    # own terminal. Revisit with a timeout before wiring --symbol into any
+    # CI or network-facing path.
+    rx = re.compile(pattern, re.IGNORECASE)
+    lines: list[str] = []
+    for mod in digests:
+        for sym in mod.symbols:
+            haystack = f"{mod.dotted} {sym.signature} {sym.summary}"
+            if rx.search(haystack):
+                tag = " (internal)" if sym.internal else ""
+                summary = f" — {sym.summary}" if sym.summary else ""
+                lines.append(f"{mod.dotted}: {sym.signature}{tag}{summary}")
+    return lines
+
+
+def main() -> int:
+    """Generate, verify, or query the API digest.
+
+    Returns:
+        Exit code: ``0`` when the doc was written / is in sync / the
+        ``--symbol`` query matched, ``1`` when ``--check`` detected
+        drift or ``--symbol`` found nothing.
     """
     parser = argparse.ArgumentParser(
         prog="forge-gen-api-digest",
@@ -579,6 +612,16 @@ def main() -> int:
         action="store_true",
         help="Verify docs/api-digest.md is in sync; do not write.",
     )
+    parser.add_argument(
+        "--symbol",
+        default=None,
+        metavar="REGEX",
+        help=(
+            "Query mode: print digest entries matching REGEX (module path, "
+            "signature, or summary; case-insensitive) and exit 0 on match, "
+            "1 on none. Queries live source, not the committed doc."
+        ),
+    )
     args = parser.parse_args()
 
     root = repo_root()
@@ -593,6 +636,15 @@ def main() -> int:
     )
 
     digests = build_digest(root, roots)
+
+    if args.symbol is not None:
+        matches = query_symbols(digests, args.symbol)
+        for line in matches:
+            sys.stdout.write(line + "\n")
+        if not matches:
+            logger.info("No digest entry matches %r.", args.symbol)
+        return 0 if matches else 1
+
     generated = render_digest(digests)
 
     if args.check:

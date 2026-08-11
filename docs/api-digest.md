@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 685 symbols._
+_63 modules, 687 symbols._
 
 ## `forge`
 
@@ -39,6 +39,7 @@ _63 modules, 685 symbols._
 - `_is_reporter_agent(agent: AgentDoc, reporters: frozenset[str]) -> bool` _(internal)_ — Return True when *agent* is in the effective reporter set.
 - `_check_reporter_tools(agent: AgentDoc, reporters: frozenset[str], artifact_reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Flag reporter agents holding mutating tools (`Write`/`Edit`).
 - `_check_reporter_verified_at(agent: AgentDoc, reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Flag reporter agents missing the ``verified-at:`` header instruction.
+- `_check_header_contract(agent: AgentDoc, names: frozenset[str], *, header: str, rationale: str) -> list[Finding]` _(internal)_ — Flag an agent in *names* whose body never mentions *header*.
 - `_check_required_sections(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag missing canonical H2 sections.
 - `_tokens(text: str) -> list[str]` _(internal)_ — Return whitespace-split lowercase tokens of *text*.
 - `_ngrams(tokens: list[str], n: int) -> set[str]` _(internal)_ — Return the set of *n*-token windows from *tokens*.
@@ -324,7 +325,8 @@ _63 modules, 685 symbols._
 - `_render_symbol(symbol: Symbol) -> list[str]` _(internal)_ — Render one symbol (and any methods) as markdown lines.
 - `count_symbols(digests: list[ModuleDigest]) -> int` — Return the total number of top-level symbols across all modules.
 - `render_digest(digests: list[ModuleDigest]) -> str` — Render the full API digest markdown document.
-- `main() -> int` — Generate or verify the API digest doc.
+- `query_symbols(digests: list[ModuleDigest], pattern: str) -> list[str]` — Return digest lines whose symbol or module matches *pattern*.
+- `main() -> int` — Generate, verify, or query the API digest.
 
 ## `forge.gen_c4`
 

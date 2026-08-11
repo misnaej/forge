@@ -141,11 +141,12 @@ is forbidden.
 
 Foundation agents ship via the `forge` plugin and resolve as `forge:<name>` (e.g.
 `forge:pr-manager`); a bare name fails with `Agent type '<name>' not found`. The
-twelve foundation agents are:
+thirteen foundation agents are:
 `forge:design-checker`, `forge:docs-types-checker`, `forge:git-commit-push`,
 `forge:issue-triage`, `forge:knowledge-search`, `forge:perf-optimizer`,
-`forge:pr-manager`, `forge:precommit-fixer`, `forge:security-checker`,
-`forge:test-advisor`, `forge:test-writer`, `forge:weekly-summary`.
+`forge:pr-manager`, `forge:precommit-fixer`, `forge:prior-art`,
+`forge:security-checker`, `forge:test-advisor`, `forge:test-writer`,
+`forge:weekly-summary`.
 
 **Consumer wrappers MUST use distinct names.** When a consumer repo layers
 repo-specific extras on a foundation agent, it ships a local wrapper under
@@ -158,6 +159,7 @@ extras>... <original task>")`.
 
 | Task | Agent | Trigger |
 |---|---|---|
+| Create a new file / module / top-level symbol | `forge:prior-art` | **BEFORE** writing — a REUSE verdict means no new file at all |
 | Edit existing file | `forge:design-checker` (or a `design-checker-<repo>` wrapper that delegates here) | **BEFORE** writing code |
 | Clear pre-commit failures | `forge:precommit-fixer` | Before commit |
 | Commit + push | `forge:git-commit-push` | After `forge:precommit-fixer` |
@@ -178,7 +180,7 @@ extras>... <original task>")`.
 
 ### Standard workflow orders
 
-**Commit:** `forge:design-checker` (pre-write) → code changes → `forge:precommit-fixer` → `forge:git-commit-push`
+**Commit:** `forge:prior-art` (when creating files/symbols — first, a REUSE verdict ends the plan) → `forge:design-checker` (pre-write) → code changes → `forge:precommit-fixer` → `forge:git-commit-push`
 
 **PR finalization:** `forge:design-checker` + `forge:security-checker` + `forge:docs-types-checker` (parallel) → `forge:precommit-fixer` (mode `strict`) → `forge:pr-manager`
 

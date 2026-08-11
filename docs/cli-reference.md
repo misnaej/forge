@@ -295,6 +295,7 @@ options:
 
 ```text
 usage: forge-gen-api-digest [-h] [--roots [ROOTS ...]] [--check]
+                            [--symbol REGEX]
 
 Generate docs/api-digest.md indexing top-level functions and classes (public
 API and internal helpers).
@@ -304,6 +305,10 @@ options:
   --roots [ROOTS ...]  Source dirs to scan. Auto-detected (src/ or packages)
                        if omitted.
   --check              Verify docs/api-digest.md is in sync; do not write.
+  --symbol REGEX       Query mode: print digest entries matching REGEX (module
+                       path, signature, or summary; case-insensitive) and exit
+                       0 on match, 1 on none. Queries live source, not the
+                       committed doc.
 ```
 
 ## forge-gen-c4
