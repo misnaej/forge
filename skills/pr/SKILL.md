@@ -284,6 +284,9 @@ blocked unless `code_health/pr_wrapup.md` names the current `HEAD` —
 authoring at one SHA and publishing another re-runs this step. When the
 user explicitly asks to skip the gate, prefix the create command with
 `FORGE_SKIP_WRAPUP_GATE=1` — never on the agent's own judgment.
+Promotion PRs self-exempt only with provenance: the `release/vX.Y.Z`
+branch's tree must reproduce its tag modulo `CHANGELOG.md` — a branch
+merely named `release/*` stays gated.
 
 **Prior-art gate (file-adding diffs).** When
 `git diff --name-only --diff-filter=A origin/<base>...HEAD` shows added
@@ -355,7 +358,7 @@ The squash-merge message becomes the permanent commit message on `main`.
 
 17. **`issue-triage`** — Run `post-pr` mode after merge:
     ```
-    Agent(subagent_type="issue-triage", prompt="Run post-pr mode. PR #<number> was just finalized. Detect issues closed by this PR, remove their tier labels, and regenerate the 📋 Backlog Index issue.")
+    Agent(subagent_type="forge:issue-triage", prompt="Run post-pr mode. PR #<number> was just finalized. Detect issues closed by this PR, remove their tier labels, and regenerate the 📋 Backlog Index issue.")
     ```
 
 ## Step 6: Update CONTINUATION state

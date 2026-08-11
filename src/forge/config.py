@@ -395,10 +395,41 @@ def resolve_tool_roots(
         if isinstance(granular, list):
             return _existing_dirs(repo_root, [str(p) for p in granular])
 
-    if "source_dirs" in forge:
-        roots = [str(p) for p in forge["source_dirs"]]
-    else:
-        roots = detect_source_dirs(repo_root)
+    declared = declared_layout_dirs(repo_root, include_tests=include_tests)
+    if declared is not None:
+        return declared
+    roots = detect_source_dirs(repo_root)
+    if include_tests:
+        roots += detect_test_dirs(repo_root)
+    return _existing_dirs(repo_root, roots)
+
+
+def declared_layout_dirs(
+    repo_root: Path,
+    *,
+    include_tests: bool = True,
+) -> list[str] | None:
+    """Return the explicitly declared layout dirs, or ``None`` if undeclared.
+
+    The shared "declared ``[tool.forge].source_dirs`` (+ ``test_dirs``)"
+    tier of root resolution — one implementation for
+    :func:`resolve_tool_roots` and the audit pack's ``resolve_roots``, so
+    the declared-vs-fallback boundary cannot drift between them.
+    Declaring ``source_dirs`` (even ``[]``) is the opt-in signal; each
+    undeclared half of the pair falls back to smart detection.
+
+    Args:
+        repo_root: Git repo root.
+        include_tests: Append the test roots to the source roots.
+
+    Returns:
+        Existing in-repo dirs, or ``None`` when ``source_dirs`` is not
+        declared at all (callers pick their own fallback).
+    """
+    forge = read_tool_forge_section(repo_root)
+    if "source_dirs" not in forge:
+        return None
+    roots = [str(p) for p in forge["source_dirs"]]
     if include_tests:
         if "test_dirs" in forge:
             roots += [str(p) for p in forge["test_dirs"]]

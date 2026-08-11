@@ -159,6 +159,29 @@ def test_build_graph_skips_syntax_error(import_chain_repo: Path) -> None:
     assert "myapp.core" in graph.path_of
 
 
+def test_build_graph_type_checking_only_import_creates_edge(
+    import_chain_repo: Path,
+) -> None:
+    """A TYPE_CHECKING-only import still becomes a graph edge (conservative).
+
+    ``build_graph`` always passes ``include_type_checking=True`` to
+    :func:`extract_import_targets`, so a change to a module only imported
+    under a ``TYPE_CHECKING`` guard still selects the coupled test — a
+    safe superset beats a missed selection.
+    """
+    typeonly_file = import_chain_repo / "tests" / "test_typeonly.py"
+    typeonly_file.write_text(
+        "from typing import TYPE_CHECKING\n\n"
+        "if TYPE_CHECKING:\n"
+        "    from myapp.core import x\n\n\n"
+        "def test_typeonly():\n    pass\n",
+        encoding="utf-8",
+    )
+    graph = build_graph(import_chain_repo)
+    test_name = next(m for m in graph.test_modules if "test_typeonly" in m)
+    assert "myapp.core" in graph.imports[test_name]
+
+
 def test_select_tests_depth_0_direct_importer(import_chain_repo: Path) -> None:
     """A change to core.py at depth 0 selects test_core.py (direct importer)."""
     plan = select_tests(import_chain_repo, {"src/myapp/core.py"}, max_depth=0)

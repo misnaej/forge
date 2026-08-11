@@ -393,12 +393,17 @@ def _run_tach() -> list[Finding]:
 def _scan_module(
     path: Path,
     package_roots: list[Path],
+    *,
+    include_type_checking: bool = False,
 ) -> tuple[str, ModuleNode, set[str]] | None:
     """Parse a single file into (name, node, raw-imports).
 
     Args:
         path: Absolute path to a Python source file.
         package_roots: Roots used to compute dotted names.
+        include_type_checking: Count ``if TYPE_CHECKING:`` imports as
+            edges (see :func:`forge.import_graph.extract_import_targets`
+            — runtime-facing consumers leave this off).
 
     Returns:
         Tuple of name, ``ModuleNode``, and the set of raw import targets.
@@ -420,7 +425,11 @@ def _scan_module(
         abstract_classes=abstract_count,
         total_classes=total_count,
     )
-    return name, node, extract_import_targets(tree, name)
+    return (
+        name,
+        node,
+        extract_import_targets(tree, name, include_type_checking=include_type_checking),
+    )
 
 
 def _build_internal_graph(
@@ -531,6 +540,8 @@ def _write_tree_log(tree: str, *, output: Path | None) -> Path:
 def build_module_graph(
     scope: Scope,
     roots: list[Path],
+    *,
+    include_type_checking: bool = False,
 ) -> tuple[dict[str, ModuleNode], dict[str, set[str]]]:
     """Scan source roots into a module map + internal import graph.
 
@@ -542,6 +553,10 @@ def build_module_graph(
     Args:
         scope: ``FULL`` or ``CHANGED`` file selection.
         roots: Package-root directories to scan.
+        include_type_checking: Count ``if TYPE_CHECKING:`` imports as
+            edges. Off by default — runtime-facing consumers (deps
+            cycles, layering closures) must not see phantom edges;
+            design-time consumers (C4 diagrams) opt in.
 
     Returns:
         Tuple of (modules keyed by dotted name, adjacency map keyed by
@@ -551,7 +566,9 @@ def build_module_graph(
     modules: dict[str, ModuleNode] = {}
     raw_imports: dict[str, set[str]] = {}
     for path in iter_files(scope, roots):
-        result = _scan_module(path, package_roots)
+        result = _scan_module(
+            path, package_roots, include_type_checking=include_type_checking
+        )
         if result is None:
             continue
         name, node, imports = result

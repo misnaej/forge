@@ -8,7 +8,7 @@ description: Generate a weekly summary of developer GitHub activity - PRs, issue
 Run the `weekly-summary` agent:
 
 ```
-Agent(subagent_type="weekly-summary", prompt="Generate weekly developer summary. $ARGUMENTS")
+Agent(subagent_type="forge:weekly-summary", prompt="Generate weekly developer summary. $ARGUMENTS")
 ```
 
 If no `$ARGUMENTS` provided, default to summarizing activity since last Monday.

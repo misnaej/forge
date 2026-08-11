@@ -18,7 +18,7 @@ from forge.audit.layering import (
     parse_layers,
     run,
 )
-from tests.audit.conftest import make_fake_repo
+from tests.audit.conftest import make_fake_repo, write_pyproject
 
 
 if TYPE_CHECKING:
@@ -36,6 +36,17 @@ GOOD_PIPELINE = (
 )
 
 PLAIN_MODULE = '"""Plain module with no domain import."""\n\nVALUE = 1\n'
+
+TYPE_CHECKING_ONLY_PIPELINE = (
+    '"""Pipeline module importing the domain layer only for type hints."""\n'
+    "\n"
+    "from typing import TYPE_CHECKING\n"
+    "\n"
+    "if TYPE_CHECKING:\n"
+    "    from myproj.domain import core\n"
+    "\n"
+    "VALUE = 1\n"
+)
 
 TWO_LAYER_TOML = (
     "[[tool.forge.layering.layer]]\n"
@@ -79,16 +90,6 @@ def _write(path: Path, text: str) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text.lstrip(), encoding="utf-8")
-
-
-def _write_pyproject(root: Path, body: str) -> None:
-    """Write ``body`` verbatim as ``pyproject.toml`` under ``root``.
-
-    Args:
-        root: Fake repo root.
-        body: Full TOML content.
-    """
-    (root / "pyproject.toml").write_text(body, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +487,7 @@ def test_run_no_config_logs_nothing_to_enforce_and_skips_added_or_moved_files(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No configured layers exits 0 and never calls the git-touching seams."""
-    _write_pyproject(fake_repo, NO_LAYERING_TOML)
+    write_pyproject(fake_repo, NO_LAYERING_TOML)
     calls: list[dict] = []
     monkeypatch.setattr(
         layering,
@@ -519,7 +520,7 @@ def test_run_config_error_reports_high_at_pyproject_and_exercises_mocks(
     non-empty errors list with an empty layers list must still exercise
     `added_or_moved_files`.
     """
-    _write_pyproject(fake_repo, BAD_LAYER_TOML)
+    write_pyproject(fake_repo, BAD_LAYER_TOML)
     calls: list[dict] = []
     monkeypatch.setattr(
         layering,
@@ -541,7 +542,7 @@ def test_run_changed_scope_filters_low_keeps_high(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """CHANGED scope drops an unchanged LOW finding but keeps an added HIGH one."""
-    _write_pyproject(fake_repo, TWO_LAYER_TOML)
+    write_pyproject(fake_repo, TWO_LAYER_TOML)
     _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
     _write(fake_repo / "src" / "myproj" / "pipelines" / "lowchild.py", PLAIN_MODULE)
     _write(fake_repo / "src" / "myproj" / "pipelines" / "highchild.py", PLAIN_MODULE)
@@ -571,7 +572,7 @@ def test_run_changed_scope_config_error_survives_empty_select_diff(
     Regression guard: config-error findings are appended AFTER the CHANGED
     scope filter runs, so they must never be dropped by it.
     """
-    _write_pyproject(fake_repo, BAD_LAYER_TOML)
+    write_pyproject(fake_repo, BAD_LAYER_TOML)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     monkeypatch.setattr(layering, "select_diff_files", lambda _root: [])
     code = run(Scope.CHANGED, [fake_repo / "src"], LayeringConfig())
@@ -596,7 +597,7 @@ def test_run_changed_scope_high_survives_when_anchor_not_in_changed_or_escalate(
     future refactor that decouples the escalate set from the changed set.
     This test pins the outcome (HIGH survives), not which clause fires.
     """
-    _write_pyproject(fake_repo, TWO_LAYER_TOML)
+    write_pyproject(fake_repo, TWO_LAYER_TOML)
     _write(fake_repo / "src" / "myproj" / "pipelines" / "x" / "a.py", PLAIN_MODULE)
     _write(fake_repo / "src" / "myproj" / "pipelines" / "x" / "b.py", PLAIN_MODULE)
     b_path = "src/myproj/pipelines/x/b.py"
@@ -615,7 +616,7 @@ def test_run_clean_tree_valid_config_exits_zero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A tree that fully composes its configured layers exits 0."""
-    _write_pyproject(fake_repo, TWO_LAYER_TOML)
+    write_pyproject(fake_repo, TWO_LAYER_TOML)
     _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
     _write(fake_repo / "src" / "myproj" / "pipelines" / "good.py", GOOD_PIPELINE)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
@@ -625,6 +626,31 @@ def test_run_clean_tree_valid_config_exits_zero(
     )
     assert code == 0
     assert "# findings: 0" in log_text
+
+
+def test_run_type_checking_only_import_does_not_satisfy_composes_all_of(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A TYPE_CHECKING-only import must not satisfy `composes_all_of`.
+
+    It never runs, so counting it would be the silent-false-pass case the
+    default (`include_type_checking=False`) guards against.
+    """
+    write_pyproject(fake_repo, TWO_LAYER_TOML)
+    _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
+    _write(
+        fake_repo / "src" / "myproj" / "pipelines" / "typeonly.py",
+        TYPE_CHECKING_ONLY_PIPELINE,
+    )
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert code == 0  # LOW (baseline) findings never block
+    assert "[LOW] src/myproj/pipelines/typeonly.py" in log_text
+    assert "does not compose layer 'domain'" in log_text
 
 
 def test_parse_layers_rejects_string_composes_all_of() -> None:
@@ -653,7 +679,7 @@ def test_run_changed_scope_low_survives_via_non_anchor_child_member(
     module of the same child. Membership is per child, mirroring
     forge-audit-dup's prior-art semantics.
     """
-    _write_pyproject(fake_repo, TWO_LAYER_TOML)
+    write_pyproject(fake_repo, TWO_LAYER_TOML)
     _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
     _write(
         fake_repo / "src" / "myproj" / "pipelines" / "jobs" / "alpha.py",
@@ -771,7 +797,7 @@ def test_main_no_roots_excludes_mirrored_test_package(
     never scanned — while the genuine src-side violation (`zeroshot` not
     composing `bioseq`) still surfaces.
     """
-    _write_pyproject(fake_repo, ZEROSHOT_BIOSEQ_TOML)
+    write_pyproject(fake_repo, ZEROSHOT_BIOSEQ_TOML)
     _write(fake_repo / "src" / "zeroshot" / "mod.py", ZEROSHOT_MODULE)
     _write(fake_repo / "src" / "bioseq" / "core.py", BIOSEQ_CORE_MODULE)
     _write(fake_repo / "test" / "zeroshot" / "helper.py", ZEROSHOT_MODULE)
@@ -799,7 +825,7 @@ def test_main_explicit_roots_overrides_source_only_resolution(
     evaluated as a layer child, proving `--roots` bypasses the source-only
     routing entirely rather than being merged with it.
     """
-    _write_pyproject(fake_repo, ZEROSHOT_BIOSEQ_TOML)
+    write_pyproject(fake_repo, ZEROSHOT_BIOSEQ_TOML)
     _write(fake_repo / "src" / "zeroshot" / "mod.py", ZEROSHOT_MODULE)
     _write(fake_repo / "src" / "bioseq" / "core.py", BIOSEQ_CORE_MODULE)
     _write(fake_repo / "test" / "zeroshot" / "helper.py", ZEROSHOT_MODULE)
@@ -828,7 +854,7 @@ def test_main_no_roots_granular_paths_key_beats_auto_detect(
     auto-detect never considers — is only possible if the resolution
     actually reached the `paths = ["codebase"]` key.
     """
-    _write_pyproject(fake_repo, ZEROSHOT_BIOSEQ_PATHS_TOML)
+    write_pyproject(fake_repo, ZEROSHOT_BIOSEQ_PATHS_TOML)
     _write(fake_repo / "codebase" / "zeroshot" / "mod.py", ZEROSHOT_MODULE)
     _write(fake_repo / "codebase" / "bioseq" / "core.py", BIOSEQ_CORE_MODULE)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
