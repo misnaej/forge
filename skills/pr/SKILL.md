@@ -358,7 +358,7 @@ The squash-merge message becomes the permanent commit message on `main`.
 
 17. **`issue-triage`** — Run `post-pr` mode after merge:
     ```
-    Agent(subagent_type="issue-triage", prompt="Run post-pr mode. PR #<number> was just finalized. Detect issues closed by this PR, remove their tier labels, and regenerate the 📋 Backlog Index issue.")
+    Agent(subagent_type="forge:issue-triage", prompt="Run post-pr mode. PR #<number> was just finalized. Detect issues closed by this PR, remove their tier labels, and regenerate the 📋 Backlog Index issue.")
     ```
 
 ## Step 6: Update CONTINUATION state

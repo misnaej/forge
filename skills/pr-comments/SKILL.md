@@ -14,7 +14,7 @@ description: Fetch and address PR review comments - pr-manager categorizes comme
 
 2. **Fetch and categorize comments** via `pr-manager`:
    ```
-   Agent(subagent_type="pr-manager", prompt="Fetch and categorize all review comments for PR #<number>. Categorize each as: actionable fix, question, nit, or out-of-scope.")
+   Agent(subagent_type="forge:pr-manager", prompt="Fetch and categorize all review comments for PR #<number>. Categorize each as: actionable fix, question, nit, or out-of-scope.")
    ```
 
 3. After pr-manager reports the categorized comments, **implement fixes** for actionable items.

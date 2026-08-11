@@ -128,7 +128,29 @@ def resolve_package_module_name(path: Path, repo_root: Path) -> str | None:
     return _rel_to_dotted(rel)
 
 
-def extract_import_targets(tree: ast.Module, current_module: str) -> set[str]:
+def _is_type_checking_test(test: ast.expr) -> bool:
+    """Return whether an ``if`` test is the ``TYPE_CHECKING`` guard.
+
+    Matches the bare name (``if TYPE_CHECKING:``) and the attribute form
+    (``if typing.TYPE_CHECKING:``).
+
+    Args:
+        test: The ``ast.If`` node's test expression.
+
+    Returns:
+        True for either recognized guard spelling.
+    """
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
+def extract_import_targets(
+    tree: ast.Module,
+    current_module: str,
+    *,
+    include_type_checking: bool = False,
+) -> set[str]:
     """Return the set of fully-qualified import-candidate targets.
 
     Relative imports are resolved against ``current_module``. For
@@ -138,17 +160,36 @@ def extract_import_targets(tree: ast.Module, current_module: str) -> set[str]:
     cares picks the deepest target present in its own graph, so attribute
     imports collapse to ``X`` and submodule imports resolve to ``X.Y``.
 
+    ``if TYPE_CHECKING:`` bodies are skipped by default: those imports
+    never execute, so counting them invents runtime edges — a false
+    cycle in the deps audit, or a ``composes_all_of`` clause silently
+    satisfied by an import that never runs. Callers wanting design-time
+    edges (architecture diagrams, conservative test selection) opt in.
+
     Args:
         tree: Parsed module.
         current_module: Dotted name of the importing module (for relative
             import resolution).
+        include_type_checking: Also record imports inside
+            ``if TYPE_CHECKING:`` bodies (the ``else`` branch is always
+            walked — it runs at runtime).
 
     Returns:
         Set of dotted target candidates.
     """
     targets: set[str] = set()
     parts = current_module.split(".")
-    for node in ast.walk(tree):
+    stack: list[ast.AST] = [tree]
+    while stack:
+        node = stack.pop()
+        if (
+            not include_type_checking
+            and isinstance(node, ast.If)
+            and _is_type_checking_test(node.test)
+        ):
+            stack.extend(node.orelse)
+            continue
+        stack.extend(ast.iter_child_nodes(node))
         if isinstance(node, ast.Import):
             for alias in node.names:
                 targets.add(alias.name)

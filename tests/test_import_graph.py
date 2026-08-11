@@ -80,6 +80,47 @@ def test_extract_import_targets_ignores_star_import_member() -> None:
     assert "pkg.*" not in targets
 
 
+def test_extract_import_targets_excludes_type_checking_bare_name_guard() -> None:
+    """``if TYPE_CHECKING:`` (bare name form) imports are excluded by default."""
+    tree = ast.parse(
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import guarded\n",
+    )
+    targets = extract_import_targets(tree, "myself")
+    assert "guarded" not in targets
+
+
+def test_extract_import_targets_excludes_type_checking_attribute_guard() -> None:
+    """``if typing.TYPE_CHECKING:`` (attribute form) imports are excluded by default."""
+    tree = ast.parse(
+        "import typing\nif typing.TYPE_CHECKING:\n    import guarded\n",
+    )
+    targets = extract_import_targets(tree, "myself")
+    assert "guarded" not in targets
+
+
+def test_extract_import_targets_walks_type_checking_else_branch() -> None:
+    """The guard's ``else:`` branch is always walked — it runs at runtime."""
+    tree = ast.parse(
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    import guarded\n"
+        "else:\n"
+        "    import runtime_fallback\n",
+    )
+    targets = extract_import_targets(tree, "myself")
+    assert "runtime_fallback" in targets
+    assert "guarded" not in targets
+
+
+def test_extract_import_targets_include_type_checking_opts_in() -> None:
+    """``include_type_checking=True`` records the normally-skipped guarded imports."""
+    tree = ast.parse(
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import guarded\n",
+    )
+    targets = extract_import_targets(tree, "myself", include_type_checking=True)
+    assert "guarded" in targets
+
+
 def test_closest_known_exact_match() -> None:
     """An exact module name resolves to itself."""
     assert closest_known("myapp.core", {"myapp.core", "myapp"}) == "myapp.core"

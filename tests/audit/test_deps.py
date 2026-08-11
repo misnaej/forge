@@ -17,6 +17,7 @@ from forge.audit.deps import (
     _compute_couplings,
     _instability,
     _tarjan_scc,
+    build_module_graph,
     render_dependency_tree,
     run,
 )
@@ -122,6 +123,31 @@ def test_build_internal_graph_filters_externals() -> None:
     graph = _build_internal_graph(modules, raw)
     assert graph["pkg.a"] == {"pkg.b"}
     assert graph["pkg.b"] == set()
+
+
+def test_build_module_graph_excludes_type_checking_only_import(
+    fake_repo: Path,
+) -> None:
+    """TYPE_CHECKING-only imports do not create cyclic dependencies.
+
+    A's runtime import of B creates an edge; B's TYPE_CHECKING-only import
+    of A does not — so the pair is not reported as a cyclic dependency.
+    Regression guard for the issue framing: counting a guarded-only import
+    as a runtime edge would invent a false A<->B cycle that can never
+    actually execute.
+    """
+    _write(fake_repo / "src" / "pkg" / "__init__.py", "")
+    _write(fake_repo / "src" / "pkg" / "a.py", "from pkg import b\nclass A: pass\n")
+    _write(
+        fake_repo / "src" / "pkg" / "b.py",
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    from pkg import a\n"
+        "class B: pass\n",
+    )
+    _modules, graph = build_module_graph(Scope.FULL, [fake_repo / "src"])
+    assert "pkg.b" in graph["pkg.a"]
+    assert "pkg.a" not in graph["pkg.b"]
 
 
 def test_run_reports_cycle_as_critical(fake_repo: Path) -> None:

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 687 symbols._
+_63 modules, 688 symbols._
 
 ## `forge`
 
@@ -130,11 +130,11 @@ _63 modules, 687 symbols._
 - `_build_cycle_findings(sccs: list[list[str]], modules: dict[str, ModuleNode]) -> list[Finding]` _(internal)_ — Render multi-node SCCs as CRITICAL ADP-violation findings.
 - `_build_distance_findings(modules: dict[str, ModuleNode], ca: dict[str, int], ce: dict[str, int], *, threshold: float) -> list[Finding]` _(internal)_ — Render main-sequence-distance violations as LOW findings.
 - `_run_tach() -> list[Finding]` _(internal)_ — Run optional ``tach check`` and translate violations to findings.
-- `_scan_module(path: Path, package_roots: list[Path]) -> tuple[str, ModuleNode, set[str]] | None` _(internal)_ — Parse a single file into (name, node, raw-imports).
+- `_scan_module(path: Path, package_roots: list[Path], *, include_type_checking: bool = False) -> tuple[str, ModuleNode, set[str]] | None` _(internal)_ — Parse a single file into (name, node, raw-imports).
 - `_build_internal_graph(modules: dict[str, ModuleNode], raw_imports: dict[str, set[str]]) -> dict[str, set[str]]` _(internal)_ — Project raw imports onto the known-module graph.
 - `render_dependency_tree(graph: dict[str, set[str]], sccs: list[list[str]]) -> str` — Render the internal dependency graph as a readable plain-text tree.
 - `_write_tree_log(tree: str, *, output: Path | None) -> Path` _(internal)_ — Write the rendered dependency tree to ``code_health/audit_deps_tree.log``.
-- `build_module_graph(scope: Scope, roots: list[Path]) -> tuple[dict[str, ModuleNode], dict[str, set[str]]]` — Scan source roots into a module map + internal import graph.
+- `build_module_graph(scope: Scope, roots: list[Path], *, include_type_checking: bool = False) -> tuple[dict[str, ModuleNode], dict[str, set[str]]]` — Scan source roots into a module map + internal import graph.
 - `run(scope: Scope, roots: list[Path], config: DepsConfig) -> int` — Execute the full dependency-analysis pipeline.
 - `main() -> int` — CLI entry point for ``forge-audit-deps``.
 
@@ -504,7 +504,8 @@ _63 modules, 687 symbols._
 - `_rel_to_dotted(rel: Path) -> str | None` _(internal)_ — Convert a root-relative ``.py`` path to a dotted module name.
 - `resolve_module_name(path: Path, package_roots: list[Path]) -> str | None` — Translate a ``.py`` path to a dotted module name.
 - `resolve_package_module_name(path: Path, repo_root: Path) -> str | None` — Name a source file by its real import root, derived from package layout.
-- `extract_import_targets(tree: ast.Module, current_module: str) -> set[str]` — Return the set of fully-qualified import-candidate targets.
+- `_is_type_checking_test(test: ast.expr) -> bool` _(internal)_ — Return whether an ``if`` test is the ``TYPE_CHECKING`` guard.
+- `extract_import_targets(tree: ast.Module, current_module: str, *, include_type_checking: bool = False) -> set[str]` — Return the set of fully-qualified import-candidate targets.
 
 ## `forge.install_bootstrap`
 

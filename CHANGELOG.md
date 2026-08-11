@@ -23,6 +23,23 @@ versions follow forge's rolling-next convention.
 ## v3.4.2 — Unreleased
 
 ### Fixes
+- **`TYPE_CHECKING`-only imports are no longer runtime edges.** The
+  shared import extractor skips `if TYPE_CHECKING:` bodies by default,
+  so the deps audit stops inventing cycles for correctly-guarded code
+  and a layering `composes_all_of` clause can no longer be silently
+  satisfied by an import that never executes. Design-time consumers opt
+  back in: C4 diagrams and smart-test selection keep the annotation
+  edges (`include_type_checking=True`).
+- **Audits honor the declared layout.** `resolve_roots` with no
+  `--roots` now prefers `[tool.forge].source_dirs` + `test_dirs` over
+  the broad built-in directory guess — a repo that declared its layout
+  stops seeing docs/config/data/vendored trees scanned by every audit
+  (measured two-thirds of default-run dup findings on one repo). The
+  guess remains for repos with no declared layout; explicit `--roots`
+  unchanged.
+- **Shipped skills invoke agents by their canonical `forge:` names.**
+  Seven skill files used bare names (`pr-manager`, `precommit-fixer`,
+  …), which fail with "Agent type not found".
 - **The wrap-up gate no longer blocks promotion PRs.**
   `block_unverified_pr_create` self-exempts on `release/vX.Y.Z` branches
   **with provenance**: the matching tag must exist and `HEAD`'s tree must

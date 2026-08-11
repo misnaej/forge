@@ -37,3 +37,13 @@ def make_fake_repo(
     for module in modules:
         monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
     return tmp_path
+
+
+def write_pyproject(root: Path, body: str) -> None:
+    """Write ``body`` verbatim as ``pyproject.toml`` under ``root``.
+
+    Args:
+        root: Fake repo root.
+        body: Full TOML content.
+    """
+    (root / "pyproject.toml").write_text(body, encoding="utf-8")

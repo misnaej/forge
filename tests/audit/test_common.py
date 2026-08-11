@@ -18,6 +18,7 @@ from forge.audit.common import (
     resolve_roots,
     write_log,
 )
+from tests.audit.conftest import write_pyproject
 
 
 if TYPE_CHECKING:
@@ -103,6 +104,68 @@ def test_resolve_roots_respects_explicit_list(fake_repo: Path) -> None:
     out = resolve_roots(["src"])
     assert len(out) == 1
     assert out[0].name == "src"
+
+
+@pytest.fixture
+def fake_repo_with_decoys(fake_repo: Path) -> Path:
+    """Extend ``fake_repo`` with ``docs/`` and ``data/`` decoy directories.
+
+    Both exist on disk — so the broad ``DEFAULT_ROOTS`` guess would pick
+    them up — but neither is named in a declared ``source_dirs`` /
+    ``test_dirs`` layout, letting tests assert the declared layout excludes
+    them.
+
+    Returns:
+        The repo root path (same as ``fake_repo``).
+    """
+    (fake_repo / "docs").mkdir()
+    (fake_repo / "data").mkdir()
+    return fake_repo
+
+
+def test_resolve_roots_declared_layout_excludes_default_roots_extras(
+    fake_repo_with_decoys: Path,
+) -> None:
+    """Declared source_dirs/test_dirs win over the broad DEFAULT_ROOTS guess.
+
+    ``docs/`` and ``data/`` exist on disk (decoys) but are not declared, so
+    a repo that stated its layout gets exactly that layout — not the
+    DEFAULT_ROOTS extras where spurious audit findings live.
+    """
+    write_pyproject(
+        fake_repo_with_decoys,
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n',
+    )
+    out = resolve_roots(None)
+    names = {p.name for p in out}
+    assert names == {"src", "tests"}
+
+
+def test_resolve_roots_no_declared_layout_keeps_default_roots_fallback(
+    fake_repo_with_decoys: Path,
+) -> None:
+    """With no source_dirs configured, the DEFAULT_ROOTS guess is unchanged.
+
+    Same tree as the declared-layout test (decoys included) but no
+    pyproject.toml — the decoy dirs ARE picked up, proving the fallback
+    path is untouched by the declared-layout preference.
+    """
+    out = resolve_roots(None)
+    names = {p.name for p in out}
+    assert {"src", "tests", "docs", "data"} <= names
+
+
+def test_resolve_roots_explicit_list_wins_over_declared_layout(
+    fake_repo_with_decoys: Path,
+) -> None:
+    """An explicit --roots list overrides the declared-layout preference too."""
+    write_pyproject(
+        fake_repo_with_decoys,
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n',
+    )
+    out = resolve_roots(["docs"])
+    assert len(out) == 1
+    assert out[0].name == "docs"
 
 
 def test_iter_files_full_scope_walks_src_skips_pycache(fake_repo: Path) -> None:
