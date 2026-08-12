@@ -296,20 +296,22 @@ namespace is not evaluated as a layer child.
 |---|---|
 | `name` | Layer name, referenced by other layers' `composes_all_of`. Must be unique — a duplicate is a config error. |
 | `package` | Dotted package prefix owning the layer's modules. Exactly one of `package` / `packages` per layer — omitting both or setting both is a config error. |
-| `packages` | Array of dotted prefixes for a layer spanning several top-level packages (multi-package layer). Each entry must be a string; non-string values are config errors. Duplicate names in the array are config errors. Composing *any* of the prefixes satisfies a `composes_all_of` clause naming this layer. If the prefixes match no modules on disk, a single HIGH config-error finding reports the misconfiguration instead of silently succeeding. |
+| `packages` | Non-empty array of dotted prefixes for a layer spanning several top-level packages. Composing *any* of the prefixes satisfies a `composes_all_of` clause naming this layer. |
 | `composes_all_of` | Layer names each direct child must compose (reach in its import closure). Omit for layers that are only *targets*. |
 | `exempt` | Direct-child names excluded from evaluation — rendered as REVIEW findings so exemptions stay visible. Bare names: one entry covers a same-named child under every prefix. |
 
-Config validation is strict. The following each produce a single HIGH config-error finding (anchored at `pyproject.toml`):
+Config validation is strict — never coercing, never silent. Each of the
+following produces a single HIGH config-error finding (anchored at
+`pyproject.toml`):
 
-- Omitting both `package` and `packages` from a layer
-- Setting both `package` and `packages` on the same layer
-- A non-string value in `package` or any entry in `packages`
-- Duplicate layer names (the `name` key)
-- Duplicate names within a `packages` array
-- Prefixes in `package` or `packages` matching zero modules on disk (a typo or non-existent namespace)
-
-Instead of silently ignoring a misconfiguration, the step surfaces each error once; pre-existing violations report as LOW and never block (the diff is the baseline); a violation in an **added or renamed** module fails the step. When a zero-module layer has no children to fail, one loud finding replaces the per-child failures.
+- Omitting both `package` and `packages`, or setting both on one layer
+- A non-string `name` or `package`; a `packages` that is not a non-empty
+  array of strings
+- A duplicate layer `name` (the first definition wins)
+- A layer whose prefixes match **no modules on disk** (typo'd or emptied
+  namespace) — one loud finding, and the layer is skipped as a
+  `composes_all_of` target instead of failing every child of every
+  composing layer
 
 ## `[tool.forge.env_sync]` — install-freshness gate (default-on)
 
