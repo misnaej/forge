@@ -20,6 +20,18 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.4.4 — Unreleased
+
+### Docs
+- **Agent loop/content discipline hardened.** `precommit-fixer`: a
+  formatter-reverted Edit is STUCK after ONE occurrence — formatter-stable
+  findings (e.g. an overlong `def` name whose canonical layout exceeds
+  the line limit) never converge by re-layout; the fixer reports the
+  semantic fix instead of burning its run budget. `git-commit-push`:
+  explicit prohibition on authoring or modifying file content via Bash
+  (heredoc, `sed -i`, `tee`, redirects, `cp`/`mv` over tracked paths) —
+  it commits the tree exactly as handed over.
+
 ## v3.4.3 — Unreleased
 
 ### Docs
