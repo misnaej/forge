@@ -119,8 +119,9 @@ orchestration detail in
 gh pr comment list <PR#> --json body --jq '.[].body' | grep -E '^verified-at:' | tail -3
 ```
 
-Extract each SHA via the `VERIFIED_AT_RE` regex (`pr_delta.py`) — never
-substitute raw grep output into a shell command. When at least one
+Extract each SHA via the `VERIFIED_AT_RE` regex (`pr_delta.py`) — the hex
+group only, double-quoted in every `git` command; never substitute raw
+grep output into a shell command. When at least one
 `verified-at:` SHA per Step-1 reporter is returned, the diff since the
 latest extracted SHA satisfies `DELTA_LINE_THRESHOLD`
 (`pr_delta.py`), and no path in `HIGH_BLAST_RADIUS_PATHS`
