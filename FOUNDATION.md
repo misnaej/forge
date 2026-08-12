@@ -549,7 +549,9 @@ Template:
 - It is **gitignored** — never commit it.
 - **Never delete it** — rewrite structured sections in place. Deleting it (e.g. on
   `/next`) destroys the handoff exactly when the user clears context for the next task.
-- Foundation agents append one line on success; they never delete or overwrite existing content.
+- Foundation agents append one line on success — even when invoked directly,
+  outside the `/commit` / `/pr` skills, so session-to-session state survives a
+  skill bypass; they never delete or overwrite existing content.
 - The main agent owns structured-section rewrites (Status, Next steps).
 
 ---
