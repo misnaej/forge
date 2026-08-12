@@ -100,6 +100,18 @@ forge-precommit
 
 Confirms Phase 2 Edits cleared the residue (the ruff step re-runs format + fix, so Edit-introduced drift is picked up). If a blocking step still fails: ONE more Phase 2 pass on that step's log, then the FINAL `forge-precommit`. That is the whole loop — **three `forge-precommit` runs maximum, ever**. Hitting the cap with a step still failing, or seeing the same finding set twice in a row, means you are stuck: STOP immediately and emit the `STUCK` block below. More loops are noise, not progress.
 
+**A formatter-reverted Edit is STUCK after ONE occurrence — not three.**
+When a re-run shows your Edit undone by the ruff-format phase (same
+finding, same location, your change gone), the finding is
+*formatter-stable*: ruff format has exactly one canonical layout for
+that code, your layout isn't it, and no re-arrangement you try will
+survive the next format pass. The classic case is a line only a
+**rename** can shorten (an overlong `def` name whose canonical one-line
+signature exceeds the length limit) — a semantic change outside your
+mechanical-fix mandate. Retrying layouts burns the whole run budget on
+an unwinnable fight; report the revert in the `STUCK` block and name
+the semantic fix the main agent should make.
+
 `pip_audit.log` residue (advisories are never auto-bumped):
 - `normal` → success; surface advisories in the report.
 - `strict` → fail; escalate.
