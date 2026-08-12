@@ -20,10 +20,20 @@ Configuration (``pyproject.toml``)::
 
     [tool.forge.layering]
     [[tool.forge.layering.layer]]
+    name = "domain"
+    packages = ["myproj.models", "myproj.rules"]  # multi-package layer
+
+    [[tool.forge.layering.layer]]
     name = "pipelines"
     package = "myproj.pipelines"
     composes_all_of = ["domain"]
     exempt = ["legacy_import_job"]  # honest, visible exemptions
+
+Each layer names its modules with exactly one of ``package`` (a single
+dotted prefix) or ``packages`` (several). ``package`` predates
+``packages`` and stays supported — it is shipped consumer config, so
+collapsing to one list-typed key (the ``forge-gen-c4`` shape) would
+break existing ``pyproject.toml`` files for no capability gain.
 
 Severity model: a pre-existing violation is ``LOW`` (reported, never
 blocking — the diff is the baseline, so adopting the audit costs zero
@@ -83,15 +93,18 @@ class LayerSpec:
 
     Attributes:
         name: Layer name, referenced by other layers' ``composes_all_of``.
-        package: Dotted package prefix owning the layer's modules.
+        packages: Dotted package prefixes owning the layer's modules
+            (one entry when configured via ``package``).
         composes_all_of: Names of layers every direct child must reach in
             its transitive internal-import closure.
         exempt: Direct-child names excluded from evaluation (rendered as
-            informational findings so exemptions stay visible).
+            informational findings so exemptions stay visible). Matched
+            by bare child name, so one entry covers a same-named child
+            under every prefix of a multi-package layer.
     """
 
     name: str
-    package: str
+    packages: tuple[str, ...]
     composes_all_of: tuple[str, ...] = ()
     exempt: tuple[str, ...] = ()
 
@@ -107,6 +120,60 @@ class LayeringConfig:
     output: Path | None = None
 
 
+def _parse_one_layer(entry: dict[str, object], index: int) -> LayerSpec | str:
+    """Parse one ``[[tool.forge.layering.layer]]`` table.
+
+    Every value is type-checked and rejected with an explicit error —
+    never coerced: ``package = ["a", "b"]`` used to stringify to a
+    prefix matching nothing, a silent misconfiguration.
+
+    Args:
+        entry: The raw layer table.
+        index: 1-based table position, used in error messages.
+
+    Returns:
+        The parsed spec, or an error message when the table is malformed.
+    """
+    name = entry.get("name")
+    if not isinstance(name, str):
+        return f"layer #{index}: 'name' must be a string"
+    if ("package" in entry) == ("packages" in entry):
+        return (
+            f"layer #{index}: needs exactly one of 'package' (string) "
+            f"or 'packages' (array of strings)"
+        )
+    if "package" in entry:
+        package = entry["package"]
+        if not isinstance(package, str):
+            return (
+                f"layer #{index}: 'package' must be a string — use "
+                f"'packages' for a multi-package layer"
+            )
+        packages: tuple[str, ...] = (package,)
+    else:
+        raw_packages = entry["packages"]
+        if (
+            not isinstance(raw_packages, list)
+            or not raw_packages
+            or not all(isinstance(p, str) for p in raw_packages)
+        ):
+            return f"layer #{index}: 'packages' must be a non-empty array of strings"
+        packages = tuple(raw_packages)
+    composes = entry.get("composes_all_of", [])
+    exempt = entry.get("exempt", [])
+    if not isinstance(composes, list) or not isinstance(exempt, list):
+        return (
+            f"layer #{index}: 'composes_all_of' and 'exempt' must be "
+            f"arrays of layer/child names"
+        )
+    return LayerSpec(
+        name=name,
+        packages=packages,
+        composes_all_of=tuple(composes),
+        exempt=tuple(exempt),
+    )
+
+
 def parse_layers(raw: dict[str, object]) -> tuple[list[LayerSpec], list[str]]:
     """Parse ``[tool.forge.layering]`` into layer specs.
 
@@ -115,34 +182,32 @@ def parse_layers(raw: dict[str, object]) -> tuple[list[LayerSpec], list[str]]:
 
     Returns:
         Tuple of (valid layer specs, config-error messages). Errors cover
-        missing keys and ``composes_all_of`` references to undefined
-        layer names — surfaced as findings, never silently dropped.
+        malformed tables, duplicate layer names (first definition wins),
+        and ``composes_all_of`` references to undefined layer names —
+        surfaced as findings, never silently dropped.
     """
     entries = raw.get("layer", [])
     specs: list[LayerSpec] = []
     errors: list[str] = []
     if not isinstance(entries, list):
         return [], ["[tool.forge.layering].layer must be an array of tables"]
-    for i, entry in enumerate(entries):
-        if not isinstance(entry, dict) or "name" not in entry or "package" not in entry:
-            errors.append(f"layer #{i + 1}: needs 'name' and 'package' keys")
+    seen: dict[str, int] = {}
+    for i, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            errors.append(f"layer #{i}: must be a table")
             continue
-        composes = entry.get("composes_all_of", [])
-        exempt = entry.get("exempt", [])
-        if not isinstance(composes, list) or not isinstance(exempt, list):
+        parsed = _parse_one_layer(entry, i)
+        if isinstance(parsed, str):
+            errors.append(parsed)
+            continue
+        if parsed.name in seen:
             errors.append(
-                f"layer #{i + 1}: 'composes_all_of' and 'exempt' must be "
-                f"arrays of layer/child names",
+                f"layer #{i}: duplicate layer name '{parsed.name}' "
+                f"(first definition, layer #{seen[parsed.name]}, wins)",
             )
             continue
-        specs.append(
-            LayerSpec(
-                name=str(entry["name"]),
-                package=str(entry["package"]),
-                composes_all_of=tuple(composes),
-                exempt=tuple(exempt),
-            ),
-        )
+        seen[parsed.name] = i
+        specs.append(parsed)
     known = {s.name for s in specs}
     errors.extend(
         f"layer '{s.name}': composes_all_of names undefined layer '{target}'"
@@ -156,27 +221,28 @@ def parse_layers(raw: dict[str, object]) -> tuple[list[LayerSpec], list[str]]:
 def _direct_children(
     layer: LayerSpec,
     modules: dict[str, ModuleNode],
-) -> dict[str, set[str]]:
-    """Group a layer's modules by direct child of its package.
+) -> dict[tuple[str, str], set[str]]:
+    """Group a layer's modules by direct child under each package prefix.
 
-    The module equal to ``layer.package`` itself (the package surface) is
-    not a child and is excluded.
+    Keyed by ``(prefix, child)`` so same-named children under different
+    prefixes of a multi-package layer stay distinct. A module equal to a
+    prefix itself (the package surface) is not a child and is excluded.
 
     Args:
         layer: The layer being evaluated.
         modules: All discovered modules keyed by dotted name.
 
     Returns:
-        Mapping of child name (single dotted segment) to the set of module
-        names it contains.
+        Mapping of (package prefix, child name) to the set of module
+        names the child contains.
     """
-    prefix = layer.package
-    children: dict[str, set[str]] = defaultdict(set)
-    for name in modules:
-        if not under_module_prefix(name, prefix) or name == prefix:
-            continue
-        child = name[len(prefix) + 1 :].split(".", 1)[0]
-        children[child].add(name)
+    children: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for prefix in layer.packages:
+        for name in modules:
+            if not under_module_prefix(name, prefix) or name == prefix:
+                continue
+            child = name[len(prefix) + 1 :].split(".", 1)[0]
+            children[prefix, child].add(name)
     return children
 
 
@@ -238,14 +304,16 @@ def evaluate(
         Severity-ordered findings (composition misses + visible exemptions).
     """
     layer_modules = {
-        spec.name: {m for m in modules if under_module_prefix(m, spec.package)}
+        spec.name: {
+            m for m in modules if any(under_module_prefix(m, p) for p in spec.packages)
+        }
         for spec in layers
     }
     findings: list[Finding] = []
     for spec in layers:
         if not spec.composes_all_of:
             continue
-        for child, mods in sorted(_direct_children(spec, modules).items()):
+        for (_prefix, child), mods in sorted(_direct_children(spec, modules).items()):
             path, line = _child_finding_anchor(mods, modules)
             if child in spec.exempt:
                 findings.append(
@@ -264,8 +332,12 @@ def evaluate(
             closure = _closure(graph, mods)
             added_here = any(modules[m].path in escalate_paths for m in mods)
             for target in spec.composes_all_of:
-                if target not in layer_modules:
-                    continue  # already a config-error finding
+                if not layer_modules.get(target):
+                    # Undefined name or zero-module layer: both are
+                    # config-error findings, never per-child misses — an
+                    # emptied layer (mid-restructure) must not fail
+                    # every child of every composing layer.
+                    continue
                 if closure & layer_modules[target]:
                     continue
                 severity = Severity.HIGH if added_here else Severity.LOW
@@ -354,6 +426,15 @@ def run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int:
         return 0
 
     modules, graph = build_module_graph(Scope.FULL, roots)
+    # A layer matching zero modules is one loud config error, not N child
+    # misses (evaluate() skips empty targets): a typo'd prefix or an
+    # emptied layer mid-restructure gets a single actionable finding.
+    errors.extend(
+        f"layer '{spec.name}' matches no modules under "
+        + ", ".join(f"'{p}'" for p in spec.packages)
+        for spec in layers
+        if not any(under_module_prefix(m, p) for m in modules for p in spec.packages)
+    )
     escalate = set(
         added_or_moved_files(
             repo_root=root,

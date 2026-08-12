@@ -255,10 +255,10 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ConfigKey(
         ("tool", "forge", "layering", "layer"),
         "unset (audit + step skipped)",
-        "Array of layer tables (name, package, composes_all_of, exempt) for "
-        "forge-audit-layering: every direct child of a layer's package must "
-        "reach each composes_all_of layer in its import closure. Blocking "
-        "only for added/moved modules.",
+        "Array of layer tables (name, package OR packages, composes_all_of, "
+        "exempt) for forge-audit-layering: every direct child of a layer's "
+        "package(s) must reach each composes_all_of layer in its import "
+        "closure. Blocking only for added/moved modules.",
     ),
     ConfigKey(
         ("tool", "forge", "smart_test", "precommit_depth"),
