@@ -92,11 +92,11 @@ Execute `/pr` Step 3.92's authoring contract — composition inputs and the `blo
    cat ./code_health/{ruff,docstring_verification,test_naming_check,repo_structure_check}.log 2>/dev/null
    ```
 
-   Short-circuits before steps 1–3 (decision logic: `/pr` Steps 1 + 3.92):
+   Short-circuits before step 1 (decision logic: `/pr` Steps 1 + 3.92):
 
-   - **Pre-run reports** in the caller's prompt → use them; skip steps 1–3 (the direct-invocation fallback).
+   - **Pre-run reports** in the caller's prompt → use them; skip step 1 (the direct-invocation fallback).
    - **Pre-authored wrap-up** (`code_health/pr_wrapup.md` names `HEAD`) → post verbatim; refresh only the CI Status line — never recompose.
-   - **Delta mode** (conditions: [reporter header contract](_TEMPLATE.md#reporter-agent-header-contract); constants + SHA-scan: `pr_delta.py` — never hardcode) → **skip steps 1–3**; post a "Delta re-verification" comment (prior verdicts, prior SHA, line/file counts) + a refreshed squash-merge comment.
+   - **Delta mode** (the full three-part gate lives in `pr_delta.py` `delta_decision()`; header contract: [_TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract) — never hardcode) → **skip step 1**; post a "Delta re-verification" comment (prior verdicts, prior SHA, line/file counts) + a refreshed squash-merge comment.
    - **Docs-only light path** (caller-declared; classifier: `pr_delta.docs_only_diff`) → docs-types report only; step 2 = the caller's targeted `--only` gates; say so in the wrap-up.
 
 **Base-sync gate** (before the numbered steps): run `/pr` Step 0.5's checks — a behind/conflicting PR is not finalizable:

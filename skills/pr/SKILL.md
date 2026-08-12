@@ -113,7 +113,7 @@ diff since is small AND stays out of high-blast-radius areas — full
 decision criteria, thresholds, and SHA-validation regex are defined
 once in the forge package and consumed by the `pr-manager` agent —
 orchestration detail in
-[`pr-manager.md` "Delta-mode short-circuit"](../../agents/pr-manager.md#task-verification-wrap-up).
+[`pr-manager.md` "Task: Verification (Wrap-up)"](../../agents/pr-manager.md#task-verification-wrap-up).
 
 ```bash
 gh pr comment list <PR#> --json body --jq '.[].body' | grep -E '^verified-at:' | tail -3

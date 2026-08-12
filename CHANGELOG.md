@@ -20,6 +20,18 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.4.3 — Unreleased
+
+### Docs
+- **`pr-manager` agent doc back under budget — zero information loss.**
+  1499 → ~850 words by the audit metric: every removed passage is a
+  pointer to its verified canonical home (FOUNDATION §6/§10, the agent
+  template's contracts, the `/pr` skill's steps), a hoist (the
+  CONTINUATION append rule is now stated once in FOUNDATION §10 and
+  pointed at by both `pr-manager` and `git-commit-push`), or a
+  fence-conversion of exact emitted shapes. Also fixes step references
+  left stale by the internal renumbering.
+
 ## v3.4.2 — Unreleased
 
 ### Fixes
