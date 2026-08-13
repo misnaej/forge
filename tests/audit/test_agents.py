@@ -349,6 +349,112 @@ def test_check_required_sections_flags_missing() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _check_section_order — canonical H2 sections in template order
+# ---------------------------------------------------------------------------
+
+
+def test_check_section_order_in_order_returns_empty() -> None:
+    """All four canonical sections present in template order yield []."""
+    body = (
+        "# Agent\n\n"
+        "## Workflow\nstep\n\n"
+        "## Scope Boundaries\ntext\n\n"
+        "## Output\ntext\n\n"
+        "## Success Criteria\ntext\n"
+    )
+    assert audit_agents._check_section_order(_agent_doc(body=body)) == []
+
+
+def test_check_section_order_flags_swapped_pair() -> None:
+    """Swapping one adjacent pair yields exactly one LOW finding naming it."""
+    body = (
+        "# Agent\n\n"
+        "## Scope Boundaries\ntext\n\n"
+        "## Workflow\nstep\n\n"
+        "## Output\ntext\n\n"
+        "## Success Criteria\ntext\n"
+    )
+    doc = _agent_doc(body=body, path="agents/swapped.md")
+    findings = audit_agents._check_section_order(doc)
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.severity == Severity.LOW
+    assert finding.path == doc.path
+    assert finding.line == 0
+    assert "canonical sections out of template order: found" in finding.message
+    assert "'## Scope Boundaries' → '## Workflow'" in finding.message
+    assert "(see _TEMPLATE.md)" in finding.message
+
+
+def test_check_section_order_missing_section_not_double_reported() -> None:
+    """A missing section alone is not a section-order finding.
+
+    The remaining three sections in template order yield no finding; a
+    present-but-out-of-order subset yields exactly one finding that does
+    not name the absent section — that's `_check_required_sections`'s job.
+    """
+    in_order_body = (
+        "# Agent\n\n"
+        "## Workflow\nstep\n\n"
+        "## Scope Boundaries\ntext\n\n"
+        "## Success Criteria\ntext\n"
+    )
+    assert audit_agents._check_section_order(_agent_doc(body=in_order_body)) == []
+
+    out_of_order_body = (
+        "# Agent\n\n"
+        "## Scope Boundaries\ntext\n\n"
+        "## Workflow\nstep\n\n"
+        "## Success Criteria\ntext\n"
+    )
+    findings = audit_agents._check_section_order(_agent_doc(body=out_of_order_body))
+    assert len(findings) == 1
+    assert "Output" not in findings[0].message
+
+
+def test_check_section_order_body_startswith_first_section() -> None:
+    """A body beginning with the first section (no leading newline) is in order."""
+    body = (
+        "## Workflow\nstep\n\n"
+        "## Scope Boundaries\ntext\n\n"
+        "## Output\ntext\n\n"
+        "## Success Criteria\ntext\n"
+    )
+    assert audit_agents._check_section_order(_agent_doc(body=body)) == []
+
+
+def test_check_section_order_all_sections_missing_returns_empty() -> None:
+    """A body with none of the canonical sections yields []."""
+    body = "# Agent\n\nno canonical sections here\n"
+    assert audit_agents._check_section_order(_agent_doc(body=body)) == []
+
+
+def test_per_agent_findings_includes_section_order_finding() -> None:
+    """`_per_agent_findings` surfaces the section-order finding end to end."""
+    fm = {
+        "name": "test",
+        "description": "Use proactively when validating agent files.",
+        "tools": ("Read",),
+        "model": "haiku",
+    }
+    body = (
+        "# Agent\n\n"
+        "## Scope Boundaries\ntext\n\n"
+        "## Workflow\nstep\n\n"
+        "## Output\ntext\n\n"
+        "## Success Criteria\ntext\n"
+    )
+    doc = _agent_doc(body=body, frontmatter=fm, path="agents/test.md")
+    findings = audit_agents._per_agent_findings(
+        doc,
+        set(),
+        frozenset(audit_agents.REPORTER_AGENT_NAMES),
+        frozenset(audit_agents._REPORTER_WITH_ARTIFACT_NAMES),
+    )
+    assert any("out of template order" in f.message for f in findings)
+
+
+# ---------------------------------------------------------------------------
 # _sanitize_fragment — trust-boundary guard for code_health/audit_agents.log
 #
 # Consumer-authored `.claude/agents/*.md` frontmatter reaches the log via

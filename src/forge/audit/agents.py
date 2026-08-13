@@ -507,6 +507,45 @@ def _check_required_sections(agent: AgentDoc) -> list[Finding]:
     ]
 
 
+def _check_section_order(agent: AgentDoc) -> list[Finding]:
+    """Flag required H2 sections appearing out of template order.
+
+    ``REQUIRED_SECTIONS`` is ordered exactly as ``_TEMPLATE.md`` mandates
+    ("Required body sections"). Only sections actually present are
+    compared — a missing section is ``_check_required_sections``'s
+    finding, not a second one here.
+
+    Args:
+        agent: Parsed agent doc.
+
+    Returns:
+        At most one LOW finding naming the out-of-order sequence found.
+    """
+    positions: list[tuple[int, str]] = []
+    for section in REQUIRED_SECTIONS:
+        marker = f"## {section}"
+        pos = 0 if agent.body.startswith(marker) else agent.body.find(f"\n{marker}")
+        if pos != -1:
+            positions.append((pos, section))
+    expected = [s for _, s in positions]
+    found = [s for _, s in sorted(positions)]
+    if found == expected:
+        return []
+    return [
+        Finding(
+            audit="agents",
+            severity=Severity.LOW,
+            path=agent.path,
+            line=0,
+            message=(
+                "canonical sections out of template order: found "
+                + " → ".join(f"'## {s}'" for s in found)
+                + " (see _TEMPLATE.md)"
+            ),
+        ),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Shared-substring detection
 # ---------------------------------------------------------------------------
@@ -736,6 +775,7 @@ def _per_agent_findings(
         )
     )
     findings.extend(_check_required_sections(agent))
+    findings.extend(_check_section_order(agent))
     findings.extend(_check_foundation_restatements(agent, foundation_ngrams))
     return findings
 

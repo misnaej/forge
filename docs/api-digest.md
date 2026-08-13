@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 693 symbols._
+_63 modules, 694 symbols._
 
 ## `forge`
 
@@ -41,6 +41,7 @@ _63 modules, 693 symbols._
 - `_check_reporter_verified_at(agent: AgentDoc, reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Flag reporter agents missing the ``verified-at:`` header instruction.
 - `_check_header_contract(agent: AgentDoc, names: frozenset[str], *, header: str, rationale: str) -> list[Finding]` _(internal)_ — Flag an agent in *names* whose body never mentions *header*.
 - `_check_required_sections(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag missing canonical H2 sections.
+- `_check_section_order(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag required H2 sections appearing out of template order.
 - `_tokens(text: str) -> list[str]` _(internal)_ — Return whitespace-split lowercase tokens of *text*.
 - `_ngrams(tokens: list[str], n: int) -> set[str]` _(internal)_ — Return the set of *n*-token windows from *tokens*.
 - `_check_foundation_restatements(agent: AgentDoc, foundation_ngrams: set[str]) -> list[Finding]` _(internal)_ — Flag substrings of ``SHARED_TOKEN_MIN`` tokens shared with FOUNDATION.

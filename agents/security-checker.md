@@ -120,12 +120,6 @@ Note: ruff `S` rules (flake8-bandit port) already gate at lint time via
 `select = ["ALL"]`. The agent does not re-run a separate bandit scan to
 avoid duplication.
 
-## Output
-
-`verified-at:` header (see contract in
-[_TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract) for the
-SHA-capture snippet), then the Report Format below.
-
 ## Report Format
 
 ```markdown
@@ -232,6 +226,12 @@ This requires immediate attention before PR can be merged.
 - **No false alarms** - verify findings are actual issues
 - **Context matters** - note when patterns are safe (e.g., pickle from trusted source)
 - Reference [foundation security guidelines](../docs/security.md) for standards
+
+## Output
+
+`verified-at:` header (see contract in
+[_TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract) for the
+SHA-capture snippet), then the Report Format below.
 
 ## Success Criteria
 

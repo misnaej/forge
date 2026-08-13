@@ -135,24 +135,6 @@ adoption" — NOT "Developer Tooling", "Refactoring".
 Write the markdown file (shape in `## Output` below). Status tag every
 theme: `(done)` / `(in progress PR#<n>)` / `(draft PR#<n>)`.
 
-## Output
-
-The agent produces two artifacts.
-
-### (a) The summary file — `.plan/weekly_summary_<start>_to_<end>.md`
-
-First line is the `verified-at:` header per the
-[contract in _TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract)
-(capture snippet lives there).
-
-```markdown
-verified-at: <sha>   (branch <branch>)
-
-# Week Summary: <Date Range>
-
-> **To paste into Google Docs:** Copy all, then in Google Docs:
-> **Right-click → "Paste from Markdown"** (regular paste won't format correctly).
-
 ## Repos covered
 
 - `<owner>/<repo-1>` — N PRs (merged: X, open: Y, draft: Z), M issues
@@ -240,6 +222,24 @@ The summary is ready for paste into Google Docs.
 - **No counts in prose** — "added tests for X" not "added 34 tests"
 - **Specific theme names** — "Claude Code subagents" not "Developer Tooling"
 - **Group by repo first** — one top-level section per repo; never flatten cross-repo work into a single executive summary
+
+## Output
+
+The agent produces two artifacts.
+
+### (a) The summary file — `.plan/weekly_summary_<start>_to_<end>.md`
+
+First line is the `verified-at:` header per the
+[contract in _TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract)
+(capture snippet lives there).
+
+```markdown
+verified-at: <sha>   (branch <branch>)
+
+# Week Summary: <Date Range>
+
+> **To paste into Google Docs:** Copy all, then in Google Docs:
+> **Right-click → "Paste from Markdown"** (regular paste won't format correctly).
 
 ## Success Criteria
 

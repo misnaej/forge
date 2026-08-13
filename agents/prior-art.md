@@ -75,11 +75,6 @@ missing, run `forge-gen-api-digest` first (never guess from memory).
      (nearest-relative family, never a catch-all like `common`/`utils`
      without justification), and say which layer contract will apply.
 
-## Output
-
-```
-prior-art-searched: digest=<hash12> queries=<n>
-
 ## Prior-Art Report: <planned symbol/file>
 
 ### Queries run
@@ -108,6 +103,11 @@ prior-art-searched: digest=<hash12> queries=<n>
   agent exists to close
 - Review broader design → **`forge:design-checker`** (its pre-write
   briefing covers style/violations; I own existence + placement)
+
+## Output
+
+```
+prior-art-searched: digest=<hash12> queries=<n>
 
 ## Success Criteria
 
