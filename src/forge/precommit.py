@@ -68,6 +68,7 @@ import shlex
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
+from importlib import resources
 from typing import TYPE_CHECKING
 
 from forge import config, pip_audit_json
@@ -98,6 +99,7 @@ from forge.git_utils import (
     write_tree,
 )
 from forge.git_utils import repo_root as get_repo_root
+from forge.install_claudemd import foundation_matches_installed
 from forge.run_context import is_ci, is_non_interactive
 
 
@@ -873,6 +875,123 @@ def step_api_digest_check(repo_root: Path) -> StepResult:
     require_cli("forge-gen-api-digest", caller="forge-precommit")
     passed, output = _run(["forge-gen-api-digest", "--check"], cwd=repo_root)
     return StepResult(name="api_digest_check", passed=passed, output=output)
+
+
+# The cli-reference doc path — shared reference for the opt-in drift gate
+# so future writers and the gate never disagree on which file they cover.
+_CLI_REFERENCE_DOC = "docs/cli-reference.md"
+
+
+def step_cli_reference_check(repo_root: Path) -> StepResult:
+    """Run ``forge-gen-cli-reference --check`` — cli-reference drift guard (opt-in).
+
+    Mirrors :func:`step_api_digest_check` for ``docs/cli-reference.md``,
+    closing the "no drift gate of its own" gap. One of the provenance
+    gates the ``/pr`` regen-verified light path runs (``forge-precommit --only
+    foundation_md_check,cli_reference_check,api_digest_check``)
+    before letting a resync PR skip the reporter round.
+
+    Opt-in only — runs when listed in ``[tool.forge.precommit] enable``
+    or named via ``--only``. Self-skips when the doc does not exist.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` mirroring the CLI exit code, or a skipped result
+        when no cli-reference doc is present.
+
+    Raises:
+        SystemExit: If ``forge-gen-cli-reference`` is not on PATH.
+    """
+    if not (repo_root / _CLI_REFERENCE_DOC).exists():
+        return StepResult(
+            name="cli_reference_check",
+            passed=True,
+            output=f"(no {_CLI_REFERENCE_DOC} — skipped)",
+            skipped=True,
+        )
+    require_cli("forge-gen-cli-reference", caller="forge-precommit")
+    passed, output = _run(["forge-gen-cli-reference", "--check"], cwd=repo_root)
+    return StepResult(name="cli_reference_check", passed=passed, output=output)
+
+
+def step_foundation_md_check(repo_root: Path) -> StepResult:
+    """Verify ``FOUNDATION.md`` reproduces the installed foundation (opt-in).
+
+    The provenance gate behind the ``/pr`` regen-verified light path: a
+    resync PR's ``FOUNDATION.md`` must byte-reproduce the shipped
+    ``forge/data/FOUNDATION.md`` (version banner ignored — the same rule
+    ``install-forge-claude-md`` syncs by). A hand edit, an unmanaged
+    file, or a stale copy FAILS — falling the PR back to the full
+    review round.
+
+    **Editable-install self-reference is a FAIL, not a pass**: in
+    forge's own repo the packaged copy is a symlink to the very file
+    under review, so a byte-compare would vacuously approve any edit.
+    Unverifiable provenance means no light path.
+
+    Opt-in only — runs when listed in ``[tool.forge.precommit] enable``
+    or named via ``--only``. Self-skips when no ``FOUNDATION.md``
+    exists (repo does not adopt the foundation).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult``; blocking on divergence, self-reference, or a
+        missing installed reference.
+    """
+    target = repo_root / "FOUNDATION.md"
+    if not target.exists():
+        return StepResult(
+            name="foundation_md_check",
+            passed=True,
+            output="(no FOUNDATION.md — skipped)",
+            skipped=True,
+        )
+    try:
+        ref = resources.files("forge").joinpath("data/FOUNDATION.md")
+        with resources.as_file(ref) as ref_path:
+            self_referential = ref_path.exists() and target.samefile(ref_path)
+    except (ModuleNotFoundError, OSError) as exc:
+        return StepResult(
+            name="foundation_md_check",
+            passed=False,
+            output=(
+                f"FAIL: installed forge foundation unavailable ({exc}) — "
+                "provenance unverifiable."
+            ),
+        )
+    if self_referential:
+        return StepResult(
+            name="foundation_md_check",
+            passed=False,
+            output=(
+                "FAIL: FOUNDATION.md and the installed copy are the same "
+                "file (editable install) — a byte-compare would approve "
+                "any edit, so provenance is unverifiable here."
+            ),
+        )
+    if foundation_matches_installed(target):
+        return StepResult(
+            name="foundation_md_check",
+            passed=True,
+            output=(
+                "FOUNDATION.md reproduces the installed forge-scripts "
+                "foundation (version banner ignored)."
+            ),
+        )
+    return StepResult(
+        name="foundation_md_check",
+        passed=False,
+        output=(
+            "FAIL: FOUNDATION.md does not match the installed foundation "
+            "— hand-edited, stale, or unmanaged. Run "
+            "install-forge-claude-md to resync, or take the full review "
+            "path."
+        ),
+    )
 
 
 # Maximum residual ``pip-audit`` advisories allowed before the WARN
@@ -2055,6 +2174,18 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("c4", step_c4, tree_content=True, default_on=False),
     StepDef(
         "api_digest_check", step_api_digest_check, tree_content=True, default_on=False
+    ),
+    StepDef(
+        "cli_reference_check",
+        step_cli_reference_check,
+        tree_content=True,
+        default_on=False,
+    ),
+    StepDef(
+        "foundation_md_check",
+        step_foundation_md_check,
+        tree_content=True,
+        default_on=False,
     ),
     StepDef("smart_test", step_smart_test, tree_content=True, default_on=False),
     StepDef("layering", step_layering, tree_content=True, default_on=False),

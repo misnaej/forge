@@ -8,11 +8,13 @@ from forge.pr_delta import (
     DELTA_LINE_THRESHOLD,
     DOCS_ONLY_GLOBS,
     HIGH_BLAST_RADIUS_PATHS,
+    MANAGED_REGEN_PATHS,
     VERIFIED_AT_RE,
     configured_docs_only_globs,
     delta_decision,
     docs_only_diff,
     extract_verified_shas,
+    regen_only_diff,
     touches_high_blast_radius,
 )
 
@@ -207,3 +209,25 @@ def test_configured_docs_only_globs_ignores_non_string_items(tmp_path: Path) -> 
 
     (tmp_path / "pyproject.toml").write_text('[tool.forge.pr]\ndocs_only_globs = "x"\n')
     assert configured_docs_only_globs(tmp_path) == ()
+
+
+def test_regen_only_diff_empty_is_false() -> None:
+    """No changed paths → nothing to classify; not eligible."""
+    assert not regen_only_diff([])
+
+
+def test_regen_only_diff_all_managed_is_true() -> None:
+    """A diff of every managed regen path together qualifies."""
+    assert regen_only_diff(list(MANAGED_REGEN_PATHS))
+    assert regen_only_diff(["FOUNDATION.md"])
+
+
+def test_regen_only_diff_mixed_managed_and_unmanaged_is_false() -> None:
+    """Any non-managed path in the diff disqualifies the whole diff."""
+    assert not regen_only_diff(["FOUNDATION.md", "src/forge/pr_delta.py"])
+
+
+def test_regen_only_diff_case_insensitive_matches() -> None:
+    """Case-varied managed paths still classify as eligible (casefold match)."""
+    assert regen_only_diff(["FOUNDATION.MD"])
+    assert regen_only_diff(["Docs/Cli-Reference.md"])

@@ -70,6 +70,22 @@ DOCS_ONLY_GLOBS: Final[tuple[str, ...]] = (
 )
 
 
+# Forge-managed regen artifacts a resync PR's diff may consist entirely
+# of. The `/pr` regen-verified light path classifies with
+# :func:`regen_only_diff` and then EARNS the escape per-PR by running the
+# provenance gates (`forge-precommit --only
+# foundation_md_check,cli_reference_check,api_digest_check`) —
+# classification alone never skips review, and a provenance failure
+# (including the editable-install self-reference case) falls back to the
+# full round. Other bootstrap-managed files (badges, hook wrappers) are
+# deliberately absent: a diff touching them takes the full path.
+MANAGED_REGEN_PATHS: Final[tuple[str, ...]] = (
+    "FOUNDATION.md",
+    "docs/cli-reference.md",
+    "docs/api-digest.md",
+)
+
+
 # Matches the reporter-agent header contract documented in
 # agents/_TEMPLATE.md "Reporter-agent header contract".
 # Example: `verified-at: 7ab3e4e   (PR #56, branch fix/foo)`
@@ -175,6 +191,33 @@ def docs_only_diff(
     return all(
         any(fnmatch(path.casefold(), g) for g in globs) for path in changed_paths
     )
+
+
+def regen_only_diff(changed_paths: list[str]) -> bool:
+    """Return whether every changed path is a forge-managed regen artifact.
+
+    Pure path classifier, same contract shape as :func:`docs_only_diff`
+    — it decides *eligibility* for the regen-verified light path, never
+    the escape itself: provenance is established by the pre-commit gates
+    named on :data:`MANAGED_REGEN_PATHS`, which byte-verify each file
+    against the installed package at finalization time.
+
+    Known residual (documented, accepted): classification sees path
+    strings only. A managed path whose content was hand-edited after
+    regen classifies as eligible here and is caught by the provenance
+    gates instead — that split is the design, not a gap.
+
+    Args:
+        changed_paths: Repo-relative paths from ``git diff --name-only``.
+
+    Returns:
+        ``True`` when the diff is non-empty and every path is managed;
+        ``False`` otherwise.
+    """
+    if not changed_paths:
+        return False
+    managed = {p.casefold() for p in MANAGED_REGEN_PATHS}
+    return all(path.casefold() in managed for path in changed_paths)
 
 
 def delta_decision(

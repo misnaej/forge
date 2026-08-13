@@ -105,6 +105,31 @@ the diff is docs-only:
   injection-shaped prose are not detected; docs-types-checker plus the
   human PR review remain the reviewers of record for doc content.
 
+**Regen-verified light path — resync PRs.** When the diff is not
+docs-only, classify with `pr_delta.regen_only_diff`: every changed path
+in `pr_delta.MANAGED_REGEN_PATHS` (`FOUNDATION.md`,
+`docs/cli-reference.md`, `docs/api-digest.md` — the `forge-resync`
+artifact set). If it classifies, **earn** the escape by running the
+provenance gates:
+
+```bash
+forge-precommit --only foundation_md_check,cli_reference_check,api_digest_check
+```
+
+- **Every gate passes** (a gate skipped for a file absent from the repo
+  is fine) → light path: skip the design/security reporters AND
+  docs-types-checker — nothing was authored; a byte-comparison against
+  the installed package is stronger evidence on generated content than
+  a prose review. The wrap-up embeds the gate outputs verbatim as its
+  verification evidence and says the PR took the regen-verified path.
+- **Any gate FAILS** → full round, no exceptions. This includes the
+  editable-install self-reference case (`foundation_md_check` FAILs
+  when the repo file IS the installed copy — provenance unverifiable)
+  and any hand-edit slipped into a managed file: the byte check is the
+  detector for exactly that tampering, which is why classification by
+  path alone never grants the escape.
+- Steps 3–4 run as normal (wrap-up + squash message stay MANDATORY).
+
 Otherwise, check if the PR is eligible for
 **delta mode** (needs an existing PR — its inputs are prior wrap-up
 comments; on a first run with no PR yet, skip the delta check and run the
