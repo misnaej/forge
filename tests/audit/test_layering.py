@@ -1327,7 +1327,7 @@ def test_run_require_without_layers_exits_one_with_needs_at_least_one(
 ) -> None:
     """`require_all_classified = true` with zero layers is a config error.
 
-    Not a no-op.
+    Not a silent no-op.
     """
     write_pyproject(fake_repo, REQUIRE_NO_LAYERS_TOML)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
@@ -1427,9 +1427,9 @@ def test_run_composition_and_coverage_high_findings_both_counted_in_summary(
     fake_repo: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A composition HIGH and a coverage HIGH are both reflected, distinctly.
+    """A composition HIGH and a coverage HIGH are both reflected distinctly.
 
-    In the summary.
+    Both are reflected in the summary.
     """
     write_pyproject(fake_repo, TWO_LAYER_REQUIRE_TOML)
     _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
@@ -1517,9 +1517,9 @@ def test_run_flag_off_default_ignores_unclassified_package(
     fake_repo: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With `require_all_classified` unset (default off).
+    """With `require_all_classified` unset (default off), coverage is not evaluated.
 
-    Coverage is never evaluated.
+    Coverage is never evaluated by default.
     """
     write_pyproject(fake_repo, LAYER_NO_REQUIRE_TOML)
     _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)

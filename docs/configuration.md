@@ -318,7 +318,7 @@ following produces a single HIGH config-error finding (anchored at
 | Key (table-level) | Default | What it does |
 |---|---|---|
 | `require_all_classified` | `false` | Every **top-level** source package must be classified — reached by some layer's prefix, or listed in `unclassified_allow`. An unclassified package is a **blocking HIGH** finding anchored at the package's first module. |
-| `unclassified_allow` | `[]` | Deliberate opt-outs, surfaced as REVIEW findings (visible, reviewed — never silent). A stale entry matching no discovered package is flagged for removal. |
+| `unclassified_allow` | `[]` | Deliberate opt-outs, surfaced as REVIEW findings (visible, reviewed — never silent). A stale entry (matches no discovered package) or a redundant one (names an already-classified package) is flagged for removal. |
 
 Why: `packages = [...]` makes a multi-package domain *expressible*; this
 gate makes it *safe under refactoring*. When a dissolving umbrella

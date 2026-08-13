@@ -44,7 +44,10 @@ prefix, or named in ``unclassified_allow`` — else a blocking finding
 fires. This is the safety half of multi-package layering: during a
 package-dissolve refactor, a package promoted to a new top-level prefix
 but not added to any layer would otherwise drop out of the gate
-*silently*, on exactly the code just moved.
+*silently*, on exactly the code just moved. Unlike ``composes_all_of``
+violations, an unclassified-package finding is **not** baseline-scoped:
+it blocks every commit while the flag is on, not just commits touching
+that package.
 
 Severity model: a pre-existing violation is ``LOW`` (reported, never
 blocking — the diff is the baseline, so adopting the audit costs zero
