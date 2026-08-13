@@ -429,6 +429,55 @@ def test_check_section_order_all_sections_missing_returns_empty() -> None:
     assert audit_agents._check_section_order(_agent_doc(body=body)) == []
 
 
+def test_check_required_sections_heading_inside_fence_counts_missing() -> None:
+    """A heading swallowed by a code fence does not count as present.
+
+    Matches against `body_no_code`: `_strip_code_blocks` removes the
+    fenced ``## Output`` entirely, so it is missing exactly like a
+    section that was never written.
+    """
+    body = (
+        "# Agent\n\n"
+        "## Workflow\nstep\n\n"
+        "## Scope Boundaries\ntext\n\n"
+        "```\n## Output\nfenced content\n```\n\n"
+        "## Success Criteria\ntext\n"
+    )
+    doc = audit_agents.AgentDoc(
+        path="agents/fenced.md",
+        frontmatter={},
+        body=body,
+        body_no_code=audit_agents._strip_code_blocks(body),
+    )
+    findings = audit_agents._check_required_sections(doc)
+    assert len(findings) == 1
+    assert "'## Output'" in findings[0].message
+
+
+def test_check_section_order_ignores_fenced_heading() -> None:
+    """A heading duplicated inside a later code fence is not a phantom position.
+
+    All four canonical sections appear once, in template order; a fenced
+    block re-mentioning ``## Workflow`` is stripped before position
+    comparison, so it cannot create a false out-of-order finding.
+    """
+    body = (
+        "# Agent\n\n"
+        "## Workflow\nstep\n\n"
+        "## Scope Boundaries\ntext\n\n"
+        "## Output\ntext\n\n"
+        "## Success Criteria\ntext\n\n"
+        "```\n## Workflow\nfenced duplicate\n```\n"
+    )
+    doc = audit_agents.AgentDoc(
+        path="agents/fenced.md",
+        frontmatter={},
+        body=body,
+        body_no_code=audit_agents._strip_code_blocks(body),
+    )
+    assert audit_agents._check_section_order(doc) == []
+
+
 def test_per_agent_findings_includes_section_order_finding() -> None:
     """`_per_agent_findings` surfaces the section-order finding end to end."""
     fm = {

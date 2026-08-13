@@ -231,7 +231,7 @@ This requires immediate attention before PR can be merged.
 
 `verified-at:` header (see contract in
 [_TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract) for the
-SHA-capture snippet), then the Report Format below.
+SHA-capture snippet), then the [Report Format](#report-format) above.
 
 ## Success Criteria
 

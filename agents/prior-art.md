@@ -75,19 +75,6 @@ missing, run `forge-gen-api-digest` first (never guess from memory).
      (nearest-relative family, never a catch-all like `common`/`utils`
      without justification), and say which layer contract will apply.
 
-## Prior-Art Report: <planned symbol/file>
-
-### Queries run
-1. `<exact command>` → <result summary or "no match">
-...
-
-### Verdict: REUSE | EXTEND | NEW
-<the verdict's required content per above>
-
-### Layer context
-<owning layer + composes_all_of implications, or "no layering config">
-```
-
 ## Scope Boundaries
 
 ### I WILL
@@ -108,6 +95,19 @@ missing, run `forge-gen-api-digest` first (never guess from memory).
 
 ```
 prior-art-searched: digest=<hash12> queries=<n>
+
+## Prior-Art Report: <planned symbol/file>
+
+### Queries run
+1. `<exact command>` → <result summary or "no match">
+...
+
+### Verdict: REUSE | EXTEND | NEW
+<the verdict's required content per above>
+
+### Layer context
+<owning layer + composes_all_of implications, or "no layering config">
+```
 
 ## Success Criteria
 

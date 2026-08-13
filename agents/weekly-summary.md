@@ -135,6 +135,52 @@ adoption" — NOT "Developer Tooling", "Refactoring".
 Write the markdown file (shape in `## Output` below). Status tag every
 theme: `(done)` / `(in progress PR#<n>)` / `(draft PR#<n>)`.
 
+## Scope Boundaries
+
+### I WILL
+
+- Discover repos with activity OR honour the caller's repo / repo-list
+- Use `AskUserQuestion` to confirm repo scope when not specified
+- Fetch all activity (PRs, issues, commits) in the date range
+- Extract implementation details (functions, classes, files)
+- Group output by repo first, then by theme
+- Write the summary file under `.plan/`
+
+### I WILL NOT (report and stop)
+
+- Make any code changes → **summary generation only**
+- Create PRs or issues → **report only**
+- Commit anything → **Use `forge:git-commit-push`**
+- Fix any code issues → **Use `forge:precommit-fixer`**
+
+## Critical Rules
+
+- **Capture all work** — completed (merged) AND in-progress (open, draft)
+- **Status in parentheses** on every theme: `(done)` / `(in progress PR#<n>)` / `(draft PR#<n>)`
+- **One sub-bullet per theme** in the executive summary — concise
+- **Specific names not verbose** — `function_name()`, `ClassName`, agent slugs; keep descriptions short
+- **No counts in prose** — "added tests for X" not "added 34 tests"
+- **Specific theme names** — "Claude Code subagents" not "Developer Tooling"
+- **Group by repo first** — one top-level section per repo; never flatten cross-repo work into a single executive summary
+
+## Output
+
+The agent produces two artifacts.
+
+### (a) The summary file — `.plan/weekly_summary_<start>_to_<end>.md`
+
+First line is the `verified-at:` header per the
+[contract in _TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract)
+(capture snippet lives there).
+
+```markdown
+verified-at: <sha>   (branch <branch>)
+
+# Week Summary: <Date Range>
+
+> **To paste into Google Docs:** Copy all, then in Google Docs:
+> **Right-click → "Paste from Markdown"** (regular paste won't format correctly).
+
 ## Repos covered
 
 - `<owner>/<repo-1>` — N PRs (merged: X, open: Y, draft: Z), M issues
@@ -194,52 +240,6 @@ File: .plan/weekly_summary_<dates>.md
 
 The summary is ready for paste into Google Docs.
 ```
-
-## Scope Boundaries
-
-### I WILL
-
-- Discover repos with activity OR honour the caller's repo / repo-list
-- Use `AskUserQuestion` to confirm repo scope when not specified
-- Fetch all activity (PRs, issues, commits) in the date range
-- Extract implementation details (functions, classes, files)
-- Group output by repo first, then by theme
-- Write the summary file under `.plan/`
-
-### I WILL NOT (report and stop)
-
-- Make any code changes → **summary generation only**
-- Create PRs or issues → **report only**
-- Commit anything → **Use `forge:git-commit-push`**
-- Fix any code issues → **Use `forge:precommit-fixer`**
-
-## Critical Rules
-
-- **Capture all work** — completed (merged) AND in-progress (open, draft)
-- **Status in parentheses** on every theme: `(done)` / `(in progress PR#<n>)` / `(draft PR#<n>)`
-- **One sub-bullet per theme** in the executive summary — concise
-- **Specific names not verbose** — `function_name()`, `ClassName`, agent slugs; keep descriptions short
-- **No counts in prose** — "added tests for X" not "added 34 tests"
-- **Specific theme names** — "Claude Code subagents" not "Developer Tooling"
-- **Group by repo first** — one top-level section per repo; never flatten cross-repo work into a single executive summary
-
-## Output
-
-The agent produces two artifacts.
-
-### (a) The summary file — `.plan/weekly_summary_<start>_to_<end>.md`
-
-First line is the `verified-at:` header per the
-[contract in _TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract)
-(capture snippet lives there).
-
-```markdown
-verified-at: <sha>   (branch <branch>)
-
-# Week Summary: <Date Range>
-
-> **To paste into Google Docs:** Copy all, then in Google Docs:
-> **Right-click → "Paste from Markdown"** (regular paste won't format correctly).
 
 ## Success Criteria
 
