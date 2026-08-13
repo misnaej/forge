@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 689 symbols._
+_63 modules, 690 symbols._
 
 ## `forge`
 
@@ -169,8 +169,9 @@ _63 modules, 689 symbols._
 
 - `class LayerSpec` — One configured layer contract.
 - `class LayeringConfig` — Tunable knobs for the layering audit.
+- `_parse_one_layer(entry: dict[str, object], index: int) -> LayerSpec | str` _(internal)_ — Parse one ``[[tool.forge.layering.layer]]`` table.
 - `parse_layers(raw: dict[str, object]) -> tuple[list[LayerSpec], list[str]]` — Parse ``[tool.forge.layering]`` into layer specs.
-- `_direct_children(layer: LayerSpec, modules: dict[str, ModuleNode]) -> dict[str, set[str]]` _(internal)_ — Group a layer's modules by direct child of its package.
+- `_direct_children(layer: LayerSpec, modules: dict[str, ModuleNode]) -> dict[tuple[str, str], set[str]]` _(internal)_ — Group a layer's modules by direct child under each package prefix.
 - `_closure(graph: dict[str, set[str]], start: set[str]) -> set[str]` _(internal)_ — Return the transitive import closure of ``start`` (inclusive).
 - `_child_finding_anchor(mods: set[str], modules: dict[str, ModuleNode]) -> tuple[str, int]` _(internal)_ — Pick a stable file anchor for a child-level finding.
 - `evaluate(layers: list[LayerSpec], modules: dict[str, ModuleNode], graph: dict[str, set[str]], *, escalate_paths: set[str]) -> list[Finding]` — Evaluate every layer contract over the module graph.
