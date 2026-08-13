@@ -106,22 +106,6 @@ Example: `fix: resolve parameter validation [depth-0]`
 - **NEVER add Claude/AI attribution** in commit messages — enforced by `claude-hooks/block_claude_attribution.sh`.
 - **If pre-commit fails**: Stop and report - do not attempt to fix (that's `precommit-fixer`'s job)
 
-## Output
-
-```
-COMMIT-PUSH COMPLETE
-
-Commit: <short-hash> <subject>
-Files staged: <paths, or "all (-A)">
-Pre-commit: passed
-Pushed: <branch> → origin/<branch> (tracking set, if -u)
-CONTINUATION: appended
-```
-
-On pre-commit failure, emit the `OUTSIDE MY SCOPE: Pre-commit
-violations detected` block below instead. On push failure, report the
-exact git error and skip the CONTINUATION append (step 6).
-
 ## Scope Boundaries
 
 ### I WILL:
@@ -171,6 +155,22 @@ Specific errors from logs:
 ```
 
 **I will NOT attempt to fix violations myself. I will STOP and report with specifics.**
+
+## Output
+
+```
+GIT-COMMIT-PUSH COMPLETE
+
+Commit: <short-hash> <subject>
+Files staged: <paths, or "all (-A)">
+Pre-commit: passed
+Pushed: <branch> → origin/<branch> (tracking set, if -u)
+CONTINUATION: appended
+```
+
+On pre-commit failure, emit the `OUTSIDE MY SCOPE: Pre-commit
+violations detected` block above instead. On push failure, report the
+exact git error and skip the CONTINUATION append (step 6).
 
 ## Success Criteria
 
