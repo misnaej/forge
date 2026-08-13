@@ -717,6 +717,260 @@ def test_evaluate_child_missing_one_of_two_targets_reports_one_finding() -> None
 
 
 # ---------------------------------------------------------------------------
+# _parse_coverage_config
+# ---------------------------------------------------------------------------
+
+
+def test_parse_coverage_config_defaults_returns_false_empty_no_errors() -> None:
+    """An empty table with at least one layer parses to the all-off default."""
+    assert layering._parse_coverage_config({}, has_layers=True) == (False, (), [])
+
+
+def test_parse_coverage_config_non_bool_require_reports_error_and_coerces_false() -> (
+    None
+):
+    """A non-bool `require_all_classified` is rejected, not coerced truthy."""
+    require, _allow, errors = layering._parse_coverage_config(
+        {"require_all_classified": "yes"},
+        has_layers=True,
+    )
+    assert require is False
+    assert errors == [
+        "[tool.forge.layering].require_all_classified must be a boolean",
+    ]
+
+
+def test_parse_coverage_config_allow_not_list_reports_error_and_empty_tuple() -> None:
+    """A non-list `unclassified_allow` is rejected, coerced to an empty tuple."""
+    require, allow, errors = layering._parse_coverage_config(
+        {"unclassified_allow": "scripts"},
+        has_layers=True,
+    )
+    assert require is False
+    assert allow == ()
+    assert errors == [
+        "[tool.forge.layering].unclassified_allow must be an array of strings",
+    ]
+
+
+def test_parse_coverage_config_allow_non_string_element_reports_error() -> None:
+    """A `unclassified_allow` array with a non-string element is rejected outright."""
+    _require, allow, errors = layering._parse_coverage_config(
+        {"unclassified_allow": ["scripts", 1]},
+        has_layers=True,
+    )
+    assert allow == ()
+    assert errors == [
+        "[tool.forge.layering].unclassified_allow must be an array of strings",
+    ]
+
+
+def test_parse_coverage_config_require_true_without_layers_reports_error() -> None:
+    """`require_all_classified = true` with no layers configured is an error."""
+    require, _allow, errors = layering._parse_coverage_config(
+        {"require_all_classified": True},
+        has_layers=False,
+    )
+    assert require is False
+    assert errors == [
+        (
+            "require_all_classified = true needs at least one "
+            "[[tool.forge.layering.layer]] — with no layers, nothing "
+            "could classify any package"
+        ),
+    ]
+
+
+def test_parse_coverage_config_require_true_with_layers_and_valid_allow() -> None:
+    """A valid `require_all_classified` + `unclassified_allow` pair parses clean."""
+    assert layering._parse_coverage_config(
+        {"require_all_classified": True, "unclassified_allow": ["scripts"]},
+        has_layers=True,
+    ) == (True, ("scripts",), [])
+
+
+def test_parse_coverage_config_non_bool_require_without_layers_single_error() -> None:
+    """Coercing a non-bool `require` to False must not double-fire no-layers too.
+
+    Regression guard: `require and not has_layers` must see the *coerced*
+    False, not the original truthy raw value — otherwise a single bad
+    config value would report two errors instead of one.
+    """
+    require, _allow, errors = layering._parse_coverage_config(
+        {"require_all_classified": "yes"},
+        has_layers=False,
+    )
+    assert require is False
+    assert errors == [
+        "[tool.forge.layering].require_all_classified must be a boolean",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# _top_level_packages
+# ---------------------------------------------------------------------------
+
+
+def test_top_level_packages_empty_modules_returns_empty_dict() -> None:
+    """An empty module set groups to an empty mapping."""
+    assert layering._top_level_packages({}) == {}
+
+
+def test_top_level_packages_nested_modules_group_under_one_top() -> None:
+    """Modules sharing a first dotted segment group under that one top."""
+    modules = {
+        "myproj.a.x": _node("myproj.a.x", "src/myproj/a/x.py"),
+        "myproj.a.y": _node("myproj.a.y", "src/myproj/a/y.py"),
+    }
+    assert layering._top_level_packages(modules) == {
+        "myproj": {"myproj.a.x", "myproj.a.y"},
+    }
+
+
+def test_top_level_packages_two_tops_kept_separate() -> None:
+    """Modules under distinct first segments group into distinct tops."""
+    modules = {
+        "myproj.a.x": _node("myproj.a.x", "src/myproj/a/x.py"),
+        "other.b.y": _node("other.b.y", "src/other/b/y.py"),
+    }
+    assert layering._top_level_packages(modules) == {
+        "myproj": {"myproj.a.x"},
+        "other": {"other.b.y"},
+    }
+
+
+def test_top_level_packages_dotless_module_is_its_own_top() -> None:
+    """A dotless module name (no package) is its own top-level entry."""
+    modules = {"toplevel": _node("toplevel", "src/toplevel.py")}
+    assert layering._top_level_packages(modules) == {"toplevel": {"toplevel"}}
+
+
+# ---------------------------------------------------------------------------
+# _coverage_findings
+# ---------------------------------------------------------------------------
+
+
+def test_coverage_findings_dissolved_package_reports_high_unclassified() -> None:
+    """A top-level package no layer prefix reaches is a blocking HIGH finding."""
+    layers = [LayerSpec(name="myproj", packages=("myproj",))]
+    modules = {
+        "myproj.core": _node("myproj.core", "src/myproj/core.py"),
+        "orphan.mod": _node("orphan.mod", "src/orphan/mod.py"),
+    }
+    findings, n_unclassified = layering._coverage_findings(layers, modules, allow=())
+    assert n_unclassified == 1
+    assert len(findings) == 1
+    assert findings[0].severity is Severity.HIGH
+    assert "top-level package 'orphan' is not classified" in findings[0].message
+
+
+def test_coverage_findings_single_root_shared_first_segment_no_findings() -> None:
+    """A layer prefix under the same top as an unrelated sibling classifies both."""
+    layers = [LayerSpec(name="pipelines", packages=("myproj.pipelines",))]
+    modules = {
+        "myproj.pipelines.x": _node("myproj.pipelines.x", "src/myproj/pipelines/x.py"),
+        "myproj.other.y": _node("myproj.other.y", "src/myproj/other/y.py"),
+    }
+    findings, n_unclassified = layering._coverage_findings(layers, modules, allow=())
+    assert findings == []
+    assert n_unclassified == 0
+
+
+def test_coverage_findings_allow_listed_reports_review_not_high() -> None:
+    """An `unclassified_allow` entry downgrades the finding to REVIEW, non-blocking."""
+    modules = {"orphan.mod": _node("orphan.mod", "src/orphan/mod.py")}
+    findings, n_unclassified = layering._coverage_findings(
+        [],
+        modules,
+        allow=("orphan",),
+    )
+    assert n_unclassified == 0
+    assert len(findings) == 1
+    assert findings[0].severity is Severity.REVIEW
+    assert "deliberately unclassified" in findings[0].message
+
+
+def test_coverage_findings_stale_allow_entry_reports_review_at_pyproject() -> None:
+    """An `unclassified_allow` entry matching no discovered package is flagged stale."""
+    layers = [LayerSpec(name="myproj", packages=("myproj",))]
+    modules = {"myproj.core": _node("myproj.core", "src/myproj/core.py")}
+    findings, n_unclassified = layering._coverage_findings(
+        layers,
+        modules,
+        allow=("ghost",),
+    )
+    assert n_unclassified == 0
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.severity is Severity.REVIEW
+    assert finding.path == "pyproject.toml"
+    assert finding.line == 1
+    assert "stale — remove it" in finding.message
+
+
+def test_coverage_findings_redundant_allow_entry_reports_review_at_pyproject() -> None:
+    """An `unclassified_allow` entry naming an already-classified package is redundant.
+
+    Distinct from the stale case (matches no package at all): here the
+    package exists and IS classified, so the opt-out never does anything —
+    flagged separately so the two dead-entry causes aren't conflated.
+    """
+    layers = [LayerSpec(name="myproj", packages=("myproj",))]
+    modules = {"myproj.core": _node("myproj.core", "src/myproj/core.py")}
+    findings, n_unclassified = layering._coverage_findings(
+        layers,
+        modules,
+        allow=("myproj",),
+    )
+    assert n_unclassified == 0
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.severity is Severity.REVIEW
+    assert finding.path == "pyproject.toml"
+    assert finding.line == 1
+    assert "redundant — remove it" in finding.message
+
+
+def test_coverage_findings_fully_classified_returns_empty() -> None:
+    """A tree where every top-level package is classified reports nothing."""
+    layers = [LayerSpec(name="myproj", packages=("myproj",))]
+    modules = {"myproj.core": _node("myproj.core", "src/myproj/core.py")}
+    assert layering._coverage_findings(layers, modules, allow=()) == ([], 0)
+
+
+def test_coverage_findings_anchor_is_alphabetically_first_module_path() -> None:
+    """The finding's anchor path is the top's alphabetically-first module."""
+    modules = {
+        "orphan.b": _node("orphan.b", "src/orphan/b.py"),
+        "orphan.a": _node("orphan.a", "src/orphan/a.py"),
+    }
+    findings, _n_unclassified = layering._coverage_findings([], modules, allow=())
+    assert findings[0].path == "src/orphan/a.py"
+
+
+def test_coverage_findings_two_unclassified_reports_two_high() -> None:
+    """Two unrelated unclassified top-level packages each get their own HIGH."""
+    modules = {
+        "a.mod": _node("a.mod", "src/a/mod.py"),
+        "b.mod": _node("b.mod", "src/b/mod.py"),
+    }
+    findings, n_unclassified = layering._coverage_findings([], modules, allow=())
+    assert n_unclassified == 2
+    assert len(findings) == 2
+    assert all(f.severity is Severity.HIGH for f in findings)
+
+
+def test_coverage_findings_sorted_by_top_level_name() -> None:
+    """Findings are emitted in sorted top-level-package order, not discovery order."""
+    modules = {
+        "zebra.mod": _node("zebra.mod", "src/zebra/mod.py"),
+        "alpha.mod": _node("alpha.mod", "src/alpha/mod.py"),
+    }
+    findings, _n_unclassified = layering._coverage_findings([], modules, allow=())
+    assert [f.path for f in findings] == ["src/alpha/mod.py", "src/zebra/mod.py"]
+
+
+# ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
 
@@ -1012,6 +1266,274 @@ def test_run_changed_scope_low_survives_via_non_anchor_child_member(
     assert code == 0
 
 
+# ---------------------------------------------------------------------------
+# run — require_all_classified coverage gate
+# ---------------------------------------------------------------------------
+
+
+REQUIRE_NO_LAYERS_TOML = "[tool.forge.layering]\nrequire_all_classified = true\n"
+
+REQUIRE_DISSOLVE_TOML = (
+    "[tool.forge.layering]\n"
+    "require_all_classified = true\n"
+    "\n"
+    "[[tool.forge.layering.layer]]\n"
+    'name = "domain"\n'
+    'package = "myproj.domain"\n'
+)
+
+REQUIRE_ALLOW_TOML = (
+    "[tool.forge.layering]\n"
+    "require_all_classified = true\n"
+    'unclassified_allow = ["scripts"]\n'
+    "\n"
+    "[[tool.forge.layering.layer]]\n"
+    'name = "domain"\n'
+    'package = "myproj.domain"\n'
+)
+
+REQUIRE_STALE_ALLOW_TOML = (
+    "[tool.forge.layering]\n"
+    "require_all_classified = true\n"
+    'unclassified_allow = ["ghost"]\n'
+    "\n"
+    "[[tool.forge.layering.layer]]\n"
+    'name = "domain"\n'
+    'package = "myproj.domain"\n'
+)
+
+LAYER_NO_REQUIRE_TOML = (
+    '[[tool.forge.layering.layer]]\nname = "domain"\npackage = "myproj.domain"\n'
+)
+
+TWO_LAYER_REQUIRE_TOML = (
+    "[tool.forge.layering]\n"
+    "require_all_classified = true\n"
+    "\n"
+    "[[tool.forge.layering.layer]]\n"
+    'name = "domain"\n'
+    'package = "myproj.domain"\n'
+    "\n"
+    "[[tool.forge.layering.layer]]\n"
+    'name = "pipelines"\n'
+    'package = "myproj.pipelines"\n'
+    'composes_all_of = ["domain"]\n'
+)
+
+
+def test_run_require_without_layers_exits_one_with_needs_at_least_one(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`require_all_classified = true` with zero layers is a config error.
+
+    Not a no-op.
+    """
+    write_pyproject(fake_repo, REQUIRE_NO_LAYERS_TOML)
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert code == 1
+    assert "require_all_classified = true needs at least one" in log_text
+    assert "nothing to enforce" not in log_text
+
+
+def test_run_dissolved_package_reports_high_unclassified_and_exits_one(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A package promoted to a new top-level prefix with no layer is caught."""
+    write_pyproject(fake_repo, REQUIRE_DISSOLVE_TOML)
+    _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
+    _write(fake_repo / "src" / "orphan" / "mod.py", PLAIN_MODULE)
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert code == 1
+    assert "[HIGH]" in log_text
+    assert "'orphan' is not classified" in log_text
+
+
+def test_run_single_root_layer_prefix_classifies_sibling_package(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A layer prefix under the same top as an unrelated sibling classifies both.
+
+    Single-root layout: `myproj.pipelines` shares its first dotted segment
+    with `myproj.other`, so `myproj.other` never needs its own layer entry
+    just to satisfy the coverage gate.
+    """
+    write_pyproject(
+        fake_repo,
+        "[tool.forge.layering]\n"
+        "require_all_classified = true\n"
+        "\n"
+        "[[tool.forge.layering.layer]]\n"
+        'name = "pipelines"\n'
+        'package = "myproj.pipelines"\n',
+    )
+    _write(fake_repo / "src" / "myproj" / "pipelines" / "x.py", PLAIN_MODULE)
+    _write(fake_repo / "src" / "myproj" / "other" / "y.py", PLAIN_MODULE)
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert code == 0
+    assert "is not classified" not in log_text
+
+
+def test_run_allow_listed_package_reports_review_and_exits_zero(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An `unclassified_allow` entry keeps the gate green with a visible REVIEW."""
+    write_pyproject(fake_repo, REQUIRE_ALLOW_TOML)
+    _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
+    _write(fake_repo / "src" / "scripts" / "tool.py", PLAIN_MODULE)
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert code == 0
+    assert "[REVIEW]" in log_text
+    assert "deliberately unclassified" in log_text
+    assert "unclassified package(s)." not in log_text
+
+
+def test_run_stale_allow_entry_reports_review_and_exits_zero(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale `unclassified_allow` entry (matches nothing) is a non-blocking REVIEW."""
+    write_pyproject(fake_repo, REQUIRE_STALE_ALLOW_TOML)
+    _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert code == 0
+    assert "stale — remove it" in log_text
+
+
+def test_run_composition_and_coverage_high_findings_both_counted_in_summary(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A composition HIGH and a coverage HIGH are both reflected, distinctly.
+
+    In the summary.
+    """
+    write_pyproject(fake_repo, TWO_LAYER_REQUIRE_TOML)
+    _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
+    bad_pipeline = fake_repo / "src" / "myproj" / "pipelines" / "bad.py"
+    _write(bad_pipeline, PLAIN_MODULE)
+    _write(fake_repo / "src" / "orphan" / "mod.py", PLAIN_MODULE)
+    monkeypatch.setattr(
+        layering,
+        "added_or_moved_files",
+        lambda **_kw: ["src/myproj/pipelines/bad.py"],
+    )
+    code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert code == 1
+    assert "1 blocking violation(s) on added/moved modules" in log_text
+    assert "1 unclassified package(s)." in log_text
+
+
+def test_run_changed_scope_drops_untouched_allow_review(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CHANGED scope drops an allow-listed REVIEW whose package was not touched."""
+    write_pyproject(fake_repo, REQUIRE_ALLOW_TOML)
+    _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
+    _write(fake_repo / "src" / "scripts" / "tool.py", PLAIN_MODULE)
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    monkeypatch.setattr(layering, "select_diff_files", lambda _root: [])
+    code = run(Scope.CHANGED, [fake_repo / "src"], LayeringConfig())
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert code == 0
+    assert "deliberately unclassified" not in log_text
+
+
+def test_run_changed_scope_keeps_touched_allow_review(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CHANGED scope keeps an allow-listed REVIEW whose package WAS touched."""
+    write_pyproject(fake_repo, REQUIRE_ALLOW_TOML)
+    _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
+    scripts_path = fake_repo / "src" / "scripts" / "tool.py"
+    _write(scripts_path, PLAIN_MODULE)
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    monkeypatch.setattr(
+        layering,
+        "select_diff_files",
+        lambda _root: ["src/scripts/tool.py"],
+    )
+    code = run(Scope.CHANGED, [fake_repo / "src"], LayeringConfig())
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert code == 0
+    assert "deliberately unclassified" in log_text
+
+
+def test_run_changed_scope_keeps_unclassified_high_with_empty_diff(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blocking unclassified HIGH survives CHANGED filtering even with no diff.
+
+    Mirrors the config-error regression guard: HIGH findings always survive
+    the CHANGED-scope filter, whether or not anything was actually touched.
+    """
+    write_pyproject(fake_repo, REQUIRE_DISSOLVE_TOML)
+    _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
+    _write(fake_repo / "src" / "orphan" / "mod.py", PLAIN_MODULE)
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    monkeypatch.setattr(layering, "select_diff_files", lambda _root: [])
+    code = run(Scope.CHANGED, [fake_repo / "src"], LayeringConfig())
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert code == 1
+    assert "'orphan' is not classified" in log_text
+
+
+def test_run_flag_off_default_ignores_unclassified_package(
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With `require_all_classified` unset (default off).
+
+    Coverage is never evaluated.
+    """
+    write_pyproject(fake_repo, LAYER_NO_REQUIRE_TOML)
+    _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
+    _write(fake_repo / "src" / "orphan" / "mod.py", PLAIN_MODULE)
+    monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
+    code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
+    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+        encoding="utf-8",
+    )
+    assert code == 0
+    assert "is not classified" not in log_text
+    assert "unclassified" not in log_text
+
+
 def test_summary_separates_config_errors_from_blocking_violations() -> None:
     """The summary never misattributes config errors as added/moved blocks.
 
@@ -1046,6 +1568,29 @@ def test_summary_separates_config_errors_from_blocking_violations() -> None:
     assert "1 blocking violation(s) on added/moved modules" in summary
     assert "1 pre-existing" in summary
     assert "1 config error(s)." in summary
+
+    # Both clauses non-zero together: n_block must subtract each exactly
+    # once, not double-subtract one HIGH finding counted under both.
+    findings_both = [
+        *findings,
+        layering.Finding(
+            audit="layering",
+            severity=Severity.HIGH,
+            path="src/orphan/mod.py",
+            line=1,
+            message="top-level package 'orphan' is not classified",
+        ),
+    ]
+    summary_both = layering._summary(
+        2,
+        3,
+        findings_both,
+        n_config_errors=1,
+        n_unclassified=1,
+    )
+    assert "1 blocking violation(s) on added/moved modules" in summary_both
+    assert "1 config error(s)." in summary_both
+    assert "1 unclassified package(s)." in summary_both
 
 
 # ---------------------------------------------------------------------------

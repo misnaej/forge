@@ -19,6 +19,9 @@ not a child, and is never evaluated.
 Configuration (``pyproject.toml``)::
 
     [tool.forge.layering]
+    require_all_classified = true  # optional coverage gate (see below)
+    unclassified_allow = ["scripts"]  # deliberate, visible opt-outs
+
     [[tool.forge.layering.layer]]
     name = "domain"
     packages = ["myproj.models", "myproj.rules"]  # multi-package layer
@@ -34,6 +37,14 @@ dotted prefix) or ``packages`` (several). ``package`` predates
 ``packages`` and stays supported — it is shipped consumer config, so
 collapsing to one list-typed key (the ``forge-gen-c4`` shape) would
 break existing ``pyproject.toml`` files for no capability gain.
+
+``require_all_classified`` (default off) adds a **coverage gate**: every
+top-level source package must be classified — reached by some layer's
+prefix, or named in ``unclassified_allow`` — else a blocking finding
+fires. This is the safety half of multi-package layering: during a
+package-dissolve refactor, a package promoted to a new top-level prefix
+but not added to any layer would otherwise drop out of the gate
+*silently*, on exactly the code just moved.
 
 Severity model: a pre-existing violation is ``LOW`` (reported, never
 blocking — the diff is the baseline, so adopting the audit costs zero
@@ -85,6 +96,15 @@ if TYPE_CHECKING:
 
 configure_cli_logging()
 logger = logging.getLogger(__name__)
+
+
+_SEVERITY_ORDER = {
+    Severity.CRITICAL: 0,
+    Severity.HIGH: 1,
+    Severity.MEDIUM: 2,
+    Severity.LOW: 3,
+    Severity.REVIEW: 4,
+}
 
 
 @dataclass(frozen=True)
@@ -355,15 +375,145 @@ def evaluate(
                         ),
                     ),
                 )
-    order = {
-        Severity.CRITICAL: 0,
-        Severity.HIGH: 1,
-        Severity.MEDIUM: 2,
-        Severity.LOW: 3,
-        Severity.REVIEW: 4,
-    }
-    findings.sort(key=lambda f: (order[f.severity], f.path, f.line))
+    findings.sort(key=lambda f: (_SEVERITY_ORDER[f.severity], f.path, f.line))
     return findings
+
+
+def _parse_coverage_config(
+    raw: dict[str, object],
+    *,
+    has_layers: bool,
+) -> tuple[bool, tuple[str, ...], list[str]]:
+    """Parse the coverage-gate keys of ``[tool.forge.layering]``.
+
+    Same never-coerce discipline as :func:`_parse_one_layer`: a wrong
+    type is a named config error, and requiring classification with no
+    layers configured is an error too — nothing could classify anything,
+    and a silent no-op is the exact failure the gate exists to prevent.
+
+    Args:
+        raw: The ``[tool.forge.layering]`` table (may be empty).
+        has_layers: Whether at least one layer spec parsed successfully.
+
+    Returns:
+        Tuple of (require_all_classified, allow entries, error messages).
+    """
+    errors: list[str] = []
+    require = raw.get("require_all_classified", False)
+    if not isinstance(require, bool):
+        errors.append(
+            "[tool.forge.layering].require_all_classified must be a boolean",
+        )
+        require = False
+    allow_raw = raw.get("unclassified_allow", [])
+    if not isinstance(allow_raw, list) or not all(
+        isinstance(a, str) for a in allow_raw
+    ):
+        errors.append(
+            "[tool.forge.layering].unclassified_allow must be an array of strings",
+        )
+        allow_raw = []
+    if require and not has_layers:
+        errors.append(
+            "require_all_classified = true needs at least one "
+            "[[tool.forge.layering.layer]] — with no layers, nothing "
+            "could classify any package",
+        )
+        require = False
+    return require, tuple(allow_raw), errors
+
+
+def _top_level_packages(modules: dict[str, ModuleNode]) -> dict[str, set[str]]:
+    """Group modules by top-level package (first dotted segment).
+
+    Args:
+        modules: Discovered modules keyed by dotted name.
+
+    Returns:
+        Mapping of top-level package name to its module names.
+    """
+    tops: dict[str, set[str]] = defaultdict(set)
+    for name in modules:
+        tops[name.split(".", 1)[0]].add(name)
+    return tops
+
+
+def _coverage_findings(
+    layers: list[LayerSpec],
+    modules: dict[str, ModuleNode],
+    *,
+    allow: tuple[str, ...],
+) -> tuple[list[Finding], int]:
+    """Flag top-level packages no layer classifies (``require_all_classified``).
+
+    A top-level package counts as classified when any layer prefix
+    shares its first dotted segment — a single-root layout (every prefix
+    under ``myproj``) never flags its own root, while a package promoted
+    to a new top-level prefix with no layer reference is caught the
+    moment it appears. Allowed packages and stale allow entries surface
+    as REVIEW findings so opt-outs stay visible.
+
+    Args:
+        layers: Parsed layer specs.
+        modules: Discovered modules keyed by dotted name.
+        allow: ``unclassified_allow`` entries (deliberate opt-outs).
+
+    Returns:
+        Tuple of (findings, count of blocking unclassified packages).
+    """
+    tops = _top_level_packages(modules)
+    classified = {p.split(".", 1)[0] for spec in layers for p in spec.packages}
+    findings: list[Finding] = []
+    n_unclassified = 0
+    for top, mods in sorted(tops.items()):
+        if top in classified:
+            continue
+        path, line = _child_finding_anchor(mods, modules)
+        if top in allow:
+            findings.append(
+                Finding(
+                    audit="layering",
+                    severity=Severity.REVIEW,
+                    path=path,
+                    line=line,
+                    message=(
+                        f"top-level package '{top}' is deliberately "
+                        f"unclassified (unclassified_allow — visible exemption)"
+                    ),
+                ),
+            )
+            continue
+        n_unclassified += 1
+        findings.append(
+            Finding(
+                audit="layering",
+                severity=Severity.HIGH,
+                path=path,
+                line=line,
+                message=(
+                    f"top-level package '{top}' is not classified by any "
+                    f"layer (require_all_classified) — add it to a layer's "
+                    f"package(s) or to unclassified_allow"
+                ),
+            ),
+        )
+    for entry in allow:
+        if entry not in tops:
+            note = "matches no discovered top-level package (stale — remove it)"
+        elif entry in classified:
+            note = "names an already-classified package (redundant — remove it)"
+        else:
+            continue  # consumed above as a visible exemption
+        findings.append(
+            Finding(
+                audit="layering",
+                severity=Severity.REVIEW,
+                path="pyproject.toml",
+                line=1,
+                message=f"unclassified_allow entry '{entry}' {note}",
+            ),
+        )
+    return findings, n_unclassified
 
 
 def _summary(
@@ -372,6 +522,7 @@ def _summary(
     findings: list[Finding],
     *,
     n_config_errors: int = 0,
+    n_unclassified: int = 0,
 ) -> str:
     """Render the one-paragraph audit summary.
 
@@ -382,17 +533,27 @@ def _summary(
         n_config_errors: HIGH findings that are config errors, not
             added/moved-module violations — counted separately so the
             summary does not misattribute them.
+        n_unclassified: HIGH findings from the ``require_all_classified``
+            coverage gate — same misattribution concern.
 
     Returns:
         One-line summary for the log header.
     """
-    n_block = sum(1 for f in findings if f.severity is Severity.HIGH) - n_config_errors
+    n_block = (
+        sum(1 for f in findings if f.severity is Severity.HIGH)
+        - n_config_errors
+        - n_unclassified
+    )
     n_base = sum(1 for f in findings if f.severity is Severity.LOW)
     errors_clause = f" {n_config_errors} config error(s)." if n_config_errors else ""
+    unclassified_clause = (
+        f" {n_unclassified} unclassified package(s)." if n_unclassified else ""
+    )
     return (
         f"Evaluated {n_children} direct child(ren) across {n_layers} "
         f"layer(s). {n_block} blocking violation(s) on added/moved modules, "
-        f"{n_base} pre-existing (baseline, non-blocking).{errors_clause}"
+        f"{n_base} pre-existing (baseline, non-blocking)."
+        f"{unclassified_clause}{errors_clause}"
     )
 
 
@@ -416,6 +577,15 @@ def run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int:
     root = repo_root()
     raw = read_tool_forge_section(root, "layering")
     layers, errors = parse_layers(raw)
+    # Coverage-config errors merge in BEFORE the early return: requiring
+    # classification with nothing configured must fail loudly, not exit 0
+    # as "nothing to enforce" — that silent no-op is the gate's whole
+    # reason to exist.
+    require_classified, allow, coverage_errors = _parse_coverage_config(
+        raw,
+        has_layers=bool(layers),
+    )
+    errors.extend(coverage_errors)
     if not layers and not errors:
         write_log(
             "layering",
@@ -442,6 +612,13 @@ def run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int:
         ),
     )
     findings = evaluate(layers, modules, graph, escalate_paths=escalate)
+    n_unclassified = 0
+    if require_classified:
+        coverage, n_unclassified = _coverage_findings(layers, modules, allow=allow)
+        findings = sorted(
+            findings + coverage,
+            key=lambda f: (_SEVERITY_ORDER[f.severity], f.path, f.line),
+        )
 
     if scope is Scope.CHANGED:
         # Keep a finding when ANY module of its child was touched (child
@@ -451,6 +628,12 @@ def run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int:
         touched_anchors: set[str] = set()
         for spec in layers:
             for mods in _direct_children(spec, modules).values():
+                if {modules[m].path for m in mods} & changed:
+                    touched_anchors.add(_child_finding_anchor(mods, modules)[0])
+        if require_classified:
+            # REVIEW coverage findings survive when their package was
+            # touched (HIGH ones survive unconditionally below).
+            for mods in _top_level_packages(modules).values():
                 if {modules[m].path for m in mods} & changed:
                     touched_anchors.add(_child_finding_anchor(mods, modules)[0])
         findings = [
@@ -476,7 +659,13 @@ def run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int:
     write_log(
         "layering",
         findings,
-        _summary(len(layers), n_children, findings, n_config_errors=len(errors)),
+        _summary(
+            len(layers),
+            n_children,
+            findings,
+            n_config_errors=len(errors),
+            n_unclassified=n_unclassified,
+        ),
         output=config.output,
     )
     return exit_code_for(findings)

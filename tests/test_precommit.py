@@ -1602,6 +1602,33 @@ def test_step_layering_configured_missing_cli_exits(
         precommit.step_layering(tmp_path)
 
 
+def test_step_layering_require_all_classified_without_layer_table_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`require_all_classified = true` alone (no `[[layer]]` table) still runs the CLI.
+
+    The flag-without-layers case is a config error the CLI itself must
+    report — the step's skip check only fires when BOTH `layer` and
+    `require_all_classified` are absent.
+    """
+    _write_pyproject(
+        tmp_path,
+        "[tool.forge.layering]\nrequire_all_classified = true\n",
+    )
+    _present(monkeypatch)
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return False, "require_all_classified = true needs at least one"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    result = precommit.step_layering(tmp_path)
+    assert not result.skipped
+    assert not result.passed
+    assert captured["cmd"] == ["forge-audit-layering", "--scope", "changed"]
+
+
 # ---------------------------------------------------------------------------
 # step_api_digest_check
 # ---------------------------------------------------------------------------

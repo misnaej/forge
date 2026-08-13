@@ -797,7 +797,9 @@ def step_layering(repo_root: Path) -> StepResult:
     Enforces ``[tool.forge.layering]`` composes_all_of contracts. Exits
     non-zero only for violations on added/moved modules (the diff is the
     baseline — pre-existing violations report as LOW and never block).
-    Self-skips when no layers are configured.
+    Self-skips when neither layers nor ``require_all_classified`` are
+    configured — the flag without layers is a config error the CLI must
+    get the chance to report, not a silent skip.
 
     Args:
         repo_root: Git repo root.
@@ -809,7 +811,8 @@ def step_layering(repo_root: Path) -> StepResult:
     Raises:
         SystemExit: If ``forge-audit-layering`` is not on PATH.
     """
-    if not config.read_tool_forge_section(repo_root, "layering").get("layer"):
+    layering_cfg = config.read_tool_forge_section(repo_root, "layering")
+    if not (layering_cfg.get("layer") or layering_cfg.get("require_all_classified")):
         return StepResult(
             name="layering",
             passed=True,
