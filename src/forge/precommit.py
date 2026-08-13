@@ -954,6 +954,10 @@ def step_foundation_md_check(repo_root: Path) -> StepResult:
         ref = resources.files("forge").joinpath("data/FOUNDATION.md")
         with resources.as_file(ref) as ref_path:
             self_referential = ref_path.exists() and target.samefile(ref_path)
+        # Inside the same try: reading the installed foundation text can
+        # itself raise (FileNotFoundError ⊂ OSError) when the resource
+        # is absent — that must be the same clean FAIL, not a crash.
+        matches = False if self_referential else foundation_matches_installed(target)
     except (ModuleNotFoundError, OSError) as exc:
         return StepResult(
             name="foundation_md_check",
@@ -973,7 +977,7 @@ def step_foundation_md_check(repo_root: Path) -> StepResult:
                 "any edit, so provenance is unverifiable here."
             ),
         )
-    if foundation_matches_installed(target):
+    if matches:
         return StepResult(
             name="foundation_md_check",
             passed=True,

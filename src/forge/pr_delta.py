@@ -202,6 +202,14 @@ def regen_only_diff(changed_paths: list[str]) -> bool:
     named on :data:`MANAGED_REGEN_PATHS`, which byte-verify each file
     against the installed package at finalization time.
 
+    Matching is **exact-case, deliberately** — the opposite of
+    :func:`touches_high_blast_radius`'s casefolding. The provenance
+    gates address files by these exact canonical paths, so on a
+    case-sensitive filesystem a case-varied path (``FOUNDATION.MD``)
+    is a *different, unverified* file: classifying it eligible while
+    the gate self-skips would hand it a reporter-free merge. Casefold
+    widens the blast-radius net safely; here it would widen the escape.
+
     Known residual (documented, accepted): classification sees path
     strings only. A managed path whose content was hand-edited after
     regen classifies as eligible here and is caught by the provenance
@@ -216,8 +224,7 @@ def regen_only_diff(changed_paths: list[str]) -> bool:
     """
     if not changed_paths:
         return False
-    managed = {p.casefold() for p in MANAGED_REGEN_PATHS}
-    return all(path.casefold() in managed for path in changed_paths)
+    return all(path in MANAGED_REGEN_PATHS for path in changed_paths)
 
 
 def delta_decision(

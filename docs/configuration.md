@@ -241,8 +241,9 @@ regenerate-before-commit step to routine work. Self-skips when
 
 Two sibling **provenance gates** (enabled the same way, no config
 tables) back the `/pr` regen-verified light path for `forge-resync`
-PRs — all three gates must pass before a resync diff may skip the
-reporter round, and each also works standalone:
+PRs (see the shipped `pr` skill's "Regen-verified light path" section)
+— all three gates must pass before a resync diff may skip the reporter
+round, and each also works standalone:
 
 - `cli_reference_check` — `forge-gen-cli-reference --check`, the
   blocking drift gate for `docs/cli-reference.md` (mirror of

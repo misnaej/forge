@@ -1868,6 +1868,36 @@ def test_step_foundation_md_check_resources_unavailable_fails(
     assert "provenance unverifiable" in result.output
 
 
+def test_step_foundation_md_check_missing_resource_during_match_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resource that vanishes mid-compare FAILs cleanly, not a crash.
+
+    MOCK SETUP: the installed reference resolves to a *different*,
+    existing file (so `self_referential` is False and the self-reference
+    branch is skipped), but `foundation_matches_installed` — called
+    inside the same `try` as the self-reference check — raises
+    `FileNotFoundError` (a subclass of `OSError`), simulating the
+    resource disappearing between resolving the reference and reading
+    its content.
+    """
+    target = tmp_path / "FOUNDATION.md"
+    target.write_text("# FOUNDATION.md\n", encoding="utf-8")
+    ref = tmp_path / "installed-FOUNDATION.md"
+    ref.write_text("# FOUNDATION.md\n", encoding="utf-8")
+    _patch_resources_ref(monkeypatch, ref)
+
+    def _raise(_target: Path) -> bool:
+        msg = "gone"
+        raise FileNotFoundError(msg)
+
+    monkeypatch.setattr(precommit, "foundation_matches_installed", _raise)
+    result = precommit.step_foundation_md_check(tmp_path)
+    assert not result.passed
+    assert "provenance unverifiable" in result.output
+
+
 def test_step_foundation_md_check_passes_when_matches_installed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

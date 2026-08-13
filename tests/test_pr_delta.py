@@ -227,7 +227,13 @@ def test_regen_only_diff_mixed_managed_and_unmanaged_is_false() -> None:
     assert not regen_only_diff(["FOUNDATION.md", "src/forge/pr_delta.py"])
 
 
-def test_regen_only_diff_case_insensitive_matches() -> None:
-    """Case-varied managed paths still classify as eligible (casefold match)."""
-    assert regen_only_diff(["FOUNDATION.MD"])
-    assert regen_only_diff(["Docs/Cli-Reference.md"])
+def test_regen_only_diff_case_varied_path_not_eligible() -> None:
+    """Case-varied paths are NOT eligible — casefolding here would be a bypass.
+
+    The provenance gates address files by exact canonical path; a
+    case-varied path is a different, unverified file, so widening the
+    match with casefold (as the blast-radius check does) would let it
+    dodge inspection while the exact-case gate silently self-skips.
+    """
+    assert not regen_only_diff(["FOUNDATION.MD"])
+    assert not regen_only_diff(["Docs/Cli-Reference.md"])

@@ -128,6 +128,11 @@ forge-precommit --only foundation_md_check,cli_reference_check,api_digest_check
   and any hand-edit slipped into a managed file: the byte check is the
   detector for exactly that tampering, which is why classification by
   path alone never grants the escape.
+- **Step 2 narrows too**: the provenance gates above ARE this path's
+  pre-commit scope — no strict whole-tree battery (a regen-only diff
+  touches nothing that battery reviews, and resync's `no-version`
+  marker exempts the changelog gates), mirroring the docs-only path's
+  narrowing.
 - Steps 3–4 run as normal (wrap-up + squash message stay MANDATORY).
 
 Otherwise, check if the PR is eligible for
