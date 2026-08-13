@@ -313,6 +313,36 @@ following produces a single HIGH config-error finding (anchored at
   `composes_all_of` target instead of failing every child of every
   composing layer
 
+### `require_all_classified` — coverage gate for package-dissolve refactors
+
+| Key (table-level) | Default | What it does |
+|---|---|---|
+| `require_all_classified` | `false` | Every **top-level** source package must be classified — reached by some layer's prefix, or listed in `unclassified_allow`. An unclassified package is a **blocking HIGH** finding anchored at the package's first module. |
+| `unclassified_allow` | `[]` | Deliberate opt-outs, surfaced as REVIEW findings (visible, reviewed — never silent). A stale entry (matches no discovered package) or a redundant one (names an already-classified package) is flagged for removal. |
+
+Why: `packages = [...]` makes a multi-package domain *expressible*; this
+gate makes it *safe under refactoring*. When a dissolving umbrella
+package promotes code into new top-level packages, each promotion must
+be added to its domain's `packages` list — forget it and the layering
+gate silently stops seeing exactly the code just moved. With the gate
+on, the omission **fails at commit** instead.
+
+Two things to know before enabling:
+
+- **Granularity is top-level only.** A package counts as classified when
+  any layer prefix shares its first dotted segment — so in a single-root
+  layout (everything under `myproj.`), the root is always classified and
+  the gate adds no protection; it earns its keep in multi-root layouts
+  where dissolves mint new top-level packages. A new *sub*-package under
+  an already-classified root is likewise not covered.
+- **Findings are HIGH immediately, with no pre-existing baseline.** Turning
+  the flag on with existing unclassified packages blocks commits until each
+  is classified or allow-listed — seed `unclassified_allow` with the
+  current unclassified set at opt-in, then shrink it deliberately.
+
+`require_all_classified = true` with zero configured layers is a config
+error, not a silent no-op.
+
 ## `[tool.forge.env_sync]` — install-freshness gate (default-on)
 
 Runs **first** in the default sequence. A deadly-fast, in-process
