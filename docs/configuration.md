@@ -161,7 +161,7 @@ available as `forge-precommit --only <names>` / `--skip <names>`.
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
 | `disable` | `[]` | Force-skip these default steps by name (e.g. `["pip_audit"]`). | You want a default step off repo-wide. |
-| `enable` | `[]` | Opt into normally-off steps by name: `doctest`, `typecheck`, `doc_consistency`, `api_digest_check`. | You want one of the opt-in steps below to run. |
+| `enable` | `[]` | Opt into normally-off steps by name: `doctest`, `typecheck`, `doc_consistency`, `api_digest_check`, `cli_reference_check`, `foundation_md_check`. | You want one of the opt-in steps below to run. |
 | `scope` | `"all"` | Default file scope for the scope-aware steps — `"all"` (whole tracked source tree) or `"diff"` (only files modified vs main). | You want a faster, diff-only gate repo-wide (trades completeness for speed). |
 | `scope_overrides` | `{}` | Per-step scope, overriding `scope`. Keys are step names; values are `"all"` / `"diff"`. | You want most steps full-repo but one (or vice-versa) on the diff. |
 
@@ -238,6 +238,23 @@ would only warn on, or to gate the digest in CI). Kept opt-in because the
 digest changes on nearly every code PR, so the gate adds a
 regenerate-before-commit step to routine work. Self-skips when
 `docs/api-digest.md` is absent.
+
+Two sibling **provenance gates** (enabled the same way, no config
+tables) back the `/pr` regen-verified light path for `forge-resync`
+PRs (see the shipped `pr` skill's "Regen-verified light path" section)
+— all three gates must pass before a resync diff may skip the reporter
+round, and each also works standalone:
+
+- `cli_reference_check` — `forge-gen-cli-reference --check`, the
+  blocking drift gate for `docs/cli-reference.md` (mirror of
+  `api_digest_check`). Self-skips when the doc is absent.
+- `foundation_md_check` — verifies `FOUNDATION.md` byte-reproduces the
+  installed forge foundation (version banner ignored, the same rule
+  `install-forge-claude-md` syncs by). A hand edit, an unmanaged file,
+  or a stale copy fails. An **editable-install self-reference** (the
+  repo file IS the installed copy, as in forge's own repo) fails too:
+  a byte-compare that would approve any edit proves nothing. Self-skips
+  when no `FOUNDATION.md` exists.
 
 ## `[tool.forge.smart_test]` — opt-in change-scoped test gate
 

@@ -148,6 +148,58 @@ def test_force_overwrites_unmanaged_foundation(
 
 
 # ---------------------------------------------------------------------------
+# foundation_matches_installed: provenance seam for the regen light path.
+# ---------------------------------------------------------------------------
+
+
+def test_foundation_matches_installed_missing_file_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A FOUNDATION.md that doesn't exist on disk never matches."""
+    _patch_inputs(monkeypatch)
+    target = tmp_path / "FOUNDATION.md"
+    assert install_claudemd.foundation_matches_installed(target) is False
+
+
+def test_foundation_matches_installed_unmanaged_no_markers_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A file present but lacking the managed markers never matches."""
+    _patch_inputs(monkeypatch)
+    target = tmp_path / "FOUNDATION.md"
+    target.write_text("# My own FOUNDATION.md\n\nNo markers here.\n")
+    assert install_claudemd.foundation_matches_installed(target) is False
+
+
+def test_foundation_matches_installed_in_sync_true(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A version-only difference (dev banner) still counts as matching."""
+    target = tmp_path / "FOUNDATION.md"
+    _patch_inputs(monkeypatch, version="1.0.1.dev3+gabc1234")
+    install_claudemd.sync_foundation(target)
+
+    _patch_inputs(monkeypatch, version="1.0.1.dev9+gdef9876")
+    assert install_claudemd.foundation_matches_installed(target) is True
+
+
+def test_foundation_matches_installed_divergent_body_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A foundation body change makes the on-disk file diverge."""
+    target = tmp_path / "FOUNDATION.md"
+    _patch_inputs(monkeypatch, foundation="# Old\n")
+    install_claudemd.sync_foundation(target)
+
+    _patch_inputs(monkeypatch, foundation="# New\n")
+    assert install_claudemd.foundation_matches_installed(target) is False
+
+
+# ---------------------------------------------------------------------------
 # scaffold_claudemd: writes a minimal CLAUDE.md with @FOUNDATION.md.
 # ---------------------------------------------------------------------------
 

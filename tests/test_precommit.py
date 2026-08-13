@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import shutil
@@ -1701,6 +1702,232 @@ def test_step_api_digest_check_missing_cli_exits(
     monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(SystemExit):
         precommit.step_api_digest_check(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# step_cli_reference_check
+# ---------------------------------------------------------------------------
+
+
+def test_step_cli_reference_check_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runs `forge-gen-cli-reference --check` and mirrors a passing exit.
+
+    MOCK SETUP: `docs/cli-reference.md` present (so the step doesn't skip);
+    the CLI resolves on PATH; ``_run`` captures the command and returns a
+    passing canned result.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "cli-reference.md").write_text(
+        "# CLI Reference\n", encoding="utf-8"
+    )
+    _present(monkeypatch)
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return True, "up to date"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    result = precommit.step_cli_reference_check(tmp_path)
+    assert captured["cmd"] == ["forge-gen-cli-reference", "--check"]
+    assert result.passed
+    assert not result.non_blocking
+    assert not result.skipped
+
+
+def test_step_cli_reference_check_drift_is_blocking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A drifted reference doc fails the step and stays blocking (refuses commit)."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "cli-reference.md").write_text(
+        "# CLI Reference\n", encoding="utf-8"
+    )
+    _present(monkeypatch)
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (False, "out of sync"))
+    result = precommit.step_cli_reference_check(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+
+
+def test_step_cli_reference_check_no_doc_is_skipped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No `docs/cli-reference.md` skips cleanly without reaching `require_cli`.
+
+    MOCK SETUP: the CLI is absent from PATH — asserting no `SystemExit` is
+    raised proves the skip check runs before `require_cli`.
+    """
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    result = precommit.step_cli_reference_check(tmp_path)
+    assert result.skipped
+    assert result.passed
+    assert "(no docs/cli-reference.md — skipped)" in result.output
+
+
+def test_step_cli_reference_check_missing_cli_exits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An opted-in-but-absent `forge-gen-cli-reference` binary fails loudly."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "cli-reference.md").write_text(
+        "# CLI Reference\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(SystemExit):
+        precommit.step_cli_reference_check(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# step_foundation_md_check
+# ---------------------------------------------------------------------------
+
+
+def _patch_resources_ref(monkeypatch: pytest.MonkeyPatch, ref_path: Path) -> None:
+    """Stub `precommit.resources` so `step_foundation_md_check` sees *ref_path*.
+
+    Args:
+        monkeypatch: Pytest fixture.
+        ref_path: Path the stubbed `resources.as_file` context manager yields
+            as the "installed" `FOUNDATION.md` reference.
+    """
+
+    class _FakeRef:
+        """Mock resources.files return value for testing."""
+
+        def joinpath(self, *_parts: str) -> Path:
+            """Join path parts.
+
+            Args:
+                *_parts: Path parts (unused; always returns ref_path).
+
+            Returns:
+                The mocked ref_path.
+            """
+            return ref_path
+
+    monkeypatch.setattr(precommit.resources, "files", lambda _pkg: _FakeRef())
+    monkeypatch.setattr(
+        precommit.resources, "as_file", lambda _ref: contextlib.nullcontext(ref_path)
+    )
+
+
+def test_step_foundation_md_check_no_foundation_is_skipped(
+    tmp_path: Path,
+) -> None:
+    """No `FOUNDATION.md` in the repo skips cleanly — nothing to verify."""
+    result = precommit.step_foundation_md_check(tmp_path)
+    assert result.skipped
+    assert result.passed
+    assert "(no FOUNDATION.md — skipped)" in result.output
+
+
+def test_step_foundation_md_check_self_referential_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The editable-install self-reference case FAILs even if content matches.
+
+    MOCK SETUP: the "installed" reference resolves to the very
+    `FOUNDATION.md` under review (as in forge's own editable install,
+    where the packaged copy is a symlink to the tracked file).
+    `foundation_matches_installed` is stubbed `True` to prove
+    self-reference is checked first and wins regardless.
+    """
+    target = tmp_path / "FOUNDATION.md"
+    target.write_text("# FOUNDATION.md\n", encoding="utf-8")
+    _patch_resources_ref(monkeypatch, target)
+    monkeypatch.setattr(precommit, "foundation_matches_installed", lambda _p: True)
+    result = precommit.step_foundation_md_check(tmp_path)
+    assert not result.passed
+    assert not result.skipped
+    assert "editable install" in result.output
+
+
+def test_step_foundation_md_check_resources_unavailable_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unresolvable installed reference FAILs — provenance unverifiable."""
+    target = tmp_path / "FOUNDATION.md"
+    target.write_text("# FOUNDATION.md\n", encoding="utf-8")
+
+    def _raise(_pkg: str) -> None:
+        msg = "forge"
+        raise ModuleNotFoundError(msg)
+
+    monkeypatch.setattr(precommit.resources, "files", _raise)
+    result = precommit.step_foundation_md_check(tmp_path)
+    assert not result.passed
+    assert "provenance unverifiable" in result.output
+
+
+def test_step_foundation_md_check_missing_resource_during_match_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resource that vanishes mid-compare FAILs cleanly, not a crash.
+
+    MOCK SETUP: the installed reference resolves to a *different*,
+    existing file (so `self_referential` is False and the self-reference
+    branch is skipped), but `foundation_matches_installed` — called
+    inside the same `try` as the self-reference check — raises
+    `FileNotFoundError` (a subclass of `OSError`), simulating the
+    resource disappearing between resolving the reference and reading
+    its content.
+    """
+    target = tmp_path / "FOUNDATION.md"
+    target.write_text("# FOUNDATION.md\n", encoding="utf-8")
+    ref = tmp_path / "installed-FOUNDATION.md"
+    ref.write_text("# FOUNDATION.md\n", encoding="utf-8")
+    _patch_resources_ref(monkeypatch, ref)
+
+    def _raise(_target: Path) -> bool:
+        msg = "gone"
+        raise FileNotFoundError(msg)
+
+    monkeypatch.setattr(precommit, "foundation_matches_installed", _raise)
+    result = precommit.step_foundation_md_check(tmp_path)
+    assert not result.passed
+    assert "provenance unverifiable" in result.output
+
+
+def test_step_foundation_md_check_passes_when_matches_installed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `FOUNDATION.md` byte-matching the installed copy PASSes."""
+    target = tmp_path / "FOUNDATION.md"
+    target.write_text("# FOUNDATION.md\n", encoding="utf-8")
+    ref = tmp_path / "installed-FOUNDATION.md"
+    ref.write_text("# FOUNDATION.md\n", encoding="utf-8")
+    _patch_resources_ref(monkeypatch, ref)
+    monkeypatch.setattr(precommit, "foundation_matches_installed", lambda _p: True)
+    result = precommit.step_foundation_md_check(tmp_path)
+    assert result.passed
+    assert "reproduces the installed" in result.output
+
+
+def test_step_foundation_md_check_fails_when_divergent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `FOUNDATION.md` diverging from the installed copy FAILs."""
+    target = tmp_path / "FOUNDATION.md"
+    target.write_text("# FOUNDATION.md\n", encoding="utf-8")
+    ref = tmp_path / "installed-FOUNDATION.md"
+    ref.write_text("# FOUNDATION.md\n", encoding="utf-8")
+    _patch_resources_ref(monkeypatch, ref)
+    monkeypatch.setattr(precommit, "foundation_matches_installed", lambda _p: False)
+    result = precommit.step_foundation_md_check(tmp_path)
+    assert not result.passed
+    assert "hand-edited, stale, or unmanaged" in result.output
 
 
 def test_step_doctest_drops_paths_escaping_repo(
@@ -3665,9 +3892,6 @@ def _repo_with_undocumented_src_change(tmp_path: Path) -> Path:
     a real source file without touching the changelog, then HEAD is
     detached at that commit — the CI ``pull_request`` checkout shape the
     detached-HEAD ``step_changelog_updated`` tests below share.
-
-    Args:
-        tmp_path: Pytest ``tmp_path`` fixture directory.
 
     Returns:
         The work-tree path, HEAD detached on the feature-branch commit.
