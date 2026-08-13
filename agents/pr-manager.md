@@ -21,10 +21,6 @@ Orchestrator for the full PR lifecycle: delegates verification to the three chec
 
 The caller's prompt names a `## Task:` section; all are independently callable. Finalization order: **Verification (Wrap-up) → Write Squash-Merge Message → Issue Management → CONTINUATION Log Update**.
 
-## Output
-
-Report templates live in each task section — Verification's two mandatory PR comments, Fetch/Categorize's structured list, URL/comment-id returns elsewhere. Reports reach the **orchestrator only** — callers must relay to the user's terminal (rationale: `/pr` Step 3.9).
-
 ## Task: Fetch & Summarize PR
 
 ```bash
@@ -190,6 +186,10 @@ forge-continuation-append \
     --pr "$(gh pr view --json number --jq '.number')" \
     "$(gh pr view --json title --jq '.title')"
 ```
+
+## Output
+
+Report templates live in each task section — Verification's two mandatory PR comments, Fetch/Categorize's structured list, URL/comment-id returns elsewhere. Reports reach the **orchestrator only** — callers must relay to the user's terminal (rationale: `/pr` Step 3.9).
 
 ## Success Criteria
 

@@ -168,12 +168,6 @@ Before adjudicating, consider source authority:
 - **No paywall bypass** (no Sci-Hub / LibGen). Open-access or properly
   licensed APIs only.
 
-## Output
-
-`verified-at:` header (see Phase 5), then the markdown summary template
-above (Query / Sources / Coverage / Summary / Verification /
-Limitations).
-
 ## Scope Boundaries
 
 ### I WILL
@@ -190,6 +184,12 @@ Limitations).
 - Make recommendations or decisions → **Inform, do not prescribe**
 - Replace specialized domain agents — consumer repos may ship
   authoritative specialists (e.g. `target-biology`); the caller routes
+
+## Output
+
+`verified-at:` header (see Phase 5), then the markdown summary template
+above (Query / Sources / Coverage / Summary / Verification /
+Limitations).
 
 ## Success Criteria
 

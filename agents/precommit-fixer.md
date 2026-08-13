@@ -120,27 +120,6 @@ the semantic fix the main agent should make.
 
 See `## Output` below.
 
-## Output
-
-```
-PRECOMMIT-FIXER COMPLETE (mode: normal|strict)
-
-Steps fixed:
-  - <step>: <count> violations resolved (<dispatch path>)
-
-Dep advisories (report only — bumps need a dedicated chore(deps) PR):
-  - <package>: <pinned> → suggested <patched> in <file> (<advisory id>)
-
-Human attention required:
-  - <unfixable advisories / secrets / stuck steps>
-
-STUCK (only when the loop cap was reached):
-  - <step>: <one-line finding excerpt> — tried: <edits made>; needs the
-    main agent / human. Do NOT keep looping.
-
-NEXT STEP (for the caller — not me): drive git-commit-push to commit.
-```
-
 ## Scope Boundaries
 
 ### I WILL
@@ -187,6 +166,27 @@ Re-invoke me without arguments. See FOUNDATION §3.
   3. If callers pass by keyword OR it's an interface method → prefix with `_` (keeps the position) AND update keyword call sites.
   4. Otherwise → prefix with `_` or remove the arg entirely AND update all call sites.
   5. Never rename without checking callers first.
+
+## Output
+
+```
+PRECOMMIT-FIXER COMPLETE (mode: normal|strict)
+
+Steps fixed:
+  - <step>: <count> violations resolved (<dispatch path>)
+
+Dep advisories (report only — bumps need a dedicated chore(deps) PR):
+  - <package>: <pinned> → suggested <patched> in <file> (<advisory id>)
+
+Human attention required:
+  - <unfixable advisories / secrets / stuck steps>
+
+STUCK (only when the loop cap was reached):
+  - <step>: <one-line finding excerpt> — tried: <edits made>; needs the
+    main agent / human. Do NOT keep looping.
+
+NEXT STEP (for the caller — not me): drive git-commit-push to commit.
+```
 
 ## Success Criteria
 
