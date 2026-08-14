@@ -12,7 +12,8 @@ cleanup loop deterministically:
    steps self-skip per FOUNDATION §15).
 4. No diff → "in sync", exit 0.
 5. Diff → branch ``chore/forge-resync-<forge-version>-no-version``,
-   commit, push, open a PR against ``[tool.forge].base_branch`` via
+   commit, push, run the provenance gates and open a PR (their evidence
+   embedded in the body) against ``[tool.forge].base_branch`` via
    ``gh``, then return to the starting branch. The branch and commit
    both carry the ``no-version`` opt-out signal (mechanical regen has
    nothing for the changelog to gain).
@@ -45,6 +46,7 @@ from forge.git_utils import (
     run_git,
 )
 from forge.install_bootstrap import run_in_process as _bootstrap_run
+from forge.pr_delta import PROVENANCE_GATE_STEPS
 from forge.run_context import progress_logger
 
 
@@ -141,6 +143,51 @@ def _run_bootstrap() -> int:
         return _bootstrap_run()
 
 
+def _provenance_evidence(root: Path) -> tuple[bool, str]:
+    """Run the provenance gates and format PR-body evidence.
+
+    ``forge-resync`` opens its PR from a subprocess, where the wrap-up
+    authoring hook cannot see it — so the PR body itself must carry the
+    verification evidence: the same ``forge-precommit --only`` gate run
+    the ``/pr`` regen-verified light path embeds in its wrap-up
+    (`skills/pr/SKILL.md`). A gate failure never blocks the PR — the
+    body flags it loudly and reviewers take the full round.
+
+    Args:
+        root: Repo root passed to the gate subprocess as cwd.
+
+    Returns:
+        ``(passed, evidence_block)`` — ``passed`` is ``True`` only when
+        every gate exited 0; ``evidence_block`` is a markdown section
+        headlined by the verdict with the verbatim gate output fenced
+        below it.
+    """
+    gates = ",".join(PROVENANCE_GATE_STEPS)
+    proc = subprocess.run(
+        ["forge-precommit", "--only", gates],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=root,
+    )
+    passed = proc.returncode == 0
+    if passed:
+        headline = (
+            "✅ **Regen byte-verified against the installed forge package** "
+            f"(`forge-precommit --only {gates}`) — the same evidence the "
+            "`/pr` regen-verified light path uses."
+        )
+    else:
+        headline = (
+            "⚠️ **Provenance gates FAILED — full review required; do not "
+            "take the regen-verified light path.**"
+        )
+    output = "\n".join(
+        part for part in (proc.stdout.strip(), proc.stderr.strip()) if part
+    )
+    return passed, (f"## Provenance verification\n\n{headline}\n\n```\n{output}\n```\n")
+
+
 def _publish_resync(root: Path, version: str, base_branch: str) -> int:
     """Branch, commit, push the regen diff and open the resync PR.
 
@@ -173,6 +220,9 @@ def _publish_resync(root: Path, version: str, base_branch: str) -> int:
             f"{NO_VERSION_COMMIT_MARKER}",
         )
         run_git("push", "-u", "origin", branch, cwd=root)
+        passed, evidence = _provenance_evidence(root)
+        if not passed:
+            logger.warning("provenance gates did not pass — PR body flags full review.")
         proc = subprocess.run(
             [
                 "gh",
@@ -185,7 +235,7 @@ def _publish_resync(root: Path, version: str, base_branch: str) -> int:
                 "--title",
                 f"chore: resync forge-managed artifacts ({version})",
                 "--body",
-                _PR_BODY,
+                f"{_PR_BODY}\n{evidence}",
             ],
             capture_output=True,
             text=True,
@@ -227,6 +277,14 @@ def main() -> int:
         "gh",
         caller="forge-resync",
         hint="Install the GitHub CLI (https://cli.github.com) and retry.",
+    )
+    require_cli(
+        "forge-precommit",
+        caller="forge-resync",
+        hint=(
+            "forge-scripts is not fully installed. Run `pip install "
+            "forge-scripts` (provides the provenance gates)."
+        ),
     )
 
     if _working_tree_dirty(root):
