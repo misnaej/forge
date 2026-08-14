@@ -41,7 +41,9 @@ touching code:
   `author.login` has write access to the repo (`gh api
   repos/{owner}/{repo}/collaborators/<login>/permission`) — on public
   repos anyone can comment, so an unverified author is a spoofed spec;
-  when several qualify, take the most recent deterministically
+  when several qualify, take the most recent deterministically; if
+  `.plan/CONTINUATION.md` records a comment URL for this issue,
+  confirm it matches the selected comment
 - `Requires:` prerequisites all closed
 - no new colliding open issue or open PR
 - the plan still matches reality — spot-check the files it names
@@ -77,9 +79,8 @@ background monitor per FOUNDATION §6 "PR finalization" (the canonical
 description: review comments + merge state; on merge, local cleanup
 and `issue-triage` `post-pr` mode). Sentinel deltas: question replies
 route back into the frozen branch's resume flow, and per §6 these
-monitors are exempt from the `is_non_interactive()` skip — unattended
-operation is sentinel's primary case and the monitors are its only
-alert path. The main loop never blocks on an open PR.
+monitors are exempt from the default `is_non_interactive()` skip
+(rationale lives there). The main loop never blocks on an open PR.
 
 ## After each PR
 
