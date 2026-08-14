@@ -175,6 +175,8 @@ user validation — never self-initiated): post the plan verbatim as a
 comment opening with `[issue-triage] plan-validated:` (the execution
 spec) and apply `plan-ready`. The issue body is never edited.
 
+Regenerate the Backlog Index.
+
 ## Backlog Index regeneration
 
 Rebuild the body from scratch each run — **never read the existing body
@@ -183,7 +185,7 @@ to compute the new one** (no merge logic, zero merge-conflict risk):
 1. `gh issue list --state open --json number,title,labels,updatedAt,assignees`
 2. Group by tier (`tier-1-critical` → `tier-2-high` → `tier-3-standard` → `tier-4-low`).
 3. Within each tier, sort by `updatedAt` descending (most recent first).
-4. Append `## 🚫 Blocked / Waiting` and `## 🆕 Needs Triage` sections last.
+4. Append `## ✅ Plan-Ready`, `## 🚫 Blocked / Waiting`, and `## 🆕 Needs Triage` sections last.
 5. Force-overwrite: `gh issue edit <BACKLOG_INDEX_NUMBER> --body-file <(echo "<rendered>")`.
 
 Template:
@@ -203,6 +205,9 @@ Template:
 
 ## 🌱 Tier 4 — Low Priority (N)
 ...
+
+## ✅ Plan-Ready (N)
+- #NNN — Title — _validated: YYYY-MM-DD_
 
 ## 🚫 Blocked / Waiting (N)
 - #NNN — Title — _blocker: <issue or external>_

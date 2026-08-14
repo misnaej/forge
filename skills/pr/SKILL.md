@@ -398,13 +398,11 @@ The squash-merge message becomes the permanent commit message on `main`.
 
 ## Step 7: Background PR monitor (default)
 
-19. Per FOUNDATION §6 "PR finalization", the flow does not end at
-    posting: delegate one background subagent per open PR to watch
-    review comments and merge state. On merge → local cleanup at least
-    (sync the base branch, prune the merged local branch — the `/next`
-    cleanup phase). On new comments → surface them (or run
-    `/pr-comments`). Skip only on explicit user request or when
-    `forge.run_context.is_non_interactive()`.
+19. Delegate the background PR monitor per FOUNDATION §6 "PR
+    finalization" — the canonical description of what it watches, what
+    runs on merge (local cleanup + `issue-triage` `post-pr` mode, i.e.
+    Step 5 no longer waits for a later session), and when to skip.
+    Call-site delta: new review comments route to `/pr-comments`.
 
 ## Rules
 

@@ -342,13 +342,18 @@ pin; they do not edit pins.
   no longer exists. The `verified-at:` header (reporter contract,
   `agents/_TEMPLATE.md`) makes such drift detectable; verifying the tree
   being pushed closes the gap by construction.
-- **The flow does not end at posting — monitor the PR.** By default, after
-  the wrap-up is posted, delegate one background monitor per open PR watching
-  review comments and merge state. On merge: at least the local cleanup
-  (sync the base branch, prune the merged local branch — the `/next` cleanup
-  phase). On new comments: surface them. The main session stays free for the
-  next task. Skip only on explicit user request or when
-  `forge.run_context.is_non_interactive()`.
+- **The flow does not end at posting — monitor the PR.** This bullet is the
+  canonical description of the post-wrap-up monitor; skills point here and
+  state only their call-site delta. By default, after the wrap-up is posted,
+  delegate one background monitor per open PR watching review comments and
+  merge state. On merge: the local cleanup (sync the base branch, prune the
+  merged local branch — the `/next` cleanup phase) **and** `issue-triage`'s
+  `post-pr` mode (closed-issue tier-label removal + Backlog Index
+  regeneration). On new comments: surface them. The main session stays free
+  for the next task. Skip only on explicit user request or when
+  `forge.run_context.is_non_interactive()` — except `/sentinel`, whose
+  monitors always run: unattended operation is its primary case and the
+  monitors are its only alert path.
 
 ### Squash-merge messages (mandatory at PR finalization)
 

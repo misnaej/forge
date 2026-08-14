@@ -60,5 +60,7 @@ plan for issue #<N>: post the plan below as a comment opening with
 ```
 
 The issue body — the original ask — is never edited. Report the
-recorded comment URL and stop; execution belongs to `/sentinel` or a
-later session.
+recorded comment URL, append it as a one-line record to
+`.plan/CONTINUATION.md` (an audit trail `/sentinel` can cross-check at
+pickup), and stop; execution belongs to `/sentinel` or a later
+session.
