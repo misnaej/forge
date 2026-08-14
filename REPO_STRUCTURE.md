@@ -125,12 +125,16 @@ ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-proto
 Slash-command skills auto-discovered by the Claude Code plugin. Each
 subdirectory holds a single `SKILL.md`:
 
+- c4/: build a C4 architecture model — reason out context/containers/components into c4.toml, then run forge-gen-c4
 - commit/: standard commit flow
 - fix/: invoke precommit-fixer to clear all pre-commit failures
+- memory-audit/: audit agent memory against the repo's rule surface
 - next/: clean up state and pick next task
+- plan-issue/: human-validated planning for one issue — records a plan-validated execution spec + plan-ready label
 - pr/: full PR finalization flow
-- review/: address PR review comments
-- c4/: build a C4 architecture model — reason out context/containers/components into c4.toml, then run forge-gen-c4
+- pr-comments/: address PR review comments
+- sentinel/: autonomous executor of plan-ready issues — to PR wrap-up, never merging
+- smart-test/: run only the tests a change set affects, in depth tiers
 - test/: write tests via the test agents (advisor → writer → review → precommit-fixer)
 - triage/: issue backlog triage
 - weekly/: weekly summary report

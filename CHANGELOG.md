@@ -20,6 +20,25 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.8.0 — Unreleased
+
+### Features
+- **Plan-readiness pipeline: screened backlog → human-validated plans →
+  autonomous execution.** `issue-triage` gains a `plan-readiness` mode
+  (four-point verdict per open issue — actual / non-colliding / aligned /
+  unblocked — whole-backlog baseline then incremental diffs; may create
+  ad-hoc grouping labels with a decision trail). New `/plan-issue` skill
+  confirms scope, approach, edge cases, and versioning with the user, then
+  records the validated plan as an `[issue-triage] plan-validated:`
+  execution spec plus the new canonical `plan-ready` label. New
+  `/sentinel` skill executes `plan-ready` issues through the standard
+  workflow to a PR wrap-up — re-checking blockers at pickup, freezing to a
+  draft PR with feedback comments when a question needs the user, and
+  never merging.
+- **PR finalization now monitors published PRs by default.** After the
+  wrap-up posts, a background monitor per open PR watches review comments
+  and merge state; merges trigger local cleanup (base sync, branch prune).
+
 ## v3.4.4 — Unreleased
 
 ### Docs

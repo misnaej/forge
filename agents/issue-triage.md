@@ -1,6 +1,6 @@
 ---
 name: issue-triage
-description: GitHub-native issue triage. Maintains the canonical foundation label schema and a single auto-generated "📋 Backlog Index" issue per repo. Six modes - bootstrap, triage, recommend-next, post-pr, stale-scan, deep-review.
+description: GitHub-native issue triage. Maintains the canonical foundation label schema and a single auto-generated "📋 Backlog Index" issue per repo. Seven modes - bootstrap, triage, recommend-next, post-pr, stale-scan, deep-review, plan-readiness.
 tools:
   - Bash
   - Read
@@ -144,6 +144,39 @@ and stop (caller may explicitly force).
    (scope: full|<topic>)` on the Backlog Index (no scope suffix =
    `full`).
 
+### `plan-readiness`
+
+```bash
+gh issue list --state open --limit 200 --json number,title,labels,body,updatedAt
+gh pr list --state open --json number,title,body,headRefName
+```
+
+Per open issue, a four-point verdict from **mechanical heuristics
+only** (`Requires:` lines, labels, PR titles / bodies / branch names,
+recently merged work — content-level collision judgment stays
+`deep-review`'s): **actual** (not obsolete vs current code / latest
+release), **non-colliding** (no overlap with another open issue or
+PR), **aligned** (consistent with current direction), **unblocked**
+(no open `Requires:`, not awaiting a merge).
+
+All four true and no validated plan → a **needs-plan candidate**.
+Never auto-plan: planning is human-validated via `/plan-issue`
+(FOUNDATION §14). The first run sweeps the whole backlog and comments
+`[issue-triage] plan-readiness baseline: YYYY-MM-DD` on the Backlog
+Index; later runs diff issues updated since that marker against the
+full current open set.
+
+May create ad-hoc grouping labels when clustering helps (kebab-case,
+FOUNDATION §14 consumer-extension clause) — never reusing or
+recoloring a canonical name, always with an `[issue-triage]` comment.
+
+**Record a validated plan** (delegated by `/plan-issue` after explicit
+user validation — never self-initiated): post the plan verbatim as a
+comment opening with `[issue-triage] plan-validated:` (the execution
+spec) and apply `plan-ready`. The issue body is never edited.
+
+Regenerate the Backlog Index.
+
 ## Backlog Index regeneration
 
 Rebuild the body from scratch each run — **never read the existing body
@@ -152,7 +185,7 @@ to compute the new one** (no merge logic, zero merge-conflict risk):
 1. `gh issue list --state open --json number,title,labels,updatedAt,assignees`
 2. Group by tier (`tier-1-critical` → `tier-2-high` → `tier-3-standard` → `tier-4-low`).
 3. Within each tier, sort by `updatedAt` descending (most recent first).
-4. Append `## 🚫 Blocked / Waiting` and `## 🆕 Needs Triage` sections last.
+4. Append `## ✅ Plan-Ready`, `## 🚫 Blocked / Waiting`, and `## 🆕 Needs Triage` sections last.
 5. Force-overwrite: `gh issue edit <BACKLOG_INDEX_NUMBER> --body-file <(echo "<rendered>")`.
 
 Template:
@@ -172,6 +205,9 @@ Template:
 
 ## 🌱 Tier 4 — Low Priority (N)
 ...
+
+## ✅ Plan-Ready (N)
+- #NNN — Title — _validated: YYYY-MM-DD_
 
 ## 🚫 Blocked / Waiting (N)
 - #NNN — Title — _blocker: <issue or external>_
@@ -200,6 +236,9 @@ Every agent-driven label change leaves a comment prefixed
 - Migrate a legacy `docs/development/issue_backlog.md` (bootstrap)
 - Propose umbrella issues and, after explicit user approval, create
   them; emit sequenced `/goal`-ready goal-file content (deep-review)
+- Emit plan-readiness verdicts; record user-validated plans
+  (`plan-validated` comment + `plan-ready` label) when `/plan-issue`
+  delegates; create ad-hoc grouping labels with a comment trail
 
 ### I WILL NOT (report and stop)
 
@@ -210,6 +249,8 @@ Every agent-driven label change leaves a comment prefixed
 - Install dependencies → **`install-forge-labels` must already be available**
 - Write files → **the caller persists goal files (no `Write` tool)**
 - Run `deep-review` within 7 days of the last → **skip unless forced**
+- Draft or validate a plan myself → **`/plan-issue` owns planning; I
+  only screen and record**
 
 ## Output
 
@@ -217,7 +258,8 @@ Mode-dependent — see each mode's last step. Every mode ends with a
 report line naming the mode and the counts ("N triaged, M respected,
 Backlog Index updated"). `deep-review` additionally returns umbrella
 proposals/decisions and, per approved umbrella, full goal-file
-content for the caller to persist.
+content for the caller to persist. `plan-readiness` returns the
+per-issue verdicts plus the needs-plan candidate list.
 
 ## Success Criteria
 

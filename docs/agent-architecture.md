@@ -298,11 +298,18 @@ graph LR
   issue_triage_forge["⚖️ issue-triage-forge<br/>AI agent"]
   sk_next(["/next<br/>skill"])
   sk_triage(["/triage<br/>skill"])
+  sk_plan_issue(["/plan-issue<br/>skill"])
+  sk_sentinel(["/sentinel<br/>skill"])
+  sk_pr(["/pr<br/>skill"])
   main_agent -->|runs| sk_next
   main_agent -->|runs| sk_triage
+  main_agent -->|runs| sk_plan_issue
+  main_agent -->|runs| sk_sentinel
   issue_triage_forge -->|delegates| issue_triage
   sk_next -->|invokes| issue_triage
   sk_triage -->|invokes| issue_triage
+  sk_plan_issue -->|records validated plan via| issue_triage
+  sk_sentinel -->|executes plan-ready issues via| sk_pr
   issue_triage -->|invokes| cli_install_forge_labels
   class human person
   class main_agent orchestrator
@@ -313,6 +320,9 @@ graph LR
   class issue_triage_forge mutator
   class sk_next skill
   class sk_triage skill
+  class sk_plan_issue skill
+  class sk_sentinel skill
+  class sk_pr skill
 ```
 
 ## Docs & Reporting
