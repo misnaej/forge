@@ -60,6 +60,8 @@ logger = logging.getLogger(__name__)
 
 _BRANCH_PREFIX = "chore/forge-resync-"
 
+_EVIDENCE_OUTPUT_CAP = 4000
+
 _PR_BODY = """\
 Automated regeneration of forge-managed artifacts (`install-forge-bootstrap`)
 after a forge release moved their canonical content.
@@ -185,7 +187,13 @@ def _provenance_evidence(root: Path) -> tuple[bool, str]:
     output = "\n".join(
         part for part in (proc.stdout.strip(), proc.stderr.strip()) if part
     )
-    return passed, (f"## Provenance verification\n\n{headline}\n\n```\n{output}\n```\n")
+    # Cap + four-backtick fence: gate output is trusted but unbounded, and
+    # a stray ``` inside it must not break out of the evidence fence.
+    if len(output) > _EVIDENCE_OUTPUT_CAP:
+        output = f"{output[:_EVIDENCE_OUTPUT_CAP]}\n… (truncated)"
+    return passed, (
+        f"## Provenance verification\n\n{headline}\n\n````\n{output}\n````\n"
+    )
 
 
 def _publish_resync(root: Path, version: str, base_branch: str) -> int:
@@ -278,14 +286,7 @@ def main() -> int:
         caller="forge-resync",
         hint="Install the GitHub CLI (https://cli.github.com) and retry.",
     )
-    require_cli(
-        "forge-precommit",
-        caller="forge-resync",
-        hint=(
-            "forge-scripts is not fully installed. Run `pip install "
-            "forge-scripts` (provides the provenance gates)."
-        ),
-    )
+    require_cli("forge-precommit", caller="forge-resync")
 
     if _working_tree_dirty(root):
         logger.error(

@@ -289,6 +289,35 @@ def test_provenance_evidence_argv_and_kwargs(
     assert kwargs["cwd"] == tmp_path
 
 
+def test_provenance_evidence_truncates_oversized_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gate output past the cap is truncated with a marker; the fence survives.
+
+    SCENARIO: a passing gate run whose stdout exceeds
+        `resync._EVIDENCE_OUTPUT_CAP`.
+    MOCK SETUP: `subprocess.run` replaced with a fake returning
+        `FakeProc(0, stdout=<oversized payload>)`.
+    EXPECTED BEHAVIOR: the evidence block carries the "… (truncated)"
+        marker, does not contain the full original output, and the
+        four-backtick fence is intact.
+    """
+    oversized = "x" * (resync._EVIDENCE_OUTPUT_CAP + 500)
+    monkeypatch.setattr(
+        resync.subprocess,
+        "run",
+        lambda *_a, **_kw: FakeProc(0, stdout=oversized),
+    )
+
+    passed, block = resync._provenance_evidence(tmp_path)
+
+    assert passed is True
+    assert "… (truncated)" in block
+    assert oversized not in block
+    assert "````" in block
+
+
 # ---------------------------------------------------------------------------
 # _publish_resync
 # ---------------------------------------------------------------------------
