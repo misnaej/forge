@@ -9,6 +9,7 @@ from forge.pr_delta import (
     DOCS_ONLY_GLOBS,
     HIGH_BLAST_RADIUS_PATHS,
     MANAGED_REGEN_PATHS,
+    PROVENANCE_GATE_STEPS,
     VERIFIED_AT_RE,
     configured_docs_only_globs,
     delta_decision,
@@ -115,6 +116,20 @@ def test_delta_decision_high_blast_radius_path_forces_full() -> None:
 def test_high_blast_radius_paths_is_non_empty() -> None:
     """Guard against accidental empty constant (would disable the gate)."""
     assert len(HIGH_BLAST_RADIUS_PATHS) > 0
+
+
+def test_provenance_gate_steps_pins_literal_contents() -> None:
+    """The gate-step names are pinned so a silent edit is caught.
+
+    `forge-resync`'s `--only` argv and the `/pr` skill's prose both name
+    these three steps directly; a silent reorder or rename here would
+    desync them without either failing loudly.
+    """
+    assert PROVENANCE_GATE_STEPS == (
+        "foundation_md_check",
+        "cli_reference_check",
+        "api_digest_check",
+    )
 
 
 def test_docs_only_all_docs_paths_qualify() -> None:

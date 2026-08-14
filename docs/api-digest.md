@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 698 symbols._
+_63 modules, 699 symbols._
 
 ## `forge`
 
@@ -770,6 +770,7 @@ _63 modules, 698 symbols._
 - `_working_tree_dirty(root: Path) -> bool` _(internal)_ — Return ``True`` when the working tree has any pending change.
 - `_open_resync_pr_url() -> str | None` _(internal)_ — Return the URL of an already-open resync PR, or ``None``.
 - `_run_bootstrap() -> int` _(internal)_ — Run ``install-forge-bootstrap`` in-process and return its exit code.
+- `_provenance_evidence(root: Path) -> tuple[bool, str]` _(internal)_ — Run the provenance gates and format PR-body evidence.
 - `_publish_resync(root: Path, version: str, base_branch: str) -> int` _(internal)_ — Branch, commit, push the regen diff and open the resync PR.
 - `main() -> int` — Run the resync loop; see the module docstring for the steps.
 

@@ -20,6 +20,11 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.8.1 — Unreleased
+
+### Features
+- **forge-resync embeds provenance-gate evidence in PR bodies.** Resync PRs now carry their regen-verified byte-check output directly in the PR body, so verification artifacts travel with the PR for auditability.
+
 ## v3.8.0 — Unreleased
 
 ### Features
