@@ -20,6 +20,52 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.5.0 — 2026-08-13
+
+### ⚠️ Upgrade notes
+- **Layering config validation is now strict.** A malformed layer value
+  that previously matched nothing *silently* — e.g. `package = ["a", "b"]`,
+  which stringified to a dead prefix — is now a HIGH config-error finding
+  anchored at `pyproject.toml`. If the layering audit newly fails on
+  config errors after upgrading, fix the layer tables; nothing about the
+  passing-config contract changed.
+
+### Features
+- **Multi-package layers.** `[[tool.forge.layering.layer]]` accepts
+  `packages = ["a", "b"]` for a domain spanning several top-level
+  prefixes (exactly one of `package` / `packages` per layer). Composing
+  *any* prefix satisfies a `composes_all_of` clause naming the layer;
+  `exempt` bare names cover same-named children under every prefix. Also
+  restores `forge:prior-art`'s layer-aware placement advice for
+  multi-package consumers (#306).
+
+### Fixes
+- **Loud layering misconfiguration.** Non-string `name` / `package`,
+  malformed `packages`, duplicate layer names (first definition wins),
+  and both/neither package keys each yield a single HIGH config error; a
+  layer matching **zero modules on disk** reports once and is skipped as
+  a compose target instead of failing every child of every composing
+  layer mid-restructure (#306).
+- **Layering scan roots are source-only by default** — a test package
+  mirroring a source namespace is no longer evaluated as a layer child
+  (#297).
+- **`TYPE_CHECKING`-only imports are no longer runtime edges** for the
+  deps audit and layering closure; C4 diagrams and smart-test selection
+  keep the annotation edges.
+- **Audits honor the declared layout** — `[tool.forge].source_dirs` +
+  `test_dirs` beat the broad built-in directory guess when no `--roots`
+  is given.
+- **Shipped skills invoke agents by canonical `forge:` names**, and the
+  wrap-up gate self-exempts on provenance-verified `release/vX.Y.Z`
+  branches (tree reproduces the tag modulo the curated CHANGELOG).
+
+### Docs
+- **Agent discipline hardened.** `precommit-fixer` treats a
+  formatter-reverted Edit as STUCK after one occurrence (formatter-stable
+  findings never converge by re-layout); `git-commit-push` may never
+  author or modify file content via Bash — it commits the tree exactly
+  as handed over. `pr-manager` doc trimmed back under budget (#305).
+
 ## v3.4.0 — 2026-08-11
 
 ### Features

@@ -13,6 +13,14 @@
 #   - the USER asks to skip the gate: the agent prefixes the command with
 #     FORGE_SKIP_WRAPUP_GATE=1 — only on an explicit user request, never
 #     on the agent's own judgment.
+#
+# Promotion PRs self-exempt: a release/vX.Y.Z branch is an era-locked
+# tree whose verification is the release-fingerprint check, not a /pr
+# reporter wrap-up — the /promote flow has no Step 3.92. The exemption
+# demands provenance, not just naming: the vX.Y.Z tag must exist AND
+# HEAD's tree must reproduce it modulo CHANGELOG.md (the curated entry
+# is the one tolerated divergence). A branch merely NAMED release/*
+# whose content diverges falls through to the normal gate.
 set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
@@ -30,6 +38,19 @@ fi
 if echo "$COMMAND" | grep -qE '(^|[[:space:]]*[|;&]+[[:space:]]*)FORGE_SKIP_WRAPUP_GATE=1[[:space:]]+gh[[:space:]]+pr[[:space:]]+create\b' \
     || [ "${FORGE_SKIP_WRAPUP_GATE:-}" = "1" ]; then
     exit 0
+fi
+
+BRANCH=$(git branch --show-current 2>/dev/null || true)
+if echo "$BRANCH" | grep -qE '^release/v[0-9]+\.[0-9]+\.[0-9]+$'; then
+    TAG="${BRANCH#release/}"
+    # Top-anchored pathspecs (':/', ':(exclude,top)') — a bare '.' is
+    # cwd-relative and would silently narrow the divergence check when
+    # the hook fires from a subdirectory.
+    if git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null 2>&1 \
+        && [ -z "$(git diff --name-only "$TAG" HEAD -- ':/' ':(exclude,top)CHANGELOG.md')" ]; then
+        exit 0
+    fi
+    echo "NOTE: branch is named $BRANCH but its tree does not reproduce tag $TAG (mod CHANGELOG.md) — promotion exemption withheld, normal wrap-up gate applies." >&2
 fi
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")

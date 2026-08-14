@@ -9,12 +9,12 @@ Run the standard commit workflow:
 
 1. **Run `precommit-fixer`** (no file list — it scopes off `code_health/`):
    ```
-   Agent(subagent_type="precommit-fixer", prompt="Clear all pre-commit failures.")
+   Agent(subagent_type="forge:precommit-fixer", prompt="Clear all pre-commit failures.")
    ```
 
 2. **Run `git-commit-push`** to stage and commit:
    ```
-   Agent(subagent_type="git-commit-push", prompt="Commit changes with message: $ARGUMENTS")
+   Agent(subagent_type="forge:git-commit-push", prompt="Commit changes with message: $ARGUMENTS")
    ```
    If no message provided via `$ARGUMENTS`, the agent generates an appropriate conventional commit message.
 

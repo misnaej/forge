@@ -21,7 +21,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from forge.config import load_config
+from forge.config import declared_layout_dirs, load_config
 from forge.git_utils import get_modified_files, repo_root
 
 
@@ -208,8 +208,16 @@ def make_audit_parser(prog: str, description: str) -> argparse.ArgumentParser:
 def resolve_roots(roots: list[str] | None) -> list[Path]:
     """Resolve the effective scan roots.
 
+    A repo that declared its layout gets exactly that layout: when
+    ``[tool.forge].source_dirs`` is set, the default scan is the declared
+    ``source_dirs`` + ``test_dirs`` — not the broad ``DEFAULT_ROOTS``
+    guess, whose extra directories (docs, config, data, vendored trees)
+    are where spurious audit findings live. The guess remains only for
+    repos with no declared layout.
+
     Args:
-        roots: Explicit list from ``--roots``, or ``None`` for auto-detect.
+        roots: Explicit list from ``--roots``, or ``None`` for the
+            declared-layout / auto-detect fallback.
 
     Returns:
         Existing absolute directories under the repo root.
@@ -217,6 +225,9 @@ def resolve_roots(roots: list[str] | None) -> list[Path]:
     root = repo_root()
     if roots:
         return [(root / r).resolve() for r in roots if (root / r).is_dir()]
+    declared = declared_layout_dirs(root)
+    if declared is not None:
+        return [(root / r).resolve() for r in declared]
     return [(root / r).resolve() for r in DEFAULT_ROOTS if (root / r).is_dir()]
 
 

@@ -324,8 +324,10 @@ pin; they do not edit pins.
   written before the PR exists (only its posting needs a PR); the
   `block_unverified_pr_create` hook blocks `gh pr create` until the authored
   wrap-up names the current `HEAD` (skippable via `FORGE_SKIP_WRAPUP_GATE=1`
-  — on explicit user request only). A **draft PR** is the escape hatch when
-  the PR should be visible earlier.
+  — on explicit user request only; promotion PRs self-exempt when the
+  `release/vX.Y.Z` branch's tree reproduces its tag modulo the curated
+  changelog — provenance, not naming). A **draft PR** is the escape hatch
+  when the PR should be visible earlier.
 - **Verification starts itself.** The moment a branch's implementation
   commits are done, run the finalization reviews — automatically, without
   stopping to offer or ask. The reviews are read-only; nothing about them
@@ -547,7 +549,9 @@ Template:
 - It is **gitignored** — never commit it.
 - **Never delete it** — rewrite structured sections in place. Deleting it (e.g. on
   `/next`) destroys the handoff exactly when the user clears context for the next task.
-- Foundation agents append one line on success; they never delete or overwrite existing content.
+- Foundation agents append one line on success — even when invoked directly,
+  outside the `/commit` / `/pr` skills, so session-to-session state survives a
+  skill bypass; they never delete or overwrite existing content.
 - The main agent owns structured-section rewrites (Status, Next steps).
 
 ---

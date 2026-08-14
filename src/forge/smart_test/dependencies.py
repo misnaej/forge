@@ -280,7 +280,7 @@ def build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph
         except (SyntaxError, UnicodeDecodeError):
             continue
         rel = path.relative_to(repo_root).as_posix()
-        targets = extract_import_targets(tree, name)
+        targets = extract_import_targets(tree, name, include_type_checking=True)
         if is_test:
             test_modules.add(name)
             if follow_mock_patches:

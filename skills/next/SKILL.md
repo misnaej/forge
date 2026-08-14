@@ -181,14 +181,14 @@ task-selection precedence rule in Important Rules).
 
 9. **Refresh if confirmed** — delegate to `issue-triage`:
     ```
-    Agent(subagent_type="issue-triage", prompt="Run triage mode. The Backlog Index was last triaged X days ago. Walk all open issues, apply tier labels where missing, and regenerate the 📋 Backlog Index issue body.")
+    Agent(subagent_type="forge:issue-triage", prompt="Run triage mode. The Backlog Index was last triaged X days ago. Walk all open issues, apply tier labels where missing, and regenerate the 📋 Backlog Index issue body.")
     ```
 
 ## Phase 4: Task Selection
 
 10. **Delegate to `issue-triage` in `recommend-next` mode**:
     ```
-    Agent(subagent_type="issue-triage", prompt="Run recommend-next mode. Return the top 3 issues with: number, title, labels, tier, rationale, and estimated scope.")
+    Agent(subagent_type="forge:issue-triage", prompt="Run recommend-next mode. Return the top 3 issues with: number, title, labels, tier, rationale, and estimated scope.")
     ```
 
 11. **Present recommendations** to the user — number+title (with link), labels+tier, why recommended, estimated scope.

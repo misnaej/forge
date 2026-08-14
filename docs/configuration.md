@@ -283,15 +283,35 @@ exempt = ["legacy_import_job"]   # visible, per-child exemptions
 
 [[tool.forge.layering.layer]]
 name = "domain"
-package = "myproj.domain"
+packages = ["myproj.models", "myproj.rules"]   # multi-package layer
 ```
+
+Scan roots are **source-only** by default: `[tool.forge.layering].paths`
+→ `[tool.forge].source_dirs` → smart auto-detect (the shared
+`resolve_tool_roots` seam) — test directories are never scanned unless
+named via explicit `--roots`, so a test package mirroring a source
+namespace is not evaluated as a layer child.
 
 | Key (per layer) | What it does |
 |---|---|
-| `name` | Layer name, referenced by other layers' `composes_all_of`. |
-| `package` | Dotted package prefix owning the layer's modules. |
+| `name` | Layer name, referenced by other layers' `composes_all_of`. Must be unique — a duplicate is a config error. |
+| `package` | Dotted package prefix owning the layer's modules. Exactly one of `package` / `packages` per layer — omitting both or setting both is a config error. |
+| `packages` | Non-empty array of dotted prefixes for a layer spanning several top-level packages. Composing *any* of the prefixes satisfies a `composes_all_of` clause naming this layer. |
 | `composes_all_of` | Layer names each direct child must compose (reach in its import closure). Omit for layers that are only *targets*. |
-| `exempt` | Direct-child names excluded from evaluation — rendered as REVIEW findings so exemptions stay visible. |
+| `exempt` | Direct-child names excluded from evaluation — rendered as REVIEW findings so exemptions stay visible. Bare names: one entry covers a same-named child under every prefix. |
+
+Config validation is strict — never coercing, never silent. Each of the
+following produces a single HIGH config-error finding (anchored at
+`pyproject.toml`):
+
+- Omitting both `package` and `packages`, or setting both on one layer
+- A non-string `name` or `package`; a `packages` that is not a non-empty
+  array of strings
+- A duplicate layer `name` (the first definition wins)
+- A layer whose prefixes match **no modules on disk** (typo'd or emptied
+  namespace) — one loud finding, and the layer is skipped as a
+  `composes_all_of` target instead of failing every child of every
+  composing layer
 
 ## `[tool.forge.env_sync]` — install-freshness gate (default-on)
 

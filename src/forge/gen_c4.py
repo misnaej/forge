@@ -1455,7 +1455,7 @@ def build_model(
     config = load_c4_config(root)
     if config is None:
         return None
-    modules, graph = build_module_graph(Scope.FULL, roots)
+    modules, graph = build_module_graph(Scope.FULL, roots, include_type_checking=True)
     sorted_modules = sorted(modules)
     assigned, unmatched = assign_components(sorted_modules, config.components)
     edges = derive_component_edges(graph, assigned)

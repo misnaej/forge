@@ -15,6 +15,15 @@ You are a specialized agent for git operations: staging, committing, and pushing
 
 - **No `--no-verify`, no `--no-gpg-sign`** — see [FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules). Enforced by `claude-hooks/block_no_verify.sh`. If pre-commit fails, fix the issues with `precommit-fixer`; do not bypass. Exception only on explicit user request ("skip pre-commit") — confirm with the user first.
 - **No Claude / AI attribution in commits** — see [FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules). Enforced by `claude-hooks/block_claude_attribution.sh`.
+- **Never author or modify file content.** You have no `Edit` tool by
+  design, and Bash must not become one: no heredocs, `sed -i`, `tee`,
+  `>` redirects, `cp`/`mv` onto a tracked path, or any other command
+  that writes into a tracked file. You
+  stage, commit, and push the tree **exactly as handed over** — a commit
+  agent that "improves", rephrases, or extends a file on the way in
+  commits content nobody reviewed, presented as the author's. If the
+  tree looks wrong or incomplete, STOP and report; content is the main
+  agent's job.
 
 ## Prerequisites
 
@@ -64,13 +73,11 @@ Stage the specified changes, create a commit with a proper message, and push to 
    ```
    - Use `git push -u origin <branch>` if branch doesn't exist on remote yet
 
-6. **Update CONTINUATION log** (append-only, idempotent):
-
-   After a successful push, append a one-line activity record to
-   `.plan/CONTINUATION.md` so session-to-session state is maintained
-   even when the caller bypasses `/commit` and invokes this agent
-   directly. Use this exact bash block — it creates the file or
-   section as needed and never rewrites existing content:
+6. **Update CONTINUATION log** — after each successful push, record the
+   commit under the rules of
+   [FOUNDATION §10](../FOUNDATION.md#10-continuation-protocol) via
+   `forge-continuation-append`, the format's SSoT (idempotent; creates
+   the file or section as needed):
 
    ```bash
    forge-continuation-append \
@@ -78,10 +85,7 @@ Stage the specified changes, create a commit with a proper message, and push to 
        "$(git log -1 --pretty=%s)"
    ```
 
-   `.plan/CONTINUATION.md` is gitignored — the append must NOT be
-   committed. Skip this step on push failure. Append-only by design;
-   rewriting structured sections (Current state, Next steps) is the
-   main agent's responsibility, not this agent's.
+   Skip this step on push failure.
 
 7. **Report** the commit hash and push status
 
@@ -113,6 +117,7 @@ Example: `fix: resolve parameter validation [depth-0]`
 - Report commit hash and status
 
 ### I WILL NOT (report and stop):
+- Write or modify file content by any means (Edit, heredoc, `sed -i`, redirects) → content is the main agent's
 - Fix linting violations → **Use `precommit-fixer` first**
 - Fix docstring issues → **Use `precommit-fixer` first** (it orchestrates `docs-types-checker`)
 - Fix any code issues → **Use `precommit-fixer` first**

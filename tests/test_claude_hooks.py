@@ -766,3 +766,152 @@ def test_unverified_pr_create_blocks_token_mention_in_argument(
         )
         == 2
     )
+
+
+def test_unverified_pr_create_allows_release_branch_without_wrapup(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A `release/vX.Y.Z` branch whose tree reproduces tag `vX.Y.Z` self-exempts.
+
+    The exemption demands provenance, not just naming (per the hook's header
+    comment): the `vX.Y.Z` tag must exist AND HEAD's tree must reproduce it.
+    Tagging HEAD before branching satisfies both, so no wrap-up is needed —
+    the `/promote` flow has no Step 3.92; its verification is the
+    release-fingerprint check instead.
+    """
+    repo, sha = git_repo_with_commit
+    subprocess.run(["git", "tag", "v1.2.3", sha], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "release/v1.2.3"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo) == 0
+
+
+def test_unverified_pr_create_blocks_release_branch_suffix(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """`release/v1.2.3-rc1` does not match the anchored `release/vX.Y.Z` regex.
+
+    Regression guard for the exemption's anchoring: a suffixed branch name
+    (e.g. a release-candidate) must fall through to the normal wrap-up gate
+    rather than silently exempting itself.
+    """
+    repo, _sha = git_repo_with_commit
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "release/v1.2.3-rc1"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
+    assert proc.returncode == 2
+    assert "authored wrap-up" in proc.stderr
+
+
+def test_unverified_pr_create_blocks_spoofed_release_branch(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A branch merely NAMED `release/vX.Y.Z` with no matching tag is not exempt.
+
+    Regression for the naming-only exemption this replaced: without a
+    `v9.9.9` tag to reproduce, the hook withholds the exemption and falls
+    through to the normal (missing-wrap-up) gate.
+    """
+    repo, _sha = git_repo_with_commit
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "release/v9.9.9"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
+    assert proc.returncode == 2
+    assert "promotion exemption withheld" in proc.stderr
+
+
+def test_unverified_pr_create_allows_release_branch_changelog_only_divergence(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A tree diverging from its tag ONLY in `CHANGELOG.md` stays exempt.
+
+    `CHANGELOG.md` is the one tolerated divergence (the curated release-notes
+    entry written after tagging) — the hook diffs `tag..HEAD` excluding it.
+    """
+    repo, sha = git_repo_with_commit
+    subprocess.run(["git", "tag", "v1.2.3", sha], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "release/v1.2.3"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    (repo / "CHANGELOG.md").write_text("## v1.2.3\n\n- release notes\n")
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "changelog"], cwd=repo, env=GIT_ENV, check=True
+    )
+    assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo) == 0
+
+
+def test_unverified_pr_create_blocks_release_branch_non_changelog_divergence(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A tree diverging from its tag in a file OTHER than `CHANGELOG.md` is not exempt.
+
+    The excluded-path diff (`':(exclude)CHANGELOG.md'`) is scoped to that one
+    file — any other post-tag edit means the tree no longer reproduces the
+    release, so the promotion exemption is withheld.
+    """
+    repo, sha = git_repo_with_commit
+    subprocess.run(["git", "tag", "v1.2.3", sha], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "release/v1.2.3"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    (repo / "other.txt").write_text("post-tag change\n")
+    subprocess.run(["git", "add", "other.txt"], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "unrelated change"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
+    assert proc.returncode == 2
+    assert "promotion exemption withheld" in proc.stderr
+
+
+def test_unverified_pr_create_provenance_check_is_cwd_independent(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A non-CHANGELOG divergence is detected even from a subdirectory cwd.
+
+    Regression: the divergence diff used a cwd-relative `.` pathspec, so a
+    hook invocation from a subdirectory silently narrowed the check —
+    files diverging elsewhere in the tree became invisible and a
+    tag-diverged branch wrongly earned the exemption. The top-anchored
+    pathspecs make the check cwd-independent.
+    """
+    repo, sha = git_repo_with_commit
+    subprocess.run(["git", "tag", "v1.2.3", sha], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "release/v1.2.3"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    (repo / "outside.txt").write_text("diverges\n", encoding="utf-8")
+    subprocess.run(["git", "add", "outside.txt"], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "diverge"], cwd=repo, env=GIT_ENV, check=True
+    )
+    subdir = repo / "sub"
+    subdir.mkdir()
+    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=subdir)
+    assert proc.returncode == 2
+    assert "promotion exemption withheld" in proc.stderr

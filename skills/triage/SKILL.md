@@ -8,7 +8,7 @@ description: Triage GitHub issues - prioritize backlog, recommend next work item
 Run the `issue-triage` agent to manage the issue backlog:
 
 ```
-Agent(subagent_type="issue-triage", prompt="$ARGUMENTS")
+Agent(subagent_type="forge:issue-triage", prompt="$ARGUMENTS")
 ```
 
 If no `$ARGUMENTS` provided, default to: "Run triage mode: walk all open issues, apply tier labels where missing, and regenerate the 📋 Backlog Index issue."
