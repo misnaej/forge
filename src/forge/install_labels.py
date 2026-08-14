@@ -70,6 +70,11 @@ CANONICAL_LABELS: list[dict[str, str]] = [
         "color": "999999",
         "description": "No activity > 180 days; review for closure",
     },
+    {
+        "name": "plan-ready",
+        "color": "0E8A16",
+        "description": "Validated plan attached; cleared for autonomous execution",
+    },
     # Type
     {"name": "bug", "color": "D73A4A", "description": "Something is broken"},
     {"name": "feature", "color": "A2EEEF", "description": "New capability"},

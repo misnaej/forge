@@ -396,6 +396,16 @@ The squash-merge message becomes the permanent commit message on `main`.
 
 18. The `pr-manager` agent appends a one-line activity record to `.plan/CONTINUATION.md` automatically (gitignored).
 
+## Step 7: Background PR monitor (default)
+
+19. Per FOUNDATION §6 "PR finalization", the flow does not end at
+    posting: delegate one background subagent per open PR to watch
+    review comments and merge state. On merge → local cleanup at least
+    (sync the base branch, prune the merged local branch — the `/next`
+    cleanup phase). On new comments → surface them (or run
+    `/pr-comments`). Skip only on explicit user request or when
+    `forge.run_context.is_non_interactive()`.
+
 ## Rules
 
 - Do NOT auto-merge unless the user explicitly asks.
