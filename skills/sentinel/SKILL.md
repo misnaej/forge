@@ -1,6 +1,7 @@
 ---
 name: sentinel
 description: Autonomous executor of validated plans - watch for plan-ready issues carrying a plan-validated spec, execute each through the standard workflow to a PR wrap-up with background PR monitors, never merging. Use when the user activates autonomous execution of the validated backlog.
+user-invocable: true
 ---
 
 # Sentinel — execute validated plans

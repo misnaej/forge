@@ -1,6 +1,7 @@
 ---
 name: pr
 description: Full PR finalization flow, verification-first - design check, security check, docs check, precommit-fixer (strict), plan/docs updates, then publish the PR and have pr-manager post wrap-up + squash-merge message. Use when the user wants to finalize a PR.
+user-invocable: true
 ---
 
 # PR Finalization Flow

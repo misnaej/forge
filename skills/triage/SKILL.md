@@ -1,6 +1,7 @@
 ---
 name: triage
 description: Triage GitHub issues - prioritize backlog, recommend next work items. Use when the user wants to plan what to work on next.
+user-invocable: true
 ---
 
 # Issue Triage

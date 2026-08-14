@@ -1,6 +1,7 @@
 ---
 name: test
 description: Write tests for a target by chaining the forge test agents - test-advisor recommends, test-writer writes, test-advisor reviews, then precommit-fixer cleans. Use when the user wants tests written for a module, path, or feature.
+user-invocable: true
 ---
 
 # Test-Writing Flow

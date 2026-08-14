@@ -1,6 +1,7 @@
 ---
 name: memory-audit
 description: Audit the agent's persistent memory against the repo's rule surface - flag contradictions, duplicates of shipped rules, and stale references, then propose reconciliation. Use when the user wants memory checked, cleaned, or reconciled against FOUNDATION / CLAUDE.md / skills.
+user-invocable: true
 ---
 
 # Memory Audit

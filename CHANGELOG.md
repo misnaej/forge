@@ -20,6 +20,11 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.8.2 — Unreleased
+
+### Fixes
+- **Every shipped skill is now a typeable slash command.** Only `/next` and `/smart-test` carried the `user-invocable` flag; typing any other skill (`/commit`, `/pr`, `/plan-issue`, `/sentinel`, …) failed with "Unknown command" although agents could invoke them. All thirteen skills now carry the flag.
+
 ## v3.8.1 — Unreleased
 
 ### Features
