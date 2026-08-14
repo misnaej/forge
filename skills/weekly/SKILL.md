@@ -1,6 +1,7 @@
 ---
 name: weekly
 description: Generate a weekly summary of developer GitHub activity - PRs, issues, commits grouped by theme. Use when the user wants a weekly report.
+user-invocable: true
 ---
 
 # Weekly Summary

@@ -1,6 +1,7 @@
 ---
 name: c4
 description: Build or refresh a C4 architecture model for this repo — interactively interview the user to define the System Context, Containers, and Components (the parts not in the code), write c4.toml, then run forge-gen-c4. Use when the user wants an architecture diagram from their code.
+user-invocable: true
 ---
 
 # C4 Architecture Model
