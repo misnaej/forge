@@ -20,6 +20,11 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.8.2 — Unreleased
+
+### Fixes
+- **`/plan-issue` and `/sentinel` are now typeable slash commands.** Both skills shipped without the `user-invocable` flag, so typing them failed with "Unknown command" although agents could invoke them; they now match `/next` and `/smart-test`.
+
 ## v3.8.1 — Unreleased
 
 ### Features

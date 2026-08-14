@@ -1,6 +1,7 @@
 ---
 name: plan-issue
 description: Human-in-the-loop planning for one backlog issue - investigate read-only, confirm scope and approach with the user, then record the validated plan as a plan-ready execution spec. Use when an issue surfaced as a needs-plan candidate, or the user names an issue to plan.
+user-invocable: true
 ---
 
 # Plan an Issue (human-validated)
