@@ -20,6 +20,11 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.8.3 — Unreleased
+
+### Tooling
+- **Regression test locks the skill slash-command contract.** A manifest-integrity test now asserts every shipped skill under `skills/` declares `user-invocable: true`, so a new skill can no longer ship silently untypeable.
+
 ## v3.8.2 — Unreleased
 
 ### Fixes
