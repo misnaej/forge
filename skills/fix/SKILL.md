@@ -1,6 +1,7 @@
 ---
 name: fix
 description: Run precommit-fixer to clear every blocking pre-commit failure (lint, docstrings, naming, structure, dep advisories). Use when code needs cleanup before committing.
+user-invocable: true
 ---
 
 # Fix Code Quality

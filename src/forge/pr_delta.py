@@ -73,16 +73,27 @@ DOCS_ONLY_GLOBS: Final[tuple[str, ...]] = (
 # Forge-managed regen artifacts a resync PR's diff may consist entirely
 # of. The `/pr` regen-verified light path classifies with
 # :func:`regen_only_diff` and then EARNS the escape per-PR by running the
-# provenance gates (`forge-precommit --only
-# foundation_md_check,cli_reference_check,api_digest_check`) —
-# classification alone never skips review, and a provenance failure
-# (including the editable-install self-reference case) falls back to the
-# full round. Other bootstrap-managed files (badges, hook wrappers) are
-# deliberately absent: a diff touching them takes the full path.
+# provenance gates (`forge-precommit --only` over
+# :data:`PROVENANCE_GATE_STEPS`) — classification alone never skips
+# review, and a provenance failure (including the editable-install
+# self-reference case) falls back to the full round. Other
+# bootstrap-managed files (badges, hook wrappers) are deliberately
+# absent: a diff touching them takes the full path.
 MANAGED_REGEN_PATHS: Final[tuple[str, ...]] = (
     "FOUNDATION.md",
     "docs/cli-reference.md",
     "docs/api-digest.md",
+)
+
+
+# The pre-commit steps that byte-verify MANAGED_REGEN_PATHS against the
+# installed package. Executable callers (`forge-resync`'s PR-body
+# evidence) build their `forge-precommit --only` argv from this tuple;
+# the `/pr` skill's prose names the same three steps.
+PROVENANCE_GATE_STEPS: Final[tuple[str, ...]] = (
+    "foundation_md_check",
+    "cli_reference_check",
+    "api_digest_check",
 )
 
 

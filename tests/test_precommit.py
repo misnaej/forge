@@ -3078,18 +3078,20 @@ def test_step_smart_test_blocking_when_opted_in(
 # ---------------------------------------------------------------------------
 
 
-def _fake_run_git_dispatch(
-    *, branch: str = "feat/x", base_changelog: str = ""
-) -> Callable[..., str]:
+def _fake_run_git_dispatch(*, base_changelog: str = "") -> Callable[..., str]:
     """Build a ``run_git`` fake dispatching on the git subcommand.
 
-    ``merge-base`` is not dispatched here — ``step_changelog_version``
-    resolves the merge-base via ``git_utils.merge_base_with_head``, not a
-    raw ``run_git("merge-base", ...)`` call, so callers patch that
-    function directly instead of feeding this fake a ``merge_base=`` value.
+    Branch resolution is not dispatched here — ``step_changelog_version``
+    resolves the current branch via ``git_utils.resolve_current_branch``
+    (patched separately with ``_fake_resolve_current_branch``), which calls
+    its own module-internal ``run_git`` rather than the one patched on
+    ``precommit``. ``merge-base`` is likewise not dispatched here —
+    ``step_changelog_version`` resolves the merge-base via
+    ``git_utils.merge_base_with_head``, not a raw ``run_git("merge-base",
+    ...)`` call, so callers patch that function directly instead of
+    feeding this fake a ``merge_base=`` value.
 
     Args:
-        branch: What ``branch --show-current`` reports.
         base_changelog: What ``show <rev>:CHANGELOG.md`` reports — the
             old-side contents the stranded membership comparison reads.
 
@@ -3098,8 +3100,6 @@ def _fake_run_git_dispatch(
     """
 
     def _fake(*args: str, **_kw: object) -> str:
-        if args[:2] == ("branch", "--show-current"):
-            return branch
         if args[0] == "show":
             return base_changelog
         return ""
@@ -3156,6 +3156,10 @@ def test_step_changelog_version_fails_on_invalid_heading(
     """`## Unreleased` heading fails the gate, blocking by default."""
     (tmp_path / "CHANGELOG.md").write_text("## Unreleased\n\n## v1.0.0\n")
     monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     result = precommit.step_changelog_version(tmp_path)
     assert not result.passed
@@ -3169,6 +3173,10 @@ def test_step_changelog_version_passes_clean(
     """Consistent headings and no stranded entries → pass."""
     (tmp_path / "CHANGELOG.md").write_text("## v1.1.0\n\n- a\n\n## v1.0.0\n")
     monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     result = precommit.step_changelog_version(tmp_path)
     assert result.passed
@@ -3189,6 +3197,10 @@ def test_step_changelog_version_detects_stranded_entries(
     base_changelog = "## v1.0.0\n"
     (tmp_path / "CHANGELOG.md").write_text(text)
     monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
     merge_base_calls: list[tuple[object, object]] = []
 
     def _fake_merge_base_with_head(root: object, base: object) -> str:
@@ -3317,6 +3329,10 @@ def test_step_changelog_version_nonblocking_when_configured(
         "[tool.forge.changelog]\nblocking = false\n"
     )
     monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: None)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     result = precommit.step_changelog_version(tmp_path)
     assert not result.passed
@@ -3415,6 +3431,10 @@ def test_step_changelog_version_stale_branch_guidance_when_tag_only_on_base(
     """
     (tmp_path / "CHANGELOG.md").write_text("## v1.1.0\n")
     monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     monkeypatch.setattr(precommit, "_tag_only_on_base", lambda *_a, **_kw: True)
     result = precommit.step_changelog_version(tmp_path)
@@ -3437,6 +3457,10 @@ def test_step_changelog_version_no_stale_guidance_when_tag_not_only_on_base(
     """
     (tmp_path / "CHANGELOG.md").write_text("## v1.1.0\n")
     monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     monkeypatch.setattr(precommit, "_tag_only_on_base", lambda *_a, **_kw: False)
     result = precommit.step_changelog_version(tmp_path)
@@ -3460,6 +3484,10 @@ def test_step_changelog_version_no_stale_guidance_for_non_tag_shaped_finding(
     """
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n\n## v1.0.0\n")
     monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     monkeypatch.setattr(precommit, "_tag_only_on_base", lambda *_a, **_kw: True)
     result = precommit.step_changelog_version(tmp_path)
@@ -3847,10 +3875,10 @@ def test_step_changelog_updated_deferred_mode_gated_on_is_ci_not_non_interactive
 ) -> None:
     """Deferred mode's local/CI split is gated on ``is_ci()``, not non-interactivity.
 
-    SCENARIO: pins the same wrong-gate regression as
-    ``test_step_changelog_version_fetches_tags_unless_ci`` — an
-    agent-driven local run has a non-tty stdin but is not genuine CI, so
-    the deferred skip must key off ``is_ci()`` alone.
+    SCENARIO: an agent-driven local run has a non-tty stdin but is not
+    genuine CI, so the deferred skip must key off ``is_ci()`` alone —
+    the same distinction ``test_step_changelog_version_fetches_tags_in_every_context``
+    pins for the tag-refresh gate.
     MOCK SETUP: ``precommit.is_non_interactive`` is monkeypatched to raise
     if called at all, so any accidental read of it fails the test loudly
     instead of silently passing on either backend.
@@ -3979,22 +4007,27 @@ def test_step_changelog_updated_skips_detached_head_with_no_head_ref(
     assert "detached HEAD" in result.output
 
 
-def test_step_changelog_version_fetches_tags_unless_ci(
+def test_step_changelog_version_fetches_tags_in_every_context(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Local runs (human OR agent) refresh tags; genuine CI does not re-fetch.
+    """Tags are refreshed best-effort regardless of `is_ci()`.
 
-    SCENARIO: gate must be is_ci(), not is_non_interactive() — agent-driven
-    runs have a non-tty stdin but no authoritative tag fetch of their own.
+    SCENARIO: a CI `pull_request` checkout may start with no tags at all,
+    so the refresh must not be gated on `is_ci()` — it runs whether the
+    caller is a human, an agent, or genuine CI.
     MOCK SETUP: subprocess.run recorded (the fetch is a direct bounded
-    call); run_git faked for the branch read. `merge_base_with_head` is
-    left real — against a non-git `tmp_path` it resolves no base ref and
-    short-circuits to `""`, so no stranded-entries diff is attempted.
-    EXPECTED BEHAVIOR: fetch argv appears when is_ci() is False, absent
-    when True.
+    call); run_git faked for the `show` old-side read; resolve_current_branch
+    faked so the branch resolution does not depend on the real (non-git)
+    `tmp_path`. `merge_base_with_head` is left real — against a non-git
+    `tmp_path` it resolves no base ref and short-circuits to `""`, so no
+    stranded-entries diff is attempted.
+    EXPECTED BEHAVIOR: fetch argv appears whether is_ci() is False or True.
     """
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
     monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     fetches: list[list[str]] = []
 
@@ -4005,16 +4038,212 @@ def test_step_changelog_version_fetches_tags_unless_ci(
     monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
     assert precommit.step_changelog_version(tmp_path).passed
-    assert any(c[:3] == ["git", "fetch", "--tags"] for c in fetches)
+    assert ["git", "fetch", "--tags", "--quiet"] in fetches
 
     fetches.clear()
     monkeypatch.setattr(precommit, "is_ci", lambda: True)
     assert precommit.step_changelog_version(tmp_path).passed
-    assert not any(c[:3] == ["git", "fetch", "--tags"] for c in fetches)
+    assert ["git", "fetch", "--tags", "--quiet"] in fetches
+
+
+def _setup_tagged_repo_stranded_detached(base: Path) -> Path:
+    """Build a tagged single-track repo with a stranded bullet, HEAD detached.
+
+    Mirrors a CI ``pull_request`` checkout of ``refs/pull/N/merge``:
+    ``main`` carries a tagged ``CHANGELOG.md``; ``feat/x`` adds a bullet
+    under the already-tagged heading (the stranded shape) and HEAD is then
+    detached at that commit, so ``git branch --show-current`` is empty and
+    the ``GITHUB_HEAD_REF`` fallback must carry the branch name instead.
+
+    Args:
+        base: Base directory for the test repo.
+
+    Returns:
+        Path to the work repository, HEAD detached on the feature-branch
+        commit.
+    """
+    work, _bare = init_single_track_repo(base)
+    (work / "CHANGELOG.md").write_text("## v1.0.0\n")
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "chore: add changelog"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.0.0", "-m", "v1.0.0"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "--tags"], cwd=work, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=work, env=GIT_ENV, check=True
+    )
+    (work / "CHANGELOG.md").write_text("## v1.0.0\n\n- new bullet\n")
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "docs: feat/x changelog"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    _detach_head(work)
+    return work
+
+
+def test_step_changelog_version_detects_stranded_entries_on_detached_pr_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stranded-entries check stays live on a detached CI `pull_request` checkout.
+
+    SCENARIO: HEAD is detached (as in a CI `refs/pull/N/merge` checkout),
+    so `git branch --show-current` is empty; branch resolution must fall
+    back to `GITHUB_HEAD_REF` to keep the stranded-entries check live
+    rather than silently skipping it (the `current == ""` short-circuit
+    that would otherwise hide the finding). Real git —
+    `resolve_current_branch` is not mocked here; the `GITHUB_HEAD_REF`
+    fallback wiring is the thing under test.
+    """
+    work = _setup_tagged_repo_stranded_detached(tmp_path)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "feat/x")
+    result = precommit.step_changelog_version(work)
+    assert not result.passed
+    assert "stranded" in result.output
+
+
+def test_step_changelog_version_fetch_failure_falls_back_to_local_tags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed `git fetch --tags` degrades to local tags with a visible note.
+
+    MOCK SETUP: `subprocess.run` faked to report `returncode=1` for the
+    best-effort tag refresh; `run_git` / `resolve_current_branch` faked so
+    the rest of the step reads a consistent, tag-having changelog.
+    EXPECTED BEHAVIOR: the step still passes (local tags are stale but
+    present) and the output carries the degradation note.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.1.0\n\n- a\n\n## v1.0.0\n")
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+
+    def _fake_subprocess_run(*_a: object, **_kw: object) -> object:
+        return type("P", (), {"returncode": 1, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
+    result = precommit.step_changelog_version(tmp_path)
+    assert result.passed is True
+    assert "validating against local tags, which may be stale." in result.output
+
+
+def test_step_changelog_version_no_tag_visible_warns_structural_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No `v*` tag visible after the refresh → structural-only note, not a failure.
+
+    MOCK SETUP: `latest_v_tag` faked to `None` (no tag visible, e.g. a
+    fresh CI checkout with no tags fetched); `subprocess.run` faked to
+    report a successful (`returncode=0`) refresh so the "no tag visible"
+    note is attributable to `latest_v_tag`, not a fetch failure.
+    EXPECTED BEHAVIOR: the step passes (no tag-relative check can fire)
+    and the output names the missing reference tag.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: None)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
+
+    def _fake_subprocess_run(*_a: object, **_kw: object) -> object:
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
+    result = precommit.step_changelog_version(tmp_path)
+    assert result.passed is True
+    assert "no `v*` tag visible" in result.output
 
 
 # ---------------------------------------------------------------------------
-# _release_merge_context + run_all era-gap promotion suppression (#252)
+# _refresh_tags_best_effort
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_tags_best_effort_success_returns_no_notes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A successful `git fetch --tags` refresh returns no degradation notes.
+
+    MOCK SETUP: `subprocess.run` faked to capture its call args and report
+    `returncode=0`, so the call contract (cwd, stdin, timeout, check) is
+    asserted alongside the empty-notes return.
+    """
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def _fake_subprocess_run(cmd: list[str], **kw: object) -> object:
+        calls.append((list(cmd), kw))
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
+    assert precommit._refresh_tags_best_effort(tmp_path) == []
+    assert len(calls) == 1
+    cmd, kw = calls[0]
+    assert cmd == ["git", "fetch", "--tags", "--quiet"]
+    assert kw["cwd"] == tmp_path
+    assert kw["stdin"] is subprocess.DEVNULL
+    assert kw["timeout"] == 10
+    assert kw["check"] is False
+
+
+def test_refresh_tags_best_effort_failure_returns_stale_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-zero `git fetch --tags` exit degrades with a visible note."""
+
+    def _fake_subprocess_run(*_a: object, **_kw: object) -> object:
+        return type("P", (), {"returncode": 1, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
+    notes = precommit._refresh_tags_best_effort(tmp_path)
+    assert notes == [
+        (
+            "Note: `git fetch --tags` failed — validating against local "
+            "tags, which may be stale."
+        )
+    ]
+
+
+def test_refresh_tags_best_effort_timeout_returns_stale_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hung `git fetch --tags` (timeout) degrades the same as a failed exit."""
+
+    def _fake_subprocess_run(*_a: object, **_kw: object) -> object:
+        raise subprocess.TimeoutExpired(
+            cmd=["git", "fetch", "--tags", "--quiet"], timeout=10
+        )
+
+    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
+    notes = precommit._refresh_tags_best_effort(tmp_path)
+    assert notes == [
+        (
+            "Note: `git fetch --tags` failed — validating against local "
+            "tags, which may be stale."
+        )
+    ]
+
+
+# ---------------------------------------------------------------------------
+# _release_merge_context + run_all era-gap promotion suppression
 # ---------------------------------------------------------------------------
 
 

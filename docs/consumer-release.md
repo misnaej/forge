@@ -125,6 +125,16 @@ stranded-entry detection when a tag lands under an open PR) and
 `changelog_updated` (the per-PR entry rule). `forge-release`'s CHANGELOG
 gate remains the final check at cut time.
 
+A commit-time or one-shot CI pass of `changelog_version` can go
+stale-but-green: entries placed under a pending heading strand later
+when a sibling PR merges first and the tag is cut, and same-heading
+edits in different subsections auto-merge without a conflict to force a
+re-check. To catch that pre-merge, run the step as a **required PR
+status check** paired with branch protection's *"require branches to be
+up to date before merging"* — the job recipe lives in
+[`ci-recipe.md`](ci-recipe.md) "Stranded-changelog gate as a required
+PR check".
+
 **Deferred entry timing** (`[tool.forge.changelog].precommit_enforce =
 false`): by default `changelog_updated` gates every local commit, which
 on high-parallelism repos means resolving changelog conflicts mid-PR.

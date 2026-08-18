@@ -62,6 +62,39 @@ def test_expected_plugin_dirs_present() -> None:
         assert any(d.iterdir()), f"{sub}/ is empty"
 
 
+def test_all_shipped_skills_user_invocable() -> None:
+    """Every shipped skill under skills/ declares `user-invocable: true`.
+
+    A skill missing this frontmatter key is silently untypeable as a slash
+    command even though it ships to consumers, so every entry is asserted
+    directly against the real tree rather than a hand-maintained list.
+    """
+    skill_files = sorted((REPO_ROOT / "skills").glob("*/SKILL.md"))
+    assert skill_files, "expected skills/*/SKILL.md files, glob returned none"
+
+    for path in skill_files:
+        lines = path.read_text().splitlines()
+        assert lines[:1] == ["---"], f"{path}: missing opening `---` frontmatter fence"
+
+        close_idx = next(
+            (i for i, line in enumerate(lines[1:], start=1) if line == "---"),
+            None,
+        )
+        assert close_idx is not None, f"{path}: frontmatter fence never closes"
+
+        frontmatter = {}
+        for line in lines[1:close_idx]:
+            if ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            frontmatter[key.strip()] = value.strip()
+
+        assert frontmatter.get("user-invocable") == "true", (
+            f"{path}: expected `user-invocable: true`, "
+            f"got {frontmatter.get('user-invocable')!r}"
+        )
+
+
 def test_pyproject_entry_points_declared() -> None:
     """pyproject.toml declares all forge CLI entry points."""
     pyproject = (REPO_ROOT / "pyproject.toml").read_text()

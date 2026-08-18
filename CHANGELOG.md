@@ -20,6 +20,39 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.9.0 — 2026-08-18
+
+### ⚠️ Upgrade notes
+- **`changelog_version` now refreshes tags in CI too.** A CI run that
+  previously saw no tags (shallow checkout) silently skipped the
+  tag-relative checks; the step now fetches tags best-effort in every
+  context, so a previously-green check can turn red with no code change
+  on your side. Give the job real tag visibility (`fetch-depth: 0`) and
+  adopt the new required-check recipe in `docs/ci-recipe.md`
+  "Stranded-changelog gate as a required PR check".
+
+### Features
+- **Stranded-changelog detection works as a live, re-evaluating PR
+  gate.** `changelog_version` resolves the PR branch on detached CI
+  `pull_request` checkouts (`GITHUB_HEAD_REF`) instead of silently
+  skipping the stranded half, and always validates against the live
+  latest tag with visible degradation notes. Paired with branch
+  protection's "require branches to be up to date before merging"
+  (job recipe in `docs/ci-recipe.md`), a stranding PR goes red before
+  merge instead of blocking the post-merge tagger.
+- **Resync PRs embed provenance-gate evidence in their bodies**, so
+  regen-verified byte-check output travels with the PR for audit.
+
+### Fixes
+- **Every shipped skill is a typeable slash command.** All thirteen
+  skills carry `user-invocable: true`; previously only `/next` and
+  `/smart-test` did, and typing the rest failed with "Unknown command".
+
+### Tooling
+- **Regression test locks the skill slash-command contract** — a
+  manifest-integrity test asserts the flag on every shipped skill, so a
+  new skill can no longer ship silently untypeable.
+
 ## v3.8.0 — 2026-08-18
 
 ### Features

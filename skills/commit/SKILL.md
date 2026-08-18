@@ -1,6 +1,7 @@
 ---
 name: commit
 description: Run the standard commit flow - precommit-fixer then git-commit-push. Use when the user wants to commit changes.
+user-invocable: true
 ---
 
 # Commit Flow
