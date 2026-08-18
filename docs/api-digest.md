@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 699 symbols._
+_63 modules, 700 symbols._
 
 ## `forge`
 
@@ -734,6 +734,7 @@ _63 modules, 699 symbols._
 - `step_vendored_integrity(repo_root: Path) -> StepResult` — Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
 - `_changelog_blocking(repo_root: Path) -> bool` _(internal)_ — Return whether the changelog steps block the commit (default yes).
 - `_tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool` _(internal)_ — Return whether *tag* is reachable from the base branch but not HEAD.
+- `_refresh_tags_best_effort(repo_root: Path) -> list[str]` _(internal)_ — Refresh local tags from the remote, reporting degradations as notes.
 - `step_changelog_version(repo_root: Path) -> StepResult` — Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
 - `step_changelog_updated(repo_root: Path) -> StepResult` — Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.

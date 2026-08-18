@@ -58,7 +58,6 @@ after run only if the forge sequence passed.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import hashlib
 import importlib.metadata
 import json
@@ -1819,6 +1818,45 @@ def _tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool:
     )
 
 
+def _refresh_tags_best_effort(repo_root: Path) -> list[str]:
+    """Refresh local tags from the remote, reporting degradations as notes.
+
+    The tag-relative checks are only as fresh as the tags visible
+    locally, and a CI ``pull_request`` checkout may start with none — so
+    the refresh runs in every context, bounded and stdin-less, degrading
+    to the local tag state (with a visible note) rather than failing or
+    hanging on an offline remote or credential prompt.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        Notes describing any degradation (fetch failure); empty when the
+        refresh succeeded.
+    """
+    failed = False
+    try:
+        fetch = subprocess.run(
+            ["git", "fetch", "--tags", "--quiet"],
+            cwd=repo_root,
+            capture_output=True,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            timeout=10,
+        )
+        failed = fetch.returncode != 0
+    except subprocess.TimeoutExpired:
+        failed = True
+    if failed:
+        return [
+            (
+                "Note: `git fetch --tags` failed — validating against local "
+                "tags, which may be stale."
+            )
+        ]
+    return []
+
+
 def step_changelog_version(repo_root: Path) -> StepResult:
     """Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
 
@@ -1835,6 +1873,17 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     progress (``MERGE_HEAD`` present): mid-merge, the merge-base is the
     stale fork point, so the base's own entries would be misattributed to
     the branch; the structural checks still run.
+
+    The gate compares against the **live** latest tag in every context:
+    tags are refreshed best-effort before reading (CI included — a
+    ``pull_request`` checkout may carry none), and branch resolution
+    routes through :func:`forge.git_utils.resolve_current_branch`, so
+    the stranded check stays live on a detached CI ``pull_request``
+    checkout (``GITHUB_HEAD_REF``). Run as a required PR status check
+    paired with branch protection's "require branches to be up to date
+    before merging", it re-evaluates as the base advances — catching
+    the stale-but-green stranding race pre-merge (recipe:
+    ``docs/ci-recipe.md``).
 
     Self-skips when there is no root ``CHANGELOG.md``, on
     manifest-versioned repos (``verify-forge-plugin-version`` owns the
@@ -1873,27 +1922,20 @@ def step_changelog_version(repo_root: Path) -> StepResult:
             skipped=True,
         )
     text = changelog.read_text(encoding="utf-8")
-    # Best-effort tag refresh: stale local tags would wrongly accept a
-    # behind-the-tag heading (plain `git fetch` skips tags not on fetched
-    # tips). Gated on is_ci() — NOT is_non_interactive(): agent-driven
-    # local runs (non-tty stdin) are the primary audience of the stranded
-    # check and have no authoritative fetch; genuine CI does (§15).
-    # Bounded + stdin-less so an offline remote or credential prompt
-    # degrades to a stale-tag check instead of hanging the commit.
-    if not is_ci():
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            subprocess.run(
-                ["git", "fetch", "--tags", "--quiet"],
-                cwd=repo_root,
-                capture_output=True,
-                check=False,
-                stdin=subprocess.DEVNULL,
-                timeout=10,
-            )
+    # The gate's reference point is the live latest tag: a stale local
+    # tag set wrongly accepts a behind-the-tag heading, and a CI
+    # pull_request checkout may carry no tags at all — so the refresh
+    # runs everywhere, degradations surfacing as notes.
+    notes = _refresh_tags_best_effort(repo_root)
     latest = latest_v_tag(repo_root)
+    if latest is None:
+        notes.append(
+            "Note: no `v*` tag visible — structural checks only; the "
+            "behind-tag and stranded-entries checks have no reference tag."
+        )
     findings = changelog_version_findings(text, latest)
-    current = run_git("branch", "--show-current", cwd=repo_root, check=False)
-    notes: list[str] = []
+    resolved = resolve_current_branch(repo_root)
+    current = resolved[0] if resolved is not None else ""
     if current and current != cfg.base_branch:
         if merge_in_progress(repo_root):
             # Mid-merge HEAD predates the merge commit, so the merge-base is
