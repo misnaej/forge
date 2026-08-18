@@ -126,7 +126,7 @@ def _withhold_newest_minor(
     Forge-only mechanism (``[tool.forge.promotion].hold_newest_minor``,
     default off): the newest dev minor is unpromotable until its
     successor tags — relocating it would leave ``@dev`` installs
-    describing a dirty version (``docs/release-process.md`` §3). The
+    describing a dirty version (``docs/release-process.md`` §2). The
     staged list's top entry is by construction the repo's newest minor
     tag, so withholding is always exactly one entry.
 
@@ -215,7 +215,7 @@ def _promotion_status_lines(
     staged, held = _withhold_newest_minor(repo_root, staged)
     held_line = (
         f"{held} held back (newest dev minor — promotes once the next "
-        "minor tags; docs/release-process.md §3)."
+        "minor tags; docs/release-process.md §2)."
         if held
         else None
     )

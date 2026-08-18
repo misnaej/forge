@@ -474,7 +474,7 @@ def test_promotion_status_holds_back_newest_minor(
     pending = [line.strip() for line in lines if line.startswith("  ")]
     assert pending == ["v1.18.0", "v1.19.0"]
     assert "v1.20.0 held back" in text
-    assert "docs/release-process.md §3" in text
+    assert "docs/release-process.md §2" in text
 
 
 def test_promotion_status_up_to_date_when_only_newest_pending(

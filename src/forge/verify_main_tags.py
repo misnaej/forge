@@ -97,7 +97,7 @@ def _held_tag(repo_root: Path) -> str | None:
     branch — moving it would leave ``dev``'s ``git describe`` falling
     back to an older patch tag, so ``@dev`` installs would report a
     dirty version for release content. The tag becomes movable once a
-    newer minor tags on dev (``docs/release-process.md`` §3).
+    newer minor tags on dev (``docs/release-process.md`` §2).
 
     Args:
         repo_root: Repo root for config + git reads.
@@ -165,7 +165,7 @@ def _tag_states(repo_root: Path, base_ref: str) -> list[_TagState]:
         if tag == held:
             logger.info(
                 "%s: newest dev minor — held from relocation until the "
-                "next minor tags (docs/release-process.md §3).",
+                "next minor tags (docs/release-process.md §2).",
                 tag,
             )
             continue

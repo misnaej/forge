@@ -186,7 +186,7 @@ blocking = true
 # Forge-only: the newest dev minor never promotes/relocates to main until
 # its successor tags on dev — otherwise the relocation leaves dev's
 # `git describe` on an older patch tag and @dev installs report a dirty
-# version for release content (docs/release-process.md §3). Consumers keep
+# version for release content (docs/release-process.md §2). Consumers keep
 # the default (off).
 hold_newest_minor = true
 
