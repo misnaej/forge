@@ -342,6 +342,18 @@ pin; they do not edit pins.
   no longer exists. The `verified-at:` header (reporter contract,
   `agents/_TEMPLATE.md`) makes such drift detectable; verifying the tree
   being pushed closes the gap by construction.
+- **The flow does not end at posting — monitor the PR.** This bullet is the
+  canonical description of the post-wrap-up monitor; skills point here and
+  state only their call-site delta. By default, after the wrap-up is posted,
+  delegate one background monitor per open PR watching review comments and
+  merge state. On merge: the local cleanup (sync the base branch, prune the
+  merged local branch — the `/next` cleanup phase) **and** `issue-triage`'s
+  `post-pr` mode (closed-issue tier-label removal + Backlog Index
+  regeneration). On new comments: surface them. The main session stays free
+  for the next task. Skip only on explicit user request or when
+  `forge.run_context.is_non_interactive()` — except `/sentinel`, whose
+  monitors always run: unattended operation is its primary case and the
+  monitors are its only alert path.
 
 ### Squash-merge messages (mandatory at PR finalization)
 
@@ -657,8 +669,8 @@ GitHub is the **canonical** backlog — no markdown files. The `forge:issue-tria
 agent reads live `gh` data, applies labels, and curates a single auto-generated
 "📋 Backlog Index" issue per repo. The agent owns the per-mode cookbook
 (`bootstrap` / `triage` / `recommend-next` / `post-pr` / `stale-scan` /
-`deep-review`), the Backlog Index template, and regeneration; this section owns
-the policy. The weekly `deep-review` mode re-reads the backlog (whole or
+`deep-review` / `plan-readiness`), the Backlog Index template, and regeneration;
+this section owns the policy. The weekly `deep-review` mode re-reads the backlog (whole or
 topic-scoped) and may — only with explicit user approval — create umbrella issues
 grouping related work and emit sequenced local goal files to execute them
 (mechanics in the agent doc).
@@ -681,8 +693,11 @@ taxonomy by family:
   `tier-2-high` (important + high ROI), `tier-3-standard` (normal features /
   refactors), `tier-4-low` (nice-to-have / research), `needs-triage` (awaiting
   tier assignment).
-- **State** — `blocked` (waiting on dependency), `needs-discussion` (team input),
-  `waiting-upstream` (blocked on external release), `stale` (no activity > 180 days).
+- **State** — workflow gates, blocking and enabling — `blocked` (waiting on
+  dependency), `needs-discussion` (team input), `waiting-upstream` (blocked on
+  external release), `stale` (no activity > 180 days), `plan-ready` (validated
+  plan attached as a `plan-validated` comment; cleared for autonomous
+  execution — see "Plan-readiness pipeline" below).
 - **Type** — `bug`, `feature`, `refactor` (no behavior change), `docs`,
   `tech-debt` (cleanup / consolidation), `security`, `research` (spike).
 - **Surface** — `quick-win` (easy + isolated + low-risk), `architecture`
@@ -710,10 +725,30 @@ Foundation ships no GitHub issue templates. Consumer repos may add their own und
 `.github/ISSUE_TEMPLATE/`; ones that auto-apply `needs-triage` + a type label pair
 well with the triage workflow.
 
+### Plan-readiness pipeline
+
+Screening → human-validated planning → autonomous execution, each with one
+owner: the `plan-readiness` triage mode **screens** every open issue against
+the whole backlog (actual / non-colliding / aligned / unblocked) and surfaces
+needs-plan candidates; the `/plan-issue` skill is the **human gate** — it
+investigates read-only, confirms scope / approach / edge cases / versioning
+with the user, and on explicit validation has `issue-triage` record the plan;
+the `/sentinel` skill **executes** only recorded plans, to a PR wrap-up and
+never past it (merging stays the user's decision; all §2 guards hold).
+Screening is mechanical and repeatable; planning judgment is validated once,
+up front — that is what makes the execution safe to run unattended.
+
 ### Decision trail
 
 Every label change leaves a comment prefixed `[issue-triage]` for filtering.
 Auditable, reversible, no silent state.
+
+Two comment conventions, deliberately distinct: the `[issue-triage]` prefix
+marks short **audit lines** (who changed what, why); a comment opening with
+`[issue-triage] plan-validated:` is an **execution payload** — the full
+user-validated plan `/sentinel` executes — posted only by `issue-triage` on
+delegation from `/plan-issue`, alongside the `plan-ready` label. The issue
+body (the original ask) is never edited.
 
 ---
 
