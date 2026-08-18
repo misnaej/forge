@@ -69,6 +69,12 @@ Skip entirely when it reports **"Up to date — nothing to promote"**
 between releases per `docs/release-process.md` §1), or when a promotion PR
 (base `main`) is already open (Step 2).
 
+A trailing **"vX.Y.0 held back"** line is not a promotion candidate:
+forge holds the newest dev minor until its successor tags
+(`[tool.forge.promotion].hold_newest_minor`,
+`docs/release-process.md` §2) — never open a release PR for a held
+minor; `forge-check-main-tags` would refuse to relocate its tag anyway.
+
 Set `$NEW` to the **first** (lowest) listed release and promote that one.
 
 ## Step 2: Refuse to open a duplicate

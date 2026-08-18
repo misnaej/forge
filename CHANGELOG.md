@@ -20,6 +20,20 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.11.0 — Unreleased
+
+### Features
+- **The newest dev minor is held from promotion until its successor
+  tags.** New forge-repo config gate `[tool.forge.promotion].hold_newest_minor`
+  (default off — consumers unaffected): `forge-next-prep
+  --promotion-status` withholds the newest dev minor with a visible
+  "held back" line, and `forge-check-main-tags` refuses to relocate its
+  tag. Relocating the newest minor used to leave `@dev` installs
+  describing a stale, dirty version for release content; holding it
+  until the next minor tags keeps `@dev` version derivation clean, at
+  the accepted cost of `@main` trailing one minor. The minor-tag filter
+  is now shared (`git_utils.minor_tags`) by both CLIs.
+
 ## v3.10.0 — Unreleased
 
 ### Features

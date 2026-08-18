@@ -46,11 +46,12 @@ import sys
 from pathlib import Path
 
 from forge.changelog import changelog_lacks_entry
-from forge.config import ForgeConfig, load_config
+from forge.config import ForgeConfig, load_config, read_tool_forge_section
 from forge.git_utils import (
     configure_cli_logging,
     create_annotated_tag,
     latest_v_tag,
+    minor_tags,
     parse_semver,
     read_local_plugin_version,
     read_plugin_version_at_ref,
@@ -116,6 +117,38 @@ def _check_promote_pending_message(
     )
 
 
+def _withhold_newest_minor(
+    repo_root: Path,
+    staged: list[tuple[tuple[int, int, int], str]],
+) -> tuple[list[tuple[tuple[int, int, int], str]], str | None]:
+    """Split the newest minor off *staged* when the promotion hold is on.
+
+    Forge-only mechanism (``[tool.forge.promotion].hold_newest_minor``,
+    default off): the newest dev minor is unpromotable until its
+    successor tags — relocating it would leave ``@dev`` installs
+    describing a dirty version (``docs/release-process.md`` §3). The
+    staged list's top entry is by construction the repo's newest minor
+    tag, so withholding is always exactly one entry.
+
+    Args:
+        repo_root: Repo root for the config read.
+        staged: Ascending ``(semver, tag)`` pending-promotion list.
+
+    Returns:
+        ``(remaining, held)`` — the list without its top entry and that
+        entry's tag name when the hold applies; ``(staged, None)``
+        otherwise.
+    """
+    if not staged:
+        return staged, None
+    hold = read_tool_forge_section(repo_root, "promotion").get(
+        "hold_newest_minor", False
+    )
+    if not hold:
+        return staged, None
+    return staged[:-1], staged[-1][1]
+
+
 def _promotion_status_lines(
     repo_root: Path,
     dev_branch: str,
@@ -162,14 +195,13 @@ def _promotion_status_lines(
     # Only MINOR/MAJOR releases (``X.Y.0``) are promotion targets — base
     # is minor-only, and accumulated patches fold into the next minor's
     # promotion (e.g. 1.5.1 / 1.5.2 ride along when 1.6.0 is promoted).
-    # Filtering on ``pv[2] == 0`` drops the interleaved patch tags the
-    # version range would otherwise list as separate promotions.
+    # ``minor_tags`` (shared with forge-check-main-tags) drops the
+    # interleaved patch tags the version range would otherwise list as
+    # separate promotions.
     staged = sorted(
         (pv, tag)
-        for tag in run_git("tag", "--list", "v*", cwd=repo_root, check=False).split()
-        if (pv := parse_semver(tag)) is not None
-        and pv[2] == 0
-        and base_tuple < pv <= dev_tuple
+        for tag in minor_tags(repo_root)
+        if (pv := parse_semver(tag)) is not None and base_tuple < pv <= dev_tuple
     )
     if not staged:
         # MINOR/MAJOR gap detected but no ``X.Y.0`` tag in range — the
@@ -180,8 +212,22 @@ def _promotion_status_lines(
             "— check that the target minor was tagged."
         )
         return lines
+    staged, held = _withhold_newest_minor(repo_root, staged)
+    held_line = (
+        f"{held} held back (newest dev minor — promotes once the next "
+        "minor tags; docs/release-process.md §3)."
+        if held
+        else None
+    )
+    if not staged:
+        lines.append("Up to date — nothing to promote.")
+        if held_line:
+            lines.append(held_line)
+        return lines
     lines.append(f"Promotion pending — promote these in order ({len(staged)}):")
     lines.extend(f"  {tag}" for _, tag in staged)
+    if held_line:
+        lines.append(held_line)
     # Non-blocking CHANGELOG advisory (docs/release-process.md §5): a
     # reminder that each pending minor needs a curated entry — authored in
     # its release/vX.Y.Z branch during promotion. Stays silent for repos

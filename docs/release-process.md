@@ -38,9 +38,23 @@ be released** — never the last-released version.
   the bump lands, then *relocated* to main's squash commit at promotion.
   Because promotion squashes, that commit is not in `dev`'s history; after
   relocation `dev` resolves the minor by `git describe` distance (a
-  pre-release suffix), which is correct — `dev` is the pre-release channel.
-  `@main` checkouts describe the clean `vX.Y.0`; `@dev` checkouts track the
-  branch tip. A single ref cannot resolve to two commits simultaneously.
+  pre-release suffix). `@main` checkouts describe the clean `vX.Y.0`;
+  `@dev` checkouts track the branch tip. A single ref cannot resolve to
+  two commits simultaneously — which is why the **promotion hold** below
+  orders the moves so `dev`'s describe never regresses.
+- **The newest dev minor is held from promotion until its successor
+  tags** (`[tool.forge.promotion].hold_newest_minor`, forge's own
+  `pyproject.toml`; default off — a forge-repo mechanism, never shipped
+  behavior for consumers). Rationale: relocating `vX.Y.0` while it is
+  dev's newest minor leaves dev HEAD's describe falling back to an older
+  patch tag + distance, so an `@dev` install refreshed in that window
+  reports a stale/dirty version for release content. Once `vX.(Y+1).0`
+  (or the next major) tags on dev, HEAD's describe resolves through the
+  successor and `vX.Y.0` relocates cleanly. Both guards enforce it:
+  `--promotion-status` withholds the newest minor from the pending list
+  (with a visible "held back" line), and `forge-check-main-tags` refuses
+  to relocate it. Consequence, accepted by design: **`main` trails dev's
+  newest minor by one** — the slow channel is the deliberate-lag channel.
 - **`forge-check-main-tags` enforces the relocation.** It maps each minor
   tag to its base squash commit by **release fingerprint** — tree content
   with `CHANGELOG.md` excluded (`git_utils.release_tree_fingerprint`) — so
@@ -106,6 +120,7 @@ invariant that had no test).
 | A branch that merged `origin/<base>` in (a promotion or any main-merge) must retain **every** `## vX.Y.0` heading present on `origin/<base>` — a CHANGELOG conflict resolved blindly toward dev that drops one fails the guard. Self-skips when `origin/<base>` is not an ancestor of `HEAD` (plain `dev` may lag, §5) and on single-branch repos | `verify_changelog_history.main` | `tests/test_verify_changelog_history.py::test_fails_when_base_heading_dropped` / `::test_skips_when_base_not_ancestor` |
 | The promotion merge commit's pre-commit skips **tree-content** steps only while the staged tree reproduces the promoted tag's release fingerprint (era-gap suppression); a staged tree diverging beyond `CHANGELOG.md` disengages the suppression and the gate runs — a CHANGELOG-only divergence keeps it engaged | `precommit._release_merge_context` / `precommit.run_all` | `tests/test_precommit.py::test_run_all_no_suppression_when_tree_diverges_beyond_changelog` / `::test_run_all_still_suppresses_when_only_changelog_diverges` |
 | The wrap-up gate exempts a promotion `gh pr create` only with **provenance**: branch matches `release/vX.Y.Z` exactly, the tag exists, and `HEAD`'s tree reproduces it modulo `CHANGELOG.md`; a branch merely named `release/*` (or suffixed) stays gated | `claude-hooks/block_unverified_pr_create.sh` | `tests/test_claude_hooks.py::test_unverified_pr_create_allows_release_branch_without_wrapup` / `::test_unverified_pr_create_blocks_spoofed_release_branch` |
+| With `[tool.forge.promotion].hold_newest_minor` set, `--promotion-status` withholds the newest dev minor from the pending list (visible "held back" line, never a silent cap) and `forge-check-main-tags` refuses to relocate it; with the key unset (default), both behave exactly as before — consumer-neutral | `next_prep._withhold_newest_minor` / `verify_main_tags._held_tag` | `tests/test_next_prep.py::test_promotion_status_holds_back_newest_minor` / `::test_promotion_status_default_off_lists_newest_minor` / `tests/test_verify_main_tags.py::test_fix_refuses_to_relocate_newest_dev_minor` |
 
 When you add a versioning/promotion behavior, add a row here **and** its
 test. When you find an invariant with no test, that gap is a bug to close.

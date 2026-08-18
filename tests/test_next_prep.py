@@ -296,10 +296,8 @@ def test_promotion_status_lists_pending_minors_in_order(
     )
     monkeypatch.setattr(
         next_prep,
-        "run_git",
-        lambda *args, **_kw: (
-            "v1.16.4 v1.17.0 v1.18.0 v1.19.0" if args[:1] == ("tag",) else ""
-        ),
+        "minor_tags",
+        lambda _root: ["v1.17.0", "v1.18.0", "v1.19.0"],
     )
     lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
     text = "\n".join(lines)
@@ -310,14 +308,17 @@ def test_promotion_status_lists_pending_minors_in_order(
     assert pending == ["v1.18.0", "v1.19.0"]
 
 
-def test_promotion_status_excludes_patch_tags(
+def test_promotion_status_excludes_out_of_range_minors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Patch tags fold into the next minor — never listed as separate promotions.
+    """Only minors in ``(base_tuple, dev_tuple]`` are staged as pending.
 
-    base is minor-only; v1.19.1 / v1.20.1 / v1.20.2 ride along when their
-    minor is promoted, so only the ``X.Y.0`` targets appear.
+    Patch-tag exclusion itself now lives in ``git_utils.minor_tags`` (see
+    ``test_minor_tags_returns_only_patch_zero_tags_sorted`` in
+    ``test_git_utils.py``) — this test owns the range filter
+    ``_promotion_status_lines`` still applies on top of that already-minor-only
+    list: a tag at or below ``base`` or above ``dev`` is excluded.
     """
     monkeypatch.setattr(
         next_prep,
@@ -326,12 +327,8 @@ def test_promotion_status_excludes_patch_tags(
     )
     monkeypatch.setattr(
         next_prep,
-        "run_git",
-        lambda *args, **_kw: (
-            "v1.19.0 v1.19.1 v1.20.0 v1.20.1 v1.20.2 v1.21.0"
-            if args[:1] == ("tag",)
-            else ""
-        ),
+        "minor_tags",
+        lambda _root: ["v1.18.0", "v1.19.0", "v1.20.0", "v1.21.0", "v1.22.0"],
     )
     lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
     pending = [line.strip() for line in lines if line.startswith("  ")]
@@ -348,11 +345,14 @@ def test_promotion_status_flags_missing_changelog_entry(
     authored on dev; ``--promotion-status`` flags any that are missing
     without changing the exit code. Here v1.21.0 has an entry, v1.20.0
     does not → only v1.20.0 is flagged.
+
+    MOCK SETUP: the tag-listing half is stubbed via ``minor_tags``
+    (resolved in the ``git_utils`` namespace, not ``next_prep.run_git``);
+    the ``git show`` (CHANGELOG read) half still goes through the
+    ``next_prep.run_git`` fake.
     """
 
     def _fake_git(*args: str, **_kw: object) -> str:
-        if args[:1] == ("tag",):
-            return "v1.19.0 v1.20.0 v1.21.0"
         if args[:1] == ("show",):
             return "## v1.21.0 — 2026-06-17\n\n### Features\n- thing\n"
         return ""
@@ -361,6 +361,9 @@ def test_promotion_status_flags_missing_changelog_entry(
         next_prep,
         "read_plugin_version_at_ref",
         lambda _root, ref: "1.21.0" if "dev" in ref else "1.19.0",
+    )
+    monkeypatch.setattr(
+        next_prep, "minor_tags", lambda _root: ["v1.19.0", "v1.20.0", "v1.21.0"]
     )
     monkeypatch.setattr(next_prep, "run_git", _fake_git)
     lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
@@ -374,11 +377,15 @@ def test_promotion_status_silent_when_changelog_complete(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No advisory when every pending minor already has a CHANGELOG entry."""
+    """No advisory when every pending minor already has a CHANGELOG entry.
+
+    MOCK SETUP: the tag-listing half is stubbed via ``minor_tags``
+    (resolved in the ``git_utils`` namespace, not ``next_prep.run_git``);
+    the ``git show`` (CHANGELOG read) half still goes through the
+    ``next_prep.run_git`` fake.
+    """
 
     def _fake_git(*args: str, **_kw: object) -> str:
-        if args[:1] == ("tag",):
-            return "v1.19.0 v1.20.0 v1.21.0"
         if args[:1] == ("show",):
             return "## v1.21.0 — 2026-06-17\n\n## v1.20.0 — 2026-06-17\n"
         return ""
@@ -387,6 +394,9 @@ def test_promotion_status_silent_when_changelog_complete(
         next_prep,
         "read_plugin_version_at_ref",
         lambda _root, ref: "1.21.0" if "dev" in ref else "1.19.0",
+    )
+    monkeypatch.setattr(
+        next_prep, "minor_tags", lambda _root: ["v1.19.0", "v1.20.0", "v1.21.0"]
     )
     monkeypatch.setattr(next_prep, "run_git", _fake_git)
     lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
@@ -405,10 +415,8 @@ def test_promotion_status_includes_major_release(
     )
     monkeypatch.setattr(
         next_prep,
-        "run_git",
-        lambda *args, **_kw: (
-            "v1.20.0 v1.20.1 v1.21.0 v2.0.0" if args[:1] == ("tag",) else ""
-        ),
+        "minor_tags",
+        lambda _root: ["v1.20.0", "v1.21.0", "v2.0.0"],
     )
     lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
     pending = [line.strip() for line in lines if line.startswith("  ")]
@@ -427,14 +435,101 @@ def test_promotion_status_when_dev_sits_on_patch_above_last_minor(
     )
     monkeypatch.setattr(
         next_prep,
-        "run_git",
-        lambda *args, **_kw: (
-            "v1.20.0 v1.20.1 v1.21.0 v1.21.3" if args[:1] == ("tag",) else ""
-        ),
+        "minor_tags",
+        lambda _root: ["v1.20.0", "v1.21.0"],
     )
     lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
     pending = [line.strip() for line in lines if line.startswith("  ")]
     assert pending == ["v1.20.0", "v1.21.0"]
+
+
+def test_promotion_status_holds_back_newest_minor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``[tool.forge.promotion].hold_newest_minor`` withholds the newest pending minor.
+
+    MOCK SETUP: three pending minors; ``read_tool_forge_section`` stubbed to
+    report the hold flag on (no pyproject.toml needed on disk).
+    EXPECTED BEHAVIOR: only the two older minors are listed as pending; a
+    line names the withheld minor and points at the release-process doc.
+    """
+    monkeypatch.setattr(
+        next_prep,
+        "read_plugin_version_at_ref",
+        lambda _root, ref: "1.20.0" if "dev" in ref else "1.17.0",
+    )
+    monkeypatch.setattr(
+        next_prep,
+        "minor_tags",
+        lambda _root: ["v1.18.0", "v1.19.0", "v1.20.0"],
+    )
+    monkeypatch.setattr(
+        next_prep,
+        "read_tool_forge_section",
+        lambda *_a, **_kw: {"hold_newest_minor": True},
+    )
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    text = "\n".join(lines)
+    pending = [line.strip() for line in lines if line.startswith("  ")]
+    assert pending == ["v1.18.0", "v1.19.0"]
+    assert "v1.20.0 held back" in text
+    assert "docs/release-process.md §3" in text
+
+
+def test_promotion_status_up_to_date_when_only_newest_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Single pending minor + hold on → "Up to date" AND the held line both show.
+
+    MOCK SETUP: only one minor in range; ``hold_newest_minor`` on withholds
+    it entirely, so ``staged`` empties out.
+    EXPECTED BEHAVIOR: "Up to date" appears (nothing left to promote) and
+    the held-back line still names the withheld minor.
+    """
+    monkeypatch.setattr(
+        next_prep,
+        "read_plugin_version_at_ref",
+        lambda _root, ref: "1.18.0" if "dev" in ref else "1.17.0",
+    )
+    monkeypatch.setattr(next_prep, "minor_tags", lambda _root: ["v1.18.0"])
+    monkeypatch.setattr(
+        next_prep,
+        "read_tool_forge_section",
+        lambda *_a, **_kw: {"hold_newest_minor": True},
+    )
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    text = "\n".join(lines)
+    assert "Up to date — nothing to promote." in text
+    assert "v1.18.0 held back" in text
+
+
+def test_promotion_status_default_off_lists_newest_minor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No ``[tool.forge.promotion]`` table → the newest minor is NOT withheld.
+
+    MOCK SETUP: ``read_tool_forge_section`` is left unpatched — ``tmp_path``
+    has no ``pyproject.toml``, so it reads ``{}`` and the hold defaults off.
+    EXPECTED BEHAVIOR: the newest minor is listed normally; no held-back line.
+    """
+    monkeypatch.setattr(
+        next_prep,
+        "read_plugin_version_at_ref",
+        lambda _root, ref: "1.20.0" if "dev" in ref else "1.17.0",
+    )
+    monkeypatch.setattr(
+        next_prep,
+        "minor_tags",
+        lambda _root: ["v1.18.0", "v1.19.0", "v1.20.0"],
+    )
+    lines = next_prep._promotion_status_lines(tmp_path, "dev", "main")
+    text = "\n".join(lines)
+    pending = [line.strip() for line in lines if line.startswith("  ")]
+    assert pending == ["v1.18.0", "v1.19.0", "v1.20.0"]
+    assert "held back" not in text
 
 
 def test_main_promotion_status_early_exits(
