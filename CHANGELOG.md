@@ -20,6 +20,29 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.9.0 — Unreleased
+
+### ⚠️ Upgrade notes
+- **`changelog_version` now refreshes tags in CI too.** A CI run that
+  previously saw no tags (shallow checkout) silently skipped the
+  tag-relative checks; the step now fetches tags best-effort in every
+  context, so a previously-green check can turn red with no code change
+  on your side. Give the job real tag visibility (`fetch-depth: 0`) and
+  adopt the new required-check recipe in `docs/ci-recipe.md`
+  "Stranded-changelog gate as a required PR check".
+
+### Features
+- **Stranded-changelog detection now works as a live, re-evaluating PR
+  gate.** The `changelog_version` step resolves the PR branch on
+  detached CI `pull_request` checkouts (`GITHUB_HEAD_REF`) instead of
+  silently skipping the stranded half, and always validates against the
+  live latest tag (fetch failure degrades to local tags with a visible
+  note; zero visible tags is called out explicitly). Paired with branch
+  protection's "require branches to be up to date before merging" (job
+  recipe in `docs/ci-recipe.md`), a PR whose entries strand while it
+  sits open goes red before merge — instead of blocking the post-merge
+  tagger.
+
 ## v3.8.2 — Unreleased
 
 ### Fixes

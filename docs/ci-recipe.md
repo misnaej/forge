@@ -110,6 +110,48 @@ Notes:
   Actions / GitLab CI / etc., so the gates fire automatically. No
   `--skip` flags needed.
 
+### Stranded-changelog gate as a required PR check (single-track repos)
+
+The `changelog_version` step detects entries stranded under an
+already-released heading — but a one-shot check goes stale: a PR green
+when checked can strand *afterwards*, when a sibling PR merges first
+and the base cuts the tag, with no merge conflict to warn (see
+[`consumer-release.md`](consumer-release.md) "Enforcement"). To catch
+that pre-merge, run the step as its own **required status check**:
+
+```yaml
+  changelog-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          # Full history + tags: the gate compares against the LIVE
+          # latest tag, which a shallow checkout does not carry.
+          fetch-depth: 0
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: "3.11"
+      - name: Install project + forge-scripts
+        run: pip install -e ".[dev]"
+      - name: Changelog gate against the live tag
+        run: forge-precommit --only changelog_version
+```
+
+- **The branch-protection pairing IS the re-evaluation mechanism**:
+  mark the job a required status check AND enable *"require branches
+  to be up to date before merging"*. When the base advances (a sibling
+  merge cuts a tag), the PR must take the base back in, which re-runs
+  this job against the now-live tag — a stranded PR goes red *before*
+  merge instead of blocking the post-merge tagger.
+- **Trigger on `pull_request`** (as above): the stranded half of the
+  check identifies the PR branch via `GITHUB_HEAD_REF` on the detached
+  merge-ref checkout; a `push`-triggered run still validates heading
+  structure but has no PR branch to diff against.
+- Repos where the step self-skips (plugin-manifest and dual-track
+  repos) satisfy the required check via the skip — safe to require
+  everywhere.
+
 ## 3. Scheduled `forge-upgrade --apply` workflow
 
 `.github/workflows/forge-upgrade.yml`:
