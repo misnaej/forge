@@ -29,7 +29,10 @@ versions follow forge's rolling-next convention.
   context, so a previously-green check can turn red with no code change
   on your side. Give the job real tag visibility (`fetch-depth: 0`) and
   adopt the new required-check recipe in `docs/ci-recipe.md`
-  "Stranded-changelog gate as a required PR check".
+  "Stranded-changelog gate as a required PR check". (MINOR, not MAJOR:
+  the step is opt-in and its contract — validate headings against the
+  latest tag — is unchanged; the CI fetch restores that contract on
+  runners whose shallow checkout hid the tags, rather than altering it.)
 
 ### Features
 - **Stranded-changelog detection now works as a live, re-evaluating PR
