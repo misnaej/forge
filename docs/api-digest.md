@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 690 symbols._
+_63 modules, 693 symbols._
 
 ## `forge`
 
@@ -175,7 +175,10 @@ _63 modules, 690 symbols._
 - `_closure(graph: dict[str, set[str]], start: set[str]) -> set[str]` _(internal)_ — Return the transitive import closure of ``start`` (inclusive).
 - `_child_finding_anchor(mods: set[str], modules: dict[str, ModuleNode]) -> tuple[str, int]` _(internal)_ — Pick a stable file anchor for a child-level finding.
 - `evaluate(layers: list[LayerSpec], modules: dict[str, ModuleNode], graph: dict[str, set[str]], *, escalate_paths: set[str]) -> list[Finding]` — Evaluate every layer contract over the module graph.
-- `_summary(n_layers: int, n_children: int, findings: list[Finding], *, n_config_errors: int = 0) -> str` _(internal)_ — Render the one-paragraph audit summary.
+- `_parse_coverage_config(raw: dict[str, object], *, has_layers: bool) -> tuple[bool, tuple[str, ...], list[str]]` _(internal)_ — Parse the coverage-gate keys of ``[tool.forge.layering]``.
+- `_top_level_packages(modules: dict[str, ModuleNode]) -> dict[str, set[str]]` _(internal)_ — Group modules by top-level package (first dotted segment).
+- `_coverage_findings(layers: list[LayerSpec], modules: dict[str, ModuleNode], *, allow: tuple[str, ...]) -> tuple[list[Finding], int]` _(internal)_ — Flag top-level packages no layer classifies (``require_all_classified``).
+- `_summary(n_layers: int, n_children: int, findings: list[Finding], *, n_config_errors: int = 0, n_unclassified: int = 0) -> str` _(internal)_ — Render the one-paragraph audit summary.
 - `run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int` — Execute the layering audit.
 - `main() -> int` — CLI entry point for ``forge-audit-layering``.
 

@@ -20,6 +20,18 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.6.0 — 2026-08-18
+
+### Features
+- **Layering audit can require every top-level package to be classified.**
+  New opt-in `[tool.forge.layering].require_all_classified` gate: a
+  top-level source package that appears in no layer becomes a blocking
+  HIGH finding instead of silently escaping enforcement — the hazard when
+  a refactor promotes code out of a dissolving umbrella package.
+  Deliberate exceptions live on the visible `unclassified_allow` list
+  (REVIEW findings; stale or redundant entries are flagged for cleanup),
+  and malformed config fails loudly instead of no-opping.
+
 ## v3.5.0 — 2026-08-13
 
 ### ⚠️ Upgrade notes

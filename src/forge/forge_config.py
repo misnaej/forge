@@ -261,6 +261,22 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "closure. Blocking only for added/moved modules.",
     ),
     ConfigKey(
+        ("tool", "forge", "layering", "require_all_classified"),
+        default=False,
+        description="Coverage gate: every top-level source package must be "
+        "classified (reached by some layer's package prefix) or listed in "
+        "unclassified_allow — an unclassified package is a blocking HIGH "
+        "finding. Guards package-dissolve refactors where a promoted "
+        "package silently drops out of the layering gate.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "layering", "unclassified_allow"),
+        default=[],
+        description="Top-level packages deliberately exempt from "
+        "require_all_classified — visible REVIEW findings, never silent; "
+        "stale entries (matching no package) are flagged.",
+    ),
+    ConfigKey(
         ("tool", "forge", "smart_test", "precommit_depth"),
         "unset (step skipped)",
         "Depth the smart_test pre-commit step runs on commit (0/1/2/full). "
