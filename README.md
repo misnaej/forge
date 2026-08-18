@@ -152,6 +152,7 @@ graph LR
     installers -->|"imports"| config_shared
     installers -->|"imports"| release_tooling
     pre_commit_dispatcher -->|"imports"| config_shared
+    pre_commit_dispatcher -->|"imports"| installers
     release_tooling -->|"imports"| config_shared
     release_tooling -->|"imports"| installers
     smart_test -->|"imports"| config_shared

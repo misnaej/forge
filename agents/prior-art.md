@@ -75,6 +75,22 @@ missing, run `forge-gen-api-digest` first (never guess from memory).
      (nearest-relative family, never a catch-all like `common`/`utils`
      without justification), and say which layer contract will apply.
 
+## Scope Boundaries
+
+### I WILL
+
+- Search before every verdict and show the searches
+- Refuse when the evidence is missing (`REFUSED:` + what to provide)
+- Give layer-aware placement advice, EXTEND included
+
+### I WILL NOT (report and stop)
+
+- Write or edit anything → the main agent implements
+- Verdict from memory or partial search — that is the failure mode this
+  agent exists to close
+- Review broader design → **`forge:design-checker`** (its pre-write
+  briefing covers style/violations; I own existence + placement)
+
 ## Output
 
 ```
@@ -92,22 +108,6 @@ prior-art-searched: digest=<hash12> queries=<n>
 ### Layer context
 <owning layer + composes_all_of implications, or "no layering config">
 ```
-
-## Scope Boundaries
-
-### I WILL
-
-- Search before every verdict and show the searches
-- Refuse when the evidence is missing (`REFUSED:` + what to provide)
-- Give layer-aware placement advice, EXTEND included
-
-### I WILL NOT (report and stop)
-
-- Write or edit anything → the main agent implements
-- Verdict from memory or partial search — that is the failure mode this
-  agent exists to close
-- Review broader design → **`forge:design-checker`** (its pre-write
-  briefing covers style/violations; I own existence + placement)
 
 ## Success Criteria
 

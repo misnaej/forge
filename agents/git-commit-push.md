@@ -156,6 +156,22 @@ Specific errors from logs:
 
 **I will NOT attempt to fix violations myself. I will STOP and report with specifics.**
 
+## Output
+
+```
+GIT-COMMIT-PUSH COMPLETE
+
+Commit: <short-hash> <subject>
+Files staged: <paths, or "all (-A)">
+Pre-commit: passed
+Pushed: <branch> → origin/<branch> (tracking set, if -u)
+CONTINUATION: appended
+```
+
+On pre-commit failure, emit the `OUTSIDE MY SCOPE: Pre-commit
+violations detected` block above instead. On push failure, report the
+exact git error and skip the CONTINUATION append (step 6).
+
 ## Success Criteria
 
 - Pre-commit hook passes

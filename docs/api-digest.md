@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 693 symbols._
+_63 modules, 698 symbols._
 
 ## `forge`
 
@@ -41,6 +41,7 @@ _63 modules, 693 symbols._
 - `_check_reporter_verified_at(agent: AgentDoc, reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Flag reporter agents missing the ``verified-at:`` header instruction.
 - `_check_header_contract(agent: AgentDoc, names: frozenset[str], *, header: str, rationale: str) -> list[Finding]` _(internal)_ — Flag an agent in *names* whose body never mentions *header*.
 - `_check_required_sections(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag missing canonical H2 sections.
+- `_check_section_order(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag required H2 sections appearing out of template order.
 - `_tokens(text: str) -> list[str]` _(internal)_ — Return whitespace-split lowercase tokens of *text*.
 - `_ngrams(tokens: list[str], n: int) -> set[str]` _(internal)_ — Return the set of *n*-token windows from *tokens*.
 - `_check_foundation_restatements(agent: AgentDoc, foundation_ngrams: set[str]) -> list[Finding]` _(internal)_ — Flag substrings of ``SHARED_TOKEN_MIN`` tokens shared with FOUNDATION.
@@ -545,6 +546,7 @@ _63 modules, 693 symbols._
 - `_has_managed_markers(text: str) -> bool` _(internal)_ — Return True if *text* contains a forge-managed START/END pair.
 - `_normalize(text: str) -> str` _(internal)_ — Strip the version-stamped comment for drift comparison.
 - `sync_foundation(foundation_path: Path, *, check_only: bool = False, force: bool = False) -> bool` — Write or update ``FOUNDATION.md`` with the shipped foundation text.
+- `foundation_matches_installed(foundation_path: Path) -> bool` — Return whether *foundation_path* reproduces the installed foundation.
 - `_claudemd_has_include(text: str) -> bool` _(internal)_ — Return True if *text* has an ``@FOUNDATION.md`` include directive.
 - `scaffold_claudemd(claudemd_path: Path) -> bool` — Write a minimal scaffold ``CLAUDE.md`` if the file does not exist.
 - `scaffold_claude_settings(settings_path: Path) -> bool` — Write a minimal ``.claude/settings.json`` if the file does not exist.
@@ -662,6 +664,7 @@ _63 modules, 693 symbols._
 - `touches_high_blast_radius(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`HIGH_BLAST_RADIUS_PATHS`.
 - `configured_docs_only_globs(repo_root: Path) -> tuple[str, ...]` — Return the consumer's extra docs-only globs from ``[tool.forge.pr]``.
 - `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
+- `regen_only_diff(changed_paths: list[str]) -> bool` — Return whether every changed path is a forge-managed regen artifact.
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
 
 ## `forge.pr_squash_comment`
@@ -707,6 +710,8 @@ _63 modules, 693 symbols._
 - `step_c4(repo_root: Path) -> StepResult` — Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
 - `step_layering(repo_root: Path) -> StepResult` — Run ``forge-audit-layering`` — layer-composition gate.
 - `step_api_digest_check(repo_root: Path) -> StepResult` — Run ``forge-gen-api-digest --check`` — api-digest drift guard (opt-in).
+- `step_cli_reference_check(repo_root: Path) -> StepResult` — Run ``forge-gen-cli-reference --check`` — cli-reference drift guard (opt-in).
+- `step_foundation_md_check(repo_root: Path) -> StepResult` — Verify ``FOUNDATION.md`` reproduces the installed foundation (opt-in).
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
 - `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.
 - `_write_audit_sidecar(repo_root: Path, data: dict) -> None` _(internal)_ — Persist pip-audit's parsed JSON to the shared sidecar.

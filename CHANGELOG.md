@@ -20,6 +20,21 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.7.0 — 2026-08-18
+
+### Features
+- **Resync PRs earn a regen-verified light finalization path.** When a PR's
+  diff is exactly the `forge-resync` managed artifact set, `/pr` runs the
+  provenance byte-check gates instead of the prose reporters — generated
+  content is verified against the installed package, with the gate output
+  embedded in the wrap-up as evidence. Any gate failure or hand-edit falls
+  back to the full review round.
+
+### Fixes
+- **Agent docs enforce canonical section order.** `forge-audit-agents` flags
+  a shipped agent doc whose sections drift from the `_TEMPLATE.md` order,
+  and `git-commit-push` gained its canonical Output section.
+
 ## v3.6.0 — 2026-08-18
 
 ### Features

@@ -306,6 +306,36 @@ def sync_foundation(
     return True
 
 
+def foundation_matches_installed(foundation_path: Path) -> bool:
+    """Return whether *foundation_path* reproduces the installed foundation.
+
+    The provenance seam for ``forge-precommit --only foundation_md_check``
+    (the ``/pr`` regen-verified light path): ``True`` only when the file
+    exists, carries the managed START/END markers, and its normalized
+    content equals a fresh render from the installed package — the same
+    version-banner-insensitive rule :func:`sync_foundation` uses, so the
+    two can never disagree about what "in sync" means.
+
+    Args:
+        foundation_path: Path to the consumer repo's ``FOUNDATION.md``.
+
+    Returns:
+        ``True`` when the file byte-reproduces the shipped foundation
+        (modulo the version banner); ``False`` when missing, unmanaged,
+        or divergent.
+    """
+    if not foundation_path.exists():
+        return False
+    existing = foundation_path.read_text()
+    if not _has_managed_markers(existing):
+        return False
+    new_content = _build_foundation_file(
+        foundation=_foundation_text(),
+        version=_forge_version(),
+    )
+    return _normalize(new_content) == _normalize(existing)
+
+
 def _claudemd_has_include(text: str) -> bool:
     """Return True if *text* has an ``@FOUNDATION.md`` include directive.
 

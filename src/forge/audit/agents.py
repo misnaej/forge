@@ -29,6 +29,8 @@ Measurements per agent:
     - ``frontmatter_complete`` — required keys present.
     - ``description_shape`` — routing-trigger vs role-label heuristic.
     - ``missing_canonical_sections`` — required H2 sections present.
+    - ``section_order`` — present required H2 sections appear in
+      ``_TEMPLATE.md`` order.
     - ``inline_foundation_restatements`` — 8+ word substrings shared
       with FOUNDATION.md.
     - ``cross_agent_duplicates`` — 8+ word substrings shared across
@@ -487,6 +489,11 @@ def _check_header_contract(
 def _check_required_sections(agent: AgentDoc) -> list[Finding]:
     """Flag missing canonical H2 sections.
 
+    Matches against ``body_no_code`` (fence-stripped), not the raw body:
+    a heading swallowed by an unbalanced code fence is not a live
+    heading, and treating it as present would hide exactly the
+    corruption a botched section move produces.
+
     Args:
         agent: Parsed agent doc.
 
@@ -502,8 +509,49 @@ def _check_required_sections(agent: AgentDoc) -> list[Finding]:
             message=f"missing canonical section '## {section}' (see _TEMPLATE.md)",
         )
         for section in REQUIRED_SECTIONS
-        if f"\n## {section}" not in agent.body
-        and not agent.body.startswith(f"## {section}")
+        if f"\n## {section}" not in agent.body_no_code
+        and not agent.body_no_code.startswith(f"## {section}")
+    ]
+
+
+def _check_section_order(agent: AgentDoc) -> list[Finding]:
+    """Flag required H2 sections appearing out of template order.
+
+    ``REQUIRED_SECTIONS`` is ordered exactly as ``_TEMPLATE.md`` mandates
+    ("Required body sections"). Only sections actually present are
+    compared — a missing section is ``_check_required_sections``'s
+    finding, not a second one here. Positions come from ``body_no_code``
+    (fence-stripped) so a heading inside a code fence never counts.
+
+    Args:
+        agent: Parsed agent doc.
+
+    Returns:
+        At most one LOW finding naming the out-of-order sequence found.
+    """
+    text = agent.body_no_code
+    positions: list[tuple[int, str]] = []
+    for section in REQUIRED_SECTIONS:
+        marker = f"## {section}"
+        pos = 0 if text.startswith(marker) else text.find(f"\n{marker}")
+        if pos != -1:
+            positions.append((pos, section))
+    expected = [s for _, s in positions]
+    found = [s for _, s in sorted(positions)]
+    if found == expected:
+        return []
+    return [
+        Finding(
+            audit="agents",
+            severity=Severity.LOW,
+            path=agent.path,
+            line=0,
+            message=(
+                "canonical sections out of template order: found "
+                + " → ".join(f"'## {s}'" for s in found)
+                + " (see _TEMPLATE.md)"
+            ),
+        ),
     ]
 
 
@@ -736,6 +784,7 @@ def _per_agent_findings(
         )
     )
     findings.extend(_check_required_sections(agent))
+    findings.extend(_check_section_order(agent))
     findings.extend(_check_foundation_restatements(agent, foundation_ngrams))
     return findings
 
