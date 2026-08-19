@@ -20,6 +20,17 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.10.0 — 2026-08-18
+
+### Features
+- **The PR monitor contract names its signals.** FOUNDATION §6's
+  background-monitor rule now enumerates the four watched signals —
+  review comments, merged/closed, `mergeable == CONFLICTING`, and CI
+  failure — with their actions. Conflicts are alert-only by design: a
+  base-merge push re-triggers CI, so resolution stays a deliberate
+  decision that weighs the running CI's state instead of an automatic
+  sync.
+
 ## v3.9.0 — 2026-08-18
 
 ### ⚠️ Upgrade notes

@@ -77,8 +77,8 @@ Freeze, never guess:
 
 For **every** PR this loop opens — draft or final — delegate one
 background monitor per FOUNDATION §6 "PR finalization" (the canonical
-description: review comments + merge state; on merge, local cleanup
-and `issue-triage` `post-pr` mode). Sentinel deltas: question replies
+description — the four watched signals and their actions are
+enumerated there). Sentinel deltas: question replies
 route back into the frozen branch's resume flow, and per §6 these
 monitors are exempt from the default `is_non_interactive()` skip
 (rationale lives there). The main loop never blocks on an open PR.
