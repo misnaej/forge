@@ -6,7 +6,10 @@
 # ``verify_main_tags.git_auth_mode`` to control the auth-gate branch.
 # Group F ``main()`` tests monkeypatch ``verify_main_tags.load_config`` to
 # supply a ForgeConfig without a real ``pyproject.toml``, and use real-git
-# bare-origin repos for end-to-end push verification.
+# bare-origin repos for end-to-end push verification — except
+# ``test_fix_refuses_to_relocate_newest_dev_minor``, which writes a real
+# ``pyproject.toml`` to exercise the promotion-hold config seam
+# (``_held_tag`` reads disk directly, not the mocked ``load_config``).
 # Groups A/B/E are pure (no I/O); Groups D/F use real ``git`` subprocesses.
 # Monkeypatch targets are always the consuming namespace
 # (``verify_main_tags.*``), never the originating module.
@@ -214,6 +217,214 @@ def _dual_track_promotion_with_extra(
         ["git", "push", "-q", "origin", "main"], cwd=work, env=_GIT_ENV, check=True
     )
     return work, bare, dev_sha, main_sha
+
+
+def _dual_track_with_two_unpromoted_minors(
+    base: Path,
+) -> tuple[Path, Path, str, str]:
+    """Dual-track repo with two unpromoted minors: v1.0.0 (older) + v1.1.0 (newest).
+
+    Each minor is committed cumulatively on ``dev``, tagged, and separately
+    squash-promoted onto ``main`` as an identical-tree commit (dev's
+    cumulative tree at each tag reproduces exactly on main) — but neither
+    tag is moved off its dev commit. Exercises the ``hold_newest_minor``
+    gate against a *pair* of drifted tags, unlike the single-tag Group F
+    fixtures built on :func:`_dual_track_with_unpromoted_tag`.
+
+    Args:
+        base: Parent directory for the ``work`` / ``origin.git`` subdirs.
+
+    Returns:
+        A ``(work, bare, v1_main_sha, v2_main_sha)`` tuple — the main
+        squash commit each tag's release fingerprint reproduces.
+    """
+    work, bare = _init_dual_track_repo(base)
+
+    v1_dev_sha = _write_file_commit(
+        work, "v1.py", "x = 1\n", "release v1.0.0", branch="dev"
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "dev"], cwd=work, env=_GIT_ENV, check=True
+    )
+    _push_tag(work, "v1.0.0", v1_dev_sha, bare)
+
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "v1.0.0", "--", "."], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "promote v1.0.0"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    v1_main_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=_GIT_ENV, check=True
+    )
+
+    v2_dev_sha = _write_file_commit(
+        work, "v2.py", "y = 2\n", "release v1.1.0", branch="dev"
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "dev"], cwd=work, env=_GIT_ENV, check=True
+    )
+    _push_tag(work, "v1.1.0", v2_dev_sha, bare)
+
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "v1.1.0", "--", "."], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "promote v1.1.0"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    v2_main_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=_GIT_ENV, check=True
+    )
+
+    return work, bare, v1_main_sha, v2_main_sha
+
+
+def test_fix_refuses_to_relocate_newest_dev_minor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCENARIO: two misplaced minors with ``hold_newest_minor`` on.
+
+    Only the older minor relocates.
+
+    MOCK SETUP: ``load_config`` → ``ForgeConfig(base_branch="main",
+        dev_branch="dev")`` (branch names only); the hold flag itself is
+        read off disk from a real ``pyproject.toml`` written into *work* —
+        proving ``_held_tag`` reads ``[tool.forge.promotion]`` independently
+        of the mocked config. Real dual-track repo via
+        ``_dual_track_with_two_unpromoted_minors`` with both v1.0.0 and
+        v1.1.0 misplaced on their dev commits.
+    EXPECTED BEHAVIOR: returns 0; v1.0.0 relocates to its main squash
+        commit (same as the single-tag fix case); v1.1.0 — the newest dev
+        minor — stays on its original dev commit; caplog logs "held from
+        relocation" naming v1.1.0.
+    """
+    work, bare, v1_main_sha, _v2_main_sha = _dual_track_with_two_unpromoted_minors(
+        tmp_path
+    )
+    v1_1_before = subprocess.run(
+        ["git", "rev-parse", "v1.1.0^{commit}"],
+        cwd=bare,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    (work / "pyproject.toml").write_text(
+        "[tool.forge.promotion]\nhold_newest_minor = true\n"
+    )
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "t")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "t@t")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "t")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "t@t")
+    monkeypatch.setattr(
+        verify_main_tags,
+        "load_config",
+        lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
+    )
+    monkeypatch.setattr("sys.argv", ["forge-check-main-tags", "--fix"])
+    monkeypatch.chdir(work)
+    with caplog.at_level(logging.INFO, logger="forge.verify_main_tags"):
+        assert verify_main_tags.main() == 0
+
+    v1_0_after = subprocess.run(
+        ["git", "rev-parse", "v1.0.0^{commit}"],
+        cwd=bare,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    v1_1_after = subprocess.run(
+        ["git", "rev-parse", "v1.1.0^{commit}"],
+        cwd=bare,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert v1_0_after == v1_main_sha
+    assert v1_1_after == v1_1_before
+    assert any(
+        "held from relocation" in r.getMessage() and "v1.1.0" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_fix_relocates_all_minors_when_hold_unset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCENARIO: two misplaced minors with no ``[tool.forge.promotion]`` table.
+
+    Both minors relocate.
+
+    MOCK SETUP: ``load_config`` → ``ForgeConfig(base_branch="main",
+        dev_branch="dev")``; no ``pyproject.toml`` is written into *work*,
+        so ``_held_tag`` reads ``{}`` and the hold defaults off. Real
+        dual-track repo via ``_dual_track_with_two_unpromoted_minors``.
+    EXPECTED BEHAVIOR: default-off neutrality — both v1.0.0 and v1.1.0
+        relocate to their respective main squash commits.
+    """
+    work, bare, v1_main_sha, v2_main_sha = _dual_track_with_two_unpromoted_minors(
+        tmp_path
+    )
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "t")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "t@t")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "t")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "t@t")
+    monkeypatch.setattr(
+        verify_main_tags,
+        "load_config",
+        lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
+    )
+    monkeypatch.setattr("sys.argv", ["forge-check-main-tags", "--fix"])
+    monkeypatch.chdir(work)
+    assert verify_main_tags.main() == 0
+
+    v1_0_after = subprocess.run(
+        ["git", "rev-parse", "v1.0.0^{commit}"],
+        cwd=bare,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    v1_1_after = subprocess.run(
+        ["git", "rev-parse", "v1.1.0^{commit}"],
+        cwd=bare,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert v1_0_after == v1_main_sha
+    assert v1_1_after == v2_main_sha
 
 
 def test_fix_relocates_when_base_diverges_only_by_changelog(
@@ -474,43 +685,8 @@ def test_repair_proceeds_to_push_when_non_interactive_but_has_auth(
 
 
 # ---------------------------------------------------------------------------
-# Group D — _minor_tags / _base_tree_index (real git, no origin needed)
+# Group D — _base_tree_index (real git, no origin needed)
 # ---------------------------------------------------------------------------
-
-
-def test_minor_tags_returns_only_patch_zero_tags_sorted(tmp_path: Path) -> None:
-    """Only vX.Y.0 tags are returned, sorted ascending by semver."""
-    subprocess.run(
-        ["git", "init", "-q", "-b", "main"], cwd=tmp_path, env=_GIT_ENV, check=True
-    )
-    subprocess.run(
-        ["git", "commit", "-q", "--allow-empty", "-m", "init"],
-        cwd=tmp_path,
-        env=_GIT_ENV,
-        check=True,
-    )
-    for tag in ("v1.0.0", "v1.0.1", "v2.0.0", "v2.1.0", "v1.1.0"):
-        subprocess.run(["git", "tag", tag], cwd=tmp_path, env=_GIT_ENV, check=True)
-    assert verify_main_tags._minor_tags(tmp_path) == [
-        "v1.0.0",
-        "v1.1.0",
-        "v2.0.0",
-        "v2.1.0",
-    ]
-
-
-def test_minor_tags_returns_empty_when_no_v_tags(tmp_path: Path) -> None:
-    """Repo with no ``v*`` tags at all returns an empty list."""
-    subprocess.run(
-        ["git", "init", "-q", "-b", "main"], cwd=tmp_path, env=_GIT_ENV, check=True
-    )
-    subprocess.run(
-        ["git", "commit", "-q", "--allow-empty", "-m", "init"],
-        cwd=tmp_path,
-        env=_GIT_ENV,
-        check=True,
-    )
-    assert verify_main_tags._minor_tags(tmp_path) == []
 
 
 def test_base_tree_index_newest_commit_wins_on_tree_collision(

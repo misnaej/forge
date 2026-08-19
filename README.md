@@ -209,7 +209,7 @@ Pin to a specific version or channel:
 
 | Pin | Cadence |
 |---|---|
-| `@main` | Slow channel — minor versions only |
+| `@main` | Slow channel — minor versions only; trails `dev`'s newest minor by one release, by design |
 | `@dev` | Fast channel — every patch |
 | `@v1.3.0` | Frozen at a specific tag |
 
