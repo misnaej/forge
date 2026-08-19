@@ -30,12 +30,12 @@ GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec
 # anywhere in the command string would false-positive on e.g.
 # `git commit -m "about --hard"; git reset HEAD~1`. `[^;&|]*` bounds the
 # invocation at the next command separator.
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}reset[^;&|]*[[:space:]]--hard\b"; then
+if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}reset\b[^;&|]*--hard\b"; then
     _block "git reset --hard"
 fi
 
 # `git reset --merge` is the same destruction class: it discards unstaged
 # changes to files that differ between HEAD and the target.
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}reset[^;&|]*[[:space:]]--merge\b"; then
+if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}reset\b[^;&|]*--merge\b"; then
     _block "git reset --merge"
 fi

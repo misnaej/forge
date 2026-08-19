@@ -555,6 +555,15 @@ def test_reset_hard_allows_flag_in_other_segment_of_compound() -> None:
     assert _run_hook(_RESET_HARD, "git reset HEAD~1; echo done --hard") == 0
 
 
+def test_reset_hard_blocks_flag_glued_by_substitution() -> None:
+    """A flag glued to an empty substitution (`$(echo)--hard`) still blocks.
+
+    Bash concatenates an adjacent substitution with literal text into one
+    argv word, so no whitespace precedes the flag in the raw command.
+    """
+    assert _run_hook(_RESET_HARD, "git reset $(echo)--hard") == 2
+
+
 _CONTINUATION_DELETE = "block_continuation_delete.sh"
 
 
