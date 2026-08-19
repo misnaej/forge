@@ -95,6 +95,15 @@ convention without checking current code still matches. Asking beats reverting.
   origin/<base>`), never a rebase. The `block_git_rebase` hook enforces this with
   **no bypass**: it blocks `git rebase` and `git pull --rebase` / `-r`. A human
   rebases via `! git rebase ...`.
+- **NEVER `git reset --hard` (or `--merge`) as recovery.** Both discard
+  uncommitted work irrecoverably — the reflex move when a merge or commit goes
+  sideways, and the wrong one. The sanctioned dirty-tree base sync is the
+  **stash dance**: `git stash -u` → `git merge origin/<base>` → `git stash pop`.
+  - On ANY failure mid-dance: leave the stash alone (never `git stash drop`),
+    verify it with `git stash list`, and report — a stranded stash is
+    recoverable; a dropped one is not.
+  - The `block_git_reset_hard` hook enforces the ban with **no bypass**. A
+    human resets via `! git reset --hard ...`.
 - **NEVER add Claude/AI attribution** in commits, PRs, or merge messages (no
   `Co-Authored-By`, no `Generated with Claude`, no AI references).
 - **NEVER push directly to a protected branch** (`base_branch` / `dev_branch`,
@@ -356,7 +365,8 @@ pin; they do not edit pins.
     deliberate follow-up that weighs CI state — a long or nearly-done
     run may be worth letting finish, and whether superseded runs are
     cancelled is repo-specific. When acted on, the cure is
-    `git merge origin/<base>` (§2 — never rebase).
+    `git merge origin/<base>` (§2 — never rebase; dirty tree → §2's
+    stash dance, never `reset --hard`).
   - **A CI run concluding in failure** → surface it and investigate
     (§1); never auto-push fixes.
 

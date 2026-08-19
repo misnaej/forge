@@ -457,6 +457,88 @@ def test_rebase_blocks_leading_whitespace() -> None:
     assert _run_hook(_REBASE, "   git rebase main") == 2
 
 
+_RESET_HARD = "block_git_reset_hard.sh"
+
+
+def test_reset_hard_blocks_bare_hard() -> None:
+    """`git reset --hard` is blocked — it discards uncommitted work irrecoverably."""
+    assert _run_hook(_RESET_HARD, "git reset --hard") == 2
+
+
+def test_reset_hard_blocks_hard_with_ref() -> None:
+    """`git reset --hard HEAD~1` (targeted hard reset) is blocked too."""
+    assert _run_hook(_RESET_HARD, "git reset --hard HEAD~1") == 2
+
+
+def test_reset_hard_blocks_merge() -> None:
+    """`git reset --merge` is blocked — same destruction class as `--hard`."""
+    assert _run_hook(_RESET_HARD, "git reset --merge") == 2
+
+
+def test_reset_hard_has_no_agent_bypass() -> None:
+    """Even forge:git-commit-push cannot hard-reset — the block has no bypass."""
+    assert (
+        _run_hook(_RESET_HARD, "git reset --hard", agent_type="forge:git-commit-push")
+        == 2
+    )
+
+
+def test_reset_hard_blocks_compound_command() -> None:
+    """A hard reset chained after `cd` (`cd /tmp/x && git reset --hard`) is blocked."""
+    assert _run_hook(_RESET_HARD, "cd /tmp/x && git reset --hard") == 2
+
+
+def test_reset_hard_blocks_env_var_prefix() -> None:
+    """`GIT_DIR=/tmp/x git reset --hard` (inline env assignment) is blocked."""
+    assert _run_hook(_RESET_HARD, "GIT_DIR=/tmp/x git reset --hard") == 2
+
+
+def test_reset_hard_blocks_leading_whitespace() -> None:
+    """A hard reset with leading whitespace (`   git reset --hard`) is blocked."""
+    assert _run_hook(_RESET_HARD, "   git reset --hard") == 2
+
+
+def test_reset_hard_blocks_subshell_and_flagged_wrapper() -> None:
+    """Subshell parens and flag tokens between wrapper and git still block."""
+    assert _run_hook(_RESET_HARD, "(git reset --hard)") == 2
+    assert _run_hook(_RESET_HARD, "sudo -n git reset --hard") == 2
+
+
+def test_reset_hard_allows_bare_reset() -> None:
+    """A bare `git reset` (mixed reset, keeps the working tree) is allowed."""
+    assert _run_hook(_RESET_HARD, "git reset") == 0
+
+
+def test_reset_hard_allows_soft() -> None:
+    """`git reset --soft HEAD~1` keeps the working tree and is allowed."""
+    assert _run_hook(_RESET_HARD, "git reset --soft HEAD~1") == 0
+
+
+def test_reset_hard_allows_ref_only() -> None:
+    """`git reset HEAD~1` (no `--hard`/`--merge`) is allowed."""
+    assert _run_hook(_RESET_HARD, "git reset HEAD~1") == 0
+
+
+def test_reset_hard_allows_path_reset() -> None:
+    """`git reset -- some_file.py` (unstaging a path) is allowed."""
+    assert _run_hook(_RESET_HARD, "git reset -- some_file.py") == 0
+
+
+def test_reset_hard_allows_stash() -> None:
+    """`git stash -u` — the sanctioned dirty-tree sync step — is allowed."""
+    assert _run_hook(_RESET_HARD, "git stash -u") == 0
+
+
+def test_reset_hard_allows_commit_message_mention() -> None:
+    """The words "reset --hard" inside a quoted commit message do not false-positive."""
+    assert _run_hook(_RESET_HARD, 'git commit -m "never reset --hard here"') == 0
+
+
+def test_reset_hard_allows_non_git_tool() -> None:
+    """A non-git command merely containing the words is not inspected."""
+    assert _run_hook(_RESET_HARD, "some-other-tool --hard reset") == 0
+
+
 _CONTINUATION_DELETE = "block_continuation_delete.sh"
 
 
