@@ -16,7 +16,6 @@ from unittest.mock import patch
 import pytest
 
 from forge import doctor, precommit
-from forge.upgrade import Pin
 from tests.conftest import make_fake_run
 
 
@@ -501,19 +500,15 @@ def test_surface_pin_revision_reports_mismatch(
 ) -> None:
     """A provable pin/installed-revision mismatch surfaces one advisory result.
 
-    ``doctor.py`` imports ``find_pin`` / ``_installed_revision`` from
-    ``forge.upgrade`` into its own namespace, so the collaborators are
-    patched at ``doctor.find_pin`` / ``doctor._installed_revision`` —
-    patching ``forge.upgrade.*`` would not reach this module's bound names.
+    MOCK SETUP: ``doctor.py`` imports ``pin_revision_mismatch`` from
+    ``forge.upgrade`` into its own namespace, so the shared predicate is
+    patched at ``doctor.pin_revision_mismatch`` — patching
+    ``forge.upgrade.*`` would not reach this module's bound name. The
+    predicate's own branch logic is unit-tested in ``test_upgrade.py``.
     """
-    pin = Pin(
-        path=tmp_path / "pyproject.toml",
-        line_no=1,
-        url="https://github.com/misnaej/forge.git",
-        ref="v1.2.0",
+    monkeypatch.setattr(
+        doctor, "pin_revision_mismatch", lambda _root: ("v1.2.0", "v1.1.0")
     )
-    monkeypatch.setattr(doctor, "find_pin", lambda _root: pin)
-    monkeypatch.setattr(doctor, "_installed_revision", lambda: "v1.1.0")
 
     results = doctor._surface_pin_revision(tmp_path)
 
@@ -523,49 +518,14 @@ def test_surface_pin_revision_reports_mismatch(
     assert results[0].info is True
     assert "v1.2.0" in results[0].detail
     assert "v1.1.0" in results[0].detail
-    assert doctor._pip_command("v1.2.0") in results[0].detail
+    assert doctor.pip_command("v1.2.0") in results[0].detail
 
 
-def test_surface_pin_revision_empty_when_pin_is_none(
+def test_surface_pin_revision_empty_when_no_mismatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No pin found -> nothing to compare, empty result list."""
-    monkeypatch.setattr(doctor, "find_pin", lambda _root: None)
-    monkeypatch.setattr(doctor, "_installed_revision", lambda: "v1.1.0")
-
-    assert doctor._surface_pin_revision(tmp_path) == []
-
-
-def test_surface_pin_revision_empty_when_installed_revision_none(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An unknowable installed revision (non-git install) never flags."""
-    pin = Pin(
-        path=tmp_path / "pyproject.toml",
-        line_no=1,
-        url="https://github.com/misnaej/forge.git",
-        ref="v1.2.0",
-    )
-    monkeypatch.setattr(doctor, "find_pin", lambda _root: pin)
-    monkeypatch.setattr(doctor, "_installed_revision", lambda: None)
-
-    assert doctor._surface_pin_revision(tmp_path) == []
-
-
-def test_surface_pin_revision_empty_when_ref_matches(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A matching installed revision is not a finding."""
-    pin = Pin(
-        path=tmp_path / "pyproject.toml",
-        line_no=1,
-        url="https://github.com/misnaej/forge.git",
-        ref="v1.2.0",
-    )
-    monkeypatch.setattr(doctor, "find_pin", lambda _root: pin)
-    monkeypatch.setattr(doctor, "_installed_revision", lambda: "v1.2.0")
+    """No provable mismatch (predicate returns None) -> empty result list."""
+    monkeypatch.setattr(doctor, "pin_revision_mismatch", lambda _root: None)
 
     assert doctor._surface_pin_revision(tmp_path) == []

@@ -32,6 +32,12 @@ versions follow forge's rolling-next convention.
   fourth version-skew advisory. Closes the silent-downgrade window when
   a branch pin becomes a tag pin and branch-only refresh wrappers stop
   covering it.
+- **Action:** scripts that run `forge-upgrade --continue` unconditionally
+  can now see exit 1 without bootstrap running — only when the installed
+  build provably mismatches the pin, a state that previously regenerated
+  artifacts silently from the stale build. The failure names the exact
+  pip command to run. MINOR, not MAJOR: the new exit fires only on that
+  already-broken state.
 
 ## v3.11.0 — Unreleased
 

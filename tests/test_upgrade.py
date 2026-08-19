@@ -141,7 +141,7 @@ def test_rewrite_pin_preserves_quote_style(tmp_path: Path) -> None:
 
 def test_pip_command_uses_https_no_deps_force_reinstall() -> None:
     """The printed pip command matches the documented shape."""
-    cmd = upgrade._pip_command("main")
+    cmd = upgrade.pip_command("main")
     assert cmd.startswith("pip install --upgrade --force-reinstall --no-deps")
     assert "git+https://github.com/misnaej/forge.git@main" in cmd
 
@@ -352,6 +352,45 @@ def test_continue_calls_bootstrap(
     assert "/plugin update forge@forge" in msgs
 
 
+def test_pin_revision_mismatch_returns_pair_on_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin present + installed revision known + differing -> the pair."""
+    (tmp_path / "pyproject.toml").write_text(_BASE_PYPROJECT)
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: "v1.1.0")
+    assert upgrade.pin_revision_mismatch(tmp_path) == ("v1.2.0", "v1.1.0")
+
+
+def test_pin_revision_mismatch_none_when_refs_match(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Installed revision equal to the pin ref -> no mismatch."""
+    (tmp_path / "pyproject.toml").write_text(_BASE_PYPROJECT)
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: "v1.2.0")
+    assert upgrade.pin_revision_mismatch(tmp_path) is None
+
+
+def test_pin_revision_mismatch_none_when_pin_absent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No pin to compare against -> no mismatch, regardless of install."""
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: "v1.1.0")
+    assert upgrade.pin_revision_mismatch(tmp_path) is None
+
+
+def test_pin_revision_mismatch_none_when_installed_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-git install (revision unknowable) -> never a mismatch."""
+    (tmp_path / "pyproject.toml").write_text(_BASE_PYPROJECT)
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: None)
+    assert upgrade.pin_revision_mismatch(tmp_path) is None
+
+
 def test_phase2_gate_blocks_on_revision_mismatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -366,7 +405,7 @@ def test_phase2_gate_blocks_on_revision_mismatch(
         ref); `_bootstrap_run` replaced with a spy that fails the test if
         it is ever called.
     EXPECTED BEHAVIOR: rc 1, an ERROR log naming the refusal and the exact
-        `_pip_command("v1.2.0")` fix command; bootstrap never runs.
+        `pip_command("v1.2.0")` fix command; bootstrap never runs.
     """
     (tmp_path / "pyproject.toml").write_text(_BASE_PYPROJECT)
     monkeypatch.setattr(upgrade, "_installed_revision", lambda: "v1.1.0")
@@ -382,7 +421,7 @@ def test_phase2_gate_blocks_on_revision_mismatch(
     assert rc == 1
     msgs = " ".join(r.getMessage() for r in caplog.records)
     assert "refusing to regenerate managed artifacts from a stale install" in msgs
-    assert upgrade._pip_command("v1.2.0") in msgs
+    assert upgrade.pip_command("v1.2.0") in msgs
 
 
 def test_phase2_gate_proceeds_on_revision_match(
@@ -675,7 +714,7 @@ def test_atomic_write_preserves_other_lines(
 
 def test_pip_command_ssh_mode_uses_ssh_url() -> None:
     """auth_mode=ssh renders a ``git+ssh://git@github.com/...`` URL."""
-    cmd = upgrade._pip_command("main", auth_mode="ssh")
+    cmd = upgrade.pip_command("main", auth_mode="ssh")
     assert "git+ssh://git@github.com/" in cmd
     assert "git+https://" not in cmd
 
@@ -687,14 +726,14 @@ def test_pip_command_non_ssh_modes_use_https_url(mode: str) -> None:
     Args:
         mode: Auth mode from the AuthMode Literal (excluding ``ssh``).
     """
-    cmd = upgrade._pip_command("main", auth_mode=mode)
+    cmd = upgrade.pip_command("main", auth_mode=mode)
     assert "git+https://github.com/" in cmd
     assert "git+ssh://" not in cmd
 
 
 def test_pip_command_default_auth_mode_is_https_anonymous() -> None:
     """Default ``auth_mode="https-anonymous"`` keeps the hint-display URL form."""
-    cmd = upgrade._pip_command("main")
+    cmd = upgrade.pip_command("main")
     assert "git+https://github.com/" in cmd
 
 
@@ -770,6 +809,28 @@ def test_installed_revision_returns_none_on_malformed_json(
         upgrade.metadata,
         "distribution",
         lambda _name: _StubDistribution("{not valid json"),
+    )
+    assert upgrade._installed_revision() is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["null", "[]", "42", '"str"'],
+    ids=["null", "list", "int", "str"],
+)
+def test_installed_revision_returns_none_for_non_dict_json(
+    monkeypatch: pytest.MonkeyPatch,
+    content: str,
+) -> None:
+    """Valid JSON whose top level is not a dict degrades to None, not a crash.
+
+    Args:
+        content: direct_url.json payload that parses but has the wrong shape.
+    """
+    monkeypatch.setattr(
+        upgrade.metadata,
+        "distribution",
+        lambda _name: _StubDistribution(content),
     )
     assert upgrade._installed_revision() is None
 

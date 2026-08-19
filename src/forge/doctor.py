@@ -36,7 +36,7 @@ from pathlib import Path
 from forge import config
 from forge.git_utils import emit, parse_semver
 from forge.install_githooks import SIDECAR_NAME as _HOOK_VERSION_SIDECAR
-from forge.upgrade import _installed_revision, _pip_command, find_pin
+from forge.upgrade import pin_revision_mismatch, pip_command
 
 
 # Drift is only meaningful across at least two surfaces; a single present
@@ -434,18 +434,18 @@ def _surface_pin_revision(root: Path) -> list[CheckResult]:
         One advisory :class:`CheckResult` on a provable mismatch; empty
         list otherwise.
     """
-    pin = find_pin(root)
-    installed = _installed_revision()
-    if pin is None or installed is None or installed == pin.ref:
+    mismatch = pin_revision_mismatch(root)
+    if mismatch is None:
         return []
+    pinned_ref, installed = mismatch
     return [
         CheckResult(
             name="pin:revision",
             passed=True,
             info=True,
             detail=(
-                f"pin says '{pin.ref}' but the installed build is from "
-                f"'{installed}' — run: {_pip_command(pin.ref)}"
+                f"pin says '{pinned_ref}' but the installed build is from "
+                f"'{installed}' — run: {pip_command(pinned_ref)}"
             ),
         )
     ]

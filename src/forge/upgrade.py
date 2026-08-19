@@ -281,7 +281,7 @@ def _git_url_for(auth_mode: AuthMode, ref: str) -> str:
     return f"git+https://github.com/{_FORGE_GITHUB_REPO}.git@{ref}"
 
 
-def _pip_command(ref: str, *, auth_mode: AuthMode = "https-anonymous") -> str:
+def pip_command(ref: str, *, auth_mode: AuthMode = "https-anonymous") -> str:
     """Return the exact ``pip install`` line for a given pin ref.
 
     Args:
@@ -415,7 +415,7 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
             logger.info("(no target — pass --channel or --to to see the pip command)")
             return 0, None
         logger.info("would upgrade to: %s", target_hint)
-        logger.info("pip command: %s", _pip_command(target_hint))
+        logger.info("pip command: %s", pip_command(target_hint))
         changelog_text = _read_changelog()
         if changelog_text is not None:
             pending = _pending_action_count(changelog_text)
@@ -434,7 +434,7 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
             "no forge-scripts pin found (%s) — skipping rewrite. "
             "Run the pip command manually:\n  %s",
             _PIN_SEARCH_SCOPE,
-            _pip_command(target_ref),
+            pip_command(target_ref),
         )
         logger.info("Then re-run: forge-upgrade --continue")
         return 0, target_ref
@@ -460,7 +460,7 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
     logger.info("Next: run the pip install command manually, then ")
     logger.info("`forge-upgrade --continue` to re-sync managed artifacts.")
     logger.info("")
-    logger.info("  %s", _pip_command(target_ref))
+    logger.info("  %s", pip_command(target_ref))
     installed = _installed_revision()
     if installed is not None and installed != target_ref:
         logger.warning(
@@ -599,11 +599,37 @@ def _installed_revision() -> str | None:
         data = json.loads(raw)
     except json.JSONDecodeError:
         return None
+    if not isinstance(data, dict):
+        return None
     vcs = data.get("vcs_info")
     if not isinstance(vcs, dict):
         return None
     rev = vcs.get("requested_revision")
     return rev if isinstance(rev, str) and rev else None
+
+
+def pin_revision_mismatch(root: Path) -> tuple[str, str] | None:
+    """Return ``(pinned_ref, installed_ref)`` on a provable pin/install mismatch.
+
+    The one shared predicate behind pin verification — ``forge-upgrade
+    --continue``'s refuse-to-regenerate gate and ``forge-doctor``'s
+    ``pin:revision`` advisory both call it, so the "provable mismatch"
+    rule lives in exactly one place. Absence of either side (no pin
+    found, or a non-git install with no recorded revision) is not a
+    mismatch.
+
+    Args:
+        root: Consumer repo root, for pin discovery.
+
+    Returns:
+        The differing ``(pin.ref, installed_revision)`` pair, or ``None``
+        when they match or either side is unknowable.
+    """
+    pin = find_pin(root)
+    installed = _installed_revision()
+    if pin is None or installed is None or installed == pin.ref:
+        return None
+    return pin.ref, installed
 
 
 def _pending_action_count(changelog_text: str) -> int:
@@ -696,16 +722,16 @@ def _run_phase2(root: Path) -> int:
         command to fix it). ``0`` plus a plugin-update reminder when
         bootstrap succeeds.
     """
-    pin = find_pin(root)
-    installed = _installed_revision()
-    if pin is not None and installed is not None and installed != pin.ref:
+    mismatch = pin_revision_mismatch(root)
+    if mismatch is not None:
+        pinned_ref, installed = mismatch
         logger.error(
             "pin says '%s' but the installed build is from '%s' — "
             "refusing to regenerate managed artifacts from a stale "
             "install. Run:\n  %s\nthen re-run `forge-upgrade --continue`.",
-            pin.ref,
+            pinned_ref,
             installed,
-            _pip_command(pin.ref),
+            pip_command(pinned_ref),
         )
         return 1
     with progress_logger("bootstrap") as note:
@@ -756,7 +782,7 @@ def _run_pip_install(
         diagnostics can distinguish "tool reported failure" from
         "watchdog killed it").
     """
-    pip_cmd = _pip_command(ref, auth_mode=auth_mode)
+    pip_cmd = pip_command(ref, auth_mode=auth_mode)
     with progress_logger("pip install") as note:
         timeout_label = "none" if timeout_seconds is None else f"{timeout_seconds}s"
         note(f"auth={auth_mode} timeout={timeout_label}")

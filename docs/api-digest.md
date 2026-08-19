@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 704 symbols._
+_63 modules, 705 symbols._
 
 ## `forge`
 
@@ -872,7 +872,7 @@ _63 modules, 704 symbols._
 - `find_pin(repo_root: Path) -> Pin | None` — Locate the ``forge-scripts`` pin in *repo_root*'s dependency files.
 - `_rewrite_pin(pin: Pin, new_ref: str) -> str` _(internal)_ — Return the file content with *pin*'s line rewritten to *new_ref*.
 - `_git_url_for(auth_mode: AuthMode, ref: str) -> str` _(internal)_ — Return the ``git+...`` URL pip should resolve for *ref* under *auth_mode*.
-- `_pip_command(ref: str, *, auth_mode: AuthMode = 'https-anonymous') -> str` _(internal)_ — Return the exact ``pip install`` line for a given pin ref.
+- `pip_command(ref: str, *, auth_mode: AuthMode = 'https-anonymous') -> str` — Return the exact ``pip install`` line for a given pin ref.
 - `_resolve_target_ref_or_none(args: argparse.Namespace, current_ref: str | None) -> str | None` _(internal)_ — Resolve the target ref from CLI flags, falling back to current.
 - `_resolve_target_ref(args: argparse.Namespace, current_ref: str | None) -> str` _(internal)_ — Resolve the target ref or exit when undetermined.
 - `_write_atomic(path: Path, content: str) -> None` _(internal)_ — Replace *path*'s contents with *content*, atomically.
@@ -881,6 +881,7 @@ _63 modules, 704 symbols._
 - `_consumer_upgrade_notes(changelog_text: str, *, max_versions: int = 3) -> str | None` _(internal)_ — Extract the most recent ``⚠️ Upgrade notes`` lanes from the changelog.
 - `_recent_action_items(changelog_text: str, *, max_versions: int = _ACTIONS_MAX_VERSIONS) -> list[tuple[str, str]]` _(internal)_ — Return ``**Action:**`` items from the newest marker-bearing versions.
 - `_installed_revision() -> str | None` _(internal)_ — Return the installed forge-scripts build's requested git revision.
+- `pin_revision_mismatch(root: Path) -> tuple[str, str] | None` — Return ``(pinned_ref, installed_ref)`` on a provable pin/install mismatch.
 - `_pending_action_count(changelog_text: str) -> int` _(internal)_ — Count ``**Action:**`` items in versions newer than the installed one.
 - `_print_upgrade_notes() -> None` _(internal)_ — Surface consumer-action upgrade notes after a successful upgrade.
 - `_run_phase2(root: Path) -> int` _(internal)_ — Phase 2 — verify the install matches the pin, then re-sync artifacts.
