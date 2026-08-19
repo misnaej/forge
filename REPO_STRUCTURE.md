@@ -155,6 +155,7 @@ enforcement:
 - check_commit_format.sh: enforce conventional commit format
 - check_foundation_sync.sh: verify FOUNDATION.md sync
 - warn_pr_checks.sh: warn on PR check status
+- block_git_reset_hard.sh: block `git reset --hard` / `--merge` from agents (no bypass — the stash dance is the sanctioned recovery)
 - block_raw_git.sh: hard-block raw `git commit` / `git push` from agents (bypass: `git-commit-push` subagent)
 - block_raw_ruff.sh: hard-block raw `ruff check` / `ruff format` from agents (no bypass — agents use forge-precommit)
 

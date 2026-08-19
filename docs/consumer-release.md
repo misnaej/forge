@@ -139,7 +139,7 @@ PR check".
 branch-cumulative — a tag cut while the branch is open strands *all*
 its earlier entries at once, and editing headings cannot fix it. The
 one cure is merging the base in (`git merge origin/<base>`); with
-uncommitted work in the tree, use the stash dance FOUNDATION §2
+uncommitted work in the tree, use the stash dance [`FOUNDATION.md` §2](../FOUNDATION.md#2-core-safety-rules)
 sanctions (`git stash -u` → merge → `git stash pop`; on any failure
 leave the stash alone) — never `git reset --hard`.
 

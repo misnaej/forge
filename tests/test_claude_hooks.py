@@ -539,6 +539,22 @@ def test_reset_hard_allows_non_git_tool() -> None:
     assert _run_hook(_RESET_HARD, "some-other-tool --hard reset") == 0
 
 
+def test_reset_hard_allows_flag_in_other_segment_of_compound() -> None:
+    """`--hard` in one command segment never taints a plain reset in another.
+
+    The flag check is scoped to the same `git reset` invocation — a quoted
+    mention followed by a legitimate mixed reset must not block.
+    """
+    assert (
+        _run_hook(
+            _RESET_HARD,
+            'git commit -m "fixed the --hard regression"; git reset HEAD~1',
+        )
+        == 0
+    )
+    assert _run_hook(_RESET_HARD, "git reset HEAD~1; echo done --hard") == 0
+
+
 _CONTINUATION_DELETE = "block_continuation_delete.sh"
 
 

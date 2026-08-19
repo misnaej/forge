@@ -26,14 +26,16 @@ _block() {
 # `exec`/`builtin`/`sudo` wrapper, so `GIT_DIR=x git reset --hard` can't slip
 # the gate (shared verbatim with block_git_rebase.sh / block_force_push.sh).
 GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+'
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}reset\b" \
-    && echo "$COMMAND" | grep -qE -- '--hard\b'; then
+# The flag must appear inside the SAME `git reset` invocation — matching it
+# anywhere in the command string would false-positive on e.g.
+# `git commit -m "about --hard"; git reset HEAD~1`. `[^;&|]*` bounds the
+# invocation at the next command separator.
+if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}reset[^;&|]*[[:space:]]--hard\b"; then
     _block "git reset --hard"
 fi
 
 # `git reset --merge` is the same destruction class: it discards unstaged
 # changes to files that differ between HEAD and the target.
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}reset\b" \
-    && echo "$COMMAND" | grep -qE -- '--merge\b'; then
+if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}reset[^;&|]*[[:space:]]--merge\b"; then
     _block "git reset --merge"
 fi
