@@ -360,7 +360,7 @@ def select_tests(
     # edge never connects and the tier would select zero tests silently. Warn
     # loudly instead. A genuinely un-imported module (e.g. a CLI entry point)
     # trips this too; a spurious warning beats a silent false green. A package
-    # __init__ with known descendants no longer trips it: the ancestor edges
+    # __init__ with known descendants does not trip it: the ancestor edges
     # give it incoming edges, so it selects through its descendants instead.
     for module in changed_modules:
         if module not in graph.test_modules and not importers.get(module):

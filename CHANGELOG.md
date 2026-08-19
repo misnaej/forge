@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.12.0 — Unreleased
+## v3.11.1 — Unreleased
 
 ### Fixes
 - **Editing a package `__init__.py` no longer selects zero tests.**

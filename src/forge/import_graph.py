@@ -1,9 +1,11 @@
 """Shared AST import-graph primitives.
 
-The two pure, audit-agnostic building blocks for static import analysis:
-turning a ``.py`` path into a dotted module name, and extracting the set
-of import targets from a parsed module. Both are derived purely from the
-syntax tree — no runtime instrumentation, no import execution.
+The pure, audit-agnostic primitives for static import analysis: turning a
+``.py`` path into a dotted module name, extracting the set of import
+targets from a parsed module, and mapping a module to its ancestor
+packages. The first two are derived purely from the syntax tree — no
+runtime instrumentation, no import execution; the third is pure
+dotted-name arithmetic and needs no AST at all.
 
 They live here rather than inside their consumers because both
 ``forge.audit.deps`` (module-coupling graph for architecture metrics) and
