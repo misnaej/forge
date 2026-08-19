@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -217,6 +218,68 @@ def test_phase1_idempotent_when_already_at_target(
     assert any("already at" in r.getMessage() for r in caplog.records)
 
 
+def test_phase1_advisory_warns_on_installed_revision_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Phase 1 warns when the installed build's revision no longer matches the pin.
+
+    None of the *other* phase-1 tests stub `_installed_revision`, so they
+    exercise the real (dev-checkout) call, which returns None — editable /
+    dir_info install, per its docstring — and stay silent on this path by
+    construction; only a test that explicitly stubs `_installed_revision`
+    (like this one) can trip it.
+    """
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text(_BASE_PYPROJECT)
+    monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: "v1.1.0")
+    argv = ["forge-upgrade"]  # no flags -> target_ref resolves to the pin's own ref
+    with patch.object(upgrade.sys, "argv", argv), caplog.at_level("WARNING"):
+        rc = upgrade.main()
+    assert rc == 0
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "installed build is from" in msgs
+    assert "pin now says" in msgs
+
+
+def test_phase1_advisory_silent_when_installed_matches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No warning when the installed revision already matches the pin."""
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text(_BASE_PYPROJECT)
+    monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: "v1.2.0")
+    argv = ["forge-upgrade"]
+    with patch.object(upgrade.sys, "argv", argv), caplog.at_level("WARNING"):
+        rc = upgrade.main()
+    assert rc == 0
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "installed build is from" not in msgs
+
+
+def test_phase1_advisory_silent_when_installed_revision_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No warning when the installed revision is unknowable (non-git install)."""
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text(_BASE_PYPROJECT)
+    monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: None)
+    argv = ["forge-upgrade"]
+    with patch.object(upgrade.sys, "argv", argv), caplog.at_level("WARNING"):
+        rc = upgrade.main()
+    assert rc == 0
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "installed build is from" not in msgs
+
+
 def test_phase1_errors_when_no_pin_and_no_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -287,6 +350,95 @@ def test_continue_calls_bootstrap(
     assert captured["calls"] == 1
     msgs = " ".join(r.getMessage() for r in caplog.records)
     assert "/plugin update forge@forge" in msgs
+
+
+def test_phase2_gate_blocks_on_revision_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A provable installed/pin mismatch refuses to regenerate managed artifacts.
+
+    SCENARIO: pin says v1.2.0 but the installed build's direct_url reads
+        v1.1.0 — regenerating artifacts now would be the silent-downgrade
+        case, so phase 2 must refuse.
+    MOCK SETUP: `_installed_revision` -> "v1.1.0" (mismatches the pin
+        ref); `_bootstrap_run` replaced with a spy that fails the test if
+        it is ever called.
+    EXPECTED BEHAVIOR: rc 1, an ERROR log naming the refusal and the exact
+        `_pip_command("v1.2.0")` fix command; bootstrap never runs.
+    """
+    (tmp_path / "pyproject.toml").write_text(_BASE_PYPROJECT)
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: "v1.1.0")
+
+    def _fail_if_called() -> int:
+        msg = "_bootstrap_run must not be called when the gate blocks"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(upgrade, "_bootstrap_run", _fail_if_called)
+
+    with caplog.at_level("ERROR"):
+        rc = upgrade._run_phase2(tmp_path)
+    assert rc == 1
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "refusing to regenerate managed artifacts from a stale install" in msgs
+    assert upgrade._pip_command("v1.2.0") in msgs
+
+
+def test_phase2_gate_proceeds_on_revision_match(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A matching installed revision lets bootstrap run."""
+    (tmp_path / "pyproject.toml").write_text(_BASE_PYPROJECT)
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: "v1.2.0")
+    calls: dict[str, int] = {"n": 0}
+
+    def _spy() -> int:
+        calls["n"] += 1
+        return 0
+
+    monkeypatch.setattr(upgrade, "_bootstrap_run", _spy)
+    rc = upgrade._run_phase2(tmp_path)
+    assert rc == 0
+    assert calls["n"] == 1
+
+
+def test_phase2_gate_silent_when_pin_is_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No pin at all -> the gate can't compare, so it must not block."""
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: "v1.1.0")
+    calls: dict[str, int] = {"n": 0}
+
+    def _spy() -> int:
+        calls["n"] += 1
+        return 0
+
+    monkeypatch.setattr(upgrade, "_bootstrap_run", _spy)
+    rc = upgrade._run_phase2(tmp_path)
+    assert rc == 0
+    assert calls["n"] == 1
+
+
+def test_phase2_gate_silent_when_installed_revision_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknowable installed revision (non-git install) never blocks."""
+    (tmp_path / "pyproject.toml").write_text(_BASE_PYPROJECT)
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: None)
+    calls: dict[str, int] = {"n": 0}
+
+    def _spy() -> int:
+        calls["n"] += 1
+        return 0
+
+    monkeypatch.setattr(upgrade, "_bootstrap_run", _spy)
+    rc = upgrade._run_phase2(tmp_path)
+    assert rc == 0
+    assert calls["n"] == 1
 
 
 def test_check_with_no_pin_and_no_target_reports_gracefully(
@@ -404,6 +556,44 @@ def test_apply_runs_pip_and_bootstrap(
     assert "@main" in pp.read_text()
 
 
+def test_apply_warns_when_installed_still_mismatches_after_pip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`--apply` warns when pip reports success but the read-back still mismatches.
+
+    SCENARIO: pip exits 0 but a re-read of the installed distribution still
+        shows the old revision — the "multiple environments" case
+        (`which pip` vs `which python`).
+    MOCK SETUP: `_run_pip_install` -> 0 and `_run_phase2` -> 0 (isolates
+        this assertion from the phase-2 gate, which would otherwise *also*
+        fire on the same mismatched `_installed_revision` and mask it
+        behind an early rc=1); `_installed_revision` -> "v1.1.0" against a
+        `--channel main` target.
+    EXPECTED BEHAVIOR: rc 0, a WARNING log carrying the apply-specific
+        substring. The same mocked `_installed_revision` also trips the
+        phase-1 advisory warning (a distinct message) earlier in the same
+        run, so this asserts on the apply-specific substring rather than
+        "any warning present" — keeps the two messages distinguishable if
+        either wording drifts.
+    """
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text(_BASE_PYPROJECT)
+    monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
+    _stub_run_context(monkeypatch)
+    monkeypatch.setattr(upgrade, "_run_pip_install", lambda *_a, **_k: 0)
+    monkeypatch.setattr(upgrade, "_run_phase2", lambda _root: 0)
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: "v1.1.0")
+
+    argv = ["forge-upgrade", "--apply", "--channel", "main"]
+    with patch.object(upgrade.sys, "argv", argv), caplog.at_level("WARNING"):
+        rc = upgrade.main()
+    assert rc == 0
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "pip reported success but the installed build still reads" in msgs
+
+
 def test_apply_aborts_if_pip_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -506,6 +696,122 @@ def test_pip_command_default_auth_mode_is_https_anonymous() -> None:
     """Default ``auth_mode="https-anonymous"`` keeps the hint-display URL form."""
     cmd = upgrade._pip_command("main")
     assert "git+https://github.com/" in cmd
+
+
+class _StubDistribution:
+    """Stand-in for importlib.metadata.Distribution exposing only read_text."""
+
+    def __init__(self, content: str | None) -> None:
+        """Initialize with stubbed direct_url.json content.
+
+        Args:
+            content: The JSON content to return from read_text, or None.
+        """
+        self._content = content
+
+    def read_text(self, _filename: str) -> str | None:
+        """Return the stubbed direct_url.json content (or None if "missing").
+
+        Args:
+            _filename: Name of the file to read (unused in stub).
+
+        Returns:
+            The stubbed direct_url.json content, or None if "missing".
+        """
+        return self._content
+
+
+def test_installed_revision_returns_ref_for_git_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A git install's direct_url.json yields the requested revision verbatim."""
+    content = json.dumps(
+        {
+            "url": "https://github.com/misnaej/forge.git",
+            "vcs_info": {
+                "vcs": "git",
+                "requested_revision": "dev",
+                "commit_id": "abc123",
+            },
+        }
+    )
+    monkeypatch.setattr(
+        upgrade.metadata, "distribution", lambda _name: _StubDistribution(content)
+    )
+    assert upgrade._installed_revision() == "dev"
+
+
+def test_installed_revision_returns_none_for_editable_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dir_info-only (editable) install has no vcs_info -> None."""
+    content = json.dumps({"url": "file:///repo", "dir_info": {"editable": True}})
+    monkeypatch.setattr(
+        upgrade.metadata, "distribution", lambda _name: _StubDistribution(content)
+    )
+    assert upgrade._installed_revision() is None
+
+
+def test_installed_revision_returns_none_when_file_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """direct_url.json absent -- read_text returns None, not a raise."""
+    monkeypatch.setattr(
+        upgrade.metadata, "distribution", lambda _name: _StubDistribution(None)
+    )
+    assert upgrade._installed_revision() is None
+
+
+def test_installed_revision_returns_none_on_malformed_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed direct_url.json content degrades to None rather than crashing."""
+    monkeypatch.setattr(
+        upgrade.metadata,
+        "distribution",
+        lambda _name: _StubDistribution("{not valid json"),
+    )
+    assert upgrade._installed_revision() is None
+
+
+def test_installed_revision_returns_none_when_package_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """forge-scripts distribution unavailable -> None, not a crash."""
+
+    def _raise(_name: str) -> _StubDistribution:
+        raise upgrade.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(upgrade.metadata, "distribution", _raise)
+    assert upgrade._installed_revision() is None
+
+
+@pytest.mark.parametrize(
+    "requested_revision",
+    [None, "", 123],
+    ids=["missing", "empty", "non_str"],
+)
+def test_installed_revision_returns_none_for_invalid_requested_revision(
+    monkeypatch: pytest.MonkeyPatch,
+    requested_revision: object,
+) -> None:
+    """A vcs_info block with a missing/empty/non-str requested_revision -> None.
+
+    Args:
+        requested_revision: The malformed ``requested_revision`` value under
+            test -- ``None`` means the key is omitted entirely (missing),
+            versus an explicit empty string or a non-str value.
+    """
+    vcs_info: dict[str, object] = {"vcs": "git", "commit_id": "abc123"}
+    if requested_revision is not None:
+        vcs_info["requested_revision"] = requested_revision
+    content = json.dumps(
+        {"url": "https://github.com/misnaej/forge.git", "vcs_info": vcs_info}
+    )
+    monkeypatch.setattr(
+        upgrade.metadata, "distribution", lambda _name: _StubDistribution(content)
+    )
+    assert upgrade._installed_revision() is None
 
 
 def test_apply_aborts_when_auth_none_and_non_interactive(

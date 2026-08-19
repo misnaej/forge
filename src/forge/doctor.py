@@ -36,6 +36,7 @@ from pathlib import Path
 from forge import config
 from forge.git_utils import emit, parse_semver
 from forge.install_githooks import SIDECAR_NAME as _HOOK_VERSION_SIDECAR
+from forge.upgrade import _installed_revision, _pip_command, find_pin
 
 
 # Drift is only meaningful across at least two surfaces; a single present
@@ -416,6 +417,40 @@ def _check_version_skew(
     ]
 
 
+def _surface_pin_revision(root: Path) -> list[CheckResult]:
+    """Compare the pyproject pin's git ref against the installed build's.
+
+    The fourth skew surface: a pin rewritten from a branch to a tag (or
+    edited by hand) leaves the environment silently running the old
+    build until pip is re-run — consumer refresh wrappers that only
+    force-reinstall branch pins skip tag pins entirely. Advisory only:
+    the absence of either side (no pin found, or a non-git install such
+    as forge's own editable checkout) is not a finding.
+
+    Args:
+        root: Consumer repo root, for pin discovery.
+
+    Returns:
+        One advisory :class:`CheckResult` on a provable mismatch; empty
+        list otherwise.
+    """
+    pin = find_pin(root)
+    installed = _installed_revision()
+    if pin is None or installed is None or installed == pin.ref:
+        return []
+    return [
+        CheckResult(
+            name="pin:revision",
+            passed=True,
+            info=True,
+            detail=(
+                f"pin says '{pin.ref}' but the installed build is from "
+                f"'{installed}' — run: {_pip_command(pin.ref)}"
+            ),
+        )
+    ]
+
+
 def _check_plugin_manifests(
     plugin_root: Path | None,
     plugin_name: str,
@@ -701,6 +736,7 @@ def main() -> int:
         results.extend(_check_plugin_contents(plugin_root))
 
     results.extend(_check_version_skew(Path.cwd(), plugin_root))
+    results.extend(_surface_pin_revision(Path.cwd()))
     results.extend(_check_under_used_capabilities(Path.cwd()))
 
     if args.json:

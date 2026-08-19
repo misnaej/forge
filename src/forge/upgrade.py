@@ -36,6 +36,7 @@ found" message; they continue to upgrade manually.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import re
@@ -460,6 +461,16 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
     logger.info("`forge-upgrade --continue` to re-sync managed artifacts.")
     logger.info("")
     logger.info("  %s", _pip_command(target_ref))
+    installed = _installed_revision()
+    if installed is not None and installed != target_ref:
+        logger.warning(
+            "installed build is from '%s', pin now says '%s' — the "
+            "environment does not update itself, and refresh wrappers "
+            "that only force-reinstall branch pins will skip a tag pin. "
+            "The pip command above is what makes them match.",
+            installed,
+            target_ref,
+        )
     return 0, target_ref
 
 
@@ -561,6 +572,40 @@ def _recent_action_items(
     return kept
 
 
+def _installed_revision() -> str | None:
+    """Return the installed forge-scripts build's requested git revision.
+
+    Reads the distribution's PEP 610 ``direct_url.json``: a git install
+    records the literal ref from the install URL as
+    ``vcs_info.requested_revision`` (verbatim — no normalization), so it
+    compares directly against a pin's ref string. An editable or index
+    install carries no ``vcs_info`` (forge's own dev checkout is
+    ``dir_info``-only) and a partial install may lack the file entirely —
+    both return ``None`` so pin verification fires only on a provable
+    git-install mismatch, never on forge's own repo.
+
+    Returns:
+        The requested revision (e.g. ``"dev"``, ``"v3.10.0"``), or
+        ``None`` when the distribution is missing, the file is absent or
+        malformed, or the install is not a git install.
+    """
+    try:
+        raw = metadata.distribution("forge-scripts").read_text("direct_url.json")
+    except metadata.PackageNotFoundError:
+        return None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    vcs = data.get("vcs_info")
+    if not isinstance(vcs, dict):
+        return None
+    rev = vcs.get("requested_revision")
+    return rev if isinstance(rev, str) and rev else None
+
+
 def _pending_action_count(changelog_text: str) -> int:
     """Count ``**Action:**`` items in versions newer than the installed one.
 
@@ -628,18 +673,41 @@ def _print_upgrade_notes() -> None:
     logger.info("Full release history: CHANGELOG.md in the forge repo.")
 
 
-def _run_phase2() -> int:
-    """Phase 2 — run install-forge-bootstrap; print plugin reminder.
+def _run_phase2(root: Path) -> int:
+    """Phase 2 — verify the install matches the pin, then re-sync artifacts.
 
-    Wrapped in :func:`forge.run_context.progress_logger` so the substep
-    boundary + total elapsed time appears in CI logs even though
+    Refuses to run ``install-forge-bootstrap`` when the installed
+    build's git revision provably differs from the pin: regenerating
+    managed artifacts from a stale build is the silent-downgrade case —
+    the next commit would land older content while the pin claims
+    otherwise. The gate stays silent when either side is unknowable (no
+    pin, or a non-git install). Wrapped in
+    :func:`forge.run_context.progress_logger` so the substep boundary +
+    total elapsed time appears in CI logs even though
     ``install-forge-bootstrap`` already emits its own per-step
     ``→ <slug>`` lines.
 
+    Args:
+        root: Consumer repo root (pin discovery for the verify gate).
+
     Returns:
-        Exit code from ``install-forge-bootstrap``. ``0`` plus a
-        plugin-update reminder when bootstrap succeeds.
+        Exit code from ``install-forge-bootstrap``; ``1`` when the
+        installed revision mismatches the pin (with the exact pip
+        command to fix it). ``0`` plus a plugin-update reminder when
+        bootstrap succeeds.
     """
+    pin = find_pin(root)
+    installed = _installed_revision()
+    if pin is not None and installed is not None and installed != pin.ref:
+        logger.error(
+            "pin says '%s' but the installed build is from '%s' — "
+            "refusing to regenerate managed artifacts from a stale "
+            "install. Run:\n  %s\nthen re-run `forge-upgrade --continue`.",
+            pin.ref,
+            installed,
+            _pip_command(pin.ref),
+        )
+        return 1
     with progress_logger("bootstrap") as note:
         note("install-forge-bootstrap")
         rc = _bootstrap_run()
@@ -777,9 +845,20 @@ def _run_apply(args: argparse.Namespace, root: Path) -> int:
         logger.error("pip install failed (exit %d) — aborting --apply.", pip_rc)
         return pip_rc
 
+    installed = _installed_revision()
+    if installed is not None and installed != target_ref:
+        logger.warning(
+            "pip reported success but the installed build still reads "
+            "'%s' (expected '%s') — unexpected, since the command "
+            "already forces reinstall. Check for multiple environments "
+            "(`which pip` vs `which python`).",
+            installed,
+            target_ref,
+        )
+
     logger.info("")
     logger.info("Re-syncing managed artifacts...")
-    return _run_phase2()
+    return _run_phase2(root)
 
 
 def main() -> int:
@@ -858,7 +937,7 @@ def main() -> int:
                 "--channel / --to / --check / --apply.\n",
             )
             return 2
-        return _run_phase2()
+        return _run_phase2(root)
 
     if args.apply:
         if args.check:

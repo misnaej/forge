@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 702 symbols._
+_63 modules, 704 symbols._
 
 ## `forge`
 
@@ -283,6 +283,7 @@ _63 modules, 702 symbols._
 - `_surface_hook_version(repo_root: Path) -> str | None` _(internal)_ — Forge version recorded in the git-hook sidecar, or None when absent.
 - `_surface_plugin_version(plugin_root: Path | None) -> str | None` _(internal)_ — Version of the cached Claude Code plugin install, or None when absent.
 - `_check_version_skew(repo_root: Path, plugin_root: Path | None) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
+- `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
 - `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
 - `_check_plugin_contents(plugin_root: Path | None) -> list[CheckResult]` _(internal)_ — Verify the expected plugin sub-directories contain files.
 - `_check_step_tools(repo_root: Path) -> list[CheckResult]` _(internal)_ — Verify the external tool for each enabled pre-commit step is on PATH.
@@ -879,9 +880,10 @@ _63 modules, 702 symbols._
 - `_read_changelog() -> str | None` _(internal)_ — Return forge's packaged ``CHANGELOG.md`` text, or ``None`` if unavailable.
 - `_consumer_upgrade_notes(changelog_text: str, *, max_versions: int = 3) -> str | None` _(internal)_ — Extract the most recent ``⚠️ Upgrade notes`` lanes from the changelog.
 - `_recent_action_items(changelog_text: str, *, max_versions: int = _ACTIONS_MAX_VERSIONS) -> list[tuple[str, str]]` _(internal)_ — Return ``**Action:**`` items from the newest marker-bearing versions.
+- `_installed_revision() -> str | None` _(internal)_ — Return the installed forge-scripts build's requested git revision.
 - `_pending_action_count(changelog_text: str) -> int` _(internal)_ — Count ``**Action:**`` items in versions newer than the installed one.
 - `_print_upgrade_notes() -> None` _(internal)_ — Surface consumer-action upgrade notes after a successful upgrade.
-- `_run_phase2() -> int` _(internal)_ — Phase 2 — run install-forge-bootstrap; print plugin reminder.
+- `_run_phase2(root: Path) -> int` _(internal)_ — Phase 2 — verify the install matches the pin, then re-sync artifacts.
 - `_run_pip_install(ref: str, *, auth_mode: AuthMode, timeout_seconds: int | None) -> int` _(internal)_ — Run the force-reinstall pip command, wrapped in a progress logger.
 - `_run_apply(args: argparse.Namespace, root: Path) -> int` _(internal)_ — ``--apply``: do phase 1 + run pip + do phase 2, in one command.
 - `main() -> int` — One-command forge upgrade entry point.
