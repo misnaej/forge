@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 702 symbols._
+_63 modules, 703 symbols._
 
 ## `forge`
 
@@ -508,6 +508,7 @@ _63 modules, 702 symbols._
 > _Shared AST import-graph primitives._
 
 - `closest_known(target: str, modules: AbstractSet[str]) -> str | None` — Resolve an import *target* to the deepest known module that covers it.
+- `ancestor_edges(modules: AbstractSet[str]) -> dict[str, set[str]]` — Map each known module to its known ancestor packages.
 - `_rel_to_dotted(rel: Path) -> str | None` _(internal)_ — Convert a root-relative ``.py`` path to a dotted module name.
 - `resolve_module_name(path: Path, package_roots: list[Path]) -> str | None` — Translate a ``.py`` path to a dotted module name.
 - `resolve_package_module_name(path: Path, repo_root: Path) -> str | None` — Name a source file by its real import root, derived from package layout.
@@ -839,7 +840,7 @@ _63 modules, 702 symbols._
 - `_collect_sys_modules_targets(node: ast.Call, targets: set[str]) -> None` _(internal)_ — Extract module names from a ``patch.dict("sys.modules", {…})`` call.
 - `_patch_targets(tree: ast.Module) -> set[str]` _(internal)_ — Return the dotted module-attribute targets of ``mock.patch`` calls.
 - `class _Graph` _(internal)_ — The internal import graph plus the name↔path mapping.
-- `build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph` — Parse the repo into an internal import graph.
+- `build_graph(repo_root: Path, *, follow_mock_patches: bool = False, include_ancestor_edges: bool = False) -> _Graph` — Parse the repo into an internal import graph.
 - `select_tests(repo_root: Path, changed_files: set[str], max_depth: int, *, follow_mock_patches: bool = False) -> SelectionPlan` — Compute the depth-layered test selection for a change set.
 - `render_plan(plan: SelectionPlan, depth: int) -> str` — Render a parseable ``--show-files`` plan for *depth*.
 
