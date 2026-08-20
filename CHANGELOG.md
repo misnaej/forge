@@ -34,6 +34,20 @@ versions follow forge's rolling-next convention.
   discarding state; the changelog-gate docs explain that the check is
   branch-cumulative and merging base is the cure.
 
+## v3.12.1 — Unreleased
+
+### Fixes
+- **Editing a package `__init__.py` no longer selects zero tests.**
+  `forge-smart-test`'s graph gains implicit ancestor-package edges
+  (importing `a.b.c` executes the ancestor `__init__` files), so a
+  facade `__init__` whose consumers import submodules directly now
+  reaches its descendants' tests in the reverse walk instead of
+  silently selecting nothing — restoring the conservative-selection
+  guarantee. The misleading source-dir/import-root-mismatch warning
+  stops firing for covered package nodes. Opt-in at the shared graph
+  seam (`include_ancestor_edges`); design-time consumers (deps audit,
+  C4) are unchanged.
+
 ## v3.12.0 — Unreleased
 
 ### Features

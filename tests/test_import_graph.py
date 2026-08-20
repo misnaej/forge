@@ -6,6 +6,7 @@ import ast
 from typing import TYPE_CHECKING
 
 from forge.import_graph import (
+    ancestor_edges,
     closest_known,
     extract_import_targets,
     resolve_module_name,
@@ -145,3 +146,31 @@ def test_closest_known_walks_up_to_shallowest_package() -> None:
 def test_closest_known_external_returns_none() -> None:
     """An import not in the internal module set returns ``None``."""
     assert closest_known("requests.get", {"myapp.core"}) is None
+
+
+def test_ancestor_edges_nested_chain() -> None:
+    """A three-level package chain maps each module to every known ancestor."""
+    assert ancestor_edges({"a", "a.b", "a.b.c"}) == {
+        "a.b": {"a"},
+        "a.b.c": {"a", "a.b"},
+    }
+
+
+def test_ancestor_edges_omits_module_with_no_known_ancestor() -> None:
+    """A module whose ancestors are all unknown is omitted from the result."""
+    assert ancestor_edges({"a.b.c"}) == {}
+
+
+def test_ancestor_edges_partial_known_ancestor() -> None:
+    """Only the known ancestor is recorded when an intermediate package is missing."""
+    assert ancestor_edges({"a", "a.b.c"}) == {"a.b.c": {"a"}}
+
+
+def test_ancestor_edges_flat_names_no_dots() -> None:
+    """Dot-free module names have no ancestors to record."""
+    assert ancestor_edges({"requests", "numpy"}) == {}
+
+
+def test_ancestor_edges_empty_input_returns_empty_dict() -> None:
+    """An empty module set produces an empty edge map."""
+    assert ancestor_edges(set()) == {}
