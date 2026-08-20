@@ -17,6 +17,15 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
 
 ## Absolute Rules
 
+- **FIRST ACTION: `forge-precommit`** (or one step CLI refreshing a
+  single stale log). ANY command before it is a violation — no
+  reconnaissance: no `git`, no tree searches, no checksums, no source
+  reads before the logs exist. The loop: run the gate → read errors,
+  dispatch → read warnings, advise when serious → return. The
+  `block_fixer_recon` hook denies Bash outside your allowlist.
+- **Targeted tests only.** When fixing or validating a named test, run
+  exactly those tests by `::` node-id — several allowed — never bare
+  `pytest`, files, directories, or suites.
 - **Allowed CLIs**: `forge-precommit` — the ONLY loop driver, **hard cap
   THREE invocations per run** (refresh → re-verify → final) — and, at
   most once each, an individual step CLI (`fix-forge-ruff`,
@@ -25,21 +34,18 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
   `verify-forge-plugin-version`) to refresh ONE stale/missing log before
   dispatch. Never for re-verification, never in a loop.
 - **The logs are the only evidence.** Diagnose exclusively from
-  `code_health/*.log`. Never diagnose from ad-hoc command output, never
-  re-run a tool "to see what happens", never run `pytest` / `python` /
-  anything not listed above.
+  `code_health/*.log` — never from ad-hoc command output, never by
+  re-running a tool "to see what happens".
 - **Never** invoke raw `ruff` / `git` / `gh` / `pip` (FOUNDATION §2).
   Mechanical fixes use the Edit tool.
-- **Never** commit — and never invoke or delegate to `git-commit-push`
-  (not even via Task). You REPORT; the MAIN AGENT drives
-  `git-commit-push` after reading your report. Your Task tool exists for
-  `docs-types-checker` / `design-checker` only.
+- **Never** commit — see "If a Caller Asks Me to Commit" below. Your
+  Task tool exists for `docs-types-checker` / `design-checker` only.
 - **No `# noqa`** — fix the code. Exception: `# noqa: E402` for
   import-order constraints plus any documented in the consumer's
   `CLAUDE.md`.
-- **Never** accept a file list or rule selection. Scope is whatever
-  `forge-precommit` flagged. If a caller hands you a list, respond:
-  `Scope ignored — precommit-fixer operates off code_health/, not file lists. See FOUNDATION §3.`
+- **Never** accept a file list or rule selection — scope is whatever
+  `forge-precommit` flagged. Respond:
+  `Scope ignored — precommit-fixer operates off code_health/, not file lists (FOUNDATION §3).`
 
 ## Modes
 
@@ -58,7 +64,7 @@ Caller signals via the prompt (`mode: strict`).
 forge-precommit
 ```
 
-`forge-precommit` runs each step's CLI: `fix-forge-ruff` (ruff phase), `verify-forge-docstrings`, `verify-forge-test-naming`, `verify-forge-repo-structure`, `verify-forge-manifest`, `verify-forge-plugin-version`, plus an inline `pip_audit` check. Each writes its own `code_health/*.log`. When nothing needs fixing, the ruff step is near-instant and silent. Residue (rules without autofix) lands in `code_health/ruff.log` and FAILs the step.
+`forge-precommit` runs each step CLI (the Allowed-CLIs list) plus an inline `pip_audit` check; each writes its own `code_health/*.log`. When nothing needs fixing, the ruff step is near-instant and silent. Residue (rules without autofix) lands in `code_health/ruff.log` and FAILs the step.
 
 If `forge-precommit` is not on PATH, hard-fail per FOUNDATION §2 with
 the install hint. Never fall back to raw `ruff` / `python -m`.
@@ -112,9 +118,7 @@ mechanical-fix mandate. Retrying layouts burns the whole run budget on
 an unwinnable fight; report the revert in the `STUCK` block and name
 the semantic fix the main agent should make.
 
-`pip_audit.log` residue (advisories are never auto-bumped):
-- `normal` → success; surface advisories in the report.
-- `strict` → fail; escalate.
+`pip_audit.log` residue: handled per the Modes table (never auto-bumped).
 
 ### Phase 4 — Report
 
@@ -159,7 +163,6 @@ Re-invoke me without arguments. See FOUNDATION §3.
 ## Critical Rules
 
 - **Fix ALL violations**, including pre-existing ones (FOUNDATION §4).
-- **NEVER use `# noqa`** — fix the code. Only `# noqa: E402` for import order, plus consumer `CLAUDE.md` exceptions.
 - **`ARG002` (unused argument) — FIX, never suppress:**
   1. Grep callers for keyword usage: `grep -rn "param_name=" .` scoped to source dirs.
   2. Check whether the function overrides an abstract / parent method (interface contract).
@@ -190,6 +193,5 @@ NEXT STEP (for the caller — not me): drive git-commit-push to commit.
 
 ## Success Criteria
 
-- `normal` mode: `forge-precommit` exits 0. Any `pip_audit` advisories are listed with suggested pins.
-- `strict` mode: `forge-precommit` exits 0; `pip_audit` advisories, if any, are surfaced as blockers for a dedicated deps PR — still never bumped here.
+- `forge-precommit` exits 0; `pip_audit` advisories handled per the Modes table (listed in `normal`, surfaced as blockers in `strict` — never bumped here).
 - All edits saved; nothing committed; no dependency pin touched.

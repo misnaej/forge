@@ -20,6 +20,19 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.14.0 — Unreleased
+
+### Features
+- **The precommit-fixer's Bash contract is now hook-enforced.** New
+  agent-scoped `block_fixer_recon` hook: when the calling agent is the
+  precommit-fixer, any Bash command outside its allowlist
+  (`forge-precommit`, the six step CLIs, `cd`, and targeted
+  `pytest`/`python -m pytest` runs with explicit `::` node-ids) is
+  denied — reconnaissance (git status/diff, tree searches, checksums)
+  becomes impossible instead of merely forbidden prose. Other agents
+  are unaffected. The agent doc gains a front-loaded FIRST-ACTION rule
+  and the targeted-test exception, funded by same-file de-duplication.
+
 ## v3.13.0 — Unreleased
 
 ### Features

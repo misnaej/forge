@@ -1022,3 +1022,169 @@ def test_unverified_pr_create_provenance_check_is_cwd_independent(
     proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=subdir)
     assert proc.returncode == 2
     assert "promotion exemption withheld" in proc.stderr
+
+
+# --- block_fixer_recon.sh: agent-scoped Bash allowlist ---------------------
+
+_FIXER_RECON = "block_fixer_recon.sh"
+
+
+def test_fixer_recon_blocks_git_status() -> None:
+    """`git status` is reconnaissance, outside the precommit-fixer's allowlist."""
+    assert (
+        _run_hook(_FIXER_RECON, "git status", agent_type="forge:precommit-fixer") == 2
+    )
+
+
+def test_fixer_recon_blocks_find_and_checksum_pipe() -> None:
+    """A `find | xargs md5sum` pipe is blocked — neither segment is allowlisted."""
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "find . -name '*.py' | xargs md5sum",
+            agent_type="forge:precommit-fixer",
+        )
+        == 2
+    )
+
+
+def test_fixer_recon_blocks_bare_pytest() -> None:
+    """A bare `pytest` (no node-id selector) is blocked — too broad to be targeted."""
+    assert _run_hook(_FIXER_RECON, "pytest", agent_type="forge:precommit-fixer") == 2
+
+
+def test_fixer_recon_blocks_pytest_directory() -> None:
+    """`pytest tests/` (directory, no `::` selector) is blocked."""
+    assert (
+        _run_hook(_FIXER_RECON, "pytest tests/", agent_type="forge:precommit-fixer")
+        == 2
+    )
+
+
+def test_fixer_recon_blocks_pipe_into_non_allowlisted() -> None:
+    """`forge-precommit | tee out.log` is blocked — the piped-into segment isn't."""
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "forge-precommit | tee out.log",
+            agent_type="forge:precommit-fixer",
+        )
+        == 2
+    )
+
+
+def test_fixer_recon_blocks_chained_recon() -> None:
+    """`forge-precommit && git diff` is blocked — every chained segment must pass."""
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "forge-precommit && git diff",
+            agent_type="forge:precommit-fixer",
+        )
+        == 2
+    )
+
+
+def test_fixer_recon_allows_forge_precommit() -> None:
+    """Bare `forge-precommit` call is allowed — the fixer's primary evidence source."""
+    assert (
+        _run_hook(_FIXER_RECON, "forge-precommit", agent_type="forge:precommit-fixer")
+        == 0
+    )
+
+
+def test_fixer_recon_allows_forge_precommit_with_flags() -> None:
+    """`forge-precommit --only ruff,typecheck` (scoped refresh) is allowed."""
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "forge-precommit --only ruff,typecheck",
+            agent_type="forge:precommit-fixer",
+        )
+        == 0
+    )
+
+
+def test_fixer_recon_allows_env_prefix() -> None:
+    """`CI=1 forge-precommit` (inline env assignment) is allowed."""
+    assert (
+        _run_hook(
+            _FIXER_RECON, "CI=1 forge-precommit", agent_type="forge:precommit-fixer"
+        )
+        == 0
+    )
+
+
+def test_fixer_recon_allows_cd_and_chain() -> None:
+    """`cd /tmp && forge-precommit` — chained into allowed CLI."""
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "cd /tmp && forge-precommit",
+            agent_type="forge:precommit-fixer",
+        )
+        == 0
+    )
+
+
+def test_fixer_recon_allows_step_cli() -> None:
+    """A standalone step CLI (`verify-forge-docstrings`) is allowed."""
+    assert (
+        _run_hook(
+            _FIXER_RECON, "verify-forge-docstrings", agent_type="forge:precommit-fixer"
+        )
+        == 0
+    )
+
+
+def test_fixer_recon_allows_targeted_pytest_single_nodeid() -> None:
+    """`pytest tests/foo.py::test_bar` (one explicit node-id) is allowed."""
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "pytest tests/foo.py::test_bar",
+            agent_type="forge:precommit-fixer",
+        )
+        == 0
+    )
+
+
+def test_fixer_recon_allows_targeted_pytest_multiple_nodeids() -> None:
+    """`pytest` with several explicit node-ids is allowed."""
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "pytest tests/foo.py::test_bar tests/foo.py::test_baz",
+            agent_type="forge:precommit-fixer",
+        )
+        == 0
+    )
+
+
+def test_fixer_recon_allows_python_m_pytest_nodeid() -> None:
+    """`python -m pytest` with an explicit node-id is allowed."""
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "python -m pytest tests/foo.py::test_bar",
+            agent_type="forge:precommit-fixer",
+        )
+        == 0
+    )
+
+
+def test_fixer_recon_ignores_other_agent() -> None:
+    """The hook only restricts precommit-fixer — another agent's `git status` passes."""
+    assert (
+        _run_hook(_FIXER_RECON, "git status", agent_type="forge:git-commit-push") == 0
+    )
+
+
+def test_fixer_recon_ignores_missing_agent_type() -> None:
+    """No `agent_type` payload field at all — the hook is a no-op."""
+    assert _run_hook(_FIXER_RECON, "git status") == 0
+
+
+def test_fixer_recon_matches_unprefixed_agent_form() -> None:
+    """The unprefixed `precommit-fixer` agent-type form is scoped too."""
+    assert _run_hook(_FIXER_RECON, "git status", agent_type="precommit-fixer") == 2
