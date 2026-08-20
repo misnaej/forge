@@ -3,7 +3,9 @@
 > **Maintained by hand, guarded by a check.** Nodes (agents / skills / hooks /
 > CLIs) are discovered from the repo; edges, phases, and enforcer badges are
 > hand-curated and source-verified. Two layers keep it honest: the `agent_doc`
-> pre-commit step gates node **coverage + no dangling refs** on every commit,
+> pre-commit step gates node **coverage + no dangling refs** plus the
+> **edge structure** (wired skill→agent delegations, the configured
+> guard-hook map, and endpoint resolution) on every commit,
 > and at PR review `docs-types-checker` runs `verify-forge-agent-doc --diff
 > <base>` to surface the **edge** changes a PR made so they get reconciled
 > here. Still eyeball it when `agents/`, `skills/`, or `claude-hooks/` change.
@@ -208,6 +210,7 @@ graph LR
   precommit_fixer["⚖️ precommit-fixer<br/>AI agent"]
   sk_pr_comments(["/pr-comments<br/>skill"])
   security_checker["⚖️ security-checker<br/>AI agent"]
+  issue_triage["⚖️ issue-triage<br/>AI agent"]
   main_agent -->|runs| sk_pr
   main_agent -->|runs| sk_pr_comments
   pr_manager -->|delegates| design_checker
@@ -221,6 +224,7 @@ graph LR
   sk_pr -->|invokes| docs_types_checker
   sk_pr -->|invokes| precommit_fixer
   sk_pr -->|invokes| pr_manager
+  sk_pr -->|post-pr triage via| issue_triage
   sk_pr_comments -->|invokes| pr_manager
   pr_manager -->|invokes| cli_forge_pr_squash_comment
   pr_manager -->|invokes| cli_forge_continuation_append
@@ -248,6 +252,8 @@ graph LR
   class sk_pr_comments skill
   class security_checker agent
   class security_checker reporter
+  class issue_triage agent
+  class issue_triage mutator
 ```
 
 ## Release

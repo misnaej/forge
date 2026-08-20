@@ -175,6 +175,466 @@ def test_check_doc_flags_dangling_skill(tmp_path: Path) -> None:
     assert "dangling: skill '/ghost' does not exist" in problems
 
 
+# --- _SKILL_RE ---------------------------------------------------------------
+
+
+def test_skill_re_does_not_match_shebang_line() -> None:
+    """_SKILL_RE does not misclassify a shell shebang as a skill mention."""
+    assert vad._SKILL_RE.findall("#!/usr/bin/env bash") == []
+
+
+# --- _parse_blocks ------------------------------------------------------------
+
+
+def test_parse_blocks_pipe_label_both_arrowheads() -> None:
+    """Piped labels on solid and dotted arrows both parse to verb-stripped Edges."""
+    doc = "```mermaid\nA -->|invokes| B\nA -.->|guards| C\n```\n"
+    blocks = vad._parse_blocks(doc)
+    edges, _ = blocks[0]
+    assert edges == [vad.Edge("A", "invokes", "B"), vad.Edge("A", "guards", "C")]
+
+
+def test_parse_blocks_dotted_spaced_label_form() -> None:
+    """The dotted spaced-label form (`A -. text .-> B`) parses to an Edge."""
+    doc = "```mermaid\nA -. some text .-> B\n```\n"
+    blocks = vad._parse_blocks(doc)
+    edges, _ = blocks[0]
+    assert edges == [vad.Edge("A", "some text", "B")]
+
+
+def test_parse_blocks_class_map_single_block_unions_two_lines() -> None:
+    """Two `class <id> <name>` lines for the same id union into one class set."""
+    doc = "```mermaid\nclass A agent\nclass A reporter\n```\n"
+    blocks = vad._parse_blocks(doc)
+    _, classes = blocks[0]
+    assert classes == {"A": {"agent", "reporter"}}
+
+
+def test_parse_blocks_separates_classes_per_block() -> None:
+    """Mermaid classes are scoped per block — a class in block 1 isn't in block 2.
+
+    SCENARIO: two mermaid blocks both declare node A; only block 1 classes
+    it `agent`. Mermaid itself scopes node declarations per block (an
+    unclassed node in block 2 simply doesn't render as an agent there), so
+    `_parse_blocks` must keep the two blocks' class maps independent rather
+    than merging them.
+    """
+    doc = (
+        "```mermaid\nclass A agent\n```\n"
+        "some prose between blocks\n"
+        "```mermaid\nclass B agent\n```\n"
+    )
+    blocks = vad._parse_blocks(doc)
+    assert "A" in blocks[0][1]
+    assert "A" not in blocks[1][1]
+
+
+def test_parse_blocks_unlabeled_edge_yields_no_edges() -> None:
+    """An unlabeled edge (`A --> B`, no `|verb|`) is silently unparsed.
+
+    Regression lock: curated docs label every edge, so an unlabeled arrow
+    is intentionally invisible to `_parse_blocks` rather than treated as a
+    verb-less edge — widening the regex to match it would risk matching
+    incidental `-->` text outside a real edge line.
+    """
+    doc = "```mermaid\nA --> B\n```\n"
+    blocks = vad._parse_blocks(doc)
+    edges, _ = blocks[0]
+    assert edges == []
+
+
+# --- _node_kind_ids -----------------------------------------------------------
+
+
+def test_node_kind_ids_maps_hyphenated_names_and_prefixes() -> None:
+    """Hyphenated agent/skill/CLI names get `-`→`_` plus their kind prefix.
+
+    Hooks keep their name as-is (no `-`→`_`) and get only the `hk_` prefix —
+    hook filenames are already underscore-separated (`block_push.sh`).
+    """
+    roster = {
+        "agents": {"design-checker"},
+        "skills": {"pr-manager"},
+        "hooks": {"block_push"},
+        "clis": {"forge-precommit"},
+    }
+    kind_ids = vad._node_kind_ids(roster)
+    assert kind_ids["agent"] == {"design_checker"}
+    assert kind_ids["skill"] == {"sk_pr_manager"}
+    assert kind_ids["hook"] == {"hk_block_push"}
+    assert kind_ids["cli"] == {"cli_forge_precommit"}
+
+
+# --- _discover_invokes ---------------------------------------------------------
+
+
+def test_discover_invokes_multiple_pairs_and_claude_skills_dir(tmp_path: Path) -> None:
+    """Multiple `subagent_type=` lines in one SKILL.md yield multiple pairs.
+
+    A skill under `.claude/skills/` (the consumer-wrapper location, not
+    just `skills/`) is discovered too.
+    """
+    _write(
+        tmp_path / "skills" / "ship" / "SKILL.md",
+        "# ship\n"
+        'Task(subagent_type="forge:reviewer")\n'
+        'Task(subagent_type="forge:security-checker")\n',
+    )
+    _write(
+        tmp_path / ".claude" / "skills" / "local-ship" / "SKILL.md",
+        '# local-ship\nTask(subagent_type="forge:reviewer")\n',
+    )
+    pairs = vad._discover_invokes(tmp_path)
+    assert pairs == {
+        ("ship", "reviewer"),
+        ("ship", "security-checker"),
+        ("local-ship", "reviewer"),
+    }
+
+
+# --- _guard_map -----------------------------------------------------------
+
+
+def test_guard_map_happy_path_returns_configured_table(tmp_path: Path) -> None:
+    """A well-formed guarded_by table (agent -> list[str] hooks) is returned intact."""
+    _write(
+        tmp_path / "pyproject.toml",
+        '[tool.forge.agent_doc.guarded_by]\nreviewer = ["block_push"]\n',
+    )
+    assert vad._guard_map(tmp_path) == {"reviewer": ["block_push"]}
+
+
+def test_guard_map_returns_empty_when_not_a_dict(tmp_path: Path) -> None:
+    """A bare-string `guarded_by` value (not a table) degrades to empty."""
+    _write(
+        tmp_path / "pyproject.toml",
+        '[tool.forge.agent_doc]\nguarded_by = "oops"\n',
+    )
+    assert vad._guard_map(tmp_path) == {}
+
+
+def test_guard_map_drops_entry_with_non_list_value(tmp_path: Path) -> None:
+    """A guarded_by entry whose value isn't a list is dropped."""
+    _write(
+        tmp_path / "pyproject.toml",
+        '[tool.forge.agent_doc.guarded_by]\nreviewer = "block_push"\n',
+    )
+    assert vad._guard_map(tmp_path) == {}
+
+
+def test_guard_map_drops_entry_with_non_string_list_item(tmp_path: Path) -> None:
+    """A guarded_by entry whose list contains a non-string item is dropped."""
+    _write(
+        tmp_path / "pyproject.toml",
+        "[tool.forge.agent_doc.guarded_by]\nreviewer = [1, 2]\n",
+    )
+    assert vad._guard_map(tmp_path) == {}
+
+
+# --- _check_endpoints -----------------------------------------------------
+
+
+def test_check_endpoints_flags_unclassified_node() -> None:
+    """A node with no class declaration in its block is flagged."""
+    roster = {"agents": {"reviewer"}, "skills": set(), "hooks": set(), "clis": set()}
+    kind_ids = vad._node_kind_ids(roster)
+    blocks = [
+        ([vad.Edge("ghost", "calls", "reviewer")], {"reviewer": {"agent"}}),
+    ]
+    problems = vad._check_endpoints(blocks, kind_ids)
+    assert problems == ["edge: node 'ghost' has no class declaration in its block"]
+
+
+def test_check_endpoints_flags_classed_agent_not_in_roster() -> None:
+    """A node classed 'agent' but absent from the agent roster is flagged."""
+    roster = {"agents": {"reviewer"}, "skills": set(), "hooks": set(), "clis": set()}
+    kind_ids = vad._node_kind_ids(roster)
+    blocks = [
+        (
+            [vad.Edge("ghost", "calls", "reviewer")],
+            {"ghost": {"agent"}, "reviewer": {"agent"}},
+        ),
+    ]
+    problems = vad._check_endpoints(blocks, kind_ids)
+    assert problems == [
+        "edge: node 'ghost' (classed agent) matches no repo agent/skill/hook/CLI"
+    ]
+
+
+def test_check_endpoints_exempts_structural_classes() -> None:
+    """Nodes classed person, orchestrator, or policy are exempt from roster matching."""
+    roster = {"agents": set(), "skills": set(), "hooks": set(), "clis": set()}
+    kind_ids = vad._node_kind_ids(roster)
+    blocks = [
+        (
+            [vad.Edge("human", "asks", "orch"), vad.Edge("orch", "follows", "rule")],
+            {"human": {"person"}, "orch": {"orchestrator"}, "rule": {"policy"}},
+        ),
+    ]
+    assert vad._check_endpoints(blocks, kind_ids) == []
+
+
+def test_check_endpoints_resolves_multi_class_node_via_any() -> None:
+    """A node classed both 'agent' and 'reporter' resolves via the agent class.
+
+    'reporter' is a modifier class with no roster counterpart of its own;
+    the endpoint check must not fail just because one of a node's several
+    classes doesn't map to a kind — `any()` across its classes is enough.
+    """
+    roster = {
+        "agents": {"reviewer"},
+        "skills": {"ship"},
+        "hooks": set(),
+        "clis": set(),
+    }
+    kind_ids = vad._node_kind_ids(roster)
+    blocks = [
+        (
+            [vad.Edge("sk_ship", "invokes", "reviewer")],
+            {"sk_ship": {"skill"}, "reviewer": {"agent", "reporter"}},
+        ),
+    ]
+    assert vad._check_endpoints(blocks, kind_ids) == []
+
+
+# --- _check_invokes ---------------------------------------------------------
+
+
+def test_check_invokes_flags_missing_edge_for_wired_delegation(tmp_path: Path) -> None:
+    """A skill's wired subagent_type= delegation with no matching doc edge is flagged.
+
+    SCENARIO: skills/ship/SKILL.md delegates to the reviewer agent, both of
+    which are in the roster, but the doc's edge set is empty.
+    EXPECTED BEHAVIOR: one problem naming the expected sk_ship -> reviewer edge.
+    """
+    _write(tmp_path / "agents" / "reviewer.md", "# reviewer\n")
+    _write(
+        tmp_path / "skills" / "ship" / "SKILL.md",
+        '# ship\nTask(subagent_type="forge:reviewer")\n',
+    )
+    roster = vad._roster(tmp_path)
+    invokes = vad._discover_invokes(tmp_path)
+    problems = vad._check_invokes(invokes, roster, set())
+    assert problems == [
+        (
+            "edge: skill '/ship' delegates to agent 'reviewer'"
+            " (subagent_type=) but the doc has no sk_ship -> reviewer edge"
+        )
+    ]
+
+
+def test_check_invokes_passes_when_edge_present_under_any_verb(tmp_path: Path) -> None:
+    """A wired delegation is satisfied by a matching edge under any verb."""
+    _write(tmp_path / "agents" / "reviewer.md", "# reviewer\n")
+    _write(
+        tmp_path / "skills" / "ship" / "SKILL.md",
+        '# ship\nTask(subagent_type="forge:reviewer")\n',
+    )
+    roster = vad._roster(tmp_path)
+    invokes = vad._discover_invokes(tmp_path)
+    edge_pairs = {("sk_ship", "reviewer")}
+    assert vad._check_invokes(invokes, roster, edge_pairs) == []
+
+
+def test_check_invokes_skips_delegation_to_agent_absent_from_roster(
+    tmp_path: Path,
+) -> None:
+    """A delegation to an agent the repo doesn't define produces no problem.
+
+    Only the agent-absent branch of the `skill not in roster or agent not
+    in roster` guard is reachable in practice: `_discover_invokes` globs
+    the same `SKILL.md` paths `_roster` does, so a discovered skill is
+    always in the skill roster too. The agent side, however, can
+    legitimately name a plugin-shipped agent (e.g. `forge:reviewer`) that
+    this repo does not define — no node exists to draw an edge to, so it's
+    skipped rather than flagged.
+    """
+    _write(
+        tmp_path / "skills" / "ship" / "SKILL.md",
+        '# ship\nTask(subagent_type="forge:ghost")\n',
+    )
+    roster = vad._roster(tmp_path)
+    invokes = vad._discover_invokes(tmp_path)
+    assert vad._check_invokes(invokes, roster, set()) == []
+
+
+# --- _check_guard_map -------------------------------------------------------
+
+
+def test_check_guard_map_happy_path_returns_empty(tmp_path: Path) -> None:
+    """A guard entry naming a real agent + real hook with a matching edge passes."""
+    _build_repo(tmp_path)
+    roster = vad._roster(tmp_path)
+    guard_map = {"reviewer": ["block_push"]}
+    edge_pairs = {("reviewer", "hk_block_push")}
+    assert vad._check_guard_map(guard_map, roster, edge_pairs) == []
+
+
+def test_check_guard_map_flags_missing_edge(tmp_path: Path) -> None:
+    """A guard entry with a real agent + hook but no matching edge is flagged."""
+    _build_repo(tmp_path)
+    roster = vad._roster(tmp_path)
+    guard_map = {"reviewer": ["block_push"]}
+    problems = vad._check_guard_map(guard_map, roster, set())
+    assert problems == [
+        (
+            "edge: guard map declares hook 'block_push' on agent 'reviewer'"
+            " but the doc has no reviewer -> hk_block_push edge"
+        )
+    ]
+
+
+def test_check_guard_map_flags_unknown_hook(tmp_path: Path) -> None:
+    """A guard entry naming a hook that does not exist in the roster is flagged."""
+    _build_repo(tmp_path)
+    roster = vad._roster(tmp_path)
+    guard_map = {"reviewer": ["block_ghost"]}
+    problems = vad._check_guard_map(guard_map, roster, set())
+    assert problems == ["guard-map: hook 'block_ghost' does not exist"]
+
+
+def test_check_guard_map_flags_unknown_agent(tmp_path: Path) -> None:
+    """A guard entry keyed on an agent id absent from the roster is flagged."""
+    _build_repo(tmp_path)
+    roster = vad._roster(tmp_path)
+    guard_map = {"ghost": ["block_push"]}
+    problems = vad._check_guard_map(guard_map, roster, set())
+    assert problems == ["guard-map: agent 'ghost' does not match any repo agent"]
+
+
+def test_check_guard_map_short_circuits_on_bad_agent(tmp_path: Path) -> None:
+    """An entry with both a bad agent key and a bad hook reports only the agent problem.
+
+    SCENARIO: `_check_guard_map` `continue`s immediately after flagging an
+    unknown agent id, so its hooks are never inspected — a hook that would
+    independently be flagged as unknown never gets its own problem in the
+    same pass.
+    """
+    _build_repo(tmp_path)
+    roster = vad._roster(tmp_path)
+    guard_map = {"ghost": ["block_ghost"]}
+    problems = vad._check_guard_map(guard_map, roster, set())
+    assert problems == ["guard-map: agent 'ghost' does not match any repo agent"]
+
+
+# --- _check_edges -----------------------------------------------------------
+
+
+def test_check_edges_self_skips_when_no_mermaid_no_delegations_no_guards(
+    tmp_path: Path,
+) -> None:
+    """A doc with no mermaid blocks, no wired delegations, and no guard map is clean."""
+    _build_repo(tmp_path)
+    roster = vad._roster(tmp_path)
+    doc = "Plain prose describing the reviewer agent and ship skill."
+    assert vad._check_edges(tmp_path, doc, roster) == []
+
+
+def test_check_edges_combines_endpoint_and_guard_map_problems(tmp_path: Path) -> None:
+    """`_check_edges` unions problems across the endpoint and guard-map checks.
+
+    SCENARIO: the doc's mermaid block has one edge with an unclassed node
+    ('ghost', an endpoint problem), and `[tool.forge.agent_doc].guarded_by`
+    names a hook that does not exist (a guard-map problem).
+    EXPECTED BEHAVIOR: the combined problem list carries both, not just
+    whichever check ran first.
+    """
+    _write(tmp_path / "agents" / "reviewer.md", "# reviewer\n")
+    _write(
+        tmp_path / "pyproject.toml",
+        '[tool.forge.agent_doc]\npath = "docs/agent-architecture.md"\n'
+        'guarded_by = { reviewer = ["block_ghost"] }\n',
+    )
+    doc = "```mermaid\nghost -->|calls| reviewer\nclass reviewer agent\n```\n"
+    roster = vad._roster(tmp_path)
+    problems = vad._check_edges(tmp_path, doc, roster)
+    assert any("node 'ghost' has no class declaration" in p for p in problems)
+    assert any("hook 'block_ghost' does not exist" in p for p in problems)
+
+
+def test_check_edges_and_main_pass_on_well_formed_full_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fully-wired repo (delegation + guard + matching mermaid edges) is clean.
+
+    SCENARIO: skills/ship/SKILL.md delegates to the reviewer agent via
+    subagent_type=, [tool.forge.agent_doc].guarded_by wires reviewer to
+    block_push, and the doc's single mermaid block draws both the
+    sk_ship -> reviewer and reviewer -> hk_block_push edges with every node
+    classed. This is the steady-state "everything lines up" case, exercised
+    through both `_check_edges` directly and `main()` end-to-end.
+    EXPECTED BEHAVIOR: `_check_edges` returns no problems and `main()` exits 0.
+    MOCK SETUP: repo_root pinned to tmp_path; argv patched so argparse does
+    not consume pytest's own arguments.
+    """
+    _build_repo(tmp_path)
+    _write(
+        tmp_path / "skills" / "ship" / "SKILL.md",
+        '# ship\nTask(subagent_type="forge:reviewer")\n',
+    )
+    _write(
+        tmp_path / "pyproject.toml",
+        '[project.scripts]\nforge-ship = "x:main"\n'
+        '[tool.forge.agent_doc]\npath = "docs/agent-architecture.md"\n'
+        'guarded_by = { reviewer = ["block_push"] }\n',
+    )
+    doc = (
+        "The reviewer agent runs after the ship skill.\n"
+        "```mermaid\n"
+        "sk_ship -->|delegates via| reviewer\n"
+        "reviewer -.->|guarded by| hk_block_push\n"
+        "class reviewer agent\n"
+        "class sk_ship skill\n"
+        "class hk_block_push hook\n"
+        "```\n"
+    )
+    _write(tmp_path / "docs" / "agent-architecture.md", doc)
+    roster = vad._roster(tmp_path)
+    assert vad._check_edges(tmp_path, doc, roster) == []
+
+    monkeypatch.setattr(vad, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(sys, "argv", ["verify-forge-agent-doc"])
+    assert vad.main() == 0
+
+
+def test_check_edges_combines_endpoint_invokes_and_guard_map_problems(
+    tmp_path: Path,
+) -> None:
+    """`_check_edges` unions problems across all three structural checks at once.
+
+    SCENARIO: the doc's mermaid block has one edge with an unclassed node
+    ('ghost', an endpoint problem); skills/ship/SKILL.md wires a
+    subagent_type= delegation to the reviewer agent with no matching
+    sk_ship -> reviewer edge in the doc (an invokes problem); and
+    [tool.forge.agent_doc].guarded_by wires reviewer to the real block_push
+    hook with no matching reviewer -> hk_block_push edge (a guard-map
+    problem).
+    EXPECTED BEHAVIOR: the combined problem list carries all three, not
+    just whichever check ran first.
+    """
+    _write(tmp_path / "agents" / "reviewer.md", "# reviewer\n")
+    _write(
+        tmp_path / "skills" / "ship" / "SKILL.md",
+        '# ship\nTask(subagent_type="forge:reviewer")\n',
+    )
+    _write(tmp_path / "claude-hooks" / "block_push.sh", "#!/bin/sh\n")
+    _write(
+        tmp_path / "pyproject.toml",
+        '[tool.forge.agent_doc]\npath = "docs/agent-architecture.md"\n'
+        'guarded_by = { reviewer = ["block_push"] }\n',
+    )
+    doc = "```mermaid\nghost -->|calls| reviewer\nclass reviewer agent\n```\n"
+    roster = vad._roster(tmp_path)
+    problems = vad._check_edges(tmp_path, doc, roster)
+    assert any("node 'ghost' has no class declaration" in p for p in problems)
+    assert any("skill '/ship' delegates to agent 'reviewer'" in p for p in problems)
+    assert any(
+        "guard map declares hook 'block_push' on agent 'reviewer'" in p
+        for p in problems
+    )
+
+
 # --- main -------------------------------------------------------------------
 
 
@@ -247,6 +707,37 @@ def test_main_returns_zero_when_in_sync(
     monkeypatch.setattr(vad, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(sys, "argv", ["verify-forge-agent-doc"])
     assert vad.main() == 0
+
+
+def test_main_returns_one_when_edge_structure_out_of_sync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """main() exits 1 when a wired skill→agent delegation has no matching doc edge.
+
+    MOCK SETUP: full repo tree, with skills/ship/SKILL.md additionally wired
+    to delegate to the reviewer agent via subagent_type=; the doc mentions
+    both by name (satisfying coverage) but its mermaid block draws an
+    sk_ship -> hk_block_push edge instead of the required sk_ship ->
+    reviewer one. repo_root pinned to tmp_path and argv patched.
+    """
+    _build_repo(tmp_path)
+    _write(
+        tmp_path / "skills" / "ship" / "SKILL.md",
+        '# ship\nTask(subagent_type="forge:reviewer")\n',
+    )
+    _write(
+        tmp_path / "docs" / "agent-architecture.md",
+        "The reviewer agent runs after ship. Uses forge-ship and block_push.\n"
+        "```mermaid\n"
+        "sk_ship -->|starts| hk_block_push\n"
+        "class sk_ship skill\n"
+        "class hk_block_push hook\n"
+        "```\n",
+    )
+    monkeypatch.setattr(vad, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(sys, "argv", ["verify-forge-agent-doc"])
+    assert vad.main() == 1
 
 
 def test_diff_report_rejects_dash_prefixed_base(tmp_path: Path) -> None:
@@ -399,6 +890,30 @@ def test_diff_report_attributes_deleted_file_correctly(tmp_path: Path) -> None:
     lines = vad._diff_report(tmp_path, "HEAD")
     assert lines == ["removed agents/foo.md: delegates → design-checker"]
     assert not any("alpha.md" in line for line in lines)
+
+
+def test_diff_report_skips_sh_comment_but_reports_md_heading(tmp_path: Path) -> None:
+    """A `#`-comment added in a .sh file is skipped; a `#`-heading in .md is not.
+
+    SCENARIO: claude-hooks/guard.sh and agents/foo.md both start committed
+    with minimal content, then each gains a `#`-prefixed line naming a
+    graph token — a shell comment (`# guarded by block_push`) and a
+    markdown heading (`# use /ship next`) respectively. The shell comment
+    is a no-op guard mention (skipped, .sh-scoped, since `#` there is a
+    real comment); the markdown heading still carries a real mention
+    (a leading `#` in .md is a heading, not a comment).
+    """
+    _write(tmp_path / "claude-hooks" / "guard.sh", "#!/bin/sh\n")
+    _write(tmp_path / "agents" / "foo.md", "# foo\n")
+    _git_commit_all(tmp_path, "initial")
+    _write(
+        tmp_path / "claude-hooks" / "guard.sh",
+        "#!/bin/sh\n# guarded by block_push\n",
+    )
+    _write(tmp_path / "agents" / "foo.md", "# foo\n# use /ship next\n")
+    lines = vad._diff_report(tmp_path, "HEAD")
+    assert not any("block_push" in line for line in lines)
+    assert any("mentions skill /ship" in line for line in lines)
 
 
 # --- _classify_mention -------------------------------------------------------
