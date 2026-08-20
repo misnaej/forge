@@ -33,6 +33,17 @@ versions follow forge's rolling-next convention.
   are unaffected. The agent doc gains a front-loaded FIRST-ACTION rule
   and the targeted-test exception, funded by same-file de-duplication.
 
+## v3.13.1 — Unreleased
+
+### Docs
+- **CI recipe workflows declare least-privilege token scopes.** The
+  per-PR snippet consumers copy now carries a workflow-level
+  `permissions: contents: read` block (the changelog-gate job inherits
+  it), and `docs/security.md` states the least-privilege
+  `GITHUB_TOKEN` rule the snippets point at — a pasted workflow no
+  longer inherits whatever broad defaults the host repo happens to
+  have.
+
 ## v3.13.0 — Unreleased
 
 ### Features
