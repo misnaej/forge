@@ -20,6 +20,20 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.13.0 — Unreleased
+
+### Features
+- **`git reset --hard` is now hook-blocked for agents.** New
+  `block_git_reset_hard` Claude hook (no bypass; humans use
+  `! git reset --hard ...`) covering `--hard` and `--merge` — both
+  destroy uncommitted work, and an incident showed the ban needs
+  enforcement, not just prose. FOUNDATION §2 gains the rule plus the
+  sanctioned dirty-tree base sync (the stash dance, with its
+  never-drop-the-stash failure protocol); the `git-commit-push` agent
+  contract now says a blocked commit is reported, never cleared by
+  discarding state; the changelog-gate docs explain that the check is
+  branch-cumulative and merging base is the cure.
+
 ## v3.12.1 — Unreleased
 
 ### Fixes
