@@ -144,6 +144,7 @@ graph LR
     installers -->|"bootstrap runs generators"| doc_generators
     audit_suite -->|"imports"| config_shared
     config_shared -->|"imports"| installers
+    config_shared -->|"imports"| release_tooling
     doc_generators -->|"imports"| audit_suite
     doc_generators -->|"imports"| config_shared
     doc_generators -->|"imports"| release_tooling
@@ -431,6 +432,18 @@ Three ways to handle this:
 | **Pin to a tag** (`@v1.3.0`) | CI / production — version comparisons are reliable. |
 | **`forge-upgrade --apply`** | Setup scripts / Makefile / human-driven upgrades. Wraps the `--force-reinstall --no-deps` pip command + re-sync in one call. |
 | **Two-phase `forge-upgrade` + manual pip** | Claude Code agents — they're blocked from running `pip install`, so the agent rewrites the pin + prints the command; you run it. |
+
+**Switching from a branch pin to a tag pin has a footgun**: refresh
+wrappers built around the branch-caching rule above typically
+force-reinstall only deps pinned to a *branch* — a tag pin falls outside
+that logic, so after the switch nothing refreshes forge again and the
+environment silently keeps running the old build. `forge-upgrade` now
+verifies the installed build's recorded git revision (PEP 610
+`direct_url.json`) against the pin: phase 1 warns on a mismatch,
+`--continue` refuses to regenerate managed artifacts from a stale
+install, and `forge-doctor` reports the same mismatch as an advisory.
+If you maintain a refresh wrapper, extend it to also force-reinstall on
+any pin *change*, not only on branch pins.
 
 The channel-aware upstream warning in `install-forge-claude-md` also
 fires a freeze hint when it detects a `.devN+gHASH` install (the
