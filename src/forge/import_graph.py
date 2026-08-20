@@ -1,9 +1,11 @@
 """Shared AST import-graph primitives.
 
-The two pure, audit-agnostic building blocks for static import analysis:
-turning a ``.py`` path into a dotted module name, and extracting the set
-of import targets from a parsed module. Both are derived purely from the
-syntax tree — no runtime instrumentation, no import execution.
+The pure, audit-agnostic primitives for static import analysis: turning a
+``.py`` path into a dotted module name, extracting the set of import
+targets from a parsed module, and mapping a module to its ancestor
+packages. The first two are derived purely from the syntax tree — no
+runtime instrumentation, no import execution; the third is pure
+dotted-name arithmetic and needs no AST at all.
 
 They live here rather than inside their consumers because both
 ``forge.audit.deps`` (module-coupling graph for architecture metrics) and
@@ -47,6 +49,39 @@ def closest_known(target: str, modules: AbstractSet[str]) -> str | None:
         if candidate in modules:
             return candidate
     return None
+
+
+def ancestor_edges(modules: AbstractSet[str]) -> dict[str, set[str]]:
+    """Map each known module to its known ancestor packages.
+
+    Importing ``a.b.c`` executes ``a/__init__.py`` and ``a/b/__init__.py``
+    at runtime, so every module implicitly depends on its ancestor
+    packages even when no import statement names them. A statically-built
+    graph that omits these edges leaves a package ``__init__`` with
+    submodule-reaching consumers (``from a.b.c import X``) with zero
+    incoming edges — the false-negative test selection this helper
+    exists to prevent. Opt-in per consumer: design-time graphs (deps
+    audit, C4) deliberately model declared imports only and do not call
+    this.
+
+    Args:
+        modules: The set of known internal module names.
+
+    Returns:
+        ``{module: {known ancestors}}``; modules with no known ancestor
+        are omitted.
+    """
+    edges: dict[str, set[str]] = {}
+    for module in modules:
+        parts = module.split(".")
+        ancestors = {
+            candidate
+            for end in range(1, len(parts))
+            if (candidate := ".".join(parts[:end])) in modules
+        }
+        if ancestors:
+            edges[module] = ancestors
+    return edges
 
 
 def _rel_to_dotted(rel: Path) -> str | None:
