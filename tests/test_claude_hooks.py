@@ -1173,6 +1173,30 @@ def test_fixer_recon_allows_python_m_pytest_nodeid() -> None:
     )
 
 
+def test_fixer_recon_blocks_backtick_substitution() -> None:
+    """A backticked command inside an allowed segment blocks outright."""
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "forge-precommit `git status`",
+            agent_type="forge:precommit-fixer",
+        )
+        == 2
+    )
+
+
+def test_fixer_recon_blocks_backtick_glued_to_flag() -> None:
+    """A backtick glued to a flag value (`--only=`...``) blocks too."""
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "forge-precommit --only=`git branch --show-current`",
+            agent_type="forge:precommit-fixer",
+        )
+        == 2
+    )
+
+
 def test_fixer_recon_ignores_other_agent() -> None:
     """The hook only restricts precommit-fixer — another agent's `git status` passes."""
     assert (
