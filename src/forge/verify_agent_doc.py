@@ -184,7 +184,14 @@ def _check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]:
 
 @dataclass(frozen=True)
 class Edge:
-    """One hand-curated mermaid edge (``src --[verb]--> dst``) in the agent doc."""
+    """One hand-curated mermaid edge (``src --[verb]--> dst``) in the agent doc.
+
+    Attributes:
+        src: Source node id.
+        verb: Edge label text (structurally unchecked — see the module
+            docstring's edge-structure section).
+        dst: Destination node id.
+    """
 
     src: str
     verb: str
