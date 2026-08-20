@@ -492,3 +492,40 @@ def test_version_skew_drops_unparseable_surface(
     assert results[0].passed
     assert not results[0].info
     assert "aligned at v2.23.1" in results[0].detail
+
+
+def test_surface_pin_revision_reports_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provable pin/installed-revision mismatch surfaces one advisory result.
+
+    MOCK SETUP: ``doctor.py`` imports ``pin_revision_mismatch`` from
+    ``forge.upgrade`` into its own namespace, so the shared predicate is
+    patched at ``doctor.pin_revision_mismatch`` — patching
+    ``forge.upgrade.*`` would not reach this module's bound name. The
+    predicate's own branch logic is unit-tested in ``test_upgrade.py``.
+    """
+    monkeypatch.setattr(
+        doctor, "pin_revision_mismatch", lambda _root: ("v1.2.0", "v1.1.0")
+    )
+
+    results = doctor._surface_pin_revision(tmp_path)
+
+    assert len(results) == 1
+    assert results[0].name == "pin:revision"
+    assert results[0].passed is True
+    assert results[0].info is True
+    assert "v1.2.0" in results[0].detail
+    assert "v1.1.0" in results[0].detail
+    assert doctor.pip_command("v1.2.0") in results[0].detail
+
+
+def test_surface_pin_revision_empty_when_no_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No provable mismatch (predicate returns None) -> empty result list."""
+    monkeypatch.setattr(doctor, "pin_revision_mismatch", lambda _root: None)
+
+    assert doctor._surface_pin_revision(tmp_path) == []

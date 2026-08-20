@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.12.0 — Unreleased
+## v3.13.0 — Unreleased
 
 ### Features
 - **`git reset --hard` is now hook-blocked for agents.** New
@@ -33,6 +33,25 @@ versions follow forge's rolling-next convention.
   contract now says a blocked commit is reported, never cleared by
   discarding state; the changelog-gate docs explain that the check is
   branch-cumulative and merging base is the cure.
+
+## v3.12.0 — Unreleased
+
+### Features
+- **`forge-upgrade` verifies the install actually matches the pin.** The
+  installed build's recorded git revision (PEP 610 `direct_url.json`) is
+  compared against the pyproject pin: phase 1 warns on a mismatch after
+  rewriting, `--continue` refuses to regenerate managed artifacts from a
+  stale install (naming the exact pip command), `--apply` re-checks
+  after its own pip step, and `forge-doctor` reports the mismatch as a
+  fourth version-skew advisory. Closes the silent-downgrade window when
+  a branch pin becomes a tag pin and branch-only refresh wrappers stop
+  covering it.
+- **Action:** scripts that run `forge-upgrade --continue` unconditionally
+  can now see exit 1 without bootstrap running — only when the installed
+  build provably mismatches the pin, a state that previously regenerated
+  artifacts silently from the stale build. The failure names the exact
+  pip command to run. MINOR, not MAJOR: the new exit fires only on that
+  already-broken state.
 
 ## v3.11.0 — Unreleased
 

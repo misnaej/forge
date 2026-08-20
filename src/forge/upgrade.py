@@ -36,6 +36,7 @@ found" message; they continue to upgrade manually.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import re
@@ -280,7 +281,7 @@ def _git_url_for(auth_mode: AuthMode, ref: str) -> str:
     return f"git+https://github.com/{_FORGE_GITHUB_REPO}.git@{ref}"
 
 
-def _pip_command(ref: str, *, auth_mode: AuthMode = "https-anonymous") -> str:
+def pip_command(ref: str, *, auth_mode: AuthMode = "https-anonymous") -> str:
     """Return the exact ``pip install`` line for a given pin ref.
 
     Args:
@@ -414,7 +415,7 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
             logger.info("(no target — pass --channel or --to to see the pip command)")
             return 0, None
         logger.info("would upgrade to: %s", target_hint)
-        logger.info("pip command: %s", _pip_command(target_hint))
+        logger.info("pip command: %s", pip_command(target_hint))
         changelog_text = _read_changelog()
         if changelog_text is not None:
             pending = _pending_action_count(changelog_text)
@@ -433,7 +434,7 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
             "no forge-scripts pin found (%s) — skipping rewrite. "
             "Run the pip command manually:\n  %s",
             _PIN_SEARCH_SCOPE,
-            _pip_command(target_ref),
+            pip_command(target_ref),
         )
         logger.info("Then re-run: forge-upgrade --continue")
         return 0, target_ref
@@ -459,7 +460,17 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
     logger.info("Next: run the pip install command manually, then ")
     logger.info("`forge-upgrade --continue` to re-sync managed artifacts.")
     logger.info("")
-    logger.info("  %s", _pip_command(target_ref))
+    logger.info("  %s", pip_command(target_ref))
+    installed = _installed_revision()
+    if installed is not None and installed != target_ref:
+        logger.warning(
+            "installed build is from '%s', pin now says '%s' — the "
+            "environment does not update itself, and refresh wrappers "
+            "that only force-reinstall branch pins will skip a tag pin. "
+            "The pip command above is what makes them match.",
+            installed,
+            target_ref,
+        )
     return 0, target_ref
 
 
@@ -561,6 +572,66 @@ def _recent_action_items(
     return kept
 
 
+def _installed_revision() -> str | None:
+    """Return the installed forge-scripts build's requested git revision.
+
+    Reads the distribution's PEP 610 ``direct_url.json``: a git install
+    records the literal ref from the install URL as
+    ``vcs_info.requested_revision`` (verbatim — no normalization), so it
+    compares directly against a pin's ref string. An editable or index
+    install carries no ``vcs_info`` (forge's own dev checkout is
+    ``dir_info``-only) and a partial install may lack the file entirely —
+    both return ``None`` so pin verification fires only on a provable
+    git-install mismatch, never on forge's own repo.
+
+    Returns:
+        The requested revision (e.g. ``"dev"``, ``"v3.10.0"``), or
+        ``None`` when the distribution is missing, the file is absent or
+        malformed, or the install is not a git install.
+    """
+    try:
+        raw = metadata.distribution("forge-scripts").read_text("direct_url.json")
+    except metadata.PackageNotFoundError:
+        return None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    vcs = data.get("vcs_info")
+    if not isinstance(vcs, dict):
+        return None
+    rev = vcs.get("requested_revision")
+    return rev if isinstance(rev, str) and rev else None
+
+
+def pin_revision_mismatch(root: Path) -> tuple[str, str] | None:
+    """Return ``(pinned_ref, installed_ref)`` on a provable pin/install mismatch.
+
+    The one shared predicate behind pin verification — ``forge-upgrade
+    --continue``'s refuse-to-regenerate gate and ``forge-doctor``'s
+    ``pin:revision`` advisory both call it, so the "provable mismatch"
+    rule lives in exactly one place. Absence of either side (no pin
+    found, or a non-git install with no recorded revision) is not a
+    mismatch.
+
+    Args:
+        root: Consumer repo root, for pin discovery.
+
+    Returns:
+        The differing ``(pin.ref, installed_revision)`` pair, or ``None``
+        when they match or either side is unknowable.
+    """
+    pin = find_pin(root)
+    installed = _installed_revision()
+    if pin is None or installed is None or installed == pin.ref:
+        return None
+    return pin.ref, installed
+
+
 def _pending_action_count(changelog_text: str) -> int:
     """Count ``**Action:**`` items in versions newer than the installed one.
 
@@ -628,18 +699,41 @@ def _print_upgrade_notes() -> None:
     logger.info("Full release history: CHANGELOG.md in the forge repo.")
 
 
-def _run_phase2() -> int:
-    """Phase 2 — run install-forge-bootstrap; print plugin reminder.
+def _run_phase2(root: Path) -> int:
+    """Phase 2 — verify the install matches the pin, then re-sync artifacts.
 
-    Wrapped in :func:`forge.run_context.progress_logger` so the substep
-    boundary + total elapsed time appears in CI logs even though
+    Refuses to run ``install-forge-bootstrap`` when the installed
+    build's git revision provably differs from the pin: regenerating
+    managed artifacts from a stale build is the silent-downgrade case —
+    the next commit would land older content while the pin claims
+    otherwise. The gate stays silent when either side is unknowable (no
+    pin, or a non-git install). Wrapped in
+    :func:`forge.run_context.progress_logger` so the substep boundary +
+    total elapsed time appears in CI logs even though
     ``install-forge-bootstrap`` already emits its own per-step
     ``→ <slug>`` lines.
 
+    Args:
+        root: Consumer repo root (pin discovery for the verify gate).
+
     Returns:
-        Exit code from ``install-forge-bootstrap``. ``0`` plus a
-        plugin-update reminder when bootstrap succeeds.
+        Exit code from ``install-forge-bootstrap``; ``1`` when the
+        installed revision mismatches the pin (with the exact pip
+        command to fix it). ``0`` plus a plugin-update reminder when
+        bootstrap succeeds.
     """
+    mismatch = pin_revision_mismatch(root)
+    if mismatch is not None:
+        pinned_ref, installed = mismatch
+        logger.error(
+            "pin says '%s' but the installed build is from '%s' — "
+            "refusing to regenerate managed artifacts from a stale "
+            "install. Run:\n  %s\nthen re-run `forge-upgrade --continue`.",
+            pinned_ref,
+            installed,
+            pip_command(pinned_ref),
+        )
+        return 1
     with progress_logger("bootstrap") as note:
         note("install-forge-bootstrap")
         rc = _bootstrap_run()
@@ -688,7 +782,7 @@ def _run_pip_install(
         diagnostics can distinguish "tool reported failure" from
         "watchdog killed it").
     """
-    pip_cmd = _pip_command(ref, auth_mode=auth_mode)
+    pip_cmd = pip_command(ref, auth_mode=auth_mode)
     with progress_logger("pip install") as note:
         timeout_label = "none" if timeout_seconds is None else f"{timeout_seconds}s"
         note(f"auth={auth_mode} timeout={timeout_label}")
@@ -777,9 +871,20 @@ def _run_apply(args: argparse.Namespace, root: Path) -> int:
         logger.error("pip install failed (exit %d) — aborting --apply.", pip_rc)
         return pip_rc
 
+    installed = _installed_revision()
+    if installed is not None and installed != target_ref:
+        logger.warning(
+            "pip reported success but the installed build still reads "
+            "'%s' (expected '%s') — unexpected, since the command "
+            "already forces reinstall. Check for multiple environments "
+            "(`which pip` vs `which python`).",
+            installed,
+            target_ref,
+        )
+
     logger.info("")
     logger.info("Re-syncing managed artifacts...")
-    return _run_phase2()
+    return _run_phase2(root)
 
 
 def main() -> int:
@@ -858,7 +963,7 @@ def main() -> int:
                 "--channel / --to / --check / --apply.\n",
             )
             return 2
-        return _run_phase2()
+        return _run_phase2(root)
 
     if args.apply:
         if args.check:

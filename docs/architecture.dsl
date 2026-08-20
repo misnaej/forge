@@ -28,6 +28,7 @@ workspace "Forge" "Python CI/CD & code-quality foundation: deterministic CLIs + 
         installers -> doc_generators "bootstrap runs generators"
         audit_suite -> config_shared "imports"
         config_shared -> installers "imports"
+        config_shared -> release_tooling "imports"
         doc_generators -> audit_suite "imports"
         doc_generators -> config_shared "imports"
         doc_generators -> release_tooling "imports"
