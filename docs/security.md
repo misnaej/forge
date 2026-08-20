@@ -73,11 +73,14 @@ What consumers do:
   `uses: actions/checkout@<commit-sha>`).
 - **Least-privilege `GITHUB_TOKEN`** — declare `permissions:` at
   workflow level, minimum first: `contents: read` unless a job provably
-  writes, with per-job overrides for the exceptions (the tag-on-merge
-  and upgrade-PR workflows are the pattern). Without a block, default
-  token scopes on public repos are broad unless the org hardened them —
-  a copy-pasted workflow inherits whatever the host repo's defaults
-  happen to be.
+  writes, with write scopes as narrow as the boundary allows — a
+  per-job override inside a shared workflow (`ci.yml`'s tag-release
+  job) or a workflow-level block in a dedicated write workflow (the
+  upgrade / resync recipes). Without a block, the token
+  gets whatever the host repo/org default happens to be — read-only on
+  repos created after GitHub's restrictive-default change, broad
+  read/write on older or opted-in ones — so a copy-pasted workflow
+  inherits an unknown; declaring the block makes it deterministic.
 - **Never log secrets**, even masked — they end up in CI artifacts.
 
 For forge access from CI runners, see [`docs/ci-access.md`](ci-access.md).
