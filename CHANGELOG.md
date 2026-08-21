@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.18.0 — Unreleased
+## v3.19.0 — Unreleased
 
 ### Refactor
 - **One bounded tag refresh everywhere.** The six inline `git fetch
@@ -34,6 +34,18 @@ versions follow forge's rolling-next convention.
   log the stale-tags note. The consolidation also makes every site
   fetch explicitly from `origin` — two previously relied on the
   checkout's default remote.
+
+## v3.18.0 — Unreleased
+
+### Features
+- **An empty sentinel loop now surfaces what to plan next.** When
+  `/sentinel` finds zero `plan-ready` candidates, it delegates one
+  bounded, read-only screen to `issue-triage`'s `plan-readiness` mode
+  before exiting: issues carrying a drafted-but-unvalidated plan
+  comment are named first (one validation from executable), then the
+  top needs-plan candidates as `/plan-issue` suggestions — written
+  into the resume note and shown as the loop's parting output. No
+  labels or issues are touched.
 
 ## v3.17.0 — Unreleased
 
