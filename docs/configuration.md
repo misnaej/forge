@@ -277,6 +277,21 @@ speed/coverage trade-off: FOUNDATION §17.
 | `coverage_json` | _(unset)_ | Path to a `coverage json --show-contexts` export (recorded with `pytest --cov-context=test`) for `coverage_validate`. Also settable per-run via `--coverage-json`. A stale export under-selects — regenerate on `full` runs. | You enabled `coverage_validate`. |
 | `commit_directive_re` | `\[(?:depth-(?P<n>[0-2])\|(?P<full>full))\]` | Regex for `--from-commit-message` to read a depth directive from `HEAD`'s message (named groups `n` / `full`). | Your CI tags commits with a different directive syntax. |
 
+## `[tool.forge.telemetry]` — resource profiling
+
+Governs [`forge-telemetry`](cli-reference.md#forge-telemetry) (`forge-telemetry
+-- <cmd> ...`) and `forge-smart-test --telemetry`: process-tree RSS + host CPU
+sampled while the wrapped command runs, written to `code_health/telemetry.log`
+(+ `telemetry.png` with matplotlib). Needs the `[telemetry]` extra
+(`psutil` + `matplotlib`); invocation is always explicit — there is no
+ambient enable switch. Usage guide, an example chart, and how to read a
+profile: [`docs/telemetry.md`](telemetry.md).
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `sample_interval` | `1.0` | Seconds between samples (floored at 0.1). | Long runs drown the log (raise it) or short runs need finer resolution (lower it). |
+| `plot` | `true` | Render `code_health/telemetry.png` alongside the text log when matplotlib is importable; otherwise text-only, logging a skip notice. | You never want the chart artifact. |
+
 ## `[tool.forge.layering]` — opt-in layer-composition gate
 
 Drives [`forge-audit-layering`](cli-reference.md#forge-audit-layering) and

@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.17.0 — Unreleased
+## v3.18.0 — Unreleased
 
 ### Features
 - **An empty sentinel loop now surfaces what to plan next.** When
@@ -31,6 +31,19 @@ versions follow forge's rolling-next convention.
   top needs-plan candidates as `/plan-issue` suggestions — written
   into the resume note and shown as the loop's parting output. No
   labels or issues are touched.
+
+## v3.17.0 — Unreleased
+
+### Features
+- **Resource profiling for test and command runs.** New `forge-telemetry
+  -- <cmd> ...` samples the wrapped command's process-tree RSS and host
+  CPU on a configurable interval (`[tool.forge.telemetry]`), writing
+  `code_health/telemetry.log` and — with matplotlib — a `telemetry.png`
+  chart; `forge-smart-test --telemetry` wraps its pytest runs the same
+  way. Ships as the opt-in `[telemetry]` extra (psutil + matplotlib):
+  the CLI fails loudly without psutil, while the smart-test flag
+  degrades to an unprofiled run. Default off everywhere — invocation is
+  always explicit, and the child's exit code passes through unchanged.
 
 ## v3.16.0 — Unreleased
 

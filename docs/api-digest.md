@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_64 modules, 725 symbols._
+_65 modules, 734 symbols._
 
 ## `forge`
 
@@ -825,7 +825,7 @@ _64 modules, 725 symbols._
 - `_depth_from_commit(repo_root: Path, cfg: dict[str, object]) -> str | None` _(internal)_ — Read a depth directive from ``HEAD``'s commit message, if present.
 - `_parse_depth(raw: str) -> int | str` _(internal)_ — Map a ``--depth`` token to an int tier or the ``full`` sentinel.
 - `_write_log(repo_root: Path, body: str) -> None` _(internal)_ — Write *body* to ``code_health/smart_test.log``.
-- `_run_full(repo_root: Path) -> tuple[int, str]` _(internal)_ — Run the entire suite (the ``full`` tier), always with coverage.
+- `_run_full(repo_root: Path, *, telemetry: bool = False) -> tuple[int, str]` _(internal)_ — Run the entire suite (the ``full`` tier), always with coverage.
 - `class _RunConfig` _(internal)_ — Configuration for a tiered test run.
 - `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
@@ -872,7 +872,21 @@ _64 modules, 725 symbols._
 
 - `clear_python_cache(repo_root: Path) -> None` — Delete every ``__pycache__`` directory under *repo_root*.
 - `_coverage_available() -> bool` _(internal)_ — Return whether the ``pytest-cov`` plugin is importable.
-- `run_pytest(repo_root: Path, test_paths: Sequence[str], *, coverage: bool = False) -> tuple[int, str]` — Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
+- `run_pytest(repo_root: Path, test_paths: Sequence[str], *, coverage: bool = False, telemetry: bool = False) -> tuple[int, str]` — Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
+
+## `forge.telemetry`
+
+> _forge-telemetry — resource-profiling wrapper for test/command runs._
+
+- `telemetry_available() -> bool` — Return whether sampling can run at all (``psutil`` importable).
+- `class Sample` — One point of the resource profile.
+- `_telemetry_config(root: Path) -> tuple[float, bool]` _(internal)_ — Read ``[tool.forge.telemetry]``, degrading misshaped values to defaults.
+- `_tree_rss_bytes(proc: Process) -> int` _(internal)_ — Return the summed RSS of *proc* and every live descendant.
+- `_sample(proc: Process, started: float) -> Sample` _(internal)_ — Take one sample of the child's tree RSS and host CPU.
+- `_format_log(cmd: Sequence[str], samples: list[Sample], exit_code: int, elapsed: float) -> str` _(internal)_ — Render the plain-text telemetry report.
+- `_render_plot(root: Path, samples: list[Sample]) -> None` _(internal)_ — Write ``code_health/telemetry.png``, or log why it was skipped.
+- `run_command(cmd: Sequence[str], root: Path, *, capture: bool = False, cwd: Path | None = None) -> tuple[int, str]` — Run *cmd* under resource sampling and write the telemetry artifacts.
+- `main(argv: list[str] | None = None) -> int` — Run the telemetry CLI: ``forge-telemetry -- <cmd> ...``.
 
 ## `forge.upgrade`
 

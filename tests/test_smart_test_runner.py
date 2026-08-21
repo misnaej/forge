@@ -7,7 +7,10 @@
 # process.  ``_coverage_available`` is monkeypatched (``runner._coverage_available``)
 # to control coverage-related branches without requiring ``pytest-cov`` to be
 # installed or absent.  ``clear_python_cache`` tests use a real temporary
-# directory tree — no mocking needed there.
+# directory tree — no mocking needed there.  Telemetry-delegate tests
+# monkeypatch ``runner.telemetry_mod.*`` — runner.py does
+# ``from forge import telemetry as telemetry_mod``, so ``telemetry_mod`` is
+# the namespace ``patch`` must target, per CLAUDE.md's patch-target rule.
 
 from __future__ import annotations
 
@@ -180,4 +183,126 @@ def test_run_pytest_empty_paths_with_coverage_runs_full_suite(
     )
     code, _ = runner.run_pytest(tmp_path, [], coverage=True)
     assert captured.calls, "subprocess.run was not called for the full-suite run"
+    assert code == 0
+
+
+# ---------------------------------------------------------------------------
+# telemetry=True — delegate to forge.telemetry.run_command
+# ---------------------------------------------------------------------------
+
+
+def test_run_pytest_telemetry_delegates_to_run_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``telemetry=True`` with psutil available delegates to ``run_command``.
+
+    SCENARIO: ``telemetry=True``; ``telemetry_mod.telemetry_available()`` is
+        True.
+    MOCK SETUP: ``telemetry_mod.run_command`` is stubbed to capture its
+        ``(cmd, root, capture, cwd)`` arguments and return canned output;
+        ``subprocess.run`` is a sentinel that fails the test if invoked —
+        the delegate path must never fall through to the plain subprocess run.
+    EXPECTED BEHAVIOR: ``run_command`` is called with ``capture=True`` and
+        ``cwd=repo_root``; the returned output is passed through unchanged.
+    """
+    captured: dict[str, object] = {}
+
+    def _fake_run_command(
+        cmd: list[str], root: Path, *, capture: bool = False, cwd: Path | None = None
+    ) -> tuple[int, str]:
+        captured["cmd"] = cmd
+        captured["root"] = root
+        captured["capture"] = capture
+        captured["cwd"] = cwd
+        return 0, "child output"
+
+    def _sentinel_subprocess_run(*_args: object, **_kwargs: object) -> object:
+        msg = "subprocess.run must not be called on the delegate path"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(runner.telemetry_mod, "telemetry_available", lambda: True)
+    monkeypatch.setattr(runner.telemetry_mod, "run_command", _fake_run_command)
+    monkeypatch.setattr(subprocess, "run", _sentinel_subprocess_run)
+
+    code, output = runner.run_pytest(tmp_path, ["tests/test_x.py"], telemetry=True)
+
+    assert code == 0
+    assert "child output" in output
+    assert captured["capture"] is True
+    assert captured["cwd"] == tmp_path
+    assert captured["root"] == tmp_path
+
+
+def test_run_pytest_telemetry_delegate_exit5_normalized_to_0(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exit code 5 from the telemetry delegate is normalized to 0.
+
+    SCENARIO: ``telemetry=True``; the delegate reports pytest's "no tests
+        collected" exit code (5).
+    MOCK SETUP: ``telemetry_mod.telemetry_available`` → True;
+        ``telemetry_mod.run_command`` stubbed to return ``(5, "")``.
+    EXPECTED BEHAVIOR: ``run_pytest`` normalizes the returned code to 0, same
+        as the plain subprocess path.
+    """
+    monkeypatch.setattr(runner.telemetry_mod, "telemetry_available", lambda: True)
+    monkeypatch.setattr(runner.telemetry_mod, "run_command", lambda *_a, **_kw: (5, ""))
+    code, _ = runner.run_pytest(tmp_path, ["tests/test_x.py"], telemetry=True)
+    assert code == 0
+
+
+def test_run_pytest_telemetry_unavailable_falls_back_with_notice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing ``psutil`` degrades to a plain (unprofiled) run with a notice.
+
+    SCENARIO: ``telemetry=True`` but ``telemetry_mod.telemetry_available()``
+        is False.
+    MOCK SETUP: ``telemetry_mod.telemetry_available`` → False;
+        ``subprocess.run`` stubbed via ``make_fake_run`` — the fallback path
+        must still run pytest normally.
+    EXPECTED BEHAVIOR: output is prefixed with a notice naming ``psutil`` and
+        stating the run proceeds without telemetry; the plain subprocess run
+        still happens.
+    """
+    captured = CapturedCalls()
+    monkeypatch.setattr(runner.telemetry_mod, "telemetry_available", lambda: False)
+    monkeypatch.setattr(runner, "_coverage_available", lambda: False)
+    monkeypatch.setattr(
+        subprocess, "run", make_fake_run(stdout="1 passed", captured=captured)
+    )
+
+    _, output = runner.run_pytest(tmp_path, ["tests/test_x.py"], telemetry=True)
+
+    assert captured.calls, "the fallback subprocess.run was not called"
+    assert "psutil" in output
+    assert "running without telemetry" in output
+
+
+def test_run_pytest_telemetry_false_never_touches_telemetry_mod(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``telemetry=False`` (the default) never consults ``telemetry_mod``.
+
+    SCENARIO: ``run_pytest`` called without the ``telemetry`` kwarg.
+    MOCK SETUP: both ``telemetry_mod.telemetry_available`` and
+        ``telemetry_mod.run_command`` raise if called; ``subprocess.run`` is
+        stubbed normally.
+    EXPECTED BEHAVIOR: the plain subprocess path runs; no assertion error.
+    """
+
+    def _fail(*_a: object, **_kw: object) -> object:
+        msg = "telemetry_mod must not be touched when telemetry=False"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(runner.telemetry_mod, "telemetry_available", _fail)
+    monkeypatch.setattr(runner.telemetry_mod, "run_command", _fail)
+    monkeypatch.setattr(runner, "_coverage_available", lambda: False)
+    monkeypatch.setattr(subprocess, "run", make_fake_run(stdout="1 passed"))
+
+    code, _ = runner.run_pytest(tmp_path, ["tests/test_x.py"])
     assert code == 0
