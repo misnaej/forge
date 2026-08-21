@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.16.0 — Unreleased
+## v3.17.0 — Unreleased
 
 ### Features
 - **An empty sentinel loop now surfaces what to plan next.** When
@@ -31,6 +31,20 @@ versions follow forge's rolling-next convention.
   top needs-plan candidates as `/plan-issue` suggestions — written
   into the resume note and shown as the loop's parting output. No
   labels or issues are touched.
+
+## v3.16.0 — Unreleased
+
+### Features
+- **The agent-architecture doc's edges are now structurally verified.**
+  `verify-forge-agent-doc` (the `agent_doc` pre-commit step) parses the
+  doc's mermaid graphs and hard-fails when a skill→agent delegation
+  wired in a `SKILL.md` has no matching edge, when an entry in the new
+  `[tool.forge.agent_doc].guarded_by` map (agent → guard hooks) has no
+  agent→hook edge, or when an edge endpoint resolves to no real
+  agent/skill/hook/CLI (policy/person/orchestrator nodes exempt). Edge
+  verbs stay hand-curated — checks match endpoints, never label text.
+  The Layer-2 diff report also stops misclassifying shell shebangs as
+  skill mentions and shell comments as hook edges.
 
 ## v3.15.0 — Unreleased
 
