@@ -337,6 +337,18 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "reads to drive the tier from a CI commit.",
     ),
     ConfigKey(
+        ("tool", "forge", "telemetry", "sample_interval"),
+        default=1.0,
+        description="Seconds between resource samples taken by forge-telemetry "
+        "(and forge-smart-test --telemetry); floored at 0.1.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "telemetry", "plot"),
+        default=True,
+        description="Render code_health/telemetry.png alongside the text log "
+        "when matplotlib is installed (the [telemetry] extra).",
+    ),
+    ConfigKey(
         ("tool", "forge", "env_sync", "blocking"),
         default=True,
         description="Block the commit when env_sync finds a declared "

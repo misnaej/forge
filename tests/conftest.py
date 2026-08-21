@@ -185,9 +185,13 @@ class CapturedCalls:
 
     Attributes:
         calls: List of argv lists captured in invocation order.
+        telemetry_flags: List of ``telemetry`` kwargs captured in invocation
+            order, for fakes (e.g. ``run_pytest`` stand-ins) that also record
+            a per-call telemetry toggle. Empty unless a caller appends to it.
     """
 
     calls: list[list[str]] = field(default_factory=list)
+    telemetry_flags: list[bool] = field(default_factory=list)
 
 
 def make_fake_run(

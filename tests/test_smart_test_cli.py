@@ -84,7 +84,8 @@ def _stub_cli_deps(
 
     Returns:
         A ``CapturedCalls`` that accumulates every argv list ``run_pytest``
-        was called with, for later assertion.
+        was called with, for later assertion. Also carries the ``telemetry``
+        kwarg of each call, in call order, in its ``telemetry_flags`` field.
     """
     _changed = changed if changed is not None else {"src/myapp/core.py"}
     _results = list(run_results or [])
@@ -96,9 +97,14 @@ def _stub_cli_deps(
     monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
 
     def _fake_run_pytest(
-        _root: object, paths: list[str], *, coverage: bool = False
+        _root: object,
+        paths: list[str],
+        *,
+        coverage: bool = False,
+        telemetry: bool = False,
     ) -> tuple[int, str]:
         captured.calls.append(list(paths))
+        captured.telemetry_flags.append(telemetry)
         if _results:
             return _results.pop(0)
         return 0, "ok"
@@ -276,9 +282,13 @@ def test_main_full_depth_calls_run_pytest_with_empty_paths_and_coverage_true(
     recorded: list[dict[str, object]] = []
 
     def _fake(
-        _root: object, paths: list[str], *, coverage: bool = False
+        _root: object,
+        paths: list[str],
+        *,
+        coverage: bool = False,
+        telemetry: bool = False,
     ) -> tuple[int, str]:
-        recorded.append({"paths": paths, "coverage": coverage})
+        recorded.append({"paths": paths, "coverage": coverage, "telemetry": telemetry})
         return 0, "full suite ok"
 
     monkeypatch.setattr(cli, "run_pytest", _fake)
@@ -651,3 +661,134 @@ def test_main_show_files_lists_coverage_additions(
         code = cli.main()
     assert code == 0
     assert "test_cov_extra.py" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# --telemetry
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_telemetry_defaults_false() -> None:
+    """``--telemetry`` is off unless the flag is passed."""
+    args = cli._build_parser().parse_args(["--depth", "0"])
+    assert args.telemetry is False
+
+
+def test_build_parser_telemetry_flag_sets_true() -> None:
+    """``--telemetry`` toggles ``args.telemetry`` to ``True``."""
+    args = cli._build_parser().parse_args(["--depth", "0", "--telemetry"])
+    assert args.telemetry is True
+
+
+def test_main_depth0_telemetry_flag_forwarded_to_run_pytest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--depth 0 --telemetry`` forwards ``telemetry=True`` to ``run_pytest``.
+
+    SCENARIO: a single depth-0 batch with ``--telemetry`` on the CLI.
+    MOCK SETUP: ``_stub_cli_deps``'s fake records the ``telemetry`` kwarg of
+        every ``run_pytest`` call.
+    EXPECTED BEHAVIOR: the sole recorded call carries ``telemetry=True``.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["forge-smart-test", "--depth", "0", "--telemetry"]
+    )
+    plan = _make_plan(depth0=["tests/test_core.py"], max_depth=0)
+    captured = _stub_cli_deps(monkeypatch, plan=plan)
+
+    code = cli.main()
+    assert code == 0
+    assert captured.telemetry_flags == [True]
+
+
+def test_main_depth0_no_telemetry_flag_forwards_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without ``--telemetry``, ``run_pytest`` is called with ``telemetry=False``.
+
+    SCENARIO: a single depth-0 batch with no ``--telemetry`` flag on the CLI.
+    MOCK SETUP: ``_stub_cli_deps``'s fake records the ``telemetry`` kwarg of
+        every ``run_pytest`` call.
+    EXPECTED BEHAVIOR: the sole recorded call carries ``telemetry=False``.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "0"])
+    plan = _make_plan(depth0=["tests/test_core.py"], max_depth=0)
+    captured = _stub_cli_deps(monkeypatch, plan=plan)
+
+    code = cli.main()
+    assert code == 0
+    assert captured.telemetry_flags == [False]
+
+
+def test_main_depth1_telemetry_flag_forwarded_to_every_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--depth 1 --telemetry`` forwards ``telemetry=True`` to every batch.
+
+    SCENARIO: a plan with tests at both depth 0 and depth 1, ``--telemetry``
+        on the CLI; both batches pass, so both run.
+    MOCK SETUP: ``_stub_cli_deps``'s fake records the ``telemetry`` kwarg of
+        every ``run_pytest`` call, in call order.
+    EXPECTED BEHAVIOR: two ``run_pytest`` calls, both carrying
+        ``telemetry=True``.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["forge-smart-test", "--depth", "1", "--telemetry"]
+    )
+    plan = _make_plan(
+        depth0=["tests/test_core.py"],
+        depth1=["tests/test_service.py"],
+        max_depth=1,
+    )
+    captured = _stub_cli_deps(
+        monkeypatch, plan=plan, run_results=[(0, "ok"), (0, "ok")]
+    )
+
+    code = cli.main()
+    assert code == 0
+    assert len(captured.calls) == 2
+    assert captured.telemetry_flags == [True, True]
+
+
+def test_main_full_depth_telemetry_flag_and_coverage_true(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--depth full --telemetry`` calls ``run_pytest`` with both flags set.
+
+    SCENARIO: the ``full`` tier always enables coverage; ``--telemetry`` adds
+        resource sampling on top.
+    MOCK SETUP: a local fake captures ``coverage`` and ``telemetry`` kwargs.
+    EXPECTED BEHAVIOR: the recorded call has ``coverage=True`` and
+        ``telemetry=True``.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["forge-smart-test", "--depth", "full", "--telemetry"]
+    )
+
+    recorded: list[dict[str, object]] = []
+
+    def _fake(
+        _root: object,
+        paths: list[str],
+        *,
+        coverage: bool = False,
+        telemetry: bool = False,
+    ) -> tuple[int, str]:
+        recorded.append({"paths": paths, "coverage": coverage, "telemetry": telemetry})
+        return 0, "full suite ok"
+
+    monkeypatch.setattr(cli, "run_pytest", _fake)
+
+    code = cli.main()
+    assert code == 0
+    assert recorded
+    assert recorded[0]["coverage"] is True
+    assert recorded[0]["telemetry"] is True

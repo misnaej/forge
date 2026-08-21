@@ -16,6 +16,9 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
+from forge import telemetry as telemetry_mod
+from forge.git_utils import missing_dependency_hint
+
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -51,6 +54,7 @@ def run_pytest(
     test_paths: Sequence[str],
     *,
     coverage: bool = False,
+    telemetry: bool = False,
 ) -> tuple[int, str]:
     """Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
 
@@ -64,6 +68,10 @@ def run_pytest(
         test_paths: Repo-relative test file paths; empty means "whole suite".
         coverage: Enable ``--cov`` (ignored with a notice when ``pytest-cov``
             is absent).
+        telemetry: Sample resource usage during the run via
+            ``forge.telemetry`` (degrades to an unprofiled run with a
+            notice when ``psutil`` is absent — a missing profiler must
+            never fail the test run).
 
     Returns:
         ``(exit_code, combined_output)``. Exit code 5 ("no tests collected")
@@ -80,6 +88,18 @@ def run_pytest(
         else:
             notice = "(pytest-cov not installed — running without coverage)\n"
     cmd += sorted(test_paths)
+
+    if telemetry:
+        if telemetry_mod.telemetry_available():
+            code, output = telemetry_mod.run_command(
+                cmd, repo_root, capture=True, cwd=repo_root
+            )
+            code = 0 if code == _PYTEST_NO_TESTS else code
+            return code, notice + output
+        notice += (
+            f"({missing_dependency_hint('psutil', extra='telemetry')} "
+            "— running without telemetry)\n"
+        )
 
     proc = subprocess.run(
         cmd, cwd=repo_root, capture_output=True, text=True, check=False
