@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_64 modules, 713 symbols._
+_64 modules, 725 symbols._
 
 ## `forge`
 
@@ -909,10 +909,22 @@ _64 modules, 713 symbols._
 - `_config_doc_path(root: Path) -> str | None` _(internal)_ — Return the configured agent-doc path, or ``None`` to self-skip.
 - `_roster(root: Path) -> dict[str, set[str]]` _(internal)_ — Discover the repo's agents, skills, hooks, and CLIs.
 - `_check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]` _(internal)_ — Return coverage + dangling problems for *doc* against *roster*.
+- `class Edge` — One hand-curated mermaid edge (``src --[verb]--> dst``) in the agent doc.
+- `_parse_blocks(doc: str) -> list[tuple[list[Edge], dict[str, set[str]]]]` _(internal)_ — Parse each mermaid block into its edges and node-class declarations.
+- `_node_kind_ids(roster: dict[str, set[str]]) -> dict[str, set[str]]` _(internal)_ — Map each node kind to the mermaid ids its roster names produce.
+- `_discover_invokes(root: Path) -> set[tuple[str, str]]` _(internal)_ — Collect the skill→agent delegations wired in the repo's skill files.
+- `_guard_map(root: Path) -> dict[str, list[str]]` _(internal)_ — Read the configured agent→hooks guard map, degrading to empty on misshape.
+- `_check_endpoints(blocks: list[tuple[list[Edge], dict[str, set[str]]]], kind_ids: dict[str, set[str]]) -> list[str]` _(internal)_ — Return problems for edge endpoints that resolve to no real node.
+- `_check_invokes(invokes: set[tuple[str, str]], roster: dict[str, set[str]], edge_pairs: set[tuple[str, str]]) -> list[str]` _(internal)_ — Return problems for wired skill→agent delegations missing from the doc.
+- `_check_guard_map(guard_map: dict[str, list[str]], roster: dict[str, set[str]], edge_pairs: set[tuple[str, str]]) -> list[str]` _(internal)_ — Return problems for configured agent→hook guards missing from the doc.
+- `_check_edges(root: Path, doc: str, roster: dict[str, set[str]]) -> list[str]` _(internal)_ — Run the three structural edge checks against *doc*.
 - `_classify_mention(text: str) -> str | None` _(internal)_ — Describe the highest-priority graph-relevant mention in *text*, or ``None``.
+- `_run_git_diff(root: Path, base: str, paths: list[str]) -> str | None` _(internal)_ — Execute git diff and return its output, or None on error.
+- `_update_file_context(line: str, a_file: str, b_file: str) -> tuple[str, str] | None` _(internal)_ — Process a diff header line and return updated file context.
+- `_process_content_line(line: str, a_file: str, b_file: str) -> str | None` _(internal)_ — Classify a diff content line and return a report entry if graph-relevant.
 - `_diff_report(root: Path, base: str) -> list[str]` _(internal)_ — Classify the graph-relevant mentions a PR added or removed vs *base*.
 - `_handle_diff_mode(root: Path, path: str, base: str) -> None` _(internal)_ — Report graph-relevant changes in diff mode.
-- `_handle_normal_mode(doc: str, roster: dict[str, set[str]], path: str) -> int` _(internal)_ — Check the agent doc for coverage and dangling references in normal mode.
+- `_handle_normal_mode(root: Path, doc: str, roster: dict[str, set[str]], path: str) -> int` _(internal)_ — Check coverage, dangling references, and edge structure in normal mode.
 - `main(argv: list[str] | None = None) -> int` — Run the agent-doc verifier.
 
 ## `forge.verify_changelog_history`
