@@ -102,4 +102,4 @@ under `install-forge-bootstrap` when
 for the runtime-context contract.
 
 Full pasteable CI workflows are in
-[`ci-recipe.md`](ci-recipe.md).
+[`ci-recipe.md`](../forge-docs/ci-recipe.md).

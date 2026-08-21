@@ -85,7 +85,7 @@ them.
 ### Cutting a release — agent/human boundary
 
 **Automated (recommended): CI is the tag-pusher.** With the
-tag-on-merge job from [`ci-recipe.md`](ci-recipe.md) §4 installed,
+tag-on-merge job from [`ci-recipe.md`](../forge-docs/ci-recipe.md) §4 installed,
 `forge-release --from-changelog` runs on every merge to the base
 branch and cuts the version the top heading declares — idempotent,
 race-tolerant, and (in the recommended gated form) only after the test
@@ -119,7 +119,7 @@ the conflict is the feature, not a nuisance.
 ### Enforcement
 
 Two opt-in pre-commit steps gate this convention between releases (see
-[`configuration.md`](configuration.md), `[tool.forge.changelog]`):
+[`configuration.md`](../forge-docs/configuration.md), `[tool.forge.changelog]`):
 `changelog_version` (heading validity, ordering, tag alignment, and
 stranded-entry detection when a tag lands under an open PR) and
 `changelog_updated` (the per-PR entry rule). `forge-release`'s CHANGELOG
@@ -132,7 +132,7 @@ edits in different subsections auto-merge without a conflict to force a
 re-check. To catch that pre-merge, run the step as a **required PR
 status check** paired with branch protection's *"require branches to be
 up to date before merging"* — the job recipe lives in
-[`ci-recipe.md`](ci-recipe.md) "Stranded-changelog gate as a required
+[`ci-recipe.md`](../forge-docs/ci-recipe.md) "Stranded-changelog gate as a required
 PR check".
 
 **Recovery when the gate fires mid-branch**: the check is
@@ -154,7 +154,7 @@ flow's `pr-manager` **authors** the missing bullet (mandatory, not
 skip-when-absent); (3) the merge gate: CI's `changelog_updated` must be
 green before merge, so a skipped wrap-up is impossible to miss.
 `precommit_enforce` is orthogonal to `blocking` (timing vs severity) —
-see [`configuration.md`](configuration.md).
+see [`configuration.md`](../forge-docs/configuration.md).
 
 **No-version opt-out** (`changelog_updated` only): a change that
 genuinely doesn't deserve a version — a mechanical revert, CI-only

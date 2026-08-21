@@ -119,7 +119,7 @@ class ForgeConfig:
     """Repo configuration sourced from ``[tool.forge]``.
 
     Release-channel semantics live in FOUNDATION §6; the project-layout
-    rationale in §8 / `docs/configuration.md`. This class carries the
+    rationale in §8 / `forge-docs/configuration.md`. This class carries the
     `[tool.forge]` values forge reads repo-wide.
 
     Attributes:

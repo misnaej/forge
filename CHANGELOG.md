@@ -20,6 +20,33 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.20.0 — Unreleased
+
+### Features
+- **FOUNDATION's reference pages now ship to consumer repos.** A new
+  root-level `forge-docs/` folder is the canonical, fully mirrored home
+  of the pages FOUNDATION.md links to (`configuration.md`,
+  `ci-recipe.md`, `smart-test.md` — moved out of `docs/`):
+  `install-forge-claude-md` writes verbatim copies plus a never-edit
+  README into every consumer repo, `--check` reports hand-edits and the
+  next sync heals them, and a new `block_forge_docs_edits` hook blocks
+  agent writes in the folder. FOUNDATION's links resolve identically in
+  the forge repo and in every consumer checkout; the installer
+  self-skips inside forge's own repo.
+
+### Docs
+- **FOUNDATION.md trimmed under its 40k-char budget** (49.2k → <40k) with
+  every relocated rule landing in a durable home: the §17 smart-test depth
+  model now lives in `docs/smart-test.md` and the docstring-enforcement
+  layer table in `docs/configuration.md`, each behind a §12 pointer.
+  Additions: §1 gains the absence-of-evidence rule (a negative probe only
+  disproves what it could have proved); §2's branch-deletion bullet names
+  the authoritative `gh api rules/branches/{branch}` + `rulesets` checks
+  (a legacy `/protection` 404 never means "unprotected"); §11's plugin
+  staleness recovery is hedged (agents/hooks reload via `/reload-plugins`;
+  skills and monitors may need a session restart — trust the command's own
+  output). No guard semantics changed.
+
 ## v3.19.0 — Unreleased
 
 ### Refactor
