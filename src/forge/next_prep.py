@@ -50,6 +50,7 @@ from forge.config import ForgeConfig, load_config, read_tool_forge_section
 from forge.git_utils import (
     configure_cli_logging,
     create_annotated_tag,
+    fetch_tags_best_effort,
     latest_v_tag,
     minor_tags,
     parse_semver,
@@ -425,7 +426,8 @@ def _emit_promotion_status(
     Returns:
         Always ``0`` — this is a pure read-only report.
     """
-    run_git("fetch", "origin", "--tags", "--quiet", cwd=repo_root, check=False)
+    for note in fetch_tags_best_effort(repo_root):
+        logger.warning("%s", note)
     for line in _promotion_status_lines(repo_root, dev_branch, base_branch):
         logger.info("%s", line)
     return 0
@@ -526,7 +528,8 @@ def main() -> int:
     if args.no_sync:
         # CI tag path: HEAD is already the exact commit CI validated;
         # only the tag set needs refreshing for the version comparison.
-        run_git("fetch", "--tags", "--quiet", cwd=repo_root, check=False)
+        for note in fetch_tags_best_effort(repo_root):
+            logger.warning("%s", note)
         return _tag_and_report(repo_root, cfg, args)
 
     logger.info("Fetching from origin...")

@@ -199,6 +199,49 @@ def minor_tags(repo_root: Path) -> list[str]:
     return sorted(minors, key=lambda tag: parse_semver(tag) or (0, 0, 0))
 
 
+def fetch_tags_best_effort(repo_root: Path, *, timeout: int = 10) -> list[str]:
+    """Refresh local tags from ``origin``, reporting degradations as notes.
+
+    The single source of truth for the bounded tag refresh every
+    tag-relative check depends on: the ``changelog_version`` pre-commit
+    step, ``forge-release``, ``forge-next-prep``, and
+    ``forge-check-main-tags`` all read the local tag set, which a CI
+    ``pull_request`` checkout may start without. The fetch is bounded and
+    stdin-less so a stalled remote or credential prompt degrades to the
+    local (possibly stale) tag state with a visible note instead of
+    hanging the caller.
+
+    Args:
+        repo_root: Git repo root.
+        timeout: Hard bound in seconds on the fetch.
+
+    Returns:
+        Notes describing any degradation (fetch failure or timeout) for
+        the caller to log or surface; empty when the refresh succeeded.
+    """
+    failed = False
+    try:
+        fetch = subprocess.run(
+            ["git", "fetch", "--tags", "--quiet", "origin"],
+            cwd=repo_root,
+            capture_output=True,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+        failed = fetch.returncode != 0
+    except subprocess.TimeoutExpired:
+        failed = True
+    if failed:
+        return [
+            (
+                "Note: `git fetch --tags` failed — validating against local "
+                "tags, which may be stale."
+            )
+        ]
+    return []
+
+
 def forge_install_command(extra: str | None = None) -> str:
     """Format the consumer-valid install command for forge-scripts.
 
