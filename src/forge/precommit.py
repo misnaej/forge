@@ -82,6 +82,7 @@ from forge.git_utils import (
     SCOPE_DIFF,
     VALID_SCOPES,
     emit,
+    fetch_tags_best_effort,
     is_ancestor,
     latest_v_tag,
     merge_base_with_head,
@@ -1818,45 +1819,6 @@ def _tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool:
     )
 
 
-def _refresh_tags_best_effort(repo_root: Path) -> list[str]:
-    """Refresh local tags from the remote, reporting degradations as notes.
-
-    The tag-relative checks are only as fresh as the tags visible
-    locally, and a CI ``pull_request`` checkout may start with none — so
-    the refresh runs in every context, bounded and stdin-less, degrading
-    to the local tag state (with a visible note) rather than failing or
-    hanging on an offline remote or credential prompt.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        Notes describing any degradation (fetch failure); empty when the
-        refresh succeeded.
-    """
-    failed = False
-    try:
-        fetch = subprocess.run(
-            ["git", "fetch", "--tags", "--quiet"],
-            cwd=repo_root,
-            capture_output=True,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            timeout=10,
-        )
-        failed = fetch.returncode != 0
-    except subprocess.TimeoutExpired:
-        failed = True
-    if failed:
-        return [
-            (
-                "Note: `git fetch --tags` failed — validating against local "
-                "tags, which may be stale."
-            )
-        ]
-    return []
-
-
 def step_changelog_version(repo_root: Path) -> StepResult:
     """Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
 
@@ -1926,7 +1888,7 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     # tag set wrongly accepts a behind-the-tag heading, and a CI
     # pull_request checkout may carry no tags at all — so the refresh
     # runs everywhere, degradations surfacing as notes.
-    notes = _refresh_tags_best_effort(repo_root)
+    notes = fetch_tags_best_effort(repo_root)
     latest = latest_v_tag(repo_root)
     if latest is None:
         notes.append(
