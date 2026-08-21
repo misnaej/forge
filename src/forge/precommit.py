@@ -1401,7 +1401,7 @@ def step_smart_test(repo_root: Path) -> StepResult:
     absent, so the hook stays cheap for repos that haven't configured it.
     Non-blocking by default (a test failure WARNs); set
     ``[tool.forge.smart_test].blocking = true`` to make it refuse the
-    commit. See FOUNDATION §17 and #8.
+    commit. See docs/smart-test.md and #8.
 
     Args:
         repo_root: Git repo root.

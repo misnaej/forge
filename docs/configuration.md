@@ -265,7 +265,7 @@ every commit so only the tests your change set affects run. **Off by
 default** — the step self-skips entirely unless `precommit_depth` is set.
 The CLI itself (and the `/forge:smart-test` skill) work without any config;
 this table only governs the pre-commit integration. Depth model and the
-speed/coverage trade-off: FOUNDATION §17.
+speed/coverage trade-off: [`docs/smart-test.md`](smart-test.md).
 
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
@@ -429,6 +429,26 @@ export FORGE_NO_AUTO_REBUILD=1
 Forge-specific keys for the docstring-coverage reporter. (The coverage *gate*
 itself — threshold, excludes, ignores — lives in `[tool.interrogate]` below;
 these are the keys interrogate has no concept of.)
+
+### Docstring enforcement — three deliberate layers
+
+Forge ships THREE docstring enforcement mechanisms (FOUNDATION §8); they
+overlap on purpose, each catching what the others miss:
+
+| Layer | What it enforces | Scope | Blocking? |
+|---|---|---|---|
+| **ruff D100–D107** (`select = ["ALL"]`) | Docstring present on every module / class / public function / method / `__init__` / magic method | Modified files | YES |
+| `verify-forge-docstrings` (`docstring_verification`) | If a docstring exists: **Args** match the signature, **Returns** present for non-`None` returns, no `self` / `cls` / `Returns: None` anti-patterns | Modified files | YES |
+| `verify-forge-docstring-coverage` (`docstring_coverage`) | Aggregate % across the tree; per-file table; `MISSING:` list for the fixer; optional badge | Full `src/` tree | **NO — reporter** |
+
+**Why interrogate is non-blocking:** ruff D100–D107 are the actual gate — a
+missing docstring on a public symbol is refused there. Interrogate measures
+**aggregate coverage across the full tree** (ruff only sees the diff) and
+surfaces a `MISSING:` list `forge:precommit-fixer` acts on. Trivial nested
+functions / closures are exempt (`ignore-nested-functions`), so blocking
+here is redundant. `[tool.interrogate]` is the single source of truth for
+the gate config (default threshold `fail-under = 90`, tighten per
+FOUNDATION §4).
 
 > **Naming — one thing, three names.** The config section
 > `[tool.forge.docstring_coverage]`, the generated badge file
