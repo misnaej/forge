@@ -20,6 +20,17 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.16.0 — Unreleased
+
+### Features
+- **An empty sentinel loop now surfaces what to plan next.** When
+  `/sentinel` finds zero `plan-ready` candidates, it runs a bounded
+  screen of the open backlog before exiting: issues carrying a
+  drafted-but-unvalidated plan comment are named first (one validation
+  from executable), then the top unblocked issues as `/plan-issue`
+  suggestions — written into the resume note and shown as the loop's
+  parting output. No labels or issues are touched.
+
 ## v3.15.0 — Unreleased
 
 ### Features

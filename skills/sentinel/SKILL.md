@@ -25,10 +25,35 @@ gh issue list --state open --label plan-ready \
 
 1. Candidates found → pickup re-check, then execute the best one
    (highest tier, oldest validation first).
-2. No candidates → end the session with a resume note in
-   `.plan/CONTINUATION.md`; re-invoking `/sentinel` resumes the loop.
+2. No candidates → run the **empty-loop screen** below, then end the
+   session with a resume note in `.plan/CONTINUATION.md`; re-invoking
+   `/sentinel` resumes the loop.
 3. Exit conditions: the user stops the loop, or every remaining
    candidate is awaiting user input.
+
+### Empty-loop screen (zero candidates)
+
+An empty watch loop is a signal, not just an exit: the backlog may hold
+work that only lacks a validated plan. Before writing the resume note,
+run one bounded screen — no labels changed, no issues touched:
+
+```bash
+gh issue list --state open --json number,title,labels
+```
+
+1. **Drafted-but-unvalidated first**: scan the remaining open issues
+   for an `[issue-triage] plan-validated:` comment WITHOUT the
+   `plan-ready` label (a plan drafted but never validated, or a label
+   later removed). Name these first — they are one validation away
+   from executable.
+2. **Plan candidates next**: from the rest, drop `blocked`,
+   `needs-discussion`, and `waiting-upstream` issues, then name the
+   top few (highest tier first) as `/plan-issue` suggestions.
+
+Write the named suggestions into the `.plan/CONTINUATION.md` resume
+note so the next session starts with them, and surface them to the
+user as the loop's parting output: "no validated plans left — these
+are the nearest candidates; run `/plan-issue <N>` to queue one."
 
 ## Pickup re-check
 
