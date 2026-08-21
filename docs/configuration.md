@@ -288,7 +288,7 @@ ambient enable switch.
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
 | `sample_interval` | `1.0` | Seconds between samples (floored at 0.1). | Long runs drown the log (raise it) or short runs need finer resolution (lower it). |
-| `plot` | `true` | Render `code_health/telemetry.png` alongside the text log when matplotlib is importable; silently text-only otherwise. | You never want the chart artifact. |
+| `plot` | `true` | Render `code_health/telemetry.png` alongside the text log when matplotlib is importable; otherwise text-only, logging a skip notice. | You never want the chart artifact. |
 
 ## `[tool.forge.layering]` — opt-in layer-composition gate
 

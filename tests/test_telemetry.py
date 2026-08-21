@@ -42,6 +42,10 @@ class FakeNoSuchProcessError(Exception):
     """Stand-in for ``psutil.NoSuchProcess`` — a process that has exited."""
 
 
+class FakeAccessDeniedError(Exception):
+    """Stand-in for ``psutil.AccessDenied`` — a process the sampler can't read."""
+
+
 class FakeProcess:
     """Stand-in for a ``psutil.Process`` handle.
 
@@ -50,6 +54,8 @@ class FakeProcess:
         children_procs: Flattened descendant list returned by ``children()``.
         gone: When True, both ``children()`` and ``memory_info()`` raise
             ``FakeNoSuchProcess`` — a process that exited mid-sample.
+        denied: When True, ``memory_info()`` raises ``FakeAccessDenied`` — a
+            process the sampler lacks permission to read (e.g. sandboxed CI).
     """
 
     def __init__(
@@ -58,17 +64,20 @@ class FakeProcess:
         children: list[FakeProcess] | None = None,
         *,
         gone: bool = False,
+        denied: bool = False,
     ) -> None:
-        """Store the configured RSS, children, and gone-ness for this fake.
+        """Store the configured RSS, children, gone-ness, and denied-ness for this fake.
 
         Args:
             rss: Bytes reported by memory_info().rss.
             children: Flattened descendant list returned by children().
             gone: When True, both children() and memory_info() raise FakeNoSuchProcess.
+            denied: When True, memory_info() raises FakeAccessDenied.
         """
         self.rss = rss
         self.children_procs = children or []
         self.gone = gone
+        self.denied = denied
 
     def children(self, *, recursive: bool = True) -> list[FakeProcess]:
         """Return the flattened descendant list, or raise if this process exited.
@@ -86,10 +95,13 @@ class FakeProcess:
         return self.children_procs
 
     def memory_info(self) -> SimpleNamespace:
-        """Return an ``rss``-bearing namespace, or raise if this process exited."""
+        """Return ``rss``-bearing namespace or raise if exited or denied."""
         if self.gone:
             msg = "process exited"
             raise FakeNoSuchProcessError(msg)
+        if self.denied:
+            msg = "access denied"
+            raise FakeAccessDeniedError(msg)
         return SimpleNamespace(rss=self.rss)
 
 
@@ -109,6 +121,7 @@ class FakePsutil:
             cpu_percent_value: Host CPU percentage to return from cpu_percent().
         """
         self.NoSuchProcess = FakeNoSuchProcessError
+        self.AccessDenied = FakeAccessDeniedError
         self._process = process
         self._cpu_percent_value = cpu_percent_value
 
@@ -141,6 +154,7 @@ def _write_pyproject(tmp_path: Path, body: str) -> None:
     """Write a ``pyproject.toml`` with *body* under *tmp_path*.
 
     Args:
+        tmp_path: Directory to write pyproject.toml into.
         body: TOML content to write to pyproject.toml.
     """
     (tmp_path / "pyproject.toml").write_text(body, encoding="utf-8")
@@ -272,6 +286,23 @@ def test_tree_rss_bytes_root_gone_returns_zero(
     monkeypatch.setattr(telemetry, "psutil", FakePsutil())
     root = FakeProcess(rss=100, gone=True)
     assert telemetry._tree_rss_bytes(root) == 0
+
+
+def test_tree_rss_bytes_tolerates_access_denied_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A child the sampler lacks permission to read is skipped, not fatal.
+
+    SECURITY REGRESSION: a sandboxed-CI permission error on one process in
+    the tree must not kill the telemetry wrapper — the child's exit code
+    would otherwise be lost.
+    """
+    monkeypatch.setattr(telemetry, "psutil", FakePsutil())
+    root = FakeProcess(
+        rss=100,
+        children=[FakeProcess(rss=50), FakeProcess(rss=30, denied=True)],
+    )
+    assert telemetry._tree_rss_bytes(root) == 150
 
 
 # ---------------------------------------------------------------------------

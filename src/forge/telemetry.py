@@ -117,14 +117,17 @@ def _tree_rss_bytes(proc: Process) -> int:
         error).
     """
     total = 0
+    # AccessDenied is treated like a vanished process: a sandboxed runner or
+    # a child that re-execs under another user must degrade the sample, never
+    # kill the wrapper mid-run (the child's exit code would be lost).
     try:
         procs = [proc, *proc.children(recursive=True)]  # type: ignore[attr-defined]
         for p in procs:
             try:
                 total += p.memory_info().rss
-            except psutil.NoSuchProcess:  # type: ignore[union-attr]
+            except (psutil.NoSuchProcess, psutil.AccessDenied):  # type: ignore[union-attr]
                 continue
-    except psutil.NoSuchProcess:  # type: ignore[union-attr]
+    except (psutil.NoSuchProcess, psutil.AccessDenied):  # type: ignore[union-attr]
         return 0
     return total
 
