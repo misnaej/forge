@@ -443,8 +443,7 @@ def main() -> int:
     repo_root = Path.cwd()
     cfg = load_config(repo_root)
 
-    # Bounded + stdin-less: a stalled remote or credential prompt degrades
-    # to a stale-tag view instead of hanging the release command.
+    # Bounded degrade-to-stale semantics: see fetch_tags_best_effort.
     for note in fetch_tags_best_effort(repo_root):
         logger.warning("%s", note)
 

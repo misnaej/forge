@@ -29,8 +29,11 @@ versions follow forge's rolling-next convention.
   `git_utils.fetch_tags_best_effort`: every fetch is bounded (10s,
   stdin-less) and degrades to the local tag state with a logged note.
   Sites that previously could hang on a stalled remote or credential
-  prompt (promotion status, the CI tag path, tag alignment) now time
-  out instead; sites that failed silently now log the stale-tags note.
+  prompt (promotion status, the CI tag path, tag alignment, the release
+  race-recheck) now time out instead; sites that failed silently now
+  log the stale-tags note. The consolidation also makes every site
+  fetch explicitly from `origin` — two previously relied on the
+  checkout's default remote.
 
 ## v3.17.0 — Unreleased
 

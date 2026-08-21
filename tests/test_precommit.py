@@ -4124,9 +4124,11 @@ def test_step_changelog_version_fetch_failure_falls_back_to_local_tags(
 ) -> None:
     """A failed `git fetch --tags` degrades to local tags with a visible note.
 
-    MOCK SETUP: `subprocess.run` faked to report `returncode=1` for the
-    best-effort tag refresh; `run_git` / `resolve_current_branch` faked so
-    the rest of the step reads a consistent, tag-having changelog.
+    MOCK SETUP: `git_utils.subprocess.run` faked to report `returncode=1`
+    for the best-effort tag refresh (the fetch is a direct bounded call
+    inside `fetch_tags_best_effort`, which `precommit` imports by name);
+    `run_git` / `resolve_current_branch` faked so the rest of the step
+    reads a consistent, tag-having changelog.
     EXPECTED BEHAVIOR: the step still passes (local tags are stale but
     present) and the output carries the degradation note.
     """
@@ -4140,7 +4142,7 @@ def test_step_changelog_version_fetch_failure_falls_back_to_local_tags(
     def _fake_subprocess_run(*_a: object, **_kw: object) -> object:
         return type("P", (), {"returncode": 1, "stdout": "", "stderr": ""})()
 
-    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_subprocess_run)
     result = precommit.step_changelog_version(tmp_path)
     assert result.passed is True
     assert "validating against local tags, which may be stale." in result.output
@@ -4152,9 +4154,11 @@ def test_step_changelog_version_no_tag_visible_warns_structural_only(
     """No `v*` tag visible after the refresh → structural-only note, not a failure.
 
     MOCK SETUP: `latest_v_tag` faked to `None` (no tag visible, e.g. a
-    fresh CI checkout with no tags fetched); `subprocess.run` faked to
-    report a successful (`returncode=0`) refresh so the "no tag visible"
-    note is attributable to `latest_v_tag`, not a fetch failure.
+    fresh CI checkout with no tags fetched); `git_utils.subprocess.run`
+    faked to report a successful (`returncode=0`) refresh (the fetch is
+    a direct bounded call inside `fetch_tags_best_effort`, which
+    `precommit` imports by name) so the "no tag visible" note is
+    attributable to `latest_v_tag`, not a fetch failure.
     EXPECTED BEHAVIOR: the step passes (no tag-relative check can fire)
     and the output names the missing reference tag.
     """
@@ -4168,7 +4172,7 @@ def test_step_changelog_version_no_tag_visible_warns_structural_only(
     def _fake_subprocess_run(*_a: object, **_kw: object) -> object:
         return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
-    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_subprocess_run)
     result = precommit.step_changelog_version(tmp_path)
     assert result.passed is True
     assert "no `v*` tag visible" in result.output
