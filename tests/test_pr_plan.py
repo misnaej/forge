@@ -30,15 +30,7 @@ if TYPE_CHECKING:
 
 
 def _init_feature_repo(tmp_path: Path) -> Path:
-    """Create a real git repo with an empty ``main`` and a checked-out ``feature``.
-
-    Args:
-        tmp_path: Pytest ``tmp_path`` fixture directory to build the repo under.
-
-    Returns:
-        The repo root, checked out on ``feature`` with no commits beyond
-        ``main``'s initial empty one.
-    """
+    """Create a real git repo with an empty ``main`` and a checked-out ``feature``."""
     repo = tmp_path / "repo"
     repo.mkdir()
     init_git_repo(repo)
@@ -392,6 +384,51 @@ def test_main_rejects_dash_prefixed_base(
 
     assert rc == 2
     assert capsys.readouterr().out == ""
+
+
+def test_main_rejects_nonexistent_base_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A `--base` ref git cannot resolve exits 2 with no stdout, not a traceback.
+
+    Locks the security-review fix: `classify()`'s `git diff` raises
+    `subprocess.CalledProcessError` on an unresolvable ref; `main()` must
+    catch it and return the documented exit code instead of leaking a
+    traceback.
+    """
+    repo = _init_feature_repo(tmp_path)
+    _commit_files(repo, {"src/foo.py": "x = 1\n"}, "initial commit")
+    monkeypatch.setattr(pr_plan, "repo_root", lambda: repo)
+
+    rc = pr_plan.main(["--base", "no-such-ref-xyz"])
+
+    assert rc == 2
+    assert capsys.readouterr().out == ""
+
+
+def test_main_base_with_space_stays_one_argv_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A space-containing --base never splits into option-injecting argv tokens.
+
+    SCENARIO: a base like ``main --output=<path>`` would, if shell-interpreted,
+    let an attacker inject a second git flag. Because argv is always a list
+    (never passed through a shell), the whole string stays ONE token inside
+    the diff range and simply fails as an invalid revision.
+    EXPECTED BEHAVIOR: exit 2 and no file created at the injected path.
+    """
+    repo = _init_feature_repo(tmp_path)
+    _commit_files(repo, {"src/foo.py": "x = 1\n"}, "initial commit")
+    monkeypatch.setattr(pr_plan, "repo_root", lambda: repo)
+    pwned = tmp_path / "pwned.txt"
+
+    rc = pr_plan.main(["--base", f"main --output={pwned}"])
+
+    assert rc == 2
+    assert not pwned.exists()
 
 
 def test_main_happy_path_emits_full_plan_json(

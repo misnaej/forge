@@ -16,14 +16,18 @@ Output contract (single JSON object on stdout; diagnostics go to stderr)::
 
     {
         "mode": "full" | "light-docs" | "light-regen" | "delta",
-        "reporters": [...],  # verification agents the skill must run
-        "precommit_scope": [...],  # step names for `forge-precommit --only`;
-        # empty = the full strict battery for
-        # "full", nothing at all for "delta"
-        "reasons": [...],  # the classification trail, human-readable
-        "classified_at": "<sha>",  # HEAD at classification time; pr-manager
-        # warns when posting at a different HEAD
+        "reporters": [...],
+        "precommit_scope": [...],
+        "reasons": [...],
+        "classified_at": "<sha>",
     }
+
+``reporters`` names the verification agents the skill must run.
+``precommit_scope`` lists step names for ``forge-precommit --only``; empty
+means the full strict battery for "full" and no pre-commit run at all for
+"delta". ``reasons`` is the human-readable classification trail.
+``classified_at`` is HEAD at classification time; ``pr-manager`` warns when
+posting at a different HEAD.
 
 ``light-regen`` is *eligibility only*: the skill still earns the escape by
 running the provenance gates (``precommit_scope`` lists them); any gate
@@ -34,7 +38,8 @@ to ``full``.
 
 Exit codes:
     0  plan emitted
-    2  not inside a git repository, or the base ref is invalid
+    1  not inside a git repository (``repo_root``'s own ``SystemExit``)
+    2  the base ref is invalid (dash-prefixed) or unresolvable by git
 """
 
 from __future__ import annotations
@@ -304,8 +309,9 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argument vector (defaults to ``sys.argv``).
 
     Returns:
-        Process exit code: ``0`` with the plan on stdout, ``2`` on an
-        invalid base ref or when run outside a git repository.
+        Process exit code: ``0`` with the plan on stdout; ``2`` on an
+        invalid or unresolvable base ref (``1`` if run outside a git
+        repository — raised by ``repo_root`` before this returns).
     """
     parser = argparse.ArgumentParser(prog="forge-pr-plan")
     parser.add_argument(
@@ -329,7 +335,14 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("pr-plan: %r is not a valid base ref.", args.base)
         return 2
     root = repo_root()
-    plan = classify(root, args.base, args.pr)
+    try:
+        plan = classify(root, args.base, args.pr)
+    except subprocess.CalledProcessError:
+        # An unresolvable base ref (or no shared history with HEAD) fails the
+        # underlying git diff; surface the documented exit code, not a
+        # traceback. run_git already logged git's own stderr.
+        logger.exception("pr-plan: cannot diff against base ref %r.", args.base)
+        return 2
     emit(json.dumps(asdict(plan), indent=2))
     return 0
 
