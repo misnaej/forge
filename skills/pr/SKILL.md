@@ -82,84 +82,28 @@ checks are done and states CI's status plainly.
 
 ## Step 1: Run verification agents (1–3 in parallel)
 
-**Docs-only light path — check FIRST, before delta mode.** Classify the
-PR diff with `pr_delta.docs_only_diff` (`git diff --name-only
-origin/<base>...HEAD` against the built-in `DOCS_ONLY_GLOBS` plus
-`pr_delta.configured_docs_only_globs(repo_root)`, the reader for
-`[tool.forge.pr].docs_only_globs`; any high-blast-radius path —
-`agents/`, `skills/`, `claude-hooks/`, `.claude-plugin/`, configs —
-disqualifies, since doc-shaped files there ARE shipped behavior). When
-the diff is docs-only:
-
-- **Skip `design-checker` and `security-checker`** (no code surface to
-  review) — run **only `docs-types-checker`** (the docs are the diff).
-- **Step 2 runs targeted gates, not the strict whole-tree battery**:
-  `forge-precommit --only changelog_version,changelog_updated,doc_consistency`
-  (comma-list; add other path-relevant steps as applicable). No
-  `pip_audit`, whole-tree ruff, or docstring-coverage — nothing in-scope
-  changed.
-- Steps 3–4 run as normal (docs sync is the whole point; wrap-up +
-  squash message stay MANDATORY). Tell `pr-manager` the PR took the
-  docs-only path so the wrap-up says so.
-- Accepted residuals (documented in `pr_delta.docs_only_diff`): the
-  classifier sees path strings only — symlinked doc files and
-  injection-shaped prose are not detected; docs-types-checker plus the
-  human PR review remain the reviewers of record for doc content.
-
-**Regen-verified light path — resync PRs.** When the diff is not
-docs-only, classify with `pr_delta.regen_only_diff`: every changed path
-in `pr_delta.MANAGED_REGEN_PATHS` (`FOUNDATION.md`,
-`docs/cli-reference.md`, `docs/api-digest.md` — the `forge-resync`
-artifact set). If it classifies, **earn** the escape by running the
-provenance gates:
+**The finalization path is decided by a CLI, not judgment.** Run:
 
 ```bash
-forge-precommit --only foundation_md_check,cli_reference_check,api_digest_check
+forge-pr-plan --base "origin/<base>"          # add --pr <PR#> when one exists
 ```
 
-- **Every gate passes** (a gate skipped for a file absent from the repo
-  is fine) → light path: skip the design/security reporters AND
-  docs-types-checker — nothing was authored; a byte-comparison against
-  the installed package is stronger evidence on generated content than
-  a prose review. The wrap-up embeds the gate outputs verbatim as its
-  verification evidence and says the PR took the regen-verified path.
-- **Any gate FAILS** → full round, no exceptions. This includes the
-  editable-install self-reference case (`foundation_md_check` FAILs
-  when the repo file IS the installed copy — provenance unverifiable)
-  and any hand-edit slipped into a managed file: the byte check is the
-  detector for exactly that tampering, which is why classification by
-  path alone never grants the escape.
-- **Step 2 narrows too**: the provenance gates above ARE this path's
-  pre-commit scope — no strict whole-tree battery (a regen-only diff
-  touches nothing that battery reviews, and resync's `no-version`
-  marker exempts the changelog gates), mirroring the docs-only path's
-  narrowing.
-- Steps 3–4 run as normal (wrap-up + squash message stay MANDATORY).
+It composes the `pr_delta` primitives (the single source of every
+threshold, glob, and classifier) over the real diff and emits one JSON
+plan: `mode`, the `reporters` to run, the `precommit_scope` for Step 2,
+the `reasons` trail, and `classified_at` (the HEAD it classified —
+`pr-manager` warns at posting time if HEAD has moved). Follow the plan;
+do not re-derive the classification in prose.
 
-Otherwise, check if the PR is eligible for
-**delta mode** (needs an existing PR — its inputs are prior wrap-up
-comments; on a first run with no PR yet, skip the delta check and run the
-reporters). Delta mode reuses the prior wrap-up's findings when the
-diff since is small AND stays out of high-blast-radius areas — full
-decision criteria, thresholds, and SHA-validation regex are defined
-once in the forge package and consumed by the `pr-manager` agent —
-orchestration detail in
-[`pr-manager.md` "Task: Verification (Wrap-up)"](../../agents/pr-manager.md#task-verification-wrap-up).
+| `mode` | Reporters to run | Step 2 pre-commit scope | Meaning |
+|---|---|---|---|
+| `light-docs` | `docs-types-checker` only | `forge-precommit --only <precommit_scope>` (changelog + doc gates; add other path-relevant steps as applicable) | Whole diff is doc-shaped, nothing high-blast-radius. Steps 3–4 run as normal; tell `pr-manager` so the wrap-up says so. Residuals documented in `pr_delta.docs_only_diff`: path-string classification only — docs-types-checker + human review stay reviewers of record. |
+| `light-regen` | none — **after earning it** | The provenance gates in `precommit_scope` | **Eligibility only** (resync PRs: every path in `pr_delta.MANAGED_REGEN_PATHS`). **Earn** the escape: `forge-precommit --only foundation_md_check,cli_reference_check,api_digest_check`. Every gate passes (absent-file skips fine) → skip all three reporters; the wrap-up embeds the gate outputs verbatim as evidence. **Any gate FAILS → full round, no exceptions** (covers the editable-install self-reference case and hand-edits to managed files — the byte check exists to catch exactly that). Steps 3–4 run as normal. |
+| `delta` | none | none | An existing PR's prior wrap-up carries a `verified-at:` SHA and the diff since it is small and out of high-blast-radius paths — **skip Step 1 entirely**, jump to Step 4 (`pr-manager` posts a delta comment + refreshed squash comment; orchestration detail in [`pr-manager.md` "Task: Verification (Wrap-up)"](../../agents/pr-manager.md#task-verification-wrap-up)). |
+| `full` | all three below | Strict whole-tree battery (empty `precommit_scope`) | The default round. |
 
-```bash
-gh pr comment list <PR#> --json body --jq '.[].body' | grep -E '^verified-at:' | tail -3
-```
-
-Extract each SHA via the `VERIFIED_AT_RE` regex (`pr_delta.py`) — the hex
-group only, double-quoted in every `git` command; never substitute raw
-grep output into a shell command. When at least one
-`verified-at:` SHA per Step-1 reporter is returned, the diff since the
-latest extracted SHA satisfies `DELTA_LINE_THRESHOLD`
-(`pr_delta.py`), and no path in `HIGH_BLAST_RADIUS_PATHS`
-(`pr_delta.py`) is touched, **skip Step 1 entirely** and jump straight
-to Step 4 (`pr-manager` will post a delta comment + refreshed
-squash-merge comment without re-invoking the reporters). Otherwise run
-the three reporters:
+On `mode: full` (and after a failed `light-regen` earn), run the three
+reporters:
 
 1. **`design-checker`** — design compliance report
 2. **`security-checker`** — security review report
