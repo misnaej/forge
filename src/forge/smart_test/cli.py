@@ -114,7 +114,7 @@ def _write_log(repo_root: Path, body: str) -> None:
     log_path.write_text(body, encoding="utf-8")
 
 
-def _run_full(repo_root: Path) -> tuple[int, str]:
+def _run_full(repo_root: Path, *, telemetry: bool = False) -> tuple[int, str]:
     """Run the entire suite (the ``full`` tier), always with coverage.
 
     Coverage is unconditionally enabled for ``full`` — it is the tier's
@@ -122,12 +122,13 @@ def _run_full(repo_root: Path) -> tuple[int, str]:
 
     Args:
         repo_root: Git repo root.
+        telemetry: Sample resource usage during the run.
 
     Returns:
         ``(exit_code, output)`` from the single pytest run.
     """
     logger.info("Running the full suite (depth=full) with coverage.")
-    return run_pytest(repo_root, [], coverage=True)
+    return run_pytest(repo_root, [], coverage=True, telemetry=telemetry)
 
 
 @dataclass
@@ -140,6 +141,8 @@ class _RunConfig:
     """Coverage-derived tests to union into the depth-0 batch."""
     header: str
     """One-line run header recorded at the top of the log."""
+    telemetry: bool = False
+    """Whether to sample resource usage during each pytest batch."""
 
 
 def _run_tiers(
@@ -180,7 +183,9 @@ def _run_tiers(
         already.update(batch)
         clear_python_cache(repo_root)
         output.append(f"\n=== depth {tier}: {len(batch)} test file(s) ===\n")
-        code, out = run_pytest(repo_root, batch, coverage=config.coverage)
+        code, out = run_pytest(
+            repo_root, batch, coverage=config.coverage, telemetry=config.telemetry
+        )
         output.append(out)
         if code != 0:
             output.append(f"\nFAILED at depth {tier} — skipping higher depths.\n")
@@ -218,6 +223,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--coverage",
         action="store_true",
         help="Enable coverage (always on for --depth full).",
+    )
+    parser.add_argument(
+        "--telemetry",
+        action="store_true",
+        help="Sample RSS/CPU during the run via forge-telemetry (needs the "
+        "[telemetry] extra; degrades to an unprofiled run when absent).",
     )
     parser.add_argument(
         "--base",
@@ -260,7 +271,7 @@ def main() -> int:
         if args.show_files:
             logger.info("📋 Tests covering changed code (depth full): the entire suite")
             return 0
-        code, body = _run_full(repo_root)
+        code, body = _run_full(repo_root, telemetry=args.telemetry)
         _write_log(repo_root, body)
         logger.info("%s", body.rstrip())
         return code
@@ -293,6 +304,7 @@ def main() -> int:
         coverage=args.coverage,
         extra_depth0=extra_depth0,
         header=header,
+        telemetry=args.telemetry,
     )
     code, body = _run_tiers(repo_root, depth, plan, config)
     _write_log(repo_root, body)

@@ -43,6 +43,9 @@ pass before higher ones run (fail-fast).
      map (`pytest --cov-context=test`). Enables `coverage_validate`.
    - `--from-commit-message` reads a `[depth-N]` / `[full]` directive from
      `HEAD`'s message and overrides `--depth` (CI convenience).
+   - `--telemetry` samples RSS/CPU during the run via `forge-telemetry`
+     (`code_health/telemetry.log` + `.png`; needs the `[telemetry]`
+     extra — degrades to an unprofiled run when absent).
 
 3. **Report the outcome.** On failure the run stops at the first failing
    depth and exits non-zero; the full output is also written to
