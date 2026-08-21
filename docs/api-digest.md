@@ -474,6 +474,7 @@ _65 modules, 734 symbols._
 - `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
 - `latest_v_tag(root: Path) -> str | None` — Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
 - `minor_tags(repo_root: Path) -> list[str]` — Return every ``vX.Y.0`` tag (patch == 0), semver-sorted ascending.
+- `fetch_tags_best_effort(repo_root: Path, *, timeout: int = 10) -> list[str]` — Refresh local tags from ``origin``, reporting degradations as notes.
 - `forge_install_command(extra: str | None = None) -> str` — Format the consumer-valid install command for forge-scripts.
 - `missing_dependency_hint(package: str, *, extra: str | None = None) -> str` — Format a user-facing hint for a missing dependency.
 - `require_cli(name: str, *, caller: str | None = None, extra: str | None = None, hint: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
@@ -750,7 +751,6 @@ _65 modules, 734 symbols._
 - `step_vendored_integrity(repo_root: Path) -> StepResult` — Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
 - `_changelog_blocking(repo_root: Path) -> bool` _(internal)_ — Return whether the changelog steps block the commit (default yes).
 - `_tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool` _(internal)_ — Return whether *tag* is reachable from the base branch but not HEAD.
-- `_refresh_tags_best_effort(repo_root: Path) -> list[str]` _(internal)_ — Refresh local tags from the remote, reporting degradations as notes.
 - `step_changelog_version(repo_root: Path) -> StepResult` — Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
 - `step_changelog_updated(repo_root: Path) -> StepResult` — Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
