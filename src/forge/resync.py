@@ -23,7 +23,7 @@ never written. The PR body flags that mechanical regen does not surface
 adoption-required changes; ``forge-upgrade --check`` lists those.
 
 Invocation surfaces: manual run, a scheduled CI workflow
-(``docs/ci-recipe.md``), and ``/next`` offering it on detected drift.
+(``forge-docs/ci-recipe.md``), and ``/next`` offering it on detected drift.
 """
 
 from __future__ import annotations

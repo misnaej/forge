@@ -442,7 +442,7 @@ Forge enforces docstrings with three deliberate layers — ruff D100–D107
 `verify-forge-docstring-coverage` (aggregate %, non-blocking reporter with a
 `MISSING:` list for `forge:precommit-fixer`). The layer table and the
 why-interrogate-is-non-blocking rationale live in
-[`docs/configuration.md`](docs/configuration.md) under
+[`forge-docs/configuration.md`](forge-docs/configuration.md) under
 `[tool.forge.docstring_coverage]`.
 
 **Config-home rule:** a forge tool wrapping a third-party library reads that
@@ -717,7 +717,7 @@ review rejects inline `os.environ.get("CI")` checks; new CI markers go in
 `_CI_MARKERS` — one place, every tool.
 
 Consumers adopt the single shipped CI recipe (README "Running forge in CI" +
-[`docs/ci-recipe.md`](docs/ci-recipe.md)) rather than a custom integration.
+[`forge-docs/ci-recipe.md`](forge-docs/ci-recipe.md)) rather than a custom integration.
 
 ---
 
@@ -766,7 +766,7 @@ maintenance burden on every foundation upgrade.
 `forge-smart-test` (skill `/forge:smart-test`) selects the tests a change
 set affects and runs them in escalating depth tiers (`0`/`1`/`2`/`full`).
 The depth model, the guarantees consumers can rely on, and the opt-in
-correctness extensions are specified in **[`docs/smart-test.md`](docs/smart-test.md)** — the single source of truth; this section is a pointer only.
+correctness extensions are specified in **[`forge-docs/smart-test.md`](forge-docs/smart-test.md)** — the single source of truth; this section is a pointer only.
 
 ---
 

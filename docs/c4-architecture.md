@@ -4,7 +4,7 @@
 > doc for `forge-gen-c4` + the `/c4` skill — why it works the way it does,
 > what was deliberately left out, and the deferred future work in
 > [§9](#9-future-work). For *how to configure it* see
-> [`docs/configuration.md`](configuration.md) (`[tool.forge.c4]`); for the
+> [`forge-docs/configuration.md`](../forge-docs/configuration.md) (`[tool.forge.c4]`); for the
 > interactive build flow see [`skills/c4/SKILL.md`](../skills/c4/SKILL.md).
 > Whether forge keeps growing it is the decision gate in
 > [§8](#8-decision-gate-is-this-worth-forges-while).
@@ -268,7 +268,7 @@ byte-identical.
 
 **Consumer-configurable rendering.** The whole `mermaid.initialize(...)` setup is
 driven by `[tool.forge.c4.render]` (see
-[`docs/configuration.md`](configuration.md)); defaults reproduce the look above,
+[`forge-docs/configuration.md`](../forge-docs/configuration.md)); defaults reproduce the look above,
 so a repo only sets a key to deviate (fonts, spacing, colors, ELK tuning).
 
 **Hover + click interactivity.** Inline JS wires onto Mermaid's post-render SVG.
@@ -436,7 +436,7 @@ container. Scoping honours the Component view's edge-source mode (a
 `declared`-mode model never pulls in an import-only neighbour), and a name that
 matches no connected component warns and is skipped. Like the mechanisms above
 it is per-view-only (the DSL / README / `--format mermaid` stay canonical) and
-adds no tab when unset. See [`configuration.md`](configuration.md) for the field
+adds no tab when unset. See [`configuration.md`](../forge-docs/configuration.md) for the field
 reference.
 
 ## 6. Why this fits forge's existing patterns

@@ -1402,7 +1402,7 @@ def step_smart_test(repo_root: Path) -> StepResult:
     absent, so the hook stays cheap for repos that haven't configured it.
     Non-blocking by default (a test failure WARNs); set
     ``[tool.forge.smart_test].blocking = true`` to make it refuse the
-    commit. See docs/smart-test.md and #8.
+    commit. See forge-docs/smart-test.md and #8.
 
     Args:
         repo_root: Git repo root.
@@ -1845,7 +1845,7 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     paired with branch protection's "require branches to be up to date
     before merging", it re-evaluates as the base advances — catching
     the stale-but-green stranding race pre-merge (recipe:
-    ``docs/ci-recipe.md``).
+    ``forge-docs/ci-recipe.md``).
 
     Self-skips when there is no root ``CHANGELOG.md``, on
     manifest-versioned repos (``verify-forge-plugin-version`` owns the

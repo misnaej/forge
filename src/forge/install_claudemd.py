@@ -306,6 +306,118 @@ def sync_foundation(
     return True
 
 
+FORGE_DOCS_DIR = "forge-docs"
+FORGE_DOCS_PAGES = ("configuration.md", "ci-recipe.md", "smart-test.md")
+FORGE_DOCS_README = "README.md"
+
+
+def _forge_docs_readme_text(version: str) -> str:
+    """Render the ``forge-docs/README.md`` never-edit notice.
+
+    Args:
+        version: Installed forge version string (for traceability).
+
+    Returns:
+        Full README content for the mirrored folder.
+    """
+    pages = "\n".join(f"- `{name}`" for name in FORGE_DOCS_PAGES)
+    return (
+        f"<!-- {BLOCK_NAME} v{BLOCK_VERSION} START -->\n"
+        f"<!-- DO NOT EDIT — managed by forge. Synced from forge-scripts "
+        f"{version} by install-forge-claude-md. -->\n\n"
+        "# forge-docs — forge's shipped reference pages\n\n"
+        "**Do not edit anything in this folder.** Every file is a verbatim\n"
+        "mirror of the forge repository's `forge-docs/` reference set — the\n"
+        "pages `FOUNDATION.md` links to — and is refreshed by forge\n"
+        "upgrades (`install-forge-claude-md`); hand-edits are overwritten on\n"
+        "the next sync and blocked for agents by the `block_forge_docs_edits`\n"
+        "hook. Links inside these pages that point at other forge documents\n"
+        "resolve in the forge repository, not here.\n\n"
+        f"Mirrored pages:\n{pages}\n\n"
+        f"<!-- {BLOCK_NAME} v{BLOCK_VERSION} END -->\n"
+    )
+
+
+def _forge_docs_is_self(repo_root: Path) -> bool:
+    """Return whether *repo_root*'s ``forge-docs/`` IS the shipped canonical set.
+
+    In forge's own repo the package data under ``data/docs/`` is a symlink
+    chain into ``forge-docs/`` — writing there would clobber the canonical
+    files with marker-wrapped copies of themselves (the same self-corruption
+    hazard ``foundation_md_check`` guards against).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``True`` when the sync must self-skip.
+    """
+    target = repo_root / FORGE_DOCS_DIR / FORGE_DOCS_PAGES[0]
+    if not target.exists():
+        return False
+    ref = resources.files("forge").joinpath(f"data/docs/{FORGE_DOCS_PAGES[0]}")
+    try:
+        with resources.as_file(ref) as ref_path:
+            return ref_path.exists() and target.samefile(ref_path)
+    except OSError:
+        return False
+
+
+def sync_forge_docs(repo_root: Path, *, check_only: bool = False) -> bool:
+    """Mirror the shipped ``forge-docs/`` reference set into the consumer repo.
+
+    Verbatim page copies plus a generated never-edit README; hand-edits
+    are healed on the next sync. Self-skips in forge's own repo (see
+    :func:`_forge_docs_is_self`) and degrades silently when the installed
+    package predates the ``data/docs/`` payload.
+
+    Args:
+        repo_root: Git repo root.
+        check_only: Report drift without writing.
+
+    Returns:
+        True if anything changed (or would change in ``check_only`` mode);
+        False when already in sync or self-skipped.
+    """
+    src = resources.files("forge").joinpath("data/docs")
+    try:
+        available = {entry.name for entry in src.iterdir()}
+    except (FileNotFoundError, OSError):
+        return False
+    if _forge_docs_is_self(repo_root):
+        logger.info(
+            "✓ %s/ is the canonical shipped set — skipping sync", FORGE_DOCS_DIR
+        )
+        return False
+    target_dir = repo_root / FORGE_DOCS_DIR
+    desired: dict[str, str] = {
+        name: src.joinpath(name).read_text()
+        for name in FORGE_DOCS_PAGES
+        if name in available
+    }
+    desired[FORGE_DOCS_README] = _forge_docs_readme_text(_forge_version())
+    changed = False
+    for name, content in desired.items():
+        path = target_dir / name
+        existing = path.read_text() if path.exists() else None
+        if existing is not None and _normalize(existing) == _normalize(content):
+            continue
+        changed = True
+        if check_only:
+            logger.warning(
+                "! %s/%s is out of sync with the installed forge version.",
+                FORGE_DOCS_DIR,
+                name,
+            )
+            continue
+        target_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        logger.info("✓ wrote %s/%s", FORGE_DOCS_DIR, name)
+    if not changed:
+        logger.info("✓ %s/ already in sync", FORGE_DOCS_DIR)
+    return changed
+
+
 def foundation_matches_installed(foundation_path: Path) -> bool:
     """Return whether *foundation_path* reproduces the installed foundation.
 
@@ -1077,6 +1189,10 @@ def main() -> int:
         check_only=args.check,
         force=args.force,
     )
+    # The mirrored reference set FOUNDATION links into (forge-docs/) syncs
+    # with the same cadence and the same check semantics as FOUNDATION.
+    docs_changed = sync_forge_docs(root, check_only=args.check)
+    changed = changed or docs_changed
 
     if not args.check and not claudemd_path.exists():
         scaffold_claudemd(claudemd_path)

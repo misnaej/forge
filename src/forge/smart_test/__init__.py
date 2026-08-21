@@ -3,7 +3,7 @@
 Given the files a changeset touched, select only the tests that exercise
 that code — directly or transitively through imports — and run them in
 escalating depth tiers (0 → 1 → 2 → full). Static ``ast`` import-graph
-analysis only; no runtime instrumentation. See docs/smart-test.md for the
+analysis only; no runtime instrumentation. See forge-docs/smart-test.md for the
 depth model and the speed/coverage trade-off.
 
 Modules:

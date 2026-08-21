@@ -1,0 +1,1 @@
+../../../../forge-docs/smart-test.md

@@ -5,7 +5,7 @@ affects — `forge.import_graph` reverse reachability from changed source
 modules, unioned with directly-changed test files — and runs them in
 escalating **depth tiers**: fast local feedback, then a CI ladder before a
 full pass. Config reference:
-[`docs/configuration.md`](configuration.md#toolforgesmart_test--opt-in-change-scoped-test-gate).
+[`forge-docs/configuration.md`](configuration.md#toolforgesmart_test--opt-in-change-scoped-test-gate).
 
 | Depth | Runs | Coverage | Typical use |
 |---|---|---|---|

@@ -125,7 +125,7 @@ The `changelog_version` step detects entries stranded under an
 already-released heading — but a one-shot check goes stale: a PR green
 when checked can strand *afterwards*, when a sibling PR merges first
 and the base cuts the tag, with no merge conflict to warn (see
-[`consumer-release.md`](consumer-release.md) "Enforcement"). To catch
+[`consumer-release.md`](../docs/consumer-release.md) "Enforcement"). To catch
 that pre-merge, run the step as its own **required status check**:
 
 ```yaml
@@ -364,7 +364,7 @@ inline `needs:` job, which has no such lag) keeps working.
 
 With either job in place, `/next`'s tag step becomes a no-op fallback
 (both CLIs are idempotent), and the manual `forge-release` recipe in
-[`consumer-release.md`](consumer-release.md) remains available for
+[`consumer-release.md`](../docs/consumer-release.md) remains available for
 repos without the workflow.
 
 ## Auth troubleshooting
@@ -373,7 +373,7 @@ repos without the workflow.
 |---|---|
 | `forge-upgrade --apply` aborts with `git_auth_mode() == "none"` in CI | Add `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` to the step's `env`. |
 | pip hangs on credential prompt | The runner lacks both SSH keys and a GitHub token. Inject `GITHUB_TOKEN` as above. |
-| Fork is private, CI can't clone | See [`ci-access.md`](ci-access.md) for deploy-key + token recipes. |
+| Fork is private, CI can't clone | See [`ci-access.md`](../docs/ci-access.md) for deploy-key + token recipes. |
 
 `forge.run_context.git_auth_mode()` picks the URL form
 (`ssh` / `https-token` / `https-anonymous` / `none`) based on what the

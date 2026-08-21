@@ -22,6 +22,18 @@ versions follow forge's rolling-next convention.
 
 ## v3.20.0 — Unreleased
 
+### Features
+- **FOUNDATION's reference pages now ship to consumer repos.** A new
+  root-level `forge-docs/` folder is the canonical, fully mirrored home
+  of the pages FOUNDATION.md links to (`configuration.md`,
+  `ci-recipe.md`, `smart-test.md` — moved out of `docs/`):
+  `install-forge-claude-md` writes verbatim copies plus a never-edit
+  README into every consumer repo, `--check` reports hand-edits and the
+  next sync heals them, and a new `block_forge_docs_edits` hook blocks
+  agent writes in the folder. FOUNDATION's links resolve identically in
+  the forge repo and in every consumer checkout; the installer
+  self-skips inside forge's own repo.
+
 ### Docs
 - **FOUNDATION.md trimmed under its 40k-char budget** (49.2k → <40k) with
   every relocated rule landing in a durable home: the §17 smart-test depth

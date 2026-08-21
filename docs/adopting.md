@@ -65,7 +65,7 @@ forge-config --list     # every [tool.forge.*] key forge reads + what to set
 ```
 
 Configure via `[tool.forge]` in `pyproject.toml` — see
-[`configuration.md`](configuration.md). Per-CLI usage:
+[`configuration.md`](../forge-docs/configuration.md). Per-CLI usage:
 [`standalone-installers.md`](standalone-installers.md) and the generated
 [`cli-reference.md`](cli-reference.md).
 
@@ -173,6 +173,7 @@ Idempotent and re-run-safe — it's also the upgrade re-sync step (below).
 | Artifact | Layer | Commit? |
 |---|---|---|
 | `FOUNDATION.md` | 1 | **commit** (shared engineering baseline) |
+| `forge-docs/` | 1 | **commit** (mirrored forge reference pages + README; never edit — refreshed by upgrades, agent edits hook-blocked) |
 | `CLAUDE.md` | 1 | **commit** (yours after the initial scaffold; consumer-owned) |
 | `.githooks/*` (wrappers) | 2 | **commit** (byte-stable across version bumps) |
 | `.githooks/.forge-hook-version` | 2 | **gitignore** (per-clone version sidecar) |
@@ -189,6 +190,7 @@ Re-running `install-forge-bootstrap` is safe because every managed
 artifact is **drift-aware**, not blindly overwritten:
 
 - **`CLAUDE.md` / `FOUNDATION.md`** — managed-block markers; `install-forge-claude-md --check` (run by the post-merge/checkout hooks) reports when the shipped foundation drifts from yours.
+- **`forge-docs/`** — same check reports hand-edits to the mirrored reference pages; the next sync heals them.
 - **`.githooks/*`** — the `body-sha=` marker detects consumer edits so a refresh skips wrappers you changed; the gitignored `.forge-hook-version` sidecar records which forge version last wrote them (keeps the committed wrappers byte-stable).
 - **Upstream-version staleness** — the hooks' preamble + `SessionStart` warn when the installed forge is behind the latest tag (and the cached Claude Code plugin is behind), so you know an upgrade is available.
 - **Generated docs** — `forge-gen-*` write `docs/api-digest.md` / `cli-reference.md`; a pre-commit check fails if they drift from the code.
@@ -208,4 +210,4 @@ new releases (the consumer-action items) — review any newer than your
 previous version. Channel choice (`@main` minors-only vs `@dev` every
 version vs a `@vX.Y.Z` pin) and the full flow:
 [`Upgrading forge`](../README.md#upgrading-forge-in-your-repo). CI
-integration: [`ci-recipe.md`](ci-recipe.md).
+integration: [`ci-recipe.md`](../forge-docs/ci-recipe.md).

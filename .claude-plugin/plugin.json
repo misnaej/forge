@@ -102,6 +102,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_files.sh",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_forge_docs_edits.sh",
+            "timeout": 5
           }
         ]
       },
@@ -111,6 +116,11 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_files.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_forge_docs_edits.sh",
             "timeout": 5
           }
         ]
