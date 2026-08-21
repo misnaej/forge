@@ -23,7 +23,7 @@ versions follow forge's rolling-next convention.
 ## v3.19.0 — Unreleased
 
 ### Docs
-- **FOUNDATION.md trimmed under its 40k-char budget** (49.6k → <40k) with
+- **FOUNDATION.md trimmed under its 40k-char budget** (49.2k → <40k) with
   every relocated rule landing in a durable home: the §17 smart-test depth
   model now lives in `docs/smart-test.md` and the docstring-enforcement
   layer table in `docs/configuration.md`, each behind a §12 pointer.

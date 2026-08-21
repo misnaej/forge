@@ -264,6 +264,7 @@ Forge's own bootstrap tooling (not a consumer pattern):
 - step-invocation.md: contributor rule for how pre-commit steps invoke their tools — orchestrator is the contract; standalone CLI only when it *is* the tool or does real orchestration
 - security.md: security policy and review documentation
 - standalone-installers.md: per-installer reference for manual usage (sibling of `install-forge-bootstrap`)
+- smart-test.md: `forge-smart-test` depth-tier model (0/1/2/full), the guarantees consumers can rely on, and the opt-in mock-patch-edge / coverage-validation correctness extensions
 - telemetry.md: usage guide for `forge-telemetry` / `forge-smart-test --telemetry` — example chart + how to read a profile (what warrants investigation)
 - images/: committed doc image assets (currently the telemetry example chart)
 

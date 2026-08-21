@@ -156,7 +156,8 @@ convention without checking current code still matches. Asking beats reverting.
 
 ## 3. Mandatory Delegation
 
-Specific tasks **must** be delegated to specialized subagents.
+Specific tasks **must** be delegated to specialized subagents; handling
+them directly is forbidden.
 
 ### Agent naming convention
 
@@ -187,9 +188,9 @@ Foundation agents resolve as `forge:<name>`; a bare name fails with
 | Grounded knowledge retrieval | `forge:knowledge-search` | When summarizing from sources |
 
 **Forbidden — do NOT handle directly:** running `git commit` / `git push`
-(→ `forge:git-commit-push`); invoking `ruff` from an agent (→
-`forge:precommit-fixer`, which reads `code_health/` — only the pre-commit
-hook runs ruff); hand-curating a file list for `forge:precommit-fixer` (it
+(→ `forge:git-commit-push`); invoking `ruff` or `fix-forge-ruff` from
+an agent (→ `forge:precommit-fixer`, which reads `code_health/` — only the
+pre-commit hook runs ruff); hand-curating a file list for `forge:precommit-fixer` (it
 scopes itself off the report); writing PR descriptions or squash messages
 (→ `forge:pr-manager`); reviewing security / design yourself (→ the checker
 agents); installing dependencies (never — tell the user).
@@ -372,8 +373,8 @@ rewrites) — never hand-constructed. The squash message is the permanent
 
 ### PR review comments
 
-Reply to every comment with `✅ **Resolved in commit <hash>**` plus a brief
-explanation of what was done and where (file:line). Post via `gh api
+Reply to every comment with `✅ **Resolved in commit <hash>**` plus what was
+done and where (file:line), via `gh api
 repos/<owner>/<repo>/pulls/<PR#>/comments/<comment_id>/replies`.
 
 ---
@@ -404,14 +405,13 @@ reversal of OCP: OCP adds genuinely new capability without touching stable
 code; this rule covers compensating for an interface you control that is
 wrong.)
 
-**KISS.** The right complexity is what the task requires — no more. Three similar
-lines beat a premature abstraction. No configurability / plugins / indirection for
-hypothetical future needs.
+**KISS.** The right complexity is what the task requires — no more. Three
+similar lines beat a premature abstraction. No configurability / plugins /
+indirection for hypothetical needs.
 
-**YAGNI.** No speculative abstractions; no parameters / flags "in case someone
-needs them"; no error handling for scenarios that can't happen. Trust internal
-code and framework guarantees; validate only at system boundaries (user input,
-external APIs).
+**YAGNI.** No speculative abstractions, "just in case" parameters, or error
+handling for scenarios that can't happen. Trust internal code and framework
+guarantees; validate only at system boundaries (user input, external APIs).
 
 ---
 
@@ -482,9 +482,9 @@ Python stdlib logging with propagation.
 - **In entry-point scripts:** configure the root logger once, early, before heavy
   imports — `setup_logging(log_file=output_dir / "logs" / "pipeline.log")`. All
   module loggers propagate to root, so every package's logs land in one file.
-- **Logs next to data:** when a sub-process writes to a directory, add a local
-  file handler (`add_file_handler(job_logger, work_dir / "job.log")`) so the log
-  lives alongside results — messages go to BOTH the local file AND the root logger.
+- **Logs next to data:** when a sub-process writes to a directory, add a
+  local file handler so the log lives alongside results — messages go to
+  BOTH the local file AND the root logger.
 
 ### Forbidden
 
@@ -558,9 +558,10 @@ When a forge release renames or adds an agent, an already-running session keeps
 the **cached** plugin from startup. Symptom: `Agent type 'forge:<name>' not found`
 though the agent is on disk — the cache
 (`~/.claude/plugins/cache/forge/forge/<version>/`) is behind. Recovery: `/plugin
-update forge@forge`, then `/reload-plugins` — agents and hooks reload reliably;
-**skills and monitors may need a full session restart** — trust the command's own
-output over any fixed rule, and restart when a surface stays stale. The
+update forge@forge`, then `/reload-plugins` — agents, hooks, and MCP / LSP
+servers reload reliably; **skills and monitors may need a full session
+restart** — trust the command's own output over any fixed rule, and restart
+when a surface stays stale. The
 `check_upstream` warning (`install-forge-claude-md` + the `post-merge` /
 `post-checkout` / `SessionStart` hooks) surfaces the version lag automatically.
 
@@ -709,7 +710,8 @@ non-interactive behavior **MUST** consult
 "Divergent behavior" means any of: prompting or recommending manual action;
 hard-failing on a prerequisite expected-missing in CI; running inside a
 `post-checkout` / `post-merge` hook that may fire before forge-scripts is
-installed; or hard-coding a URL form / auth method the runner may lack.
+installed; emitting one line of output before minutes of work; or
+hard-coding a URL form / auth method the runner may lack.
 Enforcement is greppable: CI-relevant files import `forge.run_context`;
 review rejects inline `os.environ.get("CI")` checks; new CI markers go in
 `_CI_MARKERS` — one place, every tool.
