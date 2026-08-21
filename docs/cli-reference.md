@@ -566,12 +566,6 @@ options:
                         selection (enables coverage validation).
 ```
 
-## forge-telemetry
-
-```text
-(--help unavailable for forge-telemetry)
-```
-
 ## forge-upgrade
 
 ```text
