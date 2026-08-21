@@ -284,7 +284,8 @@ Governs [`forge-telemetry`](cli-reference.md#forge-telemetry) (`forge-telemetry
 sampled while the wrapped command runs, written to `code_health/telemetry.log`
 (+ `telemetry.png` with matplotlib). Needs the `[telemetry]` extra
 (`psutil` + `matplotlib`); invocation is always explicit — there is no
-ambient enable switch.
+ambient enable switch. Usage guide, an example chart, and how to read a
+profile: [`docs/telemetry.md`](telemetry.md).
 
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
