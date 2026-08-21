@@ -94,6 +94,20 @@ are the ones worth chasing:
   after a change; a new spike at a new timestamp localizes the
   regression to the phase running at that offset.
 
+### From shape to fix — common improvement levers
+
+Once a shape is identified, the fix is usually one of a small set of
+levers:
+
+| Profile shape | Likely lever |
+|---|---|
+| High peak RSS, work arrives in one big load | **Batch/chunk size**: process in smaller batches or stream instead of materializing everything — peak RSS should track the batch size, not the dataset size. If halving the batch halves the peak, the knob works; tune it to the target environment's memory ceiling. |
+| RSS grows across batches that should be independent | Results (or caches) accumulating across iterations — write out / release per batch instead of collecting, or cap the cache. |
+| CPU pinned high, wall-clock dominated by one phase | Compute bound: algorithmic work first (profile the hot path — `forge:perf-optimizer`'s benchmark loop), vectorization/library offload second, parallelism last. |
+| CPU low, RSS flat, wall-clock long | Waiting, not working: batch the I/O (fewer, larger reads/writes), overlap it with compute, or raise worker concurrency — more CPU won't help. |
+| CPU high AND RSS high together | The batch size is serving two masters — bigger batches amortize per-item overhead (CPU win) but raise the memory floor. Tune it against the chart: grow the batch until the RSS line approaches the environment's ceiling, not past it. |
+| Short spiky CPU with idle gaps | Per-item startup overhead (process spawn, connection setup, import cost) — reuse workers/connections across items rather than paying setup per item. |
+
 For per-test wall-clock outliers (which test is slow, rather than what
 the run consumes), `forge-slow-tests-report` is the sharper tool — the
 two read well together: slow-tests names the test, telemetry shows
