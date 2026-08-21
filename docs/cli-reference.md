@@ -430,6 +430,19 @@ options:
   -h, --help   show this help message and exit
 ```
 
+## forge-pr-plan
+
+```text
+usage: forge-pr-plan [-h] --base REF [--pr N]
+
+options:
+  -h, --help  show this help message and exit
+  --base REF  Base ref the PR targets (e.g. origin/dev); the classified diff
+              is BASE...HEAD.
+  --pr N      Existing PR number — enables the delta path (reads the PR's
+              verified-at: comments via gh). Omit when no PR exists yet.
+```
+
 ## forge-pr-squash-comment
 
 ```text

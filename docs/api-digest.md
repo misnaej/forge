@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 718 symbols._
+_64 modules, 725 symbols._
 
 ## `forge`
 
@@ -670,6 +670,18 @@ _63 modules, 718 symbols._
 - `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
 - `regen_only_diff(changed_paths: list[str]) -> bool` — Return whether every changed path is a forge-managed regen artifact.
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
+
+## `forge.pr_plan`
+
+> _forge-pr-plan — deterministic finalization-path decision for the ``/pr`` skill._
+
+- `class PrPlan` — The finalization plan for one classification run.
+- `_changed_paths(root: Path, diff_range: str) -> list[str]` _(internal)_ — Return the repo-relative paths changed across *diff_range*.
+- `_line_count(root: Path, diff_range: str) -> int` _(internal)_ — Return insertions + deletions across *diff_range*.
+- `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.
+- `_try_delta(root: Path, pr_number: int | None, reasons: list[str]) -> bool` _(internal)_ — Evaluate delta-mode eligibility, appending the trail to *reasons*.
+- `classify(root: Path, base: str, pr_number: int | None) -> PrPlan` — Classify the current branch's finalization path.
+- `main(argv: list[str] | None = None) -> int` — Run the finalization-path classifier and emit its JSON plan.
 
 ## `forge.pr_squash_comment`
 

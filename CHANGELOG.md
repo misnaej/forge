@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.15.0 — Unreleased
+## v3.16.0 — Unreleased
 
 ### Features
 - **The agent-architecture doc's edges are now structurally verified.**
@@ -33,6 +33,21 @@ versions follow forge's rolling-next convention.
   verbs stay hand-curated — checks match endpoints, never label text.
   The Layer-2 diff report also stops misclassifying shell shebangs as
   skill mentions and shell comments as hook edges.
+
+## v3.15.0 — Unreleased
+
+### Features
+- **The `/pr` finalization-path decision is now a deterministic CLI.**
+  New `forge-pr-plan --base <ref> [--pr <N>]` composes the existing
+  `pr_delta` classifiers over the real diff and emits one JSON plan
+  (`mode`: full / light-docs / light-regen / delta, plus the reporters
+  to run, the `forge-precommit --only` scope, the reasons trail, and a
+  `classified_at` HEAD stamp). The `/pr` skill's prose decision tree is
+  replaced by one invocation + a mode table; `pr-manager` warns when a
+  wrap-up posts at a different HEAD than the plan classified.
+  `light-regen` stays eligibility-only — the provenance gates must
+  still pass. The delta path degrades to `full` (with a stated reason)
+  when `gh` or a `verified-at:` baseline is unavailable.
 
 ## v3.14.0 — Unreleased
 
