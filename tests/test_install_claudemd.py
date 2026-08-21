@@ -198,7 +198,7 @@ def test_sync_forge_docs_creates_fresh_pages(
         assert (docs_dir / name).read_text() == f"# {name}\n\nFake content.\n"
     readme = (docs_dir / install_claudemd.FORGE_DOCS_README).read_text()
     assert "Do not edit anything in this folder" in readme
-    assert "forge:foundation-managed v1 START" in readme
+    assert f"{install_claudemd.FORGE_DOCS_BLOCK_NAME} v1 START" in readme
     for name in install_claudemd.FORGE_DOCS_PAGES:
         assert name in readme
     assert "1.2.3" in readme
@@ -316,6 +316,11 @@ def test_forge_docs_is_self_returns_false_on_as_file_os_error(
     docs_dir = repo / install_claudemd.FORGE_DOCS_DIR
     docs_dir.mkdir(parents=True)
     (docs_dir / install_claudemd.FORGE_DOCS_PAGES[0]).write_text("existing\n")
+    # Seed the managed README sentinel so the unmanaged-dir guard doesn't
+    # short-circuit the sync before the as_file OSError path is exercised.
+    (docs_dir / install_claudemd.FORGE_DOCS_README).write_text(
+        install_claudemd._forge_docs_readme_text("0.0.0")
+    )
 
     def _raise_os_error(_ref: object) -> None:
         """Stand in for resources.as_file, simulating a broken symlink.
@@ -368,6 +373,52 @@ def test_sync_forge_docs_missing_package_data_returns_false(
 
     assert changed is False
     assert not (repo / install_claudemd.FORGE_DOCS_DIR).exists()
+
+
+def test_sync_forge_docs_leaves_unmanaged_dir_alone(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A pre-existing, non-forge forge-docs/ (no managed README) is untouched.
+
+    Guards against silently clobbering a consumer's own ``forge-docs/``
+    content — the same hazard ``sync_foundation``'s marker guard prevents
+    for ``FOUNDATION.md``.
+    """
+    _patch_inputs(monkeypatch)
+    _fake_docs_package(monkeypatch, tmp_path / "pkg")
+    repo = tmp_path / "repo"
+    docs_dir = repo / install_claudemd.FORGE_DOCS_DIR
+    docs_dir.mkdir(parents=True)
+    consumer_file = docs_dir / "notes.md"
+    consumer_file.write_text("consumer's own notes\n")
+
+    with caplog.at_level("WARNING"):
+        changed = install_claudemd.sync_forge_docs(repo)
+
+    assert changed is False
+    assert consumer_file.read_text() == "consumer's own notes\n"
+    assert "not forge-managed" in caplog.text
+
+
+def test_sync_forge_docs_force_overwrites_unmanaged_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """force=True overwrites a pre-existing, non-forge forge-docs/ directory."""
+    _patch_inputs(monkeypatch)
+    _fake_docs_package(monkeypatch, tmp_path / "pkg")
+    repo = tmp_path / "repo"
+    docs_dir = repo / install_claudemd.FORGE_DOCS_DIR
+    docs_dir.mkdir(parents=True)
+    docs_dir.joinpath("notes.md").write_text("consumer's own notes\n")
+
+    changed = install_claudemd.sync_forge_docs(repo, force=True)
+
+    assert changed is True
+    for name in install_claudemd.FORGE_DOCS_PAGES:
+        assert (docs_dir / name).read_text() == f"# {name}\n\nFake content.\n"
 
 
 # ---------------------------------------------------------------------------

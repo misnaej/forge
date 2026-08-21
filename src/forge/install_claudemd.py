@@ -309,6 +309,10 @@ def sync_foundation(
 FORGE_DOCS_DIR = "forge-docs"
 FORGE_DOCS_PAGES = ("configuration.md", "ci-recipe.md", "smart-test.md")
 FORGE_DOCS_README = "README.md"
+# Distinct from BLOCK_NAME: the mirrored-docs README is its own managed
+# artifact — sharing FOUNDATION's marker would couple their versioning
+# and mislabel the block for human readers.
+FORGE_DOCS_BLOCK_NAME = "forge:docs-managed"
 
 
 def _forge_docs_readme_text(version: str) -> str:
@@ -322,7 +326,7 @@ def _forge_docs_readme_text(version: str) -> str:
     """
     pages = "\n".join(f"- `{name}`" for name in FORGE_DOCS_PAGES)
     return (
-        f"<!-- {BLOCK_NAME} v{BLOCK_VERSION} START -->\n"
+        f"<!-- {FORGE_DOCS_BLOCK_NAME} v{BLOCK_VERSION} START -->\n"
         f"<!-- DO NOT EDIT — managed by forge. Synced from forge-scripts "
         f"{version} by install-forge-claude-md. -->\n\n"
         "# forge-docs — forge's shipped reference pages\n\n"
@@ -334,7 +338,7 @@ def _forge_docs_readme_text(version: str) -> str:
         "hook. Links inside these pages that point at other forge documents\n"
         "resolve in the forge repository, not here.\n\n"
         f"Mirrored pages:\n{pages}\n\n"
-        f"<!-- {BLOCK_NAME} v{BLOCK_VERSION} END -->\n"
+        f"<!-- {FORGE_DOCS_BLOCK_NAME} v{BLOCK_VERSION} END -->\n"
     )
 
 
@@ -363,7 +367,38 @@ def _forge_docs_is_self(repo_root: Path) -> bool:
         return False
 
 
-def sync_forge_docs(repo_root: Path, *, check_only: bool = False) -> bool:
+def _forge_docs_is_unmanaged(repo_root: Path) -> bool:
+    """Return whether an existing ``forge-docs/`` is NOT forge-managed.
+
+    The generated README is the management sentinel (the mirrored pages
+    themselves are verbatim, marker-free copies): a ``forge-docs/``
+    directory holding files but no README carrying the
+    ``forge:docs-managed`` marker belongs to the consumer, and syncing
+    over it would silently destroy their content — the same hazard
+    ``sync_foundation``'s marker guard prevents for ``FOUNDATION.md``.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``True`` when the directory exists with content but without the
+        managed README sentinel.
+    """
+    target_dir = repo_root / FORGE_DOCS_DIR
+    if not target_dir.is_dir() or not any(target_dir.iterdir()):
+        return False
+    readme = target_dir / FORGE_DOCS_README
+    if not readme.is_file():
+        return True
+    return FORGE_DOCS_BLOCK_NAME not in readme.read_text()
+
+
+def sync_forge_docs(
+    repo_root: Path,
+    *,
+    check_only: bool = False,
+    force: bool = False,
+) -> bool:
     """Mirror the shipped ``forge-docs/`` reference set into the consumer repo.
 
     Verbatim page copies plus a generated never-edit README; hand-edits
@@ -374,10 +409,13 @@ def sync_forge_docs(repo_root: Path, *, check_only: bool = False) -> bool:
     Args:
         repo_root: Git repo root.
         check_only: Report drift without writing.
+        force: Overwrite an existing ``forge-docs/`` that lacks the
+            managed README sentinel (i.e. belongs to the consumer).
 
     Returns:
         True if anything changed (or would change in ``check_only`` mode);
-        False when already in sync or self-skipped.
+        False when already in sync, self-skipped, or left alone as
+        unmanaged.
     """
     src = resources.files("forge").joinpath("data/docs")
     try:
@@ -387,6 +425,14 @@ def sync_forge_docs(repo_root: Path, *, check_only: bool = False) -> bool:
     if _forge_docs_is_self(repo_root):
         logger.info(
             "✓ %s/ is the canonical shipped set — skipping sync", FORGE_DOCS_DIR
+        )
+        return False
+    if _forge_docs_is_unmanaged(repo_root) and not force:
+        logger.warning(
+            "! %s/ exists but is not forge-managed (no %s README marker). "
+            "Leaving alone (use --force to overwrite).",
+            FORGE_DOCS_DIR,
+            FORGE_DOCS_BLOCK_NAME,
         )
         return False
     target_dir = repo_root / FORGE_DOCS_DIR
@@ -1191,7 +1237,7 @@ def main() -> int:
     )
     # The mirrored reference set FOUNDATION links into (forge-docs/) syncs
     # with the same cadence and the same check semantics as FOUNDATION.
-    docs_changed = sync_forge_docs(root, check_only=args.check)
+    docs_changed = sync_forge_docs(root, check_only=args.check, force=args.force)
     changed = changed or docs_changed
 
     if not args.check and not claudemd_path.exists():
