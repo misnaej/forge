@@ -92,6 +92,7 @@ Execute `/pr` Step 3.92's authoring contract — composition inputs and the `blo
 
    - **Pre-run reports** in the caller's prompt → use them; skip step 1 (the direct-invocation fallback).
    - **Pre-authored wrap-up** (`code_health/pr_wrapup.md` names `HEAD`) → post verbatim; refresh only the CI Status line — never recompose.
+   - **Stale plan check**: when the caller's `forge-pr-plan` output carries a `classified_at` that is not the current `HEAD`, **WARN in the wrap-up** (do not refuse): the finalization path was classified on a different tree, so the mode may no longer apply — name both SHAs and recommend re-running `forge-pr-plan`.
    - **Delta mode** (the full three-part gate lives in `pr_delta.py` `delta_decision()`; header contract: [_TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract) — never hardcode) → **skip step 1**; post a "Delta re-verification" comment (prior verdicts, prior SHA, line/file counts) + a refreshed squash-merge comment.
    - **Docs-only light path** (caller-declared; classifier: `pr_delta.docs_only_diff`) → docs-types report only; step 2 = the caller's targeted `--only` gates; say so in the wrap-up.
 
