@@ -116,7 +116,7 @@ what the run was doing while it was slow.
 ## Configuration
 
 Both entry points read `[tool.forge.telemetry]` — full reference in
-[`docs/configuration.md`](configuration.md#tool-forge-telemetry--resource-profiling):
+[`docs/configuration.md`](configuration.md#toolforgetelemetry--resource-profiling):
 
 ```toml
 [tool.forge.telemetry]
