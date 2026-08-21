@@ -108,6 +108,13 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "setting it opts the step in.",
     ),
     ConfigKey(
+        ("tool", "forge", "agent_doc", "guarded_by"),
+        "unset (guard-map edge check self-skips)",
+        "Table mapping an agent's doc node id to the guard hooks protecting "
+        'it (e.g. precommit_fixer = ["block_fixer_recon"]); each entry '
+        "must appear as an agent->hook edge in the agent doc.",
+    ),
+    ConfigKey(
         ("tool", "forge", "docstring_coverage", "badge"),
         default=False,
         description="Generate interrogate's coverage badge to "

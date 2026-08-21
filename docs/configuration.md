@@ -133,7 +133,8 @@ prose-level injection content are not detected by path classification.
 
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
-| `path` | unset (step self-skips) | Repo-relative path of a hand-maintained agent-architecture doc; setting it opts into the `agent_doc` pre-commit step (`verify-forge-agent-doc`: full agent/skill coverage, no dangling hook/CLI/skill references). | You keep an agent-architecture doc and want drift caught at commit time. |
+| `path` | unset (step self-skips) | Repo-relative path of a hand-maintained agent-architecture doc; setting it opts into the `agent_doc` pre-commit step (`verify-forge-agent-doc`: full agent/skill coverage, no dangling hook/CLI/skill references, structural edge checks on the doc's mermaid graphs). | You keep an agent-architecture doc and want drift caught at commit time. |
+| `guarded_by` | unset (guard-map edge check self-skips) | Table mapping an agent's doc node id to the guard hooks protecting it (e.g. `precommit_fixer = ["block_fixer_recon"]`); `verify-forge-agent-doc` requires each entry to appear as an agent→hook edge in the doc. | Your agent doc draws guard-hook edges and you want a removed/renamed guard flagged at commit time. |
 
 ## `[tool.forge.audit_agents]`
 

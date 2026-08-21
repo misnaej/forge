@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.16.0 — Unreleased
+## v3.17.0 — Unreleased
 
 ### Features
 - **Resource profiling for test and command runs.** New `forge-telemetry
@@ -32,6 +32,20 @@ versions follow forge's rolling-next convention.
   the CLI fails loudly without psutil, while the smart-test flag
   degrades to an unprofiled run. Default off everywhere — invocation is
   always explicit, and the child's exit code passes through unchanged.
+
+## v3.16.0 — Unreleased
+
+### Features
+- **The agent-architecture doc's edges are now structurally verified.**
+  `verify-forge-agent-doc` (the `agent_doc` pre-commit step) parses the
+  doc's mermaid graphs and hard-fails when a skill→agent delegation
+  wired in a `SKILL.md` has no matching edge, when an entry in the new
+  `[tool.forge.agent_doc].guarded_by` map (agent → guard hooks) has no
+  agent→hook edge, or when an edge endpoint resolves to no real
+  agent/skill/hook/CLI (policy/person/orchestrator nodes exempt). Edge
+  verbs stay hand-curated — checks match endpoints, never label text.
+  The Layer-2 diff report also stops misclassifying shell shebangs as
+  skill mentions and shell comments as hook edges.
 
 ## v3.15.0 — Unreleased
 
