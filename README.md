@@ -159,6 +159,7 @@ graph LR
     release_tooling -->|"imports"| installers
     smart_test -->|"imports"| config_shared
     verifiers -->|"imports"| config_shared
+    verifiers -->|"imports"| release_tooling
     classDef component fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
     classDef container fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
     classDef external fill:#f3e8ff,stroke:#9333ea,color:#581c87

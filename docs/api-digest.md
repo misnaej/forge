@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_65 modules, 734 symbols._
+_65 modules, 736 symbols._
 
 ## `forge`
 
@@ -981,6 +981,8 @@ _65 modules, 734 symbols._
 > _verify-forge-doc-consistency — check machine-checkable doc claims vs repo state._
 
 - `_check_cli_coverage(repo_root: Path) -> list[str]` _(internal)_ — Return findings for ``[project.scripts]`` names missing from the CLI reference.
+- `_provenance_prose_tokens(text: str) -> set[str]` _(internal)_ — Collect ``*_check`` tokens from *text*'s provenance-adjacent lines.
+- `_check_provenance_gate_names(repo_root: Path) -> list[str]` _(internal)_ — Return findings for provenance gate-step names drifting from the constant.
 - `main() -> int` — CLI entry point.
 
 ## `forge.verify_docstring_coverage`
