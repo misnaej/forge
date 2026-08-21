@@ -577,7 +577,7 @@ the plugin at `${CLAUDE_PLUGIN_ROOT}/claude-hooks/...`, not registered here.
 
 ## 12. Single Source of Truth
 
-Cross-cutting; reviewed by `forge:design-checker`.
+Reviewed by `forge:design-checker`.
 
 - Shared behaviours and principles live in **one canonical place** — this
   file, the consumer's `CLAUDE.md`, or a designated shared module — and every
@@ -716,8 +716,8 @@ Enforcement is greppable: CI-relevant files import `forge.run_context`;
 review rejects inline `os.environ.get("CI")` checks; new CI markers go in
 `_CI_MARKERS` — one place, every tool.
 
-Consumers adopt the single shipped CI recipe (README "Running forge in CI" +
-[`forge-docs/ci-recipe.md`](forge-docs/ci-recipe.md)) rather than a custom integration.
+Consumers adopt the one shipped CI recipe (README "Running forge in CI" +
+[`forge-docs/ci-recipe.md`](forge-docs/ci-recipe.md)), never a custom one.
 
 ---
 
