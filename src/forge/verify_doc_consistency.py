@@ -13,10 +13,10 @@ any repo):
   least once in ``docs/cli-reference.md``. A CLI added or removed without
   a matching doc line is drift.
 - **Provenance gate names** — every step in
-  ``pr_delta.PROVENANCE_GATE_STEPS`` appears in the two prose surfaces
-  that hand-name the gates (``src/forge/precommit.py`` docstrings and
-  ``skills/pr/SKILL.md``), and no ``*_check`` token named in those
-  files' provenance prose is absent from the constant (a stale name).
+  ``pr_delta.PROVENANCE_GATE_STEPS`` appears in each prose surface that
+  hand-names the gates (the files in :data:`_PROVENANCE_PROSE_FILES`),
+  and no ``*_check`` token named in those files' provenance prose is
+  absent from the constant (a stale name).
 
 Scope is deliberately conservative for v1: the one robust, no-NLP,
 no-maintenance check. Name-list/count checks that depend on prose
@@ -86,10 +86,16 @@ def _check_cli_coverage(repo_root: Path) -> list[str]:
 # Step-name-shaped token, matched only inside provenance-adjacent prose.
 _CHECK_TOKEN_RE = re.compile(r"\b[a-z0-9_]+_check\b")
 # Lines this close to a "provenance" mention count as provenance prose.
-_PROVENANCE_WINDOW = 3
+# Sized to span forge-docs/configuration.md's gate bullet list, whose last
+# token sits 9 lines below its "provenance gates" anchor line.
+_PROVENANCE_WINDOW = 9
 
-# The two surfaces that hand-name the provenance gate steps in prose.
-_PROVENANCE_PROSE_FILES = ("src/forge/precommit.py", "skills/pr/SKILL.md")
+# The surfaces that hand-name the provenance gate steps in prose.
+_PROVENANCE_PROSE_FILES = (
+    "src/forge/precommit.py",
+    "skills/pr/SKILL.md",
+    "forge-docs/configuration.md",
+)
 
 
 def _provenance_prose_tokens(text: str) -> set[str]:
@@ -121,8 +127,8 @@ def _check_provenance_gate_names(repo_root: Path) -> list[str]:
     """Return findings for provenance gate-step names drifting from the constant.
 
     ``pr_delta.PROVENANCE_GATE_STEPS`` is the single source of truth; the
-    ``precommit.py`` docstrings and the ``/pr`` skill hand-name the same
-    steps in prose. Two drift directions are flagged per file: a constant
+    files in :data:`_PROVENANCE_PROSE_FILES` hand-name the same steps in
+    prose. Two drift directions are flagged per file: a constant
     step missing from the file entirely, and a ``*_check`` token in the
     file's provenance prose that the constant does not contain (a stale
     name left behind by a rename).

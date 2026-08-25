@@ -159,11 +159,12 @@ def test_provenance_gate_names_skips_without_prose_files(tmp_path: Path) -> None
 
 
 def test_provenance_prose_tokens_excludes_token_outside_window() -> None:
-    """A `*_check` token more than 3 lines from any "provenance" mention is dropped."""
-    text = (
-        "Line0: Provenance overview.\nLine1: filler\nLine2: filler\n"
-        "Line3: filler\nLine4: far_away_check appears here"
-    )
+    """A `*_check` token beyond `_PROVENANCE_WINDOW` lines from a "provenance" mention.
+
+    Beyond the window, the token is dropped.
+    """
+    filler = "\n".join(f"Line filler {i}" for i in range(vdc._PROVENANCE_WINDOW + 1))
+    text = f"Line0: Provenance overview.\n{filler}\nfar_away_check appears here"
     assert vdc._provenance_prose_tokens(text) == set()
 
 
@@ -196,10 +197,11 @@ def test_provenance_gate_names_window_boundary_with_step_prefix_not_flagged(
     boundary and the `step_` prefix strip working together — either one
     alone regressing would turn this into a false stale-token finding.
     """
+    filler = "\n".join(f"filler line {i}" for i in range(vdc._PROVENANCE_WINDOW - 1))
     _write(
         tmp_path / "src" / "forge" / "precommit.py",
         (
-            "step_foundation_md_check line\nfiller line 1\nfiller line 2\n"
+            f"step_foundation_md_check line\n{filler}\n"
             "Provenance gates: foundation_md_check, cli_reference_check, "
             "api_digest_check.\n"
         ),
@@ -208,15 +210,14 @@ def test_provenance_gate_names_window_boundary_with_step_prefix_not_flagged(
 
 
 def test_provenance_prose_tokens_includes_token_at_window_boundary() -> None:
-    """A `*_check` token exactly 3 lines from a "provenance" mention is collected.
+    """A `*_check` token exactly `_PROVENANCE_WINDOW` lines from provenance.
 
-    Complements ``test_provenance_prose_tokens_excludes_token_outside_window``:
-    the window is inclusive at its edge, not merely close to it.
+    Collected at the window boundary. Complements
+    ``test_provenance_prose_tokens_excludes_token_outside_window``: the window
+    is inclusive at its edge, not merely close to it.
     """
-    text = (
-        "Line0: Provenance overview.\nLine1: filler\nLine2: filler\n"
-        "Line3: boundary_check appears here"
-    )
+    filler = "\n".join(f"Line filler {i}" for i in range(vdc._PROVENANCE_WINDOW - 1))
+    text = f"Line0: Provenance overview.\n{filler}\nboundary_check appears here"
     assert vdc._provenance_prose_tokens(text) == {"boundary_check"}
 
 
@@ -264,3 +265,19 @@ def test_provenance_gate_names_multi_file_attributes_to_drifting_file_only(
     assert len(findings) == 1
     assert "skills/pr/SKILL.md" in findings[0]
     assert "src/forge/precommit.py" not in findings[0]
+
+
+def test_provenance_gate_names_covers_configuration_md(tmp_path: Path) -> None:
+    """`forge-docs/configuration.md` is a covered prose surface.
+
+    Covered the same as the other prose surfaces.
+    """
+    _write(
+        tmp_path / "forge-docs" / "configuration.md",
+        "Provenance gates run foundation_md_check and cli_reference_check "
+        "before finalizing.\n",
+    )
+    findings = vdc._check_provenance_gate_names(tmp_path)
+    assert len(findings) == 1
+    assert "forge-docs/configuration.md" in findings[0]
+    assert "api_digest_check" in findings[0]
