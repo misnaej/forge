@@ -30,7 +30,7 @@ If `$ARGUMENTS` contains a PR number, use that instead of auto-detecting. Then:
 - **Draft escape hatch** — the user wants the PR visible now → create it as a
   draft (`gh pr create --draft`, body per the Step 3.95 template) and mark it
   ready in Step 3.95. Drafts do not consume CI: the shipped workflow
-  ([`docs/ci-recipe.md`](../../docs/ci-recipe.md)) skips draft PRs and runs
+  ([`forge-docs/ci-recipe.md`](../../forge-docs/ci-recipe.md)) skips draft PRs and runs
   on `ready_for_review`.
 
 ## Step 0.5: Base-sync gate

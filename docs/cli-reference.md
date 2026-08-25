@@ -504,7 +504,7 @@ options:
                         Semver increment to apply to the latest v* tag.
   --from-changelog      Cut the version the CHANGELOG.md top heading declares.
                         Idempotent (already tagged → exit 0); the tag-on-merge
-                        CI mode — see docs/ci-recipe.md.
+                        CI mode — see forge-docs/ci-recipe.md.
   --dry-run             Report the tag that would be cut and exit without
                         tagging.
 ```

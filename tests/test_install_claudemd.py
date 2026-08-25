@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -19,8 +20,6 @@ from forge import install_claudemd
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import pytest
 
 
@@ -145,6 +144,281 @@ def test_force_overwrites_unmanaged_foundation(
     assert text.startswith("<!-- forge:foundation-managed v1 START -->")
     assert "Hand-rolled" not in text
     assert "Fake foundation content" in text
+
+
+# ---------------------------------------------------------------------------
+# sync_forge_docs: mirrors the shipped forge-docs/ reference set.
+# ---------------------------------------------------------------------------
+
+
+def _fake_docs_package(
+    monkeypatch: pytest.MonkeyPatch,
+    package_root: Path,
+    *,
+    pages: dict[str, str] | None = None,
+) -> None:
+    """Redirect ``resources.files("forge")`` to *package_root* for docs tests.
+
+    Args:
+        monkeypatch: Pytest fixture.
+        package_root: Fake package root; ``package_root/data/docs`` supplies
+            the mirrored pages ``sync_forge_docs`` reads from.
+        pages: Page name -> content to materialise under ``data/docs``.
+            Defaults to writing every ``FORGE_DOCS_PAGES`` entry with
+            canned content when omitted.
+    """
+    docs_src = package_root / "data" / "docs"
+    docs_src.mkdir(parents=True, exist_ok=True)
+    for name, content in (
+        pages
+        or {
+            page: f"# {page}\n\nFake content.\n"
+            for page in install_claudemd.FORGE_DOCS_PAGES
+        }
+    ).items():
+        (docs_src / name).write_text(content)
+    monkeypatch.setattr(install_claudemd.resources, "files", lambda _pkg: package_root)
+
+
+def test_sync_forge_docs_creates_fresh_pages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """sync_forge_docs() writes each mirrored page plus the never-edit README."""
+    _patch_inputs(monkeypatch, version="1.2.3")
+    _fake_docs_package(monkeypatch, tmp_path / "pkg")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    changed = install_claudemd.sync_forge_docs(repo)
+
+    assert changed
+    docs_dir = repo / install_claudemd.FORGE_DOCS_DIR
+    for name in install_claudemd.FORGE_DOCS_PAGES:
+        assert (docs_dir / name).read_text() == f"# {name}\n\nFake content.\n"
+    readme = (docs_dir / install_claudemd.FORGE_DOCS_README).read_text()
+    assert "Do not edit anything in this folder" in readme
+    assert f"{install_claudemd.FORGE_DOCS_BLOCK_NAME} v1 START" in readme
+    for name in install_claudemd.FORGE_DOCS_PAGES:
+        assert name in readme
+    assert "1.2.3" in readme
+
+
+def test_sync_forge_docs_idempotent_when_in_sync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-running sync_forge_docs() on an in-sync mirror makes no changes."""
+    _patch_inputs(monkeypatch)
+    _fake_docs_package(monkeypatch, tmp_path / "pkg")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    install_claudemd.sync_forge_docs(repo)
+
+    changed = install_claudemd.sync_forge_docs(repo)
+
+    assert not changed
+
+
+def test_sync_forge_docs_check_only_reports_drift_without_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A hand-edited page is reported as drift in check_only mode, unwritten."""
+    _patch_inputs(monkeypatch)
+    _fake_docs_package(monkeypatch, tmp_path / "pkg")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    install_claudemd.sync_forge_docs(repo)
+    target = (
+        repo / install_claudemd.FORGE_DOCS_DIR / install_claudemd.FORGE_DOCS_PAGES[0]
+    )
+    target.write_text("hand-edited content\n")
+
+    with caplog.at_level("WARNING"):
+        drift = install_claudemd.sync_forge_docs(repo, check_only=True)
+
+    assert drift is True
+    assert "out of sync" in caplog.text
+    assert target.read_text() == "hand-edited content\n"
+
+
+def test_sync_forge_docs_heals_hand_edit_on_next_sync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hand-edited page is overwritten (healed) by a non-check_only sync."""
+    _patch_inputs(monkeypatch)
+    _fake_docs_package(monkeypatch, tmp_path / "pkg")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    install_claudemd.sync_forge_docs(repo)
+    target = (
+        repo / install_claudemd.FORGE_DOCS_DIR / install_claudemd.FORGE_DOCS_PAGES[0]
+    )
+    target.write_text("hand-edited content\n")
+
+    healed = install_claudemd.sync_forge_docs(repo)
+
+    assert healed is True
+    healed_name = install_claudemd.FORGE_DOCS_PAGES[0]
+    assert target.read_text() == f"# {healed_name}\n\nFake content.\n"
+
+
+def test_sync_forge_docs_partial_package_writes_only_available_pages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An installed package predating some pages writes only what's shipped.
+
+    A gradual rollout of a new mirrored page means older installs carry
+    ``data/docs/`` with a subset of ``FORGE_DOCS_PAGES`` — the
+    ``if name in available`` filter must skip the missing one rather than
+    crashing on a ``FileNotFoundError`` from ``src.joinpath(name).read_text()``.
+    """
+    _patch_inputs(monkeypatch, version="1.2.3")
+    available_pages = install_claudemd.FORGE_DOCS_PAGES[:2]
+    missing_page = install_claudemd.FORGE_DOCS_PAGES[2]
+    _fake_docs_package(
+        monkeypatch,
+        tmp_path / "pkg",
+        pages={page: f"# {page}\n\nFake content.\n" for page in available_pages},
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    changed = install_claudemd.sync_forge_docs(repo)
+
+    assert changed
+    docs_dir = repo / install_claudemd.FORGE_DOCS_DIR
+    for name in available_pages:
+        assert (docs_dir / name).read_text() == f"# {name}\n\nFake content.\n"
+    assert not (docs_dir / missing_page).exists()
+    assert (docs_dir / install_claudemd.FORGE_DOCS_README).exists()
+
+
+def test_forge_docs_is_self_returns_false_on_as_file_os_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resources.as_file OSError falls back to 'not self', so sync proceeds.
+
+    ``_forge_docs_is_self`` wraps the ``as_file``/``samefile`` check in a
+    ``try/except OSError`` — a filesystem hiccup resolving the packaged
+    resource (e.g. a broken symlink) must not crash the sync; it only means
+    the self-skip escape can't be confirmed, so the mirror still syncs
+    normally instead of silently no-oping.
+    """
+    _patch_inputs(monkeypatch)
+    _fake_docs_package(monkeypatch, tmp_path / "pkg")
+    repo = tmp_path / "repo"
+    docs_dir = repo / install_claudemd.FORGE_DOCS_DIR
+    docs_dir.mkdir(parents=True)
+    (docs_dir / install_claudemd.FORGE_DOCS_PAGES[0]).write_text("existing\n")
+    # Seed the managed README sentinel so the unmanaged-dir guard doesn't
+    # short-circuit the sync before the as_file OSError path is exercised.
+    (docs_dir / install_claudemd.FORGE_DOCS_README).write_text(
+        install_claudemd._forge_docs_readme_text("0.0.0")
+    )
+
+    def _raise_os_error(_ref: object) -> None:
+        """Stand in for resources.as_file, simulating a broken symlink.
+
+        Args:
+            _ref: Unused context manager resource reference.
+        """
+        msg = "broken symlink"
+        raise OSError(msg)
+
+    monkeypatch.setattr(install_claudemd.resources, "as_file", _raise_os_error)
+
+    assert install_claudemd._forge_docs_is_self(repo) is False
+
+    changed = install_claudemd.sync_forge_docs(repo)
+    assert changed is True
+
+
+def test_sync_forge_docs_self_skips_in_forge_repo() -> None:
+    """In forge's own repo, forge-docs/ IS the canonical shipped set.
+
+    Uses the real repo checkout (not a fake tmp tree): forge's own
+    ``src/forge/data/docs/`` ships as a symlink chain into ``forge-docs/``,
+    so ``resources.files("forge")`` resolves to files inside this very
+    checkout when running from an editable install — the exact condition
+    :func:`_forge_docs_is_self` detects.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    assert install_claudemd._forge_docs_is_self(repo_root) is True
+
+    changed = install_claudemd.sync_forge_docs(repo_root)
+
+    assert changed is False
+
+
+def test_sync_forge_docs_missing_package_data_returns_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Degrades to a no-op when the installed package predates data/docs/."""
+    monkeypatch.setattr(
+        install_claudemd.resources,
+        "files",
+        lambda _pkg: tmp_path / "no-such-package",
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    changed = install_claudemd.sync_forge_docs(repo)
+
+    assert changed is False
+    assert not (repo / install_claudemd.FORGE_DOCS_DIR).exists()
+
+
+def test_sync_forge_docs_leaves_unmanaged_dir_alone(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A pre-existing, non-forge forge-docs/ (no managed README) is untouched.
+
+    Guards against silently clobbering a consumer's own ``forge-docs/``
+    content — the same hazard ``sync_foundation``'s marker guard prevents
+    for ``FOUNDATION.md``.
+    """
+    _patch_inputs(monkeypatch)
+    _fake_docs_package(monkeypatch, tmp_path / "pkg")
+    repo = tmp_path / "repo"
+    docs_dir = repo / install_claudemd.FORGE_DOCS_DIR
+    docs_dir.mkdir(parents=True)
+    consumer_file = docs_dir / "notes.md"
+    consumer_file.write_text("consumer's own notes\n")
+
+    with caplog.at_level("WARNING"):
+        changed = install_claudemd.sync_forge_docs(repo)
+
+    assert changed is False
+    assert consumer_file.read_text() == "consumer's own notes\n"
+    assert "not forge-managed" in caplog.text
+
+
+def test_sync_forge_docs_force_overwrites_unmanaged_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """force=True overwrites a pre-existing, non-forge forge-docs/ directory."""
+    _patch_inputs(monkeypatch)
+    _fake_docs_package(monkeypatch, tmp_path / "pkg")
+    repo = tmp_path / "repo"
+    docs_dir = repo / install_claudemd.FORGE_DOCS_DIR
+    docs_dir.mkdir(parents=True)
+    docs_dir.joinpath("notes.md").write_text("consumer's own notes\n")
+
+    changed = install_claudemd.sync_forge_docs(repo, force=True)
+
+    assert changed is True
+    for name in install_claudemd.FORGE_DOCS_PAGES:
+        assert (docs_dir / name).read_text() == f"# {name}\n\nFake content.\n"
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +665,9 @@ def test_main_check_mode_exits_zero_when_in_sync(
     _patch_inputs(monkeypatch)
     monkeypatch.setattr(install_claudemd, "repo_root", lambda: tmp_path)
     install_claudemd.sync_foundation(tmp_path / "FOUNDATION.md")
+    # main() also syncs the forge-docs/ mirror; pre-sync it so this test's
+    # `--check` run only exercises FOUNDATION.md drift, not docs drift.
+    install_claudemd.sync_forge_docs(tmp_path)
     # Scaffold a CLAUDE.md with the include so warn_claudemd_missing_include is quiet.
     (tmp_path / "CLAUDE.md").write_text("# Project\n\n@FOUNDATION.md\n")
     with patch.object(

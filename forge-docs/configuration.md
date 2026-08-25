@@ -260,12 +260,12 @@ round, and each also works standalone:
 ## `[tool.forge.smart_test]` — opt-in change-scoped test gate
 
 Drives the optional `smart_test` pre-commit step, which runs
-[`forge-smart-test`](cli-reference.md#forge-smart-test) at a fixed depth on
+[`forge-smart-test`](../docs/cli-reference.md#forge-smart-test) at a fixed depth on
 every commit so only the tests your change set affects run. **Off by
 default** — the step self-skips entirely unless `precommit_depth` is set.
 The CLI itself (and the `/forge:smart-test` skill) work without any config;
 this table only governs the pre-commit integration. Depth model and the
-speed/coverage trade-off: FOUNDATION §17.
+speed/coverage trade-off: [`forge-docs/smart-test.md`](smart-test.md).
 
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
@@ -279,13 +279,13 @@ speed/coverage trade-off: FOUNDATION §17.
 
 ## `[tool.forge.telemetry]` — resource profiling
 
-Governs [`forge-telemetry`](cli-reference.md#forge-telemetry) (`forge-telemetry
+Governs [`forge-telemetry`](../docs/cli-reference.md#forge-telemetry) (`forge-telemetry
 -- <cmd> ...`) and `forge-smart-test --telemetry`: process-tree RSS + host CPU
 sampled while the wrapped command runs, written to `code_health/telemetry.log`
 (+ `telemetry.png` with matplotlib). Needs the `[telemetry]` extra
 (`psutil` + `matplotlib`); invocation is always explicit — there is no
 ambient enable switch. Usage guide, an example chart, and how to read a
-profile: [`docs/telemetry.md`](telemetry.md).
+profile: [`docs/telemetry.md`](../docs/telemetry.md).
 
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
@@ -294,7 +294,7 @@ profile: [`docs/telemetry.md`](telemetry.md).
 
 ## `[tool.forge.layering]` — opt-in layer-composition gate
 
-Drives [`forge-audit-layering`](cli-reference.md#forge-audit-layering) and
+Drives [`forge-audit-layering`](../docs/cli-reference.md#forge-audit-layering) and
 the optional `layering` pre-commit step. **Off by default** — the audit
 reports nothing and the step self-skips unless at least one
 `[[tool.forge.layering.layer]]` table exists. The contract is *positive*:
@@ -429,6 +429,26 @@ export FORGE_NO_AUTO_REBUILD=1
 Forge-specific keys for the docstring-coverage reporter. (The coverage *gate*
 itself — threshold, excludes, ignores — lives in `[tool.interrogate]` below;
 these are the keys interrogate has no concept of.)
+
+### Docstring enforcement — three deliberate layers
+
+Forge ships THREE docstring enforcement mechanisms (FOUNDATION §8); they
+overlap on purpose, each catching what the others miss:
+
+| Layer | What it enforces | Scope | Blocking? |
+|---|---|---|---|
+| **ruff D100–D107** (`select = ["ALL"]`) | Docstring present on every module / class / public function / method / `__init__` / magic method | Modified files | YES |
+| `verify-forge-docstrings` (`docstring_verification`) | If a docstring exists: **Args** match the signature, **Returns** present for non-`None` returns, no `self` / `cls` / `Returns: None` anti-patterns | Modified files | YES |
+| `verify-forge-docstring-coverage` (`docstring_coverage`) | Aggregate % across the tree; per-file table; `MISSING:` list for the fixer; optional badge | Full `src/` tree | **NO — reporter** |
+
+**Why interrogate is non-blocking:** ruff D100–D107 are the actual gate — a
+missing docstring on a public symbol is refused there. Interrogate measures
+**aggregate coverage across the full tree** (ruff only sees the diff) and
+surfaces a `MISSING:` list `forge:precommit-fixer` acts on. Trivial nested
+functions / closures are exempt (`ignore-nested-functions`), so blocking
+here is redundant. `[tool.interrogate]` is the single source of truth for
+the gate config (default threshold `fail-under = 90`, tighten per
+FOUNDATION §4).
 
 > **Naming — one thing, three names.** The config section
 > `[tool.forge.docstring_coverage]`, the generated badge file
@@ -581,7 +601,7 @@ through Mermaid's config today. **Note:** the non-hierarchical ELK engines
 (`layout = "elk.stress"` / `"elk.force"`) are **rejected** — they drop
 cross-cluster edges and overlap nodes on C4's multi-cluster views.
 
-See [`docs/c4-architecture.md`](c4-architecture.md) for the design and
+See [`docs/c4-architecture.md`](../docs/c4-architecture.md) for the design and
 rationale, and [`skills/c4/SKILL.md`](../skills/c4/SKILL.md) for building a
 model interactively.
 
@@ -606,7 +626,7 @@ you only set a key to deviate. Unknown keys are ignored. Lives under
 | `elk_layer_spacing` | _unset_ | `elk.layered.spacing.nodeNodeBetweenLayers` | Gap between layers under **ELK** (counterpart of `rank_spacing`). |
 | `elk_base_value` | _unset_ | `elk.spacing.baseValue` | ELK master spacing all unset per-pair spacings derive from — raises every gap proportionally. |
 | `padding` | _unset_ | `flowchart.padding` | Inner node padding. |
-| `custom_css` | _unset_ | `themeCSS` (root) | Raw-CSS escape hatch injected into the diagram. Every element's `tags` are emitted as Mermaid CSS classes on its node (e.g. `.agent`), so this can style by role — see the [element tag vocabulary](c4-architecture.md) for the reserved tag set. |
+| `custom_css` | _unset_ | `themeCSS` (root) | Raw-CSS escape hatch injected into the diagram. Every element's `tags` are emitted as Mermaid CSS classes on its node (e.g. `.agent`), so this can style by role — see the [element tag vocabulary](../docs/c4-architecture.md) for the reserved tag set. |
 | `layout` | `"elk"` | `layout` (root) | `elk` (= `elk.layered`) or `dagre` — the two supported, **hierarchy-aware** engines (they keep C4's clusters separated and route every edge). ELK routes dense cross-cluster edges more cleanly and tunes spacing via `elk_node_spacing` / `elk_layer_spacing`; `dagre` tunes `node_spacing` / `rank_spacing`. The organic ELK engines (`elk.stress` / `elk.force` / `elk.radial`) are **rejected at config-load** — they silently drop edges + overlap nodes on multi-cluster views. |
 | `node_placement_strategy` | `"NETWORK_SIMPLEX"` | `elk.nodePlacementStrategy` | ELK node placement (`BRANDES_KOEPF`, `NETWORK_SIMPLEX`, …). |
 | `force_node_model_order` | `true` | `elk.forceNodeModelOrder` | Preserve declared node order. |
@@ -676,7 +696,7 @@ mitigation = "ensure XML sources are trusted"
 ## `[tool.forge.changelog]` — opt-in CHANGELOG gates
 
 Two opt-in pre-commit steps for **single-track, tag-versioned** repos
-following the [consumer changelog convention](consumer-release.md)
+following the [consumer changelog convention](../docs/consumer-release.md)
 (enable via `[tool.forge.precommit] enable = ["changelog_version",
 "changelog_updated"]`):
 
@@ -694,7 +714,7 @@ following the [consumer changelog convention](consumer-release.md)
   touches a changelog-requiring path without touching `CHANGELOG.md`
   fails. Self-skips without a `CHANGELOG.md` and on the base branch;
   genuine no-version changes opt out via env, branch token, or commit
-  tag — see the ["No-version opt-out"](consumer-release.md#enforcement)
+  tag — see the ["No-version opt-out"](../docs/consumer-release.md#enforcement)
   in `docs/consumer-release.md` for all three signals.
 
 | Key | Default | What it does | Set it when |
@@ -702,7 +722,7 @@ following the [consumer changelog convention](consumer-release.md)
 | `blocking` | `true` | Findings fail the commit; `false` downgrades both steps to a WARN. | Staged adoption on a repo with a messy changelog history. |
 | `exempt_paths` | `[]` | Path prefixes `changelog_updated` ignores. | Scratch/experimental dirs whose changes need no entry. |
 | `require_paths` | `[]` | Prefixes that always require an entry, overriding `exempt_paths` (checked first). | A shipped subtree inside an otherwise exempt dir. |
-| `precommit_enforce` | `true` | `false` = deferred mode: local commits (human or agent) self-skip `changelog_updated`; genuine CI keeps failing — with an expected-until-wrap-up message — until the entry lands at PR wrap-up. See the ["Deferred entry timing"](consumer-release.md#enforcement) chain. | High-parallelism repos hitting mid-PR changelog merge conflicts. |
+| `precommit_enforce` | `true` | `false` = deferred mode: local commits (human or agent) self-skip `changelog_updated`; genuine CI keeps failing — with an expected-until-wrap-up message — until the entry lands at PR wrap-up. See the ["Deferred entry timing"](../docs/consumer-release.md#enforcement) chain. | High-parallelism repos hitting mid-PR changelog merge conflicts. |
 
 `precommit_enforce` and `blocking` are independent axes — timing vs
 severity. With both `false`, CI's deferred check degrades to a WARN, so
