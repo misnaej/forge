@@ -20,6 +20,16 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.20.1 — Unreleased
+
+### Tooling
+- **Provenance gate-step names are now drift-checked.** The
+  `doc_consistency` step verifies every `pr_delta.PROVENANCE_GATE_STEPS`
+  name appears in each prose surface that hand-names the gates
+  (`precommit.py`, the `/pr` skill, `forge-docs/configuration.md`) and
+  flags stale `*_check` tokens in their provenance prose that the
+  constant no longer contains.
+
 ## v3.20.0 — Unreleased
 
 ### Features
