@@ -245,7 +245,7 @@ seam shared with `forge-audit-deps` / `forge-gen-c4`). For every
 internal-import closure must intersect each layer named in
 `composes_all_of` — a *positive* requirement ("must be built on X")
 that permission-only tools cannot express. Config reference:
-[`docs/configuration.md`](configuration.md#toolforgelayering--opt-in-layer-composition-gate).
+[`forge-docs/configuration.md`](../forge-docs/configuration.md#toolforgelayering--opt-in-layer-composition-gate).
 
 **Severities.** Pre-existing violations are LOW (baseline, exit 0);
 violations in a child containing an **added/renamed** module (vs the

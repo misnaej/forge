@@ -1212,3 +1212,125 @@ def test_fixer_recon_ignores_missing_agent_type() -> None:
 def test_fixer_recon_matches_unprefixed_agent_form() -> None:
     """The unprefixed `precommit-fixer` agent-type form is scoped too."""
     assert _run_hook(_FIXER_RECON, "git status", agent_type="precommit-fixer") == 2
+
+
+# --- block_forge_docs_edits.sh: forge-docs/ mirror is agent-write-protected -
+
+_FORGE_DOCS_EDITS = "block_forge_docs_edits.sh"
+
+
+def _run_docs_hook(
+    file_path: str, *, cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run block_forge_docs_edits.sh with *file_path* as the tool_input.
+
+    Args:
+        file_path: The ``file_path`` a Write/Edit tool call would carry.
+            Empty string exercises the "no file_path in payload" case.
+        cwd: Directory to run the hook from. Only matters for a bare
+            relative ``forge-docs/*`` path, where ``ROOT`` is empty and
+            the ``src/forge/data/docs`` self-skip check resolves against
+            the hook's cwd rather than an extracted path prefix.
+
+    Returns:
+        The completed subprocess (exit code + captured stdout/stderr).
+    """
+    payload = json.dumps({"tool_input": {"file_path": file_path}})
+    return subprocess.run(
+        ["bash", str(_HOOKS_DIR / _FORGE_DOCS_EDITS)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=cwd,
+    )
+
+
+def test_forge_docs_edits_blocks_consumer_repo_edit(tmp_path: Path) -> None:
+    """Blocks edits under forge-docs/ in a consumer repo (no src/forge/data/docs)."""
+    file_path = str(tmp_path / "forge-docs" / "configuration.md")
+    proc = _run_docs_hook(file_path)
+    assert proc.returncode == 2
+    assert "install-forge-claude-md" in proc.stderr
+
+
+def test_forge_docs_edits_allows_forge_own_repo(tmp_path: Path) -> None:
+    """Forge's own repo (src/forge/data/docs present) is the self-skip escape."""
+    (tmp_path / "src" / "forge" / "data" / "docs").mkdir(parents=True)
+    file_path = str(tmp_path / "forge-docs" / "configuration.md")
+    assert _run_docs_hook(file_path).returncode == 0
+
+
+def test_forge_docs_edits_allows_substring_lookalike_dir() -> None:
+    """A dir name merely containing "forge-docs" as a substring stays editable.
+
+    Locks the segment-anchored `ROOT` fix: `case "$FILE_PATH" in
+    */forge-docs/*)` only matches the literal path component, so
+    `my-forge-docs-notes/` (a plausible personal-notes dir name) must not
+    be swept up by a naive substring match.
+    """
+    assert _run_docs_hook("/r/my-forge-docs-notes/file.md").returncode == 0
+
+
+def test_forge_docs_edits_blocks_nested_lookalike_dir() -> None:
+    """A real `forge-docs/` nested inside a lookalike dir still blocks.
+
+    Companion to the substring-lookalike allow case above: the
+    segment-anchored fix must not over-correct into ignoring a genuine
+    `forge-docs/` segment just because an ancestor directory's name also
+    contains the substring.
+    """
+    proc = _run_docs_hook("/r/my-forge-docs-notes/forge-docs/x.md")
+    assert proc.returncode == 2
+    assert "install-forge-claude-md" in proc.stderr
+
+
+def test_forge_docs_edits_blocks_bare_relative_path_in_consumer_repo(
+    tmp_path: Path,
+) -> None:
+    """A bare relative `forge-docs/*` path (ROOT="") blocks in a consumer repo.
+
+    Exercises the first `case` arm directly — no leading directory
+    segment, so `ROOT` stays empty and the self-skip check resolves
+    `src/forge/data/docs` against the hook's cwd. No such directory here.
+    """
+    proc = _run_docs_hook("forge-docs/x.md", cwd=tmp_path)
+    assert proc.returncode == 2
+    assert "install-forge-claude-md" in proc.stderr
+
+
+def test_forge_docs_edits_allows_bare_relative_path_in_forge_own_repo(
+    tmp_path: Path,
+) -> None:
+    """A bare relative `forge-docs/*` path is allowed when cwd IS forge's own repo.
+
+    Companion to the blocking case above: with `src/forge/data/docs`
+    present under the hook's cwd, the empty-`ROOT` self-skip check must
+    still find it and stand down.
+    """
+    (tmp_path / "src" / "forge" / "data" / "docs").mkdir(parents=True)
+    assert _run_docs_hook("forge-docs/x.md", cwd=tmp_path).returncode == 0
+
+
+def test_forge_docs_edits_allows_unrelated_path(tmp_path: Path) -> None:
+    """A path outside forge-docs/ is not inspected at all."""
+    assert _run_docs_hook(str(tmp_path / "README.md")).returncode == 0
+
+
+def test_forge_docs_edits_allows_empty_file_path() -> None:
+    """An empty/absent file_path (e.g. a non-Write/Edit payload) is a no-op."""
+    assert _run_docs_hook("").returncode == 0
+
+
+def test_forge_docs_edits_registered_for_edit_and_write() -> None:
+    """plugin.json wires block_forge_docs_edits.sh into both Edit and Write."""
+    manifest = json.loads(
+        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
+    )
+    pre_tool_use = manifest["hooks"]["PreToolUse"]
+    for matcher in ("Edit", "Write"):
+        group = next(g for g in pre_tool_use if g["matcher"] == matcher)
+        commands = [h["command"] for h in group["hooks"]]
+        assert any(_FORGE_DOCS_EDITS in cmd for cmd in commands), (
+            f"{_FORGE_DOCS_EDITS} not registered under {matcher}"
+        )

@@ -79,9 +79,9 @@ tier — force it for broad refactors.
   deliberately approximate and conservative (they err toward running an
   extra test). `full` is the only no-false-negatives tier. The opt-in
   `follow_mock_patches` and `coverage_validate` keys widen selection toward
-  a safe superset for mock-/runtime-coupled suites (FOUNDATION §17).
+  a safe superset for mock-/runtime-coupled suites (forge-docs/smart-test.md).
 - For an opt-in depth-0 gate on every commit, set
   `[tool.forge.smart_test].precommit_depth = 0` in `pyproject.toml` (see
-  `docs/configuration.md`); the `changelog_history`-style self-skipping
+  `forge-docs/configuration.md`); the `changelog_history`-style self-skipping
   `smart_test` pre-commit step then runs it. The depth model and the
-  speed/coverage trade-off are documented in FOUNDATION §17.
+  speed/coverage trade-off are documented in forge-docs/smart-test.md.

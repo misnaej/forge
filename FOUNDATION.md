@@ -29,6 +29,15 @@ Awareness · 16 Extending shipped agents/skills/CLIs · 17 Smart-test depth mode
 - A brief disagreement that leads to a better outcome beats pleasing the user
   with a bad idea. Be honest, critical, and direct.
 
+### Absence of evidence is not evidence of absence
+
+A negative result only disproves a claim when the query could have proved
+it. Before reporting "X doesn't exist / isn't configured", verify the probe
+covers X: an API that 404s for *other* reasons, a grep missing a naming
+variant, or a truncated listing all return "nothing" without meaning
+"absent". Absence claims need a coverage-checked query or two independent
+probes agreeing.
+
 ### Every failure requires investigation
 
 Never dismiss errors as "not related to our changes" or "pre-existing." Every CI
@@ -53,21 +62,20 @@ module(s) touched, their direct callers/callees, the README / docstrings /
 `docs/` describing the area, and any related GitHub issue (`gh issue list
 --search` before opening one). If it's more than a handful of files, delegate the
 read to `Explore` — ground truth, not vibe-truth. **Red flags that mean you have
-not read enough:** proposing a new helper without checking it already exists;
-creating a new module/file when an existing module is the natural home (prefer
-extending or relocating within an existing module over minting a new one, §7);
-adopting an issue's *suggested* name/path as a directive instead of a
-hypothesis to validate against the current layout; proposing a wrapper without
-first checking whether the wrapped interface could simply change (§7); a path
-that doesn't exist on disk; schema changes without inspecting the current
-schema; a fix based on what a function "should" do rather than what it does.
+not read enough:** proposing a helper without checking it exists; minting a new
+module when an existing one is the natural home (§7); adopting an issue's
+*suggested* name/path as a directive instead of a hypothesis; proposing a
+wrapper without checking whether the wrapped interface could simply change
+(§7); a path that doesn't exist on disk; schema changes without reading the
+current schema; a fix based on what a function "should" do rather than what
+it does.
 
 ### Plan before executing
 
-For any task touching more than one or two files, or that mutates remote state
-(commits, pushes, PRs, issues, tags), write a plan FIRST (files, order, side
-effects) and wait for explicit go-ahead. Skip only for genuine one-shots — a
-typo, a single-line config, or follow-on edits in a review loop the user drives.
+For any task touching more than one or two files, or that mutates remote
+state, write a plan FIRST (files, order, side effects) and wait for explicit
+go-ahead. Skip only for genuine one-shots — a typo, a single-line config, or
+follow-on edits in a review loop the user drives.
 
 ### Ask before acting on ambiguity
 
@@ -119,6 +127,11 @@ convention without checking current code still matches. Asking beats reverting.
   server-side deletion rulesets. `block_branch_deletion` enforces this with **no
   bypass** — blocks `git push --delete` / `:ref` and `gh api -X DELETE
   …/branches/…`. Local `git branch -d/-D` is untouched; a human deletes via `! …`.
+  To check a branch's real protection, query BOTH
+  `gh api repos/{owner}/{repo}/rules/branches/{branch}` and
+  `.../rulesets` — never conclude "unprotected" from a 404 on the legacy
+  `/branches/{branch}/protection` endpoint alone (it 404s for
+  ruleset-protected branches too; §1 "Absence of evidence").
 - **No backwards-compatibility shims** unless explicitly requested — no `OldName =
   NewName`, no deprecation warnings, no re-exports of moved modules. Clean breaks
   by default.
@@ -143,28 +156,23 @@ convention without checking current code still matches. Asking beats reverting.
 
 ## 3. Mandatory Delegation
 
-Specific tasks **must** be delegated to specialized subagents. Handling directly
-is forbidden.
+Specific tasks **must** be delegated to specialized subagents; handling
+them directly is forbidden.
 
 ### Agent naming convention
 
-Foundation agents ship via the `forge` plugin and resolve as `forge:<name>` (e.g.
-`forge:pr-manager`); a bare name fails with `Agent type '<name>' not found`. The
-thirteen foundation agents are:
+Foundation agents resolve as `forge:<name>`; a bare name fails with
+`Agent type '<name>' not found`. The thirteen foundation agents:
 `forge:design-checker`, `forge:docs-types-checker`, `forge:git-commit-push`,
 `forge:issue-triage`, `forge:knowledge-search`, `forge:perf-optimizer`,
 `forge:pr-manager`, `forge:precommit-fixer`, `forge:prior-art`,
 `forge:security-checker`, `forge:test-advisor`, `forge:test-writer`,
 `forge:weekly-summary`.
 
-**Consumer wrappers MUST use distinct names.** When a consumer repo layers
-repo-specific extras on a foundation agent, it ships a local wrapper under
-`.claude/agents/<name>.md` that delegates via the `Task` tool. The wrapper name
-**must differ** from the canonical name — otherwise the local file shadows the
-foundation agent and direct `forge:<name>` calls become unreachable. Convention:
-suffix with the repo/scope (`design-checker-<repo>`, `security-checker-<scope>`),
-delegating with `Agent(subagent_type="forge:<base-name>", prompt="<repo-specific
-extras>... <original task>")`.
+**Consumer wrappers MUST use distinct names** — a local
+`.claude/agents/<name>.md` matching a shipped name shadows it and makes
+`forge:<name>` unreachable. Suffix with the repo/scope
+(`design-checker-<repo>`) and delegate per §16 Pattern A.
 
 | Task | Agent | Trigger |
 |---|---|---|
@@ -179,13 +187,13 @@ extras>... <original task>")`.
 | Issue triage | `forge:issue-triage` | Backlog management |
 | Grounded knowledge retrieval | `forge:knowledge-search` | When summarizing from sources |
 
-**Forbidden — do NOT handle directly:**
-- Run `git commit` / `git push` directly → use `forge:git-commit-push`
-- Invoke `ruff` (or `fix-forge-ruff`) directly from an agent → use `forge:precommit-fixer` (reads `code_health/` reports, dispatches fixes). Only the pre-commit hook runs ruff here.
-- Hand-curate a file list or rule selection for `forge:precommit-fixer` → don't; it scopes itself off the pre-commit report.
-- Write PR descriptions or squash-merge messages → use `forge:pr-manager`
-- Review code for security / design → use `forge:security-checker` / `forge:design-checker`
-- Install dependencies → never do this; tell the user
+**Forbidden — do NOT handle directly:** running `git commit` / `git push`
+(→ `forge:git-commit-push`); invoking `ruff` or `fix-forge-ruff` from
+an agent (→ `forge:precommit-fixer`, which reads `code_health/` — only the
+pre-commit hook runs ruff); hand-curating a file list for `forge:precommit-fixer` (it
+scopes itself off the report); writing PR descriptions or squash messages
+(→ `forge:pr-manager`); reviewing security / design yourself (→ the checker
+agents); installing dependencies (never — tell the user).
 
 ### Standard workflow orders
 
@@ -199,17 +207,16 @@ extras>... <original task>")`.
 
 ## 4. Pre-commit Hook Enforcement
 
-`.githooks/pre-commit` is the single quality gate. Run it manually between
+`.githooks/pre-commit` is the single quality gate; run it manually between
 commits to catch issues early.
 
 **Agent requirement**: if pre-commit blocks, you **must** fix ALL violations
 (including pre-existing) before committing — "blocked by pre-existing violations"
 without fixing = non-compliance. Scope expands to fix violations in any file you touch.
 
-**Forbidden responses** (all mean the same evasion — fix instead): "blocked by
-pre-existing violations in X.py (not our code)"; "should I fix the pre-existing
-violations?" (yes, don't ask); "fixing them is out of scope / a lot of work"
-(doesn't matter); or reporting the block and stopping.
+**Forbidden responses** (all the same evasion — fix instead): "blocked by
+pre-existing violations (not our code)"; "should I fix them?" (yes, don't
+ask); "out of scope / a lot of work"; or reporting the block and stopping.
 
 **Never use `--no-verify`** to bypass pre-commit. Docstring WARNINGS are
 non-blocking; ERRORS must be fixed.
@@ -225,13 +232,12 @@ non-blocking; ERRORS must be fixed.
 ## 5. Ruff Configuration
 
 Single config: **`ruff.toml`** at repo root. Strict — `select = ["ALL"]`.
-Under `ALL`, every rule a ruff minor stabilizes auto-activates, so forge pins
-ruff to one minor (`>=X.Y,<X.Y+1`) and raises the cap deliberately, triaging
-the newly stable rules — never an unbounded pin. Baseline ignores for
-`select = ["ALL"]` repos: `COM812` / `ISC001` (conflict with `ruff format`),
-and `CPY001` when the repo has no per-file copyright-header policy (a
-repo-level `LICENSE` is the copyright policy). Repos not wanting ruff ≥0.16's
-Markdown code-block formatting add `exclude = ["*.md"]` under `[format]`.
+Under `ALL` every newly stabilized rule auto-activates, so forge pins ruff to
+one minor (`>=X.Y,<X.Y+1`) and raises the cap deliberately — never an
+unbounded pin. Baseline ignores: `COM812` / `ISC001` (conflict with
+`ruff format`), `CPY001` without a per-file copyright policy; repos not
+wanting Markdown code-block formatting add `exclude = ["*.md"]` under
+`[format]`.
 
 ### Rules
 - **NO `# noqa` comments.** Fix the code properly. Only exception: `# noqa: E402`
@@ -259,19 +265,13 @@ Markdown code-block formatting add `exclude = ["*.md"]` under `[format]`.
 **Consumer repos MAY enforce stricter limits in their `ruff.toml`.** Agents read
 the consumer's `ruff.toml` as the actual enforcement source — not these defaults.
 
-### Common per-file ignores
+### Common per-file ignores and conventions
 
-- `scripts/**/*.py`: ignore `S603` / `S607` (subprocess, partial path), `INP001`
-  (implicit namespace) — scripts invoke external CLIs and live outside packages.
-- `tests/**/*.py`: ignore `S101` (assert), `PLR2004` (magic values).
-
-### Conventions
-
-- **`lines-after-imports = 2`** (`[lint.isort]`) — PEP8-strict 2 blank lines
-  between imports and module code; avoids cross-repo formatter divergence.
-- **`tests/` (plural)** for the test directory — the Python community standard.
-  forge tooling (`verify-forge-test-naming`, `DEFAULT_SOURCE_DIRS`) still accepts
-  `test/` (singular) for back-compat, but `tests/` is canonical.
+Standard per-file ignores: `scripts/**` — `S603` / `S607` / `INP001`
+(external-CLI scripts outside packages); `tests/**` — `S101` / `PLR2004`.
+Conventions: `lines-after-imports = 2` (`[lint.isort]`, cross-repo formatter
+parity) and **`tests/` (plural)** as the canonical test directory (`test/`
+accepted for back-compat by forge tooling).
 
 ---
 
@@ -279,33 +279,29 @@ the consumer's `ruff.toml` as the actual enforcement source — not these defaul
 
 ### First step (new task)
 
-Applies when starting a **fresh task from a clean state** — already on a feature
-branch with uncommitted or unmerged work? The next section governs instead. Start from updated
-main, then branch: `git checkout main && git pull origin main`, then `git
-checkout -b <type>/<description>`. Branch prefixes: `feat/`, `fix/`,
-`refactor/`, `test/`, `docs/`, `chore/`. After plan mode, verify with `git branch
+Fresh task from a clean state (mid-branch work? — next section instead):
+start from updated main (`git checkout main && git pull origin main`), then
+`git checkout -b <type>/<description>` — prefixes `feat/`, `fix/`,
+`refactor/`, `test/`, `docs/`, `chore/`. Verify with `git branch
 --show-current` before editing. **Never start work from stale main.**
 
 ### A new request mid-branch — confirm, don't reflex-split
 
-When you're on a feature branch with uncommitted or unmerged work and the user
-asks for **anything new** — related side task or not: **never automatically open
-a new branch/PR.** For a small, quick change, **default to the same branch** and
-just do it there. For something genuinely large or independently-releasable:
-(1) remind them what's in flight (branch, and PR if one exists), (2) confirm
-they want the new thing now, (3) ask whether it should be its own branch.
-**Favor quick development over heavy branch/PR ceremony.** When unsure, stay
+On a feature branch with uncommitted or unmerged work, **never automatically
+open a new branch/PR** for a new ask. Small quick change → same branch, just
+do it. Genuinely large or independently-releasable → (1) remind what's in
+flight, (2) confirm they want it now, (3) ask whether it needs its own
+branch. **Favor quick development over branch/PR ceremony**; unsure → stay
 and ask.
 
 ### Dependency bumps ship alone
 
-A dependency pin change (version floor, cap, new pin — security advisory
-or not) never rides a feature/fix PR: it lands in its own dedicated
-`chore(deps)` PR, or stays a reported advisory until the user approves.
-Why: a pin bump has its own blast radius (env rebuilds, transitive
-changes, independent rollback) and hides in an unrelated diff. Agents —
-including `forge:precommit-fixer` — report advisories with the suggested
-pin; they do not edit pins.
+A dependency pin change (floor, cap, new pin — security advisory or not)
+never rides a feature/fix PR: dedicated `chore(deps)` PR, or a reported
+advisory until the user approves. A pin bump has its own blast radius (env
+rebuilds, transitive changes, independent rollback) and hides in an
+unrelated diff. Agents — including `forge:precommit-fixer` — report
+advisories with the suggested pin; they never edit pins.
 
 ### Commit messages
 
@@ -316,11 +312,10 @@ pin; they do not edit pins.
 
 - Max 300 words. Sections: Summary / Changes / Testing / Breaking
   Changes (omit if none). Update if scope shifts.
-- **The `## Summary` lead is written in plain English** for the reader who
-  uses the product but not the codebase: no class/function names or
-  internals; lead with the consequence for that reader, not the mechanism;
-  and say plainly when results stop being comparable across the change.
-  Technical detail belongs under `Changes`.
+- **The `## Summary` lead is plain English** for the reader who uses the
+  product but not the codebase: no class/function names or internals; lead
+  with the consequence, not the mechanism; say plainly when results stop
+  being comparable. Technical detail belongs under `Changes`.
 
 ### PR finalization — verify first, never block on CI
 
@@ -329,28 +324,23 @@ pin; they do not edit pins.
   tree about to be pushed, so findings are fixed in the PR's own commits —
   not follow-ups — and the changelog version heading settles before the
   branch is published. Order: verify locally → fix → commit → **author the
-  wrap-up + squash message** → push → open PR → post them. The wrap-up is
-  written before the PR exists (only its posting needs a PR); the
+  wrap-up + squash message** → push → open PR → post them. The
   `block_unverified_pr_create` hook blocks `gh pr create` until the authored
-  wrap-up names the current `HEAD` (skippable via `FORGE_SKIP_WRAPUP_GATE=1`
-  — on explicit user request only; promotion PRs self-exempt when the
-  `release/vX.Y.Z` branch's tree reproduces its tag modulo the curated
-  changelog — provenance, not naming). A **draft PR** is the escape hatch
-  when the PR should be visible earlier.
+  wrap-up names the current `HEAD` (`FORGE_SKIP_WRAPUP_GATE=1` on explicit
+  user request only; promotion PRs self-exempt when the `release/vX.Y.Z`
+  tree reproduces its tag modulo the curated changelog). A **draft PR** is
+  the escape hatch when the PR should be visible earlier.
 - **Verification starts itself.** The moment a branch's implementation
-  commits are done, run the finalization reviews — automatically, without
-  stopping to offer or ask. The reviews are read-only; nothing about them
-  needs permission. Stopping at "ready to finalize?" with verification unrun
-  is stopping too early — only genuinely outward-facing or destructive steps
-  pause for the user.
-- **The wrap-up never waits on CI.** Its value is the review verdicts; CI
-  green is a separate signal on its own schedule. Post as soon as the checks
-  are done, and state plainly when CI has not completed — an unqualified
-  wrap-up reads as "all green", a false claim.
+  commits are done, run the finalization reviews automatically — they are
+  read-only and need no permission. Stopping at "ready to finalize?" with
+  verification unrun is stopping too early; only genuinely outward-facing or
+  destructive steps pause for the user.
+- **The wrap-up never waits on CI.** Post as soon as the checks are done and
+  state plainly when CI has not completed — an unqualified wrap-up reads as
+  "all green", a false claim.
 - Why: a wrap-up posted at one SHA and read at another describes a tree that
-  no longer exists. The `verified-at:` header (reporter contract,
-  `agents/_TEMPLATE.md`) makes such drift detectable; verifying the tree
-  being pushed closes the gap by construction.
+  no longer exists — the `verified-at:` header (reporter contract,
+  `agents/_TEMPLATE.md`) makes that drift detectable.
 - **The flow does not end at posting — monitor the PR.** This bullet is the
   canonical description of the post-wrap-up monitor; skills point here and
   state only their call-site delta. By default, after the wrap-up is posted,
@@ -361,10 +351,8 @@ pin; they do not edit pins.
     **and** `issue-triage`'s `post-pr` mode (closed-issue tier-label
     removal + Backlog Index regeneration).
   - **`mergeable == CONFLICTING`** → alert only, **never auto-sync**: a
-    base merge pushed to the branch re-triggers CI, so resolution is a
-    deliberate follow-up that weighs CI state — a long or nearly-done
-    run may be worth letting finish, and whether superseded runs are
-    cancelled is repo-specific. When acted on, the cure is
+    base merge re-triggers CI, so resolution is a deliberate follow-up
+    that weighs CI state. When acted on, the cure is
     `git merge origin/<base>` (§2 — never rebase; dirty tree → §2's
     stash dance, never `reset --hard`).
   - **A CI run concluding in failure** → surface it and investigate
@@ -372,23 +360,21 @@ pin; they do not edit pins.
 
   The main session stays free for the next task. Skip only on explicit
   user request or when `forge.run_context.is_non_interactive()` — except
-  `/sentinel`, whose monitors always run: unattended operation is its
-  primary case and the monitors are its only alert path.
+  `/sentinel`, whose monitors always run (they are its only alert path).
 
 ### Squash-merge messages (mandatory at PR finalization)
 
 `forge:pr-manager` enforces: max 50 words; 3–5 bullets; conventional-commit
 title; title + bullets only; no Claude/AI attribution. Posted via
-**`forge-pr-squash-comment`** — validates every rule, wraps the body in a
-triple-backtick fence (copy verbatim into GitHub's squash dialog), and posts via
-`gh`; agents must not hand-construct it (`--dry-run` previews, `--patch
-<comment-id>` rewrites). The squash message is the permanent `main` commit; if it
-can't be summarized in 50 words, the PR is too big.
+**`forge-pr-squash-comment`** (validates every rule, fences the body for
+verbatim copy into GitHub's squash dialog; `--dry-run` previews, `--patch`
+rewrites) — never hand-constructed. The squash message is the permanent
+`main` commit; if it can't be summarized in 50 words, the PR is too big.
 
 ### PR review comments
 
-Reply to every comment with `✅ **Resolved in commit <hash>**` plus a brief
-explanation of what was done and where (file:line). Post via `gh api
+Reply to every comment with `✅ **Resolved in commit <hash>**` plus what was
+done and where (file:line), via `gh api
 repos/<owner>/<repo>/pulls/<PR#>/comments/<comment_id>/replies`.
 
 ---
@@ -409,26 +395,23 @@ agents. A fact appears in exactly one place; everywhere else points back.
 
 **Fix the interface, don't wrap it.** When a change can be made either by
 altering an existing interface or by layering a wrapper that compensates
-for it, alter the interface. A wrapper built to make an awkward API
-usable duplicates that API with a reconciliation step attached; the
-awkward shape stays, and every later change pays for both. The costs are
-asymmetric at review time: the break shows its whole cost in the diff
-(converted call sites, one version bump); the layer hides its cost in
-the interface that stays wrong. Prefer the break when call sites are
-countable; layer only when the interface is genuinely outside your
-control — a third-party or published contract, or §16's shipped-plugin
-extension case. (Not a reversal of OCP: OCP covers adding genuinely new
-capability without touching stable code; this rule covers compensating
-for an interface you already control and that is wrong.)
+for it, alter the interface: a wrapper keeps the awkward shape and every
+later change pays for both. The break shows its whole cost in the diff
+(converted call sites, one version bump); the layer hides its cost in the
+interface that stays wrong. Prefer the break when call sites are countable;
+layer only when the interface is genuinely outside your control — a
+third-party or published contract, or §16's shipped-plugin case. (Not a
+reversal of OCP: OCP adds genuinely new capability without touching stable
+code; this rule covers compensating for an interface you control that is
+wrong.)
 
-**KISS.** The right complexity is what the task requires — no more. Three similar
-lines beat a premature abstraction. No configurability / plugins / indirection for
-hypothetical future needs.
+**KISS.** The right complexity is what the task requires — no more. Three
+similar lines beat a premature abstraction. No configurability / plugins /
+indirection for hypothetical needs.
 
-**YAGNI.** No speculative abstractions; no parameters / flags "in case someone
-needs them"; no error handling for scenarios that can't happen. Trust internal
-code and framework guarantees; validate only at system boundaries (user input,
-external APIs).
+**YAGNI.** No speculative abstractions, "just in case" parameters, or error
+handling for scenarios that can't happen. Trust internal code and framework
+guarantees; validate only at system boundaries (user input, external APIs).
 
 ---
 
@@ -439,64 +422,53 @@ external APIs).
 - **Returns** required for non-`None` returning functions. Omit for `None`-returning, `@property`, `@abstractmethod`.
 - **Type hints** on all parameters and return types.
 - **Comments explain WHY, not WHAT.** The code already says what.
-- **Docstring body must not restate Args/Returns.** Args/Returns carry the WHAT;
-  the body adds WHY (invariants, edge-case rationale, design context, links). A
-  body repeating "Returns X, or None on missing file" when Returns already says
-  it is duplication — trim it or merge into Returns.
+- **Docstring body must not restate Args/Returns.** Args/Returns carry the
+  WHAT; the body adds WHY (invariants, edge-case rationale, design context) —
+  a body repeating what Returns already says is duplication.
 - **Comments describe current state, not change history.** Forbidden anti-patterns:
   `# Clean break - no backward compatibility`, `# Updated from legacy format`, `#
   Fix for issue #<n>`, `"""Refactored from old implementation..."""`.
-- **Prose docs (markdown) describe current state too — no issue/PR numbers.** A
-  doc / guide / README describes what *is*, so no `#<n>` tracking markers
-  (`tracked in #163`) — they rot. Only exception: a changelog. Defer status to
-  GitHub (§14). Agents writing/reviewing a non-changelog doc apply this.
+- **Prose docs (markdown) describe current state too — no issue/PR numbers.**
+  A doc describes what *is*; `#<n>` tracking markers rot. Only exception: a
+  changelog. Defer status to GitHub (§14).
 - **Private helpers** (`_foo`) can have a one-liner docstring.
 - **Examples use generic placeholders or in-repo concrete names only** (§2) — no
   private employer / client / project names in examples or comments.
 
 ### Docstring coverage — three layered enforcers
 
-Forge ships THREE docstring enforcement mechanisms; they overlap on purpose, each
-catching what the others miss.
+Forge enforces docstrings with three deliberate layers — ruff D100–D107
+(presence, blocking), `verify-forge-docstrings` (accuracy, blocking), and
+`verify-forge-docstring-coverage` (aggregate %, non-blocking reporter with a
+`MISSING:` list for `forge:precommit-fixer`). The layer table and the
+why-interrogate-is-non-blocking rationale live in
+[`forge-docs/configuration.md`](forge-docs/configuration.md) under
+`[tool.forge.docstring_coverage]`.
 
-| Layer | What it enforces | Scope | Blocking? |
-|---|---|---|---|
-| **ruff D100–D107** (`select = ["ALL"]`) | Docstring present on every module / class / public function / method / `__init__` / magic method | Modified files | YES |
-| `verify-forge-docstrings` (`docstring_verification`) | If a docstring exists: **Args** match the signature, **Returns** present for non-`None` returns, no `self` / `cls` / `Returns: None` anti-patterns | Modified files | YES |
-| `verify-forge-docstring-coverage` (`docstring_coverage`) | Aggregate % across the tree; per-file table; `MISSING:` list for the fixer; optional badge | Full `src/` tree | **NO — reporter** |
-
-**Why interrogate is non-blocking:** ruff D100–D107 are the actual gate — a
-missing docstring on a public symbol is refused there. Interrogate measures
-**aggregate coverage across the full tree** (ruff only sees the diff) and surfaces
-a `MISSING:` list `forge:precommit-fixer` acts on. Trivial nested functions /
-closures are exempt (`ignore-nested-functions`), so blocking here is redundant.
-
-**Configuration (config-home rule):** a forge tool wrapping a third-party library
-reads that library's native config section; only forge-specific keys are
-namespaced under `[tool.forge.<tool>]`. So `[tool.interrogate]` is the single
-source of truth (default threshold `fail-under = 90`, tighten per §4); only
-`badge` and `paths` live under `[tool.forge.docstring_coverage]`. Project layout
-is a `[tool.forge]` ground truth — `source_dirs` / `test_dirs`, read by every
-layout-aware tool. `forge-config --list` enumerates the config surface; see
-[`docs/configuration.md`](docs/configuration.md).
+**Config-home rule:** a forge tool wrapping a third-party library reads that
+library's native config section; only forge-specific keys are namespaced
+under `[tool.forge.<tool>]` (so `[tool.interrogate]` owns the coverage gate;
+only `badge` / `paths` are forge keys). Project layout is a `[tool.forge]`
+ground truth — `source_dirs` / `test_dirs`, read by every layout-aware tool.
+`forge-config --list` enumerates the config surface.
 
 ### Testing documentation standards
 
 Test code is documented for **signal, not uniformly** — the canonical "what";
 `forge:test-advisor` and `forge:test-writer` own the "how".
 
-- **Injected fixtures are NOT documented as `Args`** (pytest injects them); real
-  (non-fixture) params still are. `verify-forge-docstrings` is fixture-aware
-  (filters `tmp_path` / `monkeypatch` / `caplog` + conftest/local fixtures) and
-  is the source of truth; ruff `D417` is therefore ignored in `tests/**`.
-- **Trivial nested helpers / closures need no docstring** (`ignore-nested-functions`
-  exempts them); a self-describing name suffices.
+- **Injected fixtures are NOT documented as `Args`**; real (non-fixture)
+  params still are. `verify-forge-docstrings` is fixture-aware and is the
+  source of truth; ruff `D417` is therefore ignored in `tests/**`.
+- **Trivial nested helpers / closures need no docstring**; a self-describing
+  name suffices.
 - **Fixtures are named for WHAT they contain** (`dataset_with_missing_values`, not `data`).
-- **Mock-heavy tests carry a structured docstring** — `SCENARIO:` / `MOCK SETUP:`
-  / `EXPECTED BEHAVIOR:`; heavily-mocking files carry a module-level `# MOCKING
-  STRATEGY:` overview. Unenforced; `forge:test-writer` produces it, `forge:test-advisor` reviews.
-- **Prefer Null / Fake objects over `unittest.mock.Mock`** — less brittle; reserve
-  `Mock` for when a Null Object costs more than it saves.
+- **Mock-heavy tests carry a structured docstring** — `SCENARIO:` /
+  `MOCK SETUP:` / `EXPECTED BEHAVIOR:`; heavily-mocking files carry a
+  module-level `# MOCKING STRATEGY:` overview. Unenforced;
+  `forge:test-writer` produces it, `forge:test-advisor` reviews.
+- **Prefer Null / Fake objects over `unittest.mock.Mock`**; reserve `Mock`
+  for when a Null Object costs more than it saves.
 - **Coverage intent:** each public function gets a happy-path plus an edge/error case.
 
 ---
@@ -510,9 +482,9 @@ Python stdlib logging with propagation.
 - **In entry-point scripts:** configure the root logger once, early, before heavy
   imports — `setup_logging(log_file=output_dir / "logs" / "pipeline.log")`. All
   module loggers propagate to root, so every package's logs land in one file.
-- **Logs next to data:** when a sub-process writes to a directory, add a local
-  file handler (`add_file_handler(job_logger, work_dir / "job.log")`) so the log
-  lives alongside results — messages go to BOTH the local file AND the root logger.
+- **Logs next to data:** when a sub-process writes to a directory, add a
+  local file handler so the log lives alongside results — messages go to
+  BOTH the local file AND the root logger.
 
 ### Forbidden
 
@@ -522,69 +494,38 @@ Python stdlib logging with propagation.
 - `logger = logger or get_logger(...)` fallbacks — same reason.
 - Attaching handlers to module loggers — only entry points configure handlers.
 
-### Tests
-
-Use pytest's `caplog` fixture for log assertions. Don't create file loggers in
-tests; module loggers work via propagation and `caplog` captures them.
-
-> Note: `common.logging` is a consumer-repo-specific convention; a repo either
-> adopts it or documents its own logging entry point in its `CLAUDE.md`.
+Tests: use pytest's `caplog` for log assertions; never create file loggers in
+tests — propagation covers module loggers. (`common.logging` is a
+consumer-repo convention; a repo adopts it or documents its own logging
+entry point in its `CLAUDE.md`.)
 
 ---
 
 ## 10. Continuation Protocol
 
-To survive context compaction, agents maintain a continuation file after every
-meaningful work step.
-
-### File: `.plan/CONTINUATION.md` (gitignored)
-
-Append-only by foundation agents (`forge:git-commit-push`, `forge:pr-manager`).
-Structured rewrites (Status, Next steps, In progress) are the main agent's
-responsibility, not these workhorse agents'.
+To survive context compaction, agents maintain `.plan/CONTINUATION.md`
+(gitignored) after every meaningful work step — append-only for foundation
+agents (`forge:git-commit-push`, `forge:pr-manager`); structured rewrites are
+the main agent's responsibility.
 
 ### After every work session or significant step
 
 Update `.plan/CONTINUATION.md` with (1) current state, (2) next steps for the next
 session, (3) recent activity (auto-appended one-line commit / PR-wrap-up records).
-Template:
-
-```markdown
-# Continuation — [YYYY-MM-DD HH:MM]
-
-## Status
-<one-paragraph current state>
-
-## Done
-- <bullet list of completed work>
-
-## In progress
-- <list with branch / PR / commit references>
-
-## Next potential work
-1. <ranked list>
-
-## Open follow-ups
-- <items deferred, why>
-
-## Key references
-- <links to plans, foundation, related issues>
-
-## Recent activity (auto-appended)
-- YYYY-MM-DD <hash> <subject>
-- YYYY-MM-DD PR #N wrap-up: <title>
-```
+Sections, in order: `Status` (one paragraph) · `Done` · `In progress` (with
+branch / PR / commit refs) · `Next potential work` (ranked) · `Open follow-ups`
+(deferred, why) · `Key references` · `Recent activity (auto-appended)` — one
+`YYYY-MM-DD <hash> <subject>` or `YYYY-MM-DD PR #N wrap-up: <title>` line each.
 
 ### Rules
 
-- **Always read `.plan/CONTINUATION.md` first** at session start — it holds the most recent state.
-- It is **gitignored** — never commit it.
-- **Never delete it** — rewrite structured sections in place. Deleting it (e.g. on
-  `/next`) destroys the handoff exactly when the user clears context for the next task.
-- Foundation agents append one line on success — even when invoked directly,
-  outside the `/commit` / `/pr` skills, so session-to-session state survives a
-  skill bypass; they never delete or overwrite existing content.
-- The main agent owns structured-section rewrites (Status, Next steps).
+- **Always read `.plan/CONTINUATION.md` first** at session start.
+- It is **gitignored** — never commit it; **never delete it** (deleting on
+  `/next` destroys the handoff exactly when context is cleared) — rewrite
+  structured sections in place.
+- Foundation agents append one line on success — even invoked outside the
+  `/commit` / `/pr` skills — and never delete or overwrite existing content;
+  the main agent owns structured-section rewrites.
 
 ---
 
@@ -600,18 +541,16 @@ agents enforce quality gates.
 Every forge-shipped agent follows the structure in `agents/_TEMPLATE.md`. Key
 invariants:
 
-- **Ownership split.** FOUNDATION owns policy, numbers, principles. Agents own
-  enforcement protocol, review cookbook, investigation recipes. Neither
-  duplicates the other; both link.
+- **Ownership split.** FOUNDATION owns policy, numbers, principles; agents
+  own enforcement protocol, cookbook, recipes. Neither duplicates; both link.
 - **Length budget.** 400–800 words body (target); 1500 hard cap.
-- **Description = routing trigger**, not a role label ("Use proactively when X", not "Agent for X").
+- **Description = routing trigger**, not a role label ("Use proactively when X").
 - **Reporters do not have `Write` or `Edit`.** Exception: reporter-with-artifact
-  agents (currently `docs-types-checker`, `weekly-summary`) may hold the single
-  mutating tool their artifact needs — see
+  agents may hold the single mutating tool their artifact needs — see
   [`agents/_TEMPLATE.md`](../agents/_TEMPLATE.md#tool-sets-per-role).
 
-`forge-audit-agents` (in `forge-audit-all`) measures every agent against the
-template, writing findings to `code_health/audit_agents.log`.
+`forge-audit-agents` measures every agent against the template
+(`code_health/audit_agents.log`).
 
 ### Plugin staleness — symptoms and recovery
 
@@ -619,51 +558,43 @@ When a forge release renames or adds an agent, an already-running session keeps
 the **cached** plugin from startup. Symptom: `Agent type 'forge:<name>' not found`
 though the agent is on disk — the cache
 (`~/.claude/plugins/cache/forge/forge/<version>/`) is behind. Recovery: `/plugin
-update forge@forge`, then `/reload-plugins` (picks up new agents / hooks / skills
-/ MCP / LSP servers); for **monitor** changes, restart the session
-(`/reload-plugins` does not refresh monitors). The `check_upstream` warning (from
-`install-forge-claude-md` and the `post-merge` / `post-checkout` / `SessionStart`
-hooks) surfaces this automatically whenever the cached version is behind the
-latest forge tag.
+update forge@forge`, then `/reload-plugins` — agents, hooks, and MCP / LSP
+servers reload reliably; **skills and monitors may need a full session
+restart** — trust the command's own output over any fixed rule, and restart
+when a surface stays stale. The
+`check_upstream` warning (`install-forge-claude-md` + the `post-merge` /
+`post-checkout` / `SessionStart` hooks) surfaces the version lag automatically.
 
 ### Consumer Claude Code hook path convention
 
-Consumer-specific Claude Code hooks live under `.claude/hooks/` and must be
-registered in `.claude/settings.json` with `${CLAUDE_PROJECT_DIR}`-rooted paths
-(e.g. `${CLAUDE_PROJECT_DIR}/.claude/hooks/<name>.sh`), never relative — relative
-paths break when the hook fires from a non-root cwd (subagents, subdirs).
-`install-forge-claude-md` scaffolds the directory + README; forge's own hooks ship
-via the plugin at `${CLAUDE_PLUGIN_ROOT}/claude-hooks/...`, not registered here.
+Consumer hooks live under `.claude/hooks/`, registered in
+`.claude/settings.json` with `${CLAUDE_PROJECT_DIR}`-rooted paths, never
+relative — relative paths break when a hook fires from a non-root cwd.
+`install-forge-claude-md` scaffolds the directory; forge's own hooks ship via
+the plugin at `${CLAUDE_PLUGIN_ROOT}/claude-hooks/...`, not registered here.
 
 ---
 
 ## 12. Single Source of Truth
 
-A cross-cutting principle. Reviewed by `forge:design-checker`.
+Reviewed by `forge:design-checker`.
 
-- Shared agent behaviours and shared principles live in **one canonical place** —
-  this file (`FOUNDATION.md`), the consumer's `CLAUDE.md`, or a designated shared
-  library module — and every other reference is a pointer back, **never a copy**.
+- Shared behaviours and principles live in **one canonical place** — this
+  file, the consumer's `CLAUDE.md`, or a designated shared module — and every
+  other reference is a pointer back, **never a copy**.
 - Flag any agent prompt or doc that re-states a rule already documented elsewhere
   instead of linking to it.
 - **Process feedback ships into the rule surface, not agent memory.** When the
-  user corrects a workflow or states a working rule, write it where every agent
-  and contributor inherits it: the repo's `CLAUDE.md` for repo-specific rules,
-  the relevant skill/agent doc for workflow steps, and — when the gap is in
-  foundation-shipped content — an **upstream issue/PR against forge** (consumers
-  must not patch shipped files locally; upgrades overwrite them). Personal agent
-  memory holds only what cannot ship: individual preferences and private
-  context.
-
-Applies to: design principles (here), repo-specific safety rules (consumer
-`CLAUDE.md`), shared agent behaviours, and tool conventions (ruff config,
-docstring style, logging).
+  user corrects a workflow, write it where every agent and contributor
+  inherits it: the repo's `CLAUDE.md`, the relevant skill/agent doc, or —
+  for foundation-shipped content — an **upstream issue/PR against forge**
+  (consumers must not patch shipped files locally; upgrades overwrite them).
+  Personal agent memory holds only what cannot ship: individual preferences
+  and private context.
 
 ---
 
 ## 13. `code_health/` Convention
-
-Convention for capturing pre-commit check results.
 
 - Consumer `.githooks/pre-commit` hooks **write each check's stdout / stderr** to `code_health/<check>.log` (`ruff.log`, `docstring_verification.log`, …).
 - Foundation agents (`forge:precommit-fixer`, `forge:pr-manager`, `forge:design-checker`, `forge:git-commit-push`) **read these as the source of truth** instead of re-running the checks.
@@ -672,36 +603,30 @@ Convention for capturing pre-commit check results.
 
 ### Repo metadata for agents
 
-Two repo-metadata artifacts let agents orient quickly instead of blind
-filesystem / import scans (both optional — treat every reference as conditional):
-
-- **`REPO_STRUCTURE.md`** (repo root) — when present, the canonical drift-verified
-  directory map (kept accurate by `repo_structure_check`). Read it first to orient.
-- **`code_health/audit_deps_tree.log`** — when present, a readable module
-  dependency tree written on every `forge-audit-deps` run. Consult it for module
-  structure / coupling.
+Two optional artifacts let agents orient without blind scans (treat every
+reference as conditional): **`REPO_STRUCTURE.md`** (canonical drift-verified
+directory map, kept accurate by `repo_structure_check` — read first) and
+**`code_health/audit_deps_tree.log`** (module dependency tree from
+`forge-audit-deps` — consult for structure / coupling).
 
 ---
 
 ## 14. Issue Tracking & Triage
 
-GitHub is the **canonical** backlog — no markdown files. The `forge:issue-triage`
-agent reads live `gh` data, applies labels, and curates a single auto-generated
-"📋 Backlog Index" issue per repo. The agent owns the per-mode cookbook
+GitHub is the **canonical** backlog — no markdown files. `forge:issue-triage`
+reads live `gh` data, applies labels, and curates one auto-generated
+"📋 Backlog Index" issue per repo; it owns the per-mode cookbook
 (`bootstrap` / `triage` / `recommend-next` / `post-pr` / `stale-scan` /
-`deep-review` / `plan-readiness`), the Backlog Index template, and regeneration;
-this section owns the policy. The weekly `deep-review` mode re-reads the backlog (whole or
-topic-scoped) and may — only with explicit user approval — create umbrella issues
-grouping related work and emit sequenced local goal files to execute them
-(mechanics in the agent doc).
+`deep-review` / `plan-readiness`) and the Index template — this section owns
+the policy. `deep-review` may create umbrella issues only with explicit user
+approval.
 
 ### Issue structure — lead with `Requires:`
 
-**Every issue opens with a `Requires:` line** (before the body) naming any
-blocking dependency or `Requires: nothing`. This surfaces ordering up front so a
-blocked task isn't mistaken for a quick-win. `forge:issue-triage` adds one when
-missing (asking the author if unclear) and labels the issue `blocked` while its
-stated prerequisite is open.
+**Every issue opens with a `Requires:` line** naming any blocking dependency
+or `Requires: nothing`, so a blocked task isn't mistaken for a quick-win.
+`forge:issue-triage` adds one when missing and labels the issue `blocked`
+while its stated prerequisite is open.
 
 ### Canonical label schema
 
@@ -727,57 +652,44 @@ taxonomy by family:
 Consumer repos may add domain-specific labels (e.g. `frontend`, `data-pipeline`)
 without conflict.
 
-### Backlog Index issue
+### Backlog Index, overrides, templates
 
-One issue per repo, titled `📋 Backlog Index`. Pinned. Body **owned exclusively by
-the agent** — humans do not edit it. Each `triage` run rebuilds it from scratch
-(no merge logic); template + regeneration steps live in the agent doc.
-
-### Override policy
-
-Users override by changing labels manually. The agent **respects the last applied
-label** — it never silently re-tiers. If signals suggest a different tier, it
-comments ("…consider re-tiering") but does NOT auto-change.
-
-### Issue templates
-
-Foundation ships no GitHub issue templates. Consumer repos may add their own under
-`.github/ISSUE_TEMPLATE/`; ones that auto-apply `needs-triage` + a type label pair
-well with the triage workflow.
+One pinned issue per repo, titled `📋 Backlog Index`, body **owned exclusively
+by the agent** (humans do not edit it); each `triage` run rebuilds it from
+scratch — template in the agent doc. Users override by changing labels
+manually: the agent **respects the last applied label**, never silently
+re-tiers (it may comment "…consider re-tiering"). Foundation ships no GitHub
+issue templates; consumer repos may add their own (ones that auto-apply
+`needs-triage` + a type label pair well with triage).
 
 ### Plan-readiness pipeline
 
-Screening → human-validated planning → autonomous execution, each with one
-owner: the `plan-readiness` triage mode **screens** every open issue against
-the whole backlog (actual / non-colliding / aligned / unblocked) and surfaces
-needs-plan candidates; the `/plan-issue` skill is the **human gate** — it
-investigates read-only, confirms scope / approach / edge cases / versioning
-with the user, and on explicit validation has `issue-triage` record the plan;
-the `/sentinel` skill **executes** only recorded plans, to a PR wrap-up and
-never past it (merging stays the user's decision; all §2 guards hold).
-Screening is mechanical and repeatable; planning judgment is validated once,
-up front — that is what makes the execution safe to run unattended.
+Screening → human-validated planning → autonomous execution, one owner each:
+the `plan-readiness` triage mode **screens** the backlog (actual /
+non-colliding / aligned / unblocked) for needs-plan candidates; `/plan-issue`
+is the **human gate** — read-only investigation, scope / approach / edge
+cases / versioning confirmed with the user, then `issue-triage` records the
+plan; `/sentinel` **executes** only recorded plans, to a PR wrap-up and
+never past it (merging stays the user's; all §2 guards hold). Screening is
+mechanical and repeatable; planning judgment is validated once, up front —
+that is what makes unattended execution safe.
 
 ### Decision trail
 
-Every label change leaves a comment prefixed `[issue-triage]` for filtering.
-Auditable, reversible, no silent state.
-
-Two comment conventions, deliberately distinct: the `[issue-triage]` prefix
-marks short **audit lines** (who changed what, why); a comment opening with
-`[issue-triage] plan-validated:` is an **execution payload** — the full
-user-validated plan `/sentinel` executes — posted only by `issue-triage` on
-delegation from `/plan-issue`, alongside the `plan-ready` label. The issue
-body (the original ask) is never edited.
+Every label change leaves a comment prefixed `[issue-triage]` — auditable,
+reversible, no silent state. Two comment kinds, deliberately distinct: the
+bare prefix marks short **audit lines**; a comment opening
+`[issue-triage] plan-validated:` is the **execution payload** `/sentinel`
+runs — posted only by `issue-triage` on delegation from `/plan-issue`,
+alongside the `plan-ready` label. The issue body is never edited.
 
 ---
 
 ## 15. Runtime Context Awareness
 
-Forge tools default to workstation behavior: interactive prompts, staleness
-warnings, hard-fail exit codes assuming the user can fix what's missing. Those are
-wrong in CI — a missing `gh` auth is *expected*, and a credential prompt against
-`/dev/null` hangs indefinitely.
+Forge tools default to workstation behavior. That is wrong in CI — a missing
+`gh` auth is *expected* there, and a credential prompt against `/dev/null`
+hangs indefinitely.
 
 ### The contract
 
@@ -790,52 +702,38 @@ non-interactive behavior **MUST** consult
   (any of `_CI_MARKERS`, or `sys.stdin.isatty()` false). Conservative: when in
   doubt returns true (over-suppressing dev-loop aids beats hard-failing in CI).
 - `git_auth_mode()` — best-effort detection of the usable auth context (`ssh`,
-  `https-token` via `GITHUB_TOKEN` / `GH_TOKEN`, `https-anonymous`, `none`), so
-  callers pick a URL form the runner can authenticate against instead of blocking
-  on a credential prompt.
-- `progress_logger(step_name)` — context manager emitting start / done banners
-  with elapsed time; wraps long-running substeps so CI logs show boundaries and
-  timing, making future hangs visible.
+  `https-token`, `https-anonymous`, `none`), so callers pick a URL form the
+  runner can authenticate against instead of blocking on a credential prompt.
+- `progress_logger(step_name)` — start / done banners with elapsed time around
+  long-running substeps, so CI logs show boundaries and hangs stay visible.
 
-### What "divergent behavior" looks like
+"Divergent behavior" means any of: prompting or recommending manual action;
+hard-failing on a prerequisite expected-missing in CI; running inside a
+`post-checkout` / `post-merge` hook that may fire before forge-scripts is
+installed; emitting one line of output before minutes of work; or
+hard-coding a URL form / auth method the runner may lack.
+Enforcement is greppable: CI-relevant files import `forge.run_context`;
+review rejects inline `os.environ.get("CI")` checks; new CI markers go in
+`_CI_MARKERS` — one place, every tool.
 
-Any of: prompts or recommends manual action in warning text; hard-fails on a
-prerequisite expected-missing in CI (gh auth, Claude Code plugin, ssh agent);
-runs inside a hook (`post-checkout`, `post-merge`) that may fire before
-forge-scripts is installed; emits one line of output before minutes of work; or
-hard-codes a URL form / auth method the runner may lack credentials for.
-
-### Enforcement
-
-Greppable: every forge source file with CI-relevant behavior imports from
-`forge.run_context`; review rejects a tool that inlines a custom
-`os.environ.get("CI")` check. A new CI marker goes in `_CI_MARKERS` — one place,
-reaches every tool.
-
-### Consumer recipe
-
-The README ["Running forge in CI"](README.md#running-forge-in-ci) +
-[`docs/ci-recipe.md`](docs/ci-recipe.md) ship one recipe: channel pin (`@main` /
-`@dev`) + a per-PR CI workflow + a scheduled `forge-upgrade --apply` workflow that
-PRs any upgrade diff. Adopt it rather than a custom integration.
+Consumers adopt the one shipped CI recipe (README "Running forge in CI" +
+[`forge-docs/ci-recipe.md`](forge-docs/ci-recipe.md)), never a custom one.
 
 ---
 
 ## 16. Extending shipped agents, skills, and CLIs
 
-Consumers (and forge itself) frequently layer repo-specific extras on a
-foundation-shipped agent, skill, or pre-commit step. One rule covers every case,
-plus three patterns by extension type. (This is the sanctioned exception to
-§7's fix-the-interface rule: shipped plugin surface is outside the
-consumer's control, so wrapping is the correct move here.)
+Consumers (and forge itself) layer repo-specific extras on shipped agents,
+skills, and pre-commit steps: one rule, three patterns. (The sanctioned
+exception to §7's fix-the-interface rule — shipped plugin surface is outside
+the consumer's control, so wrapping is correct here.)
 
 ### The rule
 
-**Never shadow a shipped name with a project-local file of the same name.**
-Project-local `.claude/agents/<X>.md` / `.claude/skills/<X>/SKILL.md` take
-precedence over the plugin-shipped versions, making the canonical `forge:<X>`
-invocation unreachable. Always use a distinct name. (Same rule as §3, extended to
-skills and pre-commit logic.)
+**Never shadow a shipped name with a project-local file of the same name** —
+local `.claude/agents/<X>.md` / `.claude/skills/<X>/SKILL.md` take precedence
+and make the canonical `forge:<X>` invocation unreachable. Always use a
+distinct name (§3's rule, extended to skills and pre-commit logic).
 
 A shipped skill or agent name must also not collide with a **Claude Code
 built-in** command (`review`, `code-review`, `security-review`, `init`, `run`,
@@ -843,39 +741,20 @@ built-in** command (`review`, `code-review`, `security-review`, `init`, `run`,
 documentation can rebind it — resolve the collision by naming, never by
 instruction.
 
-### Pattern A — agent wrapper
+### The three patterns
 
-Consumer creates `.claude/agents/<base>-<scope>.md` that delegates via the `Task`
-tool: `Task(subagent_type="forge:<base>", prompt="<repo-specific extras> +
-<forwarded task>")`. Example: a `design-checker-<scope>` wrapper adds
-repo-specific checks on top of the foundation `design-checker`'s SOLID/DRY/KISS pass.
-
-### Pattern B — skill wrapper
-
-The **`Skill` tool** lets one skill invoke another. Consumer creates
-`.claude/skills/<base>-<scope>/SKILL.md` whose prose (1) invokes the foundation
-skill via `Skill(skill="forge:<base>")`, then (2) does repo-specific follow-up.
-The frontmatter `name` MUST be the wrapper name, not the base. Right when the
-extension is multi-step prose with no natural home in a CLI (e.g. "after
-`/forge:pr`, also update the CHANGELOG").
-
-### Pattern C — CLI-gated extension
-
-When the extension is a single discrete check the foundation CLI already runs,
-put the logic IN the CLI gated on `[tool.forge]` config — no wrapper needed; the
-shipped skill surfaces it because it already invokes the CLI. Example:
-`forge-next-prep` emits a `Pending promotion: …` advisory when
-`[tool.forge].dev_branch != base_branch`, invisible to single-branch consumers.
-Right when the extension fits an existing CLI and the gating signal is already in
-`[tool.forge]`.
-
-### When to pick which
-
-| Extension shape | Pattern |
-|---|---|
-| New agent rules / extra context for an existing review agent | A (agent wrapper) |
-| Multi-step procedural extension on top of a shipped skill | B (skill wrapper) |
-| One-shot check or transform that fits a shipped CLI's scope | C (CLI gate) |
+- **A — agent wrapper**: `.claude/agents/<base>-<scope>.md` delegating via
+  `Task(subagent_type="forge:<base>", prompt="<repo-specific extras> +
+  <forwarded task>")`. For new agent rules / extra review context.
+- **B — skill wrapper**: `.claude/skills/<base>-<scope>/SKILL.md` that (1)
+  invokes the foundation skill via `Skill(skill="forge:<base>")`, then (2)
+  does the repo-specific follow-up; frontmatter `name` is the wrapper name,
+  never the base. For multi-step prose with no natural CLI home.
+- **C — CLI-gated extension**: put the logic IN the foundation CLI, gated on
+  `[tool.forge]` config — no wrapper; the shipped skill surfaces it because
+  it already invokes the CLI (e.g. `forge-next-prep`'s `Pending promotion:`
+  advisory, invisible to single-branch consumers). For one-shot checks that
+  fit an existing CLI's scope with the gating signal already in config.
 
 When in doubt, prefer C over B over A: the smaller the divergent surface, the less
 maintenance burden on every foundation upgrade.
@@ -884,62 +763,10 @@ maintenance burden on every foundation upgrade.
 
 ## 17. Smart-test depth model
 
-`forge-smart-test` (skill `/forge:smart-test`) selects the tests a change set
-affects — `forge.import_graph` reverse reachability from changed source modules,
-unioned with directly-changed test files — and runs them in escalating **depth
-tiers**: fast local feedback, then a CI ladder before a full pass.
-
-| Depth | Runs | Coverage | Typical use |
-|---|---|---|---|
-| `0` | Tests importing a changed module **directly** | no | Pre-commit / tight loop |
-| `1` | Depth 0 + one import hop removed | no | First CI check on a PR push |
-| `2` | Depth 0/1 + two import hops removed | no | Pre-merge gate |
-| `full` | The **entire** suite | yes | Default-branch CI; release prep |
-
-Guarantees consumers can rely on:
-
-- **Conservative selection.** The walk errs toward including an extra test over
-  skipping one a change could affect; a new or directly-changed test always runs
-  at depth 0.
-- **No false negatives only at `full`.** The smart tiers (`0`/`1`/`2`) are
-  deliberately approximate; `full` runs everything.
-- **Speed/coverage trade-off.** Coverage instrumentation (~3–5× slower) is
-  reserved for `full` — the dominant speed difference between tiers.
-- **Fail-fast.** A failing depth short-circuits higher depths and exits non-zero;
-  the import cache is cleared between depths so a stale `__pycache__` can't mask a failure.
-- **Determinism.** Same `git diff` + same tree → same selection; pytest's file
-  order is sorted.
-- **Import-root naming.** A changed source module is named by its real `sys.path`
-  import root (top of its `__init__.py` chain), not by stripping `source_dirs` —
-  so a package-rooted entry (`libs/…` → `libs.thing.core`) or a nested `*/src`
-  root resolves to the name importers actually use. If it resolves to a name **no
-  importer references**, smart-test warns rather than silently selecting zero tests.
-
-It writes `code_health/smart_test.log` (§13). The optional `smart_test` pre-commit
-step is **off by default** (self-skips unless `[tool.forge.smart_test].precommit_depth`
-is set) and **non-blocking** unless `blocking = true`. Pytest stays out of the
-default sequence (too slow); smart-test is the opt-in change-scoped bridge.
-
-### Opt-in correctness extensions
-
-The static graph **under-selects** when a test couples to code without an
-`import`. Two opt-in extensions (default **off**) make the selector a **safe
-superset** for mock-driven or dynamically-wired suites:
-
-- **Mock-patch edges** (`follow_mock_patches = true`) — treats a test's `patch`
-  string targets as graph edges; matters only for the patch-*only* case (e.g. a
-  `sys.modules` fake against a deferred import). Orthogonal to module naming: it
-  adds edges but does not fix a source-dir/import-root mismatch.
-- **Coverage validation** (`coverage_validate = true` + `coverage_json`) — unions
-  tests whose per-test coverage **contexts** touch a changed line, catching
-  runtime-only links (fixtures, dynamic dispatch, `importlib`). Needs a fresh
-  `coverage json --show-contexts` export (`pytest --cov-context=test`); regenerate
-  on `full` runs.
-
-A **CI directive** (`--from-commit-message`) drives the tier from a `[depth-N]` /
-`[full]` commit tag (regex via `commit_directive_re`); `--depth full` is the "run
-everything" escape for risky changes. With both extensions on, smart-test is
-portable without losing mock- or coverage-driven test↔code edges.
+`forge-smart-test` (skill `/forge:smart-test`) selects the tests a change
+set affects and runs them in escalating depth tiers (`0`/`1`/`2`/`full`).
+The depth model, the guarantees consumers can rely on, and the opt-in
+correctness extensions are specified in **[`forge-docs/smart-test.md`](forge-docs/smart-test.md)** — the single source of truth; this section is a pointer only.
 
 ---
 
