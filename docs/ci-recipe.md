@@ -46,6 +46,12 @@ on:
     # moment it is marked ready.
     types: [opened, synchronize, reopened, ready_for_review]
 
+# Defense-in-depth: this workflow only reads — see docs/security.md
+# "Least-privilege GITHUB_TOKEN". Jobs needing writes (the upgrade /
+# resync / tag-on-merge workflows below) declare their own overrides.
+permissions:
+  contents: read
+
 jobs:
   test:
     # Draft PRs skip CI: /pr's verification-first flow runs the same checks
@@ -154,6 +160,9 @@ that pre-merge, run the step as its own **required status check**:
 - Repos where the step self-skips (plugin-manifest and dual-track
   repos) satisfy the required check via the skip — safe to require
   everywhere.
+- The job is read-only and **inherits the workflow-level
+  `permissions: contents: read`** added in the §2 snippet — no
+  per-job permissions block needed.
 
 ## 3. Scheduled `forge-upgrade --apply` workflow
 

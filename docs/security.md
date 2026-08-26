@@ -71,7 +71,16 @@ What consumers do:
 - **Use OIDC** for cloud auth (no long-lived secrets in CI secrets).
 - **Pin GitHub Actions** to SHAs, not tags (`uses: actions/checkout@v4` →
   `uses: actions/checkout@<commit-sha>`).
-- **Limit `permissions:`** at workflow level to the minimum needed.
+- **Least-privilege `GITHUB_TOKEN`** — declare `permissions:` at
+  workflow level, minimum first: `contents: read` unless a job provably
+  writes, with write scopes as narrow as the boundary allows — a
+  per-job override inside a shared workflow (`ci.yml`'s tag-release
+  job) or a workflow-level block in a dedicated write workflow (the
+  upgrade / resync recipes). Without a block, the token
+  gets whatever the host repo/org default happens to be — read-only on
+  repos created after GitHub's restrictive-default change, broad
+  read/write on older or opted-in ones — so a copy-pasted workflow
+  inherits an unknown; declaring the block makes it deterministic.
 - **Never log secrets**, even masked — they end up in CI artifacts.
 
 For forge access from CI runners, see [`docs/ci-access.md`](ci-access.md).
