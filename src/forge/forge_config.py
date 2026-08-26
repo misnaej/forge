@@ -188,6 +188,15 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "stays a WARN regardless).",
     ),
     ConfigKey(
+        ("tool", "forge", "promotion", "hold_newest_minor"),
+        default=False,
+        description="Withhold the newest dev minor from promotion until "
+        "its successor tags: forge-next-prep --promotion-status lists it "
+        "as held and forge-check-main-tags refuses to relocate it, so "
+        "@dev version derivation stays clean (forge-repo mechanism; "
+        "default off — consumers unaffected).",
+    ),
+    ConfigKey(
         ("tool", "forge", "cve_usage", "paths"),
         "source_dirs + test_dirs",
         "Per-tool override of the CVE-usage scan roots; otherwise inherits "

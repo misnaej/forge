@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_63 modules, 700 symbols._
+_63 modules, 702 symbols._
 
 ## `forge`
 
@@ -472,6 +472,7 @@ _63 modules, 700 symbols._
 - `parse_semver(version: str) -> tuple[int, int, int] | None` — Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
 - `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
 - `latest_v_tag(root: Path) -> str | None` — Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
+- `minor_tags(repo_root: Path) -> list[str]` — Return every ``vX.Y.0`` tag (patch == 0), semver-sorted ascending.
 - `forge_install_command(extra: str | None = None) -> str` — Format the consumer-valid install command for forge-scripts.
 - `missing_dependency_hint(package: str, *, extra: str | None = None) -> str` — Format a user-facing hint for a missing dependency.
 - `require_cli(name: str, *, caller: str | None = None, extra: str | None = None, hint: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
@@ -621,6 +622,7 @@ _63 modules, 700 symbols._
 > _forge-next-prep — prepare main for the next task (fetch, pull, tag, prune)._
 
 - `_check_promote_pending_message(repo_root: Path, dev_branch: str, base_branch: str) -> str | None` _(internal)_ — Return a one-line user-facing prompt when promotion is pending, else ``None``.
+- `_withhold_newest_minor(repo_root: Path, staged: list[tuple[tuple[int, int, int], str]]) -> tuple[list[tuple[tuple[int, int, int], str]], str | None]` _(internal)_ — Split the newest minor off *staged* when the promotion hold is on.
 - `_promotion_status_lines(repo_root: Path, dev_branch: str, base_branch: str) -> list[str]` _(internal)_ — Build the read-only promotion-status report.
 - `_is_newer(plugin_ver: str, latest_tag: str | None) -> bool` _(internal)_ — Return True when ``v<plugin_ver>`` would sort *after* ``latest_tag``.
 - `tag_staleness_warning(repo_root: Path) -> str | None` — Return a warning when the integration branch owes a rolling-next tag.
@@ -975,7 +977,7 @@ _63 modules, 700 symbols._
 - `class _TagState` _(internal)_ — Where a minor tag currently sits versus where it belongs.
   - `needs_move(self) -> bool` — ``True`` when a base commit reproduces the tag but it sits elsewhere.
 - `_short(sha: str | None) -> str` _(internal)_ — Return a 9-char abbreviation of *sha*, or ``(none)`` when absent.
-- `_minor_tags(repo_root: Path) -> list[str]` _(internal)_ — Return every ``vX.Y.0`` tag (patch == 0), semver-sorted ascending.
+- `_held_tag(repo_root: Path) -> str | None` _(internal)_ — Return the newest minor tag when the promotion hold withholds it.
 - `_base_tree_index(repo_root: Path, base_ref: str) -> dict[str, str]` _(internal)_ — Map each base commit's release fingerprint to its commit SHA.
 - `_tag_states(repo_root: Path, base_ref: str) -> list[_TagState]` _(internal)_ — Resolve every minor tag's current vs. target commit on *base_ref*.
 - `_force_move_tag(repo_root: Path, tag: str, commit_sha: str) -> None` _(internal)_ — Annotated-retag *tag* at *commit_sha* and force-push it.

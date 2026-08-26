@@ -38,10 +38,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from forge.config import load_config
+from forge.config import load_config, read_tool_forge_section
 from forge.git_utils import (
     configure_cli_logging,
     create_annotated_tag,
+    minor_tags,
     parse_semver,
     release_tree_fingerprint,
     run_git,
@@ -88,22 +89,30 @@ def _short(sha: str | None) -> str:
     return sha[:9] if sha else "(none)"
 
 
-def _minor_tags(repo_root: Path) -> list[str]:
-    """Return every ``vX.Y.0`` tag (patch == 0), semver-sorted ascending.
+def _held_tag(repo_root: Path) -> str | None:
+    """Return the newest minor tag when the promotion hold withholds it.
+
+    Forge-only mechanism (``[tool.forge.promotion].hold_newest_minor``,
+    default off): the newest dev minor must never relocate to the base
+    branch — moving it would leave ``dev``'s ``git describe`` falling
+    back to an older patch tag, so ``@dev`` installs would report a
+    dirty version for release content. The tag becomes movable once a
+    newer minor tags on dev (``docs/release-process.md`` §2).
 
     Args:
-        repo_root: Repo root for the git invocation.
+        repo_root: Repo root for config + git reads.
 
     Returns:
-        Minor tag names; empty when the repo has no ``v*`` tags.
+        The withheld tag name, or ``None`` when the hold is off or no
+        minor tags exist.
     """
-    raw = run_git("tag", "--list", "v*", cwd=repo_root, check=False)
-    minors = [
-        tag
-        for tag in raw.split()
-        if (parsed := parse_semver(tag)) is not None and parsed[2] == 0
-    ]
-    return sorted(minors, key=lambda tag: parse_semver(tag) or (0, 0, 0))
+    hold = read_tool_forge_section(repo_root, "promotion").get(
+        "hold_newest_minor", False
+    )
+    if not hold:
+        return None
+    minors = minor_tags(repo_root)
+    return minors[-1] if minors else None
 
 
 def _base_tree_index(repo_root: Path, base_ref: str) -> dict[str, str]:
@@ -146,10 +155,20 @@ def _tag_states(repo_root: Path, base_ref: str) -> list[_TagState]:
 
     Returns:
         One :class:`_TagState` per minor tag, in ascending tag order.
+        The newest minor is excluded (with an INFO line) while the
+        promotion hold withholds it — see :func:`_held_tag`.
     """
     index = _base_tree_index(repo_root, base_ref)
+    held = _held_tag(repo_root)
     states: list[_TagState] = []
-    for tag in _minor_tags(repo_root):
+    for tag in minor_tags(repo_root):
+        if tag == held:
+            logger.info(
+                "%s: newest dev minor — held from relocation until the "
+                "next minor tags (docs/release-process.md §2).",
+                tag,
+            )
+            continue
         fingerprint = release_tree_fingerprint(repo_root, tag)
         current = run_git("rev-list", "-n1", tag, cwd=repo_root, check=False)
         states.append(
