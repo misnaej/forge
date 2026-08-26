@@ -20,6 +20,21 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.19.0 — 2026-08-26
+
+### Refactor
+- **One bounded tag refresh everywhere.** The six inline `git fetch
+  --tags` calls across the pre-commit changelog gate, `forge-release`,
+  `forge-next-prep`, and `forge-check-main-tags` now share
+  `git_utils.fetch_tags_best_effort`: every fetch is bounded (10s,
+  stdin-less) and degrades to the local tag state with a logged note.
+  Sites that previously could hang on a stalled remote or credential
+  prompt (promotion status, the CI tag path, tag alignment, the release
+  race-recheck) now time out instead; sites that failed silently now
+  log the stale-tags note. The consolidation also makes every site
+  fetch explicitly from `origin` — two previously relied on the
+  checkout's default remote.
+
 ## v3.18.0 — 2026-08-26
 
 ### Features

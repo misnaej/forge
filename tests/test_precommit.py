@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
-from forge import config, precommit
+from forge import config, git_utils, precommit
 from forge.pip_audit_json import AuditRun
 from tests.conftest import GIT_ENV, _detach_head, init_git_repo, init_single_track_repo
 
@@ -3159,7 +3159,7 @@ def test_step_changelog_version_fails_on_invalid_heading(
     monkeypatch.setattr(
         precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
     )
-    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
+    monkeypatch.setattr(precommit, "fetch_tags_best_effort", lambda _r, **_kw: [])
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     result = precommit.step_changelog_version(tmp_path)
     assert not result.passed
@@ -3176,7 +3176,7 @@ def test_step_changelog_version_passes_clean(
     monkeypatch.setattr(
         precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
     )
-    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
+    monkeypatch.setattr(precommit, "fetch_tags_best_effort", lambda _r, **_kw: [])
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     result = precommit.step_changelog_version(tmp_path)
     assert result.passed
@@ -3200,7 +3200,7 @@ def test_step_changelog_version_detects_stranded_entries(
     monkeypatch.setattr(
         precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
     )
-    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
+    monkeypatch.setattr(precommit, "fetch_tags_best_effort", lambda _r, **_kw: [])
     merge_base_calls: list[tuple[object, object]] = []
 
     def _fake_merge_base_with_head(root: object, base: object) -> str:
@@ -3332,7 +3332,7 @@ def test_step_changelog_version_nonblocking_when_configured(
     monkeypatch.setattr(
         precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
     )
-    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
+    monkeypatch.setattr(precommit, "fetch_tags_best_effort", lambda _r, **_kw: [])
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     result = precommit.step_changelog_version(tmp_path)
     assert not result.passed
@@ -3434,7 +3434,7 @@ def test_step_changelog_version_stale_branch_guidance_when_tag_only_on_base(
     monkeypatch.setattr(
         precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
     )
-    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
+    monkeypatch.setattr(precommit, "fetch_tags_best_effort", lambda _r, **_kw: [])
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     monkeypatch.setattr(precommit, "_tag_only_on_base", lambda *_a, **_kw: True)
     result = precommit.step_changelog_version(tmp_path)
@@ -3460,7 +3460,7 @@ def test_step_changelog_version_no_stale_guidance_when_tag_not_only_on_base(
     monkeypatch.setattr(
         precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
     )
-    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
+    monkeypatch.setattr(precommit, "fetch_tags_best_effort", lambda _r, **_kw: [])
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     monkeypatch.setattr(precommit, "_tag_only_on_base", lambda *_a, **_kw: False)
     result = precommit.step_changelog_version(tmp_path)
@@ -3487,7 +3487,7 @@ def test_step_changelog_version_no_stale_guidance_for_non_tag_shaped_finding(
     monkeypatch.setattr(
         precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
     )
-    monkeypatch.setattr(precommit, "_refresh_tags_best_effort", lambda _r: [])
+    monkeypatch.setattr(precommit, "fetch_tags_best_effort", lambda _r, **_kw: [])
     monkeypatch.setattr(precommit, "run_git", _fake_run_git_dispatch())
     monkeypatch.setattr(precommit, "_tag_only_on_base", lambda *_a, **_kw: True)
     result = precommit.step_changelog_version(tmp_path)
@@ -4015,8 +4015,9 @@ def test_step_changelog_version_fetches_tags_in_every_context(
     SCENARIO: a CI `pull_request` checkout may start with no tags at all,
     so the refresh must not be gated on `is_ci()` — it runs whether the
     caller is a human, an agent, or genuine CI.
-    MOCK SETUP: subprocess.run recorded (the fetch is a direct bounded
-    call); run_git faked for the `show` old-side read; resolve_current_branch
+    MOCK SETUP: `git_utils.subprocess.run` recorded (the fetch is a direct
+    bounded call inside `fetch_tags_best_effort`, which `precommit` imports
+    by name); run_git faked for the `show` old-side read; resolve_current_branch
     faked so the branch resolution does not depend on the real (non-git)
     `tmp_path`. `merge_base_with_head` is left real — against a non-git
     `tmp_path` it resolves no base ref and short-circuits to `""`, so no
@@ -4035,15 +4036,15 @@ def test_step_changelog_version_fetches_tags_in_every_context(
         fetches.append(list(cmd))
         return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
-    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_subprocess_run)
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
     assert precommit.step_changelog_version(tmp_path).passed
-    assert ["git", "fetch", "--tags", "--quiet"] in fetches
+    assert ["git", "fetch", "--tags", "--quiet", "origin"] in fetches
 
     fetches.clear()
     monkeypatch.setattr(precommit, "is_ci", lambda: True)
     assert precommit.step_changelog_version(tmp_path).passed
-    assert ["git", "fetch", "--tags", "--quiet"] in fetches
+    assert ["git", "fetch", "--tags", "--quiet", "origin"] in fetches
 
 
 def _setup_tagged_repo_stranded_detached(base: Path) -> Path:
@@ -4123,9 +4124,11 @@ def test_step_changelog_version_fetch_failure_falls_back_to_local_tags(
 ) -> None:
     """A failed `git fetch --tags` degrades to local tags with a visible note.
 
-    MOCK SETUP: `subprocess.run` faked to report `returncode=1` for the
-    best-effort tag refresh; `run_git` / `resolve_current_branch` faked so
-    the rest of the step reads a consistent, tag-having changelog.
+    MOCK SETUP: `git_utils.subprocess.run` faked to report `returncode=1`
+    for the best-effort tag refresh (the fetch is a direct bounded call
+    inside `fetch_tags_best_effort`, which `precommit` imports by name);
+    `run_git` / `resolve_current_branch` faked so the rest of the step
+    reads a consistent, tag-having changelog.
     EXPECTED BEHAVIOR: the step still passes (local tags are stale but
     present) and the output carries the degradation note.
     """
@@ -4139,7 +4142,7 @@ def test_step_changelog_version_fetch_failure_falls_back_to_local_tags(
     def _fake_subprocess_run(*_a: object, **_kw: object) -> object:
         return type("P", (), {"returncode": 1, "stdout": "", "stderr": ""})()
 
-    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_subprocess_run)
     result = precommit.step_changelog_version(tmp_path)
     assert result.passed is True
     assert "validating against local tags, which may be stale." in result.output
@@ -4151,9 +4154,11 @@ def test_step_changelog_version_no_tag_visible_warns_structural_only(
     """No `v*` tag visible after the refresh → structural-only note, not a failure.
 
     MOCK SETUP: `latest_v_tag` faked to `None` (no tag visible, e.g. a
-    fresh CI checkout with no tags fetched); `subprocess.run` faked to
-    report a successful (`returncode=0`) refresh so the "no tag visible"
-    note is attributable to `latest_v_tag`, not a fetch failure.
+    fresh CI checkout with no tags fetched); `git_utils.subprocess.run`
+    faked to report a successful (`returncode=0`) refresh (the fetch is
+    a direct bounded call inside `fetch_tags_best_effort`, which
+    `precommit` imports by name) so the "no tag visible" note is
+    attributable to `latest_v_tag`, not a fetch failure.
     EXPECTED BEHAVIOR: the step passes (no tag-relative check can fire)
     and the output names the missing reference tag.
     """
@@ -4167,79 +4172,10 @@ def test_step_changelog_version_no_tag_visible_warns_structural_only(
     def _fake_subprocess_run(*_a: object, **_kw: object) -> object:
         return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
-    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_subprocess_run)
     result = precommit.step_changelog_version(tmp_path)
     assert result.passed is True
     assert "no `v*` tag visible" in result.output
-
-
-# ---------------------------------------------------------------------------
-# _refresh_tags_best_effort
-# ---------------------------------------------------------------------------
-
-
-def test_refresh_tags_best_effort_success_returns_no_notes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A successful `git fetch --tags` refresh returns no degradation notes.
-
-    MOCK SETUP: `subprocess.run` faked to capture its call args and report
-    `returncode=0`, so the call contract (cwd, stdin, timeout, check) is
-    asserted alongside the empty-notes return.
-    """
-    calls: list[tuple[list[str], dict[str, object]]] = []
-
-    def _fake_subprocess_run(cmd: list[str], **kw: object) -> object:
-        calls.append((list(cmd), kw))
-        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
-
-    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
-    assert precommit._refresh_tags_best_effort(tmp_path) == []
-    assert len(calls) == 1
-    cmd, kw = calls[0]
-    assert cmd == ["git", "fetch", "--tags", "--quiet"]
-    assert kw["cwd"] == tmp_path
-    assert kw["stdin"] is subprocess.DEVNULL
-    assert kw["timeout"] == 10
-    assert kw["check"] is False
-
-
-def test_refresh_tags_best_effort_failure_returns_stale_note(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A non-zero `git fetch --tags` exit degrades with a visible note."""
-
-    def _fake_subprocess_run(*_a: object, **_kw: object) -> object:
-        return type("P", (), {"returncode": 1, "stdout": "", "stderr": ""})()
-
-    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
-    notes = precommit._refresh_tags_best_effort(tmp_path)
-    assert notes == [
-        (
-            "Note: `git fetch --tags` failed — validating against local "
-            "tags, which may be stale."
-        )
-    ]
-
-
-def test_refresh_tags_best_effort_timeout_returns_stale_note(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A hung `git fetch --tags` (timeout) degrades the same as a failed exit."""
-
-    def _fake_subprocess_run(*_a: object, **_kw: object) -> object:
-        raise subprocess.TimeoutExpired(
-            cmd=["git", "fetch", "--tags", "--quiet"], timeout=10
-        )
-
-    monkeypatch.setattr(precommit.subprocess, "run", _fake_subprocess_run)
-    notes = precommit._refresh_tags_best_effort(tmp_path)
-    assert notes == [
-        (
-            "Note: `git fetch --tags` failed — validating against local "
-            "tags, which may be stale."
-        )
-    ]
 
 
 # ---------------------------------------------------------------------------

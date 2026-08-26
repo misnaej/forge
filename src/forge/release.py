@@ -59,6 +59,7 @@ from forge.config import ForgeConfig, load_config
 from forge.git_utils import (
     configure_cli_logging,
     create_annotated_tag,
+    fetch_tags_best_effort,
     latest_v_tag,
     next_version,
     parse_semver,
@@ -382,7 +383,8 @@ def _cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> i
         run_git("push", "origin", tag, cwd=repo_root, log_errors=not race_tolerant)
     except subprocess.CalledProcessError as exc:
         if race_tolerant:
-            run_git("fetch", "--tags", "--quiet", "origin", cwd=repo_root, check=False)
+            for note in fetch_tags_best_effort(repo_root):
+                logger.warning("%s", note)
             if _tag_exists(repo_root, tag):
                 logger.info("%s appeared concurrently — already released.", tag)
                 return 0
@@ -441,20 +443,9 @@ def main() -> int:
     repo_root = Path.cwd()
     cfg = load_config(repo_root)
 
-    # Bounded + stdin-less (mirrors the changelog_version step's fetch):
-    # a stalled remote or credential prompt degrades to a stale-tag view
-    # instead of hanging the release command.
-    try:
-        subprocess.run(
-            ["git", "fetch", "--tags", "--quiet", "origin"],
-            cwd=repo_root,
-            capture_output=True,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            timeout=10,
-        )
-    except subprocess.TimeoutExpired:
-        logger.warning("Tag fetch timed out — proceeding with local tags.")
+    # Bounded degrade-to-stale semantics: see fetch_tags_best_effort.
+    for note in fetch_tags_best_effort(repo_root):
+        logger.warning("%s", note)
 
     errors: list[str] = []
     if args.from_changelog:

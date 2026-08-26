@@ -587,6 +587,90 @@ def test_minor_tags_returns_empty_when_no_v_tags(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# fetch_tags_best_effort (moved from test_precommit.py)
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_tags_best_effort_success_returns_no_notes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A successful `git fetch --tags` refresh returns no degradation notes.
+
+    MOCK SETUP: `subprocess.run` faked to capture its call args and report
+    `returncode=0`, so the call contract (cwd, stdin, timeout, check) is
+    asserted alongside the empty-notes return.
+    """
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def _fake_subprocess_run(cmd: list[str], **kw: object) -> object:
+        calls.append((list(cmd), kw))
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_subprocess_run)
+    assert git_utils.fetch_tags_best_effort(tmp_path) == []
+    assert len(calls) == 1
+    cmd, kw = calls[0]
+    assert cmd == ["git", "fetch", "--tags", "--quiet", "origin"]
+    assert kw["cwd"] == tmp_path
+    assert kw["stdin"] is subprocess.DEVNULL
+    assert kw["timeout"] == 10
+    assert kw["check"] is False
+
+
+def test_fetch_tags_best_effort_failure_returns_stale_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-zero `git fetch --tags` exit degrades with a visible note."""
+
+    def _fake_subprocess_run(*_a: object, **_kw: object) -> object:
+        return type("P", (), {"returncode": 1, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_subprocess_run)
+    notes = git_utils.fetch_tags_best_effort(tmp_path)
+    assert notes == [
+        (
+            "Note: `git fetch --tags` failed — validating against local "
+            "tags, which may be stale."
+        )
+    ]
+
+
+def test_fetch_tags_best_effort_timeout_returns_stale_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hung `git fetch --tags` (timeout) degrades the same as a failed exit."""
+
+    def _fake_subprocess_run(*_a: object, **_kw: object) -> object:
+        raise subprocess.TimeoutExpired(
+            cmd=["git", "fetch", "--tags", "--quiet", "origin"], timeout=10
+        )
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_subprocess_run)
+    notes = git_utils.fetch_tags_best_effort(tmp_path)
+    assert notes == [
+        (
+            "Note: `git fetch --tags` failed — validating against local "
+            "tags, which may be stale."
+        )
+    ]
+
+
+def test_fetch_tags_best_effort_custom_timeout_flows_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller-supplied `timeout` overrides the 10s default in the call."""
+    calls: list[dict[str, object]] = []
+
+    def _fake_subprocess_run(_cmd: list[str], **kw: object) -> object:
+        calls.append(kw)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_subprocess_run)
+    assert git_utils.fetch_tags_best_effort(tmp_path, timeout=3) == []
+    assert calls[0]["timeout"] == 3
+
+
+# ---------------------------------------------------------------------------
 # read_local_plugin_version (moved from test_next_prep.py)
 # ---------------------------------------------------------------------------
 
