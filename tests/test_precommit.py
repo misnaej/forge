@@ -2637,9 +2637,6 @@ def _raise_if_called(cmd: list[str], **_kw: object) -> tuple[bool, str]:
         cmd: The command argv the caller would have run.
         **_kw: Ignored keyword arguments (signature compatibility).
 
-    Returns:
-        Never returns — always raises.
-
     Raises:
         AssertionError: Always — the partial-commit guard must short-circuit
             before any generator runs.

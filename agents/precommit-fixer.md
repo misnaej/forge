@@ -29,8 +29,7 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
 - **A code edit is unverified until its tests re-ran.** After any Edit
   that changes runtime code or a test double, re-run the affected tests
   (targeted, as above) before reporting — a PASS claimed without the
-  re-run is a false report (#363: a renamed fake parameter broke 25
-  tests, reported PASS).
+  re-run is a false report.
 - **Allowed CLIs**: `forge-precommit` — the ONLY loop driver, **hard cap
   THREE invocations per run** (refresh → re-verify → final) — and, at
   most once each, an individual step CLI (`fix-forge-ruff`,
@@ -178,11 +177,9 @@ Re-invoke me without arguments. See FOUNDATION §3.
 ## Guard hooks
 
 Agent-scoped: `block_fixer_recon` (source of truth:
-`[tool.forge.agent_doc.guarded_by]`). Edit/Write-scoped hooks
-(`block_protected_files`, `block_forge_docs_edits`) bind every agent. A
-block enforces your own contract — stop and report, never route around.
-For a hook-protected file (e.g. `ruff.toml`): present the exact diff;
-the USER applies it — never imply approval would let you edit.
+`[tool.forge.agent_doc.guarded_by]`). Shared contract — what a block
+means and how to respond (incl. the `ruff.toml` present-diff rule):
+[`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
 
 ## Output
 

@@ -759,6 +759,92 @@ def test_destructive_allows_stash_drop_mention_in_commit_message() -> None:
     assert _run_hook(_DESTRUCTIVE, 'git commit -m "don\'t git stash drop"') == 0
 
 
+# --- flag-interposition bypass regression (security review) ----------------
+# Security review of #363's hardening flagged interposed flags as a residual
+# bypass class: a flag sitting between the guarded verb and its literal tail
+# (`checkout -f .`, `stash --quiet drop`) that plain literal-adjacency
+# matching would miss. These regression tests pin the fix.
+
+
+def test_destructive_blocks_checkout_dot_with_force_flag() -> None:
+    """`git checkout -f .` (force flag interposed before the dot) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git checkout -f .") == 2
+
+
+def test_destructive_blocks_checkout_dot_with_long_force_flag() -> None:
+    """Block `git checkout --force .` (interposed long force flag)."""
+    assert _run_hook(_DESTRUCTIVE, "git checkout --force .") == 2
+
+
+def test_destructive_blocks_restore_dot_with_quiet_flag() -> None:
+    """`git restore --quiet .` (interposed flag before the dot) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git restore --quiet .") == 2
+
+
+def test_destructive_blocks_restore_dot_with_worktree_flag() -> None:
+    """`git restore --worktree .` (interposed flag before the dot) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git restore --worktree .") == 2
+
+
+def test_destructive_blocks_checkout_dot_trailing_slash() -> None:
+    """`git checkout ./` (trailing-slash dot pathspec) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git checkout ./") == 2
+
+
+def test_destructive_blocks_stash_drop_with_quiet_flag() -> None:
+    """`git stash --quiet drop` (interposed flag before `drop`) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git stash --quiet drop") == 2
+
+
+def test_destructive_blocks_restore_staged_worktree_voids_staged_exception() -> None:
+    """Block `git restore --staged --worktree .` (worktree voids exception).
+
+    `git restore --staged .` alone is the sanctioned unstage-everything form
+    (index-only, worktree untouched — see
+    `test_destructive_allows_restore_staged_dot`). Adding `--worktree`
+    re-adds the destructive worktree write, so the exception must not
+    apply — the exact bypass the security review flagged.
+    """
+    assert _run_hook(_DESTRUCTIVE, "git restore --staged --worktree .") == 2
+
+
+# --- global-option bypass regression (security review) ----------------------
+# Security review also flagged git's own global options (`--no-pager`, `-c
+# key=value`, `-C <dir>`) sitting between `git` and the guarded verb as a
+# bypass vector the plain anchor missed. These pin the fix and confirm
+# non-guarded verbs (`log`, `diff`) stay unaffected by the same prefix.
+
+
+def test_destructive_blocks_reset_after_no_pager_global_option() -> None:
+    """`git --no-pager reset --hard` (global option interposed) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git --no-pager reset --hard") == 2
+
+
+def test_destructive_blocks_reset_after_c_key_value_global_option() -> None:
+    """`git -c foo=bar reset HEAD~1` (`-c key=value` global option) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git -c foo=bar reset HEAD~1") == 2
+
+
+def test_destructive_blocks_clean_after_no_pager_global_option() -> None:
+    """`git --no-pager clean -fd` (global option interposed) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git --no-pager clean -fd") == 2
+
+
+def test_destructive_blocks_reset_after_c_dir_global_option() -> None:
+    """`git -C /x reset --soft HEAD~1` (`-C <dir>` global option) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git -C /x reset --soft HEAD~1") == 2
+
+
+def test_destructive_allows_log_after_no_pager_global_option() -> None:
+    """`git --no-pager log --oneline` — a non-guarded verb — stays allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git --no-pager log --oneline") == 0
+
+
+def test_destructive_allows_diff_after_no_pager_global_option() -> None:
+    """`git --no-pager diff` — a non-guarded verb — stays allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git --no-pager diff") == 0
+
+
 # --- registration / retirement -----------------------------------------
 
 

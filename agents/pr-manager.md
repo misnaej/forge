@@ -181,11 +181,8 @@ Confirm BOTH the squash-merge message and wrap-up comment were posted — **eith
 ## Guard hooks
 
 Agent-scoped: `block_pr_merge`, `block_unverified_pr_create` (source of
-truth: `[tool.forge.agent_doc.guarded_by]`). Edit/Write-scoped hooks
-(`block_protected_files`, `block_forge_docs_edits`) bind every agent. A
-block enforces your own contract — stop and report, never route around.
-For a hook-protected file: present the exact diff; the USER applies it —
-never imply approval would let you edit.
+truth: `[tool.forge.agent_doc.guarded_by]`). Shared contract — what a
+block means and how to respond: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
 
 ## CONTINUATION Log Update
 

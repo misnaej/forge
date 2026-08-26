@@ -1852,10 +1852,13 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     already-released heading since the merge base (the stranded-entries
     race: a tag cut under an open PR leaves its bullets attributed to a
     release that does not contain the code, with no merge conflict to
-    signal it). The stranded check is suppressed while a merge is in
-    progress (``MERGE_HEAD`` present): mid-merge, the merge-base is the
-    stale fork point, so the base's own entries would be misattributed to
-    the branch; the structural checks still run.
+    signal it) and none lost from one either (released history is
+    immutable; a deletion under a tagged heading erases shipped content
+    silently — see :func:`forge.changelog.released_deleted_versions`).
+    Both checks are suppressed while a merge is in progress
+    (``MERGE_HEAD`` present): mid-merge, the merge-base is the stale fork
+    point, so the base's own entries would be misattributed to the
+    branch; the structural checks still run.
 
     The gate compares against the **live** latest tag in every context:
     tags are refreshed best-effort before reading (CI included — a
@@ -1923,11 +1926,13 @@ def step_changelog_version(repo_root: Path) -> StepResult:
         if merge_in_progress(repo_root):
             # Mid-merge HEAD predates the merge commit, so the merge-base is
             # the stale fork point and every entry the base contributes would
-            # appear as HEAD-gained. Skip only the stranded check — the merge
-            # commit's own run and CI validate the settled state.
+            # appear as HEAD-gained (or lost). Skip only the stranded and
+            # deleted-entries checks — the merge commit's own run and CI
+            # validate the settled state.
             notes.append(
-                "Note: merge in progress — stranded-entries check skipped "
-                "(validated at the merge commit and by CI)."
+                "Note: merge in progress — stranded-entries and "
+                "deleted-entries checks skipped (validated at the merge "
+                "commit and by CI)."
             )
         else:
             merge_base = merge_base_with_head(repo_root, cfg.base_branch)

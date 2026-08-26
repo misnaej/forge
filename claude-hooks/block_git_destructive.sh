@@ -40,8 +40,15 @@ _block() {
 # quoted body (a commit message, PR description) never fire. The anchor also
 # tolerates a leading run of `VAR=val` assignments and a `command`/`env`/
 # `exec`/`builtin`/`sudo` wrapper, so `GIT_DIR=x git reset` can't slip the
-# gate (shared verbatim with block_git_rebase.sh / block_force_push.sh).
-GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+'
+# gate (prefix chain shared with block_git_rebase.sh / block_force_push.sh),
+# PLUS a bounded run of git GLOBAL options between `git` and the subcommand
+# (`--no-pager`, `-c k=v`, `-C <dir>`, `--git-dir=<x>`), so
+# `git --no-pager reset` can't slip it either. Known residuals (documented,
+# not covered): space-separated arg-taking globals other than -c/-C
+# (`--git-dir x`), and multi-arg wrapper flags (`sudo -u root git ...`) —
+# the shared-anchor extraction (#348) is the home for closing these
+# family-wide.
+GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][a-zA-Z-]*(=[^[:space:]]*)?[[:space:]]+)*'
 
 # `git reset` — every form. The blanket ban subsumes the --hard/--merge
 # block that previously lived in block_git_reset_hard.sh (retired).
@@ -54,7 +61,7 @@ fi
 # is the sanctioned way to REPORT untracked state — but the exemption is
 # evaluated PER INVOCATION: the command is split at shell separators so
 # `git clean -n; git clean -f` still blocks on the second segment.
-SEG_ANCHOR='^[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+'
+SEG_ANCHOR='^[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][a-zA-Z-]*(=[^[:space:]]*)?[[:space:]]+)*'
 while IFS= read -r seg; do
     if echo "$seg" | grep -qE "${SEG_ANCHOR}clean\b"; then
         # Flags are scanned only AFTER the `clean` token, so a wrapper's
@@ -69,20 +76,30 @@ while IFS= read -r seg; do
     fi
 done < <(printf '%s\n' "$COMMAND" | tr ';&|(' '\n')
 
-# Literal discard-everything restores only. The `.` must be the whole
-# pathspec (end of invocation or followed by a separator), so
+# Discard-everything restores: the pathspec `.` (or `./`) as the whole
+# target, with any run of flags tolerated in between so `git checkout -f .`
+# / `git restore --quiet .` can't slip past literal-adjacency matching.
 # `git checkout ./subdir`, `git checkout <branch>`, `git restore <path>`,
 # and `git checkout --ours -- <path>` all stay allowed.
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}checkout[[:space:]]+(--[[:space:]]+)?\.([[:space:]]|$|[;&|])"; then
+DOT_TAIL='([[:space:]]+--?[^[:space:]]+)*([[:space:]]+--)?[[:space:]]+\.(/)?([[:space:]]|$|[;&|])'
+if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}checkout${DOT_TAIL}"; then
     _block "git checkout ." "It discards every uncommitted modification in the tree; restore individual paths deliberately, or stop and report."
 fi
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}restore[[:space:]]+(--[[:space:]]+)?\.([[:space:]]|$|[;&|])"; then
-    _block "git restore ." "It discards every uncommitted modification in the tree; restore individual paths deliberately, or stop and report."
+if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}restore${DOT_TAIL}"; then
+    # `git restore --staged .` only unstages (index-only, worktree
+    # untouched) and is the sanctioned unstage-everything form — allowed
+    # unless --worktree re-adds the destructive half.
+    if ! echo "$COMMAND" | grep -qE "${GIT_ANCHOR}restore[^;&|]*--staged\b" \
+        || echo "$COMMAND" | grep -qE "${GIT_ANCHOR}restore[^;&|]*(--worktree\b|(^|[[:space:]])-W\b)"; then
+        _block "git restore ." "It discards every uncommitted modification in the tree; restore individual paths deliberately, or stop and report."
+    fi
 fi
 
-# `git stash drop` / `clear` — a dropped stash is unreferenced and gone.
+# `git stash drop` / `clear`, tolerating interposed flags
+# (`git stash --quiet drop`) — a dropped stash is unreferenced and gone.
 # FOUNDATION §2's stash dance ends with the stash either popped or left
 # alone; deleting it is never the agent's call.
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}stash[[:space:]]+(drop|clear)\b"; then
+if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}stash([[:space:]]+-[^[:space:]]+)*[[:space:]]+(drop|clear)\b"; then
     _block "git stash drop/clear" "A dropped stash is unreferenced and unrecoverable; leave the stash alone and report (\`git stash list\` to show it)."
 fi
+

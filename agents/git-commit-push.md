@@ -13,11 +13,10 @@ You are a specialized agent for git operations: staging, committing, and pushing
 
 ## Guard hooks
 
-Your agent-scoped guards are listed in `[tool.forge.agent_doc.guarded_by]`
-(`block_no_verify`, `block_force_push`, `block_git_destructive`); the
-Edit/Write-scoped hooks (`block_protected_files`, `block_forge_docs_edits`)
-bind every agent. A block is enforcement of your own contract — **stop and
-report; never route around it** ([FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules)).
+Agent-scoped: `block_no_verify`, `block_force_push`,
+`block_git_destructive` (source of truth:
+`[tool.forge.agent_doc.guarded_by]`). Shared contract — what a block
+means and how to respond: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
 
 - **No `--no-verify`, no `--no-gpg-sign`.** If pre-commit fails, fix via `precommit-fixer`; do not bypass. Exception only on explicit user request — confirm first.
 - **No Claude / AI attribution in commits** (`block_claude_attribution`).
