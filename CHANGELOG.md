@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.16.0 — Unreleased
+## v3.16.0 — 2026-08-26
 
 ### Features
 - **The agent-architecture doc's edges are now structurally verified.**
@@ -34,7 +34,7 @@ versions follow forge's rolling-next convention.
   The Layer-2 diff report also stops misclassifying shell shebangs as
   skill mentions and shell comments as hook edges.
 
-## v3.15.0 — Unreleased
+## v3.15.0 — 2026-08-26
 
 ### Features
 - **The `/pr` finalization-path decision is now a deterministic CLI.**
@@ -49,7 +49,7 @@ versions follow forge's rolling-next convention.
   still pass. The delta path degrades to `full` (with a stated reason)
   when `gh` or a `verified-at:` baseline is unavailable.
 
-## v3.14.0 — Unreleased
+## v3.14.0 — 2026-08-26
 
 ### Features
 - **The precommit-fixer's Bash contract is now hook-enforced.** New
@@ -62,18 +62,7 @@ versions follow forge's rolling-next convention.
   are unaffected. The agent doc gains a front-loaded FIRST-ACTION rule
   and the targeted-test exception, funded by same-file de-duplication.
 
-## v3.13.1 — Unreleased
-
-### Docs
-- **CI recipe workflows declare least-privilege token scopes.** The
-  per-PR snippet consumers copy now carries a workflow-level
-  `permissions: contents: read` block (the changelog-gate job inherits
-  it), and `docs/security.md` states the least-privilege
-  `GITHUB_TOKEN` rule the snippets point at — a pasted workflow no
-  longer inherits whatever broad defaults the host repo happens to
-  have.
-
-## v3.13.0 — Unreleased
+## v3.13.0 — 2026-08-26
 
 ### Features
 - **`git reset --hard` is now hook-blocked for agents.** New
@@ -87,21 +76,7 @@ versions follow forge's rolling-next convention.
   discarding state; the changelog-gate docs explain that the check is
   branch-cumulative and merging base is the cure.
 
-## v3.12.1 — Unreleased
-
-### Fixes
-- **Editing a package `__init__.py` no longer selects zero tests.**
-  `forge-smart-test`'s graph gains implicit ancestor-package edges
-  (importing `a.b.c` executes the ancestor `__init__` files), so a
-  facade `__init__` whose consumers import submodules directly now
-  reaches its descendants' tests in the reverse walk instead of
-  silently selecting nothing — restoring the conservative-selection
-  guarantee. The misleading source-dir/import-root-mismatch warning
-  stops firing for covered package nodes. Opt-in at the shared graph
-  seam (`include_ancestor_edges`); design-time consumers (deps audit,
-  C4) are unchanged.
-
-## v3.12.0 — Unreleased
+## v3.12.0 — 2026-08-26
 
 ### Features
 - **`forge-upgrade` verifies the install actually matches the pin.** The
@@ -120,7 +95,7 @@ versions follow forge's rolling-next convention.
   pip command to run. MINOR, not MAJOR: the new exit fires only on that
   already-broken state.
 
-## v3.11.0 — Unreleased
+## v3.11.0 — 2026-08-25
 
 ### Features
 - **The newest dev minor is held from promotion until its successor
@@ -134,18 +109,18 @@ versions follow forge's rolling-next convention.
   the accepted cost of `@main` trailing one minor. The minor-tag filter
   is now shared (`git_utils.minor_tags`) by both CLIs.
 
-## v3.10.0 — Unreleased
+## v3.10.0 — 2026-08-18
 
 ### Features
 - **The PR monitor contract names its signals.** FOUNDATION §6's
-  background-monitor bullet now enumerates the four watched signals —
+  background-monitor rule now enumerates the four watched signals —
   review comments, merged/closed, `mergeable == CONFLICTING`, and CI
-  failure — with their actions. Conflicts are alert-only by design:
-  a base-merge push re-triggers CI, so resolution stays a deliberate
+  failure — with their actions. Conflicts are alert-only by design: a
+  base-merge push re-triggers CI, so resolution stays a deliberate
   decision that weighs the running CI's state instead of an automatic
   sync.
 
-## v3.9.0 — Unreleased
+## v3.9.0 — 2026-08-18
 
 ### ⚠️ Upgrade notes
 - **`changelog_version` now refreshes tags in CI too.** A CI run that
@@ -154,122 +129,123 @@ versions follow forge's rolling-next convention.
   context, so a previously-green check can turn red with no code change
   on your side. Give the job real tag visibility (`fetch-depth: 0`) and
   adopt the new required-check recipe in `docs/ci-recipe.md`
-  "Stranded-changelog gate as a required PR check". (MINOR, not MAJOR:
-  the step is opt-in and its contract — validate headings against the
-  latest tag — is unchanged; the CI fetch restores that contract on
-  runners whose shallow checkout hid the tags, rather than altering it.)
+  "Stranded-changelog gate as a required PR check".
 
 ### Features
-- **Stranded-changelog detection now works as a live, re-evaluating PR
-  gate.** The `changelog_version` step resolves the PR branch on
-  detached CI `pull_request` checkouts (`GITHUB_HEAD_REF`) instead of
-  silently skipping the stranded half, and always validates against the
-  live latest tag (fetch failure degrades to local tags with a visible
-  note; zero visible tags is called out explicitly). Paired with branch
-  protection's "require branches to be up to date before merging" (job
-  recipe in `docs/ci-recipe.md`), a PR whose entries strand while it
-  sits open goes red before merge — instead of blocking the post-merge
-  tagger.
-
-## v3.8.3 — Unreleased
-
-### Tooling
-- **Regression test locks the skill slash-command contract.** A manifest-integrity test now asserts every shipped skill under `skills/` declares `user-invocable: true`, so a new skill can no longer ship silently untypeable.
-
-## v3.8.2 — Unreleased
+- **Stranded-changelog detection works as a live, re-evaluating PR
+  gate.** `changelog_version` resolves the PR branch on detached CI
+  `pull_request` checkouts (`GITHUB_HEAD_REF`) instead of silently
+  skipping the stranded half, and always validates against the live
+  latest tag with visible degradation notes. Paired with branch
+  protection's "require branches to be up to date before merging"
+  (job recipe in `docs/ci-recipe.md`), a stranding PR goes red before
+  merge instead of blocking the post-merge tagger.
+- **Resync PRs embed provenance-gate evidence in their bodies**, so
+  regen-verified byte-check output travels with the PR for audit.
 
 ### Fixes
-- **Every shipped skill is now a typeable slash command.** Only `/next` and `/smart-test` carried the `user-invocable` flag; typing any other skill (`/commit`, `/pr`, `/plan-issue`, `/sentinel`, …) failed with "Unknown command" although agents could invoke them. All thirteen skills now carry the flag.
+- **Every shipped skill is a typeable slash command.** All thirteen
+  skills carry `user-invocable: true`; previously only `/next` and
+  `/smart-test` did, and typing the rest failed with "Unknown command".
 
-## v3.8.1 — Unreleased
+### Tooling
+- **Regression test locks the skill slash-command contract** — a
+  manifest-integrity test asserts the flag on every shipped skill, so a
+  new skill can no longer ship silently untypeable.
 
-### Features
-- **forge-resync embeds provenance-gate evidence in PR bodies.** Resync PRs now carry their regen-verified byte-check output directly in the PR body, so verification artifacts travel with the PR for auditability.
-
-## v3.8.0 — Unreleased
+## v3.8.0 — 2026-08-18
 
 ### Features
 - **Plan-readiness pipeline: screened backlog → human-validated plans →
   autonomous execution.** `issue-triage` gains a `plan-readiness` mode
   (four-point verdict per open issue — actual / non-colliding / aligned /
-  unblocked — whole-backlog baseline then incremental diffs; may create
-  ad-hoc grouping labels with a decision trail). New `/plan-issue` skill
-  confirms scope, approach, edge cases, and versioning with the user, then
-  records the validated plan as an `[issue-triage] plan-validated:`
-  execution spec plus the new canonical `plan-ready` label. New
-  `/sentinel` skill executes `plan-ready` issues through the standard
-  workflow to a PR wrap-up — re-checking blockers at pickup, freezing to a
-  draft PR with feedback comments when a question needs the user, and
-  never merging.
-- **PR finalization now monitors published PRs by default.** After the
-  wrap-up posts, a background monitor per open PR watches review comments
-  and merge state; merges trigger local cleanup (base sync, branch prune).
+  unblocked). New `/plan-issue` skill confirms scope, approach, edge
+  cases, and versioning with the user, then records the validated plan
+  as an `[issue-triage] plan-validated:` execution spec plus the new
+  canonical `plan-ready` label. New `/sentinel` skill executes
+  `plan-ready` issues through the standard workflow to a PR wrap-up —
+  re-checking blockers at pickup, authenticating the spec author,
+  freezing to a draft PR when a question needs the user, and never
+  merging.
+- **PR finalization monitors published PRs by default.** After the
+  wrap-up posts, a background monitor per open PR watches review
+  comments and merge state; merges trigger local cleanup and the
+  `post-pr` triage pass.
 
-## v3.4.4 — Unreleased
+## v3.7.0 — 2026-08-18
 
-### Docs
-- **Agent loop/content discipline hardened.** `precommit-fixer`: a
-  formatter-reverted Edit is STUCK after ONE occurrence — formatter-stable
-  findings (e.g. an overlong `def` name whose canonical layout exceeds
-  the line limit) never converge by re-layout; the fixer reports the
-  semantic fix instead of burning its run budget. `git-commit-push`:
-  explicit prohibition on authoring or modifying file content via Bash
-  (heredoc, `sed -i`, `tee`, redirects, `cp`/`mv` over tracked paths) —
-  it commits the tree exactly as handed over.
-
-## v3.4.3 — Unreleased
-
-### Docs
-- **`pr-manager` agent doc back under budget — zero information loss.**
-  1499 → ~850 words by the audit metric: every removed passage is a
-  pointer to its verified canonical home (FOUNDATION §6/§10, the agent
-  template's contracts, the `/pr` skill's steps), a hoist (the
-  CONTINUATION append rule is now stated once in FOUNDATION §10 and
-  pointed at by both `pr-manager` and `git-commit-push`), or a
-  fence-conversion of exact emitted shapes. Also fixes step references
-  left stale by the internal renumbering.
-
-## v3.4.2 — Unreleased
+### Features
+- **Resync PRs earn a regen-verified light finalization path.** When a PR's
+  diff is exactly the `forge-resync` managed artifact set, `/pr` runs the
+  provenance byte-check gates instead of the prose reporters — generated
+  content is verified against the installed package, with the gate output
+  embedded in the wrap-up as evidence. Any gate failure or hand-edit falls
+  back to the full review round.
 
 ### Fixes
-- **`TYPE_CHECKING`-only imports are no longer runtime edges.** The
-  shared import extractor skips `if TYPE_CHECKING:` bodies by default,
-  so the deps audit stops inventing cycles for correctly-guarded code
-  and a layering `composes_all_of` clause can no longer be silently
-  satisfied by an import that never executes. Design-time consumers opt
-  back in: C4 diagrams and smart-test selection keep the annotation
-  edges (`include_type_checking=True`).
-- **Audits honor the declared layout.** `resolve_roots` with no
-  `--roots` now prefers `[tool.forge].source_dirs` + `test_dirs` over
-  the broad built-in directory guess — a repo that declared its layout
-  stops seeing docs/config/data/vendored trees scanned by every audit
-  (measured two-thirds of default-run dup findings on one repo). The
-  guess remains for repos with no declared layout; explicit `--roots`
-  unchanged.
-- **Shipped skills invoke agents by their canonical `forge:` names.**
-  Seven skill files used bare names (`pr-manager`, `precommit-fixer`,
-  …), which fail with "Agent type not found".
-- **The wrap-up gate no longer blocks promotion PRs.**
-  `block_unverified_pr_create` self-exempts on `release/vX.Y.Z` branches
-  **with provenance**: the matching tag must exist and `HEAD`'s tree must
-  reproduce it modulo `CHANGELOG.md` (the curated entry). An era-locked
-  release tree has no `/pr` reporter wrap-up — its verification is the
-  release fingerprint. A branch merely *named* `release/*`, or a
-  suffixed name (`release/vX.Y.Z-rc1`), stays gated.
+- **Agent docs enforce canonical section order.** `forge-audit-agents` flags
+  a shipped agent doc whose sections drift from the `_TEMPLATE.md` order,
+  and `git-commit-push` gained its canonical Output section.
 
-## v3.4.1 — Unreleased
+## v3.6.0 — 2026-08-18
+
+### Features
+- **Layering audit can require every top-level package to be classified.**
+  New opt-in `[tool.forge.layering].require_all_classified` gate: a
+  top-level source package that appears in no layer becomes a blocking
+  HIGH finding instead of silently escaping enforcement — the hazard when
+  a refactor promotes code out of a dissolving umbrella package.
+  Deliberate exceptions live on the visible `unclassified_allow` list
+  (REVIEW findings; stale or redundant entries are flagged for cleanup),
+  and malformed config fails loudly instead of no-opping.
+
+## v3.5.0 — 2026-08-13
+
+### ⚠️ Upgrade notes
+- **Layering config validation is now strict.** A malformed layer value
+  that previously matched nothing *silently* — e.g. `package = ["a", "b"]`,
+  which stringified to a dead prefix — is now a HIGH config-error finding
+  anchored at `pyproject.toml`. If the layering audit newly fails on
+  config errors after upgrading, fix the layer tables; nothing about the
+  passing-config contract changed.
+
+### Features
+- **Multi-package layers.** `[[tool.forge.layering.layer]]` accepts
+  `packages = ["a", "b"]` for a domain spanning several top-level
+  prefixes (exactly one of `package` / `packages` per layer). Composing
+  *any* prefix satisfies a `composes_all_of` clause naming the layer;
+  `exempt` bare names cover same-named children under every prefix. Also
+  restores `forge:prior-art`'s layer-aware placement advice for
+  multi-package consumers (#306).
 
 ### Fixes
-- **`forge-audit-layering` no longer scans test directories by default.**
-  The generic audit default roots include `test/`/`tests/`, so a test
-  package mirroring a source namespace was evaluated as a layer child —
-  spurious findings on repos with mirrored test layouts. Root resolution
-  now routes through the shared source-only seam
-  (`[tool.forge.layering].paths` → `[tool.forge].source_dirs` → smart
-  auto-detect); explicit `--roots` remains the highest override and can
-  still name test dirs deliberately.
+- **Loud layering misconfiguration.** Non-string `name` / `package`,
+  malformed `packages`, duplicate layer names (first definition wins),
+  and both/neither package keys each yield a single HIGH config error; a
+  layer matching **zero modules on disk** reports once and is skipped as
+  a compose target instead of failing every child of every composing
+  layer mid-restructure (#306).
+- **Layering scan roots are source-only by default** — a test package
+  mirroring a source namespace is no longer evaluated as a layer child
+  (#297).
+- **`TYPE_CHECKING`-only imports are no longer runtime edges** for the
+  deps audit and layering closure; C4 diagrams and smart-test selection
+  keep the annotation edges.
+- **Audits honor the declared layout** — `[tool.forge].source_dirs` +
+  `test_dirs` beat the broad built-in directory guess when no `--roots`
+  is given.
+- **Shipped skills invoke agents by canonical `forge:` names**, and the
+  wrap-up gate self-exempts on provenance-verified `release/vX.Y.Z`
+  branches (tree reproduces the tag modulo the curated CHANGELOG).
 
-## v3.4.0 — Unreleased
+### Docs
+- **Agent discipline hardened.** `precommit-fixer` treats a
+  formatter-reverted Edit as STUCK after one occurrence (formatter-stable
+  findings never converge by re-layout); `git-commit-push` may never
+  author or modify file content via Bash — it commits the tree exactly
+  as handed over. `pr-manager` doc trimmed back under budget (#305).
+
+## v3.4.0 — 2026-08-11
 
 ### Features
 - **`forge:prior-art` agent — the creation gate.** Runs BEFORE any new
@@ -286,7 +262,7 @@ versions follow forge's rolling-next convention.
   the agent's cheap live query surface. `design-checker`'s pre-write
   briefing sheds its existence/placement steps to a pointer.
 
-## v3.3.0 — Unreleased
+## v3.3.0 — 2026-08-11
 
 ### Fixes
 - **`changelog_version` no longer leaves stale branches stuck.** The
@@ -309,7 +285,7 @@ versions follow forge's rolling-next convention.
   suggested pin, and bumps ship in a dedicated `chore(deps)` PR per the
   new FOUNDATION §6 "Dependency bumps ship alone" rule.
 
-## v3.2.0 — Unreleased
+## v3.2.0 — 2026-08-08
 
 ### Features
 - **`forge-audit-layering` + opt-in `layering` pre-commit step.** Layer
@@ -339,7 +315,7 @@ versions follow forge's rolling-next convention.
   the fix; malformed `composes_all_of`/`exempt` values also fail with a
   clear config error instead of char-splitting.
 
-## v3.1.0 — Unreleased
+## v3.1.0 — 2026-08-07
 
 ### Features
 - **`design-checker` pre-write briefing asks where new code belongs.** The
@@ -379,7 +355,7 @@ versions follow forge's rolling-next convention.
   full-scope findings. The function-granularity limitation (inline blocks
   are invisible) is now documented.
 
-## v3.0.0 — Unreleased
+## v3.0.0 — 2026-08-07
 
 ### ⚠️ Upgrade notes
 - **Skill renamed: `review` → `pr-comments`.** Claude Code ships a
@@ -412,6 +388,18 @@ versions follow forge's rolling-next convention.
   the hook. The hook stays deliberately narrower than the Python phrase
   list (tuned for raw commit-message noise; benign prose like
   "generated with care" still passes).
+- **PR finalization is verification-first and never waits on CI.**
+  FOUNDATION §6 gains a "PR finalization" policy: reporters + the strict
+  pre-commit pass run against the local tree *before* the PR is
+  published (draft escape hatch for early visibility), and the wrap-up
+  posts as soon as checks finish, stating plainly when CI is still
+  running. `/pr` restructured to match (deferred PR creation, git-only
+  base-sync variant, publish step). The shipped CI recipe now skips
+  draft PRs and triggers on `ready_for_review`.
+- **PR descriptions lead with a plain-English `Summary`.** FOUNDATION §6
+  now requires the lead section be written for the reader who uses the
+  product, not the codebase — consequence first, no internals, and a
+  plain statement when results stop being comparable across the change.
 
 ### Refactor
 - **`config.read_tool_forge_section`** — the one `[tool.forge.<section>]`
@@ -493,7 +481,7 @@ versions follow forge's rolling-next convention.
   argument-injection hardening `create_annotated_tag` received; a
   dash-prefixed value can never parse as a `git tag --list` option.
 
-## v2.28.0 — 2026-08-04
+## v2.28.0 — 2026-08-02
 
 ### ⚠️ Upgrade notes
 - **Diff-scoped checks now compare against `origin/<base_branch>` first.**
@@ -639,6 +627,186 @@ versions follow forge's rolling-next convention.
   `forge.git_utils.merge_in_progress` resolves `MERGE_HEAD` via
   `git rev-parse --git-path`, so linked worktrees work.
 
+## v2.27.0 — 2026-08-02
+
+Adds `forge-resync` and the changelog **Action:** marker convention —
+three consumer actions below.
+
+### Features
+
+- **`forge-resync` CLI + pin discovery** (#228): detect and reconcile a
+  consumer repo whose forge pin lags the latest release — discovers the
+  pin across install surfaces and drives the update; wired into the
+  upgrade flow and CI recipe.
+  - **Action:** adopt `forge-resync` in your scheduled upgrade workflow
+    (or run it once) so pin drift is surfaced instead of silent — see
+    `docs/ci-recipe.md`.
+- **Changelog `**Action:**` marker convention** (#228): release entries
+  flag each consumer-required step with an `**Action:**` line;
+  `forge.changelog.action_items` parses them and `forge-upgrade`
+  surfaces pending actions forward-only.
+  - **Action:** when authoring your own repo's release entries, mark
+    consumer-required steps with `**Action:**` lines so tooling can
+    extract them.
+- **No-version opt-out is the explicit escape** for the per-PR changelog
+  gate: a change that genuinely deserves no version skips
+  `changelog_updated` via `NO_VERSION=1` (local), a delimited
+  `no-version` branch token, or a `[no-version]` commit tag (the two
+  CI-durable forms).
+  - **Action:** repos using the opt-in changelog gates — teach
+    contributors the opt-out signals; anything else now requires a
+    changelog bullet in the same PR.
+
+### Tooling
+
+- **All GitHub Actions SHA-pinned across workflows** (#227): supply-chain
+  hardening — every `uses:` pinned to a full commit SHA with a version
+  comment.
+
+## v2.26.0 — 2026-08-02
+
+Tooling — forge adopts ruff 0.16 under `select = ["ALL"]`; consumer
+repos with the same strict baseline must mirror two config additions
+when the pin reaches them.
+
+### ⚠️ Upgrade notes
+
+- **ruff 0.16 under `select = ["ALL"]` activates newly stable rules**
+  (#226). Mirror forge's `ruff.toml` additions in your own strict-config
+  repo: add `CPY001` to the baseline ignores (per-file copyright headers
+  — a repo-level `LICENSE` is the copyright policy), and add
+  `exclude = ["*.md"]` under `[format]` unless you want ruff formatting
+  Markdown code blocks. Repos not on `select = ["ALL"]` are unaffected.
+
+### Tooling
+
+- **ruff pinned `>=0.16,<0.17`** (#226): cap-and-triage cadence — every
+  newly stable rule triaged on adoption, never an unbounded pin.
+
+### Docs / Tests
+
+- **Verification sub-agents are report-only** (#225): the reporter
+  contract (no commits/pushes/PR comments from checker agents) stated in
+  the agent docs.
+- **Branching guidance softened** (#223): FOUNDATION §6 always-branch
+  rule scoped to fresh tasks from a clean state; mid-branch new requests
+  get confirm-don't-reflex-split guidance.
+- **End-to-end consumer release fixture** (#222): `forge-release` e2e
+  test against a real single-track repo fixture.
+
+## v2.25.0 — 2026-08-02
+
+Additive — single-track consumer repos gain a CI tag-on-merge release
+mode. No consumer action required.
+
+### Features
+
+- **`forge-release --from-changelog` CI mode + tag-on-merge recipe**
+  (#220): cut exactly the version the `CHANGELOG.md` top heading
+  declares — idempotent (already tagged → exit 0) so a merge-event CI
+  job and a manual cut race safely; under CI the on-branch guard becomes
+  a `HEAD == origin/<base>` tip check (merge-event checkouts are
+  detached). `docs/ci-recipe.md` ships the matching `tag-release`
+  workflow recipe.
+
+### Docs
+
+- **Shared semver decision procedure** (#218):
+  `docs/consumer-release.md` "Choosing the bump" — the
+  new-capability-vs-new-option axis, stated generically so forge's own
+  manifest bumps and consumer `forge-release --bump` choices follow one
+  rule.
+
+## v2.24.0 — 2026-07-28
+
+Additive — changelog hygiene becomes enforceable (opt-in pre-commit steps
+plus a canonical consumer convention), and `forge-doctor` learns to spot
+version skew across install surfaces. No consumer action required: the new
+steps are opt-in; everything else is docs/skill guidance and hardening.
+
+### Features
+
+- **Opt-in `changelog_version` + `changelog_updated` pre-commit steps**
+  (#215): verify a repo's `CHANGELOG.md` stays well-formed (heading
+  validity, strictly-decreasing versions, latest-tag entry present) and
+  current (user-facing changes update it on their own branch), enabled via
+  `[tool.forge.precommit] enable`. Ships the pure detection helpers in
+  `forge.changelog` plus fixes for stale local tags, the
+  stranded-changelog race, and a hardcoded `main` in diff scoping.
+- **`forge-doctor` version-skew check** (#199): detects drift across
+  forge's three independently-updated install surfaces — the pip package,
+  the git-hook sidecar, and the cached Claude Code plugin — replacing the
+  easy-to-miss hook-time warning that was blind to the plugin surface.
+
+### Fixes
+
+- **Path-traversal guard on `forge-doctor --plugin-name`** (#201): the
+  flag is now validated as a bare plugin identifier before being joined
+  under `~/.claude/plugins/cache`, so crafted values can no longer point
+  plugin reads at arbitrary directories.
+- **`/next` tag ceremony fenced by repo class** (#213): the skill now
+  branches on repo class first and a runtime guard makes
+  `forge-next-prep --tag` warn-and-skip on single-track, manifest-less
+  repos instead of prescribing forge's rolling-next cadence to everyone.
+
+### Docs
+
+- **Canonical consumer changelog + release convention** (#210):
+  `docs/consumer-release.md` gains the single-track "Changelog convention"
+  — dated `## vX.Y.Z — YYYY-MM-DD` headings with
+  `Added`/`Changed`/`Fixed`/`Removed` groups and no `Unreleased` section.
+- **`/pr` docs-update step adds a CHANGELOG bullet** (#211): PRs with
+  user-facing effect update the changelog on their own branch as part of
+  finalization, never batched at release time.
+
+## v2.23.0 — 2026-07-22
+
+Additive and internal — a unified engine for change-scoped (diff) file
+selection across the pre-commit steps, plus an opt-in drift gate for the
+api-digest doc. No consumer action required: the new gate is off by
+default, the new typecheck scope is opt-in config, and the diff-selection
+changes are internal correctness improvements.
+
+### Features
+
+- **Diff scope for the `typecheck` step** (#183): pyrefly can now run over
+  only the files a change set touches, via `[tool.forge.precommit]`
+  `scope` / `scope_overrides.typecheck = "diff"` — the same knob the
+  `ruff` / `docstring_verification` / `test_naming_check` steps already
+  honor. Default stays whole-tree.
+- **Opt-in blocking drift gate for `docs/api-digest.md`** (#197): a new
+  `api_digest_check` pre-commit step (`forge-gen-api-digest --check`),
+  enabled via `[tool.forge.precommit] enable`, refuses a commit on a stale
+  digest — mirroring the `c4` gate. Off by default (the digest changes on
+  nearly every PR); the non-blocking `regen_docs` auto-writer stays the
+  always-on baseline.
+
+### Fixes
+
+- **`test_naming_check` diff scope now honors `[tool.forge].test_dirs`**
+  (#195): the diff branch hardcoded `test/`,`tests/`, so a repo with custom
+  test roots got an empty diff-scoped set. Both scopes now resolve the same
+  configured roots.
+- **Repo-containment guard on diff-scoped selection** (#196): every
+  diff-scoped step now drops any modified-file path resolving outside the
+  repo root before handing it to a tool (previously only `ruff` had this,
+  via its argv guard). Deleted-in-diff files are likewise dropped uniformly.
+
+### Refactor
+
+- **Unified diff-scope file selection** (#189, #192): the per-step
+  hand-rolled `get_modified_files` recipes collapse into one
+  `forge.config.select_diff_files` choke point, so root-restriction,
+  exclude-globbing, deletion-dropping, and repo-containment are decided in
+  one place with per-step knobs instead of drifting across four call sites.
+
+### Docs
+
+- **Step-invocation architecture rule** (#188): new
+  `docs/step-invocation.md` codifies when a pre-commit step ships its own
+  CLI vs. invokes a tool directly (`forge-precommit --only <step>` is the
+  single standard entry point), with the direct-invocation invariants.
+
 ## v2.22.0 — 2026-07-15
 
 Additive — forge's release-tagging primitives become reusable by consumer
@@ -670,6 +838,142 @@ manifest-versioned or dual-track repos.
 ### Docs
 - **`docs/consumer-release.md`** — the single-track consumer release recipe
   plus the stable-import-surface table.
+
+## v2.21.0 — 2026-07-07
+
+Additive — `forge-gen-c4` gains an `owned` flag on `[[external]]` for
+team-operated infrastructure, distinct from third-party externals. Default
+(`owned` unset) is byte-identical.
+
+### ⚠️ Upgrade notes
+- **`infrastructure` is now a reserved C4 tag.** If a pre-existing `c4.toml`
+  used the literal tag string `"infrastructure"` as a free-form domain tag on a
+  non-owned element, that element now renders in the reserved teal palette
+  colour instead of its prior colour. Visual-only; no config change required.
+
+### Features
+- **`owned = true` on `[[external]]` (#143).** Marks team-operated
+  infrastructure (DB / compute / storage / runtime) as distinct from
+  third-party externals — sugar over the existing tag+group machinery: adds the
+  reserved `infrastructure` tag (a distinct teal palette colour) and defaults an
+  "Our infrastructure" band when no explicit `group` is set.
+
+## v2.20.0 — 2026-07-06
+
+Additive — the agent-architecture doc's **Layer-2 drift check** lands and wires
+into `/pr`, plus a source-tracking hygiene warning. No consumer action required.
+
+### Features
+- **Agent-architecture doc Layer-2 consistency check (#169).**
+  `verify-forge-agent-doc --diff <base>` emits a structured graph-change report
+  (`added agents/x.md: delegates → design-checker`); the `/pr` flow now has
+  `docs-types-checker` verify `docs/agent-architecture.md`'s **edges** against a
+  PR's agent/skill/hook changes at review time — config-gated via
+  `[tool.forge.agent_doc]`, self-skips otherwise. Completes the drift guardrail
+  whose Layer-1 (coverage + no-dangling `agent_doc` pre-commit step) shipped in
+  v2.19.0. The report is *candidates, not mandates*: it never misses a real edge
+  but surfaces prose mentions the reviewing agent filters out.
+- **Source-tracking warning (#164).** Flags untracked, non-gitignored Python
+  under the configured source roots — the editable-install footgun where a new
+  module isn't yet `git add`-ed.
+
+### Docs
+- **FOUNDATION §8 — no `#<n>` issue/PR references in current-state prose docs**
+  (changelog excepted): docs describe the current shape, not their history (#169).
+
+## v2.19.0 — 2026-07-06
+
+Additive — a C4 element **tag vocabulary** + reference colour palette, a
+hand-maintained **agent-architecture** diagram with its own drift guardrail, and
+**per-view SVG export**. No consumer action required.
+
+### Features
+- **C4 element tag vocabulary + tag-driven styling (#160).** A
+  consumer-adoptable standard of reserved kind/modifier tags
+  (`person` / `agent` / `skill` / `hook` / `cli` / `module` / `policy`, plus
+  `reporter` / `mutator`). `forge-gen-c4` emits each tag as a Mermaid CSS class
+  **and** a reference `classDef` palette, so a tagged model is coloured by role
+  out of the box (byte-identical when untagged); forge's own code-C4 README
+  diagram is now colour-coded. See `docs/c4-architecture.md`.
+- **Agent-architecture diagram + drift guardrail (#160).** New
+  `docs/agent-architecture.md` maps the agent × skill × hook × CLI interactions
+  by workflow phase (+ a FOUNDATION-enforcers view). A new
+  `verify-forge-agent-doc` CLI — the self-skipping `agent_doc` pre-commit step —
+  gates coverage of every agent/skill + no dangling refs, with a `--diff`
+  helper the `docs-types-checker` uses to verify edges at PR review. Opt in via
+  `[tool.forge.agent_doc].path`; repos without such a doc self-skip.
+- **`forge-gen-c4 --format svg` per-view export (#158).** One vector SVG per C4
+  view via the shared headless-browser path, offline.
+
+### Fixes / Docs / Test
+- **`forge-gen-api-digest` indexes only git-tracked files (#161)** — no longer
+  walks untracked or ignored trees.
+- **Agent tier model documented by frequency × judgment (#165).**
+- **`_safe_out_path` inward `..` traversal now covered by test (#166).**
+
+## v2.18.0 — 2026-07-02
+
+Additive — the `api-digest` and `c4` generators grow into a drift-checked,
+per-module responsibility map, the C4 render config gains display options, and
+the agent git-safety hooks are hardened against real bypasses. No consumer
+action required.
+
+### Features
+- **`forge-gen-api-digest` records each module's module-level docstring
+  (#131).** Every entry in `docs/api-digest.md` now shows its module's
+  docstring summary — its stated purpose — under the header (or a
+  `(no module docstring)` marker), and a docstring-only module (no top-level
+  symbols) now earns an entry instead of being silently dropped.
+- **`forge-gen-c4 --check` opt-in strict-coverage gate (#132).** Set
+  `[tool.forge.c4].strict_coverage = true` to make `--check` **fail** on any
+  module mapped to no `[[component]]`, or any declared component prefix
+  matching zero real modules (dead prefix). Default off — a non-exhaustive map
+  keeps today's warn-only behavior.
+- **C4 render display options (#156).** Two additive, opt-in
+  `[tool.forge.c4]` keys — a configurable System-Context `system_technology`
+  label and per-route filtered sub-views for dense Container/Component
+  diagrams. Byte-identical output when unset.
+- **`block_git_rebase` agent hook.** Blocks `git rebase` and `git pull
+  --rebase` / `-r` (no bypass). FOUNDATION §2 gains a NEVER-rebase rule and §6
+  a "confirm before splitting a mid-branch request" rule.
+
+### Fixes
+- **Hardened the agent git-safety hooks.** `block_force_push` now catches the
+  short `-f` / `-uf` cluster and `+`-prefixed force refspecs (not just
+  `--force`); and the command-matching anchor shared by `block_force_push`,
+  `block_raw_git`, and `block_git_rebase` no longer misses `git` behind an
+  inline `VAR=val` assignment, leading whitespace, or a `command` / `env`
+  wrapper.
+
+### Refactor
+- **`closest_known` promoted to `forge.import_graph` (#135).** Dedupes the
+  near-identical dotted-name resolver in `forge.audit.deps` and
+  `forge.smart_test.dependencies`. No behavior change.
+
+## v2.17.0 — 2026-07-01
+
+Additive — forge's whole-tree pre-commit steps become configurable: a repo can
+now exclude vendored / generated Python it does not author from
+`docstring_verification` and `test_naming_check`, and `--scope all` scopes to
+the declared source tree. No consumer action required.
+
+### Features
+- **Unified `[tool.forge].exclude` + source-tree scoping for whole-tree steps
+  (#83).** The file-selecting steps `docstring_verification` and
+  `test_naming_check` now (1) scope `--scope all` to `[tool.forge].source_dirs`
+  / `test_dirs` (test-naming uses `test_dirs` only) so "whole tree" means the
+  *source* tree — aligning them with ruff / api-digest / coverage — and (2)
+  honor a new repo-wide `[tool.forge].exclude` glob list (fnmatch + bare-dir
+  prefix) for paths inside the source roots you still want skipped. The dead
+  hardcoded `EXCLUDED_PATHS` is removed; a broad-wildcard footgun note is
+  documented. Surfaced by `forge-config --list`.
+
+### Fixes
+- **`forge-config --list` now lists the `[tool.forge.smart_test].*` keys.**
+  The seven smart-test config keys (`precommit_depth`, `blocking`, `paths`,
+  `follow_mock_patches`, `coverage_validate`, `coverage_json`,
+  `commit_directive_re`) were read but absent from the config surface report;
+  now declared (#83).
 
 ## v2.16.0 — 2026-07-01
 
@@ -744,6 +1048,31 @@ The DSL / README / `--format mermaid` output is unchanged.
   html`/`pdf` output, so it produces no empty tab or blank PDF page; containers
   with components are unchanged.
 
+## v2.15.0 — 2026-06-30
+
+Additive — a new opt-in `forge-smart-test` CLI + `/forge:smart-test` skill +
+a self-skipping pre-commit step; no consumer action required.
+
+### Features
+- **`forge-smart-test` — change-driven test selection by import depth.**
+  Selects only the tests a change set affects (via the `forge.import_graph`
+  reverse import graph) and runs them in escalating depth tiers
+  (`0`/`1`/`2`/`full`) with fail-fast, writing `code_health/smart_test.log`.
+  Ships the `/forge:smart-test` skill and an **opt-in**, self-skipping
+  `smart_test` pre-commit step (`[tool.forge.smart_test].precommit_depth`).
+  Opt-in extensions widen selection to a safe superset for mock- and
+  runtime-coupled suites: `follow_mock_patches` (treat `mock.patch` string
+  targets as edges) and `coverage_validate` + `--coverage-json` (union tests
+  whose coverage contexts touch a changed line). `--from-commit-message`
+  drives the tier from a `[depth-N]`/`[full]` commit directive. Depth model
+  and trade-offs in FOUNDATION §17 (#8).
+
+### Tooling
+- **`/pr` + `pr-manager` base-sync gate.** PR finalization now refuses a PR
+  that is behind or conflicting with its base (mergeable / behind-count
+  check) — a green CI run on a stale base no longer reads as ready. Surfaces
+  the state; never silently merges.
+
 ## v2.14.0 — 2026-06-30
 
 Additive — three new pre-commit steps. Two self-skip unless their artifact
@@ -776,6 +1105,9 @@ command, so no consumer action is required.
 - Relocate the git re-stage helper from `fix_ruff` to
   `git_utils.stage_modified_paths` (public) so both the ruff step and the new
   `regen_docs` step share one git-add-back implementation.
+- Extract the shared AST import-scanning primitives into `forge.import_graph`,
+  reused by `forge-gen-c4` and `forge-audit-deps` — internal; folds the
+  v2.13.1 patch into this release (#126).
 
 ## v2.13.0 — 2026-06-26
 
