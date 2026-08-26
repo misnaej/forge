@@ -182,6 +182,22 @@ def test_build_graph_type_checking_only_import_creates_edge(
     assert "myapp.core" in graph.imports[test_name]
 
 
+def test_build_graph_default_omits_ancestor_edges(import_chain_repo: Path) -> None:
+    """Without the opt-in, a module gains no edge to its package ``__init__``."""
+    graph = build_graph(import_chain_repo)
+    assert "myapp" not in graph.imports.get("myapp.core", set())
+    assert "myapp" not in graph.imports.get("myapp.service", set())
+
+
+def test_build_graph_include_ancestor_edges_adds_package_edge(
+    import_chain_repo: Path,
+) -> None:
+    """``include_ancestor_edges=True`` adds an edge from each module to ``myapp``."""
+    graph = build_graph(import_chain_repo, include_ancestor_edges=True)
+    assert "myapp" in graph.imports["myapp.core"]
+    assert "myapp" in graph.imports["myapp.service"]
+
+
 def test_select_tests_depth_0_direct_importer(import_chain_repo: Path) -> None:
     """A change to core.py at depth 0 selects test_core.py (direct importer)."""
     plan = select_tests(import_chain_repo, {"src/myapp/core.py"}, max_depth=0)
@@ -584,6 +600,155 @@ def test_self_check_silent_on_module_with_importer(
     """A changed module that IS imported produces no mismatch warning."""
     with caplog.at_level(logging.WARNING):
         select_tests(import_chain_repo, {"src/myapp/core.py"}, max_depth=1)
+    assert not any("no importer references" in r.message for r in caplog.records), (
+        f"unexpected mismatch warning: {[r.message for r in caplog.records]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Ancestor edges — a package __init__ re-exporting a submodule name must
+# reach a direct-submodule consumer's test too, not just its own facade
+# consumers.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def facade_reexport_repo(tmp_path: Path) -> Path:
+    """A package ``__init__`` that re-exports a name from a submodule.
+
+    Layout::
+
+        <root>/
+          pyproject.toml            # source_dirs = ["src"], test_dirs = ["tests"]
+          src/pkg/__init__.py
+          src/pkg/sub/__init__.py   # from pkg.sub.mod import thing
+          src/pkg/sub/mod.py        # thing = 1
+          tests/test_facade.py      # from pkg.sub import thing
+          tests/test_mod.py         # from pkg.sub.mod import thing
+
+    ``test_facade.py`` couples to the facade (``pkg.sub``); ``test_mod.py``
+    couples straight to the submodule (``pkg.sub.mod``) and never imports
+    the facade — the ancestor edge is what lets a facade edit reach it.
+
+    Returns:
+        The repo root path.
+    """
+    root = tmp_path
+    (root / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n',
+        encoding="utf-8",
+    )
+    pkg = root / "src" / "pkg"
+    sub = pkg / "sub"
+    sub.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (sub / "__init__.py").write_text(
+        "from pkg.sub.mod import thing\n", encoding="utf-8"
+    )
+    (sub / "mod.py").write_text("thing = 1\n", encoding="utf-8")
+
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_facade.py").write_text(
+        "from pkg.sub import thing\n\n\ndef test_thing():\n    assert thing == 1\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_mod.py").write_text(
+        "from pkg.sub.mod import thing\n\n\ndef test_thing():\n    assert thing == 1\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_select_tests_facade_edit_selects_facade_test_at_depth_0(
+    facade_reexport_repo: Path,
+) -> None:
+    """A facade edit at depth 0 selects the test that imports the facade directly."""
+    plan = select_tests(facade_reexport_repo, {"src/pkg/sub/__init__.py"}, max_depth=0)
+    tests = plan.tests_up_to(0)
+    assert any("test_facade" in t for t in tests)
+
+
+def test_select_tests_facade_edit_selects_descendant_test_via_ancestor_edge(
+    facade_reexport_repo: Path,
+) -> None:
+    """A facade edit at depth 1 also reaches a direct-submodule consumer.
+
+    This is the acceptance criterion for ancestor edges: ``test_mod.py``
+    never imports the facade (``pkg.sub``), only the submodule
+    (``pkg.sub.mod``) — but ``pkg.sub.mod`` implicitly depends on its
+    ancestor ``pkg.sub`` (importing it runs ``pkg/sub/__init__.py``), so the
+    ancestor edge lets a facade edit reach it one hop out.
+    """
+    plan = select_tests(facade_reexport_repo, {"src/pkg/sub/__init__.py"}, max_depth=1)
+    tests = plan.tests_up_to(1)
+    assert any("test_facade" in t for t in tests)
+    assert any("test_mod" in t for t in tests)
+
+
+def test_select_tests_submodule_edit_unaffected_by_ancestor_edges(
+    facade_reexport_repo: Path,
+) -> None:
+    """A submodule edit at depth 0 selects only its own direct-importer test.
+
+    Ancestor edges run in the submodule → package direction only, so
+    editing ``pkg.sub.mod`` does not spuriously select ``test_facade.py``.
+    """
+    plan = select_tests(facade_reexport_repo, {"src/pkg/sub/mod.py"}, max_depth=0)
+    assert plan.tests_up_to(0) == ["tests/test_mod.py"]
+
+
+# ---------------------------------------------------------------------------
+# Self-check + ancestor edges — a changed package __init__ with a known
+# descendant must NOT trip the source-dir/import-root mismatch warning: the
+# ancestor edge gives it an incoming edge via its descendant.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def descendant_only_import_repo(tmp_path: Path) -> Path:
+    """A package ``__init__`` with no direct importer but a known descendant.
+
+    Layout::
+
+        <root>/
+          pyproject.toml       # source_dirs = ["src"], test_dirs = ["tests"]
+          src/pkg/__init__.py  # empty — nothing imports it directly
+          src/pkg/leaf.py      # z = 1
+          tests/test_leaf.py   # from pkg.leaf import z
+
+    Returns:
+        The repo root path.
+    """
+    root = tmp_path
+    (root / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n',
+        encoding="utf-8",
+    )
+    pkg = root / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "leaf.py").write_text("z = 1\n", encoding="utf-8")
+
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_leaf.py").write_text(
+        "from pkg.leaf import z\n\n\ndef test_z():\n    assert z == 1\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_self_check_silent_on_package_init_with_known_descendant(
+    descendant_only_import_repo: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A package ``__init__`` with a known descendant produces no mismatch warning.
+
+    ``pkg`` has no direct importer, but ``pkg.leaf`` gains an ancestor edge
+    to it — that incoming edge is enough to satisfy the self-check.
+    """
+    with caplog.at_level(logging.WARNING):
+        select_tests(descendant_only_import_repo, {"src/pkg/__init__.py"}, max_depth=0)
     assert not any("no importer references" in r.message for r in caplog.records), (
         f"unexpected mismatch warning: {[r.message for r in caplog.records]}"
     )

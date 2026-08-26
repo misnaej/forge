@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from forge.config import resolve_tool_roots
 from forge.import_graph import (
+    ancestor_edges,
     closest_known,
     extract_import_targets,
     resolve_module_name,
@@ -236,7 +237,12 @@ class _Graph:
     test_modules: set[str] = field(default_factory=set)
 
 
-def build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph:
+def build_graph(
+    repo_root: Path,
+    *,
+    follow_mock_patches: bool = False,
+    include_ancestor_edges: bool = False,
+) -> _Graph:
     """Parse the repo into an internal import graph.
 
     Source files are named by climbing the ``__init__.py`` chain from
@@ -254,6 +260,13 @@ def build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph
             string targets are added as edges alongside its (opt-in)
             imports — ``patch("pkg.mod.attr")`` becomes a dep on ``pkg.mod``
             even with no import statement. Off by default.
+        include_ancestor_edges: When ``True``, every known module gains
+            edges to its known ancestor packages
+            (:func:`forge.import_graph.ancestor_edges`) — importing
+            ``a.b.c`` executes the ancestor ``__init__`` files, so a
+            package ``__init__`` edit reaches its descendants' tests in
+            the reverse walk. Off by default (design-time consumers model
+            declared imports only).
 
     Returns:
         The populated :class:`_Graph`.
@@ -293,6 +306,9 @@ def build_graph(repo_root: Path, *, follow_mock_patches: bool = False) -> _Graph
         graph.path_of[name] = rel
         resolved = {m for t in targets if (m := closest_known(t, known)) and m != name}
         graph.imports[name] = resolved
+    if include_ancestor_edges:
+        for name, ancestors in ancestor_edges(known).items():
+            graph.imports[name] |= ancestors
     return graph
 
 
@@ -321,7 +337,11 @@ def select_tests(
     Returns:
         A :class:`SelectionPlan` describing the selection.
     """
-    graph = build_graph(repo_root, follow_mock_patches=follow_mock_patches)
+    graph = build_graph(
+        repo_root,
+        follow_mock_patches=follow_mock_patches,
+        include_ancestor_edges=True,
+    )
     module_of = {rel: name for name, rel in graph.path_of.items()}
 
     changed_modules = {module_of[f] for f in changed_files if f in module_of}
@@ -339,7 +359,9 @@ def select_tests(
     # resolved does not match the name importers reference, so its reverse
     # edge never connects and the tier would select zero tests silently. Warn
     # loudly instead. A genuinely un-imported module (e.g. a CLI entry point)
-    # trips this too; a spurious warning beats a silent false green.
+    # trips this too; a spurious warning beats a silent false green. A package
+    # __init__ with known descendants does not trip it: the ancestor edges
+    # give it incoming edges, so it selects through its descendants instead.
     for module in changed_modules:
         if module not in graph.test_modules and not importers.get(module):
             logger.warning(

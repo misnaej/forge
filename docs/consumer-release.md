@@ -135,6 +135,14 @@ up to date before merging"* — the job recipe lives in
 [`ci-recipe.md`](ci-recipe.md) "Stranded-changelog gate as a required
 PR check".
 
+**Recovery when the gate fires mid-branch**: the check is
+branch-cumulative — a tag cut while the branch is open strands *all*
+its earlier entries at once, and editing headings cannot fix it. The
+one cure is merging the base in (`git merge origin/<base>`); with
+uncommitted work in the tree, use the stash dance [`FOUNDATION.md` §2](../FOUNDATION.md#2-core-safety-rules)
+sanctions (`git stash -u` → merge → `git stash pop`; on any failure
+leave the stash alone) — never `git reset --hard`.
+
 **Deferred entry timing** (`[tool.forge.changelog].precommit_enforce =
 false`): by default `changelog_updated` gates every local commit, which
 on high-parallelism repos means resolving changelog conflicts mid-PR.
