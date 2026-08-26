@@ -201,6 +201,7 @@ graph LR
   design_checker["⚖️ design-checker<br/>AI agent"]
   docs_types_checker["⚖️ docs-types-checker<br/>AI agent"]
   cli_forge_continuation_append[("forge-continuation-append<br/>CLI")]
+  cli_forge_pr_plan[("forge-pr-plan<br/>CLI")]
   cli_forge_pr_squash_comment[("forge-pr-squash-comment<br/>CLI")]
   sk_pr(["/pr<br/>skill"])
   prior_art["prior-art<br/>AI agent"]
@@ -216,6 +217,7 @@ graph LR
   pr_manager -->|delegates| precommit_fixer
   precommit_fixer -->|delegates| docs_types_checker
   precommit_fixer -->|delegates| design_checker
+  sk_pr -->|invokes| cli_forge_pr_plan
   sk_pr -->|invokes| design_checker
   sk_pr -->|invokes| security_checker
   sk_pr -->|invokes| docs_types_checker
@@ -239,6 +241,7 @@ graph LR
   class docs_types_checker agent
   class docs_types_checker mutator
   class cli_forge_continuation_append cli
+  class cli_forge_pr_plan cli
   class cli_forge_pr_squash_comment cli
   class sk_pr skill
   class pr_manager agent

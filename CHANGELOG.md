@@ -20,6 +20,21 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.15.0 — 2026-08-26
+
+### Features
+- **The `/pr` finalization-path decision is now a deterministic CLI.**
+  New `forge-pr-plan --base <ref> [--pr <N>]` composes the existing
+  `pr_delta` classifiers over the real diff and emits one JSON plan
+  (`mode`: full / light-docs / light-regen / delta, plus the reporters
+  to run, the `forge-precommit --only` scope, the reasons trail, and a
+  `classified_at` HEAD stamp). The `/pr` skill's prose decision tree is
+  replaced by one invocation + a mode table; `pr-manager` warns when a
+  wrap-up posts at a different HEAD than the plan classified.
+  `light-regen` stays eligibility-only — the provenance gates must
+  still pass. The delta path degrades to `full` (with a stated reason)
+  when `gh` or a `verified-at:` baseline is unavailable.
+
 ## v3.14.0 — 2026-08-26
 
 ### Features
