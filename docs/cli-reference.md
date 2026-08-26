@@ -542,7 +542,8 @@ options:
 
 ```text
 usage: forge-smart-test [-h] [--depth {0,1,2,full}] [--show-files]
-                        [--coverage] [--base BASE] [--from-commit-message]
+                        [--coverage] [--telemetry] [--base BASE]
+                        [--from-commit-message]
                         [--coverage-json COVERAGE_JSON]
 
 Run only the tests a change set affects, in escalating import-depth tiers with
@@ -555,6 +556,9 @@ options:
   --show-files          Print the selected-test plan and exit without running
                         pytest.
   --coverage            Enable coverage (always on for --depth full).
+  --telemetry           Sample RSS/CPU during the run via forge-telemetry
+                        (needs the [telemetry] extra; degrades to an
+                        unprofiled run when absent).
   --base BASE           Ref to diff against for change detection (default:
                         auto-detect).
   --from-commit-message
@@ -564,6 +568,18 @@ options:
                         Path to a `coverage json --show-contexts` export;
                         unions tests covering a changed line into the
                         selection (enables coverage validation).
+```
+
+## forge-telemetry
+
+```text
+usage: forge-telemetry [-h]
+
+Sample process-tree RSS + host CPU while a command runs; write
+code_health/telemetry.log (+ .png with matplotlib).
+
+options:
+  -h, --help  show this help message and exit
 ```
 
 ## forge-upgrade

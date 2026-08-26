@@ -72,6 +72,7 @@ forge-resync = "forge.resync:main"
 forge-pr-squash-comment = "forge.pr_squash_comment:main"
 forge-pr-plan = "forge.pr_plan:main"
 forge-slow-tests-report = "forge.slow_tests_report:main"
+forge-telemetry = "forge.telemetry:main"
 forge-config = "forge.forge_config:main"
 forge-audit-agents = "forge.audit.agents:main"
 forge-audit-deps = "forge.audit.deps:main"
@@ -89,6 +90,9 @@ audit = ["jsonschema>=4.0", "PyYAML>=6.0"]
 audit-tach = ["tach>=0.30"]
 # Type checker for the opt-in `typecheck` pre-commit step (pyrefly only).
 typecheck = ["pyrefly>=1,<2"]
+# Resource profiling for forge-telemetry / forge-smart-test --telemetry.
+# psutil is required for sampling; matplotlib only for the PNG chart.
+telemetry = ["psutil>=5.9", "matplotlib>=3.8"]
 # Contributor / dev-loop umbrella. Aggregates the targeted extras so
 # every reference to `pip install -e ".[dev]"` in forge's own docs and
 # dev tooling resolves to a real install target inside forge's own
@@ -96,7 +100,7 @@ typecheck = ["pyrefly>=1,<2"]
 # consumer-valid commands from `forge.git_utils.forge_install_command`.)
 # Consumer repos typically carry their own `[dev]` extra; this one is
 # for forge itself.
-dev = ["forge-scripts[test,audit,typecheck]"]
+dev = ["forge-scripts[test,audit,typecheck,telemetry]"]
 
 [project.urls]
 Homepage = "https://github.com/misnaej/forge"

@@ -20,6 +20,19 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.17.0 — 2026-08-26
+
+### Features
+- **Resource profiling for test and command runs.** New `forge-telemetry
+  -- <cmd> ...` samples the wrapped command's process-tree RSS and host
+  CPU on a configurable interval (`[tool.forge.telemetry]`), writing
+  `code_health/telemetry.log` and — with matplotlib — a `telemetry.png`
+  chart; `forge-smart-test --telemetry` wraps its pytest runs the same
+  way. Ships as the opt-in `[telemetry]` extra (psutil + matplotlib):
+  the CLI fails loudly without psutil, while the smart-test flag
+  degrades to an unprofiled run. Default off everywhere — invocation is
+  always explicit, and the child's exit code passes through unchanged.
+
 ## v3.16.0 — 2026-08-26
 
 ### Features
