@@ -325,6 +325,7 @@ graph LR
   sk_triage -->|invokes| issue_triage
   sk_plan_issue -->|records validated plan via| issue_triage
   sk_sentinel -->|executes plan-ready issues via| sk_pr
+  sk_sentinel -->|empty-loop screen via| issue_triage
   issue_triage -->|invokes| cli_install_forge_labels
   class human person
   class main_agent orchestrator
