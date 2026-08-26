@@ -73,6 +73,7 @@ from typing import TYPE_CHECKING
 from forge import config, pip_audit_json
 from forge.changelog import (
     changelog_version_findings,
+    released_deleted_versions,
     stranded_added_versions,
     wants_no_version,
 )
@@ -1642,7 +1643,10 @@ def step_regen_docs(repo_root: Path) -> StepResult:
 
     Returns:
         ``StepResult`` (``non_blocking=True``); skipped when neither doc
-        exists. ``passed`` is False only when a present generator errored.
+        exists or when unstaged changes are present (partial commit — the
+        generators read the worktree, which then differs from what the
+        commit records). ``passed`` is False only when a present generator
+        errored.
 
     Raises:
         SystemExit: If a needed ``forge-gen-*`` CLI is not on PATH.
@@ -1653,6 +1657,23 @@ def step_regen_docs(repo_root: Path) -> StepResult:
             name="regen_docs",
             passed=True,
             output="(no generated docs present — skipped)",
+            skipped=True,
+        )
+    # Partial-commit guard: generators read the WORKTREE, so with unstaged
+    # changes present the regenerated docs would describe a tree state that
+    # is not what this commit records (and auto-staging them would smuggle
+    # that state in). Any non-empty unstaged diff is the signal — not a
+    # staged-vs-dirty set comparison, which misses the `git add -p`
+    # same-file case (#363). Skip; the next full-tree commit refreshes.
+    if run_git("diff", "--name-only", cwd=repo_root, check=False).strip():
+        return StepResult(
+            name="regen_docs",
+            passed=True,
+            output=(
+                "(unstaged changes present — partial commit; regeneration "
+                "skipped so generated docs never capture a tree state the "
+                "commit does not record)"
+            ),
             skipped=True,
         )
     passed = True
@@ -1927,6 +1948,12 @@ def step_changelog_version(repo_root: Path) -> StepResult:
                         f"ahead of latest tag {latest}) — stranded; move them "
                         "under the next `## vX.Y.Z` heading."
                         for version in stranded_added_versions(old_text, text, latest)
+                    )
+                    findings.extend(
+                        f"Entries deleted from released section {version} (at "
+                        f"or below latest tag {latest}) — released history is "
+                        "immutable; restore the removed lines."
+                        for version in released_deleted_versions(old_text, text, latest)
                     )
     # Stale-branch trap: when the failing findings are tag-shaped AND the
     # tag lives on the base but not on HEAD, the branch is merely behind —

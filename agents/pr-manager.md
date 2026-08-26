@@ -178,6 +178,15 @@ Recommendation: <verdict>
 ```
 Confirm BOTH the squash-merge message and wrap-up comment were posted — **either missing = the wrap-up is INCOMPLETE**.
 
+## Guard hooks
+
+Agent-scoped: `block_pr_merge`, `block_unverified_pr_create` (source of
+truth: `[tool.forge.agent_doc.guarded_by]`). Edit/Write-scoped hooks
+(`block_protected_files`, `block_forge_docs_edits`) bind every agent. A
+block enforces your own contract — stop and report, never route around.
+For a hook-protected file: present the exact diff; the USER applies it —
+never imply approval would let you edit.
+
 ## CONTINUATION Log Update
 
 After a successful wrap-up (skip if incomplete), append the activity record — rules: [FOUNDATION §10](../FOUNDATION.md#10-continuation-protocol); format SSoT: `forge-continuation-append`:

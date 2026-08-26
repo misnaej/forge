@@ -457,111 +457,330 @@ def test_rebase_blocks_leading_whitespace() -> None:
     assert _run_hook(_REBASE, "   git rebase main") == 2
 
 
-_RESET_HARD = "block_git_reset_hard.sh"
+_DESTRUCTIVE = "block_git_destructive.sh"
 
 
-def test_reset_hard_blocks_bare_hard() -> None:
-    """`git reset --hard` is blocked — it discards uncommitted work irrecoverably."""
-    assert _run_hook(_RESET_HARD, "git reset --hard") == 2
+# --- git reset: blanket ban, all forms (#363 — user directive: "git reset
+# absolutely all mode forbidden"). Agents unstage via `git restore --staged
+# <path>` instead; that command stays allowed (tested below). -------------
 
 
-def test_reset_hard_blocks_hard_with_ref() -> None:
-    """`git reset --hard HEAD~1` (targeted hard reset) is blocked too."""
-    assert _run_hook(_RESET_HARD, "git reset --hard HEAD~1") == 2
+def test_destructive_blocks_bare_reset() -> None:
+    """A bare `git reset` (mixed reset) is blocked under the blanket ban."""
+    assert _run_hook(_DESTRUCTIVE, "git reset") == 2
 
 
-def test_reset_hard_blocks_merge() -> None:
-    """`git reset --merge` is blocked — same destruction class as `--hard`."""
-    assert _run_hook(_RESET_HARD, "git reset --merge") == 2
+def test_destructive_blocks_soft_reset() -> None:
+    """`git reset --soft HEAD~1` is blocked — the ban covers every reset mode."""
+    assert _run_hook(_DESTRUCTIVE, "git reset --soft HEAD~1") == 2
 
 
-def test_reset_hard_has_no_agent_bypass() -> None:
-    """Even forge:git-commit-push cannot hard-reset — the block has no bypass."""
-    assert (
-        _run_hook(_RESET_HARD, "git reset --hard", agent_type="forge:git-commit-push")
-        == 2
-    )
+def test_destructive_blocks_ref_only_reset() -> None:
+    """`git reset HEAD~1` (no explicit mode flag) is blocked too."""
+    assert _run_hook(_DESTRUCTIVE, "git reset HEAD~1") == 2
 
 
-def test_reset_hard_blocks_compound_command() -> None:
-    """A hard reset chained after `cd` (`cd /tmp/x && git reset --hard`) is blocked."""
-    assert _run_hook(_RESET_HARD, "cd /tmp/x && git reset --hard") == 2
+def test_destructive_blocks_path_reset() -> None:
+    """`git reset -- some_file.py` (path-scoped unstage) is blocked.
 
-
-def test_reset_hard_blocks_env_var_prefix() -> None:
-    """`GIT_DIR=/tmp/x git reset --hard` (inline env assignment) is blocked."""
-    assert _run_hook(_RESET_HARD, "GIT_DIR=/tmp/x git reset --hard") == 2
-
-
-def test_reset_hard_blocks_leading_whitespace() -> None:
-    """A hard reset with leading whitespace (`   git reset --hard`) is blocked."""
-    assert _run_hook(_RESET_HARD, "   git reset --hard") == 2
-
-
-def test_reset_hard_blocks_subshell_and_flagged_wrapper() -> None:
-    """Subshell parens and flag tokens between wrapper and git still block."""
-    assert _run_hook(_RESET_HARD, "(git reset --hard)") == 2
-    assert _run_hook(_RESET_HARD, "sudo -n git reset --hard") == 2
-
-
-def test_reset_hard_allows_bare_reset() -> None:
-    """A bare `git reset` (mixed reset, keeps the working tree) is allowed."""
-    assert _run_hook(_RESET_HARD, "git reset") == 0
-
-
-def test_reset_hard_allows_soft() -> None:
-    """`git reset --soft HEAD~1` keeps the working tree and is allowed."""
-    assert _run_hook(_RESET_HARD, "git reset --soft HEAD~1") == 0
-
-
-def test_reset_hard_allows_ref_only() -> None:
-    """`git reset HEAD~1` (no `--hard`/`--merge`) is allowed."""
-    assert _run_hook(_RESET_HARD, "git reset HEAD~1") == 0
-
-
-def test_reset_hard_allows_path_reset() -> None:
-    """`git reset -- some_file.py` (unstaging a path) is allowed."""
-    assert _run_hook(_RESET_HARD, "git reset -- some_file.py") == 0
-
-
-def test_reset_hard_allows_stash() -> None:
-    """`git stash -u` — the sanctioned dirty-tree sync step — is allowed."""
-    assert _run_hook(_RESET_HARD, "git stash -u") == 0
-
-
-def test_reset_hard_allows_commit_message_mention() -> None:
-    """The words "reset --hard" inside a quoted commit message do not false-positive."""
-    assert _run_hook(_RESET_HARD, 'git commit -m "never reset --hard here"') == 0
-
-
-def test_reset_hard_allows_non_git_tool() -> None:
-    """A non-git command merely containing the words is not inspected."""
-    assert _run_hook(_RESET_HARD, "some-other-tool --hard reset") == 0
-
-
-def test_reset_hard_allows_flag_in_other_segment_of_compound() -> None:
-    """`--hard` in one command segment never taints a plain reset in another.
-
-    The flag check is scoped to the same `git reset` invocation — a quoted
-    mention followed by a legitimate mixed reset must not block.
+    Use `git restore --staged some_file.py` instead — see
+    `test_destructive_allows_restore_staged_path`.
     """
-    assert (
-        _run_hook(
-            _RESET_HARD,
-            'git commit -m "fixed the --hard regression"; git reset HEAD~1',
-        )
-        == 0
-    )
-    assert _run_hook(_RESET_HARD, "git reset HEAD~1; echo done --hard") == 0
+    assert _run_hook(_DESTRUCTIVE, "git reset -- some_file.py") == 2
 
 
-def test_reset_hard_blocks_flag_glued_by_substitution() -> None:
+def test_destructive_blocks_hard_with_ref() -> None:
+    """`git reset --hard HEAD~1` (targeted hard reset) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git reset --hard HEAD~1") == 2
+
+
+def test_destructive_blocks_merge_reset() -> None:
+    """`git reset --merge` is blocked — same destruction class as `--hard`."""
+    assert _run_hook(_DESTRUCTIVE, "git reset --merge") == 2
+
+
+def test_destructive_blocks_reset_flag_glued_by_substitution() -> None:
     """A flag glued to an empty substitution (`$(echo)--hard`) still blocks.
 
     Bash concatenates an adjacent substitution with literal text into one
-    argv word, so no whitespace precedes the flag in the raw command.
+    argv word, so no whitespace precedes the flag in the raw command — but
+    the blanket ban fires on the bare `reset` verb regardless.
     """
-    assert _run_hook(_RESET_HARD, "git reset $(echo)--hard") == 2
+    assert _run_hook(_DESTRUCTIVE, "git reset $(echo)--hard") == 2
+
+
+def test_destructive_blocks_reset_leading_whitespace() -> None:
+    """A reset with leading whitespace (`   git reset HEAD~1`) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "   git reset HEAD~1") == 2
+
+
+def test_destructive_blocks_reset_env_var_prefix() -> None:
+    """`GIT_DIR=/tmp/x git reset --soft HEAD~1` (inline env assignment) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "GIT_DIR=/tmp/x git reset --soft HEAD~1") == 2
+
+
+def test_destructive_blocks_reset_subshell_and_sudo_wrapper() -> None:
+    """Subshell parens and flag tokens between wrapper and git still block."""
+    assert _run_hook(_DESTRUCTIVE, "(git reset HEAD~1)") == 2
+    assert _run_hook(_DESTRUCTIVE, "sudo -n git reset HEAD~1") == 2
+
+
+def test_destructive_allows_restore_staged_path() -> None:
+    """`git restore --staged some_file.py` — the sanctioned unstage — is allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git restore --staged some_file.py") == 0
+
+
+def test_destructive_reset_has_no_agent_bypass() -> None:
+    """Even forge:git-commit-push cannot reset — the block has no bypass."""
+    assert _run_hook(_DESTRUCTIVE, "git reset", agent_type="forge:git-commit-push") == 2
+
+
+def test_destructive_blocks_reset_compound_command() -> None:
+    """A reset chained after `cd` (`cd /tmp/x && git reset --hard`) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "cd /tmp/x && git reset --hard") == 2
+
+
+def test_destructive_allows_reset_commit_message_mention() -> None:
+    """The words "reset --hard" inside a quoted commit message do not false-positive."""
+    assert _run_hook(_DESTRUCTIVE, 'git commit -m "never reset --hard here"') == 0
+
+
+def test_destructive_allows_reset_non_git_tool() -> None:
+    """A non-git command merely containing the words is not inspected."""
+    assert _run_hook(_DESTRUCTIVE, "some-other-tool --hard reset") == 0
+
+
+def test_destructive_reset_flag_in_other_compound_segment_stays_scoped() -> None:
+    """A quoted `--hard` mention in one segment never taints another segment.
+
+    The reset ban still only fires on an actual `git reset` invocation in
+    the compound command, not on unrelated text elsewhere in the line.
+    """
+    assert _run_hook(_DESTRUCTIVE, "echo done --hard; echo unrelated") == 0
+
+
+def test_destructive_allows_reset_stash_push() -> None:
+    """`git stash -u` — the sanctioned dirty-tree sync step — is allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git stash -u") == 0
+
+
+# --- git clean: -f/-d/-x/-X/--force block; dry-run (-n/--dry-run) allowed --
+
+
+def test_destructive_blocks_clean_force_flag() -> None:
+    """`git clean -f` is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git clean -f") == 2
+
+
+def test_destructive_blocks_clean_clustered_fdx() -> None:
+    """`git clean -fdx` (clustered short flags) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git clean -fdx") == 2
+
+
+def test_destructive_blocks_clean_separate_flags() -> None:
+    """`git clean -f -d -x` (separate short flags) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git clean -f -d -x") == 2
+
+
+def test_destructive_blocks_clean_long_force_flag() -> None:
+    """`git clean --force` is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git clean --force") == 2
+
+
+def test_destructive_allows_clean_dry_run_short_flag() -> None:
+    """`git clean -n` (dry run) is allowed — it only lists candidates."""
+    assert _run_hook(_DESTRUCTIVE, "git clean -n") == 0
+
+
+def test_destructive_allows_clean_dry_run_long_flag() -> None:
+    """`git clean --dry-run` is allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git clean --dry-run") == 0
+
+
+def test_destructive_allows_clean_dry_run_clustered_with_force() -> None:
+    """`-nf` (dry-run clustered with force in the same token) short-circuits allowed.
+
+    The dry-run check runs first, so a dry-run flag anywhere in the
+    invocation stands down the force check even when `-f` sits in the
+    same cluster.
+    """
+    assert _run_hook(_DESTRUCTIVE, "git clean -nf") == 0
+
+
+def test_destructive_allows_clean_dry_run_and_force_as_separate_flags() -> None:
+    """`--dry-run --force` (both present) is allowed — dry-run wins."""
+    assert _run_hook(_DESTRUCTIVE, "git clean --dry-run --force") == 0
+
+
+def test_destructive_allows_bare_clean() -> None:
+    """A bare `git clean` (no flags at all) is allowed — nothing to delete yet."""
+    assert _run_hook(_DESTRUCTIVE, "git clean") == 0
+
+
+def test_destructive_blocks_clean_bounded_per_invocation() -> None:
+    """`git clean -n; git clean -f` — the second invocation still blocks.
+
+    The dry-run short-circuit is bounded to the same invocation
+    (`[^;&|]*`), so an earlier dry-run in a chained command must not
+    launder a later forceful `git clean`.
+    """
+    assert _run_hook(_DESTRUCTIVE, "git clean -n; git clean -f") == 2
+
+
+# --- git checkout / restore: literal discard-everything only --------------
+
+
+def test_destructive_blocks_checkout_dot() -> None:
+    """`git checkout .` discards every uncommitted modification — blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git checkout .") == 2
+
+
+def test_destructive_blocks_checkout_dash_dash_dot() -> None:
+    """`git checkout -- .` (explicit pathspec separator) is blocked too."""
+    assert _run_hook(_DESTRUCTIVE, "git checkout -- .") == 2
+
+
+def test_destructive_blocks_restore_dot() -> None:
+    """`git restore .` discards every uncommitted modification — blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git restore .") == 2
+
+
+def test_destructive_blocks_checkout_dot_after_separator() -> None:
+    """`git status; git checkout .` — chained after a separator — is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "git status; git checkout .") == 2
+
+
+def test_destructive_allows_checkout_branch() -> None:
+    """`git checkout main` (branch switch) is allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git checkout main") == 0
+
+
+def test_destructive_allows_checkout_subdir_path() -> None:
+    """`git checkout ./subdir` (a path, not the whole-tree `.`) is allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git checkout ./subdir") == 0
+
+
+def test_destructive_allows_checkout_ours_path() -> None:
+    """`git checkout --ours -- some_file.py` (path-scoped) is allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git checkout --ours -- some_file.py") == 0
+
+
+def test_destructive_allows_checkout_ref_path() -> None:
+    """`git checkout main -- some_file.py` (ref + path) is allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git checkout main -- some_file.py") == 0
+
+
+def test_destructive_allows_restore_path() -> None:
+    """`git restore some_file.py` (path-scoped restore) is allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git restore some_file.py") == 0
+
+
+def test_destructive_allows_restore_staged_dot() -> None:
+    """`git restore --staged .` unstages everything but keeps the worktree — allowed.
+
+    Distinct from `git restore .` (no `--staged`): this only touches the
+    index, never the working tree, so it isn't in the discard-everything
+    class the bare form is.
+    """
+    assert _run_hook(_DESTRUCTIVE, "git restore --staged .") == 0
+
+
+# --- git stash: drop/clear block; pop/list/push allowed --------------------
+
+
+def test_destructive_blocks_stash_drop() -> None:
+    """`git stash drop` is blocked — a dropped stash is unreferenced."""
+    assert _run_hook(_DESTRUCTIVE, "git stash drop") == 2
+
+
+def test_destructive_blocks_stash_clear() -> None:
+    """`git stash clear` is blocked — same unrecoverable-deletion class."""
+    assert _run_hook(_DESTRUCTIVE, "git stash clear") == 2
+
+
+def test_destructive_allows_stash_pop() -> None:
+    """`git stash pop` is allowed — part of FOUNDATION §2's sanctioned dance."""
+    assert _run_hook(_DESTRUCTIVE, "git stash pop") == 0
+
+
+def test_destructive_allows_stash_list() -> None:
+    """`git stash list` (read-only) is allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git stash list") == 0
+
+
+def test_destructive_allows_stash_push_with_message() -> None:
+    """`git stash push -u -m "wip"` (the sanctioned dirty-tree sync) is allowed."""
+    assert _run_hook(_DESTRUCTIVE, 'git stash push -u -m "wip"') == 0
+
+
+# --- shared anchor idiom, one representative case per family ---------------
+
+
+def test_destructive_blocks_clean_env_var_prefix() -> None:
+    """`GIT_DIR=/tmp/x git clean -fd` (inline env assignment) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "GIT_DIR=/tmp/x git clean -fd") == 2
+
+
+def test_destructive_blocks_clean_subshell() -> None:
+    """`(git clean -f)` — subshell-wrapped — is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "(git clean -f)") == 2
+
+
+def test_destructive_blocks_clean_sudo_wrapper() -> None:
+    """`sudo -n git clean -f` (flagged wrapper) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "sudo -n git clean -f") == 2
+
+
+def test_destructive_blocks_checkout_dot_env_var_prefix() -> None:
+    """`GIT_DIR=/tmp/x git checkout .` (inline env assignment) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "GIT_DIR=/tmp/x git checkout .") == 2
+
+
+def test_destructive_blocks_stash_drop_command_wrapper() -> None:
+    """`command git stash drop` (builtin wrapper) is blocked."""
+    assert _run_hook(_DESTRUCTIVE, "command git stash drop") == 2
+
+
+# --- quoted mentions per family stay allowed --------------------------------
+
+
+def test_destructive_allows_clean_mention_in_commit_message() -> None:
+    """`git clean -fd` mentioned inside a quoted commit body is allowed."""
+    assert _run_hook(_DESTRUCTIVE, 'git commit -m "run git clean -fd later"') == 0
+
+
+def test_destructive_allows_checkout_dot_mention_in_commit_message() -> None:
+    """`git checkout .` mentioned inside a quoted commit body is allowed."""
+    assert _run_hook(_DESTRUCTIVE, 'git commit -m "just git checkout . for now"') == 0
+
+
+def test_destructive_allows_stash_drop_mention_in_commit_message() -> None:
+    """`git stash drop` mentioned inside a quoted commit body is allowed."""
+    assert _run_hook(_DESTRUCTIVE, 'git commit -m "don\'t git stash drop"') == 0
+
+
+# --- registration / retirement -----------------------------------------
+
+
+def test_destructive_registered_and_reset_hard_retired() -> None:
+    """plugin.json wires block_git_destructive.sh in; block_git_reset_hard.sh is gone.
+
+    `block_git_destructive.sh` subsumes and retires the older, narrower
+    `block_git_reset_hard.sh` (#363's blanket-ban widening) — the manifest
+    must reference only the new hook.
+    """
+    manifest = json.loads(
+        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
+    )
+    pre_tool_use = manifest["hooks"]["PreToolUse"]
+    commands = [hook["command"] for group in pre_tool_use for hook in group["hooks"]]
+    assert any(_DESTRUCTIVE in cmd for cmd in commands)
+    assert not any("block_git_reset_hard.sh" in cmd for cmd in commands)
+
+
+def test_destructive_old_hook_file_removed() -> None:
+    """The retired `block_git_reset_hard.sh` file no longer exists on disk."""
+    assert not (_HOOKS_DIR / "block_git_reset_hard.sh").exists()
 
 
 _CONTINUATION_DELETE = "block_continuation_delete.sh"
