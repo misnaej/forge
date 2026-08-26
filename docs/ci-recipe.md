@@ -26,7 +26,10 @@ in the README.
 A tag pin (`@v1.9.1`) is also supported for one-off frozen releases.
 For ongoing automated upgrades the channel pin is the recommended
 default: it requires no per-version maintenance and the scheduled
-workflow below handles the rest.
+workflow below handles the rest. Switching an existing branch pin to a
+tag pin? Read ["About `@main` / `@dev` pins"](../README.md#about-main--dev-pins)
+first — branch-only refresh wrappers silently stop updating forge after
+the switch; `forge-upgrade` and `forge-doctor` now detect the mismatch.
 
 ## 2. Per-PR CI
 
