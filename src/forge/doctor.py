@@ -34,6 +34,7 @@ from importlib import metadata
 from pathlib import Path
 
 from forge import config
+from forge.config import installed_console_scripts
 from forge.git_utils import emit, parse_semver
 from forge.install_githooks import SIDECAR_NAME as _HOOK_VERSION_SIDECAR
 from forge.upgrade import pin_revision_mismatch, pip_command
@@ -84,11 +85,8 @@ def _expected_clis() -> list[str]:
         Sorted list of console-script names registered by this dist.
         Empty if ``forge-scripts`` isn't installed.
     """
-    try:
-        dist = metadata.distribution(DIST_NAME)
-    except metadata.PackageNotFoundError:
-        return []
-    return sorted(ep.name for ep in dist.entry_points if ep.group == "console_scripts")
+    installed = installed_console_scripts(DIST_NAME)
+    return sorted(installed) if installed is not None else []
 
 
 def _check_clis() -> list[CheckResult]:
