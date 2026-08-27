@@ -7,11 +7,11 @@
 #       so no test ever touches a real process tree.
 #   (2) ``forge.telemetry.run_command`` — monkeypatched in the ``main()`` CLI
 #       tests to capture the argv it would have spawned, without running a
-#       real child. The lone exception is
-#       ``test_run_command_integration_captures_child_output_and_writes_log``,
-#       which exercises the real psutil + real subprocess path end-to-end
-#       against a ``tmp_path`` repo root (``pytest.importorskip("psutil")``
-#       guards it; ``plot=false`` keeps it independent of matplotlib).
+#       real child. The exceptions are the ``test_run_command_integration_*``
+#       and ``test_run_command_sample_first_wait_*`` tests, which exercise the
+#       real psutil + real subprocess path end-to-end against a ``tmp_path``
+#       repo root (``pytest.importorskip("psutil")`` guards each; ``plot =
+#       false`` keeps them independent of matplotlib).
 # ``_render_plot``'s missing-matplotlib path uses
 # ``monkeypatch.setitem(sys.modules, "matplotlib", None)`` — the standard
 # trick that makes ``import matplotlib`` raise ``ImportError`` without
@@ -20,7 +20,9 @@
 from __future__ import annotations
 
 import logging
+import re
 import sys
+import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -161,6 +163,32 @@ def _write_pyproject(tmp_path: Path, body: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# validated_label
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("label", ["", "depth1", "a.b-c_2"])
+def test_validated_label_accepts_empty_and_safe_values(label: str) -> None:
+    """Empty and safe filename-fragment labels pass through unchanged.
+
+    Args:
+        label: A valid label string to validate.
+    """
+    assert telemetry.validated_label(label) == label
+
+
+@pytest.mark.parametrize("label", ["../etc", "a b", "-x", "!bad"])
+def test_validated_label_rejects_unsafe_values(label: str) -> None:
+    """A non-empty, non-safe label raises loudly instead of degrading (#376).
+
+    Args:
+        label: An unsafe label string that should raise ValueError.
+    """
+    with pytest.raises(ValueError, match="not a safe artifact suffix"):
+        telemetry.validated_label(label)
+
+
+# ---------------------------------------------------------------------------
 # _telemetry_config
 # ---------------------------------------------------------------------------
 
@@ -251,6 +279,82 @@ def test_format_log_peak_and_mean_exact_over_three_samples() -> None:
     body = telemetry._format_log(["true"], samples, exit_code=0, elapsed=2.0)
     assert "peak rss: 30.0MB" in body
     assert f"mean cpu: {(20.0 + 40.0 + 60.0) / 3:.1f}%" in body
+
+
+# ---------------------------------------------------------------------------
+# _summarize
+# ---------------------------------------------------------------------------
+
+
+def test_summarize_empty_samples_returns_none() -> None:
+    """No samples means no aggregate — ``None``, not a zeroed summary."""
+    assert telemetry._summarize([]) is None
+
+
+def test_summarize_computes_peak_rss_and_mean_cpu() -> None:
+    """Peak RSS and mean CPU are computed exactly over the sample set."""
+    samples = [
+        telemetry.Sample(elapsed=0.0, rss_mb=10.0, cpu_percent=20.0),
+        telemetry.Sample(elapsed=1.0, rss_mb=30.0, cpu_percent=40.0),
+        telemetry.Sample(elapsed=2.0, rss_mb=20.0, cpu_percent=60.0),
+    ]
+    summary = telemetry._summarize(samples)
+    assert summary is not None
+    assert summary.peak_rss_mb == pytest.approx(30.0)
+    assert summary.mean_cpu == pytest.approx((20.0 + 40.0 + 60.0) / 3)
+
+
+# ---------------------------------------------------------------------------
+# _append_history
+# ---------------------------------------------------------------------------
+
+
+def test_append_history_empty_summary_writes_na_peak_rss(tmp_path: Path) -> None:
+    """A ``None`` summary (no samples) writes ``peak_rss=n/a``, not a crash."""
+    history = telemetry._RunHistory(
+        cmd=["true"], summary=None, exit_code=0, elapsed=1.5
+    )
+    telemetry._append_history(tmp_path, history, label="")
+    history_log = tmp_path / "code_health" / "telemetry_history.log"
+    line = history_log.read_text(encoding="utf-8")
+    assert "peak_rss=n/a" in line
+    assert "label=-" in line
+    assert "exit=0" in line
+    assert "wall=1.5s" in line
+    assert "cmd=true" in line
+    assert "ts=" in line
+
+
+def test_append_history_second_call_appends_without_disturbing_first(
+    tmp_path: Path,
+) -> None:
+    """A second run's line is appended; the first run's line is unchanged."""
+    first_history = telemetry._RunHistory(
+        cmd=["true"], summary=None, exit_code=0, elapsed=1.0
+    )
+    telemetry._append_history(tmp_path, first_history, label="r1")
+    first_line = (
+        (tmp_path / "code_health" / "telemetry_history.log")
+        .read_text(encoding="utf-8")
+        .splitlines()[0]
+    )
+
+    summary = telemetry._Summary(peak_rss_mb=5.0, mean_cpu=10.0)
+    second_history = telemetry._RunHistory(
+        cmd=["true"], summary=summary, exit_code=1, elapsed=2.0
+    )
+    telemetry._append_history(tmp_path, second_history, label="r2")
+
+    lines = (
+        (tmp_path / "code_health" / "telemetry_history.log")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    assert len(lines) == 2
+    assert lines[0] == first_line
+    assert "label=r2" in lines[1]
+    assert "exit=1" in lines[1]
+    assert "peak_rss=5.0MB" in lines[1]
 
 
 # ---------------------------------------------------------------------------
@@ -392,9 +496,12 @@ def test_main_delegates_verbatim_cmd_to_run_command_and_returns_its_code(
     """Child argv after ``--`` reaches ``run_command`` untouched; its exit code wins."""
     captured: dict[str, object] = {}
 
-    def _fake_run_command(cmd: list[str], root: object) -> tuple[int, str]:
+    def _fake_run_command(
+        cmd: list[str], root: object, *, label: str = ""
+    ) -> tuple[int, str]:
         captured["cmd"] = cmd
         captured["root"] = root
+        captured["label"] = label
         return 7, ""
 
     monkeypatch.setattr(telemetry, "run_command", _fake_run_command)
@@ -410,15 +517,109 @@ def test_main_argv_none_uses_sys_argv(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", ["forge-telemetry", "--", "true"])
     captured: dict[str, object] = {}
 
-    def _fake_run_command(cmd: list[str], root: object) -> tuple[int, str]:
+    def _fake_run_command(
+        cmd: list[str], root: object, *, label: str = ""
+    ) -> tuple[int, str]:
         captured["cmd"] = cmd
-        del root
+        del root, label
         return 0, ""
 
     monkeypatch.setattr(telemetry, "run_command", _fake_run_command)
 
     assert telemetry.main() == 0
     assert captured["cmd"] == ["true"]
+
+
+def test_main_label_flag_passed_through_to_run_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--label`` reaches ``run_command`` as its ``label`` keyword, unchanged."""
+    captured: dict[str, object] = {}
+
+    def _fake_run_command(
+        cmd: list[str], root: object, *, label: str = ""
+    ) -> tuple[int, str]:
+        captured["cmd"] = cmd
+        captured["label"] = label
+        del root
+        return 0, ""
+
+    monkeypatch.setattr(telemetry, "run_command", _fake_run_command)
+
+    code = telemetry.main(["--label", "r1", "--", "true"])
+
+    assert code == 0
+    assert captured["label"] == "r1"
+
+
+def test_main_env_label_used_when_flag_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``FORGE_TELEMETRY_LABEL`` supplies the label when ``--label`` is not given."""
+    monkeypatch.setenv("FORGE_TELEMETRY_LABEL", "env-label")
+    captured: dict[str, object] = {}
+
+    def _fake_run_command(
+        cmd: list[str], root: object, *, label: str = ""
+    ) -> tuple[int, str]:
+        captured["label"] = label
+        del cmd, root
+        return 0, ""
+
+    monkeypatch.setattr(telemetry, "run_command", _fake_run_command)
+
+    code = telemetry.main(["--", "true"])
+
+    assert code == 0
+    assert captured["label"] == "env-label"
+
+
+def test_main_label_flag_wins_over_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--label`` overrides ``FORGE_TELEMETRY_LABEL`` when both are set."""
+    monkeypatch.setenv("FORGE_TELEMETRY_LABEL", "env-label")
+    captured: dict[str, object] = {}
+
+    def _fake_run_command(
+        cmd: list[str], root: object, *, label: str = ""
+    ) -> tuple[int, str]:
+        captured["label"] = label
+        del cmd, root
+        return 0, ""
+
+    monkeypatch.setattr(telemetry, "run_command", _fake_run_command)
+
+    code = telemetry.main(["--label", "flag-label", "--", "true"])
+
+    assert code == 0
+    assert captured["label"] == "flag-label"
+
+
+def test_main_bad_label_logs_error_and_returns_2(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A bad label's ``ValueError`` from ``run_command`` logs and exits 2.
+
+    SCENARIO: ``--label "a b"`` — an unsafe artifact suffix.
+    MOCK SETUP: ``run_command`` stubbed to raise, standing in for the real
+        ``validated_label`` rejection (already unit-tested above) so this
+        test verifies ``main``'s own handling of that failure, not the
+        validator itself.
+    EXPECTED BEHAVIOR: the error is logged (no traceback surfaces to the
+        caller) and ``main`` returns 2.
+    """
+
+    def _raise_run_command(*_a: object, **_kw: object) -> tuple[int, str]:
+        msg = "telemetry label 'a b' is not a safe artifact suffix"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(telemetry, "run_command", _raise_run_command)
+
+    with caplog.at_level(logging.ERROR, logger="forge.telemetry"):
+        code = telemetry.main(["--label", "a b", "--", "true"])
+
+    assert code == 2
+    assert "not a safe artifact suffix" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +696,84 @@ def test_run_command_integration_capture_false_streams_and_still_writes_log(
     assert "exit code: 3" in log_path.read_text(encoding="utf-8")
 
 
+def test_run_command_integration_with_label_writes_labeled_log_and_history(
+    tmp_path: Path,
+) -> None:
+    """A labeled run writes ``telemetry_<label>.log`` and an appending history line.
+
+    SCENARIO: two consecutive labeled runs of a short-lived child (a retry
+        pattern — #376's motivating case).
+    MOCK SETUP: none — real psutil + real subprocess, same as the sibling
+        integration tests above.
+    EXPECTED BEHAVIOR: ``telemetry_r1.log`` exists and the unlabeled
+        ``telemetry.log`` does not; ``telemetry_history.log`` gains one
+        ``label=r1``/``exit=`` line per run, and the first run's line is
+        left unchanged after the second run appends.
+    """
+    pytest.importorskip("psutil")
+    _write_pyproject(
+        tmp_path,
+        "[tool.forge.telemetry]\nsample_interval = 0.05\nplot = false\n",
+    )
+    cmd = [sys.executable, "-c", "import sys; sys.exit(0)"]
+
+    code, _ = telemetry.run_command(cmd, tmp_path, capture=True, label="r1")
+
+    assert code == 0
+    labeled_log = tmp_path / "code_health" / "telemetry_r1.log"
+    default_log = tmp_path / "code_health" / "telemetry.log"
+    assert labeled_log.exists()
+    assert not default_log.exists()
+    history_path = tmp_path / "code_health" / "telemetry_history.log"
+    first_lines = history_path.read_text(encoding="utf-8").splitlines()
+    assert len(first_lines) == 1
+    assert "label=r1" in first_lines[0]
+    assert "exit=0" in first_lines[0]
+
+    code, _ = telemetry.run_command(cmd, tmp_path, capture=True, label="r1")
+
+    assert code == 0
+    second_lines = history_path.read_text(encoding="utf-8").splitlines()
+    assert len(second_lines) == 2
+    assert second_lines[0] == first_lines[0]
+    assert "label=r1" in second_lines[1]
+
+
+def test_run_command_sample_first_wait_avoids_extra_interval_latency(
+    tmp_path: Path,
+) -> None:
+    """Sample-first ``wait(timeout=)`` reports near-true wall time (#376 fix).
+
+    SCENARIO: a long ``sample_interval`` (2.0s) with a child that exits
+        almost immediately (~0.1s) — the old poll-then-sleep loop slept a
+        full interval past the child's exit, inflating both the wrapper's
+        own wall-clock time and the logged ``duration:`` figure by up to
+        one interval.
+    MOCK SETUP: none — real psutil + real subprocess; the assertions are the
+        regression test itself (both fail against the pre-fix shape, which
+        would take ~2s).
+    EXPECTED BEHAVIOR: ``run_command`` returns within 1s of being called,
+        and the ``duration:`` value it logs is also under 1s.
+    """
+    pytest.importorskip("psutil")
+    _write_pyproject(
+        tmp_path,
+        "[tool.forge.telemetry]\nsample_interval = 2.0\nplot = false\n",
+    )
+    cmd = [sys.executable, "-c", "import time; time.sleep(0.1)"]
+
+    started = time.monotonic()
+    code, _ = telemetry.run_command(cmd, tmp_path, capture=True)
+    wall = time.monotonic() - started
+
+    assert code == 0
+    assert wall < 1.0
+    log_text = (tmp_path / "code_health" / "telemetry.log").read_text(encoding="utf-8")
+    match = re.search(r"duration:\s*([\d.]+)s", log_text)
+    assert match is not None
+    assert float(match.group(1)) < 1.0
+
+
 # ---------------------------------------------------------------------------
 # _render_plot
 # ---------------------------------------------------------------------------
@@ -534,3 +813,17 @@ def test_render_plot_writes_png_when_matplotlib_available(tmp_path: Path) -> Non
     png = tmp_path / "code_health" / "telemetry.png"
     assert png.exists()
     assert png.stat().st_size > 0
+
+
+def test_render_plot_with_label_writes_suffixed_png_only(tmp_path: Path) -> None:
+    """A non-empty label suffixes the PNG filename instead of the default."""
+    pytest.importorskip("matplotlib")
+    samples = [
+        telemetry.Sample(elapsed=0.0, rss_mb=1.0, cpu_percent=10.0),
+        telemetry.Sample(elapsed=1.0, rss_mb=2.0, cpu_percent=20.0),
+    ]
+    telemetry._render_plot(tmp_path, samples, label="r1")
+    labeled_png = tmp_path / "code_health" / "telemetry_r1.png"
+    assert labeled_png.exists()
+    assert labeled_png.stat().st_size > 0
+    assert not (tmp_path / "code_health" / "telemetry.png").exists()
