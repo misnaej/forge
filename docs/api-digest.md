@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_65 modules, 744 symbols._
+_65 modules, 749 symbols._
 
 ## `forge`
 
@@ -877,20 +877,25 @@ _65 modules, 744 symbols._
 
 - `clear_python_cache(repo_root: Path) -> None` — Delete every ``__pycache__`` directory under *repo_root*.
 - `_coverage_available() -> bool` _(internal)_ — Return whether the ``pytest-cov`` plugin is importable.
-- `run_pytest(repo_root: Path, test_paths: Sequence[str], *, coverage: bool = False, telemetry: bool = False) -> tuple[int, str]` — Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
+- `run_pytest(repo_root: Path, test_paths: Sequence[str], *, coverage: bool = False, telemetry: bool = False, label: str = '') -> tuple[int, str]` — Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
 
 ## `forge.telemetry`
 
 > _forge-telemetry — resource-profiling wrapper for test/command runs._
 
+- `validated_label(label: str) -> str` — Return *label* unchanged after validating it as an artifact suffix.
 - `telemetry_available() -> bool` — Return whether sampling can run at all (``psutil`` importable).
 - `class Sample` — One point of the resource profile.
 - `_telemetry_config(root: Path) -> tuple[float, bool]` _(internal)_ — Read ``[tool.forge.telemetry]``, degrading misshaped values to defaults.
 - `_tree_rss_bytes(proc: Process) -> int` _(internal)_ — Return the summed RSS of *proc* and every live descendant.
 - `_sample(proc: Process, started: float) -> Sample` _(internal)_ — Take one sample of the child's tree RSS and host CPU.
 - `_format_log(cmd: Sequence[str], samples: list[Sample], exit_code: int, elapsed: float) -> str` _(internal)_ — Render the plain-text telemetry report.
-- `_render_plot(root: Path, samples: list[Sample]) -> None` _(internal)_ — Write ``code_health/telemetry.png``, or log why it was skipped.
-- `run_command(cmd: Sequence[str], root: Path, *, capture: bool = False, cwd: Path | None = None) -> tuple[int, str]` — Run *cmd* under resource sampling and write the telemetry artifacts.
+- `class _Summary` _(internal)_ — Aggregates of one run's samples.
+- `class _RunHistory` _(internal)_ — Information to append to the telemetry history log.
+- `_summarize(samples: list[Sample]) -> _Summary | None` _(internal)_ — Return the run's aggregate summary, or ``None`` for empty samples.
+- `_append_history(root: Path, history: _RunHistory, label: str) -> None` _(internal)_ — Append one summary line for this run to ``telemetry_history.log``.
+- `_render_plot(root: Path, samples: list[Sample], label: str = '') -> None` _(internal)_ — Write ``code_health/telemetry[_<label>].png``, or log why it was skipped.
+- `run_command(cmd: Sequence[str], root: Path, *, capture: bool = False, cwd: Path | None = None, label: str = '') -> tuple[int, str]` — Run *cmd* under resource sampling and write the telemetry artifacts.
 - `main(argv: list[str] | None = None) -> int` — Run the telemetry CLI: ``forge-telemetry -- <cmd> ...``.
 
 ## `forge.upgrade`
