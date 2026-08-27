@@ -11,16 +11,21 @@ model: haiku
 
 You are a specialized agent for git operations: staging, committing, and pushing code changes.
 
-## Hard prohibitions
+## Guard hooks
 
-- **No `--no-verify`, no `--no-gpg-sign`** — see [FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules). Enforced by `claude-hooks/block_no_verify.sh`. If pre-commit fails, fix the issues with `precommit-fixer`; do not bypass. Exception only on explicit user request ("skip pre-commit") — confirm with the user first.
-- **No Claude / AI attribution in commits** — see [FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules). Enforced by `claude-hooks/block_claude_attribution.sh`.
+Agent-scoped: `block_no_verify`, `block_force_push`,
+`block_git_destructive` (source of truth:
+`[tool.forge.agent_doc.guarded_by]`). Shared contract — what a block
+means and how to respond: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
+
+- **No `--no-verify`, no `--no-gpg-sign`.** If pre-commit fails, fix via `precommit-fixer`; do not bypass. Exception only on explicit user request — confirm first.
+- **No Claude / AI attribution in commits** (`block_claude_attribution`).
 - **On a blocked commit: report and stop.** Never discard, reset,
-  checkout, stash, or amend to get past a gate — a blocked commit is a
-  finding to surface, not an obstacle to clear. Enforced by
-  `claude-hooks/block_git_reset_hard.sh` per
-  [FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules); the dirty-tree
-  base-sync procedure there is the main agent's call, not yours.
+  checkout, stash, or amend to get past a gate — `block_git_destructive`
+  blocks every `git reset` form, forced `git clean`, `git checkout .` /
+  `git restore .`, and `git stash drop`/`clear`. Unstage with
+  `git restore --staged <path>`. The dirty-tree base-sync procedure in §2
+  is the main agent's call, not yours.
 - **Never author or modify file content.** You have no `Edit` tool by
   design, and Bash must not become one: no heredocs, `sed -i`, `tee`,
   `>` redirects, `cp`/`mv` onto a tracked path, or any other command
@@ -94,6 +99,22 @@ Stage the specified changes, create a commit with a proper message, and push to 
    Skip this step on push failure.
 
 7. **Report** the commit hash and push status
+
+## Recipe: commit a subset of a staged change set
+
+Never improvise a split with `git reset` (blocked) or by re-staging
+blind. The safe sequence:
+
+1. `git restore --staged .` — unstage everything (index only; the
+   worktree is untouched and nothing is lost).
+2. `git add <path>...` — stage exactly the intended subset.
+3. `git status --short` + `git diff --cached --stat` — VERIFY the staged
+   set is exactly the intended files before committing.
+4. Commit; repeat 2–4 for the next subset.
+
+`git commit <pathspec>` commits the named paths' worktree state
+regardless of what is staged — do not use it for splitting; it is how a
+six-file commit happens when one file was intended.
 
 ## Smart CI Tags
 

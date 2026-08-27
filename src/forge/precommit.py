@@ -73,6 +73,7 @@ from typing import TYPE_CHECKING
 from forge import config, pip_audit_json
 from forge.changelog import (
     changelog_version_findings,
+    released_deleted_versions,
     stranded_added_versions,
     wants_no_version,
 )
@@ -1625,7 +1626,10 @@ def step_regen_docs(repo_root: Path) -> StepResult:
 
     Returns:
         ``StepResult`` (``non_blocking=True``); skipped when neither doc
-        exists. ``passed`` is False only when a present generator errored.
+        exists or when unstaged changes are present (partial commit — the
+        generators read the worktree, which then differs from what the
+        commit records). ``passed`` is False only when a present generator
+        errored.
 
     Raises:
         SystemExit: If a needed ``forge-gen-*`` CLI is not on PATH.
@@ -1636,6 +1640,23 @@ def step_regen_docs(repo_root: Path) -> StepResult:
             name="regen_docs",
             passed=True,
             output="(no generated docs present — skipped)",
+            skipped=True,
+        )
+    # Partial-commit guard: generators read the WORKTREE, so with unstaged
+    # changes present the regenerated docs would describe a tree state that
+    # is not what this commit records (and auto-staging them would smuggle
+    # that state in). Any non-empty unstaged diff is the signal — not a
+    # staged-vs-dirty set comparison, which misses the `git add -p`
+    # same-file case (#363). Skip; the next full-tree commit refreshes.
+    if run_git("diff", "--name-only", cwd=repo_root, check=False).strip():
+        return StepResult(
+            name="regen_docs",
+            passed=True,
+            output=(
+                "(unstaged changes present — partial commit; regeneration "
+                "skipped so generated docs never capture a tree state the "
+                "commit does not record)"
+            ),
             skipped=True,
         )
     passed = True
@@ -1814,10 +1835,13 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     already-released heading since the merge base (the stranded-entries
     race: a tag cut under an open PR leaves its bullets attributed to a
     release that does not contain the code, with no merge conflict to
-    signal it). The stranded check is suppressed while a merge is in
-    progress (``MERGE_HEAD`` present): mid-merge, the merge-base is the
-    stale fork point, so the base's own entries would be misattributed to
-    the branch; the structural checks still run.
+    signal it) and none lost from one either (released history is
+    immutable; a deletion under a tagged heading erases shipped content
+    silently — see :func:`forge.changelog.released_deleted_versions`).
+    Both checks are suppressed while a merge is in progress
+    (``MERGE_HEAD`` present): mid-merge, the merge-base is the stale fork
+    point, so the base's own entries would be misattributed to the
+    branch; the structural checks still run.
 
     The gate compares against the **live** latest tag in every context:
     tags are refreshed best-effort before reading (CI included — a
@@ -1885,11 +1909,13 @@ def step_changelog_version(repo_root: Path) -> StepResult:
         if merge_in_progress(repo_root):
             # Mid-merge HEAD predates the merge commit, so the merge-base is
             # the stale fork point and every entry the base contributes would
-            # appear as HEAD-gained. Skip only the stranded check — the merge
-            # commit's own run and CI validate the settled state.
+            # appear as HEAD-gained (or lost). Skip only the stranded and
+            # deleted-entries checks — the merge commit's own run and CI
+            # validate the settled state.
             notes.append(
-                "Note: merge in progress — stranded-entries check skipped "
-                "(validated at the merge commit and by CI)."
+                "Note: merge in progress — stranded-entries and "
+                "deleted-entries checks skipped (validated at the merge "
+                "commit and by CI)."
             )
         else:
             merge_base = merge_base_with_head(repo_root, cfg.base_branch)
@@ -1910,6 +1936,12 @@ def step_changelog_version(repo_root: Path) -> StepResult:
                         f"ahead of latest tag {latest}) — stranded; move them "
                         "under the next `## vX.Y.Z` heading."
                         for version in stranded_added_versions(old_text, text, latest)
+                    )
+                    findings.extend(
+                        f"Entries deleted from released section {version} (at "
+                        f"or below latest tag {latest}) — released history is "
+                        "immutable; restore the removed lines."
+                        for version in released_deleted_versions(old_text, text, latest)
                     )
     # Stale-branch trap: when the failing findings are tag-shaped AND the
     # tag lives on the base but not on HEAD, the branch is merely behind —

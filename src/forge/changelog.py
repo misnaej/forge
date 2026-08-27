@@ -391,3 +391,45 @@ def stranded_added_versions(
         if new_sections.get(version, set()) - old_sections.get(version, set()):
             stranded.append(version)
     return stranded
+
+
+def released_deleted_versions(
+    old_text: str, new_text: str, latest_tag: str | None
+) -> list[str]:
+    """Return released versions whose sections lost content vs *old_text*.
+
+    The inverse blind spot of :func:`stranded_added_versions`: only
+    additions under a released heading were rejected, so an edit that
+    deletes lines from — or removes outright — a section at or below the
+    latest tag passed the gate silently, erasing a shipped entry (#363).
+    Membership comparison carries the same accepted biases as the added
+    direction, mirrored: a reworded line counts as a loss (cheap false
+    positive), and deleting one of two byte-identical bullets goes
+    undetected.
+
+    Args:
+        old_text: ``CHANGELOG.md`` contents at the comparison point (the
+            merge base).
+        new_text: Full current ``CHANGELOG.md`` contents.
+        latest_tag: Latest ``v*`` tag, or ``None`` (no tags → nothing is
+            released; returns empty).
+
+    Returns:
+        Distinct released versions with removed content, in *old_text*
+        file order; empty when none.
+    """
+    tag = parse_semver(latest_tag) if latest_tag is not None else None
+    if tag is None:
+        return []
+    old_sections = _section_content(old_text)
+    new_sections = _section_content(new_text)
+    shrunk: list[str] = []
+    for version in _governing_versions(old_text):
+        if version is None or version in shrunk:
+            continue
+        parsed = parse_semver(version)
+        if parsed is None or parsed > tag:
+            continue
+        if old_sections.get(version, set()) - new_sections.get(version, set()):
+            shrunk.append(version)
+    return shrunk
