@@ -136,7 +136,7 @@ def _plugin_roster() -> dict[str, set[str]]:
     try:
         text = resources.files("forge").joinpath("data/plugin-roster.toml").read_text()
         data = tomllib.loads(text)
-    except (FileNotFoundError, OSError, tomllib.TOMLDecodeError):
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return {"skills": set(), "hooks": set()}
     out: dict[str, set[str]] = {}
     for kind in ("skills", "hooks"):
