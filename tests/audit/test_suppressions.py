@@ -112,6 +112,31 @@ def test_noqa_findings_unresolved_code_still_reports(
     assert "rule unresolved" in findings[0].evidence[1]
 
 
+def test_noqa_findings_key_is_path_and_code() -> None:
+    """The key for a coded ``# noqa`` is ``<path>|<code>``."""
+    findings = _noqa_findings("a.py", 7, "x = 1  # noqa: E501", rule_cache={})
+    assert findings[0].key == "a.py|E501"
+
+
+def test_noqa_findings_bare_key_uses_bare_marker() -> None:
+    """The key for a bare ``# noqa`` is ``<path>|noqa-bare``."""
+    findings = _noqa_findings("a.py", 1, "x = 1  # noqa", rule_cache={})
+    assert findings[0].key == "a.py|noqa-bare"
+
+
+def test_noqa_findings_key_stable_across_line_number_shift() -> None:
+    """Moving the same suppression to a different line keeps the key unchanged.
+
+    The key deliberately excludes the line number so it survives edits
+    that insert/remove lines above the suppression elsewhere in the file.
+    """
+    findings_at_line_5 = _noqa_findings("a.py", 5, "x = 1  # noqa: E501", rule_cache={})
+    findings_at_line_50 = _noqa_findings(
+        "a.py", 50, "x = 1  # noqa: E501", rule_cache={}
+    )
+    assert findings_at_line_5[0].key == findings_at_line_50[0].key == "a.py|E501"
+
+
 def test_type_ignore_bare_is_medium() -> None:
     """Bare ``# type: ignore`` (no error code list) is MEDIUM."""
     findings = _type_ignore_findings("a.py", 4, "x = y  # type: ignore")

@@ -12,6 +12,9 @@ from forge.audit.common import Scope
 from forge.audit.dup import (
     CodeUnit,
     DupConfig,
+    _build_exact_findings,
+    _build_name_findings,
+    _build_near_findings,
     _find_name_collisions,
     _find_near_dups,
     _group_by_hash,
@@ -440,6 +443,74 @@ def test_run_changed_scope_indexes_file_outside_roots(
     log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
     assert "exact body duplicate" in log_text
     assert code == 1
+
+
+def test_build_exact_findings_key_is_sorted_qualified_names() -> None:
+    """Exact-dup key joins sorted qualified names, independent of group order."""
+    unit_z = CodeUnit(
+        path="src/z.py",
+        line=1,
+        qualified_name="z.helper",
+        bare_name="helper",
+        body_hash="same",
+        token_count=10,
+    )
+    unit_a = CodeUnit(
+        path="src/a.py",
+        line=1,
+        qualified_name="a.helper",
+        bare_name="helper",
+        body_hash="same",
+        token_count=10,
+    )
+    findings_forward, _ = _build_exact_findings([[unit_z, unit_a]])
+    findings_reversed, _ = _build_exact_findings([[unit_a, unit_z]])
+    assert findings_forward[0].key == "a.helper|z.helper"
+    assert findings_reversed[0].key == "a.helper|z.helper"
+
+
+def test_build_near_findings_key_is_sorted_pair() -> None:
+    """Near-dup key is the sorted pair of qualified names, order-independent."""
+    unit_z = CodeUnit(
+        path="src/z.py",
+        line=1,
+        qualified_name="z.helper",
+        bare_name="helper",
+        body_hash="h1",
+        token_count=10,
+    )
+    unit_a = CodeUnit(
+        path="src/a.py",
+        line=1,
+        qualified_name="a.helper",
+        bare_name="helper",
+        body_hash="h2",
+        token_count=10,
+    )
+    findings = _build_near_findings([(unit_z, unit_a, 0.9)])
+    assert findings[0].key == "a.helper|z.helper"
+
+
+def test_build_name_findings_key_is_name_collision_prefixed() -> None:
+    """Name-collision key is ``name-collision:<bare_name>``."""
+    unit_a = CodeUnit(
+        path="src/a.py",
+        line=1,
+        qualified_name="helper",
+        bare_name="helper",
+        body_hash="h1",
+        token_count=10,
+    )
+    unit_b = CodeUnit(
+        path="src/b.py",
+        line=2,
+        qualified_name="helper",
+        bare_name="helper",
+        body_hash="h2",
+        token_count=10,
+    )
+    findings = _build_name_findings([[unit_a, unit_b]])
+    assert findings[0].key == "name-collision:helper"
 
 
 def test_summary_full_scope_uses_scanned_wording() -> None:

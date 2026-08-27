@@ -285,6 +285,7 @@ def _build_cycle_findings(
                 line=1,
                 message=f"cyclic dependency: {len(scc)} modules ({', '.join(ordered)})",
                 evidence=evidence,
+                key="cycle:" + "|".join(ordered),
             ),
         )
     return findings
@@ -336,6 +337,7 @@ def _build_distance_findings(
                 message=(
                     f"D={d_v:.2f} far from main sequence (I={i_v:.2f}, A={a_v:.2f})"
                 ),
+                key="distance:" + name,
                 evidence=(
                     (
                         f"Ca={ca_v} Ce={ce_v} "

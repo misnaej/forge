@@ -166,6 +166,7 @@ def _noqa_findings(
                     line=line_no,
                     message="bare `# noqa` silences every rule on this line",
                     evidence=(line.rstrip(),),
+                    key=f"{path}|noqa-bare",
                 ),
             )
             continue
@@ -186,6 +187,7 @@ def _noqa_findings(
                         "this hide a design problem?"
                     ),
                     evidence=(line.rstrip(), descriptor),
+                    key=f"{path}|{code}",
                 ),
             )
     return findings
@@ -214,6 +216,7 @@ def _type_ignore_findings(path: str, line_no: int, line: str) -> list[Finding]:
                     line=line_no,
                     message="bare `# type: ignore` — silences every type error",
                     evidence=(line.rstrip(),),
+                    key=f"{path}|type-ignore-bare",
                 ),
             )
         else:
@@ -225,6 +228,7 @@ def _type_ignore_findings(path: str, line_no: int, line: str) -> list[Finding]:
                     line=line_no,
                     message=f"`# type: ignore[{codes}]`",
                     evidence=(line.rstrip(),),
+                    key=f"{path}|type-ignore[{codes}]",
                 ),
             )
     return findings

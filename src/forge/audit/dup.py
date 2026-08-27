@@ -444,6 +444,7 @@ def _build_exact_findings(
                     f"across {len(group)} sites ({len(paths)} files)"
                 ),
                 evidence=evidence,
+                key="|".join(sorted(u.qualified_name for u in group)),
             ),
         )
         covered.update(id(u) for u in group)
@@ -476,6 +477,7 @@ def _build_near_findings(
                     f"vs {b.qualified_name}"
                 ),
                 evidence=(f"compare {b.path}:{b.line} ({b.qualified_name})",),
+                key="|".join(sorted((a.qualified_name, b.qualified_name))),
             ),
         )
     return findings
@@ -507,6 +509,7 @@ def _build_name_findings(groups: list[list[CodeUnit]]) -> list[Finding]:
                     f"{len(group)} files (bodies differ — verify intent)"
                 ),
                 evidence=evidence,
+                key="name-collision:" + head.bare_name,
             ),
         )
     return findings

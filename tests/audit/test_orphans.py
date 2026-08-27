@@ -163,6 +163,22 @@ def test_build_findings_renders_each_item(fake_repo: Path) -> None:
     assert "_leftover" in findings[1].message
 
 
+def test_build_findings_key_is_filename_and_symbol(fake_repo: Path) -> None:
+    """Each finding's key is ``<filename>|<name>``."""
+    (fake_repo / "src" / "mod.py").write_text("", encoding="utf-8")
+    items: list[object] = [
+        FakeVultureItem(
+            filename=str(fake_repo / "src" / "mod.py"),
+            first_lineno=10,
+            typ="function",
+            name="_unused_helper",
+            confidence=96,
+        ),
+    ]
+    findings = _build_findings(items)
+    assert findings[0].key == "src/mod.py|_unused_helper"
+
+
 def test_run_returns_zero_when_no_findings(
     fake_repo: Path,
     monkeypatch: pytest.MonkeyPatch,

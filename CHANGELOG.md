@@ -20,6 +20,18 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.21.0 — Unreleased
+
+### Features
+- **Audit findings carry stable identities.** `Finding.key` — an
+  optional per-audit key rendered as a `key=` line in every
+  `code_health/audit_*.log` block — makes findings individually
+  addressable across runs: dup groups key on their qualified-name
+  sets, dep cycles on their members, suppressions on `path|code`,
+  orphans on `path|symbol`. Keys survive edits elsewhere in the file
+  (never `path:line`), the prerequisite for any future
+  accepted-findings baseline.
+
 ## v3.20.1 — Unreleased
 
 ### Tooling
