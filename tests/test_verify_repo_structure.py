@@ -248,6 +248,46 @@ def test_exhaustive_section_findings_hidden_files_not_required(
     assert exhaustive_section_findings(content, tmp_path) == set()
 
 
+def test_exhaustive_section_findings_absolute_path_heading_ignored(
+    tmp_path: Path,
+) -> None:
+    """A doc-supplied absolute-path heading cannot escape containment.
+
+    Security-review traversal class: pathlib's ``/`` operator discards the
+    left operand entirely when the right side is absolute, so
+    ``root / "/etc"`` silently becomes ``/etc`` rather than
+    ``root/etc`` — outside `root` regardless of the directory's own
+    existence. The containment check must reject this before any
+    ``iterdir()`` call, so no findings (and no leaked disk listing) result.
+    """
+    content = "## Escape Attempt (`/etc`) <!-- exhaustive -->\n\n- one.sh: whatever\n"
+    assert exhaustive_section_findings(content, tmp_path) == set()
+
+
+def test_exhaustive_section_findings_relative_traversal_heading_ignored(
+    tmp_path: Path,
+) -> None:
+    """A doc-supplied `..`-traversal heading cannot escape containment.
+
+    Security-review traversal class: `..` segments in a doc-supplied path
+    let a crafted heading walk out of the repo root even though
+    ``root / candidate`` never looks like an absolute escape. The target
+    directory is created for real, outside ``repo_root`` but still inside
+    ``tmp_path`` (pytest's sandbox), to prove the guard rejects the
+    resolved path even when it points at a genuine, listable directory.
+    """
+    repo_root = tmp_path / "a" / "b"
+    repo_root.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "leaked.sh").write_text("")
+    content = (
+        "## Escape Attempt (`../../outside/`) <!-- exhaustive -->\n\n"
+        "- one.sh: whatever\n"
+    )
+    assert exhaustive_section_findings(content, repo_root) == set()
+
+
 EXHAUSTIVE_DRIFT_MARKDOWN = """\
 # Repo Structure
 

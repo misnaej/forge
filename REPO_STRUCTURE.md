@@ -4,8 +4,8 @@ This overview summarizes the current layout of the Forge repository. Keep
 this file up to date as the repo evolves — `verify-forge-repo-structure`
 checks it against the actual tree on every commit. A directory section
 whose heading ends with `<!-- exhaustive -->` is additionally checked
-both directions: every file in the directory must be listed, and every
-listed file must exist.
+both directions: every non-hidden file in the directory must be listed,
+and every listed file must exist.
 
 ## Overview
 
@@ -164,7 +164,7 @@ enforcement:
 - block_git_destructive.sh: block destructive git recovery verbs from agents — all `git reset` forms, forced `git clean`, literal `git checkout .` / `git restore .`, `git stash drop`/`clear` (no bypass — stop-and-report is the sanctioned recovery)
 - block_fixer_recon.sh: agent-scoped Bash allowlist for the precommit-fixer (gate CLIs + targeted pytest node-ids only; other agents unaffected)
 - block_raw_git.sh: hard-block raw `git commit` / `git push` from agents (bypass: `git-commit-push` subagent)
-- block_unverified_pr_create.sh: block `gh pr create` until the authored wrap-up names HEAD (draft/promotion exemptions per FOUNDATION §6)
+- block_unverified_pr_create.sh: block `gh pr create` (draft or not) until the authored wrap-up names HEAD; only a self-verifying release/vX.Y.Z promotion branch exempts itself (FOUNDATION §6)
 - block_raw_ruff.sh: hard-block raw `ruff check` / `ruff format` from agents (no bypass — agents use forge-precommit)
 
 ## Plugin Manifest (`.claude-plugin/`)

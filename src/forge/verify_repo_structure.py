@@ -113,6 +113,12 @@ _TOP_LEVEL_FILE = re.compile(
 _TOP_LEVEL_BARE_FILE = re.compile(r"^\s*-\s+(LICENSE)(?::|$|\s)")
 _DOT_DIR_REFERENCE = re.compile(r"^\s*-\s+(\.[a-zA-Z0-9_\-]+)/?:")
 _VERSION_LIKE = re.compile(r"^\d+\.\d+")
+# Heading suffix opting a directory section into the exhaustiveness check.
+_EXHAUSTIVE_MARKER = "<!-- exhaustive -->"
+# A listed-file bullet inside an exhaustive section: `- <name.ext>: ...`.
+_EXHAUSTIVE_FILE_REFERENCE = re.compile(
+    r"^\s*-\s+([A-Za-z0-9_.\-]+\.[a-z0-9]+)(?::|$|\s)"
+)
 
 
 def should_ignore(name: str) -> bool:
@@ -236,23 +242,15 @@ def extract_paths_from_markdown(content: str) -> set[str]:
     return _filter_paths(paths)
 
 
-# Heading suffix opting a directory section into the exhaustiveness check.
-_EXHAUSTIVE_MARKER = "<!-- exhaustive -->"
-# A listed-file bullet inside an exhaustive section: `- <name.ext>: ...`.
-_EXHAUSTIVE_FILE_REFERENCE = re.compile(
-    r"^\s*-\s+([A-Za-z0-9_.\-]+\.[a-z0-9]+)(?::|$|\s)"
-)
-
-
 def exhaustive_section_findings(content: str, root: Path) -> set[str]:
     """Compare marker-opted directory sections against their disk contents.
 
-    The path-existence checks only prove listed paths exist — a file
-    *missing* from an enumerated listing drifts silently (the class that
-    left three hooks unlisted, #349). A section whose heading carries
-    ``<!-- exhaustive -->`` after its `` (`dir/`) `` path opts into the
-    stronger contract: every non-hidden file in that directory must be
-    listed, and every listed file must exist.
+    The path-existence checks elsewhere in this module only prove listed
+    paths exist — a file *missing* from an enumerated listing drifts
+    silently. A section whose heading carries ``<!-- exhaustive -->``
+    after its `` (`dir/`) `` path opts into the stronger contract: every
+    non-hidden file in that directory must be listed, and every listed
+    file must exist.
 
     Args:
         content: Full ``REPO_STRUCTURE.md`` text.
@@ -292,7 +290,13 @@ def exhaustive_section_findings(content: str, root: Path) -> set[str]:
             match = _SECTION_WITH_PATH.match(line)
             if match and _EXHAUSTIVE_MARKER in line:
                 candidate = match.group(1).rstrip("/")
-                if (root / candidate).is_dir():
+                # Containment before trust: the candidate is doc-supplied
+                # text, and pathlib's `/` lets an absolute right side
+                # replace `root` entirely while `..` segments walk out —
+                # either would let a crafted heading enumerate arbitrary
+                # readable directories into the log.
+                resolved = (root / candidate).resolve()
+                if resolved.is_dir() and resolved.is_relative_to(root.resolve()):
                     section_dir = candidate
             continue
         if section_dir is not None:
@@ -381,7 +385,8 @@ def verify_structure(
         msg = "REPO_STRUCTURE.md not found"
         raise FileNotFoundError(msg)
 
-    documented_paths = extract_paths_from_markdown(repo_structure_path.read_text())
+    content = repo_structure_path.read_text()
+    documented_paths = extract_paths_from_markdown(content)
 
     if verbose:
         logger.info("Extracted paths from REPO_STRUCTURE.md:")
@@ -398,9 +403,7 @@ def verify_structure(
     }
     # Exhaustive-section drift joins the undocumented channel — same
     # remedy (edit REPO_STRUCTURE.md), same severity.
-    important_not_documented |= exhaustive_section_findings(
-        repo_structure_path.read_text(), root
-    )
+    important_not_documented |= exhaustive_section_findings(content, root)
 
     return documented_not_found, important_not_documented, len(documented_paths)
 
