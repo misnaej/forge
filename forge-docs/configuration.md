@@ -135,6 +135,9 @@ prose-level injection content are not detected by path classification.
 |---|---|---|---|
 | `path` | unset (step self-skips) | Repo-relative path of a hand-maintained agent-architecture doc; setting it opts into the `agent_doc` pre-commit step (`verify-forge-agent-doc`: full agent/skill coverage, no dangling hook/CLI/skill references, structural edge checks on the doc's mermaid graphs). | You keep an agent-architecture doc and want drift caught at commit time. |
 | `guarded_by` | unset (guard-map edge check self-skips) | Table mapping an agent's doc node id to the guard hooks protecting it (e.g. `precommit_fixer = ["block_fixer_recon"]`); `verify-forge-agent-doc` requires each entry to appear as an agent→hook edge in the doc. | Your agent doc draws guard-hook edges and you want a removed/renamed guard flagged at commit time. |
+| `extra_clis` / `extra_hooks` / `extra_skills` | unset (no extras) | Extra names the doc may reference without being flagged dangling — additive to the automatic resolution set (repo-local dirs + the shipped plugin roster + installed `forge-scripts` console scripts). Resolution only: extras are never required for coverage. | The doc names surface the checker cannot see — e.g. a plugin version newer than the pinned `forge-scripts`, or a third-party CLI. |
+
+The dangling-reference checks resolve against the union of repo-local names (`agents/`, `.claude/agents/`, `skills/`, `.claude/skills/`, `claude-hooks/`, `.claude/hooks/`, `[project.scripts]`), forge's shipped plugin roster (skills + hooks, packaged with `forge-scripts`), and the installed `forge-scripts` console scripts — so a consumer doc can say "`precommit-fixer` runs `forge-precommit`" without listing forge's surface anywhere. Coverage requirements (every agent + skill mentioned) stay strictly repo-local.
 
 ## `[tool.forge.audit_agents]`
 
