@@ -103,15 +103,21 @@ convention without checking current code still matches. Asking beats reverting.
   origin/<base>`), never a rebase. The `block_git_rebase` hook enforces this with
   **no bypass**: it blocks `git rebase` and `git pull --rebase` / `-r`. A human
   rebases via `! git rebase ...`.
-- **NEVER `git reset --hard` (or `--merge`) as recovery.** Both discard
-  uncommitted work irrecoverably — the reflex move when a merge or commit goes
-  sideways, and the wrong one. The sanctioned dirty-tree base sync is the
-  **stash dance**: `git stash -u` → `git merge origin/<base>` → `git stash pop`.
-  - On ANY failure mid-dance: leave the stash alone (never `git stash drop`),
-    verify it with `git stash list`, and report — a stranded stash is
-    recoverable; a dropped one is not.
-  - The `block_git_reset_hard` hook enforces the ban with **no bypass**. A
-    human resets via `! git reset --hard ...`.
+- **NEVER destructive git recovery: no `git reset` (ANY form), no forced
+  `git clean`, no `git checkout .` / `git restore .`, no `git stash drop` /
+  `clear`.** Rewinds un-commit published history on a synced branch; the
+  rest destroy uncommitted or untracked work — `clean` with no recovery at
+  all. Unstage with `git restore --staged <path>`. The sanctioned dirty-tree
+  base sync is the **stash dance**: `git stash -u` → `git merge
+  origin/<base>` → `git stash pop`; on ANY failure mid-dance leave the
+  stash alone, verify with `git stash list`, and report. The
+  `block_git_destructive` hook enforces all of this with **no bypass**; a
+  human runs the blocked form via `! git ...`.
+- **On deviation: STOP and report.** When you detect you have deviated from
+  instructions or repository state is not what you expected, halt and
+  surface it — never undo, rewind, or clean. An unwanted commit is
+  trivially fixable; a destroyed tree is not. A blocked command is a signal
+  to ask, never a prompt to reach the same effect another way.
 - **NEVER add Claude/AI attribution** in commits, PRs, or merge messages (no
   `Co-Authored-By`, no `Generated with Claude`, no AI references).
 - **NEVER push directly to a protected branch** (`base_branch` / `dev_branch`,
