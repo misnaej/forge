@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_65 modules, 740 symbols._
+_65 modules, 742 symbols._
 
 ## `forge`
 
@@ -255,6 +255,7 @@ _65 modules, 740 symbols._
 - `select_diff_files(repo_root: Path, *, roots: list[str] | None = None, apply_exclude: bool = False, drop_deleted: bool = True, suffix: str = '.py') -> list[str]` — Select the modified files a diff-scoped step should check.
 - `tracked_files_under_roots(repo_root: Path, roots: list[str], *, suffix: str = '.py') -> list[str]` — Select the git-tracked files under *roots*, minus repo-wide excludes.
 - `_warn_untracked_under_roots(repo_root: Path, roots: list[str], suffix: str) -> None` _(internal)_ — Warn (dev-loop only) when untracked source under *roots* goes unscanned.
+- `installed_console_scripts(name: str) -> set[str] | None` — Return *name*'s installed ``console_scripts`` entry-point names.
 
 ## `forge.continuation_append`
 
@@ -716,7 +717,6 @@ _65 modules, 740 symbols._
 - `_resolve_scope(repo_root: Path, step: str) -> str` _(internal)_ — Resolve a step's file-selection scope: per-step override → global → ``"all"``.
 - `_run(cmd: list[str], cwd: Path) -> tuple[bool, str]` _(internal)_ — Run *cmd* and capture combined output.
 - `_declared_scripts(repo_root: Path) -> tuple[str, set[str]] | None` _(internal)_ — Return ``(package_name, declared [project.scripts] names)`` or ``None``.
-- `_installed_console_scripts(name: str) -> set[str] | None` _(internal)_ — Return *name*'s installed ``console_scripts`` entry-point names.
 - `missing_console_scripts(repo_root: Path) -> list[str]` — Declared ``[project.scripts]`` names not registered as console scripts.
 - `_forge_scripts_pin_drift(repo_root: Path) -> tuple[str, str] | None` _(internal)_ — Return ``(pinned, installed)`` when forge-scripts is pinned ahead of install.
 - `step_auto_rebuild(repo_root: Path) -> StepResult` — Reinstall a stale editable install before ``env_sync`` blocks the commit.
@@ -925,6 +925,8 @@ _65 modules, 740 symbols._
 > _verify-forge-agent-doc — keep a hand-maintained agent-architecture doc in line._
 
 - `_config_doc_path(root: Path) -> str | None` _(internal)_ — Return the configured agent-doc path, or ``None`` to self-skip.
+- `_plugin_roster() -> dict[str, set[str]]` _(internal)_ — Read the shipped roster of forge's plugin skills and hook stems.
+- `_extra_roster(root: Path) -> dict[str, set[str]]` _(internal)_ — Read the consumer escape-hatch roster additions from config.
 - `_roster(root: Path) -> dict[str, set[str]]` _(internal)_ — Discover the repo's agents, skills, hooks, and CLIs.
 - `_check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]` _(internal)_ — Return coverage + dangling problems for *doc* against *roster*.
 - `class Edge` — One hand-curated mermaid edge (``src --[verb]--> dst``) in the agent doc.

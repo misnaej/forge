@@ -53,9 +53,16 @@ import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
+from importlib import resources
 from typing import TYPE_CHECKING
 
-from forge.config import AGENT_DEFINITION_DIRS, read_tool_forge_section
+from forge.config import (
+    AGENT_DEFINITION_DIRS,
+    HOOK_DEFINITION_DIRS,
+    SKILL_DEFINITION_DIRS,
+    installed_console_scripts,
+    read_tool_forge_section,
+)
 from forge.git_utils import capturing_to_step_log, configure_cli_logging, repo_root
 
 
@@ -74,8 +81,10 @@ logger = logging.getLogger(__name__)
 _HOOK_RE = re.compile(r"\bblock_[a-z0-9_]+\b")
 _CLI_RE = re.compile(r"\b(?:forge|verify-forge|install-forge|fix-forge)-[a-z0-9-]+\b")
 # The lookbehind also excludes `!` so a shell shebang (`#!/usr/bin/env`) does
-# not classify as a skill mention `/usr`.
-_SKILL_RE = re.compile(r"(?<![\w/!])/([a-z][a-z0-9-]+)\b")
+# not classify as a skill mention `/usr`. An optional `plugin:` qualifier
+# (`/forge:pr`) is tolerated and resolution happens on the bare name —
+# group 1 stays the skill name, matching `_DELEGATE_RE`'s prefix handling.
+_SKILL_RE = re.compile(r"(?<![\w/!])/(?:[a-z][a-z0-9-]*:)?([a-z][a-z0-9-]+)\b")
 # A skill's wired delegation to an agent — shared by the Layer-2 mention
 # classifier and the invokes-edge discovery so they can never drift (§12).
 _DELEGATE_RE = re.compile(r"subagent_type=[\"']?(?:forge:)?([a-z0-9-]+)")
@@ -110,16 +119,83 @@ def _config_doc_path(root: Path) -> str | None:
     return path if isinstance(path, str) and path else None
 
 
-def _roster(root: Path) -> dict[str, set[str]]:
-    """Discover the repo's agents, skills, hooks, and CLIs.
+def _plugin_roster() -> dict[str, set[str]]:
+    """Read the shipped roster of forge's plugin skills and hook stems.
+
+    ``data/plugin-roster.toml`` ships with the pip package so a consumer
+    repo's agent doc can name plugin-provided skills and hooks without
+    the checker calling them dangling (#375). A forge-repo test
+    regenerates the file from ``skills/*/SKILL.md`` +
+    ``claude-hooks/*.sh`` and diffs, so it cannot go stale.
+
+    Returns:
+        ``{"skills": set, "hooks": set}``; both empty when the data file
+        is absent (older installed package) or unparseable — enrichment
+        degrades, never blocks.
+    """
+    try:
+        text = resources.files("forge").joinpath("data/plugin-roster.toml").read_text()
+        data = tomllib.loads(text)
+    except (FileNotFoundError, OSError, tomllib.TOMLDecodeError):
+        return {"skills": set(), "hooks": set()}
+    out: dict[str, set[str]] = {}
+    for kind in ("skills", "hooks"):
+        names = data.get(kind, {}).get("names", [])
+        out[kind] = {n for n in names if isinstance(n, str)}
+    return out
+
+
+def _extra_roster(root: Path) -> dict[str, set[str]]:
+    """Read the consumer escape-hatch roster additions from config.
+
+    ``[tool.forge.agent_doc].extra_clis`` / ``extra_hooks`` /
+    ``extra_skills`` let a repo resolve names the automatic enrichment
+    cannot see — e.g. a plugin version newer than the pinned pip
+    package, or a third-party CLI the doc legitimately references.
+    Misshapen values are dropped, never raised (same contract as
+    :func:`_guard_map`).
 
     Args:
         root: Repository root directory.
 
     Returns:
-        A mapping with keys ``agents`` / ``skills`` / ``hooks`` / ``clis``, each
-        a set of names. Underscore-prefixed agent files (e.g. ``_TEMPLATE``) are
-        excluded — they are templates, not agents.
+        ``{"clis": set, "hooks": set, "skills": set}``.
+    """
+    table = read_tool_forge_section(root, "agent_doc")
+    out: dict[str, set[str]] = {}
+    for key, kind in (
+        ("extra_clis", "clis"),
+        ("extra_hooks", "hooks"),
+        ("extra_skills", "skills"),
+    ):
+        value = table.get(key)
+        out[kind] = (
+            {v for v in value if isinstance(v, str)}
+            if isinstance(value, list)
+            else set()
+        )
+    return out
+
+
+def _roster(root: Path) -> dict[str, set[str]]:
+    """Discover the repo's agents, skills, hooks, and CLIs.
+
+    Two tiers with distinct consumers (#375): the repo-local sets
+    (``agents`` / ``skills`` / ``hooks`` / ``clis``) drive the coverage
+    and edge-requirement checks, while the ``*_known`` resolution sets —
+    repo-local U shipped plugin roster U installed forge-scripts console
+    scripts U config extras — drive the dangling-reference and mermaid
+    endpoint checks, so a consumer doc can name plugin-provided surface
+    without being required to document all of it.
+
+    Args:
+        root: Repository root directory.
+
+    Returns:
+        A mapping with the repo-local keys ``agents`` / ``skills`` /
+        ``hooks`` / ``clis`` plus resolution-only ``skills_known`` /
+        ``hooks_known`` / ``clis_known``. Underscore-prefixed agent
+        files (e.g. ``_TEMPLATE``) are excluded — templates, not agents.
     """
     agents = {
         p.stem
@@ -129,16 +205,27 @@ def _roster(root: Path) -> dict[str, set[str]]:
     }
     skills = {
         p.parent.name
-        for d in ("skills", ".claude/skills")
+        for d in SKILL_DEFINITION_DIRS
         for p in (root / d).glob("*/SKILL.md")
     }
-    hooks = {p.stem for p in (root / "claude-hooks").glob("*.sh")}
+    hooks = {p.stem for d in HOOK_DEFINITION_DIRS for p in (root / d).glob("*.sh")}
     clis: set[str] = set()
     pyproject = root / "pyproject.toml"
     if pyproject.is_file():
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         clis = set(data.get("project", {}).get("scripts", {}))
-    return {"agents": agents, "skills": skills, "hooks": hooks, "clis": clis}
+    plugin = _plugin_roster()
+    extra = _extra_roster(root)
+    forge_clis = installed_console_scripts("forge-scripts") or set()
+    return {
+        "agents": agents,
+        "skills": skills,
+        "hooks": hooks,
+        "clis": clis,
+        "skills_known": skills | plugin["skills"] | extra["skills"],
+        "hooks_known": hooks | plugin["hooks"] | extra["hooks"],
+        "clis_known": clis | forge_clis | extra["clis"],
+    }
 
 
 def _check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]:
@@ -167,17 +254,17 @@ def _check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]:
     problems.extend(
         f"dangling: hook '{match}' does not exist"
         for match in sorted(set(_HOOK_RE.findall(doc)))
-        if match not in roster["hooks"]
+        if match not in roster["hooks_known"]
     )
     problems.extend(
         f"dangling: CLI '{match}' does not exist"
         for match in sorted(set(_CLI_RE.findall(doc)))
-        if match not in roster["clis"]
+        if match not in roster["clis_known"]
     )
     problems.extend(
         f"dangling: skill '/{match}' does not exist"
         for match in sorted(set(_SKILL_RE.findall(doc)))
-        if match not in roster["skills"]
+        if match not in roster["skills_known"]
     )
     return problems
 
@@ -247,9 +334,9 @@ def _node_kind_ids(roster: dict[str, set[str]]) -> dict[str, set[str]]:
     """
     return {
         "agent": {name.replace("-", "_") for name in roster["agents"]},
-        "skill": {"sk_" + name.replace("-", "_") for name in roster["skills"]},
-        "hook": {"hk_" + name for name in roster["hooks"]},
-        "cli": {"cli_" + name.replace("-", "_") for name in roster["clis"]},
+        "skill": {"sk_" + name.replace("-", "_") for name in roster["skills_known"]},
+        "hook": {"hk_" + name for name in roster["hooks_known"]},
+        "cli": {"cli_" + name.replace("-", "_") for name in roster["clis_known"]},
     }
 
 
@@ -265,7 +352,7 @@ def _discover_invokes(root: Path) -> set[tuple[str, str]]:
     """
     return {
         (path.parent.name, agent)
-        for d in ("skills", ".claude/skills")
+        for d in SKILL_DEFINITION_DIRS
         for path in (root / d).glob("*/SKILL.md")
         for agent in _DELEGATE_RE.findall(path.read_text(encoding="utf-8"))
     }
@@ -555,7 +642,7 @@ def _diff_report(root: Path, base: str) -> list[str]:
         One ``<added|removed> <file>: <edge>`` line per changed graph-relevant
         mention; empty when the diff touches nothing graph-relevant.
     """
-    paths = [*AGENT_DEFINITION_DIRS, "skills", ".claude/skills", "claude-hooks"]
+    paths = [*AGENT_DEFINITION_DIRS, *SKILL_DEFINITION_DIRS, *HOOK_DEFINITION_DIRS]
     diff = _run_git_diff(root, base, paths)
     if diff is None:
         return []
