@@ -178,6 +178,12 @@ Recommendation: <verdict>
 ```
 Confirm BOTH the squash-merge message and wrap-up comment were posted — **either missing = the wrap-up is INCOMPLETE**.
 
+## Guard hooks
+
+Agent-scoped: `block_pr_merge`, `block_unverified_pr_create` (source of
+truth: `[tool.forge.agent_doc.guarded_by]`). Shared contract — what a
+block means and how to respond: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
+
 ## CONTINUATION Log Update
 
 After a successful wrap-up (skip if incomplete), append the activity record — rules: [FOUNDATION §10](../FOUNDATION.md#10-continuation-protocol); format SSoT: `forge-continuation-append`:
