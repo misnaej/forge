@@ -20,6 +20,14 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.20.2 — Unreleased
+
+### Chore
+- **Duplicate smart-test control test removed.** The plain-`src/`
+  "control" test was byte-identical to the depth-1 transitive test
+  (same fixture, inputs, assertions); a pointer comment preserves the
+  Shapes A/B narrative. Clears the audit-pack MEDIUM duplicate finding.
+
 ## v3.20.1 — Unreleased
 
 ### Tooling
