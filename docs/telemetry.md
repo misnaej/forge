@@ -134,7 +134,15 @@ for it never pay for it.
 |---|---|
 | `code_health/telemetry.log` | Header (command, duration, exit code, sample count), one line per sample, peak-RSS / mean-CPU summary |
 | `code_health/telemetry.png` | Two-axis chart: process-tree RSS (MB) + host CPU (%) over elapsed seconds |
+| `code_health/telemetry_history.log` | Append-only: one `key=value` summary line per run (timestamp, label, exit code, wall time, peak RSS, command) — the cross-run record for "what does this suite cost, over time" |
 
-Both land in `code_health/` (FOUNDATION §13's artifact convention,
-typically gitignored) and are overwritten on each run — copy one out
-if you want to keep a baseline to compare against.
+The log and chart land in `code_health/` (FOUNDATION §13's artifact
+convention, typically gitignored) and are overwritten on each run.
+To keep runs apart — a retry after a failure, or the per-tier runs of
+`forge-smart-test` — give each a **label**: `forge-telemetry --label r1
+-- <cmd>` (or the `FORGE_TELEMETRY_LABEL` env var; the flag wins) writes
+`telemetry_r1.log` / `telemetry_r1.png` instead. `forge-smart-test
+--telemetry` labels its tiers automatically (`depth0`, `depth1`, …,
+`full`). The history file is append-only across runs either way; it is
+per-workspace (gitignored), so durable trend data still means copying it
+out.

@@ -128,7 +128,7 @@ def _run_full(repo_root: Path, *, telemetry: bool = False) -> tuple[int, str]:
         ``(exit_code, output)`` from the single pytest run.
     """
     logger.info("Running the full suite (depth=full) with coverage.")
-    return run_pytest(repo_root, [], coverage=True, telemetry=telemetry)
+    return run_pytest(repo_root, [], coverage=True, telemetry=telemetry, label="full")
 
 
 @dataclass
@@ -184,7 +184,11 @@ def _run_tiers(
         clear_python_cache(repo_root)
         output.append(f"\n=== depth {tier}: {len(batch)} test file(s) ===\n")
         code, out = run_pytest(
-            repo_root, batch, coverage=config.coverage, telemetry=config.telemetry
+            repo_root,
+            batch,
+            coverage=config.coverage,
+            telemetry=config.telemetry,
+            label=f"depth{tier}",
         )
         output.append(out)
         if code != 0:

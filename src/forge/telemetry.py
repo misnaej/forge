@@ -30,11 +30,14 @@ from __future__ import annotations
 import argparse
 import contextlib
 import logging
+import os
+import re
 import subprocess
 import sys
 import tempfile
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from forge.config import read_tool_forge_section
@@ -64,6 +67,38 @@ logger = logging.getLogger(__name__)
 
 _BYTES_PER_MB = 1024 * 1024
 _DEFAULT_SAMPLE_INTERVAL = 1.0
+
+# A run label suffixes the artifact names (`telemetry_<label>.log/.png`), so
+# it must stay a plain filename fragment — same anchored-constant shape as
+# doctor.py's plugin-name validator.
+_SAFE_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def validated_label(label: str) -> str:
+    """Return *label* unchanged after validating it as an artifact suffix.
+
+    Loud by design: a silently-dropped label would put a retried run right
+    back to clobbering the artifacts it was meant to keep apart (#376), so
+    a bad value fails the run instead of degrading.
+
+    Args:
+        label: Requested run label; empty means unlabeled (default names).
+
+    Returns:
+        The validated label (possibly empty).
+
+    Raises:
+        ValueError: If *label* is non-empty and not a safe filename
+            fragment (``[A-Za-z0-9][A-Za-z0-9._-]*``).
+    """
+    if label and not _SAFE_LABEL_RE.match(label):
+        msg = (
+            f"telemetry label {label!r} is not a safe artifact suffix "
+            "(allowed: letters, digits, '.', '_', '-'; must not start "
+            "with a separator)"
+        )
+        raise ValueError(msg)
+    return label
 
 
 def telemetry_available() -> bool:
@@ -176,19 +211,102 @@ def _format_log(
         f"t={s.elapsed:8.1f}s  rss={s.rss_mb:9.1f}MB  cpu={s.cpu_percent:5.1f}%"
         for s in samples
     )
-    if samples:
-        peak = max(s.rss_mb for s in samples)
-        mean_cpu = sum(s.cpu_percent for s in samples) / len(samples)
-        lines += ["", f"peak rss: {peak:.1f}MB   mean cpu: {mean_cpu:.1f}%"]
+    summary = _summarize(samples)
+    if summary is not None:
+        lines += [
+            "",
+            (
+                f"peak rss: {summary.peak_rss_mb:.1f}MB   "
+                f"mean cpu: {summary.mean_cpu:.1f}%"
+            ),
+        ]
     return "\n".join(lines)
 
 
-def _render_plot(root: Path, samples: list[Sample]) -> None:
-    """Write ``code_health/telemetry.png``, or log why it was skipped.
+@dataclass(frozen=True)
+class _Summary:
+    """Aggregates of one run's samples.
+
+    Attributes:
+        peak_rss_mb: Highest process-tree RSS observed, in MB.
+        mean_cpu: Mean host CPU percentage across samples.
+    """
+
+    peak_rss_mb: float
+    mean_cpu: float
+
+
+@dataclass(frozen=True)
+class _RunHistory:
+    """Information to append to the telemetry history log.
+
+    Attributes:
+        cmd: The wrapped command's argv.
+        summary: Aggregates from :func:`_summarize` (``None`` → ``n/a``).
+        exit_code: The child's exit code.
+        elapsed: True wall-clock seconds, spawn to exit.
+    """
+
+    cmd: Sequence[str]
+    summary: _Summary | None
+    exit_code: int
+    elapsed: float
+
+
+def _summarize(samples: list[Sample]) -> _Summary | None:
+    """Return the run's aggregate summary, or ``None`` for empty samples.
+
+    Single source for the peak/mean math shared by the per-run log footer
+    and the history line, so the two artifacts can never disagree.
+
+    Args:
+        samples: The captured profile, in time order.
+
+    Returns:
+        The aggregates, or ``None`` when nothing was sampled.
+    """
+    if not samples:
+        return None
+    return _Summary(
+        peak_rss_mb=max(s.rss_mb for s in samples),
+        mean_cpu=sum(s.cpu_percent for s in samples) / len(samples),
+    )
+
+
+def _append_history(root: Path, history: _RunHistory, label: str) -> None:
+    """Append one summary line for this run to ``telemetry_history.log``.
+
+    The per-run log is overwritten by design (step-log convention); this
+    sidecar accumulates one ``key=value`` line per run so "what does this
+    suite cost, over time" stays answerable (#376). Lives next to the other
+    artifacts in ``code_health/`` (gitignored — history is per-workspace).
+
+    Args:
+        root: Repository root directory.
+        history: Run information to append.
+        label: Run label (empty when unlabeled).
+    """
+    peak = (
+        f"{history.summary.peak_rss_mb:.1f}MB" if history.summary is not None else "n/a"
+    )
+    line = (
+        f"ts={datetime.now(UTC).isoformat(timespec='seconds')}  "
+        f"label={label or '-'}  exit={history.exit_code}  wall={history.elapsed:.1f}s  "
+        f"peak_rss={peak}  cmd={' '.join(history.cmd)}\n"
+    )
+    out = root / "code_health" / "telemetry_history.log"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("a", encoding="utf-8") as fh:
+        fh.write(line)
+
+
+def _render_plot(root: Path, samples: list[Sample], label: str = "") -> None:
+    """Write ``code_health/telemetry[_<label>].png``, or log why it was skipped.
 
     Args:
         root: Repository root directory.
         samples: The captured profile, in time order.
+        label: Run label suffixing the filename (empty → default name).
     """
     if not samples:
         return
@@ -212,7 +330,8 @@ def _render_plot(root: Path, samples: list[Sample]) -> None:
     cpu_axis.plot(times, [s.cpu_percent for s in samples], color="tab:orange")
     cpu_axis.set_ylabel("host CPU (%)", color="tab:orange")
     fig.tight_layout()
-    out = root / "code_health" / "telemetry.png"
+    stem = f"telemetry_{label}" if label else "telemetry"
+    out = root / "code_health" / f"{stem}.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out)
     plt.close(fig)
@@ -225,6 +344,7 @@ def run_command(
     *,
     capture: bool = False,
     cwd: Path | None = None,
+    label: str = "",
 ) -> tuple[int, str]:
     """Run *cmd* under resource sampling and write the telemetry artifacts.
 
@@ -241,11 +361,19 @@ def run_command(
         capture: Collect and return the child's combined output instead of
             streaming it.
         cwd: Working directory for the child (default: the caller's).
+        label: Run label suffixing the artifacts
+            (``telemetry_<label>.log/.png``) so a retry or a multi-tier run
+            never overwrites the run before it; empty keeps the default
+            names.
 
     Returns:
         ``(exit_code, output)`` — the child's exit code unchanged, and its
         combined output when *capture* is set (empty string otherwise).
+
+    Raises:
+        ValueError: If *label* is not a safe artifact suffix.
     """
+    label = validated_label(label)
     interval, plot = _telemetry_config(root)
     started = time.monotonic()
     # ExitStack rather than a plain `with`: the spool exists only in capture
@@ -262,20 +390,34 @@ def run_command(
         proc = psutil.Process(child.pid)  # type: ignore[union-attr]
         psutil.cpu_percent(interval=None)  # type: ignore[union-attr] — prime
         samples: list[Sample] = []
-        while child.poll() is None:
+        # Sample first, then wait: the first sample lands at t≈0 (as the old
+        # sample-then-sleep loop did), and `wait(timeout=)` returns the
+        # moment the child exits instead of at the next tick — the old
+        # poll+sleep shape added up to one full interval of latency and
+        # quantized the reported duration to it (#376).
+        while True:
             samples.append(_sample(proc, started))
-            time.sleep(interval)
+            try:
+                child.wait(timeout=interval)
+            except subprocess.TimeoutExpired:
+                continue
+            break
+        # True spawn→exit wall time — taken before the spool read, whose
+        # cost for a large captured output must not inflate the figure.
         elapsed = time.monotonic() - started
         output = ""
         if spool is not None:
             spool.seek(0)
             output = spool.read().decode(errors="replace")
-    write_step_log(
-        root, "telemetry", _format_log(cmd, samples, child.returncode, elapsed)
+    log_name = f"telemetry_{label}" if label else "telemetry"
+    log_path = write_step_log(
+        root, log_name, _format_log(cmd, samples, child.returncode, elapsed)
     )
-    logger.info("telemetry: wrote %s", root / "code_health" / "telemetry.log")
+    logger.info("telemetry: wrote %s", log_path)
+    history = _RunHistory(cmd, _summarize(samples), child.returncode, elapsed)
+    _append_history(root, history, label)
     if plot:
-        _render_plot(root, samples)
+        _render_plot(root, samples, label)
     return child.returncode, output
 
 
@@ -304,7 +446,14 @@ def main(argv: list[str] | None = None) -> int:
         description="Sample process-tree RSS + host CPU while a command runs; "
         "write code_health/telemetry.log (+ .png with matplotlib).",
     )
-    parser.parse_args(flags)
+    parser.add_argument(
+        "--label",
+        default=os.environ.get("FORGE_TELEMETRY_LABEL", ""),
+        help="suffix the artifacts as telemetry_<label>.log/.png so a retry "
+        "never overwrites the run before it (env: FORGE_TELEMETRY_LABEL; "
+        "the flag wins)",
+    )
+    args = parser.parse_args(flags)
     if not cmd:
         logger.error(
             "forge-telemetry: no command given — usage: forge-telemetry -- <cmd> ..."
@@ -316,7 +465,11 @@ def main(argv: list[str] | None = None) -> int:
             missing_dependency_hint("psutil", extra="telemetry"),
         )
         return 1
-    exit_code, _ = run_command(cmd, repo_root())
+    try:
+        exit_code, _ = run_command(cmd, repo_root(), label=args.label)
+    except ValueError:
+        logger.exception("forge-telemetry error")
+        return 2
     return exit_code
 
 
