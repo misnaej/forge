@@ -491,6 +491,52 @@ def test_git_anchor_lib_defines_both_anchors() -> None:
     assert "SEG_ANCHOR='" in text
 
 
+# A command each hook's guard would normally block — any command works here,
+# since a missing anchor lib must fail closed BEFORE the command is parsed.
+_GIT_GUARD_BLOCKING_COMMANDS = {
+    "block_force_push.sh": "git push -f origin main",
+    "block_git_rebase.sh": "git rebase origin/dev",
+    "block_raw_git.sh": "git commit -m x",
+    "block_git_destructive.sh": "git reset --hard",
+}
+
+
+@pytest.mark.parametrize("hook", _GIT_GUARD_HOOKS)
+def test_git_guard_hook_fails_closed_without_anchor_lib(
+    hook: str, tmp_path: Path
+) -> None:
+    """A git-guard hook copied without its sibling `git_anchor.sh` still blocks.
+
+    Fail-closed is a security control: a corrupted or partial plugin cache
+    (hook file present, shared `git_anchor.sh` missing) must block the
+    command the guard protects, never silently disarm and let it through.
+    `test_git_guard_hooks_source_shared_anchor_lib` only asserts the guard
+    text is present in each hook; this runs the hook alone, live, to prove
+    the guard actually fires.
+
+    Args:
+        hook: Hook filename under `claude-hooks/`, copied alone into
+            `tmp_path` (with `git_anchor.sh` deliberately absent).
+        tmp_path: Isolated directory standing in for a plugin cache missing
+            the shared anchor lib.
+    """
+    isolated_hook = tmp_path / hook
+    isolated_hook.write_bytes((_HOOKS_DIR / hook).read_bytes())
+    isolated_hook.chmod(0o755)
+    payload = json.dumps(
+        {"tool_input": {"command": _GIT_GUARD_BLOCKING_COMMANDS[hook]}}
+    )
+    proc = subprocess.run(
+        ["bash", str(isolated_hook)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 2
+    assert "anchor lib missing" in proc.stderr
+
+
 # --- shared-anchor prefix bypasses (env-var / leading-ws / wrapper) --------
 # The anchor in block_force_push / block_raw_git / block_git_rebase must
 # recognize `git` even behind an inline env assignment, leading whitespace, or
