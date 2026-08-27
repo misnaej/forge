@@ -55,6 +55,7 @@ def run_pytest(
     *,
     coverage: bool = False,
     telemetry: bool = False,
+    label: str = "",
 ) -> tuple[int, str]:
     """Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
 
@@ -72,6 +73,10 @@ def run_pytest(
             ``forge.telemetry`` (degrades to an unprofiled run with a
             notice when ``psutil`` is absent — a missing profiler must
             never fail the test run).
+        label: Telemetry run label forwarded to
+            :func:`forge.telemetry.run_command`, so each depth tier of a
+            multi-tier run keeps its own artifacts instead of clobbering
+            the previous tier's (#376).
 
     Returns:
         ``(exit_code, combined_output)``. Exit code 5 ("no tests collected")
@@ -92,7 +97,7 @@ def run_pytest(
     if telemetry:
         if telemetry_mod.telemetry_available():
             code, output = telemetry_mod.run_command(
-                cmd, repo_root, capture=True, cwd=repo_root
+                cmd, repo_root, capture=True, cwd=repo_root, label=label
             )
             code = 0 if code == _PYTEST_NO_TESTS else code
             return code, notice + output
