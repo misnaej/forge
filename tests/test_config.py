@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from forge import config
 from forge.config import (
@@ -15,6 +15,7 @@ from forge.config import (
     detect_test_dirs,
     filter_excluded,
     filter_under_roots,
+    installed_console_scripts,
     load_config,
     read_pyproject_raw,
     read_tool_forge_section,
@@ -872,3 +873,77 @@ def test_select_diff_files_forwards_configured_base_branch(
     monkeypatch.setattr(config, "get_modified_files", _fake_get_modified_files)
     select_diff_files(tmp_path)
     assert captured["base_branch"] == "develop"
+
+
+# ---------------------------------------------------------------------------
+# installed_console_scripts (shared env-introspection seam, #375)
+# ---------------------------------------------------------------------------
+#
+# Placed at the end of the file (not amid the select_diff_files group above)
+# since it is a distinct function under test, not another select_diff_files
+# case.
+
+
+class FakeEP(NamedTuple):
+    """Null-object entry point for installed_console_scripts tests.
+
+    Attributes:
+        name: Entry-point name (e.g. ``"mycli"``).
+        group: Entry-point group (e.g. ``"console_scripts"``).
+    """
+
+    name: str
+    group: str
+
+
+class FakeDist:
+    """Null-object distribution for installed_console_scripts tests.
+
+    Attributes:
+        entry_points: Fake list of entry points supplied at construction.
+    """
+
+    def __init__(self, eps: list[FakeEP]) -> None:
+        """Store fake entry points.
+
+        Args:
+            eps: List of fake entry points to expose as ``entry_points``.
+        """
+        self.entry_points: list[FakeEP] = eps
+
+
+def test_installed_console_scripts_returns_set_for_installed_dist() -> None:
+    """A real installed distribution (forge-scripts, in the dev env) yields names.
+
+    forge-scripts is editable-installed in this dev environment, so this
+    exercises the real ``importlib.metadata`` path rather than a mock —
+    the console-script names it returns must include a CLI known to be
+    declared in this repo's [project.scripts].
+    """
+    names = installed_console_scripts("forge-scripts")
+    assert names is not None
+    assert "forge-precommit" in names
+
+
+def test_installed_console_scripts_none_for_missing_distribution() -> None:
+    """A distribution name that is not installed at all returns None."""
+    assert installed_console_scripts("no-such-distribution-xyz") is None
+
+
+def test_installed_console_scripts_filters_to_console_scripts_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only ``console_scripts`` entry points are returned; ``gui_scripts`` are dropped.
+
+    SCENARIO: the fake distribution exposes one console_scripts entry point
+    and one gui_scripts entry point.
+    MOCK SETUP: ``config.importlib.metadata.distribution`` stubbed to return
+    ``FakeDist([FakeEP("mycli", "console_scripts"), FakeEP("mygui",
+    "gui_scripts")])``.
+    EXPECTED BEHAVIOR: the result contains only "mycli".
+    """
+    eps = [FakeEP("mycli", "console_scripts"), FakeEP("mygui", "gui_scripts")]
+    monkeypatch.setattr(
+        config.importlib.metadata, "distribution", lambda _n: FakeDist(eps)
+    )
+    assert installed_console_scripts("mypkg") == {"mycli"}

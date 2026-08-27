@@ -22,6 +22,7 @@ mirror it there.
 from __future__ import annotations
 
 import fnmatch
+import importlib.metadata
 import logging
 import tomllib
 from dataclasses import dataclass, field
@@ -74,6 +75,13 @@ DEFAULT_TEST_DIRS = ("tests",)
 # (`forge-audit-agents`, `verify-forge-agent-doc`) so a new agent-root type
 # is one edit here, not one per tool.
 AGENT_DEFINITION_DIRS = ("agents", ".claude/agents")
+
+# Same union for skills and Claude Code hooks: the first entry is forge's
+# plugin layout, the second the consumer-side location (FOUNDATION §11
+# "Consumer Claude Code hook path convention"). Shared so the roster in
+# `verify-forge-agent-doc` and its diff-scope watch list cannot drift.
+SKILL_DEFINITION_DIRS = ("skills", ".claude/skills")
+HOOK_DEFINITION_DIRS = ("claude-hooks", ".claude/hooks")
 
 
 def detect_source_dirs(repo_root: Path) -> list[str]:
@@ -643,3 +651,25 @@ def _warn_untracked_under_roots(repo_root: Path, roots: list[str], suffix: str) 
             suffix,
             ", ".join(roots),
         )
+
+
+def installed_console_scripts(name: str) -> set[str] | None:
+    """Return *name*'s installed ``console_scripts`` entry-point names.
+
+    Shared environment-introspection seam (§12) for every tool comparing a
+    declared CLI surface against what pip actually installed: the
+    ``env_sync`` pre-commit step, ``forge-doctor``'s skew report, and the
+    ``verify-forge-agent-doc`` roster's known-CLI enrichment.
+
+    Args:
+        name: Distribution name (``[project.name]``).
+
+    Returns:
+        The set of installed console-script names, or ``None`` when the
+        distribution is not installed at all (nothing to compare against).
+    """
+    try:
+        dist = importlib.metadata.distribution(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    return {ep.name for ep in dist.entry_points if ep.group == "console_scripts"}

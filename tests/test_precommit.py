@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
 
 class FakeEP(NamedTuple):
-    """Null-object entry point for _installed_console_scripts tests.
+    """Null-object entry point for installed_console_scripts tests.
 
     Attributes:
         name: Entry-point name (e.g. ``"mycli"``).
@@ -49,7 +49,7 @@ class FakeEP(NamedTuple):
 
 
 class FakeDist:
-    """Null-object distribution for _installed_console_scripts tests.
+    """Null-object distribution for installed_console_scripts tests.
 
     Attributes:
         entry_points: Fake list of entry points supplied at construction.
@@ -2109,28 +2109,11 @@ def test_declared_scripts_returns_none_when_scripts_empty(tmp_path: Path) -> Non
     assert precommit._declared_scripts(tmp_path) is None
 
 
-def test_installed_console_scripts_returns_console_script_names_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """_installed_console_scripts returns only console_scripts group entries."""
-    eps = [FakeEP("mycli", "console_scripts"), FakeEP("myapp", "gui_scripts")]
-    monkeypatch.setattr(
-        precommit.importlib.metadata, "distribution", lambda _n: FakeDist(eps)
-    )
-    result = precommit._installed_console_scripts("mypkg")
-    assert result == {"mycli"}
-
-
-def test_installed_console_scripts_returns_none_when_package_not_installed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """_installed_console_scripts returns None when the package is not installed."""
-
-    def _raise(_name: str) -> object:
-        raise precommit.importlib.metadata.PackageNotFoundError(_name)
-
-    monkeypatch.setattr(precommit.importlib.metadata, "distribution", _raise)
-    assert precommit._installed_console_scripts("missing-pkg") is None
+# installed_console_scripts itself now lives in forge.config — see
+# tests/test_config.py for its unit tests. FakeEP/FakeDist stay here
+# because the step_env_sync integration tests below still patch
+# precommit.importlib.metadata.distribution directly (the real singleton
+# module object config.installed_console_scripts also reads from).
 
 
 # ---------------------------------------------------------------------------
@@ -2379,7 +2362,7 @@ def test_step_env_sync_missing_script_beats_pin_drift(
         '\n[project.scripts]\nmycli = "pkg:main"\nnew-cli = "pkg:main"\n',
         encoding="utf-8",
     )
-    monkeypatch.setattr(precommit, "_installed_console_scripts", lambda _n: {"mycli"})
+    monkeypatch.setattr(precommit, "installed_console_scripts", lambda _n: {"mycli"})
     monkeypatch.setattr(precommit.importlib.metadata, "version", lambda _n: "2.8.0")
     result = precommit.step_env_sync(tmp_path)
     assert not result.passed
@@ -2929,14 +2912,14 @@ def test_missing_console_scripts_empty_when_dist_not_installed(
 ) -> None:
     """Return [] when [project.scripts] declared but distribution is not installed.
 
-    SCENARIO: pyproject declares mypkg with one script; _installed_console_scripts
+    SCENARIO: pyproject declares mypkg with one script; installed_console_scripts
         returns None (distribution absent from the environment).
-    MOCK SETUP: _installed_console_scripts patched to always return None.
+    MOCK SETUP: installed_console_scripts patched to always return None.
     EXPECTED BEHAVIOR: [] — nothing to compare against; a fresh checkout that
         predates install is not reported as stale.
     """
     _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": ""})
-    monkeypatch.setattr(precommit, "_installed_console_scripts", lambda _n: None)
+    monkeypatch.setattr(precommit, "installed_console_scripts", lambda _n: None)
     assert precommit.missing_console_scripts(tmp_path) == []
 
 
@@ -2947,11 +2930,11 @@ def test_missing_console_scripts_lists_missing_sorted(
     """Returns a sorted list of declared scripts absent from the installed set.
 
     SCENARIO: pyproject declares {a, b, c}; installed reports only {b}.
-    MOCK SETUP: _installed_console_scripts patched to return {"b"}.
+    MOCK SETUP: installed_console_scripts patched to return {"b"}.
     EXPECTED BEHAVIOR: ["a", "c"] — only the two missing names, sorted.
     """
     _write_project_scripts_pyproject(tmp_path, "mypkg", {"a": "", "b": "", "c": ""})
-    monkeypatch.setattr(precommit, "_installed_console_scripts", lambda _n: {"b"})
+    monkeypatch.setattr(precommit, "installed_console_scripts", lambda _n: {"b"})
     assert precommit.missing_console_scripts(tmp_path) == ["a", "c"]
 
 
@@ -2963,7 +2946,7 @@ def test_missing_console_scripts_empty_when_all_installed(
     _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": "", "helper": ""})
     monkeypatch.setattr(
         precommit,
-        "_installed_console_scripts",
+        "installed_console_scripts",
         lambda _n: {"mycli", "helper", "extra"},
     )
     assert precommit.missing_console_scripts(tmp_path) == []
