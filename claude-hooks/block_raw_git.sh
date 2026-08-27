@@ -16,22 +16,17 @@ if [ "$AGENT_TYPE" = "git-commit-push" ] || [ "$AGENT_TYPE" = "forge:git-commit-
     exit 0
 fi
 
-# Anchor at start-of-string or after a shell separator so substrings
-# inside quoted bodies (PR descriptions, commit messages) don't fire. The
-# anchor also tolerates a leading run of `VAR=val` assignments and a
-# `command`/`env`/`exec`/`builtin`/`sudo` wrapper, so `GIT_DIR=x git push`
-# and `command git commit` can't slip the gate (shared verbatim with
-# block_force_push.sh / block_git_rebase.sh).
-#
-# Known accepted slip-through: `bash -c "git commit ..."` — git sits
-# after a quote, not a separator. Acceptable (matches
-# block_install_deps.sh's xargs slip-through stance).
-# The separator class includes `(` (a bare subshell wrapper) and the
-# wrapper run tolerates flag tokens (`sudo -n git ...`), so neither
-# shape slips the anchor.
 # Anchor + rationale live in the shared lib (one home for the whole
 # git-guard family — issue #348).
-source "$(dirname "$0")/git_anchor.sh"
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+if [ ! -r "$ANCHOR_LIB" ]; then
+    # Fail CLOSED: a missing/unreadable lib (corrupted plugin cache)
+    # must block, not silently disarm the whole guard family — only
+    # exit 2 is a block signal in the PreToolUse contract.
+    echo "BLOCKED: git-guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$ANCHOR_LIB"
 if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}(commit|push)\b"; then
     echo "BLOCKED: raw 'git commit' / 'git push' from Bash is forbidden by FOUNDATION §3 mandatory-delegation. Use the forge:git-commit-push agent — it runs pre-commit, signs the commit per the convention, and pushes with the right tracking flags." >&2
     exit 2

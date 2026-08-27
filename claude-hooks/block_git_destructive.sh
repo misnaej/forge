@@ -38,7 +38,15 @@ _block() {
 
 # Anchor + rationale live in the shared lib (one home for the whole
 # git-guard family — issue #348).
-source "$(dirname "$0")/git_anchor.sh"
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+if [ ! -r "$ANCHOR_LIB" ]; then
+    # Fail CLOSED: a missing/unreadable lib (corrupted plugin cache)
+    # must block, not silently disarm the whole guard family — only
+    # exit 2 is a block signal in the PreToolUse contract.
+    echo "BLOCKED: git-guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$ANCHOR_LIB"
 
 # `git reset` — every form. The blanket ban subsumes the --hard/--merge
 # block that previously lived in block_git_reset_hard.sh (retired).

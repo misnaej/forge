@@ -345,6 +345,26 @@ def test_force_push_blocks_combined_short_flag_cluster() -> None:
     assert _run_hook(_FORCE_PUSH, "git push -uf origin feat") == 2
 
 
+def test_force_push_blocks_cluster_final_f() -> None:
+    r"""`-fu` (`f` cluster-leading) is blocked.
+
+    Regression (#348 design review): the scoped flag regex used to end in
+    `f\\b`, which only matched a cluster-final `f`. `-fu` has `f` first, so
+    the fix requires `f` to match anywhere in the cluster
+    (`-[a-zA-Z]*f[a-zA-Z]*\\b`).
+    """
+    assert _run_hook(_FORCE_PUSH, "git push -fu origin main") == 2
+
+
+def test_force_push_blocks_cluster_with_f_and_other_flags() -> None:
+    """`-fq` (`f` followed by another short flag) is blocked.
+
+    Regression (#348 design review): same cluster-final gap as `-fu` — `f`
+    must match anywhere in the cluster, not only at its end.
+    """
+    assert _run_hook(_FORCE_PUSH, "git push -fq origin main") == 2
+
+
 def test_force_push_blocks_plus_refspec() -> None:
     """A `+`-prefixed force refspec (`origin +main`) is blocked."""
     assert _run_hook(_FORCE_PUSH, "git push origin +main") == 2
@@ -431,11 +451,23 @@ _GIT_GUARD_HOOKS = (
 
 
 def test_git_guard_hooks_source_shared_anchor_lib() -> None:
-    """All four git-guard hooks source `git_anchor.sh` for GIT_ANCHOR/SEG_ANCHOR."""
+    """All four git-guard hooks source `git_anchor.sh`, failing CLOSED.
+
+    The guarded-source shape (existence check exiting 2 before `source`)
+    is the security contract: a missing lib in a corrupted plugin cache
+    must block, never silently disarm the guard (only exit 2 is a block
+    signal in the PreToolUse contract).
+    """
     for hook in _GIT_GUARD_HOOKS:
         text = (_HOOKS_DIR / hook).read_text()
-        assert 'source "$(dirname "$0")/git_anchor.sh"' in text, (
+        assert 'ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"' in text, (
+            f"{hook} does not resolve the shared git_anchor.sh lib"
+        )
+        assert 'source "$ANCHOR_LIB"' in text, (
             f"{hook} does not source the shared git_anchor.sh lib"
+        )
+        assert '[ ! -r "$ANCHOR_LIB" ]' in text, (
+            f"{hook} sources the lib without the fail-closed guard"
         )
 
 
