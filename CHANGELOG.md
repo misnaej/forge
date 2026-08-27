@@ -20,13 +20,26 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.22.1 — Unreleased
+## v3.23.1 — Unreleased
 
 ### Chore
 - **Duplicate smart-test control test removed.** The plain-`src/`
   "control" test was byte-identical to the depth-1 transitive test
   (same fixture, inputs, assertions); a pointer comment preserves the
   Shapes A/B narrative. Clears the audit-pack MEDIUM duplicate finding.
+
+## v3.23.0 — Unreleased
+
+### Features
+- **Telemetry runs stop overwriting each other and report true wall
+  time.** `forge-telemetry --label <l>` (env `FORGE_TELEMETRY_LABEL`)
+  suffixes the artifacts so a retry keeps the failed run's profile;
+  `forge-smart-test --telemetry` labels each depth tier automatically;
+  a new append-only `code_health/telemetry_history.log` records one
+  summary line per run (timestamp, label, exit, wall, peak RSS). The
+  sampler now wakes on child exit instead of the next tick, removing
+  up to one `sample_interval` of added latency and the
+  interval-quantized duration misreport.
 
 ## v3.22.0 — Unreleased
 
