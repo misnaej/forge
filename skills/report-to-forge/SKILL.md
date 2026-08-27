@@ -73,7 +73,8 @@ independent.
 ## Step 6: Confirm the final body, then file
 
 **Show the user the exact final body text about to be filed — the
-literal draft file content — and get explicit confirmation.** Never
+literal draft file content — and get explicit confirmation (once per
+body, when Step 5 split the findings into separate issues).** Never
 file on your own judgment of what counts as private, and never file a
 body the user has not seen in its final form.
 
