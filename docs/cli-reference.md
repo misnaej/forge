@@ -573,13 +573,16 @@ options:
 ## forge-telemetry
 
 ```text
-usage: forge-telemetry [-h]
+usage: forge-telemetry [-h] [--label LABEL]
 
 Sample process-tree RSS + host CPU while a command runs; write
 code_health/telemetry.log (+ .png with matplotlib).
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help     show this help message and exit
+  --label LABEL  suffix the artifacts as telemetry_<label>.log/.png so a retry
+                 never overwrites the run before it (env:
+                 FORGE_TELEMETRY_LABEL; the flag wins)
 ```
 
 ## forge-upgrade

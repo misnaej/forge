@@ -197,24 +197,32 @@ def test_run_pytest_telemetry_delegates_to_run_command(
 ) -> None:
     """``telemetry=True`` with psutil available delegates to ``run_command``.
 
-    SCENARIO: ``telemetry=True``; ``telemetry_mod.telemetry_available()`` is
-        True.
+    SCENARIO: ``telemetry=True``, ``label="depth0"``;
+        ``telemetry_mod.telemetry_available()`` is True.
     MOCK SETUP: ``telemetry_mod.run_command`` is stubbed to capture its
-        ``(cmd, root, capture, cwd)`` arguments and return canned output;
-        ``subprocess.run`` is a sentinel that fails the test if invoked —
-        the delegate path must never fall through to the plain subprocess run.
-    EXPECTED BEHAVIOR: ``run_command`` is called with ``capture=True`` and
-        ``cwd=repo_root``; the returned output is passed through unchanged.
+        ``(cmd, root, capture, cwd, label)`` arguments and return canned
+        output; ``subprocess.run`` is a sentinel that fails the test if
+        invoked — the delegate path must never fall through to the plain
+        subprocess run.
+    EXPECTED BEHAVIOR: ``run_command`` is called with ``capture=True``,
+        ``cwd=repo_root``, and the ``label`` forwarded unchanged; the
+        returned output is passed through unchanged.
     """
     captured: dict[str, object] = {}
 
     def _fake_run_command(
-        cmd: list[str], root: Path, *, capture: bool = False, cwd: Path | None = None
+        cmd: list[str],
+        root: Path,
+        *,
+        capture: bool = False,
+        cwd: Path | None = None,
+        label: str = "",
     ) -> tuple[int, str]:
         captured["cmd"] = cmd
         captured["root"] = root
         captured["capture"] = capture
         captured["cwd"] = cwd
+        captured["label"] = label
         return 0, "child output"
 
     def _sentinel_subprocess_run(*_args: object, **_kwargs: object) -> object:
@@ -225,13 +233,16 @@ def test_run_pytest_telemetry_delegates_to_run_command(
     monkeypatch.setattr(runner.telemetry_mod, "run_command", _fake_run_command)
     monkeypatch.setattr(subprocess, "run", _sentinel_subprocess_run)
 
-    code, output = runner.run_pytest(tmp_path, ["tests/test_x.py"], telemetry=True)
+    code, output = runner.run_pytest(
+        tmp_path, ["tests/test_x.py"], telemetry=True, label="depth0"
+    )
 
     assert code == 0
     assert "child output" in output
     assert captured["capture"] is True
     assert captured["cwd"] == tmp_path
     assert captured["root"] == tmp_path
+    assert captured["label"] == "depth0"
 
 
 def test_run_pytest_telemetry_delegate_exit5_normalized_to_0(
