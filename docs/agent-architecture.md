@@ -392,7 +392,16 @@ graph LR
   human -->|drives| main_agent
   sk_memory_audit(["/memory-audit<br/>skill"])
   main_agent -->|runs| sk_memory_audit
+  sk_report_to_forge(["/report-to-forge<br/>skill"])
+  main_agent -->|runs| sk_report_to_forge
   class human person
   class main_agent orchestrator
   class sk_memory_audit skill
+  class sk_report_to_forge skill
 ```
+
+`/report-to-forge` turns an observed defect in a shipped forge process
+into a filed upstream issue: versions captured via `forge-doctor`,
+evidence preserved verbatim, consumer specifics redacted with explicit
+user confirmation before `gh issue create` targets the canonical
+upstream. User-invoked only — no proactive detection.
