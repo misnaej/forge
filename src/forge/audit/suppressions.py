@@ -30,6 +30,7 @@ hides missing dataclasses, F841 hides dead code).
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import logging
@@ -77,6 +78,23 @@ class SuppressionsConfig:
     """
 
     output: Path | None = None
+
+
+def _line_fingerprint(line: str) -> str:
+    """Return a short stable fingerprint of *line*'s stripped text.
+
+    Disambiguates two suppressions of the same rule in the same file
+    without reintroducing line numbers into the key: the fingerprint
+    changes only when the suppressed line itself changes, so keys
+    survive edits elsewhere in the file (#291's stability contract).
+
+    Args:
+        line: The full source line text.
+
+    Returns:
+        First 8 hex chars of the SHA-256 of the stripped line.
+    """
+    return hashlib.sha256(line.strip().encode()).hexdigest()[:8]
 
 
 def _parse_codes(raw: str | None) -> list[str]:
@@ -166,7 +184,7 @@ def _noqa_findings(
                     line=line_no,
                     message="bare `# noqa` silences every rule on this line",
                     evidence=(line.rstrip(),),
-                    key=f"{path}|noqa-bare",
+                    key=f"{path}|noqa-bare|{_line_fingerprint(line)}",
                 ),
             )
             continue
@@ -187,7 +205,7 @@ def _noqa_findings(
                         "this hide a design problem?"
                     ),
                     evidence=(line.rstrip(), descriptor),
-                    key=f"{path}|{code}",
+                    key=f"{path}|{code}|{_line_fingerprint(line)}",
                 ),
             )
     return findings
@@ -216,7 +234,7 @@ def _type_ignore_findings(path: str, line_no: int, line: str) -> list[Finding]:
                     line=line_no,
                     message="bare `# type: ignore` — silences every type error",
                     evidence=(line.rstrip(),),
-                    key=f"{path}|type-ignore-bare",
+                    key=f"{path}|type-ignore-bare|{_line_fingerprint(line)}",
                 ),
             )
         else:
@@ -228,7 +246,7 @@ def _type_ignore_findings(path: str, line_no: int, line: str) -> list[Finding]:
                     line=line_no,
                     message=f"`# type: ignore[{codes}]`",
                     evidence=(line.rstrip(),),
-                    key=f"{path}|type-ignore[{codes}]",
+                    key=f"{path}|type-ignore[{codes}]|{_line_fingerprint(line)}",
                 ),
             )
     return findings

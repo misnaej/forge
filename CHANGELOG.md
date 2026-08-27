@@ -26,9 +26,10 @@ versions follow forge's rolling-next convention.
 - **Audit findings carry stable identities.** `Finding.key` — an
   optional per-audit key rendered as a `key=` line in every
   `code_health/audit_*.log` block — makes findings individually
-  addressable across runs: dup groups key on their qualified-name
-  sets, dep cycles on their members, suppressions on `path|code`,
-  orphans on `path|symbol`. Keys survive edits elsewhere in the file
+  addressable across runs: dup groups key on their path-qualified
+  member sets, dep cycles on their members and distance findings on
+  their module, suppressions on `path|code|line-fingerprint`, orphans
+  on `path|type|symbol`. Keys survive edits elsewhere in the file
   (never `path:line`), the prerequisite for any future
   accepted-findings baseline.
 

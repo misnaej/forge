@@ -163,8 +163,8 @@ def test_build_findings_renders_each_item(fake_repo: Path) -> None:
     assert "_leftover" in findings[1].message
 
 
-def test_build_findings_key_is_filename_and_symbol(fake_repo: Path) -> None:
-    """Each finding's key is ``<filename>|<name>``."""
+def test_build_findings_key_is_filename_typ_and_symbol(fake_repo: Path) -> None:
+    """Each finding's key is ``<filename>|<typ>|<name>``."""
     (fake_repo / "src" / "mod.py").write_text("", encoding="utf-8")
     items: list[object] = [
         FakeVultureItem(
@@ -176,7 +176,38 @@ def test_build_findings_key_is_filename_and_symbol(fake_repo: Path) -> None:
         ),
     ]
     findings = _build_findings(items)
-    assert findings[0].key == "src/mod.py|_unused_helper"
+    assert findings[0].key == "src/mod.py|function|_unused_helper"
+
+
+def test_build_findings_key_distinct_for_same_name_different_typ(
+    fake_repo: Path,
+) -> None:
+    """Same filename + name but different ``typ`` get distinct keys.
+
+    Regression (#291): vulture can flag both a function and an
+    unused-import of the same name in one file (e.g. a shadowed import);
+    without ``typ`` in the key the two findings collapsed onto one.
+    """
+    (fake_repo / "src" / "mod.py").write_text("", encoding="utf-8")
+    items: list[object] = [
+        FakeVultureItem(
+            filename=str(fake_repo / "src" / "mod.py"),
+            first_lineno=10,
+            typ="function",
+            name="helper",
+            confidence=96,
+        ),
+        FakeVultureItem(
+            filename=str(fake_repo / "src" / "mod.py"),
+            first_lineno=20,
+            typ="unused_import",
+            name="helper",
+            confidence=96,
+        ),
+    ]
+    findings = _build_findings(items)
+    keys = {f.key for f in findings}
+    assert len(keys) == len(findings) == 2
 
 
 def test_run_returns_zero_when_no_findings(

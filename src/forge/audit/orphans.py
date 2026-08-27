@@ -114,7 +114,7 @@ def _build_findings(items: list[object]) -> list[Finding]:
                 path=filename,
                 line=line_no,
                 message=f"unused {typ} '{name}' (confidence {confidence}%)",
-                key=f"{filename}|{name}",
+                key=f"{filename}|{typ}|{name}",
             ),
         )
     return findings
