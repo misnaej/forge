@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.21.0 — Unreleased
+## v3.22.0 — Unreleased
 
 ### Features
 - **Audit findings carry stable identities.** `Finding.key` — an
@@ -32,6 +32,37 @@ versions follow forge's rolling-next convention.
   on `path|type|symbol`. Keys survive edits elsewhere in the file
   (never `path:line`), the prerequisite for any future
   accepted-findings baseline.
+
+## v3.21.0 — Unreleased
+
+### Features
+- **Destructive git recovery verbs are now hook-blocked.** New
+  `block_git_destructive` Claude hook (retires `block_git_reset_hard`,
+  whose coverage it subsumes): blocks every `git reset` form, forced
+  `git clean` (`-f`/`-d`/`-x`; dry runs allowed), literal
+  `git checkout .` / `git restore .`, and `git stash drop`/`clear` —
+  the #363 incident class where an agent escalates a recoverable
+  mistake into unrecoverable deletion. FOUNDATION §2 gains the widened
+  ban plus a stop-on-deviation rule: a blocked command is a signal to
+  ask, never a prompt to reach the same effect another way.
+- **Agents are told which hooks constrain them.** New canonical "Guard
+  hooks" agent-doc section (`_TEMPLATE.md`; applied to
+  `git-commit-push`, `pr-manager`, `precommit-fixer`): names the
+  agent-scoped guards and the Edit-scoped hooks binding every agent,
+  and requires presenting an exact diff — user applies — for
+  hook-protected files like `ruff.toml`. `git-commit-push` also gains a
+  staged-subset commit recipe; `precommit-fixer` must re-run affected
+  tests after any code edit before reporting.
+
+### Fixes
+- **Released changelog sections are guarded against deletion.**
+  `changelog_version` now flags entries removed from sections at or
+  below the latest tag (previously only additions were rejected, so a
+  deletion silently erased shipped history).
+- **Generated docs no longer capture partial-commit tree states.**
+  `regen_docs` skips regeneration when unstaged changes are present, so
+  `api-digest.md`/`cli-reference.md` never record a worktree the commit
+  does not contain.
 
 ## v3.20.1 — Unreleased
 

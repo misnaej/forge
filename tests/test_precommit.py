@@ -2624,6 +2624,126 @@ def test_step_regen_docs_partial_failure_when_second_generator_fails(
 
 
 # ---------------------------------------------------------------------------
+# Group 2b: step_regen_docs partial-commit guard (real git repos — the
+# guard reads the actual worktree via `git diff --name-only`, so a fake
+# `run_git` would not exercise it).
+# ---------------------------------------------------------------------------
+
+
+def _raise_if_called(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+    """A `precommit._run` stand-in that fails the test if ever invoked.
+
+    Args:
+        cmd: The command argv the caller would have run.
+        **_kw: Ignored keyword arguments (signature compatibility).
+
+    Raises:
+        AssertionError: Always — the partial-commit guard must short-circuit
+            before any generator runs.
+    """
+    msg = f"_run must not be called when unstaged changes exist: {cmd}"
+    raise AssertionError(msg)
+
+
+def test_step_regen_docs_skips_on_unstaged_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dirty worktree (unrelated tracked file) skips regeneration entirely.
+
+    SCENARIO: docs/api-digest.md exists and is committed; a separate
+    tracked file (other.txt) has an unstaged edit. The guard reads
+    `git diff --name-only` — any non-empty unstaged diff anywhere in the
+    tree is the signal, not just the generated doc's own file.
+    MOCK SETUP: `precommit._run` → `_raise_if_called`, proving the guard
+    short-circuits before any generator would run.
+    EXPECTED BEHAVIOR: skipped=True, passed=True, output mentions the
+    partial commit and that regeneration was skipped.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api-digest.md").write_text("v1\n")
+    (tmp_path / "other.txt").write_text("a\n")
+    subprocess.run(
+        ["git", "add", "docs/api-digest.md", "other.txt"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add tracked files"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        check=True,
+    )
+    (tmp_path / "other.txt").write_text("b\n")
+    monkeypatch.setattr(precommit, "_run", _raise_if_called)
+    result = precommit.step_regen_docs(tmp_path)
+    assert result.skipped
+    assert result.passed
+    assert "partial commit" in result.output
+    assert "regeneration skipped" in result.output
+
+
+def test_step_regen_docs_partial_commit_guard_catches_same_file_staged_and_dirty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `git add -p`-style same-file partial stage still trips the guard.
+
+    SCENARIO: docs/api-digest.md is committed at v1, staged at v2, then
+    edited again to v3 without staging — the exact case the guard's
+    docstring calls out (#363): a staged-vs-dirty *set* comparison would
+    miss this because the file is staged, but its unstaged hunk still
+    means the tree doesn't match what the commit would record.
+    MOCK SETUP: `precommit._run` → `_raise_if_called`.
+    EXPECTED BEHAVIOR: skipped=True — still skipped despite the file
+    having a staged change too.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api-digest.md").write_text("v1\n")
+    subprocess.run(
+        ["git", "add", "docs/api-digest.md"], cwd=tmp_path, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add doc"], cwd=tmp_path, env=GIT_ENV, check=True
+    )
+    (tmp_path / "docs" / "api-digest.md").write_text("v2\n")
+    subprocess.run(
+        ["git", "add", "docs/api-digest.md"], cwd=tmp_path, env=GIT_ENV, check=True
+    )
+    (tmp_path / "docs" / "api-digest.md").write_text("v3\n")
+    monkeypatch.setattr(precommit, "_run", _raise_if_called)
+    result = precommit.step_regen_docs(tmp_path)
+    assert result.skipped
+
+
+def test_step_regen_docs_runs_when_tree_is_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clean real repo (no unstaged changes) lets the generator run.
+
+    MOCK SETUP: shutil.which → valid path (require_cli passes);
+        precommit._run → (True, "generated"); stage_modified_paths → [].
+    EXPECTED BEHAVIOR: skipped=False, passed=True — the guard stands down.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api-digest.md").write_text("v1\n")
+    subprocess.run(
+        ["git", "add", "docs/api-digest.md"], cwd=tmp_path, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add doc"], cwd=tmp_path, env=GIT_ENV, check=True
+    )
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, "generated"))
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+    result = precommit.step_regen_docs(tmp_path)
+    assert not result.skipped
+    assert result.passed
+
+
+# ---------------------------------------------------------------------------
 # Group 3: _vendored_documented_hashes + _sha256_file
 # ---------------------------------------------------------------------------
 
@@ -3217,6 +3337,60 @@ def test_step_changelog_version_detects_stranded_entries(
     assert "merge in progress" not in result.output
     cfg = config.load_config(tmp_path)
     assert merge_base_calls == [(tmp_path, cfg.base_branch)]
+
+
+def test_step_changelog_version_detects_deleted_released_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Branch removes a bullet under the already-tagged top heading → fail.
+
+    MOCK SETUP: same shape as
+    `test_step_changelog_version_detects_stranded_entries`, but the
+    base-side changelog carries a bullet the branch's current changelog no
+    longer has — a released-history deletion (#363), not a strand.
+    """
+    text = "## v1.0.0\n"
+    base_changelog = "## v1.0.0\n\n- old bullet\n"
+    (tmp_path / "CHANGELOG.md").write_text(text)
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "fetch_tags_best_effort", lambda _r, **_kw: [])
+    monkeypatch.setattr(precommit, "merge_base_with_head", lambda *_a: "abc123")
+    monkeypatch.setattr(
+        precommit, "run_git", _fake_run_git_dispatch(base_changelog=base_changelog)
+    )
+    result = precommit.step_changelog_version(tmp_path)
+    assert result.passed is False
+    assert "deleted" in result.output
+
+
+def test_step_changelog_version_deleted_and_stranded_both_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A branch that both drops one bullet and adds another under v1.0.0 reports both.
+
+    MOCK SETUP: base-side changelog has `- keep` and `- old bullet`; the
+    branch's changelog has `- keep` and `- new bullet` — one entry lost,
+    one gained, same released heading.
+    """
+    text = "## v1.0.0\n\n- keep\n- new bullet\n"
+    base_changelog = "## v1.0.0\n\n- keep\n- old bullet\n"
+    (tmp_path / "CHANGELOG.md").write_text(text)
+    monkeypatch.setattr(precommit, "latest_v_tag", lambda _r: "v1.0.0")
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit, "fetch_tags_best_effort", lambda _r, **_kw: [])
+    monkeypatch.setattr(precommit, "merge_base_with_head", lambda *_a: "abc123")
+    monkeypatch.setattr(
+        precommit, "run_git", _fake_run_git_dispatch(base_changelog=base_changelog)
+    )
+    result = precommit.step_changelog_version(tmp_path)
+    assert result.passed is False
+    assert "stranded" in result.output
+    assert "deleted" in result.output
 
 
 def _setup_tagged_repo_mid_merge(base: Path, feat_changelog: str) -> Path:
@@ -4097,6 +4271,79 @@ def _setup_tagged_repo_stranded_detached(base: Path) -> Path:
     )
     _detach_head(work)
     return work
+
+
+def _setup_tagged_repo_deleted_detached(base: Path) -> Path:
+    """Build a tagged single-track repo with a deleted released bullet, HEAD detached.
+
+    Mirrors a CI ``pull_request`` checkout of ``refs/pull/N/merge``:
+    ``main`` carries a tagged ``CHANGELOG.md`` with a bullet under the
+    released heading; ``feat/x`` removes that bullet (the deleted-history
+    shape) and HEAD is then detached at that commit, so ``git branch
+    --show-current`` is empty and the ``GITHUB_HEAD_REF`` fallback must
+    carry the branch name instead.
+
+    Args:
+        base: Base directory for the test repo.
+
+    Returns:
+        Path to the work repository, HEAD detached on the feature-branch
+        commit.
+    """
+    work, _bare = init_single_track_repo(base)
+    (work / "CHANGELOG.md").write_text("## v1.0.0\n\n- original bullet\n")
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "chore: add changelog"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.0.0", "-m", "v1.0.0"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "--tags"], cwd=work, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=work, env=GIT_ENV, check=True
+    )
+    (work / "CHANGELOG.md").write_text("## v1.0.0\n")
+    subprocess.run(["git", "add", "CHANGELOG.md"], cwd=work, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "docs: drop released bullet"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    _detach_head(work)
+    return work
+
+
+def test_step_changelog_version_detects_deleted_entry_on_detached_pr_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deleted-entries check stays live on a detached CI `pull_request` checkout.
+
+    SCENARIO: HEAD is detached (as in a CI `refs/pull/N/merge` checkout),
+    so `git branch --show-current` is empty; branch resolution must fall
+    back to `GITHUB_HEAD_REF` to keep the deleted-entries check live
+    rather than silently skipping it (the `current == ""` short-circuit
+    that would otherwise hide the finding). Real git —
+    `resolve_current_branch` is not mocked here; the `GITHUB_HEAD_REF`
+    fallback wiring is the thing under test.
+    """
+    work = _setup_tagged_repo_deleted_detached(tmp_path)
+    monkeypatch.setenv("GITHUB_HEAD_REF", "feat/x")
+    result = precommit.step_changelog_version(work)
+    assert not result.passed
+    assert "deleted" in result.output
 
 
 def test_step_changelog_version_detects_stranded_entries_on_detached_pr_checkout(

@@ -35,8 +35,18 @@ In this order:
 4. `## Workflow` — numbered protocol. Domain-specific recipes follow as
    their own H2.
 5. `## Scope Boundaries` with `### I WILL` and `### I WILL NOT (report and stop)`.
-6. `## Output` — exact emitted shape.
-7. `## Success Criteria` — measurable done conditions.
+6. `## Guard hooks` — **required when hooks constrain the agent**: name
+   the agent-scoped guard hooks (source of truth:
+   `[tool.forge.agent_doc.guarded_by]` in the consumer's config — point,
+   never copy the list) and note that the Edit/Write-scoped hooks
+   (`block_protected_files`, `block_forge_docs_edits`) bind every agent.
+   State the contract: **a block is enforcement of your own rules — stop
+   and report; never route around it.** When a change targets a
+   hook-protected file (e.g. `ruff.toml`), present the exact diff and say
+   the USER must apply it — never ask for approval as if you could edit
+   it afterward. Agents without constraining hooks omit the section.
+7. `## Output` — exact emitted shape.
+8. `## Success Criteria` — measurable done conditions.
 
 ## Length budget
 

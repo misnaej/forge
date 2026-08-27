@@ -212,6 +212,94 @@ def test_stranded_flags_entry_moved_into_released_heading() -> None:
 
 
 # ---------------------------------------------------------------------------
+# released_deleted_versions
+# ---------------------------------------------------------------------------
+
+# Mirror of _STRAND_OLD / _STRAND_NEW with the roles swapped: the bullet
+# that _gained_ under the released heading for the "added" checks is instead
+# _lost_ here — old_text has it, new_text does not.
+_DELETED_OLD = _STRAND_NEW
+_DELETED_NEW = _STRAND_OLD
+
+
+def test_deleted_detects_removed_bullet_under_released_heading() -> None:
+    """A bullet lost under a heading equal to the latest tag → flagged."""
+    result = changelog.released_deleted_versions(_DELETED_OLD, _DELETED_NEW, "v0.2.0")
+    assert result == ["v0.2.0"]
+
+
+def test_deleted_silent_when_heading_leads_tag() -> None:
+    """Same loss but the shrinking heading is ahead of the latest tag → clean."""
+    result = changelog.released_deleted_versions(_DELETED_OLD, _DELETED_NEW, "v0.1.9")
+    assert result == []
+
+
+def test_deleted_flags_whole_section_removed() -> None:
+    """Deleting an entire released heading (not just a bullet) is flagged."""
+    old = "## v0.2.0\n\n- feature\n\n## v0.1.0\n\n- old\n"
+    new = "## v0.1.0\n\n- old\n"
+    assert changelog.released_deleted_versions(old, new, "v0.2.0") == ["v0.2.0"]
+
+
+def test_deleted_no_tags_returns_empty() -> None:
+    """Without any release tag nothing counts as a released loss."""
+    assert changelog.released_deleted_versions(_DELETED_OLD, _DELETED_NEW, None) == []
+
+
+def test_deleted_silent_for_unreleased_section() -> None:
+    """Deletion under unreleased heading is silent."""
+    old = "## v0.3.0\n\n- draft bullet\n\n## v0.1.0\n\n- old\n"
+    new = "## v0.3.0\n\n## v0.1.0\n\n- old\n"
+    assert changelog.released_deleted_versions(old, new, "v0.1.0") == []
+
+
+def test_deleted_reword_counts_as_loss() -> None:
+    """Rewording a line under a released heading counts as a loss (accepted bias).
+
+    Membership comparison sees the old exact line vanish and a new one
+    appear — it cannot distinguish a rewording from a real deletion, so
+    both count (cheap false positive, documented in the function's
+    docstring).
+    """
+    old = "## v0.2.0\n\n- initial wording\n"
+    new = "## v0.2.0\n\n- reworded wording\n"
+    assert changelog.released_deleted_versions(old, new, "v0.2.0") == ["v0.2.0"]
+
+
+def test_deleted_flags_restrand_that_moves_content_out_of_released_heading() -> None:
+    """A restrand that relocates content OUT of an already-released heading flags.
+
+    This is the mirror image of `stranded_added_versions`'s own restrand
+    test: moving entries up into a newly-inserted heading means nothing new
+    appears under the released heading (so `stranded_added_versions` stays
+    silent), but the released heading's own membership genuinely shrinks —
+    real content that was shipped under the tagged version is no longer
+    there, exactly the #363 class this function exists to catch. Unlike the
+    "added" direction, this is not an accepted false positive; it is a
+    correct catch.
+    """
+    old = "## v1.11.0\n\n### Added\n- feature A\n- feature B\n- feature C\n"
+    new = (
+        "## v1.12.0\n\n### Added\n- feature A\n- feature B\n\n"
+        "## v1.11.0\n\n### Added\n- feature C\n"
+    )
+    assert changelog.released_deleted_versions(old, new, "v1.11.0") == ["v1.11.0"]
+
+
+def test_deleted_two_version_loss_returns_old_text_file_order() -> None:
+    """Multiple shrunk released sections come back in old_text's heading order."""
+    old = (
+        "# Changelog\n\n## v0.3.0\n\n- x\n- y\n\n## v0.2.0\n\n- z\n- w\n\n"
+        "## v0.1.0\n\n- keep\n"
+    )
+    new = "# Changelog\n\n## v0.3.0\n\n- x\n\n## v0.2.0\n\n- z\n\n## v0.1.0\n\n- keep\n"
+    assert changelog.released_deleted_versions(old, new, "v0.3.0") == [
+        "v0.3.0",
+        "v0.2.0",
+    ]
+
+
+# ---------------------------------------------------------------------------
 # top_release_heading
 # ---------------------------------------------------------------------------
 

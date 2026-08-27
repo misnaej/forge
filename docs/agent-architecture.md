@@ -107,7 +107,7 @@ graph LR
   human -->|drives| main_agent
   hk_block_force_push[/"block_force_push<br/>hook"/]
   hk_block_no_verify[/"block_no_verify<br/>hook"/]
-  hk_block_git_reset_hard[/"block_git_reset_hard<br/>hook"/]
+  hk_block_git_destructive[/"block_git_destructive<br/>hook"/]
   hk_block_fixer_recon[/"block_fixer_recon<br/>hook"/]
   sk_commit(["/commit<br/>skill"])
   design_checker["⚖️ design-checker<br/>AI agent"]
@@ -147,13 +147,13 @@ graph LR
   sk_smart_test -->|invokes| cli_forge_smart_test
   git_commit_push -.->|guarded by| hk_block_no_verify
   git_commit_push -.->|guarded by| hk_block_force_push
-  git_commit_push -.->|guarded by| hk_block_git_reset_hard
+  git_commit_push -.->|guarded by| hk_block_git_destructive
   precommit_fixer -.->|guarded by| hk_block_fixer_recon
   class human person
   class main_agent orchestrator
   class hk_block_force_push hook
   class hk_block_no_verify hook
-  class hk_block_git_reset_hard hook
+  class hk_block_git_destructive hook
   class hk_block_fixer_recon hook
   class sk_commit skill
   class design_checker agent
