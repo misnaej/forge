@@ -20,6 +20,17 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.21.1 — Unreleased
+
+### Fixes
+- **The git-guard anchor lives once, extended everywhere.** New sourced
+  `claude-hooks/git_anchor.sh` replaces four verbatim copies; the
+  extended anchor (git global-option tolerance) now also protects
+  `block_force_push`, `block_git_rebase`, and `block_raw_git` — closing
+  the live `git --no-pager push --force` / `git -c k=v rebase`
+  bypasses. Force-flag detection is scoped to the matched `git push`
+  invocation, ending the compound-command false-positive class.
+
 ## v3.21.0 — Unreleased
 
 ### Features

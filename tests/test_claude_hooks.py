@@ -379,9 +379,84 @@ def test_force_push_blocks_doubled_space() -> None:
     assert _run_hook(_FORCE_PUSH, "git  push -f origin main") == 2
 
 
+# --- force-flag scoping is per-invocation, not command-wide (#348) ---------
+# The force-flag check is bounded to the matched push segment
+# (`[^;&|]*`), so an unrelated `-f`-bearing command chained after a plain
+# push must not false-positive, and vice versa.
+
+
+def test_force_push_allows_unrelated_dash_f_after_separator() -> None:
+    """`git push origin main; tar -f x` — a later `-f` in another command — is allowed.
+
+    Regression: without per-invocation scoping, the force-flag grep would
+    match `-f` anywhere in the command string, false-positiving on an
+    unrelated command chained after a plain push.
+    """
+    assert _run_hook(_FORCE_PUSH, "git push origin main; tar -f x") == 0
+
+
+def test_force_push_allows_force_mention_after_chained_command() -> None:
+    """A plain push chained with an unrelated `--force`-mentioning commit is allowed.
+
+    The literal word `--force` sits in a later, separator-bounded segment
+    (a commit message), so it must not taint the earlier plain-push match.
+    """
+    assert (
+        _run_hook(
+            _FORCE_PUSH,
+            'git push origin main && git commit -m "use --force later"',
+        )
+        == 0
+    )
+
+
 def test_force_push_allows_non_push_git() -> None:
     """A non-push git command (`git status`) is not inspected."""
     assert _run_hook(_FORCE_PUSH, "git status") == 0
+
+
+# --- git_anchor.sh: shared lib integrity (#348 dedup contract) -------------
+# GIT_ANCHOR/SEG_ANCHOR moved to one sourced home so the four git-guard
+# hooks share a single anchor definition instead of four copies drifting
+# independently. This pins the dedup: every consumer sources the lib, and
+# none keeps a local `GIT_ANCHOR=` fallback that could silently diverge.
+
+_GIT_ANCHOR_LIB = "git_anchor.sh"
+_GIT_GUARD_HOOKS = (
+    "block_force_push.sh",
+    "block_git_rebase.sh",
+    "block_raw_git.sh",
+    "block_git_destructive.sh",
+)
+
+
+def test_git_guard_hooks_source_shared_anchor_lib() -> None:
+    """All four git-guard hooks source `git_anchor.sh` for GIT_ANCHOR/SEG_ANCHOR."""
+    for hook in _GIT_GUARD_HOOKS:
+        text = (_HOOKS_DIR / hook).read_text()
+        assert 'source "$(dirname "$0")/git_anchor.sh"' in text, (
+            f"{hook} does not source the shared git_anchor.sh lib"
+        )
+
+
+def test_git_guard_hooks_have_no_local_anchor_definition() -> None:
+    """None of the four hooks keeps a local `GIT_ANCHOR='...'` definition.
+
+    A local copy would defeat the point of extracting the anchor into one
+    shared lib (#348) — two definitions can silently drift apart.
+    """
+    for hook in _GIT_GUARD_HOOKS:
+        text = (_HOOKS_DIR / hook).read_text()
+        assert "GIT_ANCHOR='" not in text, (
+            f"{hook} keeps a local GIT_ANCHOR= definition alongside the shared lib"
+        )
+
+
+def test_git_anchor_lib_defines_both_anchors() -> None:
+    """`git_anchor.sh` itself defines both `GIT_ANCHOR` and `SEG_ANCHOR`."""
+    text = (_HOOKS_DIR / _GIT_ANCHOR_LIB).read_text()
+    assert "GIT_ANCHOR='" in text
+    assert "SEG_ANCHOR='" in text
 
 
 # --- shared-anchor prefix bypasses (env-var / leading-ws / wrapper) --------
@@ -843,6 +918,27 @@ def test_destructive_allows_log_after_no_pager_global_option() -> None:
 def test_destructive_allows_diff_after_no_pager_global_option() -> None:
     """`git --no-pager diff` — a non-guarded verb — stays allowed."""
     assert _run_hook(_DESTRUCTIVE, "git --no-pager diff") == 0
+
+
+# --- global-option bypass, family-wide (#348 GIT_ANCHOR extraction) --------
+# The global-option tolerance above lives in the shared `GIT_ANCHOR` in
+# `git_anchor.sh`, so the same bypass class must close for every hook that
+# now sources it, not just block_git_destructive.sh.
+
+
+def test_force_push_blocks_after_no_pager_global_option() -> None:
+    """`--no-pager push --force` (global option) is blocked."""
+    assert _run_hook(_FORCE_PUSH, "git --no-pager push --force origin main") == 2
+
+
+def test_rebase_blocks_after_c_key_value_global_option() -> None:
+    """`git -c a=b rebase main` (`-c key=value` global option) is blocked."""
+    assert _run_hook(_REBASE, "git -c a=b rebase main") == 2
+
+
+def test_raw_git_blocks_commit_after_no_pager_global_option() -> None:
+    """`git --no-pager commit -m x` (global option interposed) is blocked."""
+    assert _run_hook(_RAW_GIT, "git --no-pager commit -m x") == 2
 
 
 # --- registration / retirement -----------------------------------------

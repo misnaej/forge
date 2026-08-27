@@ -11,22 +11,17 @@
 set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
-# Only check git push commands. The anchor recognizes `git` at line-start or
-# after a shell separator (`;` `&` `|`), and tolerates a leading run of
-# `VAR=val` assignments and/or a `command`/`env`/`exec`/`builtin`/`sudo`
-# wrapper — so `GIT_DIR=/tmp/x git push -f`, `  git push -f` (leading space),
-# `command git push -f`, and `foo; git  push -f` all still hit the gate. The
-# ${GIT_ANCHOR} idiom is shared verbatim with block_raw_git.sh /
-# block_git_rebase.sh (all three had the narrower anchor).
-# The separator class includes `(` (a bare subshell wrapper) and the
-# wrapper run tolerates flag tokens (`sudo -n git ...`), so neither
-# shape slips the anchor.
-GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+'
+# Anchor + rationale live in the shared lib (one home for the whole
+# git-guard family — issue #348).
+source "$(dirname "$0")/git_anchor.sh"
 if ! echo "$COMMAND" | grep -qE "${GIT_ANCHOR}push\b"; then
     exit 0
 fi
+# Force-flag detection is scoped to the matched invocation (bounded at
+# the next command separator), so a flag in another segment of a
+# compound command never false-positives (issue #348 scoping fix).
 if echo "$COMMAND" | grep -qE -- \
-    '--force|--force-with-lease|(^|[[:space:]])-[a-zA-Z]*f|[[:space:]]\+[^[:space:]]+'; then
+    "${GIT_ANCHOR}push\b[^;&|]*(--force|--force-with-lease|[[:space:]]-[a-zA-Z]*f\b|[[:space:]]\+[^[:space:]]+)"; then
     echo "BLOCKED: Force push is not allowed for agents. Suggest the user run the command themselves with: ! $COMMAND" >&2
     exit 2
 fi
