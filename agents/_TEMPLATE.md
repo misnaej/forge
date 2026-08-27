@@ -117,6 +117,11 @@ pr=$(gh pr view --json number --jq '.number' 2>/dev/null || echo "?")
 Emit the SHA value the agent computed at the moment of producing its
 findings. The `PR #` + branch suffix is human-readable context.
 
+**Report text that may be posted as a PR/issue comment is never
+hard-wrapped**: GitHub comments render each newline as `<br>` (files
+collapse them), so wrapped prose posts as a ragged column. One line per
+paragraph; breaks only for lists, headings, fences, tables.
+
 `forge:pr-manager` parses this line on subsequent runs: when every
 prior reporter's `verified-at` SHA is reachable from current HEAD AND
 the diff since is below the delta threshold (the threshold and the

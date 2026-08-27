@@ -20,6 +20,15 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.21.1 — Unreleased
+
+### Fixes
+- **PR wrap-up comments reflow properly on GitHub.** The wrap-up
+  authoring contract (`pr-manager`, reporter template) now writes
+  comment-destined markdown one line per paragraph — GitHub renders
+  every newline in a comment as a hard break, so file-width wrapped
+  prose posted as a narrow ragged column.
+
 ## v3.21.0 — Unreleased
 
 ### Features
