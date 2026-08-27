@@ -22,7 +22,8 @@ Invocation is always explicit (the CLI or a flag) — there is no ambient
 Exit codes (CLI):
     <child's>  the wrapped command's own exit code, unchanged
     1          psutil not installed (install hint printed)
-    2          no command given after ``--``
+    2          no command given after ``--``, or ``--label`` is not a
+               safe artifact suffix
 """
 
 from __future__ import annotations
@@ -429,7 +430,8 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         The wrapped command's exit code; ``1`` when ``psutil`` is missing;
-        ``2`` when no command follows ``--``.
+        ``2`` when no command follows ``--`` or ``--label`` fails
+        validation.
     """
     raw = sys.argv[1:] if argv is None else argv
     # Flags (none today, but -h/--help must work) are parsed only from the

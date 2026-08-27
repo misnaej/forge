@@ -145,4 +145,7 @@ To keep runs apart — a retry after a failure, or the per-tier runs of
 --telemetry` labels its tiers automatically (`depth0`, `depth1`, …,
 `full`). The history file is append-only across runs either way; it is
 per-workspace (gitignored), so durable trend data still means copying it
-out.
+out. Because it accumulates each wrapped command's argv indefinitely,
+never pass secrets as CLI arguments to a telemetry-wrapped command — use
+environment variables (FOUNDATION §2's no-secrets rule extends to
+generated artifacts).
