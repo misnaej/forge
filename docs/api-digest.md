@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_65 modules, 741 symbols._
+_65 modules, 742 symbols._
 
 ## `forge`
 
@@ -1057,6 +1057,7 @@ _65 modules, 741 symbols._
 - `_filter_paths(paths: set[str]) -> set[str]` _(internal)_ — Filter out non-filesystem strings from extracted paths.
 - `_add_inline_paths(line: str, paths: set[str]) -> None` _(internal)_ — Extract backtick paths and top-level references from a single line.
 - `extract_paths_from_markdown(content: str) -> set[str]` — Extract filesystem paths mentioned in REPO_STRUCTURE.md.
+- `exhaustive_section_findings(content: str, root: Path) -> set[str]` — Compare marker-opted directory sections against their disk contents.
 - `path_is_covered(path: str, documented_paths: set[str]) -> bool` — Check whether a path is covered by the documented paths.
 - `get_actual_top_level(root: Path) -> set[str]` — Get the top-level items that should be documented.
 - `verify_documented_paths_exist(documented_paths: set[str], root: Path) -> set[str]` — Find documented paths that do not exist on disk.

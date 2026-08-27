@@ -2,7 +2,10 @@
 
 This overview summarizes the current layout of the Forge repository. Keep
 this file up to date as the repo evolves — `verify-forge-repo-structure`
-checks it against the actual tree on every commit.
+checks it against the actual tree on every commit. A directory section
+whose heading ends with `<!-- exhaustive -->` is additionally checked
+both directions: every file in the directory must be listed, and every
+listed file must exist.
 
 ## Overview
 
@@ -139,14 +142,17 @@ subdirectory holds a single `SKILL.md`:
 - triage/: issue backlog triage
 - weekly/: weekly summary report
 
-## Claude Hooks Directory (`claude-hooks/`)
+## Claude Hooks Directory (`claude-hooks/`) <!-- exhaustive -->
 
 Shell hooks referenced by `plugin.json` for Claude Code safety
 enforcement:
 
+- block_branch_deletion.sh: block agent deletion of protected remote branches (no bypass)
 - block_claude_attribution.sh: block AI attribution in commits
 - block_continuation_delete.sh: protect `.plan/CONTINUATION.md`
 - block_force_push.sh: block force pushes
+- block_forge_docs_edits.sh: block agent edits inside the forge-managed forge-docs/ mirror
+- block_git_rebase.sh: block `git rebase` and `git pull --rebase` from agents (no bypass — sync via plain base merge)
 - block_install_deps.sh: block dependency installation
 - block_protected_branches.sh: block direct pushes to protected branches (`[tool.forge].base_branch` + `dev_branch`)
 - block_no_verify.sh: block `--no-verify`
@@ -158,6 +164,7 @@ enforcement:
 - block_git_destructive.sh: block destructive git recovery verbs from agents — all `git reset` forms, forced `git clean`, literal `git checkout .` / `git restore .`, `git stash drop`/`clear` (no bypass — stop-and-report is the sanctioned recovery)
 - block_fixer_recon.sh: agent-scoped Bash allowlist for the precommit-fixer (gate CLIs + targeted pytest node-ids only; other agents unaffected)
 - block_raw_git.sh: hard-block raw `git commit` / `git push` from agents (bypass: `git-commit-push` subagent)
+- block_unverified_pr_create.sh: block `gh pr create` until the authored wrap-up names HEAD (draft/promotion exemptions per FOUNDATION §6)
 - block_raw_ruff.sh: hard-block raw `ruff check` / `ruff format` from agents (no bypass — agents use forge-precommit)
 
 ## Plugin Manifest (`.claude-plugin/`)

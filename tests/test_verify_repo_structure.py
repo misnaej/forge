@@ -7,6 +7,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from forge.verify_repo_structure import (
+    exhaustive_section_findings,
     extract_paths_from_markdown,
     main,
     verify_structure,
@@ -154,3 +155,134 @@ def test_extract_paths_from_markdown_empty_returns_empty() -> None:
 def test_extract_paths_from_markdown_prose_only_returns_empty() -> None:
     """Markdown with no path-like tokens yields no paths."""
     assert extract_paths_from_markdown("# Title\n\nJust prose, no paths.\n") == set()
+
+
+def test_exhaustive_section_findings_complete_listing_returns_empty(
+    tmp_path: Path,
+) -> None:
+    """An exhaustive section listing every disk file yields no findings."""
+    (tmp_path / "claude-hooks").mkdir()
+    (tmp_path / "claude-hooks" / "one.sh").write_text("")
+    (tmp_path / "claude-hooks" / "two.sh").write_text("")
+    content = (
+        "## Claude Hooks (`claude-hooks/`) <!-- exhaustive -->\n\n"
+        "- one.sh: first hook\n"
+        "- two.sh: second hook\n"
+    )
+    assert exhaustive_section_findings(content, tmp_path) == set()
+
+
+def test_exhaustive_section_findings_flags_unlisted_disk_file(
+    tmp_path: Path,
+) -> None:
+    """A disk file absent from an exhaustive section's listing is flagged."""
+    (tmp_path / "claude-hooks").mkdir()
+    (tmp_path / "claude-hooks" / "one.sh").write_text("")
+    (tmp_path / "claude-hooks" / "two.sh").write_text("")
+    content = (
+        "## Claude Hooks (`claude-hooks/`) <!-- exhaustive -->\n\n"
+        "- one.sh: first hook\n"
+    )
+    findings = exhaustive_section_findings(content, tmp_path)
+    assert "claude-hooks/: not listed in its exhaustive section: two.sh" in findings
+
+
+def test_exhaustive_section_findings_flags_listed_but_absent_file(
+    tmp_path: Path,
+) -> None:
+    """A listed file missing from disk is flagged as listed but absent."""
+    (tmp_path / "claude-hooks").mkdir()
+    (tmp_path / "claude-hooks" / "one.sh").write_text("")
+    content = (
+        "## Claude Hooks (`claude-hooks/`) <!-- exhaustive -->\n\n"
+        "- one.sh: first hook\n"
+        "- ghost.sh: does not exist on disk\n"
+    )
+    findings = exhaustive_section_findings(content, tmp_path)
+    assert "claude-hooks/: listed but absent from disk: ghost.sh" in findings
+
+
+def test_exhaustive_section_findings_unmarked_section_ignored(
+    tmp_path: Path,
+) -> None:
+    """A section without the exhaustive marker is not checked (opt-in)."""
+    (tmp_path / "claude-hooks").mkdir()
+    (tmp_path / "claude-hooks" / "one.sh").write_text("")
+    (tmp_path / "claude-hooks" / "two.sh").write_text("")
+    content = "## Claude Hooks (`claude-hooks/`)\n\n- one.sh: first hook\n"
+    assert exhaustive_section_findings(content, tmp_path) == set()
+
+
+def test_exhaustive_section_findings_marker_without_backtick_path_ignored(
+    tmp_path: Path,
+) -> None:
+    """A marker on a heading with no `path/` is ignored, not a crash."""
+    (tmp_path / "claude-hooks").mkdir()
+    (tmp_path / "claude-hooks" / "one.sh").write_text("")
+    (tmp_path / "claude-hooks" / "two.sh").write_text("")
+    content = "## Claude Hooks <!-- exhaustive -->\n\n- one.sh: first hook\n"
+    assert exhaustive_section_findings(content, tmp_path) == set()
+
+
+def test_exhaustive_section_findings_marker_dir_nonexistent_ignored(
+    tmp_path: Path,
+) -> None:
+    """A marker pointing at a nonexistent directory is ignored, not a crash."""
+    content = (
+        "## Ghost Section (`ghost-dir/`) <!-- exhaustive -->\n\n- one.sh: first hook\n"
+    )
+    assert exhaustive_section_findings(content, tmp_path) == set()
+
+
+def test_exhaustive_section_findings_hidden_files_not_required(
+    tmp_path: Path,
+) -> None:
+    """Hidden (dotfile) directory contents are not required to be listed."""
+    (tmp_path / "claude-hooks").mkdir()
+    (tmp_path / "claude-hooks" / "one.sh").write_text("")
+    (tmp_path / "claude-hooks" / ".hidden").write_text("")
+    content = (
+        "## Claude Hooks (`claude-hooks/`) <!-- exhaustive -->\n\n"
+        "- one.sh: first hook\n"
+    )
+    assert exhaustive_section_findings(content, tmp_path) == set()
+
+
+EXHAUSTIVE_DRIFT_MARKDOWN = """\
+# Repo Structure
+
+## Forge Package (`src/forge/`)
+
+1. **CLI Modules**
+   - precommit.py: pre-commit dispatcher
+
+## Claude Hooks (`claude-hooks/`) <!-- exhaustive -->
+
+- one.sh: first hook
+
+## Configuration Files
+
+1. **Documentation**
+   - README.md: main documentation
+   - REPO_STRUCTURE.md: this file
+"""
+
+
+def test_verify_structure_reports_exhaustive_section_drift(tmp_path: Path) -> None:
+    """A file missing from a marked exhaustive section lands in undocumented."""
+    (tmp_path / "src" / "forge").mkdir(parents=True)
+    (tmp_path / "src" / "forge" / "precommit.py").write_text("")
+    (tmp_path / "README.md").write_text("")
+    (tmp_path / "REPO_STRUCTURE.md").write_text(EXHAUSTIVE_DRIFT_MARKDOWN)
+    (tmp_path / "claude-hooks").mkdir()
+    (tmp_path / "claude-hooks" / "one.sh").write_text("")
+    (tmp_path / "claude-hooks" / "two.sh").write_text("")
+
+    _documented_not_found, important_not_documented, _total = verify_structure(
+        tmp_path,
+    )
+
+    assert (
+        "claude-hooks/: not listed in its exhaustive section: two.sh"
+        in important_not_documented
+    )
