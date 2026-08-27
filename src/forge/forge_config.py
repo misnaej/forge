@@ -115,6 +115,25 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "must appear as an agent->hook edge in the agent doc.",
     ),
     ConfigKey(
+        ("tool", "forge", "agent_doc", "extra_clis"),
+        "unset (no extra known CLIs)",
+        "Extra CLI names the agent doc may reference beyond [project.scripts] "
+        "and the installed forge-scripts console scripts (resolution only, "
+        "never required coverage).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "agent_doc", "extra_hooks"),
+        "unset (no extra known hooks)",
+        "Extra hook stems the agent doc may reference beyond claude-hooks/, "
+        ".claude/hooks/, and the shipped plugin roster (resolution only).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "agent_doc", "extra_skills"),
+        "unset (no extra known skills)",
+        "Extra skill names the agent doc may reference beyond the repo's "
+        "skill dirs and the shipped plugin roster (resolution only).",
+    ),
+    ConfigKey(
         ("tool", "forge", "docstring_coverage", "badge"),
         default=False,
         description="Generate interrogate's coverage badge to "

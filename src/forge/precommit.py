@@ -77,7 +77,7 @@ from forge.changelog import (
     stranded_added_versions,
     wants_no_version,
 )
-from forge.config import resolve_model_section
+from forge.config import installed_console_scripts, resolve_model_section
 from forge.git_utils import (
     SCOPE_ALL,
     SCOPE_DIFF,
@@ -282,23 +282,6 @@ def _declared_scripts(repo_root: Path) -> tuple[str, set[str]] | None:
     return name, set(scripts)
 
 
-def _installed_console_scripts(name: str) -> set[str] | None:
-    """Return *name*'s installed ``console_scripts`` entry-point names.
-
-    Args:
-        name: Distribution name (``[project.name]``).
-
-    Returns:
-        The set of installed console-script names, or ``None`` when the
-        distribution is not installed at all (nothing to compare against).
-    """
-    try:
-        dist = importlib.metadata.distribution(name)
-    except importlib.metadata.PackageNotFoundError:
-        return None
-    return {ep.name for ep in dist.entry_points if ep.group == "console_scripts"}
-
-
 def missing_console_scripts(repo_root: Path) -> list[str]:
     """Declared ``[project.scripts]`` names not registered as console scripts.
 
@@ -318,7 +301,7 @@ def missing_console_scripts(repo_root: Path) -> list[str]:
     if declared is None:
         return []
     name, scripts = declared
-    installed = _installed_console_scripts(name)
+    installed = installed_console_scripts(name)
     if installed is None:
         return []
     return sorted(scripts - installed)
@@ -496,7 +479,7 @@ def step_env_sync(repo_root: Path) -> StepResult:
     scripts_count = 0
     if declared is not None:
         name, scripts = declared
-        installed = _installed_console_scripts(name)
+        installed = installed_console_scripts(name)
         if installed is not None:
             installed_known = True
             scripts_count = len(scripts)

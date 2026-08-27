@@ -1,0 +1,45 @@
+# Shipped roster of forge's plugin-provided surface, read by
+# verify-forge-agent-doc so consumer agent docs can name plugin skills
+# and hooks without the checker calling them dangling (#375 class).
+# Regenerated + drift-checked by tests/test_verify_agent_doc.py against
+# skills/*/SKILL.md and claude-hooks/*.sh — edit those, never this file.
+
+[skills]
+names = [
+    "c4",
+    "commit",
+    "fix",
+    "memory-audit",
+    "next",
+    "plan-issue",
+    "pr",
+    "pr-comments",
+    "sentinel",
+    "smart-test",
+    "test",
+    "triage",
+    "weekly",
+]
+
+[hooks]
+names = [
+    "block_branch_deletion",
+    "block_claude_attribution",
+    "block_continuation_delete",
+    "block_fixer_recon",
+    "block_force_push",
+    "block_forge_docs_edits",
+    "block_git_destructive",
+    "block_git_rebase",
+    "block_install_deps",
+    "block_no_verify",
+    "block_pr_merge",
+    "block_protected_branches",
+    "block_protected_files",
+    "block_raw_git",
+    "block_raw_ruff",
+    "block_unverified_pr_create",
+    "check_commit_format",
+    "check_foundation_sync",
+    "warn_pr_checks",
+]
