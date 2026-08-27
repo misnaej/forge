@@ -11,15 +11,19 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tomllib
+from importlib import resources
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from forge import verify_agent_doc as vad
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import pytest
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _write(path: Path, text: str = "") -> None:
@@ -110,6 +114,207 @@ def test_roster_discovers_agents_skills_hooks_clis(tmp_path: Path) -> None:
     assert roster["clis"] == {"forge-ship"}
 
 
+def test_roster_consumer_claude_hook_dir_is_local_and_known(tmp_path: Path) -> None:
+    """A hook under `.claude/hooks/` (not `claude-hooks/`) is repo-local + known.
+
+    #375: `.claude/hooks/` is the consumer-side hook location (FOUNDATION
+    §11), unioned with forge's own `claude-hooks/` plugin layout.
+    """
+    _build_repo(tmp_path)
+    _write(tmp_path / ".claude" / "hooks" / "custom_guard.sh", "#!/bin/sh\n")
+    roster = vad._roster(tmp_path)
+    assert "custom_guard" in roster["hooks"]
+    assert "custom_guard" in roster["hooks_known"]
+
+
+def test_roster_plugin_skill_mention_passes_dangling_not_required_for_coverage(
+    tmp_path: Path,
+) -> None:
+    """A shipped plugin skill (e.g. `/commit`) resolves via `skills_known`.
+
+    SCENARIO: this repo defines no `commit` skill of its own — `commit`
+    only exists in the shipped plugin roster. A consumer doc naming it
+    must not be flagged dangling, but `commit` must never appear in the
+    repo-local `skills` set — coverage stays local-only, so a
+    plugin-provided skill is tolerated, never required.
+    """
+    _build_repo(tmp_path)
+    roster = vad._roster(tmp_path)
+    assert "commit" not in roster["skills"]
+    assert "commit" in roster["skills_known"]
+    doc = (
+        "The reviewer agent runs after ship. Uses forge-ship and block_push."
+        " Finish up with /commit."
+    )
+    problems = vad._check_doc(doc, roster)
+    assert not any("dangling: skill" in p for p in problems)
+
+
+def test_roster_extra_config_resolves_dangling_refs(tmp_path: Path) -> None:
+    """`[tool.forge.agent_doc].extra_*` resolves refs the automatic scan misses."""
+    _build_repo(tmp_path)
+    _write(
+        tmp_path / "pyproject.toml",
+        '[project.scripts]\nforge-ship = "x:main"\n'
+        "[tool.forge.agent_doc]\n"
+        'path = "docs/agent-architecture.md"\n'
+        'extra_clis = ["forge-external"]\n'
+        'extra_hooks = ["block_external"]\n'
+        'extra_skills = ["extra-skill"]\n',
+    )
+    roster = vad._roster(tmp_path)
+    assert roster["clis_known"] >= {"forge-external"}
+    assert roster["hooks_known"] >= {"block_external"}
+    assert roster["skills_known"] >= {"extra-skill"}
+    doc = (
+        "The reviewer agent runs after ship. Uses forge-ship, forge-external,"
+        " block_push, and block_external, then /extra-skill."
+    )
+    problems = vad._check_doc(doc, roster)
+    assert not any("dangling" in p for p in problems)
+
+
+def test_extra_roster_misshapen_values_dropped_silently(tmp_path: Path) -> None:
+    """A bare-string extra_* value degrades to empty; non-string list items are dropped.
+
+    SCENARIO: `extra_clis` is a bare string (brackets forgotten — the same
+    footgun `_guard_map` guards against), and `extra_hooks` is a list mixing
+    ints with one real string.
+    EXPECTED BEHAVIOR: `extra_clis` degrades to an empty set (the whole
+    misshapen value is dropped, never iterated character-by-character);
+    `extra_hooks` keeps only the string entry.
+    """
+    _write(
+        tmp_path / "pyproject.toml",
+        "[tool.forge.agent_doc]\n"
+        'extra_clis = "not-a-list"\n'
+        'extra_hooks = [1, 2, "real_hook"]\n'
+        "extra_skills = []\n",
+    )
+    extra = vad._extra_roster(tmp_path)
+    assert extra == {"clis": set(), "hooks": {"real_hook"}, "skills": set()}
+
+
+def test_roster_degrades_when_installed_console_scripts_returns_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `None` from `installed_console_scripts` degrades `clis_known`, never raises.
+
+    SCENARIO: forge-scripts is not installed in this environment (or the
+    query otherwise fails) — `installed_console_scripts` returns `None`.
+    MOCK SETUP: `vad.installed_console_scripts` stubbed to return `None`.
+    EXPECTED BEHAVIOR: `clis_known` falls back to the union of the
+    repo-local `clis` and the config `extra_clis`, with no installed-CLI
+    contribution and no crash from `None | set()`.
+    """
+    _build_repo(tmp_path)
+    _write(
+        tmp_path / "pyproject.toml",
+        '[project.scripts]\nforge-ship = "x:main"\n'
+        "[tool.forge.agent_doc]\n"
+        'path = "docs/agent-architecture.md"\n'
+        'extra_clis = ["forge-external"]\n',
+    )
+    monkeypatch.setattr(vad, "installed_console_scripts", lambda _name: None)
+    roster = vad._roster(tmp_path)
+    assert roster["clis_known"] == {"forge-ship", "forge-external"}
+
+
+# --- _plugin_roster -----------------------------------------------------------
+
+
+def test_plugin_roster_reads_shipped_file_non_empty() -> None:
+    """The shipped roster resolves both skills and hooks from the real package data."""
+    roster = vad._plugin_roster()
+    assert roster["skills"]
+    assert roster["hooks"]
+    data = tomllib.loads(
+        resources.files("forge").joinpath("data/plugin-roster.toml").read_text()
+    )
+    assert roster["skills"] == set(data["skills"]["names"])
+    assert roster["hooks"] == set(data["hooks"]["names"])
+
+
+def test_plugin_roster_degrades_to_empty_on_read_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing/unreadable shipped data file degrades to empty sets, never raises."""
+
+    class _MissingResource:
+        """Null-object resource whose read_text always raises FileNotFoundError."""
+
+        def joinpath(self, _name: str) -> _MissingResource:
+            """Return self so the chained `.joinpath(...).read_text()` call resolves.
+
+            Args:
+                _name: Resource filename to locate (unused).
+
+            Returns:
+                Self, enabling chained calls.
+            """
+            return self
+
+        def read_text(self) -> str:
+            """Simulate an older installed package lacking the data file."""
+            raise FileNotFoundError
+
+    monkeypatch.setattr(vad.resources, "files", lambda _pkg: _MissingResource())
+    assert vad._plugin_roster() == {"skills": set(), "hooks": set()}
+
+
+class _TextResource:
+    """Null-object resource whose ``read_text`` returns a fixed string."""
+
+    def __init__(self, text: str) -> None:
+        """Store the text the fake resource file returns.
+
+        Args:
+            text: Content returned by `read_text`.
+        """
+        self._text = text
+
+    def joinpath(self, _name: str) -> _TextResource:
+        """Return self so the chained `.joinpath(...).read_text()` call resolves.
+
+        Args:
+            _name: Resource filename to locate (unused).
+
+        Returns:
+            Self, enabling chained calls.
+        """
+        return self
+
+    def read_text(self) -> str:
+        """Return the fixed text supplied at construction."""
+        return self._text
+
+
+def test_plugin_roster_degrades_to_empty_on_invalid_toml(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalid shipped TOML degrades to empty sets, never raises."""
+    monkeypatch.setattr(
+        vad.resources, "files", lambda _pkg: _TextResource("not [ valid toml @@@")
+    )
+    assert vad._plugin_roster() == {"skills": set(), "hooks": set()}
+
+
+def test_plugin_roster_drops_non_string_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `names` array mixing ints with strings keeps only the string entries.
+
+    SCENARIO: the shipped roster file is well-formed TOML, but its `names`
+    arrays carry stray non-string entries (a hand-edit footgun).
+    EXPECTED BEHAVIOR: each kind's set contains only the string names — the
+    ints are dropped rather than raising.
+    """
+    text = '[skills]\nnames = [1, "commit", 2]\n\n[hooks]\nnames = ["block_push", 3]\n'
+    monkeypatch.setattr(vad.resources, "files", lambda _pkg: _TextResource(text))
+    assert vad._plugin_roster() == {"skills": {"commit"}, "hooks": {"block_push"}}
+
+
 # --- _check_doc -------------------------------------------------------------
 
 
@@ -175,12 +380,66 @@ def test_check_doc_flags_dangling_skill(tmp_path: Path) -> None:
     assert "dangling: skill '/ghost' does not exist" in problems
 
 
+def test_check_doc_pure_consumer_shaped_repo_round_trips_clean(tmp_path: Path) -> None:
+    """A repo with only consumer-side `.claude/` dirs, no [project.scripts], is clean.
+
+    SCENARIO: the repo defines exactly one agent, one skill, and one hook —
+    all under the consumer-side `.claude/` layout (FOUNDATION §11), never
+    forge's own plugin-layout dirs (`agents/`, `skills/`, `claude-hooks/`) —
+    and has no `pyproject.toml` at all, so `[project.scripts]` contributes
+    no repo-local CLIs. The doc mentions its own fleet (my-agent, my-skill)
+    plus forge-provided names: an installed CLI (forge-precommit, resolved
+    via `installed_console_scripts` since forge-scripts is installed in
+    this dev environment), a shipped skill (/commit), and a shipped
+    block_* hook (block_force_push).
+    EXPECTED BEHAVIOR: coverage requires only the local agent + skill
+    (never the forge-provided names), and no dangling problem is raised —
+    every forge-provided mention resolves through the `*_known` sets.
+    """
+    _write(tmp_path / ".claude" / "agents" / "my-agent.md", "# my-agent\n")
+    _write(tmp_path / ".claude" / "skills" / "my-skill" / "SKILL.md", "# my-skill\n")
+    _write(tmp_path / ".claude" / "hooks" / "block_my_guard.sh", "#!/bin/sh\n")
+    roster = vad._roster(tmp_path)
+    assert roster["agents"] == {"my-agent"}
+    assert roster["skills"] == {"my-skill"}
+    doc = (
+        "The my-agent agent runs the my-skill skill, guarded by"
+        " block_my_guard. It finishes with forge-precommit, /commit,"
+        " and is also covered by block_force_push."
+    )
+    assert vad._check_doc(doc, roster) == []
+
+
 # --- _SKILL_RE ---------------------------------------------------------------
 
 
 def test_skill_re_does_not_match_shebang_line() -> None:
     """_SKILL_RE does not misclassify a shell shebang as a skill mention."""
     assert vad._SKILL_RE.findall("#!/usr/bin/env bash") == []
+
+
+def test_skill_re_resolves_plugin_qualified_skill_to_bare_name() -> None:
+    """`/forge:pr` resolves to the bare skill name 'pr', dropping the qualifier."""
+    assert vad._SKILL_RE.findall("Run /forge:pr to open a PR.") == ["pr"]
+
+
+def test_skill_re_plain_slash_name_unchanged() -> None:
+    """A plain `/name` mention (no plugin qualifier) still resolves as before."""
+    assert vad._SKILL_RE.findall("Use /commit to finish.") == ["commit"]
+
+
+def test_check_doc_plugin_qualified_skill_mention_resolves_without_dangling(
+    tmp_path: Path,
+) -> None:
+    """A `/forge:pr` mention passes the dangling check when 'pr' is a known skill."""
+    _build_repo(tmp_path)
+    roster = vad._roster(tmp_path)
+    doc = (
+        "The reviewer agent runs after ship. Uses forge-ship and block_push."
+        " Open the PR with /forge:pr."
+    )
+    problems = vad._check_doc(doc, roster)
+    assert not any("dangling: skill" in p for p in problems)
 
 
 # --- _parse_blocks ------------------------------------------------------------
@@ -257,6 +516,9 @@ def test_node_kind_ids_maps_hyphenated_names_and_prefixes() -> None:
         "skills": {"pr-manager"},
         "hooks": {"block_push"},
         "clis": {"forge-precommit"},
+        "skills_known": {"pr-manager"},
+        "hooks_known": {"block_push"},
+        "clis_known": {"forge-precommit"},
     }
     kind_ids = vad._node_kind_ids(roster)
     assert kind_ids["agent"] == {"design_checker"}
@@ -336,7 +598,15 @@ def test_guard_map_drops_entry_with_non_string_list_item(tmp_path: Path) -> None
 
 def test_check_endpoints_flags_unclassified_node() -> None:
     """A node with no class declaration in its block is flagged."""
-    roster = {"agents": {"reviewer"}, "skills": set(), "hooks": set(), "clis": set()}
+    roster = {
+        "agents": {"reviewer"},
+        "skills": set(),
+        "hooks": set(),
+        "clis": set(),
+        "skills_known": set(),
+        "hooks_known": set(),
+        "clis_known": set(),
+    }
     kind_ids = vad._node_kind_ids(roster)
     blocks = [
         ([vad.Edge("ghost", "calls", "reviewer")], {"reviewer": {"agent"}}),
@@ -347,7 +617,15 @@ def test_check_endpoints_flags_unclassified_node() -> None:
 
 def test_check_endpoints_flags_classed_agent_not_in_roster() -> None:
     """A node classed 'agent' but absent from the agent roster is flagged."""
-    roster = {"agents": {"reviewer"}, "skills": set(), "hooks": set(), "clis": set()}
+    roster = {
+        "agents": {"reviewer"},
+        "skills": set(),
+        "hooks": set(),
+        "clis": set(),
+        "skills_known": set(),
+        "hooks_known": set(),
+        "clis_known": set(),
+    }
     kind_ids = vad._node_kind_ids(roster)
     blocks = [
         (
@@ -363,7 +641,15 @@ def test_check_endpoints_flags_classed_agent_not_in_roster() -> None:
 
 def test_check_endpoints_exempts_structural_classes() -> None:
     """Nodes classed person, orchestrator, or policy are exempt from roster matching."""
-    roster = {"agents": set(), "skills": set(), "hooks": set(), "clis": set()}
+    roster = {
+        "agents": set(),
+        "skills": set(),
+        "hooks": set(),
+        "clis": set(),
+        "skills_known": set(),
+        "hooks_known": set(),
+        "clis_known": set(),
+    }
     kind_ids = vad._node_kind_ids(roster)
     blocks = [
         (
@@ -386,12 +672,42 @@ def test_check_endpoints_resolves_multi_class_node_via_any() -> None:
         "skills": {"ship"},
         "hooks": set(),
         "clis": set(),
+        "skills_known": {"ship"},
+        "hooks_known": set(),
+        "clis_known": set(),
     }
     kind_ids = vad._node_kind_ids(roster)
     blocks = [
         (
             [vad.Edge("sk_ship", "invokes", "reviewer")],
             {"sk_ship": {"skill"}, "reviewer": {"agent", "reporter"}},
+        ),
+    ]
+    assert vad._check_endpoints(blocks, kind_ids) == []
+
+
+def test_check_endpoints_resolves_non_block_star_plugin_hook_via_hooks_known(
+    tmp_path: Path,
+) -> None:
+    """A shipped `check_*`/`warn_*` plugin hook resolves as a valid mermaid endpoint.
+
+    SCENARIO: the no-dangling word-scan (`_HOOK_RE`) is deliberately scoped
+    to `block_*` prose mentions, but `hooks_known` — read from the real
+    shipped `data/plugin-roster.toml`, which carries non-`block_*` entries
+    like `check_foundation_sync` and `warn_pr_checks` — enriches mermaid
+    endpoint resolution more broadly. The doc draws an edge into
+    `hk_check_foundation_sync`, classed 'hook'.
+    EXPECTED BEHAVIOR: the endpoint resolves cleanly via `hooks_known`, with
+    no repo-local hook of that name required.
+    """
+    _build_repo(tmp_path)
+    roster = vad._roster(tmp_path)
+    assert "check_foundation_sync" in roster["hooks_known"]
+    kind_ids = vad._node_kind_ids(roster)
+    blocks = [
+        (
+            [vad.Edge("reviewer", "runs", "hk_check_foundation_sync")],
+            {"reviewer": {"agent"}, "hk_check_foundation_sync": {"hook"}},
         ),
     ]
     assert vad._check_endpoints(blocks, kind_ids) == []
@@ -952,3 +1268,77 @@ def test_classify_mention_mentions_skill_on_bare_slash_name() -> None:
 def test_classify_mention_none_on_plain_prose() -> None:
     """Plain prose with no graph-relevant mention classifies as None."""
     assert vad._classify_mention("This is just an ordinary sentence.") is None
+
+
+# --- src/forge/data/plugin-roster.toml drift guard ---------------------------
+
+_PLUGIN_ROSTER_HEADER = (
+    "# Shipped roster of forge's plugin-provided surface, read by\n"
+    "# verify-forge-agent-doc so consumer agent docs can name plugin skills\n"
+    "# and hooks without the checker calling them dangling (#375 class).\n"
+    "# Regenerated + drift-checked by tests/test_verify_agent_doc.py against\n"
+    "# skills/*/SKILL.md and claude-hooks/*.sh — edit those, never this file.\n"
+    "\n"
+)
+
+
+def _toml_name_array(names: list[str]) -> str:
+    r"""Render a sorted TOML `names = [...]` array, one quoted entry per line.
+
+    Args:
+        names: The (already-sorted) string values to render.
+
+    Returns:
+        The `names = [\n    "a",\n    ...\n]\n` block matching the shipped
+        roster file's formatting exactly.
+    """
+    body = "".join(f'    "{name}",\n' for name in names)
+    return f"names = [\n{body}]\n"
+
+
+def _generate_plugin_roster_toml(root: Path) -> str:
+    """Regenerate the plugin-roster TOML content from this repo's own surface.
+
+    The drift-guard generator: skill names are `skills/*/SKILL.md` parent dir
+    names; hook names are `claude-hooks/*.sh` stems (every hook, not just
+    `block_*` — the shipped roster enriches all hook resolution, not just the
+    dangling-check's narrower `block_*` pattern). Kept as a tiny in-test
+    helper rather than a shipped CLI (#375) — this is a test-only contract.
+
+    Args:
+        root: Repository root containing `skills/` and `claude-hooks/`.
+
+    Returns:
+        The TOML text that `src/forge/data/plugin-roster.toml` must equal.
+    """
+    skill_names = sorted(p.parent.name for p in (root / "skills").glob("*/SKILL.md"))
+    hook_names = sorted(p.stem for p in (root / "claude-hooks").glob("*.sh"))
+    return (
+        _PLUGIN_ROSTER_HEADER
+        + "[skills]\n"
+        + _toml_name_array(skill_names)
+        + "\n[hooks]\n"
+        + _toml_name_array(hook_names)
+    )
+
+
+def test_plugin_roster_toml_matches_repo_skills_and_hooks() -> None:
+    """`src/forge/data/plugin-roster.toml` never drifts from the repo's own surface.
+
+    The staleness contract promised by the shipped file's own header comment:
+    regenerate the TOML from `skills/*/SKILL.md` + `claude-hooks/*.sh` in this
+    repo and byte-compare it to the shipped file. On failure, regenerate by
+    calling this test module's `_generate_plugin_roster_toml(repo_root)`
+    helper and writing its return value to
+    `src/forge/data/plugin-roster.toml`.
+    """
+    generated = _generate_plugin_roster_toml(_REPO_ROOT)
+    shipped = (_REPO_ROOT / "src" / "forge" / "data" / "plugin-roster.toml").read_text(
+        encoding="utf-8"
+    )
+    assert generated == shipped, (
+        "src/forge/data/plugin-roster.toml is stale vs skills/*/SKILL.md + "
+        "claude-hooks/*.sh. Regenerate: in a Python shell, run "
+        "`tests.test_verify_agent_doc._generate_plugin_roster_toml(repo_root)` "
+        "and write its output to src/forge/data/plugin-roster.toml."
+    )

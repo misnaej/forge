@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.22.0 — Unreleased
+## v3.23.0 — Unreleased
 
 ### Features
 - **Audit findings carry stable identities.** `Finding.key` — an
@@ -32,6 +32,19 @@ versions follow forge's rolling-next convention.
   on `path|type|symbol`. Keys survive edits elsewhere in the file
   (never `path:line`), the prerequisite for any future
   accepted-findings baseline.
+
+## v3.22.0 — Unreleased
+
+### Features
+- **Consumer repos can enable the `agent_doc` step.** The
+  `verify-forge-agent-doc` rosters now resolve names a consumer doc
+  legitimately references: hooks under `.claude/hooks/` are scanned,
+  forge's plugin skills and hooks ship as a packaged roster, installed
+  `forge-scripts` console scripts back the CLI set, `/plugin:skill`
+  qualifiers resolve on the bare name, and
+  `[tool.forge.agent_doc].extra_clis/extra_hooks/extra_skills` cover
+  anything else. Coverage requirements stay strictly repo-local — a
+  consumer documents its own fleet, never forge's.
 
 ## v3.21.0 — Unreleased
 
