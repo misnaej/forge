@@ -85,7 +85,8 @@ def _stub_cli_deps(
     Returns:
         A ``CapturedCalls`` that accumulates every argv list ``run_pytest``
         was called with, for later assertion. Also carries the ``telemetry``
-        kwarg of each call, in call order, in its ``telemetry_flags`` field.
+        kwarg of each call, in call order, in its ``telemetry_flags`` field,
+        and the ``label`` kwarg of each call in its ``labels`` field (#376).
     """
     _changed = changed if changed is not None else {"src/myapp/core.py"}
     _results = list(run_results or [])
@@ -102,9 +103,11 @@ def _stub_cli_deps(
         *,
         coverage: bool = False,
         telemetry: bool = False,
+        label: str = "",
     ) -> tuple[int, str]:
         captured.calls.append(list(paths))
         captured.telemetry_flags.append(telemetry)
+        captured.labels.append(label)
         if _results:
             return _results.pop(0)
         return 0, "ok"
@@ -287,7 +290,9 @@ def test_main_full_depth_calls_run_pytest_with_empty_paths_and_coverage_true(
         *,
         coverage: bool = False,
         telemetry: bool = False,
+        label: str = "",
     ) -> tuple[int, str]:
+        del label
         recorded.append({"paths": paths, "coverage": coverage, "telemetry": telemetry})
         return 0, "full suite ok"
 
@@ -781,7 +786,9 @@ def test_main_full_depth_telemetry_flag_and_coverage_true(
         *,
         coverage: bool = False,
         telemetry: bool = False,
+        label: str = "",
     ) -> tuple[int, str]:
+        del label
         recorded.append({"paths": paths, "coverage": coverage, "telemetry": telemetry})
         return 0, "full suite ok"
 
@@ -792,3 +799,66 @@ def test_main_full_depth_telemetry_flag_and_coverage_true(
     assert recorded
     assert recorded[0]["coverage"] is True
     assert recorded[0]["telemetry"] is True
+
+
+# ---------------------------------------------------------------------------
+# telemetry run label — per-tier artifacts (#376)
+# ---------------------------------------------------------------------------
+
+
+def test_main_depth_batches_label_each_call_by_tier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each depth batch is labeled ``depth<N>`` so tiers keep separate artifacts.
+
+    SCENARIO: a plan with tests at both depth 0 and depth 1; both batches pass.
+    MOCK SETUP: ``_stub_cli_deps``'s fake records the ``label`` kwarg of every
+        ``run_pytest`` call, in call order.
+    EXPECTED BEHAVIOR: the two calls carry ``label="depth0"`` then
+        ``label="depth1"`` — never the same label twice.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "1"])
+    plan = _make_plan(
+        depth0=["tests/test_core.py"],
+        depth1=["tests/test_service.py"],
+        max_depth=1,
+    )
+    captured = _stub_cli_deps(
+        monkeypatch, plan=plan, run_results=[(0, "ok"), (0, "ok")]
+    )
+
+    code = cli.main()
+    assert code == 0
+    assert captured.labels == ["depth0", "depth1"]
+
+
+def test_main_full_depth_labels_run_full(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--depth full`` labels its single ``run_pytest`` call ``"full"``."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "full"])
+
+    recorded: list[dict[str, object]] = []
+
+    def _fake(
+        _root: object,
+        paths: list[str],
+        *,
+        coverage: bool = False,
+        telemetry: bool = False,
+        label: str = "",
+    ) -> tuple[int, str]:
+        recorded.append({"paths": paths, "coverage": coverage, "label": label})
+        del telemetry
+        return 0, "full suite ok"
+
+    monkeypatch.setattr(cli, "run_pytest", _fake)
+
+    code = cli.main()
+    assert code == 0
+    assert recorded
+    assert recorded[0]["label"] == "full"
