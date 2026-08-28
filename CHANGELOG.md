@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.24.1 — Unreleased
+## v3.24.2 — Unreleased
 
 ### Fixes
 - **PR wrap-up comments reflow properly on GitHub.** The wrap-up
@@ -28,6 +28,14 @@ versions follow forge's rolling-next convention.
   comment-destined markdown one line per paragraph — GitHub renders
   every newline in a comment as a hard break, so file-width wrapped
   prose posted as a narrow ragged column.
+
+## v3.24.1 — Unreleased
+
+### Chore
+- **Duplicate smart-test control test removed.** The plain-`src/`
+  "control" test was byte-identical to the depth-1 transitive test
+  (same fixture, inputs, assertions); a pointer comment preserves the
+  Shapes A/B narrative. Clears the audit-pack MEDIUM duplicate finding.
 
 ## v3.24.0 — Unreleased
 
