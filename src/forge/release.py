@@ -430,7 +430,7 @@ def main() -> int:
         help=(
             "Cut the version the CHANGELOG.md top heading declares. "
             "Idempotent (already tagged → exit 0); the tag-on-merge CI "
-            "mode — see docs/ci-recipe.md."
+            "mode — see forge-docs/ci-recipe.md."
         ),
     )
     parser.add_argument(

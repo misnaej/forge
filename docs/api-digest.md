@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_65 modules, 734 symbols._
+_65 modules, 738 symbols._
 
 ## `forge`
 
@@ -550,6 +550,10 @@ _65 modules, 734 symbols._
 - `_has_managed_markers(text: str) -> bool` _(internal)_ — Return True if *text* contains a forge-managed START/END pair.
 - `_normalize(text: str) -> str` _(internal)_ — Strip the version-stamped comment for drift comparison.
 - `sync_foundation(foundation_path: Path, *, check_only: bool = False, force: bool = False) -> bool` — Write or update ``FOUNDATION.md`` with the shipped foundation text.
+- `_forge_docs_readme_text(version: str) -> str` _(internal)_ — Render the ``forge-docs/README.md`` never-edit notice.
+- `_forge_docs_is_self(repo_root: Path) -> bool` _(internal)_ — Return whether *repo_root*'s ``forge-docs/`` IS the shipped canonical set.
+- `_forge_docs_is_unmanaged(repo_root: Path) -> bool` _(internal)_ — Return whether an existing ``forge-docs/`` is NOT forge-managed.
+- `sync_forge_docs(repo_root: Path, *, check_only: bool = False, force: bool = False) -> bool` — Mirror the shipped ``forge-docs/`` reference set into the consumer repo.
 - `foundation_matches_installed(foundation_path: Path) -> bool` — Return whether *foundation_path* reproduces the installed foundation.
 - `_claudemd_has_include(text: str) -> bool` _(internal)_ — Return True if *text* has an ``@FOUNDATION.md`` include directive.
 - `scaffold_claudemd(claudemd_path: Path) -> bool` — Write a minimal scaffold ``CLAUDE.md`` if the file does not exist.

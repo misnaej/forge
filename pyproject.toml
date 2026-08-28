@@ -242,7 +242,7 @@ where = ["src"]
 include = ["forge*"]
 
 [tool.setuptools.package-data]
-forge = ["data/*.md", "data/*.js"]
+forge = ["data/*.md", "data/*.js", "data/docs/*.md"]
 
 [tool.setuptools_scm]
 # Version derived from the latest git tag (e.g. v1.1.0 → 1.1.0).

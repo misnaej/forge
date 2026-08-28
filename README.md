@@ -86,7 +86,7 @@ edit `.githooks/pre-commit` directly. No plugin system, no config file.
 
 | Category | Items |
 |---|---|
-| **CLIs** (pip package, no Claude required) | `install-forge-bootstrap` (one-shot umbrella), `forge-upgrade` (two-phase upgrade flow), `forge-precommit` (full sequence dispatcher), `fix-forge-ruff` (ruff phase), `verify-forge-docstrings`, `verify-forge-docstring-coverage`, `verify-forge-repo-structure`, `verify-forge-test-naming`, `verify-forge-manifest`, `verify-forge-plugin-version`, `verify-forge-cli-wiring`, `forge-continuation-append`, `forge-next-prep`, `forge-config` (config reference + setup advisor — see [`docs/configuration.md`](docs/configuration.md)), `forge-gen-c4` (C4 architecture diagram generator), `install-forge-labels`, `forge-doctor`, `install-forge-githooks`, `install-forge-claude-md` |
+| **CLIs** (pip package, no Claude required) | `install-forge-bootstrap` (one-shot umbrella), `forge-upgrade` (two-phase upgrade flow), `forge-precommit` (full sequence dispatcher), `fix-forge-ruff` (ruff phase), `verify-forge-docstrings`, `verify-forge-docstring-coverage`, `verify-forge-repo-structure`, `verify-forge-test-naming`, `verify-forge-manifest`, `verify-forge-plugin-version`, `verify-forge-cli-wiring`, `forge-continuation-append`, `forge-next-prep`, `forge-config` (config reference + setup advisor — see [`forge-docs/configuration.md`](forge-docs/configuration.md)), `forge-gen-c4` (C4 architecture diagram generator), `install-forge-labels`, `forge-doctor`, `install-forge-githooks`, `install-forge-claude-md` |
 | **Audit-pack CLIs** (pip package, no extras required) | `forge-audit-dup`, `forge-audit-deps`, `forge-audit-suppressions`, `forge-audit-orphans`, `forge-audit-data`, `forge-audit-claims`, `forge-audit-agents` (non-blocking template-conformance audit), `forge-audit-layering` (opt-in layer-composition gate), `forge-audit-all` — see [`docs/audit-pack.md`](docs/audit-pack.md) |
 | **Git hooks** (drop-in, no Claude required) | `.githooks/pre-commit` (dispatcher), `.githooks/post-merge` + `.githooks/post-checkout` (auto-warn on FOUNDATION.md drift) |
 | **Process docs** | `docs/security.md`, `docs/audit-pack.md`, `docs/cli-reference.md` (generated CLI reference), `docs/api-digest.md` (generated index of all top-level functions/classes, public API + internal helpers); foundation engineering principles at `FOUNDATION.md` |
@@ -261,7 +261,7 @@ order. Idempotent — re-run safely after every forge upgrade.
 | 5 | `forge-gen-cli-reference` | `docs/cli-reference.md` (generated from each CLI's `--help`) |
 | 6 | `forge-audit-deps --tree` | `code_health/audit_deps_tree.log` (dependency tree) |
 | 7 | `forge-doctor` | Verifies the install |
-| 8 | `forge-config` | Post-install nudge: what `[tool.forge.*]` config forge reads + what to set ([`docs/configuration.md`](docs/configuration.md)) |
+| 8 | `forge-config` | Post-install nudge: what `[tool.forge.*]` config forge reads + what to set ([`forge-docs/configuration.md`](forge-docs/configuration.md)) |
 
 Flags: `--check` (dry-run), `--skip <slug>` (repeatable; slugs are
 `githooks`, `claude-md`, `labels`, `api-digest`, `cli-reference`,
@@ -501,7 +501,7 @@ bare local runs.
 
 Full pasteable workflows (per-PR CI + scheduled
 `forge-upgrade --apply`) are in
-[`docs/ci-recipe.md`](docs/ci-recipe.md). For private-fork auth
+[`forge-docs/ci-recipe.md`](forge-docs/ci-recipe.md). For private-fork auth
 (deploy keys, PATs), see [`docs/ci-access.md`](docs/ci-access.md).
 
 ---
@@ -634,7 +634,7 @@ Topic-specific docs (read what you need, skip what you don't):
 | [`docs/standalone-installers.md`](docs/standalone-installers.md) | You want to run a single installer manually instead of `install-forge-bootstrap`. |
 | [`docs/customizing-precommit.md`](docs/customizing-precommit.md) | You want to add a repo-specific step (mypy, secret scan, etc.) to the pre-commit hook. |
 | [`docs/claude-code-plugin.md`](docs/claude-code-plugin.md) | You use Claude Code and want the agents / skills / hooks. |
-| [`docs/ci-recipe.md`](docs/ci-recipe.md) | You want a pasteable GitHub Actions workflow for running forge in CI. |
+| [`forge-docs/ci-recipe.md`](forge-docs/ci-recipe.md) | You want a pasteable GitHub Actions workflow for running forge in CI. |
 | [`docs/ci-access.md`](docs/ci-access.md) | Your CI runner can't clone forge with implicit SSH. |
 | [`docs/audit-pack.md`](docs/audit-pack.md) | You want to use the `forge-audit-*` CLIs for codebase health checks. |
 | [`docs/consumer-release.md`](docs/consumer-release.md) | Your repo's version derives from `v*` git tags (setuptools-scm) and you want `forge-release` (or its public primitives) instead of hand-rolling the tag/push flow. |

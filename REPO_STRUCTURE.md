@@ -247,6 +247,17 @@ Forge's own bootstrap tooling (not a consumer pattern):
 - setup.sh: conda env + editable install + hooks + doctor
 - test-matrix.sh: multi-version test matrix runner
 
+## Shipped reference set (`forge-docs/`)
+
+Canonical home of the consumer-mirrored reference pages FOUNDATION.md links
+to; shipped via `src/forge/data/docs/` symlinks and written into consumer
+repos by `install-forge-claude-md` (guarded there by a README notice + the
+`block_forge_docs_edits` hook).
+
+- configuration.md: complete `[tool.forge.*]` config reference + setup guide (written counterpart to `forge-config --list`)
+- ci-recipe.md: consumer CI recipe (channel pin + per-PR workflow + scheduled upgrade PR)
+- smart-test.md: usage guide for `forge-smart-test` — depth model, consumer guarantees, opt-in correctness extensions
+
 ## Documentation (`docs/`)
 
 - api-digest.md: generated public-symbol index (`forge-gen-api-digest`)
@@ -257,7 +268,6 @@ Forge's own bootstrap tooling (not a consumer pattern):
 - claude-code-plugin.md: optional Claude Code plugin install + extension
 - cli-reference.md: generated CLI reference (`forge-gen-cli-reference`)
 - adopting.md: modular adoption guide — three independent install tracks (CLIs / + git hooks / + plugin) + "what lands on disk" table + drift/upgrade explainer
-- configuration.md: complete `[tool.forge.*]` config reference + setup guide (written counterpart to `forge-config --list`)
 - release-process.md: forge-only single source of truth for versioning + dev→main promotion + the invariant→test contract
 - consumer-release.md: single-track (tag-versioned/setuptools-scm) consumer release recipe — `forge-release` usage + the stable public Python import surface
 - customizing-precommit.md: adding repo-specific steps to `.githooks/pre-commit`
