@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.24.2 — Unreleased
+## v3.25.1 — Unreleased
 
 ### Fixes
 - **The git-guard anchor lives once, extended everywhere.** New sourced
@@ -35,6 +35,19 @@ versions follow forge's rolling-next convention.
   fixed before merge). All four guards fail CLOSED when the shared
   anchor lib is missing or unreadable — a corrupted plugin cache blocks
   rather than silently disarming the family.
+
+## v3.25.0 — Unreleased
+
+### Features
+- **Audit findings carry stable identities.** `Finding.key` — an
+  optional per-audit key rendered as a `key=` line in every
+  `code_health/audit_*.log` block — makes findings individually
+  addressable across runs: dup groups key on their path-qualified
+  member sets, dep cycles on their members and distance findings on
+  their module, suppressions on `path|code|line-fingerprint`, orphans
+  on `path|type|symbol`. Keys survive edits elsewhere in the file
+  (never `path:line`), the prerequisite for any future
+  accepted-findings baseline.
 
 ## v3.24.1 — Unreleased
 

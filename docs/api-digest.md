@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_65 modules, 748 symbols._
+_65 modules, 749 symbols._
 
 ## `forge`
 
@@ -200,6 +200,7 @@ _65 modules, 748 symbols._
 > _forge-audit-suppressions: list every lint / type / coverage suppression._
 
 - `class SuppressionsConfig` — Tunable knobs for the suppressions audit.
+- `_line_fingerprint(line: str) -> str` _(internal)_ — Return a short stable fingerprint of *line*'s stripped text.
 - `_parse_codes(raw: str | None) -> list[str]` _(internal)_ — Split a comma-separated suppression-code string into trimmed codes.
 - `resolve_ruff_rule(code: str, cache: dict[str, tuple[str, str] | None]) -> tuple[str, str] | None` — Return ``(name, summary)`` for a ruff rule code, or ``None`` if unknown.
 - `_noqa_findings(path: str, line_no: int, line: str, rule_cache: dict[str, tuple[str, str] | None]) -> list[Finding]` _(internal)_ — Build findings for any ``# noqa`` directive on ``line``.
