@@ -163,6 +163,7 @@ enforcement:
 - check_foundation_sync.sh: verify FOUNDATION.md sync
 - warn_pr_checks.sh: warn on PR check status
 - block_git_destructive.sh: block destructive git recovery verbs from agents — all `git reset` forms, forced `git clean`, literal `git checkout .` / `git restore .`, `git stash drop`/`clear` (no bypass — stop-and-report is the sanctioned recovery)
+- git_anchor.sh: NOT a hook — sourced library holding the shared `GIT_ANCHOR`/`SEG_ANCHOR` invocation anchors for the git-guard family (single home; never registered in plugin.json)
 - block_fixer_recon.sh: agent-scoped Bash allowlist for the precommit-fixer (gate CLIs + targeted pytest node-ids only; other agents unaffected)
 - block_raw_git.sh: hard-block raw `git commit` / `git push` from agents (bypass: `git-commit-push` subagent)
 - block_unverified_pr_create.sh: block `gh pr create` (draft or not) until the authored wrap-up names HEAD; only a self-verifying release/vX.Y.Z promotion branch exempts itself (FOUNDATION §6)
