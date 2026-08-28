@@ -226,7 +226,7 @@ agents); installing dependencies (never — tell the user).
 
 **Commit:** `forge:prior-art` (when creating files/symbols — first, a REUSE verdict ends the plan) → `forge:design-checker` (pre-write) → code changes → `forge:precommit-fixer` → `forge:git-commit-push`
 
-**PR finalization:** `forge:design-checker` + `forge:security-checker` + `forge:docs-types-checker` (parallel) → `forge:precommit-fixer` (mode `strict`) → `forge:pr-manager` → background PR monitor (§6 "The flow does not end at posting")
+**PR finalization:** `forge:design-checker` + `forge:security-checker` + `forge:docs-types-checker` (parallel) → `forge:precommit-fixer` (mode `strict`) → `forge:pr-manager` → background PR monitor (§6 — "The flow does not end at posting")
 
 **Test writing:** `forge:test-advisor` (advise) → `forge:test-writer` → `forge:test-advisor` (review) → `forge:precommit-fixer`
 
