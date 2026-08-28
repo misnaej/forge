@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.23.1 — Unreleased
+## v3.24.1 — Unreleased
 
 ### Fixes
 - **PR wrap-up comments reflow properly on GitHub.** The wrap-up
@@ -28,6 +28,18 @@ versions follow forge's rolling-next convention.
   comment-destined markdown one line per paragraph — GitHub renders
   every newline in a comment as a hard break, so file-width wrapped
   prose posted as a narrow ragged column.
+
+## v3.24.0 — Unreleased
+
+### Features
+- **New `/report-to-forge` skill.** Turns an observed defect in a
+  shipped forge process (agent, skill, hook, step, CLI) into a filed
+  upstream issue: versions captured mechanically via `forge-doctor`
+  (skew flagged — it is often the bug), transient evidence quoted
+  verbatim, consumer specifics redacted with explicit user
+  confirmation before filing against the canonical upstream. Carries
+  out FOUNDATION §12's "upstream issue against forge" policy, which
+  previously had no mechanism.
 
 ## v3.23.0 — Unreleased
 
