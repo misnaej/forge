@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.24.0 — Unreleased
+## v3.25.0 — Unreleased
 
 ### Features
 - **Enumerated directory listings can be drift-checked exhaustively.**
@@ -29,6 +29,18 @@ versions follow forge's rolling-next convention.
   directory both directions — an unlisted file (the class that silently
   left four hooks off the list) now fails the gate. Forge's own hooks
   section opts in; the four missing entries are restored.
+
+## v3.24.0 — Unreleased
+
+### Features
+- **New `/report-to-forge` skill.** Turns an observed defect in a
+  shipped forge process (agent, skill, hook, step, CLI) into a filed
+  upstream issue: versions captured mechanically via `forge-doctor`
+  (skew flagged — it is often the bug), transient evidence quoted
+  verbatim, consumer specifics redacted with explicit user
+  confirmation before filing against the canonical upstream. Carries
+  out FOUNDATION §12's "upstream issue against forge" policy, which
+  previously had no mechanism.
 
 ## v3.23.0 — Unreleased
 
