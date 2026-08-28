@@ -90,7 +90,7 @@ edit `.githooks/pre-commit` directly. No plugin system, no config file.
 | **Audit-pack CLIs** (pip package, no extras required) | `forge-audit-dup`, `forge-audit-deps`, `forge-audit-suppressions`, `forge-audit-orphans`, `forge-audit-data`, `forge-audit-claims`, `forge-audit-agents` (non-blocking template-conformance audit), `forge-audit-layering` (opt-in layer-composition gate), `forge-audit-all` — see [`docs/audit-pack.md`](docs/audit-pack.md) |
 | **Git hooks** (drop-in, no Claude required) | `.githooks/pre-commit` (dispatcher), `.githooks/post-merge` + `.githooks/post-checkout` (auto-warn on FOUNDATION.md drift) |
 | **Process docs** | `docs/security.md`, `docs/audit-pack.md`, `docs/cli-reference.md` (generated CLI reference), `docs/api-digest.md` (generated index of all top-level functions/classes, public API + internal helpers); foundation engineering principles at `FOUNDATION.md` |
-| **Claude Code plugin** (optional) | Agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, `design-checker`, `docs-types-checker`, `security-checker`, `issue-triage`, `perf-optimizer`, `weekly-summary`, `knowledge-search`, `test-advisor`, `test-writer`); skills (`commit`, `pr`, `pr-comments`, `next`, `triage`, `plan-issue`, `sentinel`, `weekly`, `fix`, `test`, `c4`, `memory-audit`, `smart-test`); Claude Code hooks (`block_protected_branches`, `block_force_push`, `block_git_rebase`, `block_git_reset_hard`, `block_pr_merge`, `block_branch_deletion`, `block_no_verify`, `block_install_deps`, `block_claude_attribution`, `block_continuation_delete`, `block_protected_files`, `check_commit_format`, `check_foundation_sync`, `warn_pr_checks`, `block_raw_ruff`, `block_raw_git`,
+| **Claude Code plugin** (optional) | Agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, `design-checker`, `docs-types-checker`, `security-checker`, `issue-triage`, `perf-optimizer`, `weekly-summary`, `knowledge-search`, `test-advisor`, `test-writer`); skills (`commit`, `pr`, `pr-comments`, `next`, `triage`, `plan-issue`, `sentinel`, `weekly`, `fix`, `test`, `c4`, `memory-audit`, `smart-test`); Claude Code hooks (`block_protected_branches`, `block_force_push`, `block_git_rebase`, `block_git_destructive`, `block_pr_merge`, `block_branch_deletion`, `block_no_verify`, `block_install_deps`, `block_claude_attribution`, `block_continuation_delete`, `block_protected_files`, `check_commit_format`, `check_foundation_sync`, `warn_pr_checks`, `block_raw_ruff`, `block_raw_git`,
 `block_fixer_recon`) |
 
 Everything in the first three rows is **Claude-independent** — works
@@ -159,6 +159,7 @@ graph LR
     release_tooling -->|"imports"| installers
     smart_test -->|"imports"| config_shared
     verifiers -->|"imports"| config_shared
+    verifiers -->|"imports"| release_tooling
     classDef component fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
     classDef container fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
     classDef external fill:#f3e8ff,stroke:#9333ea,color:#581c87

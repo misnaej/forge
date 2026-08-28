@@ -26,6 +26,10 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
 - **Targeted tests only.** When fixing or validating a named test, run
   exactly those tests by `::` node-id — several allowed — never bare
   `pytest`, files, directories, or suites.
+- **A code edit is unverified until its tests re-ran.** After any Edit
+  that changes runtime code or a test double, re-run the affected tests
+  (targeted, as above) before reporting — a PASS claimed without the
+  re-run is a false report.
 - **Allowed CLIs**: `forge-precommit` — the ONLY loop driver, **hard cap
   THREE invocations per run** (refresh → re-verify → final) — and, at
   most once each, an individual step CLI (`fix-forge-ruff`,
@@ -79,7 +83,7 @@ the install hint. Never fall back to raw `ruff` / `python -m`.
 | `ruff.log` (complexity: `C901`, `PLR0913`, `PLR0912`, `PLR0911`, `PLR0915`) | Delegate to **`design-checker`** for refactor guidance, then **Edit** by hand. |
 | `ruff.log` (formatter syntax error) | Should not happen unless the file has invalid Python. Surface to human. |
 | `docstring_verification.log` | Delegate to **`docs-types-checker`** via Task tool. |
-| `docstring_coverage.log` — `MISSING: <path>:<line>:<name>` lines | **Edit** to add a one-line Google-style docstring at each listed `<path>:<line>` for the named symbol. Non-blocking step (ruff D-rules already block missing docstrings on top-level public symbols), so this dispatch typically only sees nested-function / closure escapes. Re-run `forge-precommit` to refresh the log and confirm `MISSING:` lines cleared. |
+| `docstring_coverage.log` — `MISSING: <path>:<line>:<name>` lines | **Edit** to add a one-line Google-style docstring at each listed `<path>:<line>` (non-blocking step; typically nested-function / closure escapes). Re-run `forge-precommit` to confirm the `MISSING:` lines cleared. |
 | `test_naming_check.log` | **Edit** — rename per `expected → actual` pairs in the log; update keyword call sites. |
 | `repo_structure_check.log` | **Edit** `REPO_STRUCTURE.md` to match the tree per the log diff. |
 | `manifest_json.log` | **Edit** `.claude-plugin/plugin.json` per the parse / schema error. |
@@ -169,6 +173,13 @@ Re-invoke me without arguments. See FOUNDATION §3.
   3. If callers pass by keyword OR it's an interface method → prefix with `_` (keeps the position) AND update keyword call sites.
   4. Otherwise → prefix with `_` or remove the arg entirely AND update all call sites.
   5. Never rename without checking callers first.
+
+## Guard hooks
+
+Agent-scoped: `block_fixer_recon` (source of truth:
+`[tool.forge.agent_doc.guarded_by]`). Shared contract — what a block
+means and how to respond (incl. the `ruff.toml` present-diff rule):
+[`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
 
 ## Output
 

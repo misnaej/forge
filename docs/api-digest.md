@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_65 modules, 738 symbols._
+_65 modules, 741 symbols._
 
 ## `forge`
 
@@ -225,6 +225,7 @@ _65 modules, 738 symbols._
 - `wants_no_version(repo_root: Path) -> str | None` — Return the fired no-version signal, or ``None`` when none is set.
 - `_section_content(text: str) -> dict[str, set[str]]` _(internal)_ — Map each release version to its normalized non-heading content lines.
 - `stranded_added_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections gained content vs *old_text*.
+- `released_deleted_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections lost content vs *old_text*.
 
 ## `forge.claude_settings_schema`
 
@@ -985,6 +986,8 @@ _65 modules, 738 symbols._
 > _verify-forge-doc-consistency — check machine-checkable doc claims vs repo state._
 
 - `_check_cli_coverage(repo_root: Path) -> list[str]` _(internal)_ — Return findings for ``[project.scripts]`` names missing from the CLI reference.
+- `_provenance_prose_tokens(text: str) -> set[str]` _(internal)_ — Collect ``*_check`` tokens from *text*'s provenance-adjacent lines.
+- `_check_provenance_gate_names(repo_root: Path) -> list[str]` _(internal)_ — Return findings for provenance gate-step names drifting from the constant.
 - `main() -> int` — CLI entry point.
 
 ## `forge.verify_docstring_coverage`
