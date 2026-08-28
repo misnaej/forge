@@ -533,16 +533,10 @@ def test_shape_b_nested_src_root_selects_coupled_test(
     assert any("test_runner" in t for t in tests), f"test_runner not found in {tests}"
 
 
-def test_src_container_control_unaffected(import_chain_repo: Path) -> None:
-    """Control: the plain ``src/`` layout keeps resolving and selecting.
-
-    The naming fix for Shapes A/B must not change behavior for the common
-    ``src/``-container layout, where scan dir and import root coincide.
-    """
-    plan = select_tests(import_chain_repo, {"src/myapp/core.py"}, max_depth=1)
-    tests = plan.tests_up_to(1)
-    assert any("test_core" in t for t in tests)
-    assert any("test_service" in t for t in tests)
+# Plain-src/ control for Shapes A/B: the common src/-container layout
+# (scan dir == import root) is covered by
+# test_select_tests_depth_1_transitive above — same fixture, same inputs,
+# same assertions, so a regression there fails first.
 
 
 # ---------------------------------------------------------------------------
