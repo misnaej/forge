@@ -265,6 +265,64 @@ def test_sanitize_log_text_escapes_control_characters() -> None:
     assert common.sanitize_log_text("plain") == "plain"
 
 
+def test_finding_render_includes_key_line_before_evidence() -> None:
+    """A non-empty ``key`` renders as a ``key=`` line before evidence lines."""
+    f = Finding(
+        audit="dup",
+        severity=Severity.HIGH,
+        path="src/a.py",
+        line=1,
+        message="m",
+        evidence=("ev one", "ev two"),
+        key="pkg.a|pkg.b",
+    )
+    out = f.render()
+    key_idx = out.index("key=pkg.a|pkg.b")
+    ev_idx = out.index("ev one")
+    assert key_idx < ev_idx
+    assert "    key=pkg.a|pkg.b" in out
+
+
+def test_finding_render_omits_key_line_when_empty() -> None:
+    """The default empty ``key`` produces no ``key=`` line at all."""
+    f = Finding(
+        audit="dup",
+        severity=Severity.HIGH,
+        path="src/a.py",
+        line=1,
+        message="m",
+    )
+    assert "key=" not in f.render()
+
+
+def test_finding_render_sanitizes_key_control_characters() -> None:
+    """A key with an embedded control character is escaped like other fields."""
+    f = Finding(
+        audit="dup",
+        severity=Severity.HIGH,
+        path="src/a.py",
+        line=1,
+        message="m",
+        key="a\nb",
+    )
+    out = f.render()
+    assert "key=a\\nb" in out
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    assert len(lines) == 2  # header + key line only — no injected third line
+
+
+def test_finding_default_key_is_empty_string() -> None:
+    """Findings built without a ``key`` argument (existing call sites) still work."""
+    f = Finding(
+        audit="dup",
+        severity=Severity.HIGH,
+        path="src/a.py",
+        line=1,
+        message="m",
+    )
+    assert f.key == ""
+
+
 def test_finding_render_keeps_injected_newline_on_one_line() -> None:
     """A crafted message cannot spoof a second finding line in the log."""
     finding = Finding(
