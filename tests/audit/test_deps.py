@@ -13,6 +13,8 @@ from forge.audit.deps import (
     DepsConfig,
     ModuleNode,
     _abstractness,
+    _build_cycle_findings,
+    _build_distance_findings,
     _build_internal_graph,
     _compute_couplings,
     _instability,
@@ -214,6 +216,39 @@ def test_run_skips_files_with_syntax_errors(fake_repo: Path) -> None:
     _write(fake_repo / "src" / "pkg" / "bad.py", "def !!! broken !!!\n")
     code = run(Scope.FULL, [fake_repo / "src"], DepsConfig(distance_threshold=2.0))
     assert code in {0, 1}
+
+
+def test_build_cycle_findings_key_is_sorted_members() -> None:
+    """Cycle key joins sorted member names, independent of SCC discovery order."""
+    modules = {
+        "pkg.b": ModuleNode("pkg.b", "src/pkg/b.py", 0, 0),
+        "pkg.a": ModuleNode("pkg.a", "src/pkg/a.py", 0, 0),
+    }
+    findings_forward = _build_cycle_findings([["pkg.b", "pkg.a"]], modules)
+    findings_reversed = _build_cycle_findings([["pkg.a", "pkg.b"]], modules)
+    assert findings_forward[0].key == "cycle:pkg.a|pkg.b"
+    assert findings_reversed[0].key == "cycle:pkg.a|pkg.b"
+
+
+def test_build_distance_findings_key_is_module_name_not_d_value() -> None:
+    """Distance key names the module; the message's D value is excluded.
+
+    Two modules with different D values (via different Ca/Ce) must still
+    produce keys that key off the module name alone, so the key survives
+    edits that shift coupling counts elsewhere.
+    """
+    modules = {
+        "pkg.a": ModuleNode("pkg.a", "src/pkg/a.py", 0, 0),
+    }
+    findings_low_d = _build_distance_findings(
+        modules, ca={"pkg.a": 1}, ce={"pkg.a": 4}, threshold=0.1
+    )
+    findings_high_d = _build_distance_findings(
+        modules, ca={"pkg.a": 4}, ce={"pkg.a": 1}, threshold=0.1
+    )
+    assert findings_low_d[0].key == "distance:pkg.a"
+    assert findings_high_d[0].key == "distance:pkg.a"
+    assert findings_low_d[0].message != findings_high_d[0].message
 
 
 def test_render_dependency_tree_is_sorted_and_stable() -> None:
