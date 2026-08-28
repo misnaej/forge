@@ -33,6 +33,14 @@ versions follow forge's rolling-next convention.
   (never `path:line`), the prerequisite for any future
   accepted-findings baseline.
 
+## v3.24.1 — Unreleased
+
+### Chore
+- **Duplicate smart-test control test removed.** The plain-`src/`
+  "control" test was byte-identical to the depth-1 transitive test
+  (same fixture, inputs, assertions); a pointer comment preserves the
+  Shapes A/B narrative. Clears the audit-pack MEDIUM duplicate finding.
+
 ## v3.24.0 — Unreleased
 
 ### Features
