@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.24.1 — Unreleased
+## v3.24.2 — Unreleased
 
 ### Fixes
 - **The git-guard anchor lives once, extended everywhere.** New sourced
@@ -35,6 +35,14 @@ versions follow forge's rolling-next convention.
   fixed before merge). All four guards fail CLOSED when the shared
   anchor lib is missing or unreadable — a corrupted plugin cache blocks
   rather than silently disarming the family.
+
+## v3.24.1 — Unreleased
+
+### Chore
+- **Duplicate smart-test control test removed.** The plain-`src/`
+  "control" test was byte-identical to the depth-1 transitive test
+  (same fixture, inputs, assertions); a pointer comment preserves the
+  Shapes A/B narrative. Clears the audit-pack MEDIUM duplicate finding.
 
 ## v3.24.0 — Unreleased
 
