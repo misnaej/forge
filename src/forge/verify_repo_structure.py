@@ -113,6 +113,12 @@ _TOP_LEVEL_FILE = re.compile(
 _TOP_LEVEL_BARE_FILE = re.compile(r"^\s*-\s+(LICENSE)(?::|$|\s)")
 _DOT_DIR_REFERENCE = re.compile(r"^\s*-\s+(\.[a-zA-Z0-9_\-]+)/?:")
 _VERSION_LIKE = re.compile(r"^\d+\.\d+")
+# Heading suffix opting a directory section into the exhaustiveness check.
+_EXHAUSTIVE_MARKER = "<!-- exhaustive -->"
+# A listed-file bullet inside an exhaustive section: `- <name.ext>: ...`.
+_EXHAUSTIVE_FILE_REFERENCE = re.compile(
+    r"^\s*-\s+([A-Za-z0-9_.\-]+\.[a-z0-9]+)(?::|$|\s)"
+)
 
 
 def should_ignore(name: str) -> bool:
@@ -236,6 +242,71 @@ def extract_paths_from_markdown(content: str) -> set[str]:
     return _filter_paths(paths)
 
 
+def exhaustive_section_findings(content: str, root: Path) -> set[str]:
+    """Compare marker-opted directory sections against their disk contents.
+
+    The path-existence checks elsewhere in this module only prove listed
+    paths exist — a file *missing* from an enumerated listing drifts
+    silently. A section whose heading carries ``<!-- exhaustive -->``
+    after its `` (`dir/`) `` path opts into the stronger contract: every
+    non-hidden file in that directory must be listed, and every listed
+    file must exist.
+
+    Args:
+        content: Full ``REPO_STRUCTURE.md`` text.
+        root: Repository root directory.
+
+    Returns:
+        Human-readable findings (``dir/: not listed ...`` /
+        ``dir/: listed but absent ...``); empty when every exhaustive
+        section matches its directory.
+    """
+    findings: set[str] = set()
+    section_dir: str | None = None
+    listed: set[str] = set()
+
+    def _flush() -> None:
+        if section_dir is None:
+            return
+        actual = {
+            f.name
+            for f in (root / section_dir).iterdir()
+            if f.is_file() and not f.name.startswith(".")
+        }
+        findings.update(
+            f"{section_dir}/: not listed in its exhaustive section: {name}"
+            for name in actual - listed
+        )
+        findings.update(
+            f"{section_dir}/: listed but absent from disk: {name}"
+            for name in listed - actual
+        )
+
+    for line in content.splitlines():
+        if _SECTION_WITHOUT_PATH.match(line):
+            _flush()
+            section_dir = None
+            listed = set()
+            match = _SECTION_WITH_PATH.match(line)
+            if match and _EXHAUSTIVE_MARKER in line:
+                candidate = match.group(1).rstrip("/")
+                # Containment before trust: the candidate is doc-supplied
+                # text, and pathlib's `/` lets an absolute right side
+                # replace `root` entirely while `..` segments walk out —
+                # either would let a crafted heading enumerate arbitrary
+                # readable directories into the log.
+                resolved = (root / candidate).resolve()
+                if resolved.is_dir() and resolved.is_relative_to(root.resolve()):
+                    section_dir = candidate
+            continue
+        if section_dir is not None:
+            file_match = _EXHAUSTIVE_FILE_REFERENCE.match(line)
+            if file_match:
+                listed.add(file_match.group(1))
+    _flush()
+    return findings
+
+
 def path_is_covered(path: str, documented_paths: set[str]) -> bool:
     """Check whether a path is covered by the documented paths.
 
@@ -314,7 +385,8 @@ def verify_structure(
         msg = "REPO_STRUCTURE.md not found"
         raise FileNotFoundError(msg)
 
-    documented_paths = extract_paths_from_markdown(repo_structure_path.read_text())
+    content = repo_structure_path.read_text()
+    documented_paths = extract_paths_from_markdown(content)
 
     if verbose:
         logger.info("Extracted paths from REPO_STRUCTURE.md:")
@@ -329,6 +401,9 @@ def verify_structure(
         for item in get_actual_top_level(root)
         if not path_is_covered(item, documented_paths)
     }
+    # Exhaustive-section drift joins the undocumented channel — same
+    # remedy (edit REPO_STRUCTURE.md), same severity.
+    important_not_documented |= exhaustive_section_findings(content, root)
 
     return documented_not_found, important_not_documented, len(documented_paths)
 

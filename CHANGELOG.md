@@ -20,6 +20,16 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.26.0 — Unreleased
+
+### Features
+- **Enumerated directory listings can be drift-checked exhaustively.**
+  A `REPO_STRUCTURE.md` section heading ending `<!-- exhaustive -->`
+  makes `verify-forge-repo-structure` compare its bullets against the
+  directory both directions — an unlisted file (the class that silently
+  left four hooks off the list) now fails the gate. Forge's own hooks
+  section opts in; the four missing entries are restored.
+
 ## v3.25.2 — Unreleased
 
 ### Fixes
