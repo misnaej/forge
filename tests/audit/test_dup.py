@@ -12,6 +12,9 @@ from forge.audit.common import Scope
 from forge.audit.dup import (
     CodeUnit,
     DupConfig,
+    _build_exact_findings,
+    _build_name_findings,
+    _build_near_findings,
     _find_name_collisions,
     _find_near_dups,
     _group_by_hash,
@@ -440,6 +443,174 @@ def test_run_changed_scope_indexes_file_outside_roots(
     log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
     assert "exact body duplicate" in log_text
     assert code == 1
+
+
+def test_build_exact_findings_key_is_sorted_path_qualified_names() -> None:
+    """Exact-dup key joins sorted path-qualified pairs, order-independent.
+
+    Path-qualification (added alongside #291) is what disambiguates two
+    unrelated exact-dup groups that happen to share a bare/qualified name —
+    without it, both groups would collapse onto the same key.
+    """
+    unit_z = CodeUnit(
+        path="src/z.py",
+        line=1,
+        qualified_name="z.helper",
+        bare_name="helper",
+        body_hash="same",
+        token_count=10,
+    )
+    unit_a = CodeUnit(
+        path="src/a.py",
+        line=1,
+        qualified_name="a.helper",
+        bare_name="helper",
+        body_hash="same",
+        token_count=10,
+    )
+    findings_forward, _ = _build_exact_findings([[unit_z, unit_a]])
+    findings_reversed, _ = _build_exact_findings([[unit_a, unit_z]])
+    expected = "src/a.py:a.helper|src/z.py:z.helper"
+    assert findings_forward[0].key == expected
+    assert findings_reversed[0].key == expected
+
+
+def test_build_exact_findings_key_distinct_across_different_file_pairs() -> None:
+    """Exact-dup groups sharing names across different files get distinct keys.
+
+    Regression (#291): before path-qualification, two unrelated exact-dup
+    groups that both involved a function named ``helper`` collided onto the
+    same ``key`` — collapsing two independent findings into one in
+    suppression/dedup logic keyed on ``key``.
+    """
+    group_one = [
+        CodeUnit(
+            path="src/a.py",
+            line=1,
+            qualified_name="helper",
+            bare_name="helper",
+            body_hash="same-1",
+            token_count=10,
+        ),
+        CodeUnit(
+            path="src/b.py",
+            line=1,
+            qualified_name="helper",
+            bare_name="helper",
+            body_hash="same-1",
+            token_count=10,
+        ),
+    ]
+    group_two = [
+        CodeUnit(
+            path="src/c.py",
+            line=1,
+            qualified_name="helper",
+            bare_name="helper",
+            body_hash="same-2",
+            token_count=10,
+        ),
+        CodeUnit(
+            path="src/d.py",
+            line=1,
+            qualified_name="helper",
+            bare_name="helper",
+            body_hash="same-2",
+            token_count=10,
+        ),
+    ]
+    findings, _ = _build_exact_findings([group_one, group_two])
+    keys = {f.key for f in findings}
+    assert len(keys) == len(findings) == 2
+
+
+def test_build_near_findings_key_is_sorted_path_qualified_pair() -> None:
+    """Near-dup key is the sorted pair of ``path:qualified_name``, order-independent."""
+    unit_z = CodeUnit(
+        path="src/z.py",
+        line=1,
+        qualified_name="z.helper",
+        bare_name="helper",
+        body_hash="h1",
+        token_count=10,
+    )
+    unit_a = CodeUnit(
+        path="src/a.py",
+        line=1,
+        qualified_name="a.helper",
+        bare_name="helper",
+        body_hash="h2",
+        token_count=10,
+    )
+    findings = _build_near_findings([(unit_z, unit_a, 0.9)])
+    assert findings[0].key == "src/a.py:a.helper|src/z.py:z.helper"
+
+
+def test_build_near_findings_key_distinct_across_different_file_pairs() -> None:
+    """Near-dup pairs sharing names across different files get distinct keys."""
+    pair_one = (
+        CodeUnit(
+            path="src/a.py",
+            line=1,
+            qualified_name="helper",
+            bare_name="helper",
+            body_hash="h1",
+            token_count=10,
+        ),
+        CodeUnit(
+            path="src/b.py",
+            line=1,
+            qualified_name="helper",
+            bare_name="helper",
+            body_hash="h2",
+            token_count=10,
+        ),
+        0.9,
+    )
+    pair_two = (
+        CodeUnit(
+            path="src/c.py",
+            line=1,
+            qualified_name="helper",
+            bare_name="helper",
+            body_hash="h3",
+            token_count=10,
+        ),
+        CodeUnit(
+            path="src/d.py",
+            line=1,
+            qualified_name="helper",
+            bare_name="helper",
+            body_hash="h4",
+            token_count=10,
+        ),
+        0.9,
+    )
+    findings = _build_near_findings([pair_one, pair_two])
+    keys = {f.key for f in findings}
+    assert len(keys) == len(findings) == 2
+
+
+def test_build_name_findings_key_is_name_collision_prefixed() -> None:
+    """Name-collision key is ``name-collision:<bare_name>``."""
+    unit_a = CodeUnit(
+        path="src/a.py",
+        line=1,
+        qualified_name="helper",
+        bare_name="helper",
+        body_hash="h1",
+        token_count=10,
+    )
+    unit_b = CodeUnit(
+        path="src/b.py",
+        line=2,
+        qualified_name="helper",
+        bare_name="helper",
+        body_hash="h2",
+        token_count=10,
+    )
+    findings = _build_name_findings([[unit_a, unit_b]])
+    assert findings[0].key == "name-collision:helper"
 
 
 def test_summary_full_scope_uses_scanned_wording() -> None:
