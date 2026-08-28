@@ -133,6 +133,7 @@ subdirectory holds a single `SKILL.md`:
 - plan-issue/: human-validated planning for one issue — records a plan-validated execution spec + plan-ready label
 - pr/: full PR finalization flow
 - pr-comments/: address PR review comments
+- report-to-forge/: turn an observed defect in a shipped forge process into a filed upstream issue (versions captured, evidence verbatim, redaction confirmed)
 - sentinel/: autonomous executor of plan-ready issues — to PR wrap-up, never merging
 - smart-test/: run only the tests a change set affects, in depth tiers
 - test/: write tests via the test agents (advisor → writer → review → precommit-fixer)
