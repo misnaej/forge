@@ -128,6 +128,11 @@ that omit the header force a full re-run on every follow-up commit.
 `forge-audit-agents` greps each reporter for the `verified-at:`
 substring. Missing it fails the audit step.
 
+**Report text that may be posted as a PR/issue comment is never
+hard-wrapped**: GitHub comments render each newline as `<br>` (files
+collapse them), so wrapped prose posts as a ragged column. One line per
+paragraph; breaks only for lists, headings, fences, tables.
+
 ## Pre-write agent header contract
 
 A pre-write reporter (currently `prior-art`) fires before any diff or

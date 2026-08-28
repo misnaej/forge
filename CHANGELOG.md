@@ -30,6 +30,15 @@ versions follow forge's rolling-next convention.
   left four hooks off the list) now fails the gate. Forge's own hooks
   section opts in; the four missing entries are restored.
 
+## v3.25.1 — Unreleased
+
+### Fixes
+- **PR wrap-up comments reflow properly on GitHub.** The wrap-up
+  authoring contract (`pr-manager`, reporter template) now writes
+  comment-destined markdown one line per paragraph — GitHub renders
+  every newline in a comment as a hard break, so file-width wrapped
+  prose posted as a narrow ragged column.
+
 ## v3.25.0 — Unreleased
 
 ### Features
