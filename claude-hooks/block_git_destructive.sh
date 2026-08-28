@@ -36,19 +36,17 @@ _block() {
     exit 2
 }
 
-# Anchor at line-start or after a shell separator so the words inside a
-# quoted body (a commit message, PR description) never fire. The anchor also
-# tolerates a leading run of `VAR=val` assignments and a `command`/`env`/
-# `exec`/`builtin`/`sudo` wrapper, so `GIT_DIR=x git reset` can't slip the
-# gate (prefix chain shared with block_git_rebase.sh / block_force_push.sh),
-# PLUS a bounded run of git GLOBAL options between `git` and the subcommand
-# (`--no-pager`, `-c k=v`, `-C <dir>`, `--git-dir=<x>`), so
-# `git --no-pager reset` can't slip it either. Known residuals (documented,
-# not covered): space-separated arg-taking globals other than -c/-C
-# (`--git-dir x`), and multi-arg wrapper flags (`sudo -u root git ...`) —
-# the shared-anchor extraction (#348) is the home for closing these
-# family-wide.
-GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][a-zA-Z-]*(=[^[:space:]]*)?[[:space:]]+)*'
+# Anchor + rationale live in the shared lib (one home for the whole
+# git-guard family — issue #348).
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+if [ ! -r "$ANCHOR_LIB" ]; then
+    # Fail CLOSED: a missing/unreadable lib (corrupted plugin cache)
+    # must block, not silently disarm the whole guard family — only
+    # exit 2 is a block signal in the PreToolUse contract.
+    echo "BLOCKED: git-guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$ANCHOR_LIB"
 
 # `git reset` — every form. The blanket ban subsumes the --hard/--merge
 # block that previously lived in block_git_reset_hard.sh (retired).
@@ -61,7 +59,6 @@ fi
 # is the sanctioned way to REPORT untracked state — but the exemption is
 # evaluated PER INVOCATION: the command is split at shell separators so
 # `git clean -n; git clean -f` still blocks on the second segment.
-SEG_ANCHOR='^[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][a-zA-Z-]*(=[^[:space:]]*)?[[:space:]]+)*'
 while IFS= read -r seg; do
     if echo "$seg" | grep -qE "${SEG_ANCHOR}clean\b"; then
         # Flags are scanned only AFTER the `clean` token, so a wrapper's

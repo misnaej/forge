@@ -19,15 +19,17 @@ _block() {
     exit 2
 }
 
-# Anchor at line-start or after a shell separator so the word "rebase" inside
-# a quoted body (a commit message, PR description) never fires. The anchor also
-# tolerates a leading run of `VAR=val` assignments and a `command`/`env`/
-# `exec`/`builtin`/`sudo` wrapper, so `GIT_DIR=x git rebase` can't slip the
-# gate (shared verbatim with block_force_push.sh / block_raw_git.sh).
-# The separator class includes `(` (a bare subshell wrapper) and the
-# wrapper run tolerates flag tokens (`sudo -n git ...`), so neither
-# shape slips the anchor.
-GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+'
+# Anchor + rationale live in the shared lib (one home for the whole
+# git-guard family — issue #348).
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+if [ ! -r "$ANCHOR_LIB" ]; then
+    # Fail CLOSED: a missing/unreadable lib (corrupted plugin cache)
+    # must block, not silently disarm the whole guard family — only
+    # exit 2 is a block signal in the PreToolUse contract.
+    echo "BLOCKED: git-guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$ANCHOR_LIB"
 if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}rebase\b"; then
     _block "git rebase"
 fi

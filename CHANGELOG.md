@@ -20,6 +20,22 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.25.2 — Unreleased
+
+### Fixes
+- **The git-guard anchor lives once, extended everywhere.** New sourced
+  `claude-hooks/git_anchor.sh` replaces four verbatim copies; the
+  extended anchor (git global-option tolerance) now also protects
+  `block_force_push`, `block_git_rebase`, and `block_raw_git` — closing
+  the live `git --no-pager push --force` / `git -c k=v rebase`
+  bypasses. Force-flag detection is scoped to the matched `git push`
+  invocation, ending the compound-command false-positive class, and
+  matches `f` anywhere in a short-flag cluster (`-fu`/`-fq` block; a
+  cluster-final-only match briefly regressed this in review and was
+  fixed before merge). All four guards fail CLOSED when the shared
+  anchor lib is missing or unreadable — a corrupted plugin cache blocks
+  rather than silently disarming the family.
+
 ## v3.25.1 — Unreleased
 
 ### Fixes

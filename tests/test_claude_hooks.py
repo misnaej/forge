@@ -345,6 +345,26 @@ def test_force_push_blocks_combined_short_flag_cluster() -> None:
     assert _run_hook(_FORCE_PUSH, "git push -uf origin feat") == 2
 
 
+def test_force_push_blocks_cluster_final_f() -> None:
+    r"""`-fu` (`f` cluster-leading) is blocked.
+
+    Regression (#348 design review): the scoped flag regex used to end in
+    `f\\b`, which only matched a cluster-final `f`. `-fu` has `f` first, so
+    the fix requires `f` to match anywhere in the cluster
+    (`-[a-zA-Z]*f[a-zA-Z]*\\b`).
+    """
+    assert _run_hook(_FORCE_PUSH, "git push -fu origin main") == 2
+
+
+def test_force_push_blocks_cluster_with_f_and_other_flags() -> None:
+    """`-fq` (`f` followed by another short flag) is blocked.
+
+    Regression (#348 design review): same cluster-final gap as `-fu` — `f`
+    must match anywhere in the cluster, not only at its end.
+    """
+    assert _run_hook(_FORCE_PUSH, "git push -fq origin main") == 2
+
+
 def test_force_push_blocks_plus_refspec() -> None:
     """A `+`-prefixed force refspec (`origin +main`) is blocked."""
     assert _run_hook(_FORCE_PUSH, "git push origin +main") == 2
@@ -379,9 +399,142 @@ def test_force_push_blocks_doubled_space() -> None:
     assert _run_hook(_FORCE_PUSH, "git  push -f origin main") == 2
 
 
+# --- force-flag scoping is per-invocation, not command-wide (#348) ---------
+# The force-flag check is bounded to the matched push segment
+# (`[^;&|]*`), so an unrelated `-f`-bearing command chained after a plain
+# push must not false-positive, and vice versa.
+
+
+def test_force_push_allows_unrelated_dash_f_after_separator() -> None:
+    """`git push origin main; tar -f x` — a later `-f` in another command — is allowed.
+
+    Regression: without per-invocation scoping, the force-flag grep would
+    match `-f` anywhere in the command string, false-positiving on an
+    unrelated command chained after a plain push.
+    """
+    assert _run_hook(_FORCE_PUSH, "git push origin main; tar -f x") == 0
+
+
+def test_force_push_allows_force_mention_after_chained_command() -> None:
+    """A plain push chained with an unrelated `--force`-mentioning commit is allowed.
+
+    The literal word `--force` sits in a later, separator-bounded segment
+    (a commit message), so it must not taint the earlier plain-push match.
+    """
+    assert (
+        _run_hook(
+            _FORCE_PUSH,
+            'git push origin main && git commit -m "use --force later"',
+        )
+        == 0
+    )
+
+
 def test_force_push_allows_non_push_git() -> None:
     """A non-push git command (`git status`) is not inspected."""
     assert _run_hook(_FORCE_PUSH, "git status") == 0
+
+
+# --- git_anchor.sh: shared lib integrity (#348 dedup contract) -------------
+# GIT_ANCHOR/SEG_ANCHOR moved to one sourced home so the four git-guard
+# hooks share a single anchor definition instead of four copies drifting
+# independently. This pins the dedup: every consumer sources the lib, and
+# none keeps a local `GIT_ANCHOR=` fallback that could silently diverge.
+
+_GIT_ANCHOR_LIB = "git_anchor.sh"
+_GIT_GUARD_HOOKS = (
+    "block_force_push.sh",
+    "block_git_rebase.sh",
+    "block_raw_git.sh",
+    "block_git_destructive.sh",
+)
+
+
+def test_git_guard_hooks_source_shared_anchor_lib() -> None:
+    """All four git-guard hooks source `git_anchor.sh`, failing CLOSED.
+
+    The guarded-source shape (existence check exiting 2 before `source`)
+    is the security contract: a missing lib in a corrupted plugin cache
+    must block, never silently disarm the guard (only exit 2 is a block
+    signal in the PreToolUse contract).
+    """
+    for hook in _GIT_GUARD_HOOKS:
+        text = (_HOOKS_DIR / hook).read_text()
+        assert 'ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"' in text, (
+            f"{hook} does not resolve the shared git_anchor.sh lib"
+        )
+        assert 'source "$ANCHOR_LIB"' in text, (
+            f"{hook} does not source the shared git_anchor.sh lib"
+        )
+        assert '[ ! -r "$ANCHOR_LIB" ]' in text, (
+            f"{hook} sources the lib without the fail-closed guard"
+        )
+
+
+def test_git_guard_hooks_have_no_local_anchor_definition() -> None:
+    """None of the four hooks keeps a local `GIT_ANCHOR='...'` definition.
+
+    A local copy would defeat the point of extracting the anchor into one
+    shared lib (#348) — two definitions can silently drift apart.
+    """
+    for hook in _GIT_GUARD_HOOKS:
+        text = (_HOOKS_DIR / hook).read_text()
+        assert "GIT_ANCHOR='" not in text, (
+            f"{hook} keeps a local GIT_ANCHOR= definition alongside the shared lib"
+        )
+
+
+def test_git_anchor_lib_defines_both_anchors() -> None:
+    """`git_anchor.sh` itself defines both `GIT_ANCHOR` and `SEG_ANCHOR`."""
+    text = (_HOOKS_DIR / _GIT_ANCHOR_LIB).read_text()
+    assert "GIT_ANCHOR='" in text
+    assert "SEG_ANCHOR='" in text
+
+
+# A command each hook's guard would normally block — any command works here,
+# since a missing anchor lib must fail closed BEFORE the command is parsed.
+_GIT_GUARD_BLOCKING_COMMANDS = {
+    "block_force_push.sh": "git push -f origin main",
+    "block_git_rebase.sh": "git rebase origin/dev",
+    "block_raw_git.sh": "git commit -m x",
+    "block_git_destructive.sh": "git reset --hard",
+}
+
+
+@pytest.mark.parametrize("hook", _GIT_GUARD_HOOKS)
+def test_git_guard_hook_fails_closed_without_anchor_lib(
+    hook: str, tmp_path: Path
+) -> None:
+    """A git-guard hook copied without its sibling `git_anchor.sh` still blocks.
+
+    Fail-closed is a security control: a corrupted or partial plugin cache
+    (hook file present, shared `git_anchor.sh` missing) must block the
+    command the guard protects, never silently disarm and let it through.
+    `test_git_guard_hooks_source_shared_anchor_lib` only asserts the guard
+    text is present in each hook; this runs the hook alone, live, to prove
+    the guard actually fires.
+
+    Args:
+        hook: Hook filename under `claude-hooks/`, copied alone into
+            `tmp_path` (with `git_anchor.sh` deliberately absent).
+        tmp_path: Isolated directory standing in for a plugin cache missing
+            the shared anchor lib.
+    """
+    isolated_hook = tmp_path / hook
+    isolated_hook.write_bytes((_HOOKS_DIR / hook).read_bytes())
+    isolated_hook.chmod(0o755)
+    payload = json.dumps(
+        {"tool_input": {"command": _GIT_GUARD_BLOCKING_COMMANDS[hook]}}
+    )
+    proc = subprocess.run(
+        ["bash", str(isolated_hook)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 2
+    assert "anchor lib missing" in proc.stderr
 
 
 # --- shared-anchor prefix bypasses (env-var / leading-ws / wrapper) --------
@@ -843,6 +996,27 @@ def test_destructive_allows_log_after_no_pager_global_option() -> None:
 def test_destructive_allows_diff_after_no_pager_global_option() -> None:
     """`git --no-pager diff` — a non-guarded verb — stays allowed."""
     assert _run_hook(_DESTRUCTIVE, "git --no-pager diff") == 0
+
+
+# --- global-option bypass, family-wide (#348 GIT_ANCHOR extraction) --------
+# The global-option tolerance above lives in the shared `GIT_ANCHOR` in
+# `git_anchor.sh`, so the same bypass class must close for every hook that
+# now sources it, not just block_git_destructive.sh.
+
+
+def test_force_push_blocks_after_no_pager_global_option() -> None:
+    """`--no-pager push --force` (global option) is blocked."""
+    assert _run_hook(_FORCE_PUSH, "git --no-pager push --force origin main") == 2
+
+
+def test_rebase_blocks_after_c_key_value_global_option() -> None:
+    """`git -c a=b rebase main` (`-c key=value` global option) is blocked."""
+    assert _run_hook(_REBASE, "git -c a=b rebase main") == 2
+
+
+def test_raw_git_blocks_commit_after_no_pager_global_option() -> None:
+    """`git --no-pager commit -m x` (global option interposed) is blocked."""
+    assert _run_hook(_RAW_GIT, "git --no-pager commit -m x") == 2
 
 
 # --- registration / retirement -----------------------------------------
