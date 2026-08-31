@@ -291,6 +291,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 Architecture RFCs — aspirational, not descriptions of current behavior. Each carries its own accept/reject status.
 
 - rust-core.md: RFC for splitting forge into a Rust governance-core binary + optional Python analysis pack
+- test-lifecycle.md: research report for the test-suite lifecycle policy (issue #396) — baseline profile, prior art, five proposals awaiting decision
 
 ## Configuration Files
 
