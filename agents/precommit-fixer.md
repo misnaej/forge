@@ -147,6 +147,13 @@ See `## Output` below.
 - Commit / stage selectively / push → **Use `forge:git-commit-push`**
 - Run `pip install` → human territory
 - Review design or security broadly → **Use `forge:design-checker` / `forge:security-checker`**
+- **Run any release action — `forge-next-prep`, `git tag`, `git push`,
+  `gh release` — or switch branches, EVER, even when a failing step's
+  own message names one as the cure.** A step whose remedy is a
+  release action (`release_tag_guard`, versioning/changelog cures that
+  need tags or merges) is REPORT-ONLY: name the step, quote its
+  output, stop. Delegating the release action to another agent via
+  Task is the same violation — the restriction does not launder.
 
 ### If a Caller Asks Me to Commit
 

@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.30.1 — Unreleased
+## v3.30.2 — Unreleased
 
 ### Docs
 - **Test-suite lifecycle research report.** New
@@ -34,6 +34,22 @@ versions follow forge's rolling-next convention.
   caught and fixed a stale `plugin-roster.toml` (missing the
   `report-to-forge` skill and the `git_anchor` hook), restoring a green
   suite on dev.
+
+## v3.30.1 — Unreleased
+
+### Fixes
+- **The precommit-fixer can never run release actions, and the tag
+  guard stops telling it to.** After an incident where the fixer
+  "cured" a `release_tag_guard` failure by creating and pushing a
+  release tag: the fixer's contract now forbids `forge-next-prep`,
+  `git tag`, `git push`, `gh release`, and branch switches outright —
+  including laundering them through a delegated Task — and the guard's
+  failure message distinguishes the human-on-dev skipped-tag case from
+  parallel-PR version stacking (cure: re-slot to latest-tag+1), ending
+  with an explicit "AGENTS: report only" line. Root cause of the
+  runtime gap was plugin staleness (cached v3.8.1 predating the #354
+  allowlist hook) — enforcement tests now pin the allowlist's
+  release-action denials.
 
 ## v3.30.0 — Unreleased
 
