@@ -1400,12 +1400,20 @@ def step_smart_test(repo_root: Path) -> StepResult:
     ``[tool.forge.smart_test].blocking = true`` to make it refuse the
     commit. See forge-docs/smart-test.md and #8.
 
+    The 48h cadence guarantee rides this step: when the tracked
+    ``.forge-full-run`` stamp is missing, invalid, or older than
+    ``full_run_max_age_hours``, the run escalates to
+    ``--depth full --all-tests`` (lifecycle deselection off) and, on
+    success, the refreshed stamp is staged into the same commit so the
+    guarantee travels through git.
+
     Args:
         repo_root: Git repo root.
 
     Returns:
-        ``StepResult`` mirroring the CLI exit code, or a skip when not
-        opted in.
+        ``StepResult`` mirroring the CLI exit code — possibly from an
+        escalated truly-all cadence run rather than the configured
+        depth — or a skip when not opted in.
 
     Raises:
         SystemExit: If ``forge-smart-test`` is not on PATH.
@@ -1439,7 +1447,7 @@ def step_smart_test(repo_root: Path) -> StepResult:
     age = _lifecycle.stamp_age_hours(repo_root)
     escalate = age is None or age >= max_age
     if escalate:
-        age_txt = "missing" if age is None else f"{age:.1f}h old"
+        age_txt = "missing or invalid" if age is None else f"{age:.1f}h old"
         passed, output = _run(
             ["forge-smart-test", "--depth", "full", "--all-tests"], cwd=repo_root
         )

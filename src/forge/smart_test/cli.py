@@ -332,6 +332,10 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     """Select and run change-affected tests by depth; write the log.
 
+    Depth tiers escalate to ``full`` automatically when the change set
+    contains non-Python paths the selector cannot map (safe fallback,
+    minus the ``nonpython_ignore`` globs).
+
     Returns:
         The exit code of the run: ``0`` on success / nothing-to-run /
         ``--show-files``, else the first failing batch's pytest exit code.

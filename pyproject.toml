@@ -157,7 +157,8 @@ enable = ["typecheck", "c4", "layering"]
 # severity contract every forge-audit-* must speak), and smart_test's
 # graph-facing children compose forge.import_graph. The four exempt
 # smart_test children are deliberately graph-independent support modules
-# (coverage-JSON parsing, git plumbing, pytest invocation) — visible
+# (coverage-JSON parsing, git plumbing, pytest invocation, test-
+# lifecycle mechanics) — visible
 # exemptions, re-reviewed whenever one starts doing graph work.
 [[tool.forge.layering.layer]]
 name = "audit-common"
@@ -179,7 +180,7 @@ composes_all_of = ["import-graph"]
 exempt = ["coverage", "git_helpers", "runner", "lifecycle"]
 
 [tool.forge.smart_test]
-# Dogfood the depth model (#396): commits run depth-2 selection; the
+# Dogfood the depth model: commits run depth-2 selection; the
 # tracked .forge-full-run stamp escalates to a truly-all run every 48h
 # (defaults for lifecycle_skip_days / full_run_max_age_hours /
 # nonpython_ignore apply — see forge-config --list).

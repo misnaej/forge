@@ -3537,7 +3537,7 @@ def test_step_smart_test_escalated_pass_rewrites_stamp_and_stages_it(
         "_run",
         _fake_run_capturing(
             calls,
-            returns={
+            expected_results={
                 "forge-smart-test --depth full --all-tests": (True, "ok"),
             },
         ),
@@ -3545,6 +3545,7 @@ def test_step_smart_test_escalated_pass_rewrites_stamp_and_stages_it(
     result = precommit.step_smart_test(tmp_path)
     assert result.passed
     assert ["git", "add", str(_lifecycle.STAMP_RELPATH)] in calls
+    assert "missing or invalid" in result.output
     assert "ran the full suite with --all-tests" in result.output
     assert "stamp refreshed and staged into this commit" in result.output
 

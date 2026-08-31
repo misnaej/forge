@@ -887,7 +887,7 @@ def _stub_run_full_deps(
 
 # ---------------------------------------------------------------------------
 # Safe-fallback escalation — a non-Python change the selector cannot map
-# forces depth=full before the depth-tiered path is ever entered (#396).
+# forces depth=full before the depth-tiered path is ever entered.
 # ---------------------------------------------------------------------------
 
 

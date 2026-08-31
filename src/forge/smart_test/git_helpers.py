@@ -85,6 +85,36 @@ def head_commit_message(repo_root: Path) -> str:
     return run_git("log", "-1", "--format=%B", cwd=repo_root, check=False)
 
 
+def _changed_files_all_sources(repo_root: Path, base_ref: str) -> set[str]:
+    """Union every changed path across the four change sources.
+
+    The shared plumbing behind :func:`changed_python_files` and
+    :func:`changed_non_python_files`: committed delta vs the merge-base
+    (three-dot semantics), unstaged edits, staged edits, and untracked
+    files. Callers filter the result; this helper takes no position.
+
+    Args:
+        repo_root: Git repo root.
+        base_ref: Ref to diff against (see :func:`resolve_base_ref`).
+
+    Returns:
+        Repo-relative changed paths of every type.
+    """
+    merge_base = run_git("merge-base", base_ref, "HEAD", cwd=repo_root, check=False)
+    diff_base = merge_base or base_ref
+    arg_sets = (
+        ("diff", "--name-only", diff_base, "HEAD"),
+        ("diff", "--name-only"),
+        ("diff", "--name-only", "--cached"),
+        ("ls-files", "--others", "--exclude-standard"),
+    )
+    files: set[str] = set()
+    for args in arg_sets:
+        out = run_git(*args, cwd=repo_root, check=False)
+        files.update(line for line in out.splitlines() if line)
+    return files
+
+
 def changed_python_files(repo_root: Path, base_ref: str) -> set[str]:
     """Return repo-relative ``.py`` files changed vs *base_ref*.
 
@@ -102,19 +132,11 @@ def changed_python_files(repo_root: Path, base_ref: str) -> set[str]:
     Returns:
         Repo-relative paths ending in ``.py``; empty when nothing changed.
     """
-    merge_base = run_git("merge-base", base_ref, "HEAD", cwd=repo_root, check=False)
-    diff_base = merge_base or base_ref
-    arg_sets = (
-        ("diff", "--name-only", diff_base, "HEAD"),
-        ("diff", "--name-only"),
-        ("diff", "--name-only", "--cached"),
-        ("ls-files", "--others", "--exclude-standard"),
-    )
-    files: set[str] = set()
-    for args in arg_sets:
-        out = run_git(*args, cwd=repo_root, check=False)
-        files.update(line for line in out.splitlines() if line.endswith(".py"))
-    return files
+    return {
+        rel
+        for rel in _changed_files_all_sources(repo_root, base_ref)
+        if rel.endswith(".py")
+    }
 
 
 def changed_non_python_files(
@@ -138,22 +160,9 @@ def changed_non_python_files(
         Repo-relative non-Python changed paths after ignores; a non-empty
         result means the caller must run the full suite.
     """
-    merge_base = run_git("merge-base", base_ref, "HEAD", cwd=repo_root, check=False)
-    diff_base = merge_base or base_ref
-    arg_sets = (
-        ("diff", "--name-only", diff_base, "HEAD"),
-        ("diff", "--name-only"),
-        ("diff", "--name-only", "--cached"),
-        ("ls-files", "--others", "--exclude-standard"),
-    )
-    files: set[str] = set()
-    for args in arg_sets:
-        out = run_git(*args, cwd=repo_root, check=False)
-        files.update(
-            line for line in out.splitlines() if line and not line.endswith(".py")
-        )
     return {
         rel
-        for rel in files
-        if not any(fnmatch.fnmatch(rel, pat) for pat in ignore_globs)
+        for rel in _changed_files_all_sources(repo_root, base_ref)
+        if not rel.endswith(".py")
+        and not any(fnmatch.fnmatch(rel, pat) for pat in ignore_globs)
     }

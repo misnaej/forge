@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_66 modules, 761 symbols._
+_66 modules, 763 symbols._
 
 ## `forge`
 
@@ -871,6 +871,7 @@ _66 modules, 761 symbols._
 - `_ref_exists(repo_root: Path, ref: str) -> bool` _(internal)_ — Return whether *ref* resolves to a commit in the repo.
 - `resolve_base_ref(repo_root: Path, override: str | None = None) -> str` — Resolve the ref to diff ``HEAD`` against for change detection.
 - `head_commit_message(repo_root: Path) -> str` — Return ``HEAD``'s full commit message (subject + body).
+- `_changed_files_all_sources(repo_root: Path, base_ref: str) -> set[str]` _(internal)_ — Union every changed path across the four change sources.
 - `changed_python_files(repo_root: Path, base_ref: str) -> set[str]` — Return repo-relative ``.py`` files changed vs *base_ref*.
 - `changed_non_python_files(repo_root: Path, base_ref: str, *, ignore_globs: tuple[str, ...] = ()) -> set[str]` — Return changed non-``.py`` files the selector cannot map to tests.
 
@@ -880,6 +881,7 @@ _66 modules, 761 symbols._
 
 - `class RunMetrics` — Per-run metrics appended to the smart-test history ledger.
 - `development_marked_files(repo_root: Path, test_files: set[str]) -> set[str]` — Return the subset of *test_files* classified as development tests.
+- `_has_development_pytestmark(text: str) -> bool` _(internal)_ — Return whether *text* carries a top-level development pytestmark.
 - `days_since_last_touch(repo_root: Path, rel_path: str) -> float` — Return days since *rel_path*'s last commit.
 - `lifecycle_skippable(repo_root: Path, test_files: set[str], changed: set[str], *, skip_days: float = DEFAULT_SKIP_DAYS) -> set[str]` — Return development files an ordinary full run may deselect.
 - `read_stamp(repo_root: Path) -> _dt.datetime | None` — Return the last truly-all run's timestamp, or ``None``.

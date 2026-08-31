@@ -91,8 +91,8 @@ def test_development_marked_files_unreadable_skipped_without_raising(
 def test_development_marked_files_comment_mention_not_matched(tmp_path: Path) -> None:
     """A ``pytestmark`` mention inside a comment does not count as marking.
 
-    The line-anchored regex requires ``pytestmark`` at the very start of the
-    line; a ``#``-prefixed comment line never matches.
+    A comment is not an AST assignment node, so the module-level
+    ``pytestmark`` check never sees it.
     """
     (tmp_path / "test_d.py").write_text(
         "# pytestmark = pytest.mark.development (do not uncomment yet)\n"
@@ -104,10 +104,10 @@ def test_development_marked_files_comment_mention_not_matched(tmp_path: Path) ->
 
 
 def test_development_marked_files_docstring_mention_not_matched(tmp_path: Path) -> None:
-    """A ``pytestmark`` mention inside a docstring line does not count as marking.
+    """A ``pytestmark`` mention inside a docstring does not count as marking.
 
-    The docstring line is prefixed by other text, so it never starts with
-    ``pytestmark`` at column 0 — the line anchor excludes it.
+    The docstring is a string constant, not an AST assignment node, so the
+    module-level ``pytestmark`` check never sees it.
     """
     (tmp_path / "test_e.py").write_text(
         '"""Explains that pytestmark = pytest.mark.development is used elsewhere."""\n'
@@ -115,6 +115,28 @@ def test_development_marked_files_docstring_mention_not_matched(tmp_path: Path) 
         encoding="utf-8",
     )
     result = lifecycle.development_marked_files(tmp_path, {"test_e.py"})
+    assert result == set()
+
+
+def test_development_marked_files_docstring_column_zero_line_not_matched(
+    tmp_path: Path,
+) -> None:
+    """A docstring line starting exactly ``pytestmark = ...`` at column 0 doesn't match.
+
+    A line-anchored regex would match this (the docstring line starts at
+    column 0 verbatim), but the AST-based check requires a genuine
+    top-level ``pytestmark`` assignment — a string literal is never one
+    (security review, #396).
+    """
+    (tmp_path / "test_f.py").write_text(
+        '"""Module docstring.\n'
+        "pytestmark = pytest.mark.development\n"
+        '"""\n'
+        "def test_ok():\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    result = lifecycle.development_marked_files(tmp_path, {"test_f.py"})
     assert result == set()
 
 
@@ -255,9 +277,24 @@ def test_stamp_age_hours_naive_timestamp_coerced_to_utc(tmp_path: Path) -> None:
     assert abs(age - 5.0) < 0.1
 
 
-def test_stamp_age_hours_future_stamp_clamps_to_zero(tmp_path: Path) -> None:
-    """A stamp in the future clamps the age to 0.0 rather than going negative."""
+def test_stamp_age_hours_future_beyond_tolerance_returns_none(tmp_path: Path) -> None:
+    """A stamp more than the clock-skew tolerance in the future returns ``None``.
+
+    A forged or badly mis-merged future stamp must escalate rather than
+    silently clamp to a fresh-looking ``0.0`` (security review, #396).
+    """
     future = _dt.datetime.now(tz=_dt.UTC) + _dt.timedelta(hours=10)
+    (tmp_path / lifecycle.STAMP_RELPATH).write_text(
+        future.isoformat() + "\n", encoding="utf-8"
+    )
+    assert lifecycle.stamp_age_hours(tmp_path) is None
+
+
+def test_stamp_age_hours_future_within_tolerance_clamps_to_zero(
+    tmp_path: Path,
+) -> None:
+    """A stamp only a few seconds in the future (clock skew) still clamps to 0.0."""
+    future = _dt.datetime.now(tz=_dt.UTC) + _dt.timedelta(seconds=5)
     (tmp_path / lifecycle.STAMP_RELPATH).write_text(
         future.isoformat() + "\n", encoding="utf-8"
     )

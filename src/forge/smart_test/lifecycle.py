@@ -25,6 +25,7 @@ mismatches.
 
 from __future__ import annotations
 
+import ast
 import datetime as _dt
 import re
 import time
@@ -62,11 +63,10 @@ DEFAULT_NONPYTHON_IGNORE = (
     ".gitignore",
 )
 
-# Module-level development classification. Line-anchored on purpose: the
-# marker must be a top-level ``pytestmark`` assignment naming the
-# ``development`` mark — per-test decorators exist for humans but the
-# file-level selection model acts only on whole-file classification.
-_DEV_MARK_RE = re.compile(r"^pytestmark\s*=.*\bdevelopment\b", re.MULTILINE)
+# Tolerance for clock skew before a future-dated stamp is treated as
+# invalid — a forged or mis-merged future stamp must escalate, never
+# silently suppress the cadence guarantee (security review, #396).
+_STAMP_FUTURE_TOLERANCE_S = 300.0
 
 _FAILED_LINE_RE = re.compile(r"^FAILED ([^\s:]+\.py)", re.MULTILINE)
 
@@ -90,9 +90,36 @@ def development_marked_files(repo_root: Path, test_files: set[str]) -> set[str]:
             text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        if _DEV_MARK_RE.search(text):
+        if _has_development_pytestmark(text):
             marked.add(rel)
     return marked
+
+
+def _has_development_pytestmark(text: str) -> bool:
+    """Return whether *text* carries a top-level development pytestmark.
+
+    AST-based on purpose: only a real module-level ``pytestmark``
+    assignment whose value names the ``development`` mark classifies —
+    the same literal quoted inside a docstring or comment never does
+    (security review, #396). An unparsable file is behavior by default.
+
+    Args:
+        text: The test module's source.
+
+    Returns:
+        ``True`` only for a genuine top-level assignment.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        names = {t.id for t in node.targets if isinstance(t, ast.Name)}
+        if "pytestmark" in names and "development" in ast.dump(node.value):
+            return True
+    return False
 
 
 def days_since_last_touch(repo_root: Path, rel_path: str) -> float:
@@ -188,7 +215,12 @@ def stamp_age_hours(repo_root: Path) -> float | None:
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=_dt.UTC)
     now = _dt.datetime.now(tz=_dt.UTC)
-    return max(0.0, (now - stamp).total_seconds() / 3600.0)
+    delta_s = (now - stamp).total_seconds()
+    if delta_s < -_STAMP_FUTURE_TOLERANCE_S:
+        # A future-dated stamp would silently disable the cadence
+        # guarantee — treat it as invalid so the caller escalates.
+        return None
+    return max(0.0, delta_s / 3600.0)
 
 
 def failed_files(pytest_output: str) -> set[str]:

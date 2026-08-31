@@ -93,7 +93,7 @@ Code.
    - git_helpers.py: diff-base resolution + changed-`.py` enumeration (committed delta + staged/unstaged/untracked), layered on `git_utils`
    - dependencies.py: reverse test→source import graph (built on `import_graph`) + depth expansion; `SelectionPlan`, `render_plan`
    - runner.py: import-cache hygiene + a single deterministic `pytest` invocation per batch (coverage only on `full`)
-   - lifecycle.py: test-lifecycle mechanics — development-marker detection, 30d lifecycle-skip filter, the tracked `.forge-full-run` 48h stamp, full-run history ledger, depth-2 differential check (#396)
+   - lifecycle.py: test-lifecycle mechanics — development-marker detection, 30d lifecycle-skip filter, the tracked `.forge-full-run` 48h stamp, full-run history ledger, depth-2 differential check
    - coverage.py: opt-in coverage-validated selection — maps changed lines → covering tests via per-test coverage contexts (json or `.coverage` DB); unioned into the static pass
    - cli.py: `forge-smart-test` — `--depth 0/1/2/full`, `--show-files`, `--coverage`, `--base`, `--coverage-db`, `--from-commit-message`; depth batching with fail-fast; writes `code_health/smart_test.log`
 
@@ -302,7 +302,7 @@ Architecture RFCs — aspirational, not descriptions of current behavior. Each c
    - ruff.toml: ruff lint and format configuration (strict, ALL rules)
    - pyrefly.toml: pyrefly type-checker config for the opt-in `typecheck` step (strict return-type checking; interrogate's attrs `__init__` silenced via `replace-imports-with-any`)
    - c4.toml: standalone C4 architecture-model skeleton consumed by `forge-gen-c4` (kept out of pyproject; pointed at by `[tool.forge.c4].config`)
-   - .forge-full-run: tracked one-line ISO stamp of the last truly-all test run — the 48h full-run cadence guarantee, rewritten and restaged by the `smart_test` pre-commit step (#396)
+   - .forge-full-run: tracked one-line ISO stamp of the last truly-all test run — the 48h full-run cadence guarantee, rewritten and restaged by the `smart_test` pre-commit step
 
 3. **Documentation**
    - CLAUDE.md: project guidance for Claude Code and developers
