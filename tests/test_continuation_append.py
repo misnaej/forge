@@ -499,6 +499,71 @@ def test_rotate_preserves_structured_head_byte_identical(
     assert content.startswith(head)
 
 
+def test_rotate_preserves_stray_note_in_recent_section(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A freeform stray line in Recent activity survives rotation.
+
+    SCENARIO: A human dropped a note directly into the Recent activity
+    section without the ``- `` entry prefix, alongside entries old enough
+    to trigger rotation.
+    EXPECTED BEHAVIOR: The note is re-emitted under the Recent activity
+    header, never silently dropped (``_split_sections``' conservation
+    invariant for strays).
+    """
+    stray_note = "Note: forgot to log the demo prep"
+    old_date = _days_ago(3)
+    _write_continuation(
+        tmp_path,
+        recent_lines=[
+            stray_note,
+            f"- {old_date} 1234567 old commit",
+            *_filler_lines(),
+        ],
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["forge-continuation-append", "--rotate"])
+    assert continuation_append.main() == 0
+
+    content = (tmp_path / ".plan" / "CONTINUATION.md").read_text()
+    recent_section = content.split(continuation_append.RECENT_HEADER, 1)[1]
+    assert stray_note in recent_section
+    assert "1234567" not in recent_section
+
+
+def test_rotate_preserves_unparsable_digest_line_verbatim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-existing digest line in a legacy/unparsable format survives rotation.
+
+    SCENARIO: The condensed-history section already contains a line that
+    ``_DIGEST_RE`` cannot parse (hand-edited or a since-changed digest
+    shape), and rotation is triggered by an aged entry.
+    EXPECTED BEHAVIOR: The legacy line is re-emitted verbatim in the
+    condensed section alongside the freshly regenerated digests, never
+    dropped (``_rotate``'s conservation invariant for unparsed digests).
+    """
+    legacy_line = "- 2019-12-01 -- 3 commits total (legacy format)"
+    head = (
+        f"{continuation_append.FILE_HEADER}\n\n"
+        f"{continuation_append.CONDENSED_HEADER}\n\n"
+        f"{legacy_line}\n"
+        "\n"
+    )
+    old_date = _days_ago(3)
+    _write_continuation(
+        tmp_path,
+        head=head,
+        recent_lines=[f"- {old_date} 1234567 aged commit", *_filler_lines()],
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["forge-continuation-append", "--rotate"])
+    assert continuation_append.main() == 0
+
+    content = (tmp_path / ".plan" / "CONTINUATION.md").read_text()
+    assert legacy_line in content
+
+
 def test_rotate_floor_keeps_ten_newest_entries_when_all_aged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -583,6 +648,80 @@ def test_rotate_wip_advisory_logged_when_pinned_exceed_half_the_cap(
         and "advisory:" in record.getMessage()
         for record in caplog.records
     )
+
+
+def test_rotate_preserves_prose_quoting_section_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A head bullet quoting the header literally survives rotation intact.
+
+    SCENARIO: The structured head contains a bullet that quotes the
+    ``## Recent activity (auto-appended)`` header verbatim as prose (e.g.
+    documenting the convention for new contributors), and aged entries
+    are present to trigger rotation.
+    EXPECTED BEHAVIOR: ``_split_sections`` locates the real header via
+    line-anchored matching (the header text alone on its own line, not a
+    substring occurring mid-line), so the prose bullet — including the
+    text trailing the quoted header — is preserved verbatim in the head
+    and never truncated.
+    """
+    quoting_bullet = (
+        "- Document the ## Recent activity (auto-appended) convention "
+        "for new contributors."
+    )
+    head = (
+        f"{continuation_append.FILE_HEADER}\n\n"
+        "## Status\nWorking on issue #412.\n\n"
+        "## Open follow-ups\n"
+        f"{quoting_bullet}\n\n"
+    )
+    old_date = _days_ago(3)
+    _write_continuation(
+        tmp_path,
+        head=head,
+        recent_lines=[f"- {old_date} 1234567 aged commit", *_filler_lines()],
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["forge-continuation-append", "--rotate"])
+    assert continuation_append.main() == 0
+
+    content = (tmp_path / ".plan" / "CONTINUATION.md").read_text()
+    assert content.startswith(head)
+    assert quoting_bullet in content
+
+
+def test_rotate_partitions_identical_entries_independently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two textually-identical aged entries partition independently by index.
+
+    SCENARIO: 9 fresh filler entries plus two aged, unpinned entries with
+    IDENTICAL text — the floor (``MIN_RECENT_ENTRIES`` == 10) needs
+    exactly one entry rescued from overflow to reach the minimum.
+    EXPECTED BEHAVIOR: Partitioning tracks original list indices, not
+    entry text (``_partition_recent``'s conservation invariant), so
+    exactly one of the two identical lines is rescued: the kept section
+    ends up with exactly 10 entries, the duplicate text appears exactly
+    once in Recent activity and exactly once in the archive — never
+    duplicated across both or dropped from both.
+    """
+    old_date = _days_ago(3)
+    duplicate_line = f"- {old_date} PR #999 wrap-up: retried"
+    recent_lines = [*_filler_lines(9), duplicate_line, duplicate_line]
+    _write_continuation(tmp_path, recent_lines=recent_lines)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["forge-continuation-append", "--rotate"])
+    assert continuation_append.main() == 0
+
+    content = (tmp_path / ".plan" / "CONTINUATION.md").read_text()
+    recent_section = content.split(continuation_append.RECENT_HEADER, 1)[1]
+    kept = [ln for ln in recent_section.splitlines() if ln.startswith("- ")]
+    assert len(kept) == continuation_append.MIN_RECENT_ENTRIES
+    assert kept.count(duplicate_line) == 1
+
+    archive = (tmp_path / ".plan" / "CONTINUATION-archive.md").read_text()
+    archive_lines = [ln for ln in archive.splitlines() if ln == duplicate_line]
+    assert len(archive_lines) == 1
 
 
 # --- Rotation: development-class (direct helper calls) --------------------

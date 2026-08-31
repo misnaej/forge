@@ -14,6 +14,7 @@ Usage:
 - ``forge-continuation-append --commit <hash> <subject>`` — record a commit.
 - ``forge-continuation-append --pr <number> <subject>`` — record a PR wrap-up.
 - ``forge-continuation-append --merge <hash> <subject>`` — record a PR merge.
+- ``forge-continuation-append --rotate`` — rotation/condensation only, no append.
 
 The CLI ensures both the file and the ``## Recent activity (auto-appended)``
 section header exist before appending. Idempotent on the header.
@@ -106,29 +107,45 @@ def _append_line(path: Path, line: str) -> None:
         fh.write(line + "\n")
 
 
-def _split_sections(text: str) -> tuple[str, list[str], list[str]]:
-    """Split the file into head, condensed-digest lines, and recent entries.
+def _split_sections(text: str) -> tuple[str, list[str], list[str], list[str]]:
+    """Split the file into head, digest lines, recent entries, and strays.
 
     Args:
         text: Full CONTINUATION.md content (RECENT_HEADER guaranteed
             present by :func:`_ensure_file_and_section`).
 
     Returns:
-        ``(head, digest_lines, recent_lines)`` — *head* is everything
-        before the condensed/recent sections, verbatim; the two lists
-        hold existing ``- ``-prefixed lines from each section.
+        ``(head, digest_lines, recent_lines, strays)`` — *head* is
+        everything before the condensed/recent sections, verbatim; the
+        first two lists hold ``- ``-prefixed lines from each section;
+        *strays* is any other non-blank content found inside those
+        sections (human notes, garbled headers) — callers must preserve
+        strays, never drop them (conservation invariant).
     """
-    recent_idx = text.index(RECENT_HEADER)
-    cond_idx = text.find(CONDENSED_HEADER)
+    recent_m = re.search(rf"(?m)^{re.escape(RECENT_HEADER)}\s*$", text)
+    if recent_m is None:  # pragma: no cover - guaranteed by _ensure_file
+        msg = "RECENT_HEADER not found as a whole line"
+        raise ValueError(msg)
+    recent_idx = recent_m.start()
+    cond_m = re.search(rf"(?m)^{re.escape(CONDENSED_HEADER)}\s*$", text)
+    cond_idx = cond_m.start() if cond_m else -1
     head_end = cond_idx if cond_idx != -1 and cond_idx < recent_idx else recent_idx
     head = text[:head_end]
     digest_lines: list[str] = []
+    strays: list[str] = []
     if cond_idx != -1 and cond_idx < recent_idx:
-        cond_block = text[cond_idx:recent_idx]
-        digest_lines = [ln for ln in cond_block.splitlines() if ln.startswith("- ")]
-    recent_block = text[recent_idx + len(RECENT_HEADER) :]
-    recent_lines = [ln for ln in recent_block.splitlines() if ln.startswith("- ")]
-    return head, digest_lines, recent_lines
+        for ln in text[cond_idx:recent_idx].splitlines():
+            if ln.startswith("- "):
+                digest_lines.append(ln)
+            elif ln.strip() and ln.strip() != CONDENSED_HEADER:
+                strays.append(ln)
+    recent_lines: list[str] = []
+    for ln in text[recent_idx + len(RECENT_HEADER) :].splitlines():
+        if ln.startswith("- "):
+            recent_lines.append(ln)
+        elif ln.strip():
+            strays.append(ln)
+    return head, digest_lines, recent_lines, strays
 
 
 def _parse_digests(
@@ -141,7 +158,8 @@ def _parse_digests(
 
     Returns:
         Mapping ``date -> (commits, wrapups, merges, other, pr_set)``;
-        unparsable lines are dropped (they are regenerated from counts).
+        unparsable lines are skipped here — the caller re-emits them
+        verbatim (conservation invariant), never regenerates them.
     """
     acc: dict[str, tuple[int, int, int, int, set[str]]] = {}
     for ln in digest_lines:
@@ -228,45 +246,52 @@ def _partition_recent(
         entries to rotate to archive, and count of pinned entries in keep.
     """
     # Undone work stays: entries referencing open PRs/issues in head
-    # are pinned past the age bound.
-    pinned_refs = set(_PR_NUM_RE.findall(head)) | set(re.findall(r"#(\d+)", head))
+    # are pinned past the age bound. (The generic #N pattern subsumes
+    # "PR #N", so one regex suffices.)
+    pinned_refs = set(re.findall(r"#(\d+)", head))
 
-    # Phase 1: classify by age and pinning
-    keep: list[str] = []
-    overflow: list[str] = []
+    # Every phase tracks ORIGINAL LIST INDICES, never entry text —
+    # textually-identical entries (a retried wrap-up on the same day)
+    # must partition independently or the floor/cap invariants break
+    # and lines duplicate across keep and archive.
+    keep_idx: list[int] = []
+    overflow_idx: list[int] = []
     pinned_kept = 0
-    for ln in recent:
+    pinned_at: set[int] = set()
+    for i, ln in enumerate(recent):
         m = _ENTRY_RE.match(ln)
         aged = bool(m and m.group(1) < cutoff)
         refs = set(re.findall(r"#(\d+)", ln))
         pinned = bool(refs & pinned_refs)
+        if pinned:
+            pinned_at.add(i)
         if aged and not pinned:
-            overflow.append(ln)
+            overflow_idx.append(i)
         else:
-            keep.append(ln)
+            keep_idx.append(i)
             pinned_kept += pinned
 
-    # Phase 2: apply minimum-keep floor
+    # Minimum-keep floor: rescue the newest overflow indices.
     floor = min(MIN_RECENT_ENTRIES, len(recent))
-    while len(keep) < floor and overflow:
-        keep.append(overflow.pop())
+    while len(keep_idx) < floor and overflow_idx:
+        keep_idx.append(overflow_idx.pop())
 
-    # Restore original order after floor may have pulled lines back
-    kept_set = set(keep)
-    keep = [ln for ln in recent if ln in kept_set]
+    keep_idx.sort()
 
-    # Phase 3: apply count cap (evicts oldest unpinned only)
-    if len(keep) > max_entries:
-        excess = len(keep) - max_entries
-        new_keep: list[str] = []
-        for ln in keep:
-            refs = set(re.findall(r"#(\d+)", ln))
-            if excess > 0 and not (refs & pinned_refs):
-                overflow.append(ln)
+    # Count cap: evict the oldest UNPINNED kept indices only.
+    if len(keep_idx) > max_entries:
+        excess = len(keep_idx) - max_entries
+        capped: list[int] = []
+        for i in keep_idx:
+            if excess > 0 and i not in pinned_at:
+                overflow_idx.append(i)
                 excess -= 1
             else:
-                new_keep.append(ln)
-        keep = new_keep
+                capped.append(i)
+        keep_idx = capped
+
+    keep = [recent[i] for i in keep_idx]
+    overflow = [recent[i] for i in sorted(overflow_idx)]
 
     return keep, overflow, pinned_kept
 
@@ -275,7 +300,7 @@ def _rotate(path: Path, archive: Path, *, max_entries: int, max_age_days: int) -
     """Rotate aged/overflowing recent entries into digest + archive.
 
     An entry rotates when its date is older than *max_age_days* (done
-    work clears the recent tail after a week by default) or when it
+    work clears the recent tail after two days by default) or when it
     falls outside the newest *max_entries* (flood guard). Rotated lines
     are appended verbatim to *archive* — never deleted — and folded into
     the per-day condensed-history digest.
@@ -287,7 +312,7 @@ def _rotate(path: Path, archive: Path, *, max_entries: int, max_age_days: int) -
         max_age_days: Age bound in days for the recent section.
     """
     text = path.read_text()
-    head, digest_lines, recent = _split_sections(text)
+    head, digest_lines, recent, strays = _split_sections(text)
     cutoff_dt = datetime.now(UTC).timestamp() - max_age_days * 86400
     cutoff = datetime.fromtimestamp(cutoff_dt, tz=UTC).strftime("%Y-%m-%d")
 
@@ -311,15 +336,21 @@ def _rotate(path: Path, archive: Path, *, max_entries: int, max_age_days: int) -
         fh.write("\n".join(overflow) + "\n")
 
     acc = _condense_into(_parse_digests(digest_lines), overflow)
-    digest = _render_digest(acc)
+    # Conservation: digest lines the parser cannot read (hand edits,
+    # legacy formats — any future _render_digest shape change strands
+    # lines here too) are re-emitted verbatim, never regenerated away.
+    unparsed = [ln for ln in digest_lines if not _DIGEST_RE.match(ln)]
+    digest = _render_digest(acc) + unparsed
     if not head.endswith("\n"):
         head += "\n"
+    stray_block = ("\n".join(strays) + "\n") if strays else ""
     new_text = (
         head
         + f"{CONDENSED_HEADER}\n\n"
         + "\n".join(digest)
         + ("\n" if digest else "")
         + f"\n{RECENT_HEADER}\n\n"
+        + stray_block
         + "\n".join(keep)
         + ("\n" if keep else "")
     )
@@ -333,7 +364,9 @@ def _rotate(path: Path, archive: Path, *, max_entries: int, max_age_days: int) -
 
 
 def main() -> int:
-    """Append one activity-log line to ``.plan/CONTINUATION.md``.
+    """Append one activity-log line and/or rotate the ledger tail.
+
+    Every invocation rotates; ``--rotate`` skips the append entirely.
 
     Returns:
         ``0`` on success, ``2`` on argument error.

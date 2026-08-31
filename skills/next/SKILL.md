@@ -235,7 +235,8 @@ task-selection precedence rule in Important Rules).
       stale content inside the structured sections.
 
     If `.plan/CONTINUATION.md` does not exist, create it from the
-    FOUNDATION §10 template. `.plan/CONTINUATION.md` is gitignored.
+    FOUNDATION §10 template (step 14 applies to it once created).
+    `.plan/CONTINUATION.md` is gitignored.
 
 ## Important Rules
 
