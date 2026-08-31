@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.28.1 — Unreleased
+## v3.29.1 — Unreleased
 
 ### Docs
 - **Test-suite lifecycle research report.** New
@@ -34,6 +34,18 @@ versions follow forge's rolling-next convention.
   caught and fixed a stale `plugin-roster.toml` (missing the
   `report-to-forge` skill and the `git_anchor` hook), restoring a green
   suite on dev.
+
+## v3.29.0 — Unreleased
+
+### Features
+- **PR wrap-ups report by exception.** A clean check is one PASS line;
+  prose is reserved for findings and their dispositions (fixed in
+  `<sha>` / deferred to `#N` / accepted with reason) — an all-green
+  wrap-up collapses to a handful of lines instead of re-narrating every
+  checker. Canonical rule in `agents/_TEMPLATE.md` beside the
+  no-hard-wrap contract; `pr-manager`'s wrap-up sections and the three
+  reporter agents point to it. Verbosity now scales with findings,
+  never with the number of checks run.
 
 ## v3.28.0 — Unreleased
 
