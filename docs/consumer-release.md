@@ -139,9 +139,11 @@ PR check".
 branch-cumulative — a tag cut while the branch is open strands *all*
 its earlier entries at once, and editing headings cannot fix it. The
 one cure is merging the base in (`git merge origin/<base>`); with
-uncommitted work in the tree, use the stash dance [`FOUNDATION.md` §2](../FOUNDATION.md#2-core-safety-rules)
-sanctions (`git stash -u` → merge → `git stash pop`; on any failure
-leave the stash alone) — never `git reset --hard`.
+uncommitted work in the tree, follow the sync ladder
+[`FOUNDATION.md` §2](../FOUNDATION.md#2-core-safety-rules) sanctions
+(probe with `git merge-tree --write-tree`, merge directly when nothing
+overlaps, otherwise secure the work as a `wip-sync:` checkpoint commit
+first) — never `git reset --hard`, never untracked-including stash.
 
 **Deferred entry timing** (`[tool.forge.changelog].precommit_enforce =
 false`): by default `changelog_updated` gates every local commit, which
