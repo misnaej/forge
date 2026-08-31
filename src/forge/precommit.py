@@ -1315,10 +1315,15 @@ def step_release_tag_guard(repo_root: Path) -> StepResult:
     Forge tags **every** merge to its dev branch (``forge-next-prep --tag``),
     so ``plugin.json`` — which names the *next* release — must always sit
     **exactly one** rolling-next step (patch+1 / minor+1 / major+1) ahead of
-    the latest ``v*`` tag. A larger gap means a prior release's tag was
-    skipped and is about to be buried by a further bump (the failure mode of
-    #66, where v1.25.0 shipped untagged). This guard refuses that commit and
-    points at ``forge-next-prep --tag``.
+    the latest ``v*`` tag. A larger gap has two distinct causes, and the
+    failure message names both: (a) on dev, a prior release's tag was
+    skipped and is about to be buried (the #66 failure mode, where v1.25.0
+    shipped untagged) — a HUMAN runs ``forge-next-prep --tag``; (b) on a
+    feature branch, other open PRs hold the intermediate version slots —
+    nothing was skipped, the cure is re-slotting ``plugin.json`` to
+    latest-tag+1. The message ends with an explicit agents-report-only
+    directive: no agent may run the tag command (or any release action) to
+    clear this step (#405).
 
     Self-skips (passes) for any repo this cadence does not apply to: a
     single-track repo, one without ``.claude-plugin/plugin.json``, one with
@@ -1330,8 +1335,8 @@ def step_release_tag_guard(repo_root: Path) -> StepResult:
         repo_root: Git repo root.
 
     Returns:
-        ``StepResult`` — blocking failure only on a genuine tag gap;
-        skipped/pass otherwise.
+        ``StepResult`` — blocking failure whenever the gap exceeds one step,
+        whichever cause produced it; skipped/pass otherwise.
     """
     if not config.load_config(repo_root).dual_track:
         return StepResult(
@@ -1369,9 +1374,15 @@ def step_release_tag_guard(repo_root: Path) -> StepResult:
         passed=False,
         output=(
             f"plugin.json {plugin_ver} is more than one release ahead of the "
-            f"latest tag v{latest} — an intermediate rolling-next release was "
-            f"never tagged and will be lost. Run `forge-next-prep --tag` to "
-            f"tag it before bumping further (FOUNDATION / docs/release-process)."
+            f"latest tag v{latest}. Two distinct causes — pick the right "
+            "cure. (a) On the dev branch after a merge whose release was "
+            "never tagged: a HUMAN runs `forge-next-prep --tag` on dev. "
+            "(b) On a feature branch while other open PRs hold the "
+            "intermediate version slots: nothing was skipped — re-slot "
+            "this branch's plugin.json to latest-tag+1; merge-order "
+            "re-bumping resolves the rest (docs/release-process). "
+            "AGENTS: report only — never run the tag command or any "
+            "release action to clear this step."
         ),
     )
 

@@ -515,6 +515,52 @@ def test_release_guard_blocks_on_skipped_release(
     assert "forge-next-prep --tag" in result.output
 
 
+def test_release_guard_failure_names_both_cures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The two-minor-gap failure names both the dev-tag cure and the re-slot cure.
+
+    See #405.
+    """
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="1.26.0", latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert "forge-next-prep --tag" in result.output
+    assert "re-slot" in result.output
+
+
+def test_release_guard_failure_names_dev_branch_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both causes — untagged dev release and a feature branch's stale slot.
+
+    See #405.
+    """
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="1.26.0", latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert "dev" in result.output
+    assert "feature branch" in result.output
+
+
+def test_release_guard_failure_has_agents_directive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failure explicitly forbids an agent from self-clearing via a release action.
+
+    See #405.
+    """
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="1.26.0", latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert "AGENTS:" in result.output
+    assert "report only" in result.output
+    assert "never run" in result.output
+
+
 def test_release_guard_skips_single_track(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
