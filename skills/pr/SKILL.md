@@ -63,11 +63,10 @@ silently merge.** Which variant depends on Step 0:
   CHANGELOG per `docs/release-process.md` §5, care per FOUNDATION §6's
   resolution rule), then re-run from Step 0.5.
 - **Behind but clean** (left count > 0, not conflicting) → merge the
-  base in and proceed — no confirmation needed: it refreshes the branch
-  so verification reflects the real merge result, adds a merge commit
-  (destroying nothing), and re-triggers CI. Say what was done; the §2
-  bans (rebase, force-push, reset) are the operations that actually
-  rewrite history and stay untouched.
+  base in and proceed, saying what was done — **no confirmation
+  needed** (FOUNDATION §6's resolution rule governs): it refreshes the
+  branch so verification reflects the real merge result and re-triggers
+  CI.
 - **Up to date, `MERGEABLE`** → proceed to Step 1.
 
 **Stranded-changelog check** (single-track repos with a root

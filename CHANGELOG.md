@@ -22,7 +22,7 @@ versions follow forge's rolling-next convention.
 
 ## v3.28.0 — Unreleased
 
-### Features
+### Docs
 - **Syncing a branch with its base no longer asks permission.** A base
   merge adds a merge commit and destroys nothing — the /pr skill's
   behind-but-clean case now merges and proceeds, and FOUNDATION §6
