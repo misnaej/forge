@@ -253,19 +253,22 @@ options:
 ## forge-continuation-append
 
 ```text
-usage: forge-continuation-append [-h] (--commit HASH | --pr NUMBER |
-                                 --merge HASH)
-                                 subject
+usage: forge-continuation-append [-h] (--rotate | --commit HASH |
+                                 --pr NUMBER | --merge HASH)
+                                 [subject]
 
 Append one line to .plan/CONTINUATION.md's auto-appended activity section.
 Single source of truth for the format used by forge:git-commit-push and
 forge:pr-manager.
 
 positional arguments:
-  subject        Subject line — commit subject, PR title, or merge subject.
+  subject        Subject line — commit subject, PR title, or merge subject
+                 (omitted with --rotate).
 
 options:
   -h, --help     show this help message and exit
+  --rotate       Run rotation/condensation only, without appending — the
+                 continuation-hygiene entry point for the /next skill.
   --commit HASH  Record a commit. HASH is the short SHA.
   --pr NUMBER    Record a PR wrap-up. NUMBER is the PR number (no leading #).
   --merge HASH   Record a PR merge on main. HASH is the short SHA.

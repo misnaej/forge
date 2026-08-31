@@ -216,8 +216,23 @@ task-selection precedence rule in Important Rules).
     - **Done** — clear, or keep only items still relevant.
     - **In progress** — the new branch and task reference.
     - **Next steps** — the first concrete steps for the new task.
-    - **Recent activity** — **preserve as-is.** This append-only log is the
-      audit trail; never truncate it.
+
+15. **Continuation hygiene** (every `/next`):
+
+    - Run `forge-continuation-append --rotate` — the mechanical pass:
+      done ledger entries older than two days (or beyond the count cap) move
+      verbatim to `.plan/CONTINUATION-archive.md` and collapse into
+      per-day digest lines; entries referencing PRs/issues still named
+      in the structured sections are pinned (undone work stays raw).
+    - Then a **critical curation pass** — the judgment the CLI cannot
+      apply. Read the structured sections and the condensed digests as
+      a skeptic: delete items that are stale (shipped, superseded,
+      referenced work closed, advice no longer true), collapse
+      repetition, and re-rank what remains. Done work's history lives
+      in the archive and in git/GitHub — the continuation file owes the
+      next session *orientation*, not a museum. FOUNDATION §10's
+      never-delete rule protects the FILE and the raw archive, not
+      stale content inside the structured sections.
 
     If `.plan/CONTINUATION.md` does not exist, create it from the
     FOUNDATION §10 template. `.plan/CONTINUATION.md` is gitignored.

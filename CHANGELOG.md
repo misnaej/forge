@@ -20,6 +20,22 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.31.0 — Unreleased
+
+### Features
+- **The continuation ledger is bounded; done work clears in two days.**
+  `forge-continuation-append` now rotates on every append (and via a
+  new `--rotate` standalone mode): done activity entries older than
+  `max_recent_age_days` (default 2) or beyond `max_recent_entries`
+  (default 50) move verbatim to the append-only
+  `.plan/CONTINUATION-archive.md` and collapse into per-day digest
+  lines; entries referencing PRs/issues still named in the structured
+  sections are pinned — undone work stays raw, no network needed.
+  `/next` gains a continuation-hygiene step: the mechanical rotate plus
+  a critical curation pass that deletes stale structured-section
+  content (FOUNDATION §10 protects the file and the archive, not stale
+  prose). Forge's own 506-line file dropped to ~100 on first rotation.
+
 ## v3.30.1 — Unreleased
 
 ### Fixes
