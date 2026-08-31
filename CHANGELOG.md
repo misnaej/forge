@@ -20,6 +20,19 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.28.0 — Unreleased
+
+### Features
+- **Syncing a branch with its base no longer asks permission.** A base
+  merge adds a merge commit and destroys nothing — the /pr skill's
+  behind-but-clean case now merges and proceeds, and FOUNDATION §6
+  states the care belongs in resolving conflicts (read both sides'
+  intent; ask only when a side's purpose cannot be determined), not in
+  deciding to merge. §6's "never auto-sync" is scoped explicitly to the
+  background monitor — a read-only watcher must not mutate the branch
+  it observes; "mutates history" language is reserved for §2's real
+  bans (rebase, force-push, reset), which are untouched.
+
 ## v3.27.0 — Unreleased
 
 ### Docs
