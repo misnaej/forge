@@ -114,10 +114,18 @@ def _has_development_pytestmark(text: str) -> bool:
     except SyntaxError:
         return False
     for node in tree.body:
-        if not isinstance(node, ast.Assign):
+        if isinstance(node, ast.Assign):
+            names = {t.id for t in node.targets if isinstance(t, ast.Name)}
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names = {node.target.id}
+            value = node.value
+        else:
             continue
-        names = {t.id for t in node.targets if isinstance(t, ast.Name)}
-        if "pytestmark" in names and "development" in ast.dump(node.value):
+        if "pytestmark" not in names or value is None:
+            continue
+        mark_names = {a.attr for a in ast.walk(value) if isinstance(a, ast.Attribute)}
+        if "development" in mark_names:
             return True
     return False
 

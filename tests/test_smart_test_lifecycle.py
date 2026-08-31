@@ -140,6 +140,29 @@ def test_development_marked_files_docstring_column_zero_line_not_matched(
     assert result == set()
 
 
+def test_development_marked_files_substring_lookalike_not_matched(
+    tmp_path: Path,
+) -> None:
+    """``pytest.mark.developmental`` does not match (word-precision, #396)."""
+    (tmp_path / "test_g.py").write_text(
+        "import pytest\n\npytestmark = pytest.mark.developmental\n", encoding="utf-8"
+    )
+    result = lifecycle.development_marked_files(tmp_path, {"test_g.py"})
+    assert result == set()
+
+
+def test_development_marked_files_annassign_list_form_matched(
+    tmp_path: Path,
+) -> None:
+    """An annotated ``pytestmark: list = [pytest.mark.development]`` matches."""
+    (tmp_path / "test_h.py").write_text(
+        "import pytest\n\npytestmark: list = [pytest.mark.development]\n",
+        encoding="utf-8",
+    )
+    result = lifecycle.development_marked_files(tmp_path, {"test_h.py"})
+    assert result == {"test_h.py"}
+
+
 # ---------------------------------------------------------------------------
 # days_since_last_touch
 # ---------------------------------------------------------------------------
