@@ -20,6 +20,22 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.27.0 — 2026-08-28
+
+### Docs
+- **Agents must treat their own syncs as read-invalidation, and re-read
+  when contradicted.** FOUNDATION §1 gains "Your own actions invalidate
+  your reads": any tree-changing action demotes prior reads of affected
+  files to hypotheses, and a user disputing a factual claim triggers a
+  re-read of the artifact, never a firmer re-explanation — closing the
+  stale-read-with-confidence trap where an agent defends a file it
+  personally overwrote one step earlier.
+- **The §3 PR-finalization chain now ends where the process ends.** The
+  workflow-order enumeration gains its mandatory terminal step — the §6
+  background PR monitor — so the chain readers navigate by is no longer
+  a complete-looking list missing a required stage. Pointer only; §6
+  stays canonical.
+
 ## v3.26.0 — 2026-08-28
 
 ### Features

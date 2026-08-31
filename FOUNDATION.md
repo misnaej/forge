@@ -68,7 +68,28 @@ module when an existing one is the natural home (§7); adopting an issue's
 wrapper without checking whether the wrapped interface could simply change
 (§7); a path that doesn't exist on disk; schema changes without reading the
 current schema; a fix based on what a function "should" do rather than what
-it does.
+it does; restating a claim about a file after running anything that could
+have rewritten it.
+
+### Your own actions invalidate your reads
+
+A read is a fact only until the tree changes. Any tree-changing action — a
+pull, merge, checkout, sync, install, or generated-artifact refresh —
+demotes every prior read of an affected file back to a hypothesis. The
+specific trap: the agent is usually the one that performed the change, so
+nothing external signals that its knowledge went stale, and "I already
+checked this" feels like grounds for confidence exactly when it has become
+a reason to re-check. Before repeating a claim about a file, ask whether
+anything since the read could have rewritten it — and if you ran a sync
+yourself, assume yes.
+
+**A contradiction from the user is a prompt to re-read, not to
+re-explain.** When a user disputes a factual claim about the codebase,
+re-check the artifact first; restating the reasoning is correct only once
+the re-read still supports the claim. Explaining harder is the failure
+mode this rule exists to stop. "Do not be a yes-man" (above) is about not
+capitulating on *judgment* — it never licenses defending a *fact* that has
+not been re-verified.
 
 ### Plan before executing
 
@@ -205,7 +226,7 @@ agents); installing dependencies (never — tell the user).
 
 **Commit:** `forge:prior-art` (when creating files/symbols — first, a REUSE verdict ends the plan) → `forge:design-checker` (pre-write) → code changes → `forge:precommit-fixer` → `forge:git-commit-push`
 
-**PR finalization:** `forge:design-checker` + `forge:security-checker` + `forge:docs-types-checker` (parallel) → `forge:precommit-fixer` (mode `strict`) → `forge:pr-manager`
+**PR finalization:** `forge:design-checker` + `forge:security-checker` + `forge:docs-types-checker` (parallel) → `forge:precommit-fixer` (mode `strict`) → `forge:pr-manager` → background PR monitor (§6 — "The flow does not end at posting")
 
 **Test writing:** `forge:test-advisor` (advise) → `forge:test-writer` → `forge:test-advisor` (review) → `forge:precommit-fixer`
 
