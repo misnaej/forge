@@ -31,8 +31,9 @@ versions follow forge's rolling-next convention.
   five proposals for decision — behavior/development classification,
   demote-then-delete retirement, per-test duration artifact, a
   three-metric compromise, selector guarantees. The profiling run also
-  caught and fixed a stale `plugin-roster.toml` (missing
-  `report-to-forge`), restoring a green suite on dev.
+  caught and fixed a stale `plugin-roster.toml` (missing the
+  `report-to-forge` skill and the `git_anchor` hook), restoring a green
+  suite on dev.
 
 ## v3.28.0 — Unreleased
 

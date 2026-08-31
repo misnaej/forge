@@ -288,7 +288,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 
 ### Proposals (`docs/proposals/`)
 
-Architecture RFCs — aspirational, not descriptions of current behavior. Each carries its own accept/reject status.
+Architecture RFCs and research reports — aspirational or advisory, not descriptions of current behavior. RFCs carry their own accept/reject status; research reports feed a maintainer decision.
 
 - rust-core.md: RFC for splitting forge into a Rust governance-core binary + optional Python analysis pack
 - test-lifecycle.md: research report for the test-suite lifecycle policy (issue #396) — baseline profile, prior art, five proposals awaiting decision

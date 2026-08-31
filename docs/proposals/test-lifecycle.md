@@ -12,7 +12,7 @@ One full run on dev (`pytest tests/ -q --durations=30`, single process):
 
 | Metric | Value |
 |---|---|
-| Test files | 59 |
+| Test files | 65 |
 | Collected tests | 2,319 |
 | Total wall time | 60.9 s |
 | Tests ≥ 1 s | 4 (all in `test_gen_cli_reference.py`, 2.6–5.6 s — real subprocess round-trips) |
@@ -72,9 +72,12 @@ failure mode is becoming a landfill
 ([Fowler](https://martinfowler.com/articles/nonDeterminism.html)).
 Notably, **no first-party source documents an exit/re-promotion rule** —
 any policy here must define its own. Google measured 84 % of pass→fail
-transitions as flakes and explicitly abandoned "rerun recently-failed"
-selection because failure history is flake-dominated — a telemetry-driven
-selector must classify flakes before weighting failures.
+transitions as flakes
+([Micco, CI @Google](https://research.google.com/pubs/archive/45880.pdf))
+and explicitly abandoned "rerun recently-failed" selection because
+failure history is flake-dominated
+([Memon et al.](https://research.google.com/pubs/archive/45861.pdf)) — a
+telemetry-driven selector must classify flakes before weighting failures.
 
 **Retiring tests — the contested question.** Practitioner essays give
 deletable categories: duplicate coverage, implementation-mirroring tests,
@@ -131,12 +134,14 @@ smart-test dependency map already computes this).
 
 ### P3 — Profiling wiring
 
-Per-test wall time riding the existing telemetry surface: a
-`--durations`-derived artifact (`code_health/test_durations.log`) written
-by the full-tier run, one line per test over a threshold, appended to
-`telemetry_history.log`'s run summary. No new sampler — pytest already
-measures; forge only records. Gives P2's ledger and makes the slowest-N
-table in §1 reproducible per run.
+Per-test wall time already has a home: `forge-slow-tests-report` consumes
+pytest's `--durations` output today, and `docs/telemetry.md` documents the
+pairing (slow-tests names the test, telemetry shows what the run
+consumes). The gap is *history*: neither surface persists per-test timing
+across runs. Proposal: extend `forge-slow-tests-report` (not a new tool —
+§7 fix-the-interface) so a full-tier run appends its over-threshold lines
+to a run-labelled ledger next to `telemetry_history.log`. That ledger is
+P2's evidence base and makes §1's slowest-N table reproducible per run.
 
 ### P4 — The compromise metric
 
@@ -151,10 +156,14 @@ the behavior ratio falls.
 
 ### P5 — Selector guarantees (documentation gap, independent of P1–P4)
 
-forge-smart-test should state, as guarantees: its fallback trigger
-(unrecognized change → full run) and its full-run cadence. Both exist in
-the depth model; making them explicit in `forge-docs/smart-test.md` is
-what makes the selection *safe by contract* rather than by habit.
+forge-smart-test currently has **neither** an unrecognized-change
+fallback (`changed_python_files` filters to `.py`; a non-Python change
+selects nothing) nor a stated full-run cadence — both are gaps, not
+undocumented facts. Proposal: add them as explicit guarantees
+(unrecognized change → full run; a named periodic full-run trigger) in
+the depth model and `forge-docs/smart-test.md`, per Microsoft's two
+safety conditions (§2). This is a behavior change plus a spec change,
+not a documentation catch-up.
 
 ## 4. What this report deliberately does not do
 
