@@ -1369,9 +1369,15 @@ def step_release_tag_guard(repo_root: Path) -> StepResult:
         passed=False,
         output=(
             f"plugin.json {plugin_ver} is more than one release ahead of the "
-            f"latest tag v{latest} — an intermediate rolling-next release was "
-            f"never tagged and will be lost. Run `forge-next-prep --tag` to "
-            f"tag it before bumping further (FOUNDATION / docs/release-process)."
+            f"latest tag v{latest}. Two distinct causes — pick the right "
+            "cure. (a) On the dev branch after a merge whose release was "
+            "never tagged: a HUMAN runs `forge-next-prep --tag` on dev. "
+            "(b) On a feature branch while other open PRs hold the "
+            "intermediate version slots: nothing was skipped — re-slot "
+            "this branch's plugin.json to latest-tag+1; merge-order "
+            "re-bumping resolves the rest (docs/release-process). "
+            "AGENTS: report only — never run the tag command or any "
+            "release action to clear this step."
         ),
     )
 

@@ -1639,6 +1639,51 @@ def test_fixer_recon_blocks_chained_recon() -> None:
     )
 
 
+def test_fixer_recon_blocks_next_prep_tag() -> None:
+    """`forge-next-prep --tag` is a release action, not on the fixer's allowlist.
+
+    See #405.
+    """
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "forge-next-prep --tag",
+            agent_type="forge:precommit-fixer",
+        )
+        == 2
+    )
+
+
+def test_fixer_recon_blocks_git_tag() -> None:
+    """`git tag v9.9.9` is a release action the fixer must never self-clear with.
+
+    See #405.
+    """
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "git tag v9.9.9",
+            agent_type="forge:precommit-fixer",
+        )
+        == 2
+    )
+
+
+def test_fixer_recon_blocks_git_push_tag() -> None:
+    """`git push origin v9.9.9` is a release action, blocked like tag commands.
+
+    See #405.
+    """
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "git push origin v9.9.9",
+            agent_type="forge:precommit-fixer",
+        )
+        == 2
+    )
+
+
 def test_fixer_recon_allows_forge_precommit() -> None:
     """Bare `forge-precommit` call is allowed — the fixer's primary evidence source."""
     assert (
@@ -1761,6 +1806,30 @@ def test_fixer_recon_ignores_other_agent() -> None:
 def test_fixer_recon_ignores_missing_agent_type() -> None:
     """No `agent_type` payload field at all — the hook is a no-op."""
     assert _run_hook(_FIXER_RECON, "git status") == 0
+
+
+def test_fixer_recon_next_prep_tag_fail_open_without_agent_type() -> None:
+    """Without an `agent_type` payload, `forge-next-prep --tag` fails open.
+
+    See #405.
+    """
+    assert _run_hook(_FIXER_RECON, "forge-next-prep --tag") == 0
+
+
+def test_fixer_recon_git_tag_fail_open_without_agent_type() -> None:
+    """Without an `agent_type` payload, `git tag v9.9.9` fails open.
+
+    See #405.
+    """
+    assert _run_hook(_FIXER_RECON, "git tag v9.9.9") == 0
+
+
+def test_fixer_recon_git_push_tag_fail_open_without_agent_type() -> None:
+    """Without an `agent_type` payload, `git push origin v9.9.9` fails open.
+
+    See #405.
+    """
+    assert _run_hook(_FIXER_RECON, "git push origin v9.9.9") == 0
 
 
 def test_fixer_recon_matches_unprefixed_agent_form() -> None:
