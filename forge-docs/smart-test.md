@@ -34,6 +34,29 @@ full pass. Config reference:
   or a nested `*/src` root resolves to the name importers actually use. If
   it resolves to a name **no importer references**, smart-test warns rather
   than silently selecting zero tests.
+- **Safe fallback.** A changed non-Python path the selector cannot map to
+  tests escalates the run to `full` automatically — only paths matching
+  `[tool.forge.smart_test].nonpython_ignore` (default: `*.md`, the plugin
+  manifest, `.plan/*`, `.gitignore`, the stamp itself) are exempt. A change
+  the graph does not understand is never silently under-selected.
+- **Full-run cadence.** The tracked one-line stamp `.forge-full-run`
+  records the last *truly-all* run; when it exceeds
+  `full_run_max_age_hours` (default 48), the `smart_test` pre-commit step
+  escalates that commit to `--depth full --all-tests` and stages the
+  refreshed stamp into the same commit — the guarantee travels through git
+  to every contributor and CI.
+- **Lifecycle deselection is loud, bounded, and reversible.** Ordinary
+  `full` runs deselect development-marked files
+  (module-level `pytestmark = pytest.mark.development`) untouched for
+  `lifecycle_skip_days` (default 30) — always reported as
+  `lifecycle-skipped: N`; any edit to the file re-includes it, the cadence
+  run executes truly everything, and `--all-tests` forces it manually.
+  Deletion is not part of the model (FOUNDATION §8 "Test lifecycle").
+- **Differential check, record-only.** After each full run, failing files
+  outside the would-be depth-2 selection are counted into
+  `code_health/smart_test_history.log` (with wall time, file counts, and
+  the development fraction) — evidence the tiers lose nothing; never a
+  gate.
 
 It writes `code_health/smart_test.log` (FOUNDATION §13). The optional
 `smart_test` pre-commit step is **off by default** (self-skips unless

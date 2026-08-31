@@ -356,6 +356,27 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "reads to drive the tier from a CI commit.",
     ),
     ConfigKey(
+        ("tool", "forge", "smart_test", "lifecycle_skip_days"),
+        default=30,
+        description="Quiet window (days) after which an untouched "
+        "development-marked test file leaves ordinary full runs "
+        "(lifecycle-skipped, always reported; --all-tests re-includes).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "full_run_max_age_hours"),
+        default=48,
+        description="Max age of the tracked .forge-full-run stamp before "
+        "the smart_test pre-commit step escalates to a truly-all run and "
+        "restages the refreshed stamp into the same commit.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "nonpython_ignore"),
+        "built-in list (*.md, plugin.json, stamp, .plan/*, .gitignore)",
+        "fnmatch globs for changed non-Python paths that cannot affect "
+        "tests; any other non-Python change escalates the run to full "
+        "(the safe-fallback guarantee).",
+    ),
+    ConfigKey(
         ("tool", "forge", "telemetry", "sample_interval"),
         default=1.0,
         description="Seconds between resource samples taken by forge-telemetry "

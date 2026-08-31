@@ -10,6 +10,7 @@ stays a pure function of a file set.
 
 from __future__ import annotations
 
+import fnmatch
 from typing import TYPE_CHECKING
 
 from forge.config import load_config
@@ -114,3 +115,45 @@ def changed_python_files(repo_root: Path, base_ref: str) -> set[str]:
         out = run_git(*args, cwd=repo_root, check=False)
         files.update(line for line in out.splitlines() if line.endswith(".py"))
     return files
+
+
+def changed_non_python_files(
+    repo_root: Path, base_ref: str, *, ignore_globs: tuple[str, ...] = ()
+) -> set[str]:
+    """Return changed non-``.py`` files the selector cannot map to tests.
+
+    The safe-fallback guarantee (FOUNDATION §17 / forge-docs/smart-test.md)
+    rests on this: any change the import graph cannot reason about must
+    escalate the run to ``full``. Same four change sources as
+    :func:`changed_python_files`; paths matching *ignore_globs* (doc-only
+    and metadata files that cannot affect test outcomes) are excluded.
+
+    Args:
+        repo_root: Git repo root.
+        base_ref: Ref to diff against (see :func:`resolve_base_ref`).
+        ignore_globs: ``fnmatch`` patterns for unmappable-but-harmless
+            paths (e.g. ``*.md``).
+
+    Returns:
+        Repo-relative non-Python changed paths after ignores; a non-empty
+        result means the caller must run the full suite.
+    """
+    merge_base = run_git("merge-base", base_ref, "HEAD", cwd=repo_root, check=False)
+    diff_base = merge_base or base_ref
+    arg_sets = (
+        ("diff", "--name-only", diff_base, "HEAD"),
+        ("diff", "--name-only"),
+        ("diff", "--name-only", "--cached"),
+        ("ls-files", "--others", "--exclude-standard"),
+    )
+    files: set[str] = set()
+    for args in arg_sets:
+        out = run_git(*args, cwd=repo_root, check=False)
+        files.update(
+            line for line in out.splitlines() if line and not line.endswith(".py")
+        )
+    return {
+        rel
+        for rel in files
+        if not any(fnmatch.fnmatch(rel, pat) for pat in ignore_globs)
+    }

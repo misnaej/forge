@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import contextlib
+import datetime as _dt
 import hashlib
 import json
 import shutil
@@ -23,6 +24,7 @@ import pytest
 
 from forge import config, git_utils, precommit
 from forge.pip_audit_json import AuditRun
+from forge.smart_test import lifecycle as _lifecycle
 from tests.conftest import GIT_ENV, _detach_head, init_git_repo, init_single_track_repo
 
 
@@ -3362,25 +3364,61 @@ def test_step_smart_test_skips_without_config(tmp_path: Path) -> None:
     assert "skipped" in result.output
 
 
+def _fake_run_capturing(
+    calls: list[list[str]],
+    *,
+    expected_results: dict[str, tuple[bool, str]] | None = None,
+) -> Callable[..., tuple[bool, str]]:
+    """Build a ``precommit._run`` replacement that records argv and stamps results.
+
+    Args:
+        calls: List appended with each invocation's argv, in call order.
+        expected_results: Optional ``{argv_key: (passed, output)}`` map, keyed by the
+            joined argv string, for tests needing per-command results.
+            Unmatched argvs default to ``(False, "ERR")``.
+
+    Returns:
+        A callable compatible with ``precommit._run``'s ``(cmd, cwd)``
+        signature.
+    """
+
+    def _fake(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        calls.append(list(cmd))
+        if expected_results is not None:
+            key = " ".join(cmd)
+            if key in expected_results:
+                return expected_results[key]
+        return False, "ERR"
+
+    return _fake
+
+
 def test_step_smart_test_non_blocking_by_default_on_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failing smart-test run is non-blocking (WARN) when blocking is not opted in.
 
-    SCENARIO: ``[tool.forge.smart_test] precommit_depth = 1``; forge-smart-test
-        exits non-zero; no ``blocking = true`` key.
-    MOCK SETUP: precommit.require_cli → no-op; precommit._run → (False, "ERR").
-    EXPECTED BEHAVIOR: passed=False, non_blocking=True.
+    SCENARIO: ``[tool.forge.smart_test] precommit_depth = 1``; no
+        ``.forge-full-run`` stamp exists, so the run escalates to a full,
+        ``--all-tests`` run (missing stamp always escalates); that run fails;
+        no ``blocking = true`` key.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (False, "ERR") for the escalated full-suite command.
+    EXPECTED BEHAVIOR: passed=False, non_blocking=True; the escalated
+        ``forge-smart-test --depth full --all-tests`` argv was used, not the
+        plain ``--depth 1`` command.
     """
     (tmp_path / "pyproject.toml").write_text(
         "[tool.forge.smart_test]\nprecommit_depth = 1\n", encoding="utf-8"
     )
     monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
-    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "ERR"))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(precommit, "_run", _fake_run_capturing(calls))
     result = precommit.step_smart_test(tmp_path)
     assert not result.passed
     assert result.non_blocking
+    assert calls == [["forge-smart-test", "--depth", "full", "--all-tests"]]
 
 
 def test_step_smart_test_blocking_when_opted_in(
@@ -3389,19 +3427,219 @@ def test_step_smart_test_blocking_when_opted_in(
 ) -> None:
     """``[tool.forge.smart_test].blocking = true`` makes a failure a hard FAIL.
 
-    SCENARIO: same failure as the default case but ``blocking = true`` is set.
-    MOCK SETUP: precommit.require_cli → no-op; precommit._run → (False, "ERR").
-    EXPECTED BEHAVIOR: passed=False, non_blocking=False.
+    SCENARIO: same missing-stamp escalation as the default case, but
+        ``blocking = true`` is set.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (False, "ERR").
+    EXPECTED BEHAVIOR: passed=False, non_blocking=False; the escalated
+        full-suite argv was used.
     """
     (tmp_path / "pyproject.toml").write_text(
         "[tool.forge.smart_test]\nprecommit_depth = 1\nblocking = true\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
-    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "ERR"))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(precommit, "_run", _fake_run_capturing(calls))
     result = precommit.step_smart_test(tmp_path)
     assert not result.passed
     assert not result.non_blocking
+    assert calls == [["forge-smart-test", "--depth", "full", "--all-tests"]]
+
+
+def test_step_smart_test_fresh_stamp_runs_normal_depth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh (well within max-age) stamp runs the plain configured depth.
+
+    SCENARIO: ``precommit_depth = "2"``; a stamp written just now (age ≈0h,
+        well under the 48h default).
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok").
+    EXPECTED BEHAVIOR: the normal ``forge-smart-test --depth 2`` argv runs —
+        no escalation, no stamp rewrite.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\nprecommit_depth = "2"\n', encoding="utf-8"
+    )
+    _lifecycle.write_stamp(tmp_path)
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 2": (True, "ok")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert result.passed
+    assert calls == [["forge-smart-test", "--depth", "2"]]
+
+
+def test_step_smart_test_stale_stamp_escalates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stamp older than ``full_run_max_age_hours`` escalates to a full run.
+
+    SCENARIO: default 48h max age; stamp written 50 hours ago.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv.
+    EXPECTED BEHAVIOR: the escalated ``--depth full --all-tests`` argv runs,
+        not the configured ``--depth 1``.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nprecommit_depth = 1\n", encoding="utf-8"
+    )
+    stale = _dt.datetime.now(tz=_dt.UTC) - _dt.timedelta(hours=50)
+    (tmp_path / _lifecycle.STAMP_RELPATH).write_text(
+        stale.isoformat() + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls,
+            expected_results={
+                "forge-smart-test --depth full --all-tests": (True, "ok")
+            },
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert result.passed
+    assert calls[0] == ["forge-smart-test", "--depth", "full", "--all-tests"]
+
+
+def test_step_smart_test_escalated_pass_rewrites_stamp_and_stages_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An escalated run that passes rewrites the stamp and stages it via git.
+
+    SCENARIO: no stamp (missing → escalate); the escalated run passes.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok") for the escalated command and (True, "") for the
+        ``git add`` call.
+    EXPECTED BEHAVIOR: a ``git add .forge-full-run`` call is captured after
+        the escalated run; the output carries both cadence lines (the
+        escalation notice and the stamp-refreshed confirmation).
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nprecommit_depth = 1\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls,
+            returns={
+                "forge-smart-test --depth full --all-tests": (True, "ok"),
+            },
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert result.passed
+    assert ["git", "add", str(_lifecycle.STAMP_RELPATH)] in calls
+    assert "ran the full suite with --all-tests" in result.output
+    assert "stamp refreshed and staged into this commit" in result.output
+
+
+def test_step_smart_test_escalated_fail_does_not_rewrite_stamp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An escalated run that fails leaves the stamp untouched and never stages it.
+
+    SCENARIO: no stamp (missing → escalate); the escalated run fails.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (False, "ERR").
+    EXPECTED BEHAVIOR: no ``git add`` call is captured; the stamp file still
+        does not exist.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nprecommit_depth = 1\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(precommit, "_run", _fake_run_capturing(calls))
+    result = precommit.step_smart_test(tmp_path)
+    assert not result.passed
+    assert not any(cmd[:2] == ["git", "add"] for cmd in calls)
+    assert not (tmp_path / _lifecycle.STAMP_RELPATH).exists()
+
+
+def test_step_smart_test_full_run_max_age_hours_config_honored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tightened ``full_run_max_age_hours`` escalates on stale stamps.
+
+    SCENARIO: ``full_run_max_age_hours = 1``; stamp written 2 hours ago.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv.
+    EXPECTED BEHAVIOR: the escalated ``--depth full --all-tests`` argv runs.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nprecommit_depth = 1\nfull_run_max_age_hours = 1\n",
+        encoding="utf-8",
+    )
+    two_hours_ago = _dt.datetime.now(tz=_dt.UTC) - _dt.timedelta(hours=2)
+    (tmp_path / _lifecycle.STAMP_RELPATH).write_text(
+        two_hours_ago.isoformat() + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls,
+            expected_results={
+                "forge-smart-test --depth full --all-tests": (True, "ok")
+            },
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert result.passed
+    assert calls[0] == ["forge-smart-test", "--depth", "full", "--all-tests"]
+
+
+def test_step_smart_test_full_run_max_age_hours_non_numeric_falls_back_to_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-numeric ``full_run_max_age_hours`` falls back to the 48h default.
+
+    SCENARIO: ``full_run_max_age_hours = "not-a-number"`` (a malformed
+        config value); a stamp written just now (age ~0h, well under the
+        48h default).
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv.
+    EXPECTED BEHAVIOR: the fresh stamp does not escalate under the 48h
+        fallback — the normal ``forge-smart-test --depth 1`` argv runs, not
+        ``--depth full``.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nprecommit_depth = 1\n"
+        'full_run_max_age_hours = "not-a-number"\n',
+        encoding="utf-8",
+    )
+    _lifecycle.write_stamp(tmp_path)
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 1": (True, "ok")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert result.passed
+    assert calls == [["forge-smart-test", "--depth", "1"]]
 
 
 # ---------------------------------------------------------------------------

@@ -102,6 +102,7 @@ from forge.git_utils import (
 from forge.git_utils import repo_root as get_repo_root
 from forge.install_claudemd import foundation_matches_installed
 from forge.run_context import is_ci, is_non_interactive
+from forge.smart_test import lifecycle as _lifecycle
 
 
 if TYPE_CHECKING:
@@ -1420,7 +1421,38 @@ def step_smart_test(repo_root: Path) -> StepResult:
     depth = str(cfg.get("precommit_depth"))
     blocking = bool(cfg.get("blocking", False))
     require_cli("forge-smart-test", caller="forge-precommit")
-    passed, output = _run(["forge-smart-test", "--depth", depth], cwd=repo_root)
+
+    # 48h-cadence guarantee (FOUNDATION §8/§17): when the shared
+    # .forge-full-run stamp is older than full_run_max_age_hours (or
+    # missing), this commit escalates to a truly-all run — lifecycle
+    # deselection off — and the refreshed stamp is staged into the same
+    # commit (fix-forge-ruff restage precedent), so the guarantee
+    # travels through git to every contributor and CI.
+    max_age_raw = cfg.get(
+        "full_run_max_age_hours", _lifecycle.DEFAULT_STAMP_MAX_AGE_HOURS
+    )
+    max_age = (
+        float(max_age_raw)
+        if isinstance(max_age_raw, (int, float))
+        else float(_lifecycle.DEFAULT_STAMP_MAX_AGE_HOURS)
+    )
+    age = _lifecycle.stamp_age_hours(repo_root)
+    escalate = age is None or age >= max_age
+    if escalate:
+        age_txt = "missing" if age is None else f"{age:.1f}h old"
+        passed, output = _run(
+            ["forge-smart-test", "--depth", "full", "--all-tests"], cwd=repo_root
+        )
+        output = (
+            f"cadence: .forge-full-run stamp {age_txt} (max {max_age:g}h) — "
+            f"ran the full suite with --all-tests.\n" + output
+        )
+        if passed:
+            stamp = _lifecycle.write_stamp(repo_root)
+            _run(["git", "add", str(stamp.relative_to(repo_root))], cwd=repo_root)
+            output += "\ncadence: stamp refreshed and staged into this commit.\n"
+    else:
+        passed, output = _run(["forge-smart-test", "--depth", depth], cwd=repo_root)
     return StepResult(
         name="smart_test", passed=passed, output=output, non_blocking=not blocking
     )
