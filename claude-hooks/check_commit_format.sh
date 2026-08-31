@@ -40,10 +40,22 @@ CONVENTIONAL_TYPES='feat|fix|refactor|test|docs|chore|perf|ci|build|style|revert
 # or to label a fully-gated commit as a checkpoint. Both directions
 # block; a correctly paired checkpoint is exempt from the
 # conventional-format warning.
+# Scope the pairing rule to actual commit invocations — this hook fires
+# on every Bash call, and a grep/forge-precommit command legitimately
+# containing the literal FORGE_WIP_SYNC=1 must not be mistaken for a
+# checkpoint commit.
+IS_COMMIT=false
+if echo "$COMMAND" | grep -qE 'git([[:space:]]+[^;&|[:space:]]+)*[[:space:]]+commit\b'; then
+    IS_COMMIT=true
+fi
 HAS_WIP_ENV=false
 HAS_WIP_MSG=false
-if echo "$COMMAND" | grep -qE '(^|[[:space:]])FORGE_WIP_SYNC=1([[:space:]]|$)'; then
+if $IS_COMMIT && echo "$COMMAND" | grep -qE '(^|[;&|[:space:]])FORGE_WIP_SYNC=1([;&|[:space:]]|$)'; then
     HAS_WIP_ENV=true
+fi
+if ! $IS_COMMIT; then
+    HAS_WIP_MSG=false
+    MSG=""
 fi
 if [ -n "$MSG" ] && echo "$MSG" | grep -qE '^wip-sync:'; then
     HAS_WIP_MSG=true

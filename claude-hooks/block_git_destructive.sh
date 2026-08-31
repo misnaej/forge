@@ -106,7 +106,7 @@ fi
 # FOUNDATION §2's sync ladder secures dirty work with a checkpoint
 # commit instead; plain tracked-only stash verbs stay unblocked.
 if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}stash([[:space:]]+[^;&|[:space:]]+)*[[:space:]]+(--include-untracked|--all)\b" \
-    || echo "$COMMAND" | grep -qE "${GIT_ANCHOR}stash([[:space:]]+(push|save))?([[:space:]]+-[a-zA-Z]*[ua][a-zA-Z]*\b)"; then
+    || echo "$COMMAND" | grep -qE "${GIT_ANCHOR}stash([[:space:]]+[^;&|[:space:]]+)*[[:space:]]+-[a-zA-Z]*[ua][a-zA-Z]*\b"; then
     _block "git stash -u/-a" "Untracked-including stash runs \`git clean\` internally and its restore can fail; use FOUNDATION §2's sync ladder (probe, direct merge, or wip-sync checkpoint commit) instead."
 fi
 

@@ -35,7 +35,11 @@ versions follow forge's rolling-next convention.
   blocks unpaired marker/message use both directions; and
   `block_git_destructive` now blocks untracked-including stash
   (`-u`/`-a`/long forms) while plain tracked-only stash verbs stay
-  usable.
+  usable. Semver rationale (deliberate MINOR, not MAJOR): the
+  recommended→blocked inversion binds **agents only** — humans keep
+  every stash form via `! git ...` — and the old procedure was a
+  workflow rule, not a programmatic surface consumers script against;
+  no consumer action beyond reading the new §2 is required.
 
 ## v3.28.0 — Unreleased
 
