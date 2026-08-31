@@ -299,6 +299,7 @@ parse all six logs with one schema.
 
 ## Findings
 [SEVERITY] path:line message
+    key=<optional stable finding identity>
     optional indented evidence line(s)
 
 …

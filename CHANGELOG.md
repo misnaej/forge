@@ -20,6 +20,25 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.25.0 — 2026-08-28
+
+### Features
+- **Audit findings carry stable identities.** `Finding.key` — an
+  optional per-audit key rendered as a `key=` line in every
+  `code_health/audit_*.log` block — makes findings individually
+  addressable across runs: dup groups key on their path-qualified
+  member sets, dep cycles on their members and distance findings on
+  their module, suppressions on `path|code|line-fingerprint`, orphans
+  on `path|type|symbol`. Keys survive edits elsewhere in the file
+  (never `path:line`), the prerequisite for any future
+  accepted-findings baseline.
+
+### Chore (folded from dev patch v3.24.1)
+- **Duplicate smart-test control test removed.** The plain-`src/`
+  "control" test was byte-identical to the depth-1 transitive test
+  (same fixture, inputs, assertions); a pointer comment preserves the
+  Shapes A/B narrative. Clears the audit-pack MEDIUM duplicate finding.
+
 ## v3.24.0 — 2026-08-28
 
 ### Features
@@ -88,6 +107,14 @@ versions follow forge's rolling-next convention.
   `regen_docs` skips regeneration when unstaged changes are present, so
   `api-digest.md`/`cli-reference.md` never record a worktree the commit
   does not contain.
+
+### Fixes (folded from dev patch v3.20.1, curation repair)
+- **Provenance gate-step names are now drift-checked.** The
+  `doc_consistency` step verifies every `pr_delta.PROVENANCE_GATE_STEPS`
+  name appears in each prose surface that hand-names the gates
+  (`precommit.py`, the `/pr` skill, `forge-docs/configuration.md`) and
+  flags stale `*_check` tokens in their provenance prose that the
+  constant no longer contains.
 
 ## v3.20.0 — 2026-08-25
 

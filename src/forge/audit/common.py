@@ -122,6 +122,12 @@ class Finding:
         line: 1-based line number, or ``0`` if file-level.
         message: One-line human-readable summary.
         evidence: Optional multi-line context (code snippet, related paths).
+        key: Optional stable identity for this finding, chosen by the
+            audit to survive edits elsewhere in the file (never
+            ``path:line``, whose line half shifts on any insertion above
+            it). Rendered as a ``key=`` line in the log block so agents
+            and humans can address one finding across runs. Empty when
+            the audit defines no key.
     """
 
     audit: str
@@ -130,13 +136,14 @@ class Finding:
     line: int
     message: str
     evidence: tuple[str, ...] = field(default_factory=tuple)
+    key: str = ""
 
     def render(self) -> str:
         """Render this finding as a single block in the log file.
 
-        Path, message, and evidence are control-character-escaped via
-        :func:`sanitize_log_text` — untrusted content cannot inject a
-        spoofed finding line.
+        Path, message, evidence, and key are control-character-escaped
+        via :func:`sanitize_log_text` — untrusted content cannot inject
+        a spoofed finding line.
 
         Returns:
             Multi-line string ending with a blank line.
@@ -146,10 +153,11 @@ class Finding:
             f"{sanitize_log_text(self.path)}:{self.line} "
             f"{sanitize_log_text(self.message)}"
         )
-        if not self.evidence:
-            return head + "\n\n"
-        body = "\n".join(f"    {sanitize_log_text(line)}" for line in self.evidence)
-        return f"{head}\n{body}\n\n"
+        parts = [head]
+        if self.key:
+            parts.append(f"    key={sanitize_log_text(self.key)}")
+        parts.extend(f"    {sanitize_log_text(line)}" for line in self.evidence)
+        return "\n".join(parts) + "\n\n"
 
 
 def under_module_prefix(module: str, prefix: str) -> bool:
