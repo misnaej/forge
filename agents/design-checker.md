@@ -240,6 +240,8 @@ verified-at: <sha>   (PR #<num>, branch <branch>)
 2. ...
 ```
 
+Clean result → compact PASS report per _TEMPLATE.md's report-by-exception rule: one PASS line after the header; prose only for findings.
+
 ## Principles + complexity limits
 
 Principles (SOLID, DRY, KISS, YAGNI, Martin package principles, docs-as-
