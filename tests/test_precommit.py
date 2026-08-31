@@ -31,6 +31,20 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def _clear_wip_sync_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip FORGE_WIP_SYNC from the environment before every test.
+
+    main()'s wip-sync short-circuit (#404 sync ladder) reads this var
+    directly from os.environ, so an ambient value left over from a real
+    wip-sync checkpoint commit in the developer's shell would silently
+    short-circuit every main()-calling test in this module. Tests that
+    exercise the short-circuit itself set it explicitly via
+    monkeypatch.setenv.
+    """
+    monkeypatch.delenv("FORGE_WIP_SYNC", raising=False)
+
+
 # ---------------------------------------------------------------------------
 # Null Objects — reused across env_sync test groups
 # ---------------------------------------------------------------------------
@@ -753,6 +767,174 @@ def test_main_emits_json(
         "vendored_integrity",
         "pip_audit",
     }
+
+
+# ---------------------------------------------------------------------------
+# FORGE_WIP_SYNC short-circuit (#404 sync ladder): main() defers the full
+# battery for a wip-sync checkpoint commit, before run_all ever executes.
+# ---------------------------------------------------------------------------
+
+
+def _run_all_spy() -> tuple[
+    Callable[..., list[precommit.StepResult]], list[tuple[object, ...]]
+]:
+    """Build a ``run_all`` replacement that records every call's args/kwargs.
+
+    Returns:
+        A tuple of the spy callable (returns an empty step list so
+        main()'s post-processing has nothing to summarize) and the list
+        it appends ``(args, kwargs)`` to on each call.
+    """
+    calls: list[tuple[object, ...]] = []
+
+    def _spy(*args: object, **kwargs: object) -> list[precommit.StepResult]:
+        calls.append((args, kwargs))
+        return []
+
+    return _spy, calls
+
+
+def test_main_wip_sync_env_short_circuits_before_run_all(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """FORGE_WIP_SYNC=1 returns 0 with the checkpoint banner and never calls run_all.
+
+    SCENARIO: a wip-sync checkpoint commit sets FORGE_WIP_SYNC=1 to defer
+    the full battery to the next real commit (FOUNDATION §2 sync ladder).
+    MOCK SETUP: get_repo_root is pinned to tmp_path; run_all is replaced
+    with a spy that must never fire; sys.argv drives the bare
+    `forge-precommit` invocation.
+    EXPECTED BEHAVIOR: main() returns 0, stdout names the wip-sync
+    checkpoint, and the run_all spy recorded zero calls.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("FORGE_WIP_SYNC", "1")
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+    with patch.object(precommit.sys, "argv", ["forge-precommit"]):
+        rc = precommit.main()
+    assert rc == 0
+    assert "wip-sync checkpoint" in capsys.readouterr().out
+    assert calls == []
+
+
+def test_main_wip_sync_env_unset_runs_normal_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No FORGE_WIP_SYNC set takes the normal path — the short-circuit is opt-in.
+
+    SCENARIO: a normal (non-checkpoint) commit runs with no FORGE_WIP_SYNC
+    set, so main() must take its regular path and run the full battery.
+    MOCK SETUP: get_repo_root pinned to tmp_path; FORGE_WIP_SYNC removed
+    from the environment; run_all replaced with a spy recording calls.
+    EXPECTED BEHAVIOR: the run_all spy fires exactly once and no wip-sync
+    banner appears in stdout.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    monkeypatch.delenv("FORGE_WIP_SYNC", raising=False)
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+    with patch.object(precommit.sys, "argv", ["forge-precommit"]):
+        rc = precommit.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wip-sync checkpoint" not in out
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("value", ["true", "0"])
+def test_main_wip_sync_near_miss_values_run_normal_path(
+    value: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Only the exact string "1" trips the short-circuit — "true"/"0" do not.
+
+    Args:
+        value: A FORGE_WIP_SYNC value that must NOT trigger the
+            short-circuit (near-miss truthy/falsy strings).
+
+    SCENARIO: a near-miss FORGE_WIP_SYNC value ("true"/"0") looks
+    truthy/falsy but must not silently skip the full battery — only the
+    exact string "1" is the opt-in gate.
+    MOCK SETUP: get_repo_root pinned to tmp_path; FORGE_WIP_SYNC set to
+    *value*; run_all replaced with a spy recording calls.
+    EXPECTED BEHAVIOR: the run_all spy fires once and no wip-sync banner
+    appears.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("FORGE_WIP_SYNC", value)
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+    with patch.object(precommit.sys, "argv", ["forge-precommit"]):
+        rc = precommit.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wip-sync checkpoint" not in out
+    assert len(calls) == 1
+
+
+def test_main_wip_sync_short_circuit_beats_json_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """FORGE_WIP_SYNC=1 emits the plain-text banner even under --json.
+
+    SCENARIO: a wip-sync checkpoint commit runs `forge-precommit --json`
+    (e.g. a CI wrapper expecting machine-readable output), but the
+    short-circuit runs before the --json branch, so it must still emit
+    the human text banner, not JSON — locks the current contract so a
+    future refactor doesn't silently move the check below --json.
+    MOCK SETUP: get_repo_root pinned to tmp_path; run_all replaced with a
+    spy that must never fire; sys.argv drives `forge-precommit --json`.
+    EXPECTED BEHAVIOR: raw stdout contains the plain-text banner and does
+    not parse as JSON.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("FORGE_WIP_SYNC", "1")
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--json"]):
+        rc = precommit.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wip-sync checkpoint" in out
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(out)
+    assert calls == []
+
+
+def test_main_wip_sync_short_circuit_beats_only_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """FORGE_WIP_SYNC=1 short-circuits even when --only narrows the step set.
+
+    SCENARIO: a wip-sync checkpoint commit runs `forge-precommit --only
+    ruff` (a narrowed manual invocation), and the short-circuit must
+    still fire before --only ever reaches run_all.
+    MOCK SETUP: get_repo_root pinned to tmp_path; run_all replaced with a
+    spy that must never fire; sys.argv drives `forge-precommit --only ruff`.
+    EXPECTED BEHAVIOR: main() returns 0, the banner appears, and --only
+    never reaches run_all.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("FORGE_WIP_SYNC", "1")
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--only", "ruff"]):
+        rc = precommit.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wip-sync checkpoint" in out
+    assert calls == []
 
 
 def test_step_pip_audit_loud_warn_when_cli_missing(

@@ -126,14 +126,24 @@ convention without checking current code still matches. Asking beats reverting.
   rebases via `! git rebase ...`.
 - **NEVER destructive git recovery: no `git reset` (ANY form), no forced
   `git clean`, no `git checkout .` / `git restore .`, no `git stash drop` /
-  `clear`.** Rewinds un-commit published history on a synced branch; the
-  rest destroy uncommitted or untracked work — `clean` with no recovery at
-  all. Unstage with `git restore --staged <path>`. The sanctioned dirty-tree
-  base sync is the **stash dance**: `git stash -u` → `git merge
-  origin/<base>` → `git stash pop`; on ANY failure mid-dance leave the
-  stash alone, verify with `git stash list`, and report. The
-  `block_git_destructive` hook enforces all of this with **no bypass**; a
-  human runs the blocked form via `! git ...`.
+  `clear`, no untracked-including stash (`git stash -u` / `-a` — it runs
+  `git clean` internally).** Rewinds un-commit published history on a
+  synced branch; the rest destroy uncommitted or untracked work — `clean`
+  with no recovery at all. Unstage with `git restore --staged <path>`.
+  The sanctioned dirty-tree base sync is the **sync ladder**: (1) probe
+  with `git merge-tree --write-tree origin/<base> HEAD` — it performs the
+  real merge touching neither tree nor index; judge by **exit status**
+  (0 clean / 1 conflicts), never by output emptiness; (2) probe clean and
+  index clean → plain `git merge origin/<base>` (git's own dirty-overlap
+  guard is the backstop); (3) otherwise secure the work as a
+  **checkpoint commit** first — `git add -A`, then
+  `FORGE_WIP_SYNC=1 git commit -m "wip-sync: <what>"` (the gate defers to
+  the next real commit; the PR squash erases the checkpoint) — and merge
+  on the clean tree. `git merge --abort` is the permitted recovery verb
+  **only after** a checkpoint secured the work (git documents it as lossy
+  for uncommitted changes). Stash is no longer part of any sanctioned
+  procedure. The `block_git_destructive` hook enforces all of this with
+  **no bypass**; a human runs the blocked form via `! git ...`.
 - **On deviation: STOP and report.** When you detect you have deviated from
   instructions or repository state is not what you expected, halt and
   surface it — never undo, rewind, or clean. An unwanted commit is
@@ -385,7 +395,7 @@ advisories with the suggested pin; they never edit pins.
 
   Resolving a conflict — by whoever picks the work up, never the
   monitor — is a plain base merge: `git merge origin/<base>` (§2 —
-  never rebase; dirty tree → §2's stash dance, never `reset --hard`).
+  never rebase; dirty tree → §2's sync ladder, never `reset --hard`).
   It needs no permission: a base merge adds a merge commit and destroys
   nothing, and keeping a branch current with its base is routine work
   CI correctness depends on. The care belongs in resolving the conflict

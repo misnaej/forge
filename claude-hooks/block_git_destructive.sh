@@ -94,9 +94,19 @@ fi
 
 # `git stash drop` / `clear`, tolerating interposed flags
 # (`git stash --quiet drop`) — a dropped stash is unreferenced and gone.
-# FOUNDATION §2's stash dance ends with the stash either popped or left
-# alone; deleting it is never the agent's call.
+# Deleting a stash is never the agent's call (FOUNDATION §2).
 if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}stash([[:space:]]+-[^[:space:]]+)*[[:space:]]+(drop|clear)\b"; then
     _block "git stash drop/clear" "A dropped stash is unreferenced and unrecoverable; leave the stash alone and report (\`git stash list\` to show it)."
+fi
+
+# Untracked-including stash: `git stash push -u` / `-a` (and the long or
+# clustered forms) runs `git clean` internally after snapshotting —
+# untracked files are deleted from the tree and their restore path
+# (checkout-index, never overwrites) has a documented failure class.
+# FOUNDATION §2's sync ladder secures dirty work with a checkpoint
+# commit instead; plain tracked-only stash verbs stay unblocked.
+if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}stash([[:space:]]+[^;&|[:space:]]+)*[[:space:]]+(--include-untracked|--all)\b" \
+    || echo "$COMMAND" | grep -qE "${GIT_ANCHOR}stash([[:space:]]+(push|save))?([[:space:]]+-[a-zA-Z]*[ua][a-zA-Z]*\b)"; then
+    _block "git stash -u/-a" "Untracked-including stash runs \`git clean\` internally and its restore can fail; use FOUNDATION §2's sync ladder (probe, direct merge, or wip-sync checkpoint commit) instead."
 fi
 

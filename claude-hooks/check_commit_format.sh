@@ -34,7 +34,30 @@ fi
 CONVENTIONAL_TYPES='feat|fix|refactor|test|docs|chore|perf|ci|build|style|revert'
 # FORGE_COMMIT_TYPES_END
 
-if [ -n "$MSG" ]; then
+# wip-sync checkpoint pairing (FOUNDATION §2 sync ladder): the env
+# marker FORGE_WIP_SYNC=1 defers the pre-commit gate, so it must be
+# impossible to use it with a normal-looking message (silent gate skip)
+# or to label a fully-gated commit as a checkpoint. Both directions
+# block; a correctly paired checkpoint is exempt from the
+# conventional-format warning.
+HAS_WIP_ENV=false
+HAS_WIP_MSG=false
+if echo "$COMMAND" | grep -qE '(^|[[:space:]])FORGE_WIP_SYNC=1([[:space:]]|$)'; then
+    HAS_WIP_ENV=true
+fi
+if [ -n "$MSG" ] && echo "$MSG" | grep -qE '^wip-sync:'; then
+    HAS_WIP_MSG=true
+fi
+if $HAS_WIP_ENV && ! $HAS_WIP_MSG; then
+    echo "BLOCKED: FORGE_WIP_SYNC=1 requires a commit message starting 'wip-sync:' — the deferred gate must be visible in history (FOUNDATION §2 sync ladder)." >&2
+    exit 2
+fi
+if $HAS_WIP_MSG && ! $HAS_WIP_ENV; then
+    echo "BLOCKED: a 'wip-sync:' message without FORGE_WIP_SYNC=1 mislabels a fully-gated commit as a checkpoint — pair them or rename the commit." >&2
+    exit 2
+fi
+
+if [ -n "$MSG" ] && ! $HAS_WIP_MSG; then
     if ! echo "$MSG" | grep -qE "^(${CONVENTIONAL_TYPES})(\(.+\))?(!)?:"; then
         echo "WARNING: Commit message should follow conventional format: type(scope): description (types: ${CONVENTIONAL_TYPES})"
     fi

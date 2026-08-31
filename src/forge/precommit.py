@@ -2468,6 +2468,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if os.environ.get("FORGE_WIP_SYNC") == "1":
+        emit(
+            f"{YELLOW}wip-sync checkpoint — full gate deferred to the next "
+            f"real commit.{NC}"
+        )
+        emit(
+            "This commit only secures in-progress work before a base merge "
+            "(FOUNDATION §2 sync ladder); every non-wip commit and the PR "
+            "squash still run the full battery."
+        )
+        return 0
+
     skip = _split_csv(args.skip)
     only = _split_csv(args.only)
     try:
