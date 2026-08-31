@@ -81,6 +81,8 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
 
 Execute `/pr` Step 3.92's authoring contract — composition inputs and the `block_unverified_pr_create` gate live there; the artifact is `code_health/pr_wrapup.md`. Enforced here: sections per Verification step 6; CI Status = "pending — PR not yet published"; first line `verified-at: <HEAD sha>`; file-adding diff (`--diff-filter=A`) → REFUSE without the `prior-art-searched:` block from the caller's `forge:prior-art` report. Post nothing — posting is the later posting task.
 
+**Comment-destined markdown is never hard-wrapped** — see [_TEMPLATE.md's reporter-agent header contract](_TEMPLATE.md#reporter-agent-header-contract) — do not restate. Applies here to the wrap-up and delta comments this agent authors directly.
+
 ## Task: Verification (Wrap-up)
 
 0. **Read `code_health/` logs first**; orient via `REPO_STRUCTURE.md` when present:
