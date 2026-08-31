@@ -20,6 +20,27 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.30.0 — Unreleased
+
+### Features
+- **The stash dance is retired; dirty-tree base sync is now the sync
+  ladder.** Research-backed (git docs + git source): `git stash -u`
+  runs `git clean` internally and its untracked-restore path has a
+  documented failure class, so FOUNDATION §2 now sanctions (1) a
+  zero-risk conflict probe via `git merge-tree --write-tree`, (2) a
+  plain merge when nothing overlaps, (3) a `wip-sync:` checkpoint
+  commit (`FORGE_WIP_SYNC=1`, gate deferred, erased by the PR squash)
+  when it does. `git merge --abort` is permitted post-checkpoint only.
+  `forge-precommit` gains the wip-sync mode; `check_commit_format`
+  blocks unpaired marker/message use both directions; and
+  `block_git_destructive` now blocks untracked-including stash
+  (`-u`/`-a`/long forms) while plain tracked-only stash verbs stay
+  usable. Semver rationale (deliberate MINOR, not MAJOR): the
+  recommended→blocked inversion binds **agents only** — humans keep
+  every stash form via `! git ...` — and the old procedure was a
+  workflow rule, not a programmatic surface consumers script against;
+  no consumer action beyond reading the new §2 is required.
+
 ## v3.29.0 — Unreleased
 
 ### Features

@@ -23,9 +23,11 @@ means and how to respond: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-b
 - **On a blocked commit: report and stop.** Never discard, reset,
   checkout, stash, or amend to get past a gate — `block_git_destructive`
   blocks every `git reset` form, forced `git clean`, `git checkout .` /
-  `git restore .`, and `git stash drop`/`clear`. Unstage with
-  `git restore --staged <path>`. The dirty-tree base-sync procedure in §2
-  is the main agent's call, not yours.
+  `git restore .`, `git stash drop`/`clear`, and untracked-including
+  stash (`-u`/`-a`). Unstage with `git restore --staged <path>`. The
+  dirty-tree sync ladder in §2 is the main agent's call, not yours; a
+  `wip-sync:` checkpoint commit (env `FORGE_WIP_SYNC=1`) is the one
+  commit whose gate legitimately defers.
 - **Never author or modify file content.** You have no `Edit` tool by
   design, and Bash must not become one: no heredocs, `sed -i`, `tee`,
   `>` redirects, `cp`/`mv` onto a tracked path, or any other command

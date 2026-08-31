@@ -712,9 +712,13 @@ def test_destructive_reset_flag_in_other_compound_segment_stays_scoped() -> None
     assert _run_hook(_DESTRUCTIVE, "echo done --hard; echo unrelated") == 0
 
 
-def test_destructive_allows_reset_stash_push() -> None:
-    """`git stash -u` — the sanctioned dirty-tree sync step — is allowed."""
-    assert _run_hook(_DESTRUCTIVE, "git stash -u") == 0
+def test_destructive_blocks_stash_push_untracked() -> None:
+    """`git stash -u` is blocked (#404) — it runs `git clean` internally.
+
+    FOUNDATION §2's sync ladder (probe, direct merge, or a wip-sync
+    checkpoint commit) is the sanctioned dirty-tree sync now.
+    """
+    assert _run_hook(_DESTRUCTIVE, "git stash -u") == 2
 
 
 # --- git clean: -f/-d/-x/-X/--force block; dry-run (-n/--dry-run) allowed --
@@ -861,9 +865,80 @@ def test_destructive_allows_stash_list() -> None:
     assert _run_hook(_DESTRUCTIVE, "git stash list") == 0
 
 
-def test_destructive_allows_stash_push_with_message() -> None:
-    """`git stash push -u -m "wip"` (the sanctioned dirty-tree sync) is allowed."""
-    assert _run_hook(_DESTRUCTIVE, 'git stash push -u -m "wip"') == 0
+def test_destructive_allows_stash_push_with_message_no_untracked() -> None:
+    """`git stash push -m "wip"` (tracked-only, message-bearing) is allowed."""
+    assert _run_hook(_DESTRUCTIVE, 'git stash push -m "wip"') == 0
+
+
+def test_destructive_allows_stash_push_bare() -> None:
+    """A bare `git stash push` (tracked-only, no message) is allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git stash push") == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git stash push -u",
+        "git stash -u",
+        "git stash save -a",
+        "git stash push --include-untracked",
+        "git stash --all",
+        "git stash push -qu",
+        "git stash push -uq",
+        "GIT_DIR=/tmp/x git stash -u",
+        "git --no-pager stash -u",
+        "git -c foo=bar stash --all",
+        'git stash push -u -m "wip"',
+        "git stash --quiet -u",
+        "git stash -q -u",
+        "git stash --keep-index -u",
+        "git stash save --quiet -u",
+    ],
+)
+def test_destructive_blocks_stash_untracked_forms(command: str) -> None:
+    """Block all stash operations with untracked-file flags.
+
+    Every untracked-including stash shape (flags, wrapper, global option,
+    and an interposed flag ahead of `-u`/`-a`) should be blocked per issue
+    #404 — the interposed-token forms were the short-flag bypass a
+    security review refuted, since closed by making the short-flag branch
+    token-tolerant like the long-flag branch.
+
+    Args:
+        command: The stash invocation under test.
+    """
+    assert _run_hook(_DESTRUCTIVE, command) == 2
+
+
+def test_destructive_allows_stash_apply() -> None:
+    """`git stash apply` (no untracked flag) is allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git stash apply") == 0
+
+
+def test_destructive_blocks_stash_show_untracked_known_over_block() -> None:
+    """Verify false-positive block of stash show --include-untracked.
+
+    The untracked-stash guard tolerates interposed tokens between `stash`
+    and `--include-untracked`/`--all` so wrapper/global-option forms still
+    match; the tradeoff is that a read-only `stash show` invocation with
+    the same long flag also matches. This is documented and accepted rather
+    than narrowing the pattern and risking a real bypass (issue #404).
+    """
+    assert _run_hook(_DESTRUCTIVE, "git stash show --include-untracked") == 2
+
+
+def test_destructive_blocks_stash_show_untracked_short_flag() -> None:
+    """Verify the short-flag branch now matches interposed tokens too.
+
+    The short-flag branch was made token-tolerant (like the long-flag
+    branch) to close the interposed-token bypass a security review
+    surfaced — a flag between `stash` and `-u`/`-a` (e.g. `save`,
+    `--quiet`) must still trip the guard. The tradeoff, now symmetric
+    with the long-flag branch, is that a read-only `stash show -u` also
+    blocks as an accepted false positive rather than left as a bypass
+    seam (issue #404).
+    """
+    assert _run_hook(_DESTRUCTIVE, "git stash show -u") == 2
 
 
 # --- shared anchor idiom, one representative case per family ---------------
@@ -1813,3 +1888,160 @@ def test_forge_docs_edits_registered_for_edit_and_write() -> None:
         assert any(_FORGE_DOCS_EDITS in cmd for cmd in commands), (
             f"{_FORGE_DOCS_EDITS} not registered under {matcher}"
         )
+
+
+# --- check_commit_format.sh: conventional format + wip-sync pairing (#404) --
+
+_COMMIT_FORMAT = "check_commit_format.sh"
+
+_HEREDOC_COMMIT_OK = "git commit -m \"$(cat <<'EOF'\nfeat: add x\n\nbody text\nEOF\n)\""
+
+_HEREDOC_WIP_SYNC_PAIRED = (
+    "FORGE_WIP_SYNC=1 git commit -m \"$(cat <<'EOF'\n"
+    "wip-sync: checkpoint before merge\n"
+    "EOF\n"
+    ')"'
+)
+
+_WARNING = "WARNING: Commit message should follow conventional format"
+
+
+def test_commit_format_allows_single_line_conventional() -> None:
+    """A single-line conventional message passes with no WARNING."""
+    proc = _run_hook_proc(_COMMIT_FORMAT, 'git commit -m "feat: add x"')
+    assert proc.returncode == 0
+    assert _WARNING not in proc.stdout
+
+
+def test_commit_format_allows_heredoc_conventional() -> None:
+    """The multi-line heredoc `-m "$(cat <<'EOF' ...)"` form passes too."""
+    proc = _run_hook_proc(_COMMIT_FORMAT, _HEREDOC_COMMIT_OK)
+    assert proc.returncode == 0
+    assert _WARNING not in proc.stdout
+
+
+def test_commit_format_allows_paired_wip_sync_single_line() -> None:
+    """FORGE_WIP_SYNC=1 paired with a `wip-sync:` single-line message passes."""
+    proc = _run_hook_proc(
+        _COMMIT_FORMAT,
+        'FORGE_WIP_SYNC=1 git commit -m "wip-sync: checkpoint before merge"',
+    )
+    assert proc.returncode == 0
+    assert _WARNING not in proc.stdout
+
+
+def test_commit_format_allows_paired_wip_sync_heredoc() -> None:
+    """FORGE_WIP_SYNC=1 paired with a `wip-sync:` heredoc message passes too."""
+    proc = _run_hook_proc(_COMMIT_FORMAT, _HEREDOC_WIP_SYNC_PAIRED)
+    assert proc.returncode == 0
+    assert _WARNING not in proc.stdout
+
+
+def test_commit_format_blocks_env_without_wip_sync_prefix() -> None:
+    """FORGE_WIP_SYNC=1 with a normal-looking message is blocked (silent skip risk)."""
+    proc = _run_hook_proc(
+        _COMMIT_FORMAT, 'FORGE_WIP_SYNC=1 git commit -m "feat: normal work"'
+    )
+    assert proc.returncode == 2
+    assert "BLOCKED" in proc.stderr
+
+
+def test_commit_format_blocks_wip_sync_prefix_without_env() -> None:
+    """Reject wip-sync prefix without the FORGE_WIP_SYNC environment gate.
+
+    A `wip-sync:` message without FORGE_WIP_SYNC=1 mislabels a gated
+    commit and must be blocked.
+    """
+    proc = _run_hook_proc(_COMMIT_FORMAT, 'git commit -m "wip-sync: sneaky"')
+    assert proc.returncode == 2
+    assert "BLOCKED" in proc.stderr
+
+
+def test_commit_format_blocks_env_with_no_message() -> None:
+    """FORGE_WIP_SYNC=1 with no `-m` at all has nothing to pair against — blocked."""
+    proc = _run_hook_proc(_COMMIT_FORMAT, "FORGE_WIP_SYNC=1 git commit")
+    assert proc.returncode == 2
+    assert "BLOCKED" in proc.stderr
+
+
+def test_commit_format_allows_lookalike_env_var_name() -> None:
+    """Allow commits with superstring env var names.
+
+    `MY_FORGE_WIP_SYNC=1` (superstring, not the exact marker) is not
+    the pairing gate and should allow normal commits.
+    """
+    assert _run_hook(_COMMIT_FORMAT, 'MY_FORGE_WIP_SYNC=1 git commit -m "feat: x"') == 0
+
+
+def test_commit_format_allows_lookalike_env_var_value() -> None:
+    """`FORGE_WIP_SYNC=10` (value != "1") does not trip the pairing gate either."""
+    assert _run_hook(_COMMIT_FORMAT, 'FORGE_WIP_SYNC=10 git commit -m "feat: x"') == 0
+
+
+def test_commit_format_blocks_env_with_semicolon_boundary() -> None:
+    """`export FORGE_WIP_SYNC=1;` (semicolon boundary) still trips the gate.
+
+    A shell-metacharacter boundary (`;` after `export FORGE_WIP_SYNC=1`,
+    not a space) previously slipped past the whitespace-only boundary
+    regex, letting the deferred-gate marker pair with a normal-looking
+    message undetected. Now closed.
+    """
+    proc = _run_hook_proc(
+        _COMMIT_FORMAT, 'export FORGE_WIP_SYNC=1; git commit -m "feat: sneaky"'
+    )
+    assert proc.returncode == 2
+    assert "BLOCKED" in proc.stderr
+
+
+def test_commit_format_blocks_env_with_and_boundary() -> None:
+    """`FORGE_WIP_SYNC=1&&` (`&&` boundary, no space) also trips the gate."""
+    proc = _run_hook_proc(
+        _COMMIT_FORMAT, 'FORGE_WIP_SYNC=1&&git commit -m "feat: sneaky"'
+    )
+    assert proc.returncode == 2
+    assert "BLOCKED" in proc.stderr
+
+
+def test_commit_format_allows_paired_wip_sync_semicolon_boundary() -> None:
+    """The semicolon-boundary form still passes when correctly paired."""
+    proc = _run_hook_proc(
+        _COMMIT_FORMAT, 'export FORGE_WIP_SYNC=1; git commit -m "wip-sync: ok"'
+    )
+    assert proc.returncode == 0
+    assert _WARNING not in proc.stdout
+
+
+def test_commit_format_warns_on_non_conventional_message() -> None:
+    """A message with no recognized type prefix gets the WARNING on stdout (exit 0)."""
+    proc = _run_hook_proc(_COMMIT_FORMAT, 'git commit -m "add x"')
+    assert proc.returncode == 0
+    assert _WARNING in proc.stdout
+
+
+def test_commit_format_allows_non_commit_command_with_wip_env_literal() -> None:
+    """A non-commit command carrying the literal `FORGE_WIP_SYNC=1` text passes.
+
+    Regression for the IS_COMMIT gate (design-review fix): this hook fires
+    on every Bash call, not just `git commit`. Before scoping the pairing
+    rule to commands that actually invoke `git ... commit`, a command like
+    a `forge-precommit` run under the deferred-gate env var was mistaken
+    for an unpaired wip-sync checkpoint and blocked.
+    """
+    assert (
+        _run_hook(_COMMIT_FORMAT, "FORGE_WIP_SYNC=1 forge-precommit --only ruff") == 0
+    )
+
+
+def test_commit_format_allows_grep_for_wip_env_marker_literal() -> None:
+    """Grepping the source for the marker string itself is not over-blocked.
+
+    Regression for the IS_COMMIT gate: a command that merely searches for
+    the literal `FORGE_WIP_SYNC=1` text (no `commit` subcommand present)
+    must not trip the pairing block either — the hook inspects command
+    text, not intent, so any non-commit command containing that substring
+    is a false-positive risk without the gate.
+    """
+    assert (
+        _run_hook(_COMMIT_FORMAT, "grep -n FORGE_WIP_SYNC=1 src/forge/precommit.py")
+        == 0
+    )

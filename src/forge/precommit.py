@@ -1961,7 +1961,9 @@ def step_changelog_version(repo_root: Path) -> StepResult:
             f"'{cfg.base_branch}' but not on this branch — no commit can "
             "pass until the base is merged in. Cure: "
             f"`git merge origin/{cfg.base_branch}` (never rebase). Dirty "
-            f"tree: `git stash -u` then merge, then `git stash pop`. "
+            "tree: FOUNDATION §2's sync ladder — probe with "
+            "`git merge-tree --write-tree`, merge directly when clean, "
+            "else a `wip-sync:` checkpoint commit first. "
             "Hand-adding the missing headings or a [no-version] marker "
             "will not work — both are rejected by this gate."
         )
@@ -2430,7 +2432,9 @@ def main() -> int:
     """CLI entry point.
 
     Returns:
-        ``0`` if every non-skipped step passed; ``1`` otherwise.
+        ``0`` if every non-skipped step passed (or the run was a
+        ``FORGE_WIP_SYNC=1`` checkpoint, which runs no steps); ``1``
+        otherwise.
     """
     parser = argparse.ArgumentParser(
         prog="forge-precommit",
@@ -2467,6 +2471,18 @@ def main() -> int:
         help="Run exactly these steps (repeatable or comma-separated).",
     )
     args = parser.parse_args()
+
+    if os.environ.get("FORGE_WIP_SYNC") == "1":
+        emit(
+            f"{YELLOW}wip-sync checkpoint — full gate deferred to the next "
+            f"real commit.{NC}"
+        )
+        emit(
+            "This commit only secures in-progress work before a base merge "
+            "(FOUNDATION §2 sync ladder); every non-wip commit and the PR "
+            "squash still run the full battery."
+        )
+        return 0
 
     skip = _split_csv(args.skip)
     only = _split_csv(args.only)
