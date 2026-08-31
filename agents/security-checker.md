@@ -166,6 +166,8 @@ verified-at: <sha>   (PR #<num>, branch <branch>)
 2. <Specific actionable recommendation>
 ```
 
+Clean result → compact PASS report per _TEMPLATE.md's report-by-exception rule: one PASS line after the header; prose only for findings.
+
 ## OWASP Python Security Quick Reference
 
 Check for these common vulnerabilities:

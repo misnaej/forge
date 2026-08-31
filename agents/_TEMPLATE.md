@@ -133,6 +133,14 @@ hard-wrapped**: GitHub comments render each newline as `<br>` (files
 collapse them), so wrapped prose posts as a ragged column. One line per
 paragraph; breaks only for lists, headings, fences, tables.
 
+**Report by exception.** A clean check is ONE line — `PASS` after the
+`verified-at:` header, plus at most a scope note — never a narrative of
+what was examined or a per-recipe breakdown of zero findings. Prose is
+reserved for findings: what, where, and (in wrap-ups) the disposition —
+fixed in `<sha>` / deferred to `#N` / accepted with reason. A wrap-up
+quotes the reporters' PASS lines; verbosity scales with findings, never
+with the number of checks run.
+
 ## Pre-write agent header contract
 
 A pre-write reporter (currently `prior-art`) fires before any diff or
