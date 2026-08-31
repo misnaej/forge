@@ -377,13 +377,21 @@ advisories with the suggested pin; they never edit pins.
     branch, prune the merged local branch — the `/next` cleanup phase)
     **and** `issue-triage`'s `post-pr` mode (closed-issue tier-label
     removal + Backlog Index regeneration).
-  - **`mergeable == CONFLICTING`** → alert only, **never auto-sync**: a
-    base merge re-triggers CI, so resolution is a deliberate follow-up
-    that weighs CI state. When acted on, the cure is
-    `git merge origin/<base>` (§2 — never rebase; dirty tree → §2's
-    stash dance, never `reset --hard`).
+  - **`mergeable == CONFLICTING`** → alert only; **the monitor never
+    syncs the branch it watches** (a read-only watcher must not mutate
+    what it observes).
   - **A CI run concluding in failure** → surface it and investigate
     (§1); never auto-push fixes.
+
+  Resolving a conflict — by whoever picks the work up, never the
+  monitor — is a plain base merge: `git merge origin/<base>` (§2 —
+  never rebase; dirty tree → §2's stash dance, never `reset --hard`).
+  It needs no permission: a base merge adds a merge commit and destroys
+  nothing, and keeping a branch current with its base is routine work
+  CI correctness depends on. The care belongs in resolving the conflict
+  — read what each side intended, keep both, and ask only when one
+  side's purpose cannot be determined — a question about the code, not
+  about permission.
 
   The main session stays free for the next task. Skip only on explicit
   user request or when `forge.run_context.is_non_interactive()` — except
