@@ -212,6 +212,8 @@ First line: `verified-at:` header per the
 [contract in _TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract)
 (capture snippet lives there).
 
+Clean result → compact PASS report per _TEMPLATE.md's report-by-exception rule: one PASS line after the header; prose only for findings.
+
 ```markdown
 verified-at: <sha>   (PR #<num>, branch <branch>)
 

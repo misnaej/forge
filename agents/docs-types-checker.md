@@ -286,6 +286,8 @@ If called by precommit-fixer, it will re-verify formatting.
 If called directly, consider running precommit-fixer to verify.
 ```
 
+Clean result → compact PASS report per _TEMPLATE.md's report-by-exception rule: one PASS line after the header; prose only for findings.
+
 ## Success Criteria
 
 - `code_health/docstring_verification.log` shows ZERO ERRORS (refreshed by `forge:precommit-fixer`)

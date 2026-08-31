@@ -79,7 +79,7 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
 
 ## Task: Author Wrap-up (pre-publication)
 
-Execute `/pr` Step 3.92's authoring contract — composition inputs and the `block_unverified_pr_create` gate live there; the artifact is `code_health/pr_wrapup.md`. Enforced here: sections per Verification step 6; CI Status = "pending — PR not yet published"; first line `verified-at: <HEAD sha>`; file-adding diff (`--diff-filter=A`) → REFUSE without the `prior-art-searched:` block from the caller's `forge:prior-art` report. Post nothing — posting is the later posting task.
+Execute `/pr` Step 3.92's authoring contract — composition inputs and the `block_unverified_pr_create` gate live there; the artifact is `code_health/pr_wrapup.md`. Enforced here: sections per Verification step 6, compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract); CI Status = "pending — PR not yet published"; first line `verified-at: <HEAD sha>`; file-adding diff (`--diff-filter=A`) → REFUSE without the `prior-art-searched:` block from the caller's `forge:prior-art` report. Post nothing — posting is the later posting task.
 
 **Comment-destined markdown is never hard-wrapped** — see [_TEMPLATE.md's reporter-agent header contract](_TEMPLATE.md#reporter-agent-header-contract) — do not restate. Applies here to the wrap-up and delta comments this agent authors directly.
 
@@ -119,15 +119,15 @@ git rev-list --left-right --count origin/<base>...HEAD   # left = behind
    ```
    Warn when an addressed issue lacks a bare `Closes`-family keyword in the description or a commit reference.
 5. **Post the squash-merge message as a separate PR comment** (task above) — MANDATORY in every wrap-up.
-6. **Post the wrap-up comment** via `gh pr comment` with exactly these sections:
+6. **Post the wrap-up comment** via `gh pr comment` with exactly these sections, each compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract) — clean checker = its one PASS line; findings get what/where/disposition prose:
    ```markdown
    ## Design Check | ## Security Review | ## Documentation Check
-   <each reporter's summary>
+   <PASS line, or findings + dispositions>
    ## Issue Management
    <auto-close references or warnings>
    ## Code Quality
-   <✅/❌ per code_health/ log: ruff, test_naming, repo_structure,
-    docstring_verification>
+   <one line: ✅/❌ per code_health/ log (ruff, test_naming,
+    repo_structure, docstring_verification)>
    ## CI Status
    <as of posting — never wait for CI; say plainly when it has not
     completed (FOUNDATION §6 "PR finalization")>
