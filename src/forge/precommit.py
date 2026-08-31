@@ -1315,10 +1315,15 @@ def step_release_tag_guard(repo_root: Path) -> StepResult:
     Forge tags **every** merge to its dev branch (``forge-next-prep --tag``),
     so ``plugin.json`` — which names the *next* release — must always sit
     **exactly one** rolling-next step (patch+1 / minor+1 / major+1) ahead of
-    the latest ``v*`` tag. A larger gap means a prior release's tag was
-    skipped and is about to be buried by a further bump (the failure mode of
-    #66, where v1.25.0 shipped untagged). This guard refuses that commit and
-    points at ``forge-next-prep --tag``.
+    the latest ``v*`` tag. A larger gap has two distinct causes, and the
+    failure message names both: (a) on dev, a prior release's tag was
+    skipped and is about to be buried (the #66 failure mode, where v1.25.0
+    shipped untagged) — a HUMAN runs ``forge-next-prep --tag``; (b) on a
+    feature branch, other open PRs hold the intermediate version slots —
+    nothing was skipped, the cure is re-slotting ``plugin.json`` to
+    latest-tag+1. The message ends with an explicit agents-report-only
+    directive: no agent may run the tag command (or any release action) to
+    clear this step (#405).
 
     Self-skips (passes) for any repo this cadence does not apply to: a
     single-track repo, one without ``.claude-plugin/plugin.json``, one with
@@ -1330,8 +1335,8 @@ def step_release_tag_guard(repo_root: Path) -> StepResult:
         repo_root: Git repo root.
 
     Returns:
-        ``StepResult`` — blocking failure only on a genuine tag gap;
-        skipped/pass otherwise.
+        ``StepResult`` — blocking failure whenever the gap exceeds one step,
+        whichever cause produced it; skipped/pass otherwise.
     """
     if not config.load_config(repo_root).dual_track:
         return StepResult(
