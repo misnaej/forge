@@ -436,8 +436,8 @@ def test_force_push_allows_non_push_git() -> None:
 
 
 # --- git_anchor.sh: shared lib integrity (#348 dedup contract) -------------
-# GIT_ANCHOR/SEG_ANCHOR moved to one sourced home so the four git-guard
-# hooks share a single anchor definition instead of four copies drifting
+# GIT_ANCHOR/SEG_ANCHOR moved to one sourced home so the git-guard
+# hooks share a single anchor definition instead of per-hook copies drifting
 # independently. This pins the dedup: every consumer sources the lib, and
 # none keeps a local `GIT_ANCHOR=` fallback that could silently diverge.
 
@@ -452,7 +452,7 @@ _GIT_GUARD_HOOKS = (
 
 
 def test_git_guard_hooks_source_shared_anchor_lib() -> None:
-    """All four git-guard hooks source `git_anchor.sh`, failing CLOSED.
+    """All git-guard hooks source `git_anchor.sh`, failing CLOSED.
 
     The guarded-source shape (existence check exiting 2 before `source`)
     is the security contract: a missing lib in a corrupted plugin cache
@@ -473,7 +473,7 @@ def test_git_guard_hooks_source_shared_anchor_lib() -> None:
 
 
 def test_git_guard_hooks_have_no_local_anchor_definition() -> None:
-    """None of the four hooks keeps a local `GIT_ANCHOR='...'` definition.
+    """None of the git-guard hooks keeps a local `GIT_ANCHOR='...'` definition.
 
     A local copy would defeat the point of extracting the anchor into one
     shared lib (#348) — two definitions can silently drift apart.
@@ -1096,6 +1096,12 @@ def test_raw_git_blocks_commit_after_no_pager_global_option() -> None:
     assert _run_hook(_RAW_GIT, "git --no-pager commit -m x") == 2
 
 
+def test_amend_blocks_after_no_pager_global_option(tmp_path: Path) -> None:
+    """`git --no-pager commit --amend` (global option) is blocked when pushed."""
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "git --no-pager commit --amend", cwd=work) == 2
+
+
 # --- registration / retirement -----------------------------------------
 
 
@@ -1225,6 +1231,31 @@ def test_amend_allows_longer_flag_false_positive(tmp_path: Path) -> None:
     """
     work, _bare = init_single_track_repo(tmp_path)
     assert _run_hook(_AMEND, "git commit --amend-ish -m x", cwd=work) == 0
+
+
+def test_amend_blocks_escaped_double_quote_desync(tmp_path: Path) -> None:
+    r"""A backslash-escaped `\\"` inside a message cannot hide a live `--amend`.
+
+    Security-review PoC: with a naive stripper, `-m "\\""` desynchronizes
+    the quote pairing and swallows the real `--amend` into a phantom
+    quoted span, silently allowing the amend. The escape-aware
+    double-quote rule keeps the flag visible — blocked.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = 'git commit -m "\\"" --amend -m "z"'
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+
+
+def test_amend_blocks_quote_char_inside_single_quotes(tmp_path: Path) -> None:
+    """A `"` character carried inside a single-quoted arg cannot desync the stripper.
+
+    Single-quote spans strip first (bash has no escapes inside them), so
+    `-m '"'` disappears before the double-quote rule runs and the live
+    `--amend` stays visible — blocked.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = 'git commit -m \'"\' --amend -m "z"'
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
 
 
 def test_amend_has_no_agent_bypass(tmp_path: Path) -> None:

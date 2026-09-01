@@ -20,6 +20,11 @@ set -e
 INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
 REPO_ROOT=$(jq -r '.cwd // empty' <<< "$INPUT")
+# Trust only an absolute payload cwd (same validation as
+# block_protected_branches.sh / block_branch_deletion.sh).
+if [ -n "$REPO_ROOT" ] && ! echo "$REPO_ROOT" | grep -qE '^/'; then
+    REPO_ROOT="."
+fi
 
 _block() {
     echo "BLOCKED: '$1' rewrites a commit that already exists on a remote — the single-commit form of a rebase. It forces a force-push (itself blocked) and leaves the branch diverged from origin. Make a NEW commit instead (forge squash-merges PRs, so fixup commits never reach the base branch). If a human truly needs to amend, run it yourself with: ! $COMMAND" >&2
@@ -44,7 +49,14 @@ source "$ANCHOR_LIB"
 # --amend never fires; `commit([[:space:]]|$)` excludes commit-tree /
 # commit-graph; `--am(e(n(d)?)?)?` covers git's accepted unambiguous
 # long-option abbreviations of --amend.
-STRIPPED=$(printf '%s\n' "$COMMAND" | sed -E "s/'[^']*'//g; s/\"[^\"]*\"//g")
+# The double-quote rule is escape-aware (`\"` inside a "…" span must not
+# terminate it, or `-m "\""` desynchronizes the stripper and hides a live
+# --amend). The single-quote rule stays naive ON PURPOSE: bash has no
+# backslash-escaping inside single quotes, so an escape-aware pattern
+# there would itself be wrong. Residual: a NON-git token like
+# `./run.sh --amend` after `git commit …` in one compound command can
+# false-positive; the block is conservative and a human runs it with `!`.
+STRIPPED=$(printf '%s\n' "$COMMAND" | sed -E "s/'[^']*'//g"' ; s/"([^"\\]|\\.)*"//g')
 if ! echo "$STRIPPED" | grep -qE "${GIT_ANCHOR}commit([[:space:]]|\$)"; then
     exit 0
 fi
