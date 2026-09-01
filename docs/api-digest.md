@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_66 modules, 769 symbols._
+_66 modules, 770 symbols._
 
 ## `forge`
 
@@ -752,6 +752,7 @@ _66 modules, 769 symbols._
 - `_one_step_successors(tag: tuple[int, int, int]) -> set[tuple[int, int, int]]` _(internal)_ — Return the three valid rolling-next successors of a tagged release.
 - `step_release_tag_guard(repo_root: Path) -> StepResult` — Block when an intermediate rolling-next release was never tagged (#66).
 - `step_smart_test(repo_root: Path) -> StepResult` — Run smart-test depth-N selection when opted in (off by default).
+- `_cadence_note(mode: str, *, age: float | None, age_txt: str, max_age: float) -> str` _(internal)_ — Return the informational cadence line for a non-escalating mode.
 - `step_changelog_history(repo_root: Path) -> StepResult` — Run ``verify-forge-changelog-history`` — the dropped-``@base``-entry guard.
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
