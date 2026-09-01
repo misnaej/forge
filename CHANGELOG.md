@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.30.2 — Unreleased
+## v3.31.1 — Unreleased
 
 ### Docs
 - **Test-suite lifecycle research report.** New
@@ -34,6 +34,21 @@ versions follow forge's rolling-next convention.
   caught and fixed a stale `plugin-roster.toml` (missing the
   `report-to-forge` skill and the `git_anchor` hook), restoring a green
   suite on dev.
+## v3.31.0 — Unreleased
+
+### Features
+- **The continuation ledger is bounded; done work clears in one week.**
+  `forge-continuation-append` now rotates on every append (and via a
+  new `--rotate` standalone mode): done activity entries older than
+  `max_recent_age_days` (default 7) or beyond `max_recent_entries`
+  (default 50) move verbatim to the append-only
+  `.plan/CONTINUATION-archive.md` and collapse into per-day digest
+  lines; entries referencing PRs/issues still named in the structured
+  sections are pinned — undone work stays raw, no network needed.
+  `/next` gains a continuation-hygiene step: the mechanical rotate plus
+  a critical curation pass that deletes stale structured-section
+  content (FOUNDATION §10 protects the file and the archive, not stale
+  prose). Forge's own 506-line file dropped to ~100 on first rotation.
 
 ## v3.30.1 — Unreleased
 
