@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.33.0 — Unreleased
+## v3.34.0 — Unreleased
 
 ### Features
 - **Tests now have a lifecycle, and the depth model is safe by
@@ -44,6 +44,20 @@ versions follow forge's rolling-next convention.
   wall/count/dev-fraction metrics append to
   `code_health/smart_test_history.log` per full run. Forge dogfoods
   with `precommit_depth = "2"`.
+
+## v3.33.0 — Unreleased
+
+### Docs
+- **FOUNDATION §1 closes two ask-instead-of-check loopholes.** "Ask
+  before acting on ambiguity" now requires that the ambiguity survive
+  investigation — run the search or read that would settle it before
+  asking, and when one reading is strongly favoured, take it and state
+  the assumption in one line ("investigation outranks clarification").
+  "Your own actions invalidate your reads" gains the no-action sibling:
+  beliefs formed earlier in the same session (your own briefs and
+  summaries, an issue's labels at read time) are snapshots that decay
+  with nothing signalling it — re-verify against the live source before
+  repeating them.
 
 ## v3.32.0 — Unreleased
 
