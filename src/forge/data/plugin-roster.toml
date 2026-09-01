@@ -11,6 +11,7 @@ names = [
     "fix",
     "memory-audit",
     "next",
+    "perf",
     "plan-issue",
     "pr",
     "pr-comments",

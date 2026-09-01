@@ -149,3 +149,13 @@ out. Because it accumulates each wrapped command's argv indefinitely,
 never pass secrets as CLI arguments to a telemetry-wrapped command — use
 environment variables (FOUNDATION §2's no-secrets rule extends to
 generated artifacts).
+
+## Reading the history
+
+`forge-telemetry --history` renders the append-only ledger as a trend
+table (timestamp, label, exit code, wall time, peak RSS — newest last),
+so "is this suite getting slower / hungrier" no longer means eyeballing
+raw `key=value` lines. It reads a text file only: no wrapped command,
+no `psutil` required. Mean CPU is not part of the ledger format and is
+therefore absent from the table. The `/perf` skill runs this reader
+(plus `forge-slow-tests-report --baseline`) as its analyze mode.

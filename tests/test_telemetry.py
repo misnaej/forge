@@ -358,6 +358,107 @@ def test_append_history_second_call_appends_without_disturbing_first(
 
 
 # ---------------------------------------------------------------------------
+# _parse_history
+# ---------------------------------------------------------------------------
+
+_HISTORY_LINE_WITH_SPACES_IN_CMD = (
+    "ts=2024-01-01T00:00:00+00:00  label=r1  exit=0  wall=1.5s  "
+    "peak_rss=10.0MB  cmd=pytest -q tests/test_a.py\n"
+)
+_HISTORY_LINE_NO_EQUALS = "not a valid ledger line at all\n"
+_HISTORY_LINE_NO_CMD_SEPARATOR = (
+    "ts=2024-01-01T00:00:00+00:00  label=-  exit=0  wall=1.0s  peak_rss=n/a\n"
+)
+
+
+def test_parse_history_full_line_keeps_spaces_in_cmd() -> None:
+    """The ``cmd=`` field keeps embedded spaces — it is always the last field."""
+    rows = telemetry._parse_history(_HISTORY_LINE_WITH_SPACES_IN_CMD)
+    assert rows == [
+        {
+            "ts": "2024-01-01T00:00:00+00:00",
+            "label": "r1",
+            "exit": "0",
+            "wall": "1.5s",
+            "peak_rss": "10.0MB",
+            "cmd": "pytest -q tests/test_a.py",
+        }
+    ]
+
+
+def test_parse_history_no_equals_line_skipped_adjacent_valid_line_parsed() -> None:
+    """A line with no ``=`` at all is skipped; a valid neighbor still parses."""
+    text = _HISTORY_LINE_NO_EQUALS + _HISTORY_LINE_WITH_SPACES_IN_CMD
+    rows = telemetry._parse_history(text)
+    assert len(rows) == 1
+    assert rows[0]["cmd"] == "pytest -q tests/test_a.py"
+
+
+def test_parse_history_empty_text_returns_empty_list() -> None:
+    """Empty ledger text parses to an empty list, not an error."""
+    assert telemetry._parse_history("") == []
+
+
+def test_parse_history_row_without_cmd_separator_has_no_cmd_key() -> None:
+    """A row with no ``  cmd=`` separator is still built, minus the ``cmd`` key."""
+    rows = telemetry._parse_history(_HISTORY_LINE_NO_CMD_SEPARATOR)
+    assert len(rows) == 1
+    assert "cmd" not in rows[0]
+    assert rows[0]["peak_rss"] == "n/a"
+
+
+# ---------------------------------------------------------------------------
+# _render_history
+# ---------------------------------------------------------------------------
+
+
+def test_render_history_missing_file_returns_0_and_logs_hint(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No ledger file at all — returns 0 and logs a "no history" hint."""
+    with caplog.at_level(logging.INFO, logger="forge.telemetry"):
+        code = telemetry._render_history(tmp_path)
+    assert code == 0
+    assert "No telemetry history" in caplog.text
+
+
+def test_render_history_unparsable_content_returns_0_and_logs_hint(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A ledger file that parses to zero rows still returns 0, with its own hint."""
+    history_log = tmp_path / "code_health" / "telemetry_history.log"
+    history_log.parent.mkdir(parents=True)
+    history_log.write_text(_HISTORY_LINE_NO_EQUALS, encoding="utf-8")
+    with caplog.at_level(logging.INFO, logger="forge.telemetry"):
+        code = telemetry._render_history(tmp_path)
+    assert code == 0
+    assert "holds no parsable runs" in caplog.text
+
+
+def test_render_history_two_runs_renders_header_and_both_rows_newest_last(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Two appended runs render a header plus both rows, oldest run first."""
+    first = telemetry._RunHistory(cmd=["true"], summary=None, exit_code=0, elapsed=1.0)
+    telemetry._append_history(tmp_path, first, label="r1")
+    summary = telemetry._Summary(peak_rss_mb=5.0, mean_cpu=10.0)
+    second = telemetry._RunHistory(
+        cmd=["true"], summary=summary, exit_code=1, elapsed=2.0
+    )
+    telemetry._append_history(tmp_path, second, label="r2")
+
+    with caplog.at_level(logging.INFO, logger="forge.telemetry"):
+        code = telemetry._render_history(tmp_path)
+
+    assert code == 0
+    assert "Telemetry history (2 runs):" in caplog.text
+    assert "label" in caplog.text  # header row
+    first_index = caplog.text.index("r1")
+    second_index = caplog.text.index("r2")
+    assert first_index < second_index  # newest-last: r1 appended first, renders first
+
+
+# ---------------------------------------------------------------------------
 # _tree_rss_bytes
 # ---------------------------------------------------------------------------
 
@@ -620,6 +721,37 @@ def test_main_bad_label_logs_error_and_returns_2(
 
     assert code == 2
     assert "not a safe artifact suffix" in caplog.text
+
+
+def test_main_history_flag_short_circuits_before_psutil_and_command_gates(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``--history`` short-circuits, avoiding psutil and command checks.
+
+    SCENARIO: ``main(["--history"])`` — no ``--`` command at all.
+    MOCK SETUP: ``psutil`` set to ``None`` (would normally trigger the exit-1
+        gate) and ``repo_root`` stubbed to return ``tmp_path``;
+        ``_render_history`` stubbed to record the root it received and
+        return a sentinel distinguishable from the 1/2 error codes.
+    EXPECTED BEHAVIOR: ``main`` returns the stub's sentinel (not 1 or 2),
+        proving ``--history`` is handled before both the missing-command
+        and missing-psutil checks; ``_render_history`` receives the
+        stubbed repo root.
+    """
+    monkeypatch.setattr(telemetry, "psutil", None)
+    monkeypatch.setattr(telemetry, "repo_root", lambda: tmp_path)
+    captured: dict[str, object] = {}
+
+    def _fake_render_history(root: object) -> int:
+        captured["root"] = root
+        return 42
+
+    monkeypatch.setattr(telemetry, "_render_history", _fake_render_history)
+
+    code = telemetry.main(["--history"])
+
+    assert code == 42
+    assert captured["root"] == tmp_path
 
 
 # ---------------------------------------------------------------------------

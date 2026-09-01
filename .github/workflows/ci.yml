@@ -63,10 +63,26 @@ jobs:
         run: pip install -e ".[dev]"
 
       # Same sequence the local pre-commit hook runs: ruff lint + ruff
-      # format + verify-forge-docstrings (diff vs main) + pytest + plugin
-      # manifest JSON. No CI-specific bash.
+      # format + verify-forge-docstrings (diff vs main) + plugin
+      # manifest JSON. Pytest is deliberately NOT in this sequence —
+      # it runs as its own step below.
       - name: forge-precommit (pre-commit hook sequence)
         run: forge-precommit
+
+      # Full suite with the durations sections the slow-tests reporter
+      # consumes (flags live in [tool.pytest.ini_options] addopts; the
+      # tee mirrors the documented CI recipe). GitHub's bash default is
+      # pipefail, so the tee does not mask pytest's exit code.
+      - name: pytest (full suite, durations captured)
+        run: |
+          mkdir -p code_health
+          pytest -q | tee code_health/pytest.log
+
+      # Perf visibility on every run, pass or fail — a slow AND failing
+      # suite is when the ranking matters most. Reporter never gates.
+      - name: forge-slow-tests-report (slowest tests + baseline compare)
+        if: always()
+        run: forge-slow-tests-report --baseline
 
       # Same drift check the post-merge / post-checkout hooks run locally:
       # the foundation block in CLAUDE.md must match FOUNDATION.md as

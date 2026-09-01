@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_66 modules, 772 symbols._
+_66 modules, 778 symbols._
 
 ## `forge`
 
@@ -824,6 +824,10 @@ _66 modules, 772 symbols._
 - `class Duration` — One test-phase timing parsed from a pytest durations section.
 - `parse_durations(text: str) -> list[Duration]` — Extract and rank every durations entry in a pytest log.
 - `format_report(durations: list[Duration], top: int) -> str` — Render a ranked durations table as plain text.
+- `_baseline_key(duration: Duration) -> str` _(internal)_ — Return *duration*'s flat JSON key (``nodeid::phase``).
+- `save_baseline(durations: list[Duration], path: Path) -> None` — Write *durations* as the committed baseline JSON at *path*.
+- `load_baseline(path: Path) -> dict[str, float]` — Load the baseline mapping from *path*.
+- `format_baseline_delta(durations: list[Duration], baseline: dict[str, float]) -> str` — Render the regression block comparing *durations* to *baseline*.
 - `_read_source(log: str) -> str` _(internal)_ — Read the pytest log from a file path or stdin.
 - `main() -> int` — Entry point for ``forge-slow-tests-report``.
 
@@ -839,7 +843,7 @@ _66 modules, 772 symbols._
 - `_smart_test_config(repo_root: Path) -> dict[str, object]` _(internal)_ — Return the ``[tool.forge.smart_test]`` table, or ``{}`` when absent.
 - `_depth_from_commit(repo_root: Path, cfg: dict[str, object]) -> str | None` _(internal)_ — Read a depth directive from ``HEAD``'s commit message, if present.
 - `_parse_depth(raw: str) -> int | str` _(internal)_ — Map a ``--depth`` token to an int tier or the ``full`` sentinel.
-- `_write_log(repo_root: Path, body: str) -> None` _(internal)_ — Write *body* to ``code_health/smart_test.log``.
+- `_write_log(repo_root: Path, body: str) -> None` _(internal)_ — Write *body* to ``code_health/smart_test.log`` and ``pytest.log``.
 - `_run_full(repo_root: Path, cfg: dict[str, object], changed: set[str], *, all_tests: bool = False, telemetry: bool = False) -> tuple[int, str]` _(internal)_ — Run the ``full`` tier with lifecycle deselection and metrics.
 - `class _RunConfig` _(internal)_ — Configuration for a tiered test run.
 - `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
@@ -922,6 +926,8 @@ _66 modules, 772 symbols._
 - `class _RunHistory` _(internal)_ — Information to append to the telemetry history log.
 - `_summarize(samples: list[Sample]) -> _Summary | None` _(internal)_ — Return the run's aggregate summary, or ``None`` for empty samples.
 - `_append_history(root: Path, history: _RunHistory, label: str) -> None` _(internal)_ — Append one summary line for this run to ``telemetry_history.log``.
+- `_parse_history(text: str) -> list[dict[str, str]]` _(internal)_ — Parse ``telemetry_history.log`` lines into field mappings.
+- `_render_history(root: Path) -> int` _(internal)_ — Print the run-history trend table for ``forge-telemetry --history``.
 - `_render_plot(root: Path, samples: list[Sample], label: str = '') -> None` _(internal)_ — Write ``code_health/telemetry[_<label>].png``, or log why it was skipped.
 - `run_command(cmd: Sequence[str], root: Path, *, capture: bool = False, cwd: Path | None = None, label: str = '') -> tuple[int, str]` — Run *cmd* under resource sampling and write the telemetry artifacts.
 - `main(argv: list[str] | None = None) -> int` — Run the telemetry CLI: ``forge-telemetry -- <cmd> ...``.

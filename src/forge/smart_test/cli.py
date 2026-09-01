@@ -4,9 +4,11 @@ Selects the tests a change set affects (via the import graph) and runs
 them in escalating depth batches with fail-fast: depth 0 (tests importing
 a changed module directly), depth 1 (one hop removed), depth 2 (two hops),
 or ``full`` (the entire suite, with coverage). Lower depths must pass
-before higher ones run, keeping the feedback loop tight. Writes
-``code_health/smart_test.log`` for ``forge:precommit-fixer`` per
-FOUNDATION §13.
+before higher ones run, keeping the feedback loop tight. Writes the
+run output to two sinks: ``code_health/smart_test.log`` for
+``forge:precommit-fixer`` (FOUNDATION §13) and ``code_health/pytest.log``
+so ``forge-slow-tests-report``'s no-argument default works after any
+smart-test run.
 
 Usage:
 
@@ -53,6 +55,7 @@ logger = logging.getLogger(__name__)
 _FULL = "full"
 _DEPTH_CHOICES = ("0", "1", "2", _FULL)
 _LOG_RELPATH = Path("code_health") / "smart_test.log"
+_PYTEST_LOG_RELPATH = Path("code_health") / "pytest.log"
 # Default CI directive: [depth-N] or [full] anywhere in the commit message.
 # Override via [tool.forge.smart_test].commit_directive_re.
 _DEPTH_DIRECTIVE_RE = r"\[(?:depth-(?P<n>[0-2])|(?P<full>full))\]"
@@ -111,15 +114,22 @@ def _parse_depth(raw: str) -> int | str:
 
 
 def _write_log(repo_root: Path, body: str) -> None:
-    """Write *body* to ``code_health/smart_test.log``.
+    """Write *body* to ``code_health/smart_test.log`` and ``pytest.log``.
+
+    Two sinks by design, same content: ``smart_test.log`` is what
+    ``forge:precommit-fixer`` reads (FOUNDATION §13), while
+    ``pytest.log`` is ``forge-slow-tests-report``'s documented default
+    input — writing it here makes the reporter's no-argument invocation
+    true after any smart-test run.
 
     Args:
         repo_root: Git repo root.
         body: Full captured run output.
     """
-    log_path = repo_root / _LOG_RELPATH
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(body, encoding="utf-8")
+    for relpath in (_LOG_RELPATH, _PYTEST_LOG_RELPATH):
+        log_path = repo_root / relpath
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(body, encoding="utf-8")
 
 
 def _run_full(

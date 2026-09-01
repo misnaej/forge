@@ -123,12 +123,19 @@ graph LR
   prior_art["prior-art<br/>AI agent"]
   precommit_fixer["⚖️ precommit-fixer<br/>AI agent"]
   sk_smart_test(["/smart-test<br/>skill"])
+  sk_perf(["/perf<br/>skill"])
+  cli_forge_slow_tests_report[("forge-slow-tests-report<br/>CLI")]
+  cli_forge_telemetry[("forge-telemetry<br/>CLI")]
   sk_test(["/test<br/>skill"])
   test_advisor["⚖️ test-advisor<br/>AI agent"]
   test_writer["test-writer<br/>AI agent"]
   main_agent -->|runs| sk_commit
   main_agent -->|runs| sk_fix
   main_agent -->|runs| sk_smart_test
+  main_agent -->|runs| sk_perf
+  sk_perf -->|invokes| cli_forge_slow_tests_report
+  sk_perf -->|invokes| cli_forge_telemetry
+  sk_perf -.->|delegates deep dives| perf_optimizer
   main_agent -->|runs| sk_test
   main_agent -. §3 pre-write review .-> design_checker
   main_agent -. §3 before creating files .-> prior_art
@@ -178,6 +185,9 @@ graph LR
   class precommit_fixer agent
   class precommit_fixer mutator
   class sk_smart_test skill
+  class sk_perf skill
+  class cli_forge_slow_tests_report cli
+  class cli_forge_telemetry cli
   class sk_test skill
   class test_advisor agent
   class test_advisor reporter
