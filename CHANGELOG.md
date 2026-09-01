@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.32.0 — Unreleased
+## v3.33.0 — Unreleased
 
 ### Features
 - **forge-precommit times itself.** Every run wall-clocks each step
@@ -31,6 +31,18 @@ versions follow forge's rolling-next convention.
   one-line total; `--json` elements gain an additive `elapsed_s` field
   (the output stays a list — sum the field for the run total). No more
   hand-stopwatching `--only <step>` to find the slow check.
+
+## v3.32.0 — Unreleased
+
+### Features
+- **Amending a pushed commit is now blocked at the cause.** New
+  `block_amend_pushed_commit` Claude Code hook (no bypass): rejects
+  `git commit --amend` whenever `HEAD` already exists on a
+  remote-tracking ref — the single-commit form of a rebase, previously
+  caught only when the resulting force-push hit its own wall, one step
+  too late. Amending an unpushed commit stays allowed. FOUNDATION §2
+  gains the matching "NEVER amend a pushed commit" rule, and
+  `git-commit-push` the "never amend — always a new commit" invariant.
 
 ## v3.31.1 — Unreleased
 
