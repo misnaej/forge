@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_66 modules, 781 symbols._
+_67 modules, 798 symbols._
 
 ## `forge`
 
@@ -227,6 +227,23 @@ _66 modules, 781 symbols._
 - `_section_content(text: str) -> dict[str, set[str]]` _(internal)_ — Map each release version to its normalized non-heading content lines.
 - `stranded_added_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections gained content vs *old_text*.
 - `released_deleted_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections lost content vs *old_text*.
+
+## `forge.changelog_fragments`
+
+> _forge-changelog — changelog fragments: validation, discovery, assembly._
+
+- `class Fragment` — One parsed pending changelog fragment.
+- `_parse_and_validate_filename(name: str) -> tuple[str, str, list[str]]` _(internal)_ — Validate filename and extract slug and type.
+- `_parse_bump_line_and_body(path: Path, lines: list[str]) -> tuple[str, str, list[str]]` _(internal)_ — Validate bump line and extract level and body.
+- `_check_no_versions_or_headings(name: str, body: str) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
+- `validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]` — Parse *path* into a :class:`Fragment`, collecting every violation.
+- `discover_fragments(root: Path) -> list[Path]` — Return pending fragment files under ``changelog.d/``, filename-sorted.
+- `max_level(fragments: list[Fragment]) -> str` — Return the strongest bump level among *fragments*.
+- `assemble_changelog(text: str, fragments: list[Fragment], version: str, *, date: str = '') -> str` — Insert a new release heading built from *fragments* into *text*.
+- `check_pending(root: Path) -> list[str]` — Validate every pending fragment under *root*.
+- `_cmd_check(root: Path) -> int` _(internal)_ — Report on pending fragments; gate on validity.
+- `_cmd_assemble(root: Path, version: str, date: str, *, delete: bool) -> int` _(internal)_ — Collate pending fragments into ``CHANGELOG.md`` under *version*.
+- `main(argv: list[str] | None = None) -> int` — Run the ``forge-changelog`` CLI.
 
 ## `forge.claude_settings_schema`
 
@@ -502,6 +519,7 @@ _66 modules, 781 symbols._
 - `merge_base_with_head(root: Path | None, base_branch: str) -> str` — Return the merge-base SHA of ``HEAD`` and the resolved base ref.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 - `write_tree(repo_root: Path) -> str | None` — Return the tree SHA of the current **index** via ``git write-tree``.
+- `_release_ignored(path: str) -> bool` _(internal)_ — Return whether *path* is release-curated content (fingerprint-exempt).
 - `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
 - `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
 - `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
@@ -767,7 +785,11 @@ _66 modules, 781 symbols._
 - `step_vendored_integrity(repo_root: Path) -> StepResult` — Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
 - `_changelog_blocking(repo_root: Path) -> bool` _(internal)_ — Return whether the changelog steps block the commit (default yes).
 - `_tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool` _(internal)_ — Return whether *tag* is reachable from the base branch but not HEAD.
+- `_changelog_version_skip_gate(repo_root: Path) -> StepResult | None` _(internal)_ — Check all skip conditions for changelog_version step.
 - `step_changelog_version(repo_root: Path) -> StepResult` — Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
+- `_changelog_updated_skip_gate(repo_root: Path, cfg: config.ForgeConfig) -> StepResult | None` _(internal)_ — Check all skip conditions for changelog_updated step.
+- `_handle_fragment_mode(repo_root: Path, files: list[str], fragments_prefix: str, require: tuple[str, ...], exempt: tuple[str, ...]) -> StepResult` _(internal)_ — Handle fragment-mode changelog validation.
+- `_handle_standard_mode(repo_root: Path, files: list[str], *, enforce: bool, require: tuple[str, ...], exempt: tuple[str, ...]) -> StepResult` _(internal)_ — Handle standard-mode changelog validation.
 - `step_changelog_updated(repo_root: Path) -> StepResult` — Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
 - `_step_marker(result: StepResult) -> str` _(internal)_ — Return *result*'s bare status marker (``SKIP``/``PASS``/``WARN``/``FAIL``).

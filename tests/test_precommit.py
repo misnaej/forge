@@ -5358,6 +5358,195 @@ def test_step_changelog_version_no_tag_visible_warns_structural_only(
 
 
 # ---------------------------------------------------------------------------
+# step_changelog_version / step_changelog_updated — fragments mode
+# ---------------------------------------------------------------------------
+#
+# Shared fixture recipe: CHANGELOG.md present (so the steps don't self-skip),
+# no `.claude-plugin/plugin.json` (not manifest-versioned), no `dev_branch`
+# (not dual-track), `pyproject.toml` opting into
+# `[tool.forge.changelog] mode = "fragments"`.
+
+
+def _write_fragments_pyproject(tmp_path: Path) -> None:
+    """Write a `pyproject.toml` opting into `[tool.forge.changelog] mode = "fragments"`.
+
+    Args:
+        tmp_path: Repo root to write into.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.changelog]\nmode = "fragments"\n'
+    )
+
+
+def _write_pending_fragment(tmp_path: Path, name: str, body: str) -> None:
+    """Write a `changelog.d/<name>` pending fragment with *body*.
+
+    Args:
+        tmp_path: Repo root.
+        name: Fragment filename.
+        body: Fragment file contents, written verbatim.
+    """
+    directory = tmp_path / "changelog.d"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / name).write_text(body)
+
+
+def test_step_changelog_version_fragments_mode_valid_pending_passes(
+    tmp_path: Path,
+) -> None:
+    """Fragment mode with a valid pending fragment passes, naming "Fragment mode"."""
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    _write_pending_fragment(tmp_path, "a.added.md", "bump: minor\n- x\n")
+    result = precommit.step_changelog_version(tmp_path)
+    assert result.passed
+    assert "Fragment mode" in result.output
+
+
+def test_step_changelog_version_fragments_mode_invalid_pending_fails(
+    tmp_path: Path,
+) -> None:
+    """Fragment mode with an invalid pending fragment fails, blocking by default."""
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    _write_pending_fragment(tmp_path, "a.bogus.md", "bump: minor\n- x\n")
+    result = precommit.step_changelog_version(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+    assert "unknown type 'bogus'" in result.output
+
+
+def test_step_changelog_version_fragments_mode_no_pending_passes(
+    tmp_path: Path,
+) -> None:
+    """Fragment mode with no `changelog.d/` at all passes cleanly."""
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    result = precommit.step_changelog_version(tmp_path)
+    assert result.passed
+    assert "Fragment mode" in result.output
+
+
+def test_step_changelog_updated_fragments_mode_trigger_without_fragment_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A change requiring a changelog entry, with no fragment anywhere, fails."""
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert not result.passed
+    assert "changelog.d/" in result.output
+
+
+def test_step_changelog_updated_fragments_mode_trigger_with_valid_fragment_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A trigger plus a valid fragment present in both the diff and on disk passes."""
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    _write_pending_fragment(tmp_path, "a.added.md", "bump: minor\n- x\n")
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(
+        precommit.config,
+        "select_diff_files",
+        lambda *_a, **_kw: ["src/pkg/mod.py", "changelog.d/a.added.md"],
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.passed
+    assert "fragment present" in result.output
+
+
+def test_step_changelog_updated_fragments_mode_invalid_on_disk_fragment_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A trigger with a fragment in the diff that fails validation still fails."""
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    _write_pending_fragment(tmp_path, "a.bogus.md", "bump: minor\n- x\n")
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(
+        precommit.config,
+        "select_diff_files",
+        lambda *_a, **_kw: ["src/pkg/mod.py", "changelog.d/a.bogus.md"],
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert not result.passed
+    assert "Invalid changelog.d/" in result.output
+
+
+def test_step_changelog_updated_fragments_mode_fragment_only_diff_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A diff touching only a fragment carries no changelog-requiring trigger.
+
+    Fragments live under the excluded `changelog.d/` prefix, so a
+    fragment-only diff never itself counts as a trigger — the gate is
+    satisfied by having nothing left to require an entry for.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    _write_pending_fragment(tmp_path, "a.added.md", "bump: minor\n- x\n")
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(
+        precommit.config,
+        "select_diff_files",
+        lambda *_a, **_kw: ["changelog.d/a.added.md"],
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.passed
+    assert "No changelog-requiring changes." in result.output
+
+
+def test_step_changelog_updated_fragments_mode_validates_even_without_triggers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An invalid on-disk fragment fails the gate even with an empty diff.
+
+    Locks that fragment validation is unconditional: `check_pending_fragments`
+    runs regardless of whether `triggers` is empty, so a stray invalid
+    fragment left behind by an earlier commit still blocks — it is not
+    gated on there being a changelog-requiring change in this diff.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    _write_pending_fragment(tmp_path, "a.bogus.md", "bump: minor\n- x\n")
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit.config, "select_diff_files", lambda *_a, **_kw: [])
+    result = precommit.step_changelog_updated(tmp_path)
+    assert not result.passed
+    assert "Invalid changelog.d/" in result.output
+
+
+# ---------------------------------------------------------------------------
 # _release_merge_context + run_all era-gap promotion suppression
 # ---------------------------------------------------------------------------
 
