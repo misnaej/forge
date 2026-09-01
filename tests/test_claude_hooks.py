@@ -1341,6 +1341,20 @@ def test_amend_blocks_escaped_dollar_before_quote(tmp_path: Path) -> None:
     assert _run_hook(_AMEND, cmd, cwd=work) == 2
 
 
+def test_amend_blocks_double_dollar_before_quote(tmp_path: Path) -> None:
+    """`$$'…'` (PID parameter, then quote) opens a PLAIN quote — blocked.
+
+    Security-review PoC #5: bash consumes `$$` atomically, so the quote
+    after it is ordinary single-quoting, not ANSI-C. The live-dollar
+    flag TOGGLES on consecutive `$` (parity: `$'` ANSI-C, `$$'` plain,
+    `$$$'` ANSI-C), so an interior backslash cannot swallow the live
+    `--amend` that follows.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = "git commit -m $$'x\\' --amend puppy"
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+
+
 def test_amend_has_no_agent_bypass(tmp_path: Path) -> None:
     """Even forge:git-commit-push — the one agent that runs `git commit` — cannot amend.
 

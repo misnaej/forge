@@ -67,7 +67,14 @@ source "$ANCHOR_LIB"
 # The `dollar` flag marks a LIVE `$` — one emitted as a plain char, not
 # one produced by backslash-escaping (`\$` is a literal dollar in bash,
 # so `\$'…'` opens a PLAIN quote, never ANSI-C). Reading the raw text at
-# i-1 cannot tell those apart; only emission state can.
+# i-1 cannot tell those apart; only emission state can. Consecutive `$`
+# TOGGLE the flag: bash consumes `$$` atomically (the PID parameter), so
+# `$$'…'` is plain-quoted while `$$$'…'` is ANSI-C — exact parity.
+# Threat model note: this stripper faithfully mirrors bash's quote and
+# escape rules for straightforward commands — the reflexive amend the
+# hook exists to catch. Deliberate multi-layer obfuscation (`bash -c`,
+# `${IFS}` splicing, xargs) is the git-guard family's documented
+# accepted residual (git_anchor.sh), not this hook's job to chase.
 STRIPPED=$(printf '%s\n' "$COMMAND" | awk '
     BEGIN { state = 0; pending = ""; dollar = 0; carry = 0 }
     {
@@ -86,7 +93,8 @@ STRIPPED=$(printf '%s\n' "$COMMAND" | awk '
                     dollar = 0
                 }
                 else if (c == "\"") { state = 2; dollar = 0 }
-                else { out = out c; dollar = (c == "$") }
+                else if (c == "$") { out = out c; dollar = !dollar }
+                else { out = out c; dollar = 0 }
             } else if (state == 1) {
                 if (c == "\047") state = 0
             } else if (state == 2) {
