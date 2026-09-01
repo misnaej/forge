@@ -528,17 +528,27 @@ options:
 
 ```text
 usage: forge-slow-tests-report [-h] [--log LOG] [--top TOP] [--out OUT]
+                               [--baseline [BASELINE]]
+                               [--update-baseline [UPDATE_BASELINE]]
 
 Parse pytest --durations sections from a log (or stdin) and print the slowest
 tests, merged across all batches.
 
 options:
-  -h, --help  show this help message and exit
-  --log LOG   Path to the pytest log to parse, or '-' for stdin (default:
-              code_health/pytest.log).
-  --top TOP   Number of slowest tests to show (default: 25).
-  --out OUT   Also write the report to this file (e.g.
-              code_health/slow_tests.log).
+  -h, --help            show this help message and exit
+  --log LOG             Path to the pytest log to parse, or '-' for stdin
+                        (default: code_health/pytest.log).
+  --top TOP             Number of slowest tests to show (default: 25).
+  --out OUT             Also write the report to this file (e.g.
+                        code_health/slow_tests.log).
+  --baseline [BASELINE]
+                        Compare against a committed duration baseline and
+                        append a WARN-shaped regression block (default path:
+                        .forge-test-durations.json).
+  --update-baseline [UPDATE_BASELINE]
+                        Rewrite the baseline from this run's durations — run
+                        deliberately, in a dedicated chore(perf) PR (default
+                        path: .forge-test-durations.json).
 ```
 
 ## forge-smart-test
@@ -576,7 +586,7 @@ options:
 ## forge-telemetry
 
 ```text
-usage: forge-telemetry [-h] [--label LABEL]
+usage: forge-telemetry [-h] [--label LABEL] [--history]
 
 Sample process-tree RSS + host CPU while a command runs; write
 code_health/telemetry.log (+ .png with matplotlib).
@@ -586,6 +596,9 @@ options:
   --label LABEL  suffix the artifacts as telemetry_<label>.log/.png so a retry
                  never overwrites the run before it (env:
                  FORGE_TELEMETRY_LABEL; the flag wins)
+  --history      print the run-history trend table from
+                 code_health/telemetry_history.log and exit (no command, no
+                 psutil)
 ```
 
 ## forge-upgrade
