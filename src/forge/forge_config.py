@@ -356,6 +356,18 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "reads to drive the tier from a CI commit.",
     ),
     ConfigKey(
+        ("tool", "forge", "continuation", "max_recent_entries"),
+        default=50,
+        description="Count cap for CONTINUATION.md's raw Recent-activity "
+        "tail; overflow rotates to the archive and the per-day digest.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "continuation", "max_recent_age_days"),
+        default=7,
+        description="Age bound for DONE ledger entries (undone-pinned "
+        "entries stay); older lines rotate to the archive + digest.",
+    ),
+    ConfigKey(
         ("tool", "forge", "telemetry", "sample_interval"),
         default=1.0,
         description="Seconds between resource samples taken by forge-telemetry "
