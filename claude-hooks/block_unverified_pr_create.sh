@@ -70,4 +70,43 @@ if ! head -5 "$WRAPUP" | grep -qE "verified-at:.*(${HEAD_SHA}|${HEAD_SHA:0:7})";
     exit 2
 fi
 
+# LIGHT wrap-up (`wrapup-mode: light` in the header): the short-form
+# wrap-up skips the reporter round, so the escape must be EARNED at
+# publish time, never taken on agent say-so. The hook re-runs the
+# deterministic classifier (forge-pr-plan) and blocks unless it agrees
+# the diff is light-code. Fail CLOSED throughout: a missing classifier,
+# an unresolvable base, or any error means the full wrap-up applies.
+if head -5 "$WRAPUP" | grep -qE '^wrapup-mode:[[:space:]]*light[[:space:]]*$'; then
+    if ! command -v forge-pr-plan >/dev/null 2>&1; then
+        echo "BLOCKED: wrap-up declares wrapup-mode: light but forge-pr-plan is not on PATH to verify it — install forge-scripts or author the full wrap-up." >&2
+        exit 2
+    fi
+    # Base ref: prefer the --base flag on the create command itself,
+    # else [tool.forge] config (dev_branch, falling back to base_branch)
+    # via the same python3 heredoc pattern as block_protected_branches.
+    BASE=$(echo "$COMMAND" | sed -nE 's/.*--base[= ]+([^ ]+).*/\1/p' | head -1)
+    if [ -z "$BASE" ]; then
+        BASE=$(python3 - "$REPO_ROOT" 2>/dev/null <<'PY'
+import sys, tomllib, pathlib
+try:
+    cfg = tomllib.loads((pathlib.Path(sys.argv[1]) / "pyproject.toml").read_text())
+    forge = cfg.get("tool", {}).get("forge", {})
+    print(forge.get("dev_branch") or forge.get("base_branch") or "")
+except Exception:
+    print("")
+PY
+        )
+    fi
+    if [ -z "$BASE" ]; then
+        echo "BLOCKED: wrapup-mode: light but the base ref could not be resolved (no --base on the command, no [tool.forge] branch config) — author the full wrap-up or pass --base explicitly." >&2
+        exit 2
+    fi
+    MODE=$(cd "$REPO_ROOT" && forge-pr-plan --base "origin/$BASE" 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("mode",""))' 2>/dev/null)
+    if [ "$MODE" != "light-code" ]; then
+        echo "BLOCKED: wrap-up declares wrapup-mode: light but forge-pr-plan classifies this diff as '${MODE:-unclassifiable}' against origin/$BASE — the light escape is not earned. Author the full wrap-up (/pr Step 3.92)." >&2
+        exit 2
+    fi
+fi
+
 exit 0

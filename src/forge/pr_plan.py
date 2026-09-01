@@ -15,7 +15,7 @@ prior wrap-up comments on the delta path) and the mode→plan mapping.
 Output contract (single JSON object on stdout; diagnostics go to stderr)::
 
     {
-        "mode": "full" | "light-docs" | "light-regen" | "delta",
+        "mode": "full" | "light-docs" | "light-regen" | "light-code" | "delta",
         "reporters": [...],
         "precommit_scope": [...],
         "reasons": [...],
@@ -31,7 +31,12 @@ posting at a different HEAD.
 
 ``light-regen`` is *eligibility only*: the skill still earns the escape by
 running the provenance gates (``precommit_scope`` lists them); any gate
-failure falls back to the full round. The delta path degrades, never
+failure falls back to the full round. ``light-code`` (small, no added
+files, no ``src/`` or high-blast-radius path) skips the reporters and
+authorizes the short-form ``wrapup-mode: light`` wrap-up — enforced
+fail-closed by ``block_unverified_pr_create``, which re-runs this
+classifier at ``gh pr create`` time; the strict pre-commit battery still
+runs in full. The delta path degrades, never
 crashes: no ``--pr``, a missing/unauthenticated ``gh``, or no
 ``verified-at:`` comment each add a reason and classification continues
 to ``full``.
@@ -59,6 +64,7 @@ from forge.pr_delta import (
     delta_decision,
     docs_only_diff,
     extract_verified_shas,
+    light_wrapup_decision,
     regen_only_diff,
 )
 
@@ -92,6 +98,7 @@ class PrPlan:
 
     Attributes:
         mode: One of ``full`` / ``light-docs`` / ``light-regen`` /
+            ``light-code`` /
             ``delta``.
         reporters: Verification agents the skill must invoke for this mode.
         precommit_scope: Step names for ``forge-precommit --only``; empty
@@ -122,6 +129,24 @@ def _changed_paths(root: Path, diff_range: str) -> list[str]:
         One path per changed file, empty for an empty diff.
     """
     out = run_git("diff", "--name-only", diff_range, cwd=root)
+    return [line for line in out.splitlines() if line]
+
+
+def _added_paths(root: Path, diff_range: str) -> list[str]:
+    """Return the paths ADDED across *diff_range* (``--diff-filter=A``).
+
+    The light-code class excludes file-adding diffs outright — the
+    prior-art gate is an independent refusal the light path must never
+    bypass.
+
+    Args:
+        root: Repository root directory.
+        diff_range: A git range spec (e.g. ``origin/dev...HEAD``).
+
+    Returns:
+        One path per added file, empty when nothing was added.
+    """
+    out = run_git("diff", "--name-only", "--diff-filter=A", diff_range, cwd=root)
     return [line for line in out.splitlines() if line]
 
 
@@ -282,6 +307,27 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
             classified_at=head,
         )
     reasons.append("not regen-only: diff touches non-managed paths")
+
+    added = _added_paths(root, f"{base}...HEAD")
+    use_light, why = light_wrapup_decision(
+        line_count=_line_count(root, f"{base}...HEAD"),
+        changed_paths=paths,
+        added_paths=added,
+    )
+    if use_light:
+        reasons.append(
+            f"light-code: {why}; reporters skipped, wrap-up is short-form "
+            "(wrapup-mode: light) — the publish hook re-runs this "
+            "classifier fail-closed; strict pre-commit still runs in full"
+        )
+        return PrPlan(
+            mode="light-code",
+            reporters=[],
+            precommit_scope=[],
+            reasons=reasons,
+            classified_at=head,
+        )
+    reasons.append(f"not light-code: {why}")
 
     if _try_delta(root, pr_number, reasons):
         return PrPlan(
