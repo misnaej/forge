@@ -129,19 +129,28 @@ def test_parse_depth_full_sentinel() -> None:
 
 
 def test_write_log_creates_code_health_dir_and_writes(tmp_path: Path) -> None:
-    """_write_log creates the code_health/ directory and writes the body."""
+    """_write_log creates the code_health/ directory and writes the body.
+
+    Two sinks, same content: ``smart_test.log`` (precommit-fixer's input)
+    and ``pytest.log`` (``forge-slow-tests-report``'s documented default).
+    """
     cli._write_log(tmp_path, "some output\n")
     log = tmp_path / "code_health" / "smart_test.log"
     assert log.exists()
     assert log.read_text(encoding="utf-8") == "some output\n"
+    pytest_log = tmp_path / "code_health" / "pytest.log"
+    assert pytest_log.exists()
+    assert pytest_log.read_text(encoding="utf-8") == "some output\n"
 
 
 def test_write_log_overwrites_existing_log(tmp_path: Path) -> None:
-    """A second _write_log call overwrites the previous content."""
+    """A second _write_log call overwrites the previous content in both sinks."""
     cli._write_log(tmp_path, "first\n")
     cli._write_log(tmp_path, "second\n")
     log = tmp_path / "code_health" / "smart_test.log"
     assert log.read_text(encoding="utf-8") == "second\n"
+    pytest_log = tmp_path / "code_health" / "pytest.log"
+    assert pytest_log.read_text(encoding="utf-8") == "second\n"
 
 
 def test_main_show_files_prints_plan_and_exits_0(
@@ -343,7 +352,7 @@ def test_main_log_written_after_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Write ``code_health/smart_test.log`` after run with pytest output."""
+    """Write ``code_health/smart_test.log`` and ``pytest.log`` after run."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "1"])
     plan = _make_plan(depth0=["tests/test_x.py"], max_depth=1)
@@ -354,6 +363,9 @@ def test_main_log_written_after_run(
     log_path = tmp_path / "code_health" / "smart_test.log"
     assert log_path.exists()
     assert "run output" in log_path.read_text(encoding="utf-8")
+    pytest_log_path = tmp_path / "code_health" / "pytest.log"
+    assert pytest_log_path.exists()
+    assert "run output" in pytest_log_path.read_text(encoding="utf-8")
 
 
 def test_main_changed_test_file_not_run_twice(
