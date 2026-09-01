@@ -2419,6 +2419,10 @@ def run_all(
     without running — the tree already passed its own era's gate at
     tagging time and cannot be changed here anyway.
 
+    Each invoked step is wall-clocked (monotonic) into its result's
+    ``elapsed_s``, and the run's per-step timing report is (re)written to
+    ``code_health/precommit_timing.log`` before returning.
+
     Args:
         repo_root: Override the auto-detected git repo root. Useful in tests.
         print_progress: Print one-line PASS/FAIL/SKIP per step. Disable for

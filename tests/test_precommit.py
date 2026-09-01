@@ -829,6 +829,8 @@ def test_main_emits_json(
         (False, True, False, "PASS"),
         (False, False, True, "WARN"),
         (False, False, False, "FAIL"),
+        # Precedence: a skipped non-blocking step is SKIP, never WARN.
+        (True, False, True, "SKIP"),
     ],
 )
 def test_step_marker_maps_skip_pass_warn_fail(
