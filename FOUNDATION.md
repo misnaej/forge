@@ -124,6 +124,14 @@ convention without checking current code still matches. Asking beats reverting.
   origin/<base>`), never a rebase. The `block_git_rebase` hook enforces this with
   **no bypass**: it blocks `git rebase` and `git pull --rebase` / `-r`. A human
   rebases via `! git rebase ...`.
+- **NEVER amend a pushed commit** — the single-commit form of a rebase: it
+  rewrites published history and forces the same (blocked) force-push,
+  leaving the branch diverged from origin. Make a **new commit** instead
+  (squash-merge erases fixup noise anyway). Amending an *unpushed* commit
+  stays allowed. The `block_amend_pushed_commit` hook enforces this with
+  **no bypass** — it blocks `git commit --amend` whenever `HEAD` already
+  exists on a remote-tracking ref. A human amends via `! git commit --amend
+  ...`.
 - **NEVER destructive git recovery: no `git reset` (ANY form), no forced
   `git clean`, no `git checkout .` / `git restore .`, no `git stash drop` /
   `clear`, no untracked-including stash (`git stash -u` / `-a` — it runs
