@@ -374,7 +374,8 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "commit",
         "Who carries the truly-all cadence guarantee: 'commit' "
         "(workstation fleet — stale stamp escalates the commit), "
-        "'advisory' (warn only, never escalate or block), 'external' "
+        "'advisory' (warn only — never escalates; the run keeps its "
+        "own blocking semantics), 'external' "
         "(a scheduled CI job owns it; warn at 2x the window as a "
         "broken-pipeline detector).",
     ),

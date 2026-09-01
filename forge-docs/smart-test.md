@@ -79,7 +79,7 @@ guarantee:
 | Mode | Who tests | Stale-stamp behavior |
 |---|---|---|
 | `commit` (default) | Workstations | Escalates the commit to `--depth full --all-tests`, restages the refreshed stamp |
-| `advisory` | Mixed | Warns only — never escalates, never blocks (forced non-blocking for that run) |
+| `advisory` | Mixed | Warns only — never escalates; the run keeps its own `blocking` semantics (the note itself never gates) |
 | `external` | CI | Runs the configured depth; warns at **2x** the window as a broken-pipeline detector |
 
 Which mode is my repo?

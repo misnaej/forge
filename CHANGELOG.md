@@ -33,7 +33,7 @@ versions follow forge's rolling-next convention.
   tracked `.forge-full-run` stamp forces a truly-all run at least every
   48h, restaged into the commit that earned it — governed by
   `cadence_mode`: `commit` (workstation fleet, the escalation above),
-  `advisory` (warn only, never escalate or block), `external` (a
+  `advisory` (warn only — never escalates; the note itself never gates), `external` (a
   scheduled CI job owns the cadence; warns at 2x the window as a
   broken-pipeline detector), with the classic CI-fleet schema —
   PR tiers + main-push full suite — documented with ready-made

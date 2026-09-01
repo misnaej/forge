@@ -3647,16 +3647,18 @@ def test_step_smart_test_advisory_missing_stamp_never_escalates_or_blocks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``cadence_mode = "advisory"`` never escalates despite missing stamp.
+    """``cadence_mode = "advisory"`` never escalates; blocking survives.
 
     SCENARIO: ``cadence_mode = "advisory"``, ``precommit_depth = 1``,
-        ``blocking = true``; no ``.forge-full-run`` stamp exists.
+        ``blocking = true``; no ``.forge-full-run`` stamp exists; the
+        configured-depth run FAILS.
     MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
-        returns (True, "ok") for the plain configured-depth command.
+        returns (False, "boom") for the plain configured-depth command.
     EXPECTED BEHAVIOR: only the configured-depth argv runs — no escalated
         full-suite command, no ``git add`` of the stamp; the output carries
-        the advisory cadence line; ``non_blocking`` is forced True despite
-        ``blocking = true``.
+        the advisory cadence line; the REAL failure still gates —
+        ``non_blocking`` stays False because the repo opted into
+        ``blocking = true`` (stamp staleness must never disable it).
     """
     (tmp_path / "pyproject.toml").write_text(
         '[tool.forge.smart_test]\ncadence_mode = "advisory"\n'
@@ -3669,13 +3671,14 @@ def test_step_smart_test_advisory_missing_stamp_never_escalates_or_blocks(
         precommit,
         "_run",
         _fake_run_capturing(
-            calls, expected_results={"forge-smart-test --depth 1": (True, "ok")}
+            calls, expected_results={"forge-smart-test --depth 1": (False, "boom")}
         ),
     )
     result = precommit.step_smart_test(tmp_path)
     assert calls == [["forge-smart-test", "--depth", "1"]]
     assert "cadence: advisory" in result.output
-    assert result.non_blocking is True
+    assert result.passed is False
+    assert result.non_blocking is False
 
 
 def test_step_smart_test_advisory_fresh_stamp_no_cadence_line(
