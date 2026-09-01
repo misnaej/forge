@@ -20,6 +20,20 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.36.0 — Unreleased
+
+### Features
+- **Trivial PRs get a proportionate wrap-up — earned, never taken.**
+  `forge-pr-plan` gains the `light-code` class: a diff under 50 lines
+  that adds no files and touches no `src/` or high-blast-radius path
+  skips the three reporters, and the wrap-up shrinks to a short form
+  (`wrapup-mode: light` + the classifier's reasons). The escape is
+  never agent discretion: `block_unverified_pr_create` re-runs the
+  classifier at `gh pr create` and blocks fail-closed on any
+  disagreement, missing classifier, or unresolvable base. Strict
+  pre-commit still runs in full; file-adding diffs stay on the full
+  path (the prior-art gate is independent).
+
 ## v3.35.0 — Unreleased
 
 ### Features

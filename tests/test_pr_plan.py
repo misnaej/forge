@@ -94,6 +94,36 @@ def _repo_with_branch_diff(tmp_path: Path, feature_files: dict[str, str]) -> Pat
     return repo
 
 
+def _repo_with_modified_file(
+    tmp_path: Path, path: str, initial: str, modified: str
+) -> Path:
+    """Build a repo where *path* is MODIFIED on ``feature``, never added.
+
+    Seeds *path* with *initial* content on ``main`` before branching, so
+    the ``main``/``feature`` diff is a pure modify (``--diff-filter=M``)
+    with no entry in ``--diff-filter=A`` — the light-code path's
+    added-file refusal must not fire on this diff.
+
+    Args:
+        tmp_path: Pytest ``tmp_path`` fixture directory to build the repo under.
+        path: Repo-relative path to seed on ``main`` and modify on ``feature``.
+        initial: Content committed to *path* on ``main``.
+        modified: Content committed to *path* on ``feature``.
+
+    Returns:
+        The repo root, checked out on ``feature``.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    _commit_files(repo, {path: initial}, "seed on main")
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature"], cwd=repo, env=GIT_ENV, check=True
+    )
+    _commit_files(repo, {path: modified}, "modify on feature")
+    return repo
+
+
 def _git_short_sha(repo: Path, ref: str = "HEAD") -> str:
     """Return the short SHA of *ref* via a real ``git rev-parse``.
 
@@ -178,6 +208,51 @@ def test_classify_docs_glob_precedence_over_regen_glob(tmp_path: Path) -> None:
     plan = pr_plan.classify(repo, "main", None)
 
     assert plan.mode == "light-docs"
+
+
+# --- classify(): light-code path ------------------------------------------
+
+
+def test_classify_small_non_source_modify_returns_light_code(tmp_path: Path) -> None:
+    """A small, non-blast, non-source MODIFY takes the light-code path."""
+    repo = _repo_with_modified_file(tmp_path, "tests/fixture.py", "x = 1\n", "x = 2\n")
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode == "light-code"
+    assert plan.reporters == []
+    assert plan.precommit_scope == []
+    assert any(r.startswith("light-code:") for r in plan.reasons)
+
+
+def test_classify_added_small_file_returns_full(tmp_path: Path) -> None:
+    """A small added (non-doc) file disqualifies light-code — full round instead.
+
+    The prior-art gate must run on any added file, however small, so
+    `light_wrapup_decision` refuses on `added_paths` before the line
+    threshold is even considered.
+    """
+    repo = _repo_with_branch_diff(tmp_path, {"src/new_module.py": "x = 1\n"})
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode == "full"
+    reason = next(r for r in plan.reasons if r.startswith("not light-code:"))
+    assert "src/new_module.py" in reason
+    assert "prior-art" in reason
+
+
+def test_classify_modified_source_path_returns_full(tmp_path: Path) -> None:
+    """A small MODIFY under `src/` disqualifies light-code — full round instead."""
+    repo = _repo_with_modified_file(
+        tmp_path, "src/forge/existing.py", "x = 1\n", "x = 2\n"
+    )
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode == "full"
+    reason = next(r for r in plan.reasons if r.startswith("not light-code:"))
+    assert "src/forge/existing.py" in reason
 
 
 # --- classify(): delta path ----------------------------------------------
