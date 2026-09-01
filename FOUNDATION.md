@@ -553,6 +553,50 @@ Test code is documented for **signal, not uniformly** — the canonical "what";
   for when a Null Object costs more than it saves.
 - **Coverage intent:** each public function gets a happy-path plus an edge/error case.
 
+### Test lifecycle — behavior vs development tests
+
+Runtime and authoring are both costs: a suite grows monotonically unless
+tests carry a lifecycle. Two classes, marked at authoring time:
+
+- **Behavior tests** (the unmarked default) pin observable contracts —
+  CLI output shapes, gate verdicts, invariants, every regression from a
+  real bug. Permanent; retirement does not apply.
+- **Development tests** drove an implementation to correctness —
+  per-step probes, near-duplicate variants, implementation-mirroring
+  assertions. A file that is wholly scaffolding declares it at module
+  level: `pytestmark = pytest.mark.development` (file-level, matching
+  the selection model's granularity).
+
+**The necessity gate comes first**: `forge:test-advisor` (advise mode)
+rejects planned tests that duplicate existing coverage or mirror the
+implementation, and `forge:test-writer` states each test's class and a
+one-line justification before writing — not writing an unnecessary test
+beats retiring it later.
+
+**Lifecycle rule (skip, never delete)**: a development file untouched
+for 30 days (`[tool.forge.smart_test].lifecycle_skip_days`) leaves
+ordinary full runs — always reported as `lifecycle-skipped: N`, never
+silent — and re-enters automatically the moment its file changes. The
+48-hour cadence run (below) executes truly everything, so nothing rots
+unobserved. Deletion is deliberately not part of the policy.
+
+**Selection guarantees** (spec: [`forge-docs/smart-test.md`](forge-docs/smart-test.md)):
+depth-tier selection is safe by contract — any changed non-Python path
+the selector cannot map escalates the run to `full`; the tracked
+`.forge-full-run` stamp guarantees a truly-all run at least every 48
+hours (`full_run_max_age_hours`), staged into the commit that earned
+it — that committed-stamp escalation is `cadence_mode = "commit"`, for
+repos whose testing happens on workstations; CI-fleet repos use
+`advisory`/`external` with the classic PR-tiers + main-push-full CI
+schema (spec's "Who carries the cadence"); after full runs a depth-2
+differential check records (never gates) any failing file selection
+would have missed.
+
+**Metrics are record-only**: wall time, file counts, development
+fraction, lifecycle skips, and differential mismatches append to
+`code_health/smart_test_history.log` per full run — trends inform
+reviews; nothing blocks on a health metric.
+
 ---
 
 ## 9. Logging Pattern

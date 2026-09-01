@@ -103,6 +103,27 @@ def _iter_py(roots: Iterable[Path]) -> Iterable[Path]:
         yield from root.rglob("*.py")
 
 
+def all_test_files(repo_root: Path) -> set[str]:
+    """Return every repo-relative test file under the configured test roots.
+
+    The full tier's explicit file list — lifecycle deselection subtracts
+    from this set, so it must match what a bare pytest run would collect
+    (``test_*.py`` / ``*_test.py`` under the test roots).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        Repo-relative test-file paths.
+    """
+    _, tests = _roots(repo_root)
+    found: set[str] = set()
+    for path in _iter_py(tests):
+        if path.name.startswith("test_") or path.name.endswith("_test.py"):
+            found.add(path.relative_to(repo_root).as_posix())
+    return found
+
+
 def _dotted(node: ast.expr) -> str | None:
     """Return the dotted name of an attribute/name chain, or ``None``.
 

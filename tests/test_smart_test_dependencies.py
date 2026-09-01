@@ -18,6 +18,7 @@ import pytest
 from forge.smart_test.dependencies import (
     SelectionPlan,
     _patch_targets,
+    all_test_files,
     build_graph,
     render_plan,
     select_tests,
@@ -746,3 +747,71 @@ def test_self_check_silent_on_package_init_with_known_descendant(
     assert not any("no importer references" in r.message for r in caplog.records), (
         f"unexpected mismatch warning: {[r.message for r in caplog.records]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# all_test_files
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def all_test_files_repo(tmp_path: Path) -> Path:
+    """Repo with both test-collection-name shapes plus non-test helper files.
+
+    Layout::
+
+        <root>/
+          pyproject.toml            # source_dirs = ["src"], test_dirs = ["tests"]
+          src/myapp/__init__.py
+          src/myapp/test_lookalike.py  # test_*.py under a SOURCE dir — excluded
+          tests/test_foo.py            # test_*.py — collected
+          tests/bar_test.py            # *_test.py — collected
+          tests/conftest.py            # helper — excluded
+          tests/helpers.py             # helper — excluded
+
+    Returns:
+        The repo root path.
+    """
+    root = tmp_path
+    (root / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n',
+        encoding="utf-8",
+    )
+    src = root / "src" / "myapp"
+    src.mkdir(parents=True)
+    (src / "__init__.py").write_text("", encoding="utf-8")
+    (src / "test_lookalike.py").write_text("x = 1\n", encoding="utf-8")
+
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_foo.py").write_text(
+        "def test_foo():\n    pass\n", encoding="utf-8"
+    )
+    (tests_dir / "bar_test.py").write_text(
+        "def test_bar():\n    pass\n", encoding="utf-8"
+    )
+    (tests_dir / "conftest.py").write_text("", encoding="utf-8")
+    (tests_dir / "helpers.py").write_text("", encoding="utf-8")
+    return root
+
+
+def test_all_test_files_collects_both_naming_shapes(all_test_files_repo: Path) -> None:
+    """``test_*.py`` and ``*_test.py`` under the test roots are both collected."""
+    result = all_test_files(all_test_files_repo)
+    assert "tests/test_foo.py" in result
+    assert "tests/bar_test.py" in result
+
+
+def test_all_test_files_excludes_non_test_helpers(all_test_files_repo: Path) -> None:
+    """``conftest.py`` and other non-matching helpers under tests/ are excluded."""
+    result = all_test_files(all_test_files_repo)
+    assert "tests/conftest.py" not in result
+    assert "tests/helpers.py" not in result
+
+
+def test_all_test_files_excludes_test_named_file_under_source_dir(
+    all_test_files_repo: Path,
+) -> None:
+    """A ``test_*.py``-named file under a SOURCE dir is not collected as a test."""
+    result = all_test_files(all_test_files_repo)
+    assert "src/myapp/test_lookalike.py" not in result

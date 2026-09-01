@@ -113,6 +113,9 @@ Repository = "https://github.com/misnaej/forge"
 # once here rather than repeated at every call site (DRY).
 testpaths = ["tests"]
 addopts = "--durations=25 --durations-min=1.0"
+markers = [
+    "development: scaffolding test that drove an implementation; lifecycle-managed per FOUNDATION §8 (module-level pytestmark acts on the whole file)",
+]
 
 [tool.forge]
 # Dual-track release channels. Feature/fix PRs target `dev_branch`;
@@ -152,9 +155,10 @@ enable = ["typecheck", "c4", "layering"]
 # Forge dogfoods its own layering gate. Two contracts: every audit script
 # composes the shared audit seam (audit.common — the log format / scope /
 # severity contract every forge-audit-* must speak), and smart_test's
-# graph-facing children compose forge.import_graph. The three exempt
+# graph-facing children compose forge.import_graph. The four exempt
 # smart_test children are deliberately graph-independent support modules
-# (coverage-JSON parsing, git plumbing, pytest invocation) — visible
+# (coverage-JSON parsing, git plumbing, pytest invocation, test-
+# lifecycle mechanics) — visible
 # exemptions, re-reviewed whenever one starts doing graph work.
 [[tool.forge.layering.layer]]
 name = "audit-common"
@@ -173,7 +177,14 @@ composes_all_of = ["audit-common"]
 name = "smart-test"
 package = "forge.smart_test"
 composes_all_of = ["import-graph"]
-exempt = ["coverage", "git_helpers", "runner"]
+exempt = ["coverage", "git_helpers", "runner", "lifecycle"]
+
+[tool.forge.smart_test]
+# Dogfood the depth model: commits run depth-2 selection; the
+# tracked .forge-full-run stamp escalates to a truly-all run every 48h
+# (defaults for lifecycle_skip_days / full_run_max_age_hours /
+# nonpython_ignore apply — see forge-config --list).
+precommit_depth = "2"
 
 [tool.forge.env_sync]
 # Dogfood step_auto_rebuild: when a pulled change adds a [project.scripts] CLI

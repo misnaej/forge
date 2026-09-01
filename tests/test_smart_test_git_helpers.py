@@ -391,3 +391,53 @@ def test_head_commit_message_empty_on_no_commits(tmp_path: Path) -> None:
     )
     msg = git_helpers.head_commit_message(tmp_path)
     assert msg == ""
+
+
+# ---------------------------------------------------------------------------
+# changed_non_python_files — real git (four-source coverage already proven by
+# the changed_python_files suite above; these cases exercise the non-.py
+# filter and ignore_globs specifically)
+# ---------------------------------------------------------------------------
+
+
+def test_changed_non_python_files_untracked_included(tmp_path: Path) -> None:
+    """An untracked non-``.py`` file (e.g. notes) is included by default."""
+    init_git_repo(tmp_path)
+    (tmp_path / "notes.txt").write_text("todo\n", encoding="utf-8")
+    result = git_helpers.changed_non_python_files(tmp_path, "HEAD")
+    assert "notes.txt" in result
+
+
+def test_changed_non_python_files_py_file_excluded(tmp_path: Path) -> None:
+    """A changed ``.py`` file never appears in the non-Python result."""
+    init_git_repo(tmp_path)
+    (tmp_path / "notes.txt").write_text("todo\n", encoding="utf-8")
+    (tmp_path / "code.py").write_text("x = 1\n", encoding="utf-8")
+    result = git_helpers.changed_non_python_files(tmp_path, "HEAD")
+    assert "code.py" not in result
+    assert "notes.txt" in result
+
+
+def test_changed_non_python_files_ignore_globs_excludes_matching(
+    tmp_path: Path,
+) -> None:
+    """A path matching ``ignore_globs`` (e.g. ``*.md``) is excluded."""
+    init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("# hi\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("todo\n", encoding="utf-8")
+    result = git_helpers.changed_non_python_files(
+        tmp_path, "HEAD", ignore_globs=("*.md",)
+    )
+    assert "README.md" not in result
+    assert "notes.txt" in result
+
+
+def test_changed_non_python_files_empty_ignore_globs_only_filters_py(
+    tmp_path: Path,
+) -> None:
+    """With no ``ignore_globs``, every changed non-``.py`` file is returned."""
+    init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("# hi\n", encoding="utf-8")
+    (tmp_path / "code.py").write_text("x = 1\n", encoding="utf-8")
+    result = git_helpers.changed_non_python_files(tmp_path, "HEAD")
+    assert result == {"README.md"}

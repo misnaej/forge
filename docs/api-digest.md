@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_65 modules, 764 symbols._
+_66 modules, 778 symbols._
 
 ## `forge`
 
@@ -752,6 +752,7 @@ _65 modules, 764 symbols._
 - `_one_step_successors(tag: tuple[int, int, int]) -> set[tuple[int, int, int]]` _(internal)_ — Return the three valid rolling-next successors of a tagged release.
 - `step_release_tag_guard(repo_root: Path) -> StepResult` — Block when an intermediate rolling-next release was never tagged (#66).
 - `step_smart_test(repo_root: Path) -> StepResult` — Run smart-test depth-N selection when opted in (off by default).
+- `_cadence_note(mode: str, *, age: float | None, age_txt: str, max_age: float) -> str` _(internal)_ — Return the informational cadence line for a non-escalating mode.
 - `step_changelog_history(repo_root: Path) -> StepResult` — Run ``verify-forge-changelog-history`` — the dropped-``@base``-entry guard.
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
@@ -843,7 +844,7 @@ _65 modules, 764 symbols._
 - `_depth_from_commit(repo_root: Path, cfg: dict[str, object]) -> str | None` _(internal)_ — Read a depth directive from ``HEAD``'s commit message, if present.
 - `_parse_depth(raw: str) -> int | str` _(internal)_ — Map a ``--depth`` token to an int tier or the ``full`` sentinel.
 - `_write_log(repo_root: Path, body: str) -> None` _(internal)_ — Write *body* to ``code_health/smart_test.log`` and ``pytest.log``.
-- `_run_full(repo_root: Path, *, telemetry: bool = False) -> tuple[int, str]` _(internal)_ — Run the entire suite (the ``full`` tier), always with coverage.
+- `_run_full(repo_root: Path, cfg: dict[str, object], changed: set[str], *, all_tests: bool = False, telemetry: bool = False) -> tuple[int, str]` _(internal)_ — Run the ``full`` tier with lifecycle deselection and metrics.
 - `class _RunConfig` _(internal)_ — Configuration for a tiered test run.
 - `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
@@ -865,6 +866,7 @@ _65 modules, 764 symbols._
   - `tests_up_to(self, depth: int) -> list[str]` — Return the sorted unique test relpaths selected at *depth* or below.
 - `_roots(repo_root: Path) -> tuple[list[Path], list[Path]]` _(internal)_ — Return ``(source_dir_paths, test_dir_paths)`` as absolute paths.
 - `_iter_py(roots: Iterable[Path]) -> Iterable[Path]` _(internal)_ — Yield every ``.py`` file under *roots*.
+- `all_test_files(repo_root: Path) -> set[str]` — Return every repo-relative test file under the configured test roots.
 - `_dotted(node: ast.expr) -> str | None` _(internal)_ — Return the dotted name of an attribute/name chain, or ``None``.
 - `_string_literals(args: list[ast.expr]) -> list[str]` _(internal)_ — Return the string-constant values among *args*, in order.
 - `_classify_patch_call(node: ast.Call) -> str | None` _(internal)_ — Classify a call node as a patch variant: ``"patch"``, ``"dict"``, or ``None``.
@@ -882,7 +884,24 @@ _65 modules, 764 symbols._
 - `_ref_exists(repo_root: Path, ref: str) -> bool` _(internal)_ — Return whether *ref* resolves to a commit in the repo.
 - `resolve_base_ref(repo_root: Path, override: str | None = None) -> str` — Resolve the ref to diff ``HEAD`` against for change detection.
 - `head_commit_message(repo_root: Path) -> str` — Return ``HEAD``'s full commit message (subject + body).
+- `_changed_files_all_sources(repo_root: Path, base_ref: str) -> set[str]` _(internal)_ — Union every changed path across the four change sources.
 - `changed_python_files(repo_root: Path, base_ref: str) -> set[str]` — Return repo-relative ``.py`` files changed vs *base_ref*.
+- `changed_non_python_files(repo_root: Path, base_ref: str, *, ignore_globs: tuple[str, ...] = ()) -> set[str]` — Return changed non-``.py`` files the selector cannot map to tests.
+
+## `forge.smart_test.lifecycle`
+
+> _Test-lifecycle mechanics for forge-smart-test (FOUNDATION §8)._
+
+- `class RunMetrics` — Per-run metrics appended to the smart-test history ledger.
+- `development_marked_files(repo_root: Path, test_files: set[str]) -> set[str]` — Return the subset of *test_files* classified as development tests.
+- `_has_development_pytestmark(text: str) -> bool` _(internal)_ — Return whether *text* carries a top-level development pytestmark.
+- `days_since_last_touch(repo_root: Path, rel_path: str) -> float` — Return days since *rel_path*'s last commit.
+- `lifecycle_skippable(repo_root: Path, test_files: set[str], changed: set[str], *, skip_days: float = DEFAULT_SKIP_DAYS) -> set[str]` — Return development files an ordinary full run may deselect.
+- `read_stamp(repo_root: Path) -> _dt.datetime | None` — Return the last truly-all run's timestamp, or ``None``.
+- `write_stamp(repo_root: Path) -> Path` — Write the stamp with the current UTC time.
+- `stamp_age_hours(repo_root: Path) -> float | None` — Return the stamp's age in hours, or ``None`` when unreadable.
+- `failed_files(pytest_output: str) -> set[str]` — Extract failing test-file paths from pytest output.
+- `append_history(repo_root: Path, metrics: RunMetrics) -> None` — Append one record-only metrics line for a full run.
 
 ## `forge.smart_test.runner`
 

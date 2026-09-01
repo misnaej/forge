@@ -25,6 +25,7 @@ import argparse
 import logging
 import re
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -32,8 +33,15 @@ from typing import cast
 from forge import config as _config
 from forge.git_utils import configure_cli_logging
 from forge.smart_test import coverage as cov_stage
-from forge.smart_test.dependencies import SelectionPlan, render_plan, select_tests
+from forge.smart_test import lifecycle
+from forge.smart_test.dependencies import (
+    SelectionPlan,
+    all_test_files,
+    render_plan,
+    select_tests,
+)
 from forge.smart_test.git_helpers import (
+    changed_non_python_files,
     changed_python_files,
     head_commit_message,
     resolve_base_ref,
@@ -124,21 +132,83 @@ def _write_log(repo_root: Path, body: str) -> None:
         log_path.write_text(body, encoding="utf-8")
 
 
-def _run_full(repo_root: Path, *, telemetry: bool = False) -> tuple[int, str]:
-    """Run the entire suite (the ``full`` tier), always with coverage.
+def _run_full(
+    repo_root: Path,
+    cfg: dict[str, object],
+    changed: set[str],
+    *,
+    all_tests: bool = False,
+    telemetry: bool = False,
+) -> tuple[int, str]:
+    """Run the ``full`` tier with lifecycle deselection and metrics.
 
     Coverage is unconditionally enabled for ``full`` — it is the tier's
     defining cost/coverage trade-off — so there is no opt-out parameter.
+    Ordinary full runs deselect stale development-marked files (the
+    lifecycle rule, always reported); ``all_tests`` disables that — the
+    48h-cadence run and explicit ``--all-tests`` execute truly
+    everything. After the run a record-only metrics line (including the
+    depth-2 differential check) is appended to the history ledger.
 
     Args:
         repo_root: Git repo root.
+        cfg: The ``[tool.forge.smart_test]`` table.
+        changed: Current change set (lifecycle re-inclusion trigger and
+            differential input).
+        all_tests: Run truly everything — lifecycle deselection off.
         telemetry: Sample resource usage during the run.
 
     Returns:
         ``(exit_code, output)`` from the single pytest run.
     """
-    logger.info("Running the full suite (depth=full) with coverage.")
-    return run_pytest(repo_root, [], coverage=True, telemetry=telemetry, label="full")
+    tests = all_test_files(repo_root)
+    dev_files = lifecycle.development_marked_files(repo_root, tests)
+    skip_days_raw = cfg.get("lifecycle_skip_days", lifecycle.DEFAULT_SKIP_DAYS)
+    skip_days = (
+        float(skip_days_raw)
+        if isinstance(skip_days_raw, (int, float))
+        else lifecycle.DEFAULT_SKIP_DAYS
+    )
+    skippable: set[str] = set()
+    if not all_tests:
+        skippable = lifecycle.lifecycle_skippable(
+            repo_root, tests, changed, skip_days=skip_days
+        )
+    label = "all" if all_tests else "full"
+    logger.info("Running the full suite (depth=%s) with coverage.", label)
+    batch = sorted(tests - skippable) if skippable else []
+    started = time.monotonic()
+    code, out = run_pytest(
+        repo_root, batch, coverage=True, telemetry=telemetry, label=label
+    )
+    wall_s = time.monotonic() - started
+    if skippable:
+        out += (
+            f"\nlifecycle-skipped: {len(skippable)} development file(s) "
+            f"untouched >={skip_days:g}d (run --all-tests to include)\n"
+        )
+    mismatches: set[str] = set()
+    if changed:
+        plan = select_tests(repo_root, changed, 2)
+        selected = set(plan.tests_up_to(2))
+        mismatches = lifecycle.failed_files(out) - selected - skippable
+        if mismatches:
+            out += (
+                f"differential: {len(mismatches)} failing file(s) outside "
+                f"depth-2 selection (record-only): "
+                + ", ".join(sorted(mismatches))
+                + "\n"
+            )
+    metrics = lifecycle.RunMetrics(
+        label=label,
+        wall_s=wall_s,
+        total_files=len(tests),
+        dev_files=len(dev_files),
+        lifecycle_skipped=len(skippable),
+        differential_mismatches=len(mismatches),
+    )
+    lifecycle.append_history(repo_root, metrics)
+    return code, out
 
 
 @dataclass
@@ -239,6 +309,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Enable coverage (always on for --depth full).",
     )
     parser.add_argument(
+        "--all-tests",
+        action="store_true",
+        help="With --depth full: run truly everything — disable the "
+        "lifecycle deselection of stale development-marked files.",
+    )
+    parser.add_argument(
         "--telemetry",
         action="store_true",
         help="Sample RSS/CPU during the run via forge-telemetry (needs the "
@@ -266,6 +342,10 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     """Select and run change-affected tests by depth; write the log.
 
+    Depth tiers escalate to ``full`` automatically when the change set
+    contains non-Python paths the selector cannot map (safe fallback,
+    minus the ``nonpython_ignore`` globs).
+
     Returns:
         The exit code of the run: ``0`` on success / nothing-to-run /
         ``--show-files``, else the first failing batch's pytest exit code.
@@ -281,18 +361,42 @@ def main() -> int:
         logger.info("Depth '%s' set from commit-message directive.", depth_token)
     depth_raw = _parse_depth(depth_token)
 
+    base_ref = resolve_base_ref(repo_root, args.base)
+    changed = changed_python_files(repo_root, base_ref)
+
+    if depth_raw != _FULL:
+        ignore_cfg = cfg.get("nonpython_ignore")
+        ignore = (
+            tuple(str(g) for g in ignore_cfg)
+            if isinstance(ignore_cfg, list)
+            else lifecycle.DEFAULT_NONPYTHON_IGNORE
+        )
+        unmappable = changed_non_python_files(repo_root, base_ref, ignore_globs=ignore)
+        if unmappable:
+            logger.info(
+                "Safe fallback: %d non-Python change(s) the selector cannot "
+                "map (e.g. %s) — escalating to depth=full.",
+                len(unmappable),
+                min(unmappable),
+            )
+            depth_raw = _FULL
+
     if depth_raw == _FULL:
         if args.show_files:
             logger.info("📋 Tests covering changed code (depth full): the entire suite")
             return 0
-        code, body = _run_full(repo_root, telemetry=args.telemetry)
+        code, body = _run_full(
+            repo_root,
+            cfg,
+            changed,
+            all_tests=args.all_tests,
+            telemetry=args.telemetry,
+        )
         _write_log(repo_root, body)
         logger.info("%s", body.rstrip())
         return code
 
     depth = cast("int", depth_raw)
-    base_ref = resolve_base_ref(repo_root, args.base)
-    changed = changed_python_files(repo_root, base_ref)
     plan = select_tests(repo_root, changed, depth, follow_mock_patches=follow)
 
     coverage_json = args.coverage_json or cfg.get("coverage_json")

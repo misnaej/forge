@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.35.0 — Unreleased
+## v3.36.0 — Unreleased
 
 ### Features
 - **The performance loop closes: forge now reads the perf data it
@@ -38,6 +38,31 @@ versions follow forge's rolling-next convention.
   dives via `forge:perf-optimizer`), report (file findings as a
   `performance`-labeled issue), watch (re-check open performance
   issues against current data).
+
+## v3.35.0 — Unreleased
+
+### Features
+- **Tests now have a lifecycle, and the depth model is safe by
+  contract.** FOUNDATION §8 gains the behavior-vs-development test
+  classes (`pytestmark = pytest.mark.development` at module level;
+  unmarked = behavior, the permanent default) with an authoring
+  necessity gate wired into `test-advisor`/`test-writer`. forge-smart-
+  test gains four guarantees: non-Python changes it cannot map escalate
+  to `full` (safe fallback, with a `nonpython_ignore` allowlist); the
+  tracked `.forge-full-run` stamp forces a truly-all run at least every
+  48h, restaged into the commit that earned it — governed by
+  `cadence_mode`: `commit` (workstation fleet, the escalation above),
+  `advisory` (warn only — never escalates; the note itself never gates), `external` (a
+  scheduled CI job owns the cadence; warns at 2x the window as a
+  broken-pipeline detector), with the classic CI-fleet schema —
+  PR tiers + main-push full suite — documented with ready-made
+  workflow snippets in the CI recipe; stale development files
+  (30d untouched) are loudly lifecycle-skipped from ordinary full runs
+  — never deleted, auto-re-included on touch, always executed by the
+  cadence run; and a record-only depth-2 differential check plus
+  wall/count/dev-fraction metrics append to
+  `code_health/smart_test_history.log` per full run. Forge dogfoods
+  with `precommit_depth = "2"`.
 
 ## v3.34.0 — Unreleased
 

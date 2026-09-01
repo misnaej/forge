@@ -30,9 +30,15 @@ Apply the testing documentation standards in
 2. Determine the mirrored test path: `src/foo/bar.py` →
    `tests/foo/test_bar.py`. Check for an existing test file first; extend
    it rather than duplicating.
-3. Write the tests, applying the §8 testing documentation standards in
+3. **State each planned test's lifecycle class before writing** (§8
+   "Test lifecycle"): behavior (default) or development, with a one-line
+   justification; never write a test that duplicates existing coverage —
+   if the plan contains one, report it back instead of writing it. A
+   wholly-scaffolding NEW file declares
+   `pytestmark = pytest.mark.development` at module level.
+4. Write the tests, applying the §8 testing documentation standards in
    full (see *Source of truth* above) — do not improvise alternatives.
-4. Run `pytest <file> -v` and iterate until green.
+5. Run `pytest <file> -v` and iterate until green.
 
 ## Scope Boundaries
 
