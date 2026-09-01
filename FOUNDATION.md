@@ -112,9 +112,10 @@ follow-on edits in a review loop the user drives.
 
 Pause and ask when (a) the instruction has two reasonable readings, the user
 hasn't picked, **and neither the repo nor the session so far determines
-which** (how to check: next paragraph); (b) the plan produces an unauthorized side effect (extra commits,
-version bumps, branch switches), or (c) you're about to act on a remembered
-convention without checking current code still matches. Asking beats reverting.
+which** (how to check: next paragraph); (b) the plan produces an
+unauthorized side effect (extra commits, version bumps, branch switches),
+or (c) you're about to act on a remembered convention without checking
+current code still matches. Asking beats reverting.
 
 **Investigation outranks clarification — case (a) only.** Run the
 search or read the file that would settle the ambiguity *before* asking;
