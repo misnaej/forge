@@ -83,6 +83,16 @@ a reason to re-check. Before repeating a claim about a file, ask whether
 anything since the read could have rewritten it — and if you ran a sync
 yourself, assume yes.
 
+**A read can also be superseded with no action at all.** An earlier
+belief formed in the same session — a brief you wrote, an issue's labels
+at the time you saw them, your own first summary — is a snapshot, not a
+fact. The existing rule triggers on *an action you took*; this sibling
+triggers on *elapsed session time and your own prior output*, which
+nothing signals. When a claim rests on something established earlier in
+the session rather than on something just read, re-verify against the
+live source before repeating it — the fresh read wins over the remembered
+one, every time.
+
 **A contradiction from the user is a prompt to re-read, not to
 re-explain.** When a user disputes a factual claim about the codebase,
 re-check the artifact first; restating the reasoning is correct only once
@@ -100,10 +110,27 @@ follow-on edits in a review loop the user drives.
 
 ### Ask before acting on ambiguity
 
-Pause and ask when (a) the instruction has two reasonable readings and the user
-hasn't picked, (b) the plan produces an unauthorized side effect (extra commits,
-version bumps, branch switches), or (c) you're about to act on a remembered
-convention without checking current code still matches. Asking beats reverting.
+Pause and ask when (a) the instruction has two reasonable readings, the user
+hasn't picked, **and neither the repo nor the session so far determines
+which** (how to check: next paragraph); (b) the plan produces an
+unauthorized side effect (extra commits, version bumps, branch switches),
+or (c) you're about to act on a remembered convention without checking
+current code still matches. Asking beats reverting.
+
+**Investigation outranks clarification — case (a) only.** Run the
+search or read the file that would settle the ambiguity *before* asking;
+ambiguity that survives a coverage-checked search (per "Absence of
+evidence is not evidence of absence" above) is the user's to resolve —
+ambiguity that doesn't is yours. When one reading is strongly favoured —
+by the session's own history, by what the repo contains, by what every
+artifact so far points at — take it, state the assumption in one line,
+and continue: a stated assumption is corrected faster than a menu is
+answered, and each question costs a round trip on work the user asked to
+be finished. Two bounds: no search settles *authorization* — cases (b)
+and (c) still require the pause, however confident the favoured
+reading — and where "Plan before executing" also applies, the stated
+assumption folds into the plan awaiting go-ahead; it never bypasses that
+gate.
 
 ---
 
