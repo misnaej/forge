@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_65 modules, 756 symbols._
+_65 modules, 758 symbols._
 
 ## `forge`
 
@@ -766,7 +766,9 @@ _65 modules, 756 symbols._
 - `step_changelog_version(repo_root: Path) -> StepResult` — Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
 - `step_changelog_updated(repo_root: Path) -> StepResult` — Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
+- `_step_marker(result: StepResult) -> str` _(internal)_ — Return *result*'s bare status marker (``SKIP``/``PASS``/``WARN``/``FAIL``).
 - `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
+- `_format_timing_log(results: list[StepResult]) -> str` _(internal)_ — Render the per-step timing report for ``code_health/precommit_timing.log``.
 - `_validate_step_names(names: Sequence[str]) -> None` _(internal)_ — Raise ``ValueError`` listing any *names* that are not registered steps.
 - `_resolve_steps(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepDef]` _(internal)_ — Resolve which steps to run, in registry order.
 - `_release_merge_context(repo_root: Path) -> str | None` _(internal)_ — Return the release tag a promotion merge commit is locked to, or ``None``.

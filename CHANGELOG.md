@@ -20,6 +20,18 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.34.0 — Unreleased
+
+### Features
+- **forge-precommit times itself.** Every run wall-clocks each step
+  (monotonic, a clock read per step — no added subprocess cost) and
+  writes `code_health/precommit_timing.log`: one `<step> <elapsed>s
+  <PASS|FAIL|SKIP|WARN>` line per step plus a total, newest run
+  overwriting. The human output gains a quiet per-step elapsed and a
+  one-line total; `--json` elements gain an additive `elapsed_s` field
+  (the output stays a list — sum the field for the run total). No more
+  hand-stopwatching `--only <step>` to find the slow check.
+
 ## v3.33.0 — Unreleased
 
 ### Docs
