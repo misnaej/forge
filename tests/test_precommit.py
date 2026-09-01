@@ -15,6 +15,7 @@ import contextlib
 import datetime as _dt
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 from typing import TYPE_CHECKING, NamedTuple
@@ -815,6 +816,269 @@ def test_main_emits_json(
         "vendored_integrity",
         "pip_audit",
     }
+
+
+# ---------------------------------------------------------------------------
+# Per-step timing (#417): _step_marker / _format_timing_log / run_all's
+# elapsed_s stamping / the timing surfaced by main() (JSON + human output).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("skipped", "passed", "non_blocking", "expected"),
+    [
+        (True, True, False, "SKIP"),
+        (False, True, False, "PASS"),
+        (False, False, True, "WARN"),
+        (False, False, False, "FAIL"),
+        # Precedence: a skipped non-blocking step is SKIP, never WARN.
+        (True, False, True, "SKIP"),
+    ],
+)
+def test_step_marker_maps_skip_pass_warn_fail(
+    *,
+    skipped: bool,
+    passed: bool,
+    non_blocking: bool,
+    expected: str,
+) -> None:
+    """`_step_marker` maps every StepResult flag combination to its marker.
+
+    Args:
+        skipped: The `StepResult.skipped` flag under test.
+        passed: The `StepResult.passed` flag under test.
+        non_blocking: The `StepResult.non_blocking` flag under test.
+        expected: The marker `_step_marker` must return for this
+            combination.
+
+    SCENARIO: the colored progress line and the timing log both render
+    from this one mapping, so every reachable flag combination must
+    resolve deterministically — skipped beats passed/failed, and a
+    non-blocking failure renders distinctly from a blocking one.
+    EXPECTED BEHAVIOR: `_step_marker` returns *expected* for the given
+    flag combination.
+    """
+    result = precommit.StepResult(
+        name="x", passed=passed, output="", skipped=skipped, non_blocking=non_blocking
+    )
+    assert precommit._step_marker(result) == expected
+
+
+def test_format_timing_log_renders_header_rows_and_total() -> None:
+    """`_format_timing_log` renders a header, one row per step, and an exact total.
+
+    SCENARIO: `code_health/precommit_timing.log` is read by a human
+    scanning for the slow step, so each row must show the step name, a
+    one-decimal elapsed time, and its marker — and the trailing total
+    must be the exact sum of the per-step values, not an approximation.
+    EXPECTED BEHAVIOR: the rendered text opens with the fixed banner
+    line, has one row per `StepResult` in order (name + 1-decimal
+    elapsed + marker), and ends with a `total` row whose value equals
+    `sum(r.elapsed_s for r in results)`.
+    """
+    results = [
+        precommit.StepResult(name="ruff", passed=True, output="", elapsed_s=1.2),
+        precommit.StepResult(
+            name="env_sync", passed=True, output="", skipped=True, elapsed_s=0.5
+        ),
+        precommit.StepResult(
+            name="pip_audit",
+            passed=False,
+            output="",
+            non_blocking=True,
+            elapsed_s=2.3,
+        ),
+    ]
+
+    rendered = precommit._format_timing_log(results)
+    lines = rendered.splitlines()
+
+    assert lines[0] == "forge-precommit per-step timing (newest run overwrites)"
+    assert lines[1] == ""
+
+    ruff_line, env_sync_line, pip_audit_line = lines[2:5]
+    assert "ruff" in ruff_line
+    assert "1.2s" in ruff_line
+    assert "PASS" in ruff_line
+    assert "env_sync" in env_sync_line
+    assert "0.5s" in env_sync_line
+    assert "SKIP" in env_sync_line
+    assert "pip_audit" in pip_audit_line
+    assert "2.3s" in pip_audit_line
+    assert "WARN" in pip_audit_line
+
+    assert lines[5] == ""
+    assert len(lines) == 7
+    total = sum(r.elapsed_s for r in results)
+    assert lines[6].startswith("total")
+    assert f"{total:.1f}s" in lines[6]
+
+
+def test_run_all_stamps_elapsed_s_from_monotonic_delta(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_all stamps each StepResult.elapsed_s from a real monotonic delta.
+
+    SCENARIO: mirrors test_run_all_only_dispatches_monkeypatched_steps —
+    two monkeypatched steps run via `only=`. Here the assertion is on
+    timing, not dispatch: elapsed_s must come from an actual per-step
+    (end - start) delta rather than being left at its 0.0 default or
+    shared across steps.
+    MOCK SETUP: step_ruff / step_pip_audit replaced with canned passing
+    stubs; precommit.time.monotonic is replaced with a scripted clock
+    yielding fixed, strictly increasing timestamps (0.0, 1.0, 2.0, 4.0)
+    so the two steps land on distinct, easy-to-verify deltas.
+    EXPECTED BEHAVIOR: results[0].elapsed_s == 1.0 (from 1.0 - 0.0) and
+    results[1].elapsed_s == 2.0 (from 4.0 - 2.0), exactly.
+    """
+
+    def _ruff(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="ruff", passed=True, output="x")
+
+    def _audit(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="pip_audit", passed=True, output="x")
+
+    monkeypatch.setattr(precommit, "step_ruff", _ruff)
+    monkeypatch.setattr(precommit, "step_pip_audit", _audit)
+    scripted_monotonic = iter([0.0, 1.0, 2.0, 4.0]).__next__
+    monkeypatch.setattr(precommit.time, "monotonic", scripted_monotonic)
+
+    results = precommit.run_all(
+        tmp_path, print_progress=False, only=["ruff", "pip_audit"]
+    )
+
+    assert results[0].elapsed_s == 1.0
+    assert results[1].elapsed_s == 2.0
+
+
+def test_run_all_writes_precommit_timing_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_all persists `code_health/precommit_timing.log` with consistent format.
+
+    SCENARIO: `run_all` must write the same rendering `_format_timing_log`
+    produces from its own returned results — the log is a downstream
+    consumer's ground truth, so a self-consistency check catches drift
+    between the write and the render, not the render's format itself
+    (covered by test_format_timing_log_renders_header_rows_and_total).
+    MOCK SETUP: reuses the `_stub_*` passing/skipping helpers from
+    test_run_all_writes_code_health_logs so no real CLI / network call
+    fires.
+    EXPECTED BEHAVIOR: `code_health/precommit_timing.log`'s contents
+    equal `precommit._format_timing_log(results)` for the results
+    `run_all` actually returned.
+    """
+    _stub_env_sync_skipped(monkeypatch)
+    _stub_docstrings_passing(monkeypatch)
+    _stub_test_naming_passing(monkeypatch)
+    _stub_repo_structure_passing(monkeypatch)
+    _stub_pip_audit_skipped(monkeypatch)
+    _stub_docstring_coverage_skipped(monkeypatch)
+    results = precommit.run_all(repo_root=tmp_path, print_progress=False)
+
+    log_path = tmp_path / "code_health" / "precommit_timing.log"
+    assert log_path.read_text(encoding="utf-8").rstrip(
+        "\n"
+    ) == precommit._format_timing_log(results).rstrip("\n")
+
+
+def test_main_json_includes_elapsed_s(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--json output carries a valid elapsed_s on every step, including a failing one.
+
+    SCENARIO: a JSON consumer must be able to read per-step timing even
+    when a step fails — elapsed_s should never be omitted or left
+    non-numeric on the failure path.
+    MOCK SETUP: get_repo_root pinned to tmp_path; step_docstrings is
+    replaced with a blocking FAIL (passed=False, non_blocking=False);
+    step_test_naming, step_repo_structure, step_pip_audit, and
+    step_docstring_coverage are stubbed to pass/skip as usual; argv
+    drives `forge-precommit --json`.
+    EXPECTED BEHAVIOR: every parsed element has a float elapsed_s >= 0.0,
+    and the failed docstring_verification element in particular reports
+    passed=False alongside a valid elapsed_s.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+
+    def _failing_docstrings(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(
+            name="docstring_verification",
+            passed=False,
+            output="(simulated docstring error)",
+        )
+
+    monkeypatch.setattr(precommit, "step_docstrings", _failing_docstrings)
+    _stub_test_naming_passing(monkeypatch)
+    _stub_repo_structure_passing(monkeypatch)
+    _stub_pip_audit_skipped(monkeypatch)
+    _stub_docstring_coverage_skipped(monkeypatch)
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--json"]):
+        precommit.main()
+    parsed = json.loads(capsys.readouterr().out)
+
+    for entry in parsed:
+        assert isinstance(entry["elapsed_s"], float)
+        assert entry["elapsed_s"] >= 0.0
+
+    failed = next(r for r in parsed if r["name"] == "docstring_verification")
+    assert failed["passed"] is False
+    assert isinstance(failed["elapsed_s"], float)
+    assert failed["elapsed_s"] >= 0.0
+
+
+def test_main_prints_per_step_elapsed_and_total_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Non-JSON main() prints a per-step `X.Xs` suffix and a self-consistent total line.
+
+    SCENARIO: the human-readable run must let a contributor see per-step
+    cost at a glance, and the trailing total line must actually be the
+    sum of the printed per-step numbers rather than an independent
+    figure that could drift from them.
+    MOCK SETUP: get_repo_root pinned to tmp_path; step_ruff and
+    step_pip_audit stubbed to canned passing results; argv drives
+    `forge-precommit --only ruff,pip_audit` (no --json).
+    EXPECTED BEHAVIOR: every step progress line ends in a `<N.N>s`
+    suffix, and the final `total <N.N>s (per-step:
+    code_health/precommit_timing.log)` line's value equals the sum of
+    the parsed per-step values.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+
+    def _ruff(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="ruff", passed=True, output="x")
+
+    def _audit(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="pip_audit", passed=True, output="x")
+
+    monkeypatch.setattr(precommit, "step_ruff", _ruff)
+    monkeypatch.setattr(precommit, "step_pip_audit", _audit)
+    with patch.object(
+        precommit.sys, "argv", ["forge-precommit", "--only", "ruff,pip_audit"]
+    ):
+        rc = precommit.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+
+    per_step = [
+        float(m) for m in re.findall(r"^\S+\s+\S+\s+(\d+\.\d)s$", out, re.MULTILINE)
+    ]
+    assert len(per_step) == 2
+
+    total_match = re.search(
+        r"^total (\d+\.\d)s \(per-step: code_health/precommit_timing\.log\)$",
+        out,
+        re.MULTILINE,
+    )
+    assert total_match is not None
+    assert float(total_match.group(1)) == sum(per_step)
 
 
 # ---------------------------------------------------------------------------
