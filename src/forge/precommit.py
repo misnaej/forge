@@ -2192,10 +2192,40 @@ def _changelog_updated_skip_gate(
     return None
 
 
+def _changelog_triggers(
+    files: list[str],
+    require: tuple[str, ...],
+    exempt: tuple[str, ...],
+) -> list[str]:
+    """Return changed files that require a changelog entry.
+
+    Changelog artifacts themselves (``CHANGELOG.md``, ``changelog.d/``
+    fragments) never trigger; ``require`` narrows to matching prefixes,
+    otherwise ``exempt`` prefixes are excluded.
+
+    Args:
+        files: Changed files from the diff.
+        require: Paths that require changelog entries.
+        exempt: Paths exempt from requiring entries.
+
+    Returns:
+        The triggering subset of *files*, order preserved.
+    """
+    return [
+        path
+        for path in files
+        if path != "CHANGELOG.md"
+        and not path.startswith(f"{FRAGMENTS_DIR}/")
+        and (
+            (require and path.startswith(require))
+            or not (exempt and path.startswith(exempt))
+        )
+    ]
+
+
 def _handle_fragment_mode(
     repo_root: Path,
     files: list[str],
-    fragments_prefix: str,
     require: tuple[str, ...],
     exempt: tuple[str, ...],
 ) -> StepResult:
@@ -2204,7 +2234,6 @@ def _handle_fragment_mode(
     Args:
         repo_root: Git repo root.
         files: Changed files from the diff.
-        fragments_prefix: The fragments directory prefix.
         require: Paths that require changelog entries.
         exempt: Paths exempt from requiring entries.
 
@@ -2212,17 +2241,8 @@ def _handle_fragment_mode(
         StepResult for the changelog_updated step.
     """
     name = "changelog_updated"
-    triggers = [
-        path
-        for path in files
-        if path != "CHANGELOG.md"
-        and not path.startswith(fragments_prefix)
-        and (
-            (require and path.startswith(require))
-            or not (exempt and path.startswith(exempt))
-        )
-    ]
-    has_fragment = any(p.startswith(fragments_prefix) for p in files)
+    triggers = _changelog_triggers(files, require, exempt)
+    has_fragment = any(p.startswith(f"{FRAGMENTS_DIR}/") for p in files)
     if triggers and not has_fragment:
         blocking = _changelog_blocking(repo_root)
         return StepResult(
@@ -2278,16 +2298,7 @@ def _handle_standard_mode(
         StepResult for the changelog_updated step.
     """
     name = "changelog_updated"
-    triggers = [
-        path
-        for path in files
-        if path != "CHANGELOG.md"
-        and not path.startswith(f"{FRAGMENTS_DIR}/")
-        and (
-            (require and path.startswith(require))
-            or not (exempt and path.startswith(exempt))
-        )
-    ]
+    triggers = _changelog_triggers(files, require, exempt)
     if triggers and "CHANGELOG.md" not in files:
         if enforce:
             output = (
@@ -2380,14 +2391,11 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
     exempt = tuple(_cfg_str_list(step_cfg, "exempt_paths", []))
     require = tuple(_cfg_str_list(step_cfg, "require_paths", []))
     fragments_mode = step_cfg.get("mode") == "fragments"
-    fragments_prefix = f"{FRAGMENTS_DIR}/"
     # drop_deleted=False: a deleted file is still a change that may require
     # a changelog entry — the default would silently exempt deletions.
     files = config.select_diff_files(repo_root, suffix="", drop_deleted=False)
     if fragments_mode:
-        return _handle_fragment_mode(
-            repo_root, files, fragments_prefix, require, exempt
-        )
+        return _handle_fragment_mode(repo_root, files, require, exempt)
     enforce = bool(step_cfg.get("precommit_enforce", True))
     return _handle_standard_mode(
         repo_root, files, enforce=enforce, require=require, exempt=exempt

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_67 modules, 798 symbols._
+_67 modules, 799 symbols._
 
 ## `forge`
 
@@ -520,7 +520,7 @@ _67 modules, 798 symbols._
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 - `write_tree(repo_root: Path) -> str | None` — Return the tree SHA of the current **index** via ``git write-tree``.
 - `_release_ignored(path: str) -> bool` _(internal)_ — Return whether *path* is release-curated content (fingerprint-exempt).
-- `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
+- `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring changelog paths.
 - `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
 - `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
@@ -788,7 +788,8 @@ _67 modules, 798 symbols._
 - `_changelog_version_skip_gate(repo_root: Path) -> StepResult | None` _(internal)_ — Check all skip conditions for changelog_version step.
 - `step_changelog_version(repo_root: Path) -> StepResult` — Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
 - `_changelog_updated_skip_gate(repo_root: Path, cfg: config.ForgeConfig) -> StepResult | None` _(internal)_ — Check all skip conditions for changelog_updated step.
-- `_handle_fragment_mode(repo_root: Path, files: list[str], fragments_prefix: str, require: tuple[str, ...], exempt: tuple[str, ...]) -> StepResult` _(internal)_ — Handle fragment-mode changelog validation.
+- `_changelog_triggers(files: list[str], require: tuple[str, ...], exempt: tuple[str, ...]) -> list[str]` _(internal)_ — Return changed files that require a changelog entry.
+- `_handle_fragment_mode(repo_root: Path, files: list[str], require: tuple[str, ...], exempt: tuple[str, ...]) -> StepResult` _(internal)_ — Handle fragment-mode changelog validation.
 - `_handle_standard_mode(repo_root: Path, files: list[str], *, enforce: bool, require: tuple[str, ...], exempt: tuple[str, ...]) -> StepResult` _(internal)_ — Handle standard-mode changelog validation.
 - `step_changelog_updated(repo_root: Path) -> StepResult` — Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
