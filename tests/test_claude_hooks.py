@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import GIT_ENV, init_git_repo
+from tests.conftest import GIT_ENV, init_git_repo, init_single_track_repo
 
 
 _HOOKS_DIR = Path(__file__).resolve().parents[1] / "claude-hooks"
@@ -447,6 +447,7 @@ _GIT_GUARD_HOOKS = (
     "block_git_rebase.sh",
     "block_raw_git.sh",
     "block_git_destructive.sh",
+    "block_amend_pushed_commit.sh",
 )
 
 
@@ -498,6 +499,7 @@ _GIT_GUARD_BLOCKING_COMMANDS = {
     "block_git_rebase.sh": "git rebase origin/dev",
     "block_raw_git.sh": "git commit -m x",
     "block_git_destructive.sh": "git reset --hard",
+    "block_amend_pushed_commit.sh": "git commit --amend",
 }
 
 
@@ -1116,6 +1118,181 @@ def test_destructive_registered_and_reset_hard_retired() -> None:
 def test_destructive_old_hook_file_removed() -> None:
     """The retired `block_git_reset_hard.sh` file no longer exists on disk."""
     assert not (_HOOKS_DIR / "block_git_reset_hard.sh").exists()
+
+
+# --- block_amend_pushed_commit.sh: amending a pushed commit is a rebase (#414) -
+# Amending a commit already on a remote is the single-commit analogue of
+# rebase: it rewrites published history, forcing a force-push that
+# block_force_push.sh then refuses. This hook blocks the amend itself.
+# Amending an UNPUSHED commit stays allowed — nothing published is rewritten.
+
+_AMEND = "block_amend_pushed_commit.sh"
+
+
+def test_amend_blocks_pushed_commit(tmp_path: Path) -> None:
+    """Amending HEAD when it's already contained in a remote-tracking ref is blocked.
+
+    The core case: `init_single_track_repo` pushes `main` to `origin.git`,
+    so HEAD is reachable from `refs/remotes/origin/main` — the containment
+    check the hook shells out to `git for-each-ref` for.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    proc = _run_hook_proc(_AMEND, 'git commit --amend -m "fix"', cwd=work)
+    assert proc.returncode == 2
+    assert "remote" in proc.stderr
+    assert "force-push" in proc.stderr
+
+
+def test_amend_allows_unpushed_commit(tmp_path: Path) -> None:
+    """Amending a commit made AFTER the last push is allowed.
+
+    Proves the guard checks containment of the CURRENT HEAD, not merely
+    "does this branch have a remote" — HEAD has moved past
+    `refs/remotes/origin/main` to a local-only commit, so nothing
+    published would be rewritten.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "wip"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    assert _run_hook(_AMEND, 'git commit --amend -m "fix"', cwd=work) == 0
+
+
+def test_amend_blocks_abbreviated_flag(tmp_path: Path) -> None:
+    """The `--am` abbreviation for `--amend` is blocked."""
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "git commit --am", cwd=work) == 2
+
+
+def test_amend_allows_message_mentioning_amend(tmp_path: Path) -> None:
+    """`--amend` appearing only inside a quoted commit MESSAGE is allowed.
+
+    Regression pin for the quote-strip in the hook's cheap text bail —
+    without it, a message merely mentioning `--amend` would false-positive.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, 'git commit -m "use --amend later"', cwd=work) == 0
+
+
+def test_amend_allows_plain_commit(tmp_path: Path) -> None:
+    """A plain `git commit` with no `--amend` flag is allowed."""
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, 'git commit -m "fix"', cwd=work) == 0
+
+
+def test_amend_allows_commit_tree_and_commit_graph(tmp_path: Path) -> None:
+    """`git commit-tree` / `git commit-graph` are not `git commit` and stay allowed.
+
+    The anchor's `commit([[:space:]]|$)` requires whitespace or end-of-line
+    right after `commit`, excluding the hyphenated plumbing subcommands.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "git commit-tree HEAD^{tree} -m x", cwd=work) == 0
+    assert _run_hook(_AMEND, "git commit-graph write", cwd=work) == 0
+
+
+def test_amend_blocks_env_var_prefix(tmp_path: Path) -> None:
+    """`GIT_DIR=/tmp/x git commit --amend` (inline env assignment) is blocked."""
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "GIT_DIR=/tmp/x git commit --amend", cwd=work) == 2
+
+
+def test_amend_blocks_sudo_wrapper(tmp_path: Path) -> None:
+    """A `sudo -n`-wrapped amend is blocked."""
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "sudo -n git commit --amend", cwd=work) == 2
+
+
+def test_amend_blocks_subshell_wrapper(tmp_path: Path) -> None:
+    """A subshell-wrapped amend (`(git commit --amend)`) is blocked.
+
+    The flag tail accepts any non-flag character — not just whitespace —
+    so the closing `)` of a subshell wrap cannot slip the gate.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "(git commit --amend)", cwd=work) == 2
+
+
+def test_amend_allows_longer_flag_false_positive(tmp_path: Path) -> None:
+    """A longer flag merely prefixed by `--amend` (`--amend-ish`) is not blocked.
+
+    Pins the flag tail's `([^[:alnum:]_-]|$)` class, which rejects any
+    alnum/`_`/`-` continuation — so `--amend-ish` fails the match and
+    stays allowed, distinct from the true amend forms above.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "git commit --amend-ish -m x", cwd=work) == 0
+
+
+def test_amend_has_no_agent_bypass(tmp_path: Path) -> None:
+    """Even forge:git-commit-push — the one agent that runs `git commit` — cannot amend.
+
+    Its own contract is "never amend — always a new commit"; this hook
+    deliberately carries no sanctioned-agent bypass.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert (
+        _run_hook(
+            _AMEND,
+            'git commit --amend -m "fix"',
+            cwd=work,
+            agent_type="forge:git-commit-push",
+        )
+        == 2
+    )
+
+
+def test_amend_allows_non_git_repo_cwd(tmp_path: Path) -> None:
+    """Amending in a plain (non-git) directory is allowed, with no leaked git noise.
+
+    `HEAD_SHA` resolution fails closed-to-allow (nothing published to
+    protect), and the hook's own `2>/dev/null` on the git queries must
+    keep stderr clean of git's own error text.
+    """
+    plain_dir = tmp_path / "not-a-repo"
+    plain_dir.mkdir()
+    proc = _run_hook_proc(_AMEND, 'git commit --amend -m "fix"', cwd=plain_dir)
+    assert proc.returncode == 0
+    assert proc.stderr == ""
+
+
+def test_amend_uses_payload_cwd_not_process_cwd(tmp_path: Path) -> None:
+    """The hook resolves state via the JSON payload's `cwd`, not the hook process's own.
+
+    `_run_hook_proc` never sets a top-level payload `"cwd"` field — only
+    the subprocess's working directory. This test builds the payload by
+    hand with `"cwd"` pointing at the pushed repo while the subprocess
+    itself runs from an unrelated, non-repo directory, so a pass proves
+    the hook reads `.cwd`, not its own `$PWD`.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    payload = json.dumps(
+        {"tool_input": {"command": 'git commit --amend -m "fix"'}, "cwd": str(work)}
+    )
+    proc = subprocess.run(
+        ["bash", str(_HOOKS_DIR / _AMEND)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=elsewhere,
+    )
+    assert proc.returncode == 2
+
+
+def test_amend_pushed_commit_registered_in_plugin_json() -> None:
+    """Verify hook is wired into plugin.json's Bash PreToolUse group."""
+    manifest = json.loads(
+        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
+    )
+    pre_tool_use = manifest["hooks"]["PreToolUse"]
+    commands = [hook["command"] for group in pre_tool_use for hook in group["hooks"]]
+    assert any(_AMEND in cmd for cmd in commands)
 
 
 _CONTINUATION_DELETE = "block_continuation_delete.sh"
