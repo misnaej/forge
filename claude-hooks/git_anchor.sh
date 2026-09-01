@@ -3,7 +3,7 @@
 #
 # NOT a hook — a sourced library (never registered in plugin.json).
 # Consumers: block_force_push.sh, block_git_rebase.sh, block_raw_git.sh,
-# block_git_destructive.sh, via:
+# block_git_destructive.sh, block_amend_pushed_commit.sh, via:
 #
 #     source "$(dirname "$0")/git_anchor.sh"
 #

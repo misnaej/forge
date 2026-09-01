@@ -138,7 +138,7 @@ path = "docs/agent-architecture.md"
 [tool.forge.agent_doc.guarded_by]
 # Agent node id -> the guard hooks protecting it; verify-forge-agent-doc
 # requires a matching agent->hook edge in the doc for every entry.
-git_commit_push = ["block_no_verify", "block_force_push", "block_git_destructive"]
+git_commit_push = ["block_no_verify", "block_force_push", "block_git_destructive", "block_amend_pushed_commit"]
 pr_manager = ["block_pr_merge", "block_unverified_pr_create"]
 precommit_fixer = ["block_fixer_recon"]
 
