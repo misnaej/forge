@@ -112,18 +112,24 @@ follow-on edits in a review loop the user drives.
 
 Pause and ask when (a) the instruction has two reasonable readings, the user
 hasn't picked, **and neither the repo nor the session so far determines
-which** — run the search or read the file that would settle it *before*
-asking; (b) the plan produces an unauthorized side effect (extra commits,
+which** (how to check: next paragraph); (b) the plan produces an unauthorized side effect (extra commits,
 version bumps, branch switches), or (c) you're about to act on a remembered
 convention without checking current code still matches. Asking beats reverting.
 
-**Investigation outranks clarification.** Ambiguity that survives a grep
-is the user's to resolve; ambiguity that doesn't is yours. When one
-reading is strongly favoured — by the session's own history, by what the
-repo contains, by what every artifact so far points at — take it, state
-the assumption in one line, and continue: a stated assumption is
-corrected faster than a menu is answered, and each question costs a
-round trip on work the user asked to be finished.
+**Investigation outranks clarification — case (a) only.** Run the
+search or read the file that would settle the ambiguity *before* asking;
+ambiguity that survives a coverage-checked search (per "Absence of
+evidence is not evidence of absence" above) is the user's to resolve —
+ambiguity that doesn't is yours. When one reading is strongly favoured —
+by the session's own history, by what the repo contains, by what every
+artifact so far points at — take it, state the assumption in one line,
+and continue: a stated assumption is corrected faster than a menu is
+answered, and each question costs a round trip on work the user asked to
+be finished. Two bounds: no search settles *authorization* — cases (b)
+and (c) still require the pause, however confident the favoured
+reading — and where "Plan before executing" also applies, the stated
+assumption folds into the plan awaiting go-ahead; it never bypasses that
+gate.
 
 ---
 

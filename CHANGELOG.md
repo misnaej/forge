@@ -22,10 +22,10 @@ versions follow forge's rolling-next convention.
 
 ## v3.32.0 — Unreleased
 
-### Features
+### Docs
 - **FOUNDATION §1 closes two ask-instead-of-check loopholes.** "Ask
   before acting on ambiguity" now requires that the ambiguity survive
-  investigation — run the grep or read that would settle it before
+  investigation — run the search or read that would settle it before
   asking, and when one reading is strongly favoured, take it and state
   the assumption in one line ("investigation outranks clarification").
   "Your own actions invalidate your reads" gains the no-action sibling:
