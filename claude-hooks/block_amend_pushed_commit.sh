@@ -49,14 +49,36 @@ source "$ANCHOR_LIB"
 # --amend never fires; `commit([[:space:]]|$)` excludes commit-tree /
 # commit-graph; `--am(e(n(d)?)?)?` covers git's accepted unambiguous
 # long-option abbreviations of --amend.
-# The double-quote rule is escape-aware (`\"` inside a "…" span must not
-# terminate it, or `-m "\""` desynchronizes the stripper and hides a live
-# --amend). The single-quote rule stays naive ON PURPOSE: bash has no
-# backslash-escaping inside single quotes, so an escape-aware pattern
-# there would itself be wrong. Residual: a NON-git token like
-# `./run.sh --amend` after `git commit …` in one compound command can
-# false-positive; the block is conservative and a human runs it with `!`.
-STRIPPED=$(printf '%s\n' "$COMMAND" | sed -E "s/'[^']*'//g"' ; s/"([^"\\]|\\.)*"//g')
+# Quote stripping is a single left-to-right pass tracking quote state
+# (none / single / double), mirroring bash's own tokenizer: single quotes
+# have no escapes; inside double quotes a backslash escapes the next
+# character. Two independent regex passes CANNOT do this — whichever
+# quote style strips first cross-pairs its delimiter characters embedded
+# in the OTHER style's spans (`-m "it's" --amend -m "don't"` swallows the
+# live --amend), and swapping the order just mirrors the bypass.
+# Residual: a NON-git token like `./run.sh --amend` after `git commit …`
+# in one compound command can false-positive; the block is conservative
+# and a human runs it with `!`.
+STRIPPED=$(printf '%s\n' "$COMMAND" | awk '
+    BEGIN { state = 0 }  # 0 unquoted, 1 single-quoted, 2 double-quoted
+    {
+        out = ""
+        n = length($0)
+        for (i = 1; i <= n; i++) {
+            c = substr($0, i, 1)
+            if (state == 0) {
+                if (c == "\047") state = 1
+                else if (c == "\"") state = 2
+                else out = out c
+            } else if (state == 1) {
+                if (c == "\047") state = 0
+            } else {
+                if (c == "\\") i++
+                else if (c == "\"") state = 0
+            }
+        }
+        print out
+    }')
 if ! echo "$STRIPPED" | grep -qE "${GIT_ANCHOR}commit([[:space:]]|\$)"; then
     exit 0
 fi

@@ -1258,6 +1258,35 @@ def test_amend_blocks_quote_char_inside_single_quotes(tmp_path: Path) -> None:
     assert _run_hook(_AMEND, cmd, cwd=work) == 2
 
 
+def test_amend_blocks_apostrophe_cross_pairing(tmp_path: Path) -> None:
+    """Apostrophes inside two double-quoted args cannot hide a live `--amend`.
+
+    Security-review PoC #2: with independent regex passes, the naive
+    single-quote rule pairs the `'` of `"it's"` with the `'` of
+    `"don't"` and swallows the real `--amend` between them — an
+    accidental, non-adversarial pattern (two contractions). The
+    single-pass quote-state machine tracks that both apostrophes sit
+    inside double-quoted spans — blocked.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = 'git commit -m "it\'s" --amend -m "don\'t"'
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+
+
+def test_amend_blocks_dquote_inside_single_quotes_cross_pairing(
+    tmp_path: Path,
+) -> None:
+    """The symmetric case: `"` inside two single-quoted args cannot hide `--amend`.
+
+    Mirror of the apostrophe cross-pairing PoC with the quote styles
+    swapped — pins that the state machine closes BOTH directions, not
+    just the one a particular pass ordering happens to fix.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = "git commit -m 'say \"hi' --amend -m 'there\"'"
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+
+
 def test_amend_has_no_agent_bypass(tmp_path: Path) -> None:
     """Even forge:git-commit-push — the one agent that runs `git commit` — cannot amend.
 
