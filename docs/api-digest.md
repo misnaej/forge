@@ -693,7 +693,7 @@ _66 modules, 775 symbols._
 
 - `class PrPlan` — The finalization plan for one classification run.
 - `_changed_paths(root: Path, diff_range: str) -> list[str]` _(internal)_ — Return the repo-relative paths changed across *diff_range*.
-- `_added_paths(root: Path, diff_range: str) -> list[str]` _(internal)_ — Return the paths ADDED across *diff_range* (``--diff-filter=A``).
+- `_added_paths(root: Path, diff_range: str) -> list[str]` _(internal)_ — Return the new paths across *diff_range* (``--diff-filter=ACR``).
 - `_line_count(root: Path, diff_range: str) -> int` _(internal)_ — Return insertions + deletions across *diff_range*.
 - `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.
 - `_try_delta(root: Path, pr_number: int | None, reasons: list[str]) -> bool` _(internal)_ — Evaluate delta-mode eligibility, appending the trail to *reasons*.

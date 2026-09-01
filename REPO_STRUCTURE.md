@@ -33,7 +33,8 @@ Code.
    - release.py: `forge-release` — single-track release orchestrator for tag-versioned (setuptools-scm) consumer repos: guards (clean tree, on base branch, single-track model, CHANGELOG entry) → annotated tag + push (exempt in `cli_wiring_exempt.toml`)
    - continuation_append.py: `forge-continuation-append` — single source of truth for `.plan/CONTINUATION.md` append format; called by `forge:git-commit-push` and `forge:pr-manager`; every append (and `--rotate`) rotates done entries older than one week to `.plan/CONTINUATION-archive.md` + per-day digests, pinning entries the structured sections still reference
    - pr_squash_comment.py: `forge-pr-squash-comment` — validates + posts the squash-merge comment; canonical `CONVENTIONAL_COMMIT_TYPES` source
-   - pr_delta.py: shared delta-mode thresholds/regex for the pr-manager agent
+   - pr_delta.py: the finalization-path classification primitives — every threshold, glob, and predicate (delta, docs-only, regen-only, light-code) consumed by `forge-pr-plan`, the pr-manager agent, and the wrap-up publish hook
+   - pr_plan.py: `forge-pr-plan` — deterministic finalization-path classifier for the `/pr` skill; composes the pr_delta primitives over the real diff and emits the JSON plan (mode/reporters/precommit_scope/reasons)
    - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; read-only CI/local reporter (exempt in `cli_wiring_exempt.toml`)
    - forge_config.py: `forge-config` — lists every `[tool.forge.*]` key forge reads (value/default + description), names native sections like `[tool.interrogate]`, and advises on recommended-but-unset config; read-only, surfaced by `install-forge-bootstrap`
    - fix_ruff.py: `fix-forge-ruff` — runs `ruff format` + `ruff check --fix --unsafe-fixes`, re-stages modified tracked files, writes `code_health/ruff.log`
@@ -217,7 +218,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_release.py: tests for release (forge-release CLI guards + tagging)
    - test_release_e2e.py: end-to-end single-track consumer release fixture (recipes + changelog steps)
    - test_changelog.py: tests for changelog (release_headings / changelog_lacks_entry)
-   - test_pr_delta.py: tests for pr_delta shared thresholds/regex
+   - test_pr_delta.py: tests for pr_delta classification primitives (delta, docs-only, regen-only, light-code)
    - test_pr_squash_comment.py: tests for pr_squash_comment
    - test_precommit.py: tests for precommit dispatcher
    - test_run_context.py: tests for run_context (CI vs workstation detection)

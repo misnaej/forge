@@ -255,6 +255,44 @@ def test_classify_modified_source_path_returns_full(tmp_path: Path) -> None:
     assert "src/forge/existing.py" in reason
 
 
+def test_classify_renamed_file_returns_full(tmp_path: Path) -> None:
+    """A rename-plus-edit disqualifies light-code — `--find-renames` catches it.
+
+    `_added_paths` uses `--diff-filter=ACR`, not the narrower `A`: a rename
+    is a new module in a new place exactly as an add is, and the
+    prior-art gate must run on it too.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    _commit_files(repo, {"src/forge/old_name.py": "x = 1\n"}, "seed on main")
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature"], cwd=repo, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "mv", "src/forge/old_name.py", "src/forge/new_name.py"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    (repo / "src/forge/new_name.py").write_text("x = 2\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "src/forge/new_name.py"], cwd=repo, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "rename and tweak"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode == "full"
+    reason = next(r for r in plan.reasons if r.startswith("not light-code:"))
+    assert "src/forge/new_name.py" in reason
+
+
 # --- classify(): delta path ----------------------------------------------
 
 
@@ -311,6 +349,47 @@ def test_classify_delta_ineligible_blast_radius_path_falls_back_to_full(
 
     assert plan.mode == "full"
     assert any("high-blast-radius" in r for r in plan.reasons)
+
+
+def test_classify_delta_outranks_light_code_for_verified_pr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Delta wins over light-code when both are eligible — the cheaper path.
+
+    SCENARIO: the whole PR diff (``main...feature``) is itself small enough
+    to qualify for light-code (a non-source, non-blast MODIFY), but a PR
+    already exists and has a resolvable ``verified-at:`` comment whose
+    since-diff is also tiny — so delta, which ``classify()`` tries first,
+    must win instead of falling through to the light-code check.
+
+    MOCK SETUP: ``pr_plan.subprocess.run`` is replaced with ``make_fake_run``
+    returning a ``gh``-shaped ``verified-at:`` comment naming the real
+    intermediate commit's short SHA — the same seam
+    ``test_latest_verified_sha_returns_last_sha_across_multiple_comments``
+    exercises — so ``_latest_verified_sha`` resolves without a direct
+    monkeypatch of the function itself.
+    EXPECTED BEHAVIOR: ``classify()`` returns mode ``"delta"``, never
+    reaching the light-code branch.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    _commit_files(repo, {"tests/fixture.py": "x = 1\n"}, "seed on main")
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature"], cwd=repo, env=GIT_ENV, check=True
+    )
+    _commit_files(repo, {"tests/fixture.py": "x = 2\n"}, "verified commit")
+    verified_sha = _git_short_sha(repo)
+    _commit_files(repo, {"tests/fixture.py": "x = 3\n"}, "small follow-up")
+    stdout = f"verified-at: {verified_sha} wrap-up\n"
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    plan = pr_plan.classify(repo, "main", 7)
+
+    assert plan.mode == "delta"
+    assert plan.reporters == []
+    assert plan.precommit_scope == []
 
 
 def test_classify_no_pr_number_marks_delta_ineligible(tmp_path: Path) -> None:

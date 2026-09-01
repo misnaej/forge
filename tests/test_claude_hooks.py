@@ -1915,6 +1915,21 @@ def _write_wrapup_light(
     (code_health / "pr_wrapup.md").write_text("\n".join(lines) + "\n")
 
 
+def _write_forge_dev_branch_config(repo: Path, branch: str = "main") -> None:
+    """Write a `pyproject.toml` declaring `[tool.forge] dev_branch = *branch*`.
+
+    The hook's light re-check resolves its base ref ONLY from this config
+    (never from the command's own `--base` text) — tests exercising the
+    re-check need this fixture in place for `BASE` to resolve at all.
+
+    Args:
+        repo: Repo root to write under — matches the hook's
+            `--show-toplevel` resolution.
+        branch: The `dev_branch` value to declare. Defaults to `main`.
+    """
+    (repo / "pyproject.toml").write_text(f'[tool.forge]\ndev_branch = "{branch}"\n')
+
+
 def _stub_forge_pr_plan(tmp_path: Path, mode: str) -> dict[str, str]:
     """Build an executable `forge-pr-plan` stub on PATH that reports *mode*.
 
@@ -1936,6 +1951,61 @@ def _stub_forge_pr_plan(tmp_path: Path, mode: str) -> dict[str, str]:
     return {**os.environ, "PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
 
 
+def _stub_forge_pr_plan_failing(tmp_path: Path) -> dict[str, str]:
+    """Build an executable `forge-pr-plan` stub that exits 1 printing nothing.
+
+    Simulates the classifier itself erroring out (crash, bad invocation) as
+    opposed to being absent from PATH — the hook's `if !` guard must absorb
+    this into an empty `MODE` rather than dying under `set -e` at exit 1,
+    which would fail the hook OPEN before the mode check ran.
+
+    Args:
+        tmp_path: Pytest `tmp_path` fixture directory to build the stub under.
+
+    Returns:
+        A copy of the current process environment with the stub's
+        directory PREPENDED to `PATH`, shadowing any real `forge-pr-plan`
+        install so the hook's re-check exercises this stub instead.
+    """
+    stub_dir = tmp_path / "stub_bin"
+    stub_dir.mkdir()
+    stub = stub_dir / "forge-pr-plan"
+    stub.write_text("#!/usr/bin/env bash\nexit 1\n")
+    stub.chmod(0o755)
+    return {**os.environ, "PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+
+def test_unverified_pr_create_light_classifier_error_blocks(
+    git_repo_with_commit: tuple[Path, str],
+    tmp_path: Path,
+) -> None:
+    """A crashing `forge-pr-plan` fails the light re-check CLOSED, not open.
+
+    Regression guard for the `errexit` fail-open bug: under `set -e`, a bare
+    `MODE=$(forge-pr-plan ... | python3 ...)` would die at the classifier's
+    exit 1 — before the `[ "$MODE" != "light-code" ]` check ever ran — and
+    the hook would exit at the shell's own errexit code rather than at the
+    deliberate `exit 2` block, or (worse) let the command through. The `if
+    !` guard absorbs the failure into an empty `MODE`, which the mode check
+    then blocks on.
+
+    MOCK SETUP: `forge-pr-plan` is replaced with an executable stub
+    (`_stub_forge_pr_plan_failing`) that exits 1 printing nothing —
+    distinct from `forge-pr-plan` being absent from PATH, which is covered
+    separately.
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup_light(repo, sha)
+    _write_forge_dev_branch_config(repo)
+    env = _stub_forge_pr_plan_failing(tmp_path)
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo, env=env
+    )
+    assert proc.returncode == 2
+    assert "unclassifiable" in proc.stderr
+    assert "not earned" in proc.stderr
+
+
 def test_unverified_pr_create_light_mode_stub_light_code_allows(
     git_repo_with_commit: tuple[Path, str],
     tmp_path: Path,
@@ -1949,6 +2019,7 @@ def test_unverified_pr_create_light_mode_stub_light_code_allows(
     """
     repo, sha = git_repo_with_commit
     _write_wrapup_light(repo, sha)
+    _write_forge_dev_branch_config(repo)
     env = _stub_forge_pr_plan(tmp_path, "light-code")
     assert (
         _run_hook(
@@ -1973,6 +2044,7 @@ def test_unverified_pr_create_light_mode_stub_full_blocks(
     """
     repo, sha = git_repo_with_commit
     _write_wrapup_light(repo, sha)
+    _write_forge_dev_branch_config(repo)
     env = _stub_forge_pr_plan(tmp_path, "full")
     proc = _run_hook_proc(
         _UNVERIFIED_PR_CREATE,
@@ -2020,15 +2092,18 @@ def test_unverified_pr_create_light_mode_unresolvable_base_blocks(
 ) -> None:
     """A `wrapup-mode: light` wrap-up is blocked when no base ref can be resolved.
 
-    No `--base` on the command and no `[tool.forge]` branch config in
-    `pyproject.toml` — the hook has nothing to diff against, so it fails
-    closed rather than guessing one.
+    No `[tool.forge]` branch config in `pyproject.toml` — the base ref
+    comes ONLY from that config (never from the command's own `--base`
+    text, included here as an irrelevant distractor), so the hook has
+    nothing to diff against and fails closed rather than guessing one.
     """
     repo, sha = git_repo_with_commit
     _write_wrapup_light(repo, sha)
-    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE, "gh pr create --title x --base main", cwd=repo
+    )
     assert proc.returncode == 2
-    assert "base ref could not be resolved" in proc.stderr
+    assert "no [tool.forge] dev_branch/base_branch config" in proc.stderr
 
 
 def test_unverified_pr_create_full_mode_line_skips_light_recheck(
@@ -2045,20 +2120,40 @@ def test_unverified_pr_create_full_mode_line_skips_light_recheck(
     assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo) == 0
 
 
-def test_unverified_pr_create_light_mode_line_past_head5_skips_recheck(
+def test_unverified_pr_create_light_mode_line_past_head5_still_rechecks(
     git_repo_with_commit: tuple[Path, str],
 ) -> None:
-    """A `wrapup-mode: light` line beyond the `head -5` window is not re-checked.
+    """A `wrapup-mode: light` line beyond the old `head -5` window is still re-checked.
 
-    `verified-at:` stays inside the first 5 lines (satisfying the earlier
-    HEAD-match gate) while padding pushes `wrapup-mode: light` past line 5
-    — the hook's `head -5 | grep` for the light re-check then finds no
-    match, so the PR create is allowed without ever needing `forge-pr-plan`
-    on PATH.
+    Regression guard: the mode-line scan is a WHOLE-FILE grep, not a
+    `head -5` window — a window would be dodgeable by padding the file
+    (a scan a light-code diff's author fully controls). `verified-at:`
+    stays inside the first 5 lines (satisfying the earlier HEAD-match
+    gate) while padding pushes `wrapup-mode: light` well past line 5;
+    the re-check must still fire — proven here by stripping
+    `forge-pr-plan` from PATH and observing the fail-closed block.
+
+    MOCK SETUP: PATH is stripped of every directory that actually
+    resolves a `forge-pr-plan` binary (portable — no hard-coded install
+    location), so the re-check's own "missing classifier" branch is what
+    produces the block, distinguishing "re-check fired" from "re-check
+    skipped, PR create allowed".
     """
     repo, sha = git_repo_with_commit
     _write_wrapup_light(repo, sha, padding=5)
-    assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo) == 0
+    stripped_path = os.pathsep.join(
+        d
+        for d in os.environ.get("PATH", "").split(os.pathsep)
+        if not (Path(d) / "forge-pr-plan").is_file()
+    )
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE,
+        "gh pr create --title x",
+        cwd=repo,
+        env={**os.environ, "PATH": stripped_path},
+    )
+    assert proc.returncode == 2
+    assert "not on PATH" in proc.stderr
 
 
 # --- block_fixer_recon.sh: agent-scoped Bash allowlist ---------------------

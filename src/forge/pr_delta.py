@@ -1,12 +1,15 @@
 """pr_delta — thresholds and helpers for pr-manager finalization short-circuits.
 
-`forge:pr-manager` (via the `/pr` skill) has two independent ways to skip
-the full three-agent re-verification: **delta mode**, when the diff since
-the last verified SHA is small and stays out of high-blast-radius areas,
-and the **docs-only light path**, when the whole diff is doc-shaped and
-touches no high-blast-radius path. The thresholds, path globs, and the
-SHA-extraction helper live here so the agent prompt, future audit guards,
-and any consumer wrapper read them from one source of truth.
+`forge:pr-manager` (via the `/pr` skill) has four independent ways to
+skip the full three-agent re-verification: **delta mode** (diff since
+the last verified SHA is small, out of high-blast-radius areas),
+the **docs-only light path** (whole diff doc-shaped), **regen-only
+eligibility** (managed artifacts, earned via provenance gates), and the
+**light-code path** (small, no added files, no source or blast-radius
+path — earned at publish time by the hook's classifier re-run). The
+thresholds, path globs, and the SHA-extraction helper live here so the
+agent prompt, future audit guards, and any consumer wrapper read them from
+one source of truth.
 
 The agent prompt references this module by path; the constants are not
 imported by the agent runtime (agents are markdown). Anything that
@@ -282,9 +285,11 @@ def light_wrapup_decision(
 ) -> tuple[bool, str]:
     """Decide whether a diff qualifies for the light wrap-up path.
 
-    Objective signals only — never agent judgment: small line count, no
-    added files (the prior-art gate stays independent), no source-package
-    change, no high-blast-radius path. Mirrors
+    Objective signals only — never agent judgment, checked in this
+    order: non-empty diff, no added files (the prior-art gate stays
+    independent and fires before any size check), line count under the
+    threshold, no high-blast-radius path, no source-package change.
+    Mirrors
     :func:`delta_decision`'s ``(verdict, reason)`` shape so callers and
     the publish-time hook re-check render the same trail.
 
