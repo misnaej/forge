@@ -20,7 +20,7 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
-## v3.36.0 — Unreleased
+## v3.37.0 — Unreleased
 
 ### Features
 - **Trivial PRs get a proportionate wrap-up — earned, never taken.**
@@ -33,6 +33,25 @@ versions follow forge's rolling-next convention.
   disagreement, missing classifier, or unresolvable base. Strict
   pre-commit still runs in full; file-adding diffs stay on the full
   path (the prior-art gate is independent).
+
+## v3.36.0 — Unreleased
+
+### Features
+- **The performance loop closes: forge now reads the perf data it
+  writes.** `forge-slow-tests-report` gains a committed duration
+  baseline (`.forge-test-durations.json`, flat reviewable JSON):
+  `--baseline` appends a WARN-shaped regression block (1.5x factor,
+  1s floor — never a gate; wall-clock on shared runners is
+  non-reproducible) and `--update-baseline` refreshes it deliberately
+  in a dedicated chore(perf) PR. `forge-telemetry --history` renders
+  the append-only run ledger as a trend table. `forge-smart-test` now
+  also writes `code_health/pytest.log`, making the reporter's
+  no-argument default true locally; forge's own CI runs the full
+  suite with durations captured plus the reporter on every run. New
+  opt-in `/perf` skill: analyze (readers + baseline compare, deep
+  dives via `forge:perf-optimizer`), report (file findings as a
+  `performance`-labeled issue), watch (re-check open performance
+  issues against current data).
 
 ## v3.35.0 — Unreleased
 

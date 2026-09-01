@@ -35,7 +35,8 @@ Code.
    - pr_squash_comment.py: `forge-pr-squash-comment` — validates + posts the squash-merge comment; canonical `CONVENTIONAL_COMMIT_TYPES` source
    - pr_delta.py: the finalization-path classification primitives — every threshold, glob, and predicate (delta, docs-only, regen-only, light-code) consumed by `forge-pr-plan`, the pr-manager agent, and the wrap-up publish hook
    - pr_plan.py: `forge-pr-plan` — deterministic finalization-path classifier for the `/pr` skill; composes the pr_delta primitives over the real diff and emits the JSON plan (mode/reporters/precommit_scope/reasons)
-   - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; read-only CI/local reporter (exempt in `cli_wiring_exempt.toml`)
+   - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; `--baseline`/`--update-baseline` compare against the committed `.forge-test-durations.json` (WARN-shaped, never gates); wired via the `/perf` skill
+   - telemetry.py: `forge-telemetry` — process-tree RSS + host CPU sampler around a wrapped command; per-run log/plot artifacts, append-only `telemetry_history.log`, `--history` trend reader
    - forge_config.py: `forge-config` — lists every `[tool.forge.*]` key forge reads (value/default + description), names native sections like `[tool.interrogate]`, and advises on recommended-but-unset config; read-only, surfaced by `install-forge-bootstrap`
    - fix_ruff.py: `fix-forge-ruff` — runs `ruff format` + `ruff check --fix --unsafe-fixes`, re-stages modified tracked files, writes `code_health/ruff.log`
    - verify_docstrings.py: `verify-forge-docstrings` — docstring accuracy
@@ -135,6 +136,7 @@ subdirectory holds a single `SKILL.md`:
 - fix/: invoke precommit-fixer to clear all pre-commit failures
 - memory-audit/: audit agent memory against the repo's rule surface
 - next/: clean up state and pick next task
+- perf/: opt-in perf read-side — analyze ledgers/baseline, file findings as issues (report), re-check open performance issues (watch)
 - plan-issue/: human-validated planning for one issue — records a plan-validated execution spec + plan-ready label
 - pr/: full PR finalization flow
 - pr-comments/: address PR review comments
