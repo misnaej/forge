@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_66 modules, 763 symbols._
+_66 modules, 769 symbols._
 
 ## `forge`
 
@@ -266,7 +266,13 @@ _66 modules, 763 symbols._
 - `_today_iso() -> str` _(internal)_ — Return today's date as ``YYYY-MM-DD``.
 - `_ensure_file_and_section(path: Path) -> None` _(internal)_ — Create the file with the canonical headers if missing.
 - `_append_line(path: Path, line: str) -> None` _(internal)_ — Append *line* to *path* with a trailing newline.
-- `main() -> int` — Append one activity-log line to ``.plan/CONTINUATION.md``.
+- `_split_sections(text: str) -> tuple[str, list[str], list[str], list[str]]` _(internal)_ — Split the file into head, digest lines, recent entries, and strays.
+- `_parse_digests(digest_lines: list[str]) -> dict[str, tuple[int, int, int, int, set[str]]]` _(internal)_ — Parse existing digest lines into per-day accumulators.
+- `_condense_into(acc: dict[str, tuple[int, int, int, int, set[str]]], overflow: list[str]) -> dict[str, tuple[int, int, int, int, set[str]]]` _(internal)_ — Fold rotated raw entries into the per-day digest accumulators.
+- `_render_digest(acc: dict[str, tuple[int, int, int, int, set[str]]]) -> list[str]` _(internal)_ — Render accumulators back into sorted digest lines.
+- `_partition_recent(recent: list[str], head: str, *, max_entries: int, cutoff: str) -> tuple[list[str], list[str], int]` _(internal)_ — Partition recent entries into keep/overflow with floor/cap constraints.
+- `_rotate(path: Path, archive: Path, *, max_entries: int, max_age_days: int) -> None` _(internal)_ — Rotate aged/overflowing recent entries into digest + archive.
+- `main() -> int` — Append one activity-log line and/or rotate the ledger tail.
 
 ## `forge.doctor`
 
