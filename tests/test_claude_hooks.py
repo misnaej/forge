@@ -1326,6 +1326,21 @@ def test_amend_blocks_line_continuation_split_flag(tmp_path: Path) -> None:
     assert _run_hook(_AMEND, "git commit --a\\\nmend", cwd=work) == 2
 
 
+def test_amend_blocks_escaped_dollar_before_quote(tmp_path: Path) -> None:
+    r"""`\\$'…'` (escaped dollar) opens a PLAIN quote — cannot hide `--amend`.
+
+    Security-review PoC #4: bash strips the backslash from `\\$`, so the
+    following `'…'` is an ordinary single-quoted string, not ANSI-C. A
+    raw-text lookbehind misroutes it into the escape-aware ANSI-C state,
+    where a backslash inside the string swallows the real closing quote
+    and the live `--amend` after it. The live-dollar emission flag keeps
+    the classification faithful — blocked.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = "git commit -m \\$'X\\' --amend puppy"
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+
+
 def test_amend_has_no_agent_bypass(tmp_path: Path) -> None:
     """Even forge:git-commit-push — the one agent that runs `git commit` — cannot amend.
 

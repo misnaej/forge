@@ -64,24 +64,29 @@ source "$ANCHOR_LIB"
 # (bash: `\-` is `-`), and at end-of-line is a line continuation (the
 # two lines join). $'…' differs from '…' in exactly one way bash cares
 # about: backslash escapes work inside it, including \047 itself.
+# The `dollar` flag marks a LIVE `$` — one emitted as a plain char, not
+# one produced by backslash-escaping (`\$` is a literal dollar in bash,
+# so `\$'…'` opens a PLAIN quote, never ANSI-C). Reading the raw text at
+# i-1 cannot tell those apart; only emission state can.
 STRIPPED=$(printf '%s\n' "$COMMAND" | awk '
-    BEGIN { state = 0; pending = "" }
+    BEGIN { state = 0; pending = ""; dollar = 0; carry = 0 }
     {
         out = ""; cont = 0
+        if (carry == 0) dollar = 0
         n = length($0)
         for (i = 1; i <= n; i++) {
             c = substr($0, i, 1)
             if (state == 0) {
                 if (c == "\\") {
                     if (i == n) cont = 1
-                    else { i++; out = out substr($0, i, 1) }
+                    else { i++; out = out substr($0, i, 1); dollar = 0 }
                 }
                 else if (c == "\047") {
-                    if (i > 1 && substr($0, i - 1, 1) == "$") state = 3
-                    else state = 1
+                    state = dollar ? 3 : 1
+                    dollar = 0
                 }
-                else if (c == "\"") state = 2
-                else out = out c
+                else if (c == "\"") { state = 2; dollar = 0 }
+                else { out = out c; dollar = (c == "$") }
             } else if (state == 1) {
                 if (c == "\047") state = 0
             } else if (state == 2) {
@@ -93,6 +98,7 @@ STRIPPED=$(printf '%s\n' "$COMMAND" | awk '
             }
         }
         pending = pending out
+        carry = cont
         if (cont == 0 && state == 0) { print pending; pending = "" }
     }
     END { if (pending != "") print pending }')
