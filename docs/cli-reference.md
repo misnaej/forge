@@ -545,7 +545,7 @@ options:
 
 ```text
 usage: forge-smart-test [-h] [--depth {0,1,2,full}] [--show-files]
-                        [--coverage] [--telemetry] [--base BASE]
+                        [--coverage] [--all-tests] [--telemetry] [--base BASE]
                         [--from-commit-message]
                         [--coverage-json COVERAGE_JSON]
 
@@ -559,6 +559,9 @@ options:
   --show-files          Print the selected-test plan and exit without running
                         pytest.
   --coverage            Enable coverage (always on for --depth full).
+  --all-tests           With --depth full: run truly everything — disable the
+                        lifecycle deselection of stale development-marked
+                        files.
   --telemetry           Sample RSS/CPU during the run via forge-telemetry
                         (needs the [telemetry] extra; degrades to an
                         unprofiled run when absent).
