@@ -32,6 +32,20 @@ versions follow forge's rolling-next convention.
   (the output stays a list — sum the field for the run total). No more
   hand-stopwatching `--only <step>` to find the slow check.
 
+## v3.31.1 — Unreleased
+
+### Docs
+- **Test-suite lifecycle research report.** New
+  `docs/proposals/test-lifecycle.md` (issue #396, which stays open):
+  measured baseline (2,319 tests, 60.9 s, four tests over 1 s), cited
+  prior art (test-impact selection, Google size taxonomy, extreme
+  mutation, quarantine lanes, the delete-vs-de-brittle tension), and
+  five proposals for decision — behavior/development classification,
+  demote-then-delete retirement, per-test duration artifact, a
+  three-metric compromise, selector guarantees. The profiling run also
+  caught and fixed a stale `plugin-roster.toml` (missing the
+  `report-to-forge` skill and the `git_anchor` hook), restoring a green
+  suite on dev.
 ## v3.31.0 — Unreleased
 
 ### Features
