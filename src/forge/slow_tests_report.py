@@ -10,9 +10,10 @@ prints the top-N slowest tests.
 
 It is a read-only reporter: it never runs tests, never edits source,
 and always exits ``0``. Slow + failing is exactly when the report is
-most useful, so callers wire it with ``if: always()`` in CI. The same
-report runs locally against ``code_health/pytest.log`` after a normal
-``pytest`` invocation.
+most useful, so callers wire it with ``if: always()`` in CI. Locally,
+``code_health/pytest.log`` is produced by ``forge-smart-test`` (which
+writes it alongside its own log) or by a manually tee'd ``pytest`` run
+— run one of those first, then the no-argument report just works.
 
 The durations flags themselves live once in ``[tool.pytest.ini_options]``
 (``addopts``), so a bare local ``pytest`` and CI emit the same sections
@@ -188,13 +189,23 @@ def load_baseline(path: Path) -> dict[str, float]:
 
     Returns:
         The ``{"nodeid::phase": seconds}`` mapping, or ``{}`` when the
-        file is absent — a missing baseline means "nothing to compare",
-        not an error, so first runs degrade gracefully.
+        file is absent or malformed — either way "nothing to compare",
+        never an error: this reporter's always-exit-0 contract must hold
+        even against a corrupted committed baseline (bad merge,
+        hand-edit), especially under CI's ``if: always()``.
     """
     if not path.is_file():
         logger.info("No duration baseline at %s — nothing to compare.", path)
         return {}
-    return {k: float(v) for k, v in json.loads(path.read_text("utf-8")).items()}
+    try:
+        return {k: float(v) for k, v in json.loads(path.read_text("utf-8")).items()}
+    except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+        logger.warning(
+            "Baseline at %s is malformed — ignoring it (regenerate with "
+            "--update-baseline).",
+            path,
+        )
+        return {}
 
 
 def format_baseline_delta(durations: list[Duration], baseline: dict[str, float]) -> str:

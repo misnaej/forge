@@ -254,6 +254,30 @@ def test_load_baseline_existing_file_returns_float_values(tmp_path: Path) -> Non
     assert isinstance(loaded["tests/test_a.py::test_x::call"], float)
 
 
+def test_load_baseline_malformed_json_degrades_to_empty(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A corrupted or wrong-shaped baseline degrades to ``{}`` — never raises.
+
+    Pins the always-exit-0 contract this reporter promises under CI's
+    ``if: always()``: a bad merge or hand-edit to the committed baseline
+    must warn, not crash the run that is meant to report on it.
+    """
+    path = tmp_path / "baseline.json"
+    path.write_text("{not json", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        assert load_baseline(path) == {}
+    assert "malformed" in caplog.text
+
+    # Valid JSON but the wrong shape (a list has no .items()) hits the same
+    # degrade-to-empty path via the AttributeError branch of the except clause.
+    caplog.clear()
+    path.write_text("[1, 2]", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        assert load_baseline(path) == {}
+    assert "malformed" in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # main — baseline flags
 # ---------------------------------------------------------------------------

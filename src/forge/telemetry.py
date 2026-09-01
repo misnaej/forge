@@ -19,8 +19,14 @@ and in streaming mode (the CLI) its stdout/stderr pass straight through.
 Invocation is always explicit (the CLI or a flag) — there is no ambient
 "enabled" switch, so consumers who never ask for telemetry never pay for it.
 
+Every run also appends one summary line to the append-only
+``code_health/telemetry_history.log``; ``forge-telemetry --history``
+renders that ledger as a trend table — a read-only mode that needs
+neither a wrapped command nor ``psutil``.
+
 Exit codes (CLI):
     <child's>  the wrapped command's own exit code, unchanged
+    0          ``--history`` (always — reading the ledger never gates)
     1          psutil not installed (install hint printed)
     2          no command given after ``--``, or ``--label`` is not a
                safe artifact suffix

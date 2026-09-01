@@ -4,9 +4,11 @@ Selects the tests a change set affects (via the import graph) and runs
 them in escalating depth batches with fail-fast: depth 0 (tests importing
 a changed module directly), depth 1 (one hop removed), depth 2 (two hops),
 or ``full`` (the entire suite, with coverage). Lower depths must pass
-before higher ones run, keeping the feedback loop tight. Writes
-``code_health/smart_test.log`` for ``forge:precommit-fixer`` per
-FOUNDATION §13.
+before higher ones run, keeping the feedback loop tight. Writes the
+run output to two sinks: ``code_health/smart_test.log`` for
+``forge:precommit-fixer`` (FOUNDATION §13) and ``code_health/pytest.log``
+so ``forge-slow-tests-report``'s no-argument default works after any
+smart-test run.
 
 Usage:
 
