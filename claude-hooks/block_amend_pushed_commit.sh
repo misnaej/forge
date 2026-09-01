@@ -59,26 +59,43 @@ source "$ANCHOR_LIB"
 # Residual: a NON-git token like `./run.sh --amend` after `git commit …`
 # in one compound command can false-positive; the block is conservative
 # and a human runs it with `!`.
+# States: 0 unquoted, 1 single-quoted, 2 double-quoted, 3 ANSI-C $'…'.
+# Unquoted backslash consumes itself and emits the next char verbatim
+# (bash: `\-` is `-`), and at end-of-line is a line continuation (the
+# two lines join). $'…' differs from '…' in exactly one way bash cares
+# about: backslash escapes work inside it, including \047 itself.
 STRIPPED=$(printf '%s\n' "$COMMAND" | awk '
-    BEGIN { state = 0 }  # 0 unquoted, 1 single-quoted, 2 double-quoted
+    BEGIN { state = 0; pending = "" }
     {
-        out = ""
+        out = ""; cont = 0
         n = length($0)
         for (i = 1; i <= n; i++) {
             c = substr($0, i, 1)
             if (state == 0) {
-                if (c == "\047") state = 1
+                if (c == "\\") {
+                    if (i == n) cont = 1
+                    else { i++; out = out substr($0, i, 1) }
+                }
+                else if (c == "\047") {
+                    if (i > 1 && substr($0, i - 1, 1) == "$") state = 3
+                    else state = 1
+                }
                 else if (c == "\"") state = 2
                 else out = out c
             } else if (state == 1) {
                 if (c == "\047") state = 0
-            } else {
+            } else if (state == 2) {
                 if (c == "\\") i++
                 else if (c == "\"") state = 0
+            } else {
+                if (c == "\\") i++
+                else if (c == "\047") state = 0
             }
         }
-        print out
-    }')
+        pending = pending out
+        if (cont == 0 && state == 0) { print pending; pending = "" }
+    }
+    END { if (pending != "") print pending }')
 if ! echo "$STRIPPED" | grep -qE "${GIT_ANCHOR}commit([[:space:]]|\$)"; then
     exit 0
 fi

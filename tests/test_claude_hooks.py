@@ -1287,6 +1287,45 @@ def test_amend_blocks_dquote_inside_single_quotes_cross_pairing(
     assert _run_hook(_AMEND, cmd, cwd=work) == 2
 
 
+def test_amend_blocks_backslash_escaped_flag_and_subcommand(
+    tmp_path: Path,
+) -> None:
+    r"""An unquoted backslash cannot hide the flag or the subcommand.
+
+    Bash removes an unquoted `\\` and keeps the next char (`\\-` is `-`),
+    so `git commit \\--amend` and `git \\commit --amend` both run a real
+    amend. The stripper consumes state-0 backslashes the same way, so
+    the anchor and flag regexes see the true tokens — blocked.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "git commit \\--amend", cwd=work) == 2
+    assert _run_hook(_AMEND, "git \\commit --amend", cwd=work) == 2
+
+
+def test_amend_blocks_ansi_c_quoted_message(tmp_path: Path) -> None:
+    r"""A `$'…'` message with an escaped quote cannot desync the stripper.
+
+    ANSI-C quoting honors backslash escapes (unlike plain `'…'`), so
+    `$'it\\'s ok'` ends at its real closing quote; a naive single-quote
+    state would close early and swallow the live `--amend` — blocked.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = "git commit -m $'it\\'s ok' --amend"
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+
+
+def test_amend_blocks_line_continuation_split_flag(tmp_path: Path) -> None:
+    r"""A backslash-newline split of `--amend` cannot dodge the flag match.
+
+    Bash joins `--a\\<newline>mend` back into one `--amend` token; the
+    stripper joins continuation lines the same way before matching —
+    blocked. (A split with intervening whitespace produces two tokens in
+    real bash and stays allowed — semantics, not a gap.)
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "git commit --a\\\nmend", cwd=work) == 2
+
+
 def test_amend_has_no_agent_bypass(tmp_path: Path) -> None:
     """Even forge:git-commit-push — the one agent that runs `git commit` — cannot amend.
 
