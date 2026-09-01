@@ -558,8 +558,12 @@ depth-tier selection is safe by contract — any changed non-Python path
 the selector cannot map escalates the run to `full`; the tracked
 `.forge-full-run` stamp guarantees a truly-all run at least every 48
 hours (`full_run_max_age_hours`), staged into the commit that earned
-it; after full runs a depth-2 differential check records (never gates)
-any failing file selection would have missed.
+it — that committed-stamp escalation is `cadence_mode = "commit"`, for
+repos whose testing happens on workstations; CI-fleet repos use
+`advisory`/`external` with the classic PR-tiers + main-push-full CI
+schema (spec's "Who carries the cadence"); after full runs a depth-2
+differential check records (never gates) any failing file selection
+would have missed.
 
 **Metrics are record-only**: wall time, file counts, development
 fraction, lifecycle skips, and differential mismatches append to

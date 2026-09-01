@@ -3643,6 +3643,221 @@ def test_step_smart_test_full_run_max_age_hours_non_numeric_falls_back_to_defaul
     assert calls == [["forge-smart-test", "--depth", "1"]]
 
 
+def test_step_smart_test_advisory_missing_stamp_never_escalates_or_blocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``cadence_mode = "advisory"`` never escalates despite missing stamp.
+
+    SCENARIO: ``cadence_mode = "advisory"``, ``precommit_depth = 1``,
+        ``blocking = true``; no ``.forge-full-run`` stamp exists.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok") for the plain configured-depth command.
+    EXPECTED BEHAVIOR: only the configured-depth argv runs — no escalated
+        full-suite command, no ``git add`` of the stamp; the output carries
+        the advisory cadence line; ``non_blocking`` is forced True despite
+        ``blocking = true``.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\ncadence_mode = "advisory"\n'
+        "precommit_depth = 1\nblocking = true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 1": (True, "ok")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert calls == [["forge-smart-test", "--depth", "1"]]
+    assert "cadence: advisory" in result.output
+    assert result.non_blocking is True
+
+
+def test_step_smart_test_advisory_fresh_stamp_no_cadence_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``cadence_mode = "advisory"`` with a fresh stamp adds no cadence line.
+
+    SCENARIO: ``cadence_mode = "advisory"``, ``precommit_depth = "2"``; a
+        stamp written just now (age ≈0h, well under the 48h default).
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok") for the plain configured-depth command.
+    EXPECTED BEHAVIOR: only the configured-depth argv runs; the output
+        carries no ``cadence:`` line at all — the stamp isn't stale, so
+        advisory has nothing to warn about.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\ncadence_mode = "advisory"\nprecommit_depth = "2"\n',
+        encoding="utf-8",
+    )
+    _lifecycle.write_stamp(tmp_path)
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 2": (True, "ok")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert calls == [["forge-smart-test", "--depth", "2"]]
+    assert "cadence:" not in result.output
+
+
+def test_step_smart_test_external_stamp_past_2x_window_warns_broken(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``cadence_mode = "external"`` warns once a stamp is stale past 2x the window.
+
+    SCENARIO: ``cadence_mode = "external"``, ``precommit_depth = 1``, default
+        48h window; stamp written 100 hours ago (> 2 * 48h).
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok") for the plain configured-depth command.
+    EXPECTED BEHAVIOR: only the configured-depth argv runs — external mode
+        never escalates; the output warns the CI cadence job may be broken.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\ncadence_mode = "external"\nprecommit_depth = 1\n',
+        encoding="utf-8",
+    )
+    stale = _dt.datetime.now(tz=_dt.UTC) - _dt.timedelta(hours=100)
+    (tmp_path / _lifecycle.STAMP_RELPATH).write_text(
+        stale.isoformat() + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 1": (True, "ok")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert calls == [["forge-smart-test", "--depth", "1"]]
+    assert "may be broken" in result.output
+
+
+def test_step_smart_test_external_stamp_stale_under_2x_no_cadence_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``cadence_mode = "external"`` stays silent for a stamp stale but under 2x.
+
+    Regression guard for the 2x threshold: a stamp past the plain 48h
+    window but short of the 96h (2x) broken-pipeline threshold must not
+    warn — external mode only detects a *broken* cadence job, not routine
+    staleness the scheduled job hasn't refreshed yet.
+
+    SCENARIO: ``cadence_mode = "external"``, ``precommit_depth = 1``,
+        default 48h window; stamp written 60 hours ago (stale, but
+        < 2 * 48h = 96h).
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok") for the plain configured-depth command.
+    EXPECTED BEHAVIOR: only the configured-depth argv runs; the output
+        carries no ``cadence:`` line.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\ncadence_mode = "external"\nprecommit_depth = 1\n',
+        encoding="utf-8",
+    )
+    stale = _dt.datetime.now(tz=_dt.UTC) - _dt.timedelta(hours=60)
+    (tmp_path / _lifecycle.STAMP_RELPATH).write_text(
+        stale.isoformat() + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 1": (True, "ok")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert calls == [["forge-smart-test", "--depth", "1"]]
+    assert "cadence:" not in result.output
+
+
+def test_step_smart_test_external_missing_stamp_warns_broken(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``cadence_mode = "external"`` treats a missing stamp as past the 2x threshold.
+
+    SCENARIO: ``cadence_mode = "external"``, ``precommit_depth = 1``; no
+        ``.forge-full-run`` stamp exists.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok") for the plain configured-depth command.
+    EXPECTED BEHAVIOR: only the configured-depth argv runs; the output
+        warns the CI cadence job may be broken and reports the stamp as
+        missing or invalid.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\ncadence_mode = "external"\nprecommit_depth = 1\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 1": (True, "ok")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert calls == [["forge-smart-test", "--depth", "1"]]
+    assert "may be broken" in result.output
+    assert "missing or invalid" in result.output
+
+
+def test_step_smart_test_unknown_cadence_mode_falls_back_to_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unrecognized ``cadence_mode`` falls back to ``"commit"`` behavior.
+
+    SCENARIO: ``cadence_mode = "cron"`` (not one of ``commit`` /
+        ``advisory`` / ``external``); no ``.forge-full-run`` stamp exists.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok") for the escalated full-suite command and
+        (True, "") for the ``git add`` call.
+    EXPECTED BEHAVIOR: escalates exactly like the ``"commit"`` default —
+        the escalated ``--depth full --all-tests`` argv runs first, and on
+        success the stamp is rewritten on disk and staged via ``git add``.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\ncadence_mode = "cron"\nprecommit_depth = 1\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls,
+            expected_results={
+                "forge-smart-test --depth full --all-tests": (True, "ok"),
+            },
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert result.passed
+    assert calls[0] == ["forge-smart-test", "--depth", "full", "--all-tests"]
+    assert ["git", "add", str(_lifecycle.STAMP_RELPATH)] in calls
+    assert (tmp_path / _lifecycle.STAMP_RELPATH).exists()
+
+
 # ---------------------------------------------------------------------------
 # step_changelog_version / step_changelog_updated
 # ---------------------------------------------------------------------------

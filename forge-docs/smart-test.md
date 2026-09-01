@@ -44,7 +44,9 @@ full pass. Config reference:
   `full_run_max_age_hours` (default 48), the `smart_test` pre-commit step
   escalates that commit to `--depth full --all-tests` and stages the
   refreshed stamp into the same commit — the guarantee travels through git
-  to every contributor and CI.
+  to every contributor and CI. That escalation is what
+  `cadence_mode = "commit"` does; see "Who carries the cadence" below for
+  the CI-fleet modes.
 - **Lifecycle deselection is loud, bounded, and reversible.** Ordinary
   `full` runs deselect development-marked files
   (module-level `pytestmark = pytest.mark.development`) untouched for
@@ -63,6 +65,34 @@ It writes `code_health/smart_test.log` (FOUNDATION §13). The optional
 `[tool.forge.smart_test].precommit_depth` is set) and **non-blocking**
 unless `blocking = true`. Pytest stays out of the default sequence (too
 slow); smart-test is the opt-in change-scoped bridge.
+
+## Who carries the cadence — `cadence_mode`
+
+The committed stamp is the right guarantee-carrier **only when
+workstations are the testing fleet**. For most repos, CI is the testing
+fleet — the **classic schema** is: tiered smart tests on PR CI + the
+full suite on every main-branch push (event-driven, no clock needed on
+the main path), with an optional scheduled run as the backstop for quiet
+periods. `[tool.forge.smart_test].cadence_mode` selects who owns the
+guarantee:
+
+| Mode | Who tests | Stale-stamp behavior |
+|---|---|---|
+| `commit` (default) | Workstations | Escalates the commit to `--depth full --all-tests`, restages the refreshed stamp |
+| `advisory` | Mixed | Warns only — never escalates, never blocks (forced non-blocking for that run) |
+| `external` | CI | Runs the configured depth; warns at **2x** the window as a broken-pipeline detector |
+
+Which mode is my repo?
+
+- **Local testing genuinely happens on commit** → `commit`.
+- **CI tests PRs, locals want speed** → `advisory` locally + the
+  classic-schema CI jobs.
+- **CI is the only testing fleet** → `external` + the classic-schema CI
+  jobs (see the CI recipe's "Smart-test cadence in CI" section for
+  ready-made snippets). The `external` detector assumes the CI cadence
+  job refreshes the stamp (the snippet includes the optional
+  write-permission step); without stamp refresh, expect the 2x-window
+  warning — it is telling the truth: nothing recorded a truly-all run.
 
 ## Opt-in correctness extensions
 

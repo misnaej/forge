@@ -31,7 +31,13 @@ versions follow forge's rolling-next convention.
   test gains four guarantees: non-Python changes it cannot map escalate
   to `full` (safe fallback, with a `nonpython_ignore` allowlist); the
   tracked `.forge-full-run` stamp forces a truly-all run at least every
-  48h, restaged into the commit that earned it; stale development files
+  48h, restaged into the commit that earned it — governed by
+  `cadence_mode`: `commit` (workstation fleet, the escalation above),
+  `advisory` (warn only, never escalate or block), `external` (a
+  scheduled CI job owns the cadence; warns at 2x the window as a
+  broken-pipeline detector), with the classic CI-fleet schema —
+  PR tiers + main-push full suite — documented with ready-made
+  workflow snippets in the CI recipe; stale development files
   (30d untouched) are loudly lifecycle-skipped from ordinary full runs
   — never deleted, auto-re-included on touch, always executed by the
   cadence run; and a record-only depth-2 differential check plus

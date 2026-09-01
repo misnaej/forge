@@ -1400,12 +1400,22 @@ def step_smart_test(repo_root: Path) -> StepResult:
     ``[tool.forge.smart_test].blocking = true`` to make it refuse the
     commit. See forge-docs/smart-test.md and #8.
 
-    The 48h cadence guarantee rides this step: when the tracked
-    ``.forge-full-run`` stamp is missing, invalid, or older than
-    ``full_run_max_age_hours``, the run escalates to
-    ``--depth full --all-tests`` (lifecycle deselection off) and, on
-    success, the refreshed stamp is staged into the same commit so the
-    guarantee travels through git.
+    The 48h cadence guarantee rides this step, governed by
+    ``[tool.forge.smart_test].cadence_mode``:
+
+    - ``"commit"`` (default — workstations are the testing fleet): a
+      stamp missing, invalid, or older than ``full_run_max_age_hours``
+      escalates this commit to ``--depth full --all-tests`` (lifecycle
+      deselection off) and, on success, the refreshed stamp is staged
+      into the same commit so the guarantee travels through git.
+    - ``"advisory"``: never escalates — a stale stamp only prepends a
+      WARN line to the configured-depth run (the step is forced
+      non-blocking for that run regardless of ``blocking``).
+    - ``"external"`` (CI is the testing fleet): a scheduled/main-push CI
+      job owns the guarantee; the step runs the configured depth and
+      only warns — as a broken-pipeline detector — when the stamp is
+      stale beyond twice the window. An unknown value falls back to
+      ``"commit"``.
 
     Args:
         repo_root: Git repo root.
@@ -1444,10 +1454,12 @@ def step_smart_test(repo_root: Path) -> StepResult:
         if isinstance(max_age_raw, (int, float))
         else float(_lifecycle.DEFAULT_STAMP_MAX_AGE_HOURS)
     )
+    mode_raw = cfg.get("cadence_mode", "commit")
+    mode = mode_raw if mode_raw in ("commit", "advisory", "external") else "commit"
     age = _lifecycle.stamp_age_hours(repo_root)
-    escalate = age is None or age >= max_age
-    if escalate:
-        age_txt = "missing or invalid" if age is None else f"{age:.1f}h old"
+    stale = age is None or age >= max_age
+    age_txt = "missing or invalid" if age is None else f"{age:.1f}h old"
+    if stale and mode == "commit":
         passed, output = _run(
             ["forge-smart-test", "--depth", "full", "--all-tests"], cwd=repo_root
         )
@@ -1461,6 +1473,24 @@ def step_smart_test(repo_root: Path) -> StepResult:
             output += "\ncadence: stamp refreshed and staged into this commit.\n"
     else:
         passed, output = _run(["forge-smart-test", "--depth", depth], cwd=repo_root)
+        if stale and mode == "advisory":
+            # Advisory never escalates and never blocks: the warning is
+            # the whole mechanism, so a stale stamp must not turn a
+            # blocking=true repo's configured-depth failure semantics
+            # into a cadence gate.
+            output = (
+                f"cadence: advisory — .forge-full-run stamp {age_txt} "
+                f"(max {max_age:g}h); run `forge-smart-test --depth full "
+                f"--all-tests` when convenient.\n" + output
+            )
+            blocking = False
+        elif mode == "external" and (age is None or age >= 2 * max_age):
+            # External mode: a scheduled CI job owns the cadence — a stamp
+            # stale past twice the window means that job stopped running.
+            output = (
+                f"cadence: external — stamp {age_txt} exceeds 2x the "
+                f"{max_age:g}h window; the CI cadence job may be broken.\n" + output
+            )
     return StepResult(
         name="smart_test", passed=passed, output=output, non_blocking=not blocking
     )
