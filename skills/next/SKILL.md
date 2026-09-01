@@ -220,7 +220,7 @@ task-selection precedence rule in Important Rules).
 15. **Continuation hygiene** (every `/next`):
 
     - Run `forge-continuation-append --rotate` — the mechanical pass:
-      done ledger entries older than two days (or beyond the count cap) move
+      done ledger entries older than one week (or beyond the count cap) move
       verbatim to `.plan/CONTINUATION-archive.md` and collapse into
       per-day digest lines; entries referencing PRs/issues still named
       in the structured sections are pinned (undone work stays raw).

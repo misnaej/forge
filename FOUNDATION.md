@@ -574,7 +574,7 @@ branch / PR / commit refs) · `Next potential work` (ranked) · `Open follow-ups
   `/commit` / `/pr` skills — and never delete or overwrite existing content;
   the main agent owns structured-section rewrites.
 - **The ledger is bounded; the archive is not.** Every append rotates the
-  activity tail: done entries older than two days (or beyond the count
+  activity tail: done entries older than one week (or beyond the count
   cap) move verbatim to `.plan/CONTINUATION-archive.md` — never deleted —
   and collapse into per-day digest lines; entries referencing PRs/issues
   still named in the structured sections are pinned (undone work stays).

@@ -201,8 +201,8 @@ def test_mutually_exclusive_required(
 def test_rotate_ages_out_entry_past_max_recent_age_days(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An entry older than the default 2-day window rotates to the archive."""
-    old_date = _days_ago(3)
+    """An entry older than the default 7-day window rotates to the archive."""
+    old_date = _days_ago(8)
     _write_continuation(
         tmp_path,
         recent_lines=[f"- {old_date} 1234567 old commit", *_filler_lines()],
@@ -247,7 +247,7 @@ def test_rotate_pins_aged_entry_named_in_head(
         f"{continuation_append.FILE_HEADER}\n\n"
         "## In progress\n- **PR #33** open, awaiting merge.\n\n"
     )
-    old_date = _days_ago(3)
+    old_date = _days_ago(8)
     _write_continuation(
         tmp_path,
         head=head,
@@ -266,7 +266,7 @@ def test_rotate_digest_line_has_one_entry_per_kind(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The condensed digest line counts each kind and collects PR numbers."""
-    date = _days_ago(3)
+    date = _days_ago(8)
     _write_continuation(
         tmp_path,
         recent_lines=[
@@ -290,7 +290,7 @@ def test_rotate_digest_merges_across_two_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A second rotation on the same date sums counts and unions PR sets."""
-    date = _days_ago(3)
+    date = _days_ago(8)
     _write_continuation(
         tmp_path,
         recent_lines=[f"- {date} 1111111 first commit", *_filler_lines()],
@@ -313,7 +313,7 @@ def test_archive_header_written_once_and_appended_across_rotations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Two rotations write the archive header once and keep both entries."""
-    date1 = _days_ago(3)
+    date1 = _days_ago(8)
     _write_continuation(
         tmp_path,
         recent_lines=[f"- {date1} 1111111 first entry", *_filler_lines()],
@@ -327,7 +327,7 @@ def test_archive_header_written_once_and_appended_across_rotations(
     assert first_archive.count(continuation_append.ARCHIVE_HEADER) == 1
     assert "1111111" in first_archive
 
-    date2 = _days_ago(3)
+    date2 = _days_ago(8)
     continuation_append._append_line(
         tmp_path / ".plan" / "CONTINUATION.md", f"- {date2} 2222222 second entry"
     )
@@ -343,7 +343,7 @@ def test_rotate_is_idempotent_on_second_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A second --rotate with no new stale entries leaves the file untouched."""
-    date = _days_ago(3)
+    date = _days_ago(8)
     _write_continuation(
         tmp_path,
         recent_lines=[f"- {date} 1234567 solo entry", *_filler_lines()],
@@ -363,7 +363,7 @@ def test_rotate_classifies_unrecognized_content_as_other(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A line whose content matches none of the known kinds counts as other."""
-    date = _days_ago(3)
+    date = _days_ago(8)
     _write_continuation(
         tmp_path,
         recent_lines=[
@@ -458,7 +458,7 @@ def test_non_int_config_value_falls_back_to_default(
         kept = [ln for ln in recent_section.splitlines() if ln.startswith("- ")]
         assert len(kept) == continuation_append.DEFAULT_MAX_RECENT_ENTRIES
     else:
-        stale = _days_ago(3)
+        stale = _days_ago(8)
         fresh = _days_ago(1)
         _write_continuation(
             tmp_path,
@@ -485,7 +485,7 @@ def test_rotate_preserves_structured_head_byte_identical(
         "## In progress\n- Doing thing A\n- Doing thing B\n\n"
         "## Next potential work\n1. Thing C\n\n"
     )
-    old_date = _days_ago(3)
+    old_date = _days_ago(8)
     _write_continuation(
         tmp_path,
         head=head,
@@ -512,7 +512,7 @@ def test_rotate_preserves_stray_note_in_recent_section(
     invariant for strays).
     """
     stray_note = "Note: forgot to log the demo prep"
-    old_date = _days_ago(3)
+    old_date = _days_ago(8)
     _write_continuation(
         tmp_path,
         recent_lines=[
@@ -550,7 +550,7 @@ def test_rotate_preserves_unparsable_digest_line_verbatim(
         f"{legacy_line}\n"
         "\n"
     )
-    old_date = _days_ago(3)
+    old_date = _days_ago(8)
     _write_continuation(
         tmp_path,
         head=head,
@@ -568,7 +568,7 @@ def test_rotate_floor_keeps_ten_newest_entries_when_all_aged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The floor keeps the newest MIN_RECENT_ENTRIES raw even when everything aged."""
-    aged_date = _days_ago(3)
+    aged_date = _days_ago(8)
     lines = [f"- {aged_date} {i:07x} commit {i}" for i in range(20)]
     _write_continuation(tmp_path, recent_lines=lines)
     monkeypatch.chdir(tmp_path)
@@ -675,7 +675,7 @@ def test_rotate_preserves_prose_quoting_section_header(
         "## Open follow-ups\n"
         f"{quoting_bullet}\n\n"
     )
-    old_date = _days_ago(3)
+    old_date = _days_ago(8)
     _write_continuation(
         tmp_path,
         head=head,
@@ -705,7 +705,7 @@ def test_rotate_partitions_identical_entries_independently(
     once in Recent activity and exactly once in the archive — never
     duplicated across both or dropped from both.
     """
-    old_date = _days_ago(3)
+    old_date = _days_ago(8)
     duplicate_line = f"- {old_date} PR #999 wrap-up: retried"
     recent_lines = [*_filler_lines(9), duplicate_line, duplicate_line]
     _write_continuation(tmp_path, recent_lines=recent_lines)

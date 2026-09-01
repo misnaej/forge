@@ -363,7 +363,7 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ),
     ConfigKey(
         ("tool", "forge", "continuation", "max_recent_age_days"),
-        default=2,
+        default=7,
         description="Age bound for DONE ledger entries (undone-pinned "
         "entries stay); older lines rotate to the archive + digest.",
     ),

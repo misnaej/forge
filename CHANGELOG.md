@@ -23,10 +23,10 @@ versions follow forge's rolling-next convention.
 ## v3.31.0 — Unreleased
 
 ### Features
-- **The continuation ledger is bounded; done work clears in two days.**
+- **The continuation ledger is bounded; done work clears in one week.**
   `forge-continuation-append` now rotates on every append (and via a
   new `--rotate` standalone mode): done activity entries older than
-  `max_recent_age_days` (default 2) or beyond `max_recent_entries`
+  `max_recent_age_days` (default 7) or beyond `max_recent_entries`
   (default 50) move verbatim to the append-only
   `.plan/CONTINUATION-archive.md` and collapse into per-day digest
   lines; entries referencing PRs/issues still named in the structured

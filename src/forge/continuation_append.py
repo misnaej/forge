@@ -21,7 +21,7 @@ section header exist before appending. Idempotent on the header.
 
 Every append also rotates the tail (FOUNDATION §10): entries beyond
 ``[tool.forge.continuation].max_recent_entries`` (default 50) or older
-than ``max_recent_age_days`` (default 2 — done work clears fast) move
+than ``max_recent_age_days`` (default 7 — a week of raw history) move
 verbatim, append-only, to ``.plan/CONTINUATION-archive.md`` — never
 deleted — and collapse into per-day digest lines under
 ``## Condensed history (auto-generated)``, so session starts read a
@@ -53,7 +53,7 @@ FILE_HEADER = "# Continuation Log"
 ARCHIVE_HEADER = "# Continuation Archive (raw rotated entries — never trimmed)"
 
 DEFAULT_MAX_RECENT_ENTRIES = 50
-DEFAULT_MAX_RECENT_AGE_DAYS = 2
+DEFAULT_MAX_RECENT_AGE_DAYS = 7
 MIN_RECENT_ENTRIES = 10
 
 _ENTRY_RE = re.compile(r"^- (\d{4}-\d{2}-\d{2}) (.+)$")
@@ -300,7 +300,7 @@ def _rotate(path: Path, archive: Path, *, max_entries: int, max_age_days: int) -
     """Rotate aged/overflowing recent entries into digest + archive.
 
     An entry rotates when its date is older than *max_age_days* (done
-    work clears the recent tail after two days by default) or when it
+    work clears the recent tail after one week by default) or when it
     falls outside the newest *max_entries* (flood guard). Rotated lines
     are appended verbatim to *archive* — never deleted — and folded into
     the per-day condensed-history digest.
