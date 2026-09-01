@@ -42,11 +42,14 @@ commit call ``pytest`` directly in ``.githooks/pre-commit``.
 
 Step outputs are written to ``code_health/<step>.log`` per FOUNDATION §13
 so downstream tooling can read the latest results without re-running.
+Every run also times each step (monotonic clock) and writes the per-step
+report to ``code_health/precommit_timing.log`` — newest run overwrites.
 
 Usage:
 
 - ``forge-precommit`` — run the default sequence
-- ``forge-precommit --json`` — machine-readable summary on stdout
+- ``forge-precommit --json`` — machine-readable summary on stdout (a list
+  of step objects; each carries ``elapsed_s``, so the run total is the sum)
 - ``forge-precommit --only ruff,doctest`` — run just these steps
 - ``forge-precommit --skip pip_audit`` — default sequence minus a step
 
@@ -66,6 +69,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass
 from importlib import resources
 from typing import TYPE_CHECKING
@@ -147,6 +151,9 @@ class StepResult:
             ``pip-audit``) where a non-zero result is informational, not
             grounds to refuse a commit. Reported as ``WARN`` instead of
             ``FAIL`` in the step summary.
+        elapsed_s: Wall-clock seconds the step took (monotonic clock),
+            stamped by ``run_all``. Steps it never invoked (release-lock
+            skips) keep the ``0.0`` default.
     """
 
     name: str
@@ -154,6 +161,7 @@ class StepResult:
     output: str
     skipped: bool = False
     non_blocking: bool = False
+    elapsed_s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -2155,6 +2163,30 @@ def _write_log(repo_root: Path, result: StepResult) -> None:
     write_step_log(repo_root, result.name, result.output)
 
 
+def _step_marker(result: StepResult) -> str:
+    """Return *result*'s bare status marker (``SKIP``/``PASS``/``WARN``/``FAIL``).
+
+    The one canonical home of the marker mapping — the colored progress
+    line and the timing log both render from it.
+
+    Args:
+        result: Step outcome.
+
+    Returns:
+        The marker string, without color codes.
+    """
+    if result.skipped:
+        return "SKIP"
+    if result.passed:
+        return "PASS"
+    if result.non_blocking:
+        return "WARN"
+    return "FAIL"
+
+
+_MARKER_COLORS = {"SKIP": "", "PASS": GREEN, "WARN": YELLOW, "FAIL": RED}
+
+
 def _print_step_line(result: StepResult) -> None:
     """Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
 
@@ -2165,15 +2197,29 @@ def _print_step_line(result: StepResult) -> None:
     Args:
         result: Step outcome.
     """
-    if result.skipped:
-        marker, color = "SKIP", ""
-    elif result.passed:
-        marker, color = "PASS", GREEN
-    elif result.non_blocking:
-        marker, color = "WARN", YELLOW
-    else:
-        marker, color = "FAIL", RED
-    emit(f"{result.name:<24} {color}{marker}{NC}")
+    marker = _step_marker(result)
+    color = _MARKER_COLORS[marker]
+    emit(f"{result.name:<24} {color}{marker}{NC}  {result.elapsed_s:.1f}s")
+
+
+def _format_timing_log(results: list[StepResult]) -> str:
+    """Render the per-step timing report for ``code_health/precommit_timing.log``.
+
+    One line per step (name, elapsed seconds, marker) plus a total, so an
+    operator can see which step costs a slow commit without stopwatching
+    each one by hand.
+
+    Args:
+        results: All step outcomes from a run, in execution order.
+
+    Returns:
+        The full log body.
+    """
+    lines = ["forge-precommit per-step timing (newest run overwrites)", ""]
+    lines += [f"{r.name:<28} {r.elapsed_s:>7.1f}s  {_step_marker(r)}" for r in results]
+    total = sum(r.elapsed_s for r in results)
+    lines += ["", f"{'total':<28} {total:>7.1f}s"]
+    return "\n".join(lines)
 
 
 # Ordered registry — the single source of truth for which steps exist,
@@ -2413,11 +2459,14 @@ def run_all(
         # invisible to a direct ``step_def.fn`` call. Re-resolving by name is
         # the load-bearing seam that keeps per-step monkeypatching working.
         fn = getattr(this_module, step_def.fn.__name__)
+        started = time.monotonic()
         result = fn(root)
+        result.elapsed_s = time.monotonic() - started
         if print_progress:
             _print_step_line(result)
         _write_log(root, result)
         results.append(result)
+    write_step_log(root, "precommit_timing", _format_timing_log(results))
     return results
 
 
@@ -2527,6 +2576,8 @@ def main() -> int:
                 emit(f"  - {r.name}: see code_health/{r.name}.log")
         else:
             emit(f"{GREEN}All checks passed.{NC}")
+        total_elapsed = sum(r.elapsed_s for r in results)
+        emit(f"total {total_elapsed:.1f}s (per-step: code_health/precommit_timing.log)")
 
     return 1 if blocking_failures else 0
 

@@ -28,7 +28,7 @@ Code.
 ## Forge Package (`src/forge/`)
 
 1. **CLI Modules**
-   - precommit.py: `forge-precommit` — pre-commit dispatcher; most steps shell out to their own SRP CLI, a few (env_sync, pip_audit) run in-process for speed / single-invocation sharing
+   - precommit.py: `forge-precommit` — pre-commit dispatcher; most steps shell out to their own SRP CLI, a few (env_sync, pip_audit) run in-process for speed / single-invocation sharing; every run wall-clocks each step and writes `code_health/precommit_timing.log` (per-step elapsed + total, `elapsed_s` in `--json`)
    - next_prep.py: `forge-next-prep` — refresh main, optional rolling-next tag bump, prune stale branches; used by `/next` skill
    - release.py: `forge-release` — single-track release orchestrator for tag-versioned (setuptools-scm) consumer repos: guards (clean tree, on base branch, single-track model, CHANGELOG entry) → annotated tag + push (exempt in `cli_wiring_exempt.toml`)
    - continuation_append.py: `forge-continuation-append` — single source of truth for `.plan/CONTINUATION.md` append format; called by `forge:git-commit-push` and `forge:pr-manager`; every append (and `--rotate`) rotates done entries older than one week to `.plan/CONTINUATION-archive.md` + per-day digests, pinning entries the structured sections still reference
