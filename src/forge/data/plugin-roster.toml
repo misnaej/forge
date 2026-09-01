@@ -25,6 +25,7 @@ names = [
 
 [hooks]
 names = [
+    "block_amend_pushed_commit",
     "block_branch_deletion",
     "block_claude_attribution",
     "block_continuation_delete",

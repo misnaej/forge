@@ -14,7 +14,7 @@ You are a specialized agent for git operations: staging, committing, and pushing
 ## Guard hooks
 
 Agent-scoped: `block_no_verify`, `block_force_push`,
-`block_git_destructive` (source of truth:
+`block_git_destructive`, `block_amend_pushed_commit` (source of truth:
 `[tool.forge.agent_doc.guarded_by]`). Shared contract — what a block
 means and how to respond: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
 
@@ -24,7 +24,9 @@ means and how to respond: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-b
   checkout, stash, or amend to get past a gate — `block_git_destructive`
   blocks every `git reset` form, forced `git clean`, `git checkout .` /
   `git restore .`, `git stash drop`/`clear`, and untracked-including
-  stash (`-u`/`-a`). Unstage with `git restore --staged <path>`. The
+  stash (`-u`/`-a`); `block_amend_pushed_commit` blocks
+  `git commit --amend` once `HEAD` is on a remote (FOUNDATION §2
+  "NEVER amend a pushed commit"). Unstage with `git restore --staged <path>`. The
   dirty-tree sync ladder in §2 is the main agent's call, not yours; a
   `wip-sync:` checkpoint commit (env `FORGE_WIP_SYNC=1`) is the one
   commit whose gate legitimately defers.
@@ -79,6 +81,10 @@ Stage the specified changes, create a commit with a proper message, and push to 
    - **Conventional format**: `fix:`, `feat:`, `refactor:`, `test:`, `docs:`, `chore:`
    - **Focus on what/why**, not how
    - **CRITICAL: NEVER add Claude attribution** - no `Co-Authored-By: Claude`, no AI references
+   - **Never amend, never rebase — always a NEW commit.** A sync or
+     fixup task is never a reason to reach for `git commit --amend`
+     (rewrites the pushed tip → diverged branch; `block_amend_pushed_commit`
+     blocks it). The PR squash-merge erases fixup noise anyway.
 
 5. **Push to remote**:
    ```bash
@@ -133,6 +139,7 @@ Example: `fix: resolve parameter validation [depth-0]`
 - **No `--no-verify`** — see the Hard prohibitions section at the top, and [FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules).
 - **NEVER force push** (`--force` or `--force-with-lease`) without explicit user approval — see [FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules) + `claude-hooks/block_force_push.sh`.
 - **NEVER add Claude/AI attribution** in commit messages — enforced by `claude-hooks/block_claude_attribution.sh`.
+- **NEVER amend a pushed commit** — always a new commit — see [FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules) + `claude-hooks/block_amend_pushed_commit.sh`.
 - **If pre-commit fails**: Stop and report - do not attempt to fix (that's `precommit-fixer`'s job)
 
 ## Scope Boundaries
