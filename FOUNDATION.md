@@ -400,7 +400,10 @@ advisories with the suggested pin; they never edit pins.
   branch is published. Order: verify locally → fix → commit → **author the
   wrap-up + squash message** → push → open PR → post them. The
   `block_unverified_pr_create` hook blocks `gh pr create` until the authored
-  wrap-up names the current `HEAD` (`FORGE_SKIP_WRAPUP_GATE=1` on explicit
+  wrap-up names the current `HEAD` — and, when the wrap-up declares
+  `wrapup-mode: light`, additionally re-runs the `forge-pr-plan`
+  classifier fail-closed, blocking unless it agrees the diff is
+  light-code (`FORGE_SKIP_WRAPUP_GATE=1` on explicit
   user request only; promotion PRs self-exempt when the `release/vX.Y.Z`
   tree reproduces its tag modulo the curated changelog). A **draft PR** is
   the escape hatch when the PR should be visible earlier.

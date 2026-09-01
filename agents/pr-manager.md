@@ -81,6 +81,8 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
 
 Execute `/pr` Step 3.92's authoring contract — composition inputs and the `block_unverified_pr_create` gate live there; the artifact is `code_health/pr_wrapup.md`. Enforced here: sections per Verification step 6, compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract); CI Status = "pending — PR not yet published"; first line `verified-at: <HEAD sha>`; file-adding diff (`--diff-filter=A`) → REFUSE without the `prior-art-searched:` block from the caller's `forge:prior-art` report. Post nothing — posting is the later posting task.
 
+**Light variant** (caller passes `forge-pr-plan` output with `mode: light-code`): author the SHORT form instead — `verified-at: <HEAD sha>`, then `wrapup-mode: light`, a one-line rationale, the plan's `reasons` verbatim, and the squash-merge message (unchanged rules). No reporter sections exist to compress. REFUSE the light form when the plan says any other mode, when `classified_at` ≠ current HEAD, or when the diff adds files — those all take the full authoring path; the publish hook re-verifies regardless.
+
 **Comment-destined markdown is never hard-wrapped** — see [_TEMPLATE.md's reporter-agent header contract](_TEMPLATE.md#reporter-agent-header-contract) — do not restate. Applies here to the wrap-up and delta comments this agent authors directly.
 
 ## Task: Verification (Wrap-up)

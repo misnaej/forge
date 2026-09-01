@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_66 modules, 778 symbols._
+_66 modules, 781 symbols._
 
 ## `forge`
 
@@ -683,6 +683,8 @@ _66 modules, 778 symbols._
 - `configured_docs_only_globs(repo_root: Path) -> tuple[str, ...]` — Return the consumer's extra docs-only globs from ``[tool.forge.pr]``.
 - `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
 - `regen_only_diff(changed_paths: list[str]) -> bool` — Return whether every changed path is a forge-managed regen artifact.
+- `touches_source_paths(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`SOURCE_PATHS`.
+- `light_wrapup_decision(*, line_count: int, changed_paths: list[str], added_paths: list[str]) -> tuple[bool, str]` — Decide whether a diff qualifies for the light wrap-up path.
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
 
 ## `forge.pr_plan`
@@ -691,6 +693,7 @@ _66 modules, 778 symbols._
 
 - `class PrPlan` — The finalization plan for one classification run.
 - `_changed_paths(root: Path, diff_range: str) -> list[str]` _(internal)_ — Return the repo-relative paths changed across *diff_range*.
+- `_added_paths(root: Path, diff_range: str) -> list[str]` _(internal)_ — Return the new paths across *diff_range* (``--diff-filter=ACR``).
 - `_line_count(root: Path, diff_range: str) -> int` _(internal)_ — Return insertions + deletions across *diff_range*.
 - `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.
 - `_try_delta(root: Path, pr_number: int | None, reasons: list[str]) -> bool` _(internal)_ — Evaluate delta-mode eligibility, appending the trail to *reasons*.
