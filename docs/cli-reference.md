@@ -224,18 +224,21 @@ options:
 ## forge-changelog
 
 ```text
-usage: forge-changelog [-h] {check,assemble} ...
+usage: forge-changelog [-h] {check,assemble,restrand} ...
 
 Changelog fragments: validate pending entries, assemble them into CHANGELOG.md
-at release (single writer).
+at release (single writer). Shared-heading repos: `restrand` repairs stranded
+entries mechanically.
 
 positional arguments:
-  {check,assemble}
-    check           validate pending changelog.d/ fragments
-    assemble        collate fragments into CHANGELOG.md under a version
+  {check,assemble,restrand}
+    check               validate pending changelog.d/ fragments
+    assemble            collate fragments into CHANGELOG.md under a version
+    restrand            move entries stranded under released headings to the
+                        next slot (shared-heading mode; stages, never commits)
 
 options:
-  -h, --help        show this help message and exit
+  -h, --help            show this help message and exit
 ```
 
 ## forge-check-main-tags
@@ -873,7 +876,8 @@ options:
 ```text
 usage: verify-forge-manifest [-h]
 
-Validate that every .claude-plugin/*.json file parses as JSON. Writes
+Validate that every .claude-plugin/*.json file parses as JSON and that
+plugin.json's version field, when present, is bare X.Y.Z semver. Writes
 code_health/manifest_json.log.
 
 options:

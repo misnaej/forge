@@ -3100,6 +3100,133 @@ def test_step_regen_docs_partial_failure_when_second_generator_fails(
     assert "forge-gen-cli-reference" in result.output
 
 
+def _raise_if_missing_console_scripts_called(_repo_root: Path) -> list[str]:
+    """A `missing_console_scripts` stand-in that fails the test if invoked.
+
+    Args:
+        _repo_root: Ignored (signature compatibility).
+
+    Raises:
+        AssertionError: Always — the stale-install check must be scoped to
+            targets that include ``docs/cli-reference.md``.
+    """
+    msg = "missing_console_scripts must not be called without cli-reference.md"
+    raise AssertionError(msg)
+
+
+def test_step_regen_docs_warns_when_console_scripts_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A declared-but-uninstalled console script → non-blocking WARN (#436).
+
+    SCENARIO: docs/cli-reference.md exists; the editable install is stale
+    (a declared [project.scripts] entry is absent from the install the
+    generator reads), so the regenerated doc would silently omit it.
+    MOCK SETUP: shutil.which → valid path; precommit._run → (True, "");
+        precommit.stage_modified_paths → []; precommit.missing_console_scripts
+        → ["forge-foo"].
+    EXPECTED BEHAVIOR: passed=False, non_blocking=True; output carries the
+        "⚠️" marker and the missing script name.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "cli-reference.md").write_text("old\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, ""))
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+    monkeypatch.setattr(
+        precommit, "missing_console_scripts", lambda _root: ["forge-foo"]
+    )
+    result = precommit.step_regen_docs(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+    assert "⚠️" in result.output
+    assert "forge-foo" in result.output
+
+
+def test_step_regen_docs_no_warning_when_console_scripts_fresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fully-installed editable install → no stale-install WARN.
+
+    SCENARIO: docs/cli-reference.md exists; every declared console script
+    is already installed.
+    MOCK SETUP: shutil.which → valid path; precommit._run → (True, "");
+        precommit.stage_modified_paths → []; precommit.missing_console_scripts
+        → [] (nothing missing).
+    EXPECTED BEHAVIOR: passed=True; no "⚠️" marker in output.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "cli-reference.md").write_text("old\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, ""))
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+    monkeypatch.setattr(precommit, "missing_console_scripts", lambda _root: [])
+    result = precommit.step_regen_docs(tmp_path)
+    assert result.passed
+    assert "⚠️" not in result.output
+
+
+def test_step_regen_docs_stale_check_scoped_to_cli_reference_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stale-install check never fires when cli-reference.md is absent.
+
+    SCENARIO: only docs/api-digest.md exists — cli-reference.md is not
+    among the regeneration targets, so the generator that would go stale
+    from a missing console script never runs.
+    MOCK SETUP: shutil.which → valid path; precommit._run → (True, "");
+        precommit.stage_modified_paths → []; precommit.missing_console_scripts
+        → a stub that raises AssertionError if called at all.
+    EXPECTED BEHAVIOR: passed=True (no AssertionError propagates), proving
+        the check is scoped to targets containing cli-reference.md.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api-digest.md").write_text("old\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, ""))
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+    monkeypatch.setattr(
+        precommit, "missing_console_scripts", _raise_if_missing_console_scripts_called
+    )
+    result = precommit.step_regen_docs(tmp_path)
+    assert result.passed
+
+
+def test_step_regen_docs_warns_even_when_non_interactive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stale-install WARN fires in CI too — it is not gated on interactivity.
+
+    SCENARIO: docs/cli-reference.md exists; is_non_interactive() reports
+    True (CI-like environment), same as the healing steps (auto_rebuild,
+    env_sync) that self-skip non-interactively. Unlike those, this WARN
+    is unconditional on interactivity — it is detection-only, never an
+    auto-heal, so there is no unattended-prompt risk to guard against
+    and it must fire in CI too.
+    MOCK SETUP: precommit.is_non_interactive → lambda: True; shutil.which
+        → valid path; precommit._run → (True, ""); stage_modified_paths →
+        []; precommit.missing_console_scripts → ["forge-foo"].
+    EXPECTED BEHAVIOR: passed=False; "⚠️" and "forge-foo" still in output.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "cli-reference.md").write_text("old\n")
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, ""))
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+    monkeypatch.setattr(
+        precommit, "missing_console_scripts", lambda _root: ["forge-foo"]
+    )
+    result = precommit.step_regen_docs(tmp_path)
+    assert not result.passed
+    assert "⚠️" in result.output
+    assert "forge-foo" in result.output
+
+
 # ---------------------------------------------------------------------------
 # Group 2b: step_regen_docs partial-commit guard (real git repos — the
 # guard reads the actual worktree via `git diff --name-only`, so a fake

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_68 modules, 818 symbols._
+_68 modules, 824 symbols._
 
 ## `forge`
 
@@ -230,6 +230,8 @@ _68 modules, 818 symbols._
 - `_section_content(text: str) -> dict[str, set[str]]` _(internal)_ — Map each release version to its normalized non-heading content lines.
 - `stranded_added_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections gained content vs *old_text*.
 - `released_deleted_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections lost content vs *old_text*.
+- `_version_heading_span(text: str, version: str) -> tuple[int | None, int | None]` _(internal)_ — Return the character span of *version*'s heading line plus its newline.
+- `restrand_changelog(old_text: str, new_text: str, latest_tag: str, bump: str) -> str` — Move entries stranded under released headings to the next open slot.
 
 ## `forge.changelog_fragments`
 
@@ -246,6 +248,9 @@ _68 modules, 818 symbols._
 - `check_pending(root: Path) -> list[str]` — Validate every pending fragment under *root*.
 - `_cmd_check(root: Path) -> int` _(internal)_ — Report on pending fragments; gate on validity.
 - `_cmd_assemble(root: Path, version: str, date: str, *, delete: bool) -> int` _(internal)_ — Collate pending fragments into ``CHANGELOG.md`` under *version*.
+- `_restrand_old_text(root: Path) -> str | None` _(internal)_ — Return the comparison-point ``CHANGELOG.md`` for the restrand.
+- `_restrand_preflight(root: Path) -> int | tuple[Path, str, str, str]` _(internal)_ — Resolve restrand preconditions or the early-exit code for a missing one.
+- `_cmd_restrand(root: Path, bump: str) -> int` _(internal)_ — Repair stranded changelog entries mechanically; stage the result.
 - `main(argv: list[str] | None = None) -> int` — Run the ``forge-changelog`` CLI.
 
 ## `forge.claude_settings_schema`
@@ -1128,9 +1133,10 @@ _68 modules, 818 symbols._
 
 ## `forge.verify_manifest`
 
-> _Validate that ``.claude-plugin/*.json`` files parse as JSON._
+> _Validate ``.claude-plugin/*.json`` files: JSON parse + version schema._
 
 - `_parse_json_error(manifest: Path) -> str | None` _(internal)_ — Return a formatted error if *manifest* is invalid JSON, else None.
+- `_version_error(manifest: Path) -> str | None` _(internal)_ — Return an error when ``plugin.json``'s version is not strict semver.
 - `main() -> int` — Validate every ``.claude-plugin/*.json`` file and write the log.
 
 ## `forge.verify_plugin_version`
