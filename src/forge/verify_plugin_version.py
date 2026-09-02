@@ -15,6 +15,14 @@ Skipped when:
   when its ``plugin.json`` sits below the global-max tag, and even when it
   finalizes the curated ``@main`` CHANGELOG entry.
 
+Fragment mode (``[tool.forge.changelog].mode = "fragments"``): the
+manifest parks at the latest tag between releases — the bump lives in
+``changelog.d/`` fragments and ``forge-changelog release`` is the single
+writer that advances ``plugin.json``. Equality with the latest tag is
+therefore healthy, provided every pending fragment passes the gate (the
+next version must stay derivable); ``plugin.json`` *below* the latest
+tag stays an error in every mode.
+
 ``forge-precommit`` shells out to this CLI; agents may invoke it
 standalone to refresh just ``plugin_version.log``.
 """
@@ -26,6 +34,8 @@ import logging
 import sys
 from pathlib import Path
 
+from forge.changelog_fragments import check_pending, discover_fragments
+from forge.config import read_tool_forge_section
 from forge.git_utils import (
     capturing_to_step_log,
     configure_cli_logging,
@@ -148,18 +158,74 @@ def main() -> int:
                 "plugin.json %s > latest tag %s (%s)", plugin_ver, latest_tag, tag_ver
             )
             return 0
-        if _is_release_commit(repo_root):
-            logger.info("(HEAD reproduces a published v* release tag — skipped)")
-            return 0
-        logger.error(
-            "plugin.json version %s must be strictly greater than the latest "
-            "tag %s (%s). Bump .claude-plugin/plugin.json before the next "
-            "commit.",
-            plugin_ver,
-            latest_tag,
-            tag_ver,
-        )
+        return _not_ahead_verdict(repo_root, plugin_ver, tag_ver, latest_tag)
+
+
+def _not_ahead_verdict(
+    repo_root: Path,
+    plugin_ver: tuple[int, int, int],
+    tag_ver: tuple[int, int, int],
+    latest_tag: str,
+) -> int:
+    """Resolve the verdict when ``plugin.json`` is NOT ahead of the latest tag.
+
+    Args:
+        repo_root: Git repo root.
+        plugin_ver: Parsed ``plugin.json`` version.
+        tag_ver: Parsed latest-tag version.
+        latest_tag: Latest ``v*`` tag name (for messages).
+
+    Returns:
+        ``0`` when the state is healthy (release commit, or fragment
+        mode parked at the tag with valid pending fragments); ``1``
+        otherwise.
+    """
+    if _is_release_commit(repo_root):
+        logger.info("(HEAD reproduces a published v* release tag — skipped)")
+        return 0
+    fragments_mode = (
+        read_tool_forge_section(repo_root, "changelog").get("mode") == "fragments"
+    )
+    if fragments_mode and plugin_ver == tag_ver:
+        return _fragment_parked_verdict(repo_root, latest_tag)
+    logger.error(
+        "plugin.json version %s must be strictly greater than the latest "
+        "tag %s (%s). Bump .claude-plugin/plugin.json before the next "
+        "commit.",
+        plugin_ver,
+        latest_tag,
+        tag_ver,
+    )
+    return 1
+
+
+def _fragment_parked_verdict(repo_root: Path, latest_tag: str) -> int:
+    """Gate the fragment-mode resting state: manifest == latest tag.
+
+    Healthy only while the next version stays derivable — every pending
+    fragment must pass the gate. Zero pending fragments is also healthy
+    (the just-released resting state).
+
+    Args:
+        repo_root: Git repo root.
+        latest_tag: Latest ``v*`` tag name (for messages).
+
+    Returns:
+        ``0`` when every pending fragment is valid; ``1`` when any
+        fragment fails validation (each error logged).
+    """
+    errors = check_pending(repo_root)
+    if errors:
+        for err in errors:
+            logger.error("plugin_version: invalid fragment — %s", err)
         return 1
+    logger.info(
+        "fragment mode: manifest parked at latest tag %s; %d pending "
+        "fragment(s) carry the bump",
+        latest_tag,
+        len(discover_fragments(repo_root)),
+    )
+    return 0
 
 
 if __name__ == "__main__":

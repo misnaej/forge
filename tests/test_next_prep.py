@@ -10,8 +10,11 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from typing import TYPE_CHECKING
+
+import pytest
 
 from forge import next_prep
 from forge.config import ForgeConfig
@@ -20,8 +23,6 @@ from tests.conftest import FakeProc
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -715,6 +716,52 @@ def test_tag_misuse_warning_silent_on_dual_track(tmp_path: Path) -> None:
     """Dual-track config → rolling-next applies even without a local manifest."""
     cfg = ForgeConfig(dev_branch="dev")
     assert next_prep._tag_misuse_warning(tmp_path, cfg) is None
+
+
+def test_tag_and_report_advises_on_pending_fragments(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Fragments mode with pending fragments → the release advisory is logged.
+
+    ``_tag_and_report`` is called directly with tagging and pruning
+    disabled, so only the advisory tail runs — no git needed.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.changelog]\nmode = "fragments"\n'
+    )
+    (tmp_path / "changelog.d").mkdir()
+    (tmp_path / "changelog.d" / "a.added.md").write_text("bump: minor\n- x\n")
+    args = argparse.Namespace(tag=False, no_prune_branches=True)
+    with caplog.at_level("INFO"):
+        assert next_prep._tag_and_report(tmp_path, ForgeConfig(), args) == 0
+    assert "1 pending changelog fragment(s)" in caplog.text
+    assert "forge-changelog release" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "pyproject_text",
+    [
+        '[tool.forge.changelog]\nmode = "fragments"\n',  # mode on, none pending
+        "",  # shared-heading repo (no config at all)
+    ],
+)
+def test_tag_and_report_fragment_advisory_silent(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    pyproject_text: str,
+) -> None:
+    """No advisory without pending fragments, and none outside fragments mode.
+
+    Args:
+        pyproject_text: The ``pyproject.toml`` contents for the case.
+    """
+    if pyproject_text:
+        (tmp_path / "pyproject.toml").write_text(pyproject_text)
+    args = argparse.Namespace(tag=False, no_prune_branches=True)
+    with caplog.at_level("INFO"):
+        assert next_prep._tag_and_report(tmp_path, ForgeConfig(), args) == 0
+    assert "pending changelog fragment" not in caplog.text
 
 
 def test_main_no_sync_skips_checkout_and_pull(

@@ -990,6 +990,77 @@ def read_local_plugin_version(repo_root: Path) -> str | None:
     return version
 
 
+# Targeted version-field rewrite: preserves the manifest's formatting
+# byte-for-byte outside the one value (a json round-trip would reformat).
+_VERSION_FIELD_RE = re.compile(r'("version"\s*:\s*")[^"]+(")')
+
+
+def render_plugin_version(source_text: str, version: str) -> str:
+    """Return *source_text* with its ``"version"`` field rewritten to *version*.
+
+    The shared rewrite-and-validate core for every writer of the plugin
+    manifest's version slot (``forge-rebump``, ``forge-changelog
+    release``). Fail-closed output validation (CWE-116): the source may
+    be branch-authored, and a version value carrying JSON escapes
+    defeats a textual rewrite (the regex stops at the first quote,
+    leaving the payload's remainder in place) — so the rewritten text
+    must reparse as JSON whose version field is exactly the target.
+
+    Args:
+        source_text: Manifest JSON text to rewrite.
+        version: Bare semver string the version field must carry.
+
+    Returns:
+        The rewritten manifest text, formatting preserved outside the
+        version value.
+
+    Raises:
+        ValueError: When no ``"version"`` field is found, the rewrite
+            produces invalid JSON, or the reparsed version field is not
+            exactly *version*.
+    """
+    rewritten, count = _VERSION_FIELD_RE.subn(
+        rf"\g<1>{version}\g<2>", source_text, count=1
+    )
+    if count != 1:
+        msg = 'plugin.json: no "version" field found to rewrite.'
+        raise ValueError(msg)
+    try:
+        reparsed = json.loads(rewritten)
+    except json.JSONDecodeError as exc:
+        msg = (
+            f"plugin.json: rewrite produced invalid JSON ({exc}) — "
+            "malformed or adversarial version field."
+        )
+        raise ValueError(msg) from exc
+    if reparsed.get("version") != version:
+        msg = f"plugin.json: rewrite did not land cleanly on version {version}."
+        raise ValueError(msg)
+    return rewritten
+
+
+def write_plugin_version(root: Path, version: str) -> None:
+    """Rewrite ``.claude-plugin/plugin.json``'s version field on disk.
+
+    Composes read → :func:`render_plugin_version` → write, so the
+    fail-closed validation runs before any byte reaches disk.
+
+    Args:
+        root: Repo root containing ``.claude-plugin/plugin.json``.
+        version: Bare semver string to write into the version field.
+
+    Raises:
+        ValueError: Propagated from :func:`render_plugin_version` when
+            the rewrite cannot be validated.
+        OSError: When the manifest cannot be read or written.
+    """
+    manifest = root / ".claude-plugin" / "plugin.json"
+    manifest.write_text(
+        render_plugin_version(manifest.read_text(encoding="utf-8"), version),
+        encoding="utf-8",
+    )
+
+
 def _parse_files(
     output: str,
     *,

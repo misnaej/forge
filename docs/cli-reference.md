@@ -224,15 +224,20 @@ options:
 ## forge-changelog
 
 ```text
-usage: forge-changelog [-h] {check,assemble,restrand} ...
+usage: forge-changelog [-h] {check,next-version,release,assemble,restrand} ...
 
 Changelog fragments: validate pending entries, assemble them into CHANGELOG.md
 at release (single writer). Shared-heading repos: `restrand` repairs stranded
 entries mechanically.
 
 positional arguments:
-  {check,assemble,restrand}
+  {check,next-version,release,assemble,restrand}
     check               validate pending changelog.d/ fragments
+    next-version        print the computed next release version (latest v* tag
+                        + max pending bump level)
+    release             assemble CHANGELOG.md under the computed next version,
+                        write plugin.json to it (when present), stage
+                        everything — never commits
     assemble            collate fragments into CHANGELOG.md under a version
     restrand            move entries stranded under released headings to the
                         next slot (shared-heading mode; stages, never commits)
@@ -312,6 +317,12 @@ options:
                         flag.
   --skip-plugin-checks  Skip all Claude Code plugin checks entirely. Useful
                         for consumers who only adopt the pip CLIs.
+```
+
+## forge-emergency
+
+```text
+(--help unavailable for forge-emergency)
 ```
 
 ## forge-gen-api-digest

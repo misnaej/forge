@@ -729,7 +729,7 @@ following the [consumer changelog convention](../docs/consumer-release.md)
 | `blocking` | `true` | Findings fail the commit; `false` downgrades both steps to a WARN. | Staged adoption on a repo with a messy changelog history. |
 | `exempt_paths` | `[]` | Path prefixes `changelog_updated` ignores. | Scratch/experimental dirs whose changes need no entry. |
 | `require_paths` | `[]` | Prefixes that always require an entry, overriding `exempt_paths` (checked first). | A shipped subtree inside an otherwise exempt dir. |
-| `mode` | `headings` | Changelog model: `headings` (shared top-heading bullets) or `fragments` (per-PR `changelog.d/` files, level-only bump, assembled once at release — zero merge conflicts; CHANGELOG becomes an output). | Parallel PRs keep colliding on the changelog. |
+| `mode` | `headings` | Changelog model: `headings` (shared top-heading bullets) or `fragments` (per-PR `changelog.d/` files, level-only bump, assembled once at release — zero merge conflicts; CHANGELOG becomes an output, and the release version is computed by the assembler: `forge-changelog release` / `next-version`). | Parallel PRs keep colliding on the changelog. |
 | `precommit_enforce` | `true` | `false` = deferred mode: local commits (human or agent) self-skip `changelog_updated`; genuine CI keeps failing — with an expected-until-wrap-up message — until the entry lands at PR wrap-up. See the ["Deferred entry timing"](../docs/consumer-release.md#enforcement) chain. | High-parallelism repos hitting mid-PR changelog merge conflicts. |
 
 `precommit_enforce` and `blocking` are independent axes — timing vs

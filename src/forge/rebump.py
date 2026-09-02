@@ -40,9 +40,7 @@ Exits 0 on success (including nothing-to-do), 1 on refusal.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -65,6 +63,7 @@ from forge.git_utils import (
     parse_semver,
     read_local_plugin_version,
     read_plugin_version_at_ref,
+    render_plugin_version,
     run_git,
 )
 
@@ -75,10 +74,6 @@ logger = logging.getLogger(__name__)
 
 PLUGIN_PATH = ".claude-plugin/plugin.json"
 CHANGELOG_PATH = "CHANGELOG.md"
-
-# Targeted version-field rewrite: preserves the manifest's formatting
-# byte-for-byte outside the one value (a json round-trip would reformat).
-_VERSION_FIELD_RE = re.compile(r'("version"\s*:\s*")[^"]+(")')
 
 
 class _RefusalError(Exception):
@@ -324,29 +319,15 @@ def _render_plugin_version(
         source = _read_index_stage(repo_root, 2, PLUGIN_PATH)
     if source is None:
         source = (repo_root / PLUGIN_PATH).read_text(encoding="utf-8")
-    rewritten, count = _VERSION_FIELD_RE.subn(rf"\g<1>{version}\g<2>", source, count=1)
-    if count != 1:
-        msg = f'{PLUGIN_PATH}: no "version" field found to rewrite.'
-        raise _RefusalError(msg)
-    # Fail-closed output validation (CWE-116): the source is
-    # branch-authored, and a version value carrying JSON escapes defeats
-    # a textual rewrite (the regex stops at the first quote, leaving the
-    # payload's remainder in place). Refuse unless the rewritten text is
-    # valid JSON whose version field is exactly the target.
+    # Rewrite + fail-closed CWE-116 validation live in the shared
+    # git_utils.render_plugin_version core (also the `forge-changelog
+    # release` writer); this wrapper only picks the source (stage 2 vs
+    # disk) and converts the failure into a refusal.
     try:
-        reparsed = json.loads(rewritten)
-    except json.JSONDecodeError as exc:
-        msg = (
-            f"{PLUGIN_PATH}: rewrite produced invalid JSON ({exc}) — "
-            "malformed or adversarial version field; resolve by hand."
-        )
+        rewritten = render_plugin_version(source, version)
+    except ValueError as exc:
+        msg = f"{exc} Resolve by hand."
         raise _RefusalError(msg) from exc
-    if reparsed.get("version") != version:
-        msg = (
-            f"{PLUGIN_PATH}: rewrite did not land cleanly on version "
-            f"{version} — resolve by hand."
-        )
-        raise _RefusalError(msg)
     if rewritten == source and not mid_merge:
         return None
     return rewritten
