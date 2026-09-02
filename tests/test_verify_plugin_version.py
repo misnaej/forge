@@ -323,6 +323,178 @@ def test_skips_when_release_branch_only_adds_changelog(
     assert "release tag" in log
 
 
+def _init_fragments_repo(repo: Path, *, mode: str = "fragments") -> None:
+    """Init a repo in the given changelog mode, tagged v1.0.0 at plugin 1.0.0.
+
+    Leaves ``main`` at the tagged release commit; callers add their own
+    post-tag commit to model the state under test.
+
+    Args:
+        repo: Repository directory.
+        mode: ``[tool.forge.changelog].mode`` value to configure.
+    """
+    _init_git_repo(repo)
+    (repo / "pyproject.toml").write_text(f'[tool.forge.changelog]\nmode = "{mode}"\n')
+    _write_plugin(repo, "1.0.0")
+    subprocess.run(["git", "add", "."], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "v1.0.0"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=repo, env=_GIT_ENV, check=True)
+
+
+def _commit_post_tag_work(
+    repo: Path, *, fragment: str | None = None, fragment_name: str = "a.added.md"
+) -> None:
+    """Commit a real (non-changelog) content change, optionally plus a fragment.
+
+    Args:
+        repo: Repository directory.
+        fragment: Full fragment file text (``None`` writes no fragment).
+        fragment_name: Filename for the fragment under ``changelog.d/``.
+    """
+    (repo / "work.txt").write_text("post-tag work\n")
+    if fragment is not None:
+        (repo / "changelog.d").mkdir()
+        (repo / "changelog.d" / fragment_name).write_text(fragment)
+    subprocess.run(["git", "add", "."], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "post-tag work"],
+        cwd=repo,
+        env=_GIT_ENV,
+        check=True,
+    )
+
+
+def test_fragments_mode_manifest_at_tag_with_valid_pending_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fragments mode: plugin.json == latest tag + a valid pending fragment → 0.
+
+    The fragment-mode resting state: the manifest parks at the tag and
+    the pending fragment carries the bump. A real content change is
+    committed so the release-commit skip cannot mask the verdict.
+    """
+    _init_fragments_repo(tmp_path)
+    _commit_post_tag_work(tmp_path, fragment="bump: minor\n- new thing\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 0
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "manifest parked at latest tag" in log
+    assert "1 pending fragment(s)" in log
+
+
+def test_fragments_mode_manifest_at_tag_with_zero_pending_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fragments mode: equality with zero pending fragments is also healthy.
+
+    The just-released resting state — nothing pending yet — must not
+    force a bump.
+    """
+    _init_fragments_repo(tmp_path)
+    _commit_post_tag_work(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 0
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "0 pending fragment(s)" in log
+
+
+def test_fragments_mode_invalid_fragment_fails_listing_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fragments mode: an invalid pending fragment blocks loudly (exit 1).
+
+    Equality is healthy only while the next version stays derivable —
+    a fragment the gate rejects breaks derivability, so the guard names
+    the violation instead of passing.
+    """
+    _init_fragments_repo(tmp_path)
+    _commit_post_tag_work(
+        tmp_path, fragment="bump: minor\n- x\n", fragment_name="bad.bogus.md"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 1
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "invalid fragment" in log
+    assert "unknown type 'bogus'" in log
+
+
+def test_fragments_mode_manifest_below_tag_still_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fragments mode never excuses plugin.json BELOW the latest tag → 1."""
+    _init_fragments_repo(tmp_path)
+    _write_plugin_overwrite(tmp_path, "0.9.0")
+    _commit_post_tag_work(tmp_path, fragment="bump: minor\n- x\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 1
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "must be strictly greater" in log
+
+
+def test_fragments_mode_manifest_ahead_of_tag_still_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fragments mode: plugin.json > latest tag (the release window) → 0.
+
+    The release PR itself carries the advanced manifest with ZERO pending
+    fragments (its release commit consumed them); the strictly-ahead pass
+    survives fragment mode only in that clean release window.
+    """
+    _init_fragments_repo(tmp_path)
+    _write_plugin_overwrite(tmp_path, "1.1.0")
+    _commit_post_tag_work(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 0
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "> latest tag" in log
+
+
+def test_fragments_mode_manifest_ahead_with_pending_fragments_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fragments mode: manifest ahead of the tag PLUS pending fragments → 1.
+
+    The mis-tag race: a release PR computed its version, then a new bump
+    fragment merged in from the base — tagging now would ship that change
+    under the stale version (a major could surface one release late).
+    The guard blocks the state; the fix is syncing and recomputing the
+    release.
+    """
+    _init_fragments_repo(tmp_path)
+    _write_plugin_overwrite(tmp_path, "1.1.0")
+    _commit_post_tag_work(
+        tmp_path, fragment="bump: major\n- late-merged breaking change\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 1
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "release computation is stale" in log
+
+
+def test_headings_mode_manifest_at_tag_still_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Shared-heading mode: equality with the latest tag stays a failure.
+
+    Regression pin for the mode gate — the parking rule is fragments-only.
+    """
+    _init_fragments_repo(tmp_path, mode="headings")
+    _commit_post_tag_work(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 1
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "must be strictly greater" in log
+
+
 def test_fails_when_release_branch_changes_non_changelog_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

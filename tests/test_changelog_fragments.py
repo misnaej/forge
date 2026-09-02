@@ -22,6 +22,7 @@ from forge.changelog_fragments import (
     discover_fragments,
     main,
     max_level,
+    next_version_from_fragments,
     validate_fragment,
 )
 from tests.conftest import GIT_ENV, commit_all, init_git_repo
@@ -383,6 +384,54 @@ def test_check_pending_aggregates_errors_across_fragments(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
+# next_version_from_fragments
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("levels", "expected"),
+    [
+        (["patch", "minor"], ("1.3.0", "minor")),
+        (["patch", "minor", "major"], ("2.0.0", "major")),
+        (["patch"], ("1.2.4", "patch")),
+    ],
+)
+def test_next_version_from_fragments_uses_max_level(
+    tmp_path: Path, levels: list[str], expected: tuple[str, str]
+) -> None:
+    """The strongest pending level drives the bump above the latest tag.
+
+    Args:
+        levels: Bump levels declared across the pending fragments.
+        expected: Expected ``(bare_version, level)`` above ``v1.2.3``.
+    """
+    directory = tmp_path / "changelog.d"
+    for i, level in enumerate(levels):
+        _write_fragment(directory, f"f{i}.added.md", f"bump: {level}\n- x\n")
+    assert next_version_from_fragments(tmp_path, "v1.2.3") == expected
+
+
+def test_next_version_from_fragments_none_when_nothing_pending(
+    tmp_path: Path,
+) -> None:
+    """No pending fragments → None, never a zero-fragment version."""
+    assert next_version_from_fragments(tmp_path, "v1.2.3") is None
+
+
+def test_next_version_from_fragments_raises_listing_every_error(
+    tmp_path: Path,
+) -> None:
+    """Any invalid pending fragment raises, with every error in the message."""
+    directory = tmp_path / "changelog.d"
+    _write_fragment(directory, "ok.added.md", "bump: minor\n- fine\n")
+    _write_fragment(directory, "bad-type.bogus.md", "bump: minor\n- x\n")
+    _write_fragment(directory, "bad-level.added.md", "bump: superduper\n- x\n")
+    with pytest.raises(ValueError, match="unknown type 'bogus'") as excinfo:
+        next_version_from_fragments(tmp_path, "v1.2.3")
+    assert "unknown level 'superduper'" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
 # main() — CLI
 # ---------------------------------------------------------------------------
 
@@ -491,6 +540,225 @@ def test_main_assemble_nothing_pending_exits_two(
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
     assert main(["assemble", "--version", "v1.0.0"]) == 2
     assert "nothing to assemble" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# main() — next-version
+# ---------------------------------------------------------------------------
+
+
+def _init_tagged_repo(repo: Path, tag: str = "v1.0.0") -> None:
+    """Init a git repo with one seed commit tagged *tag*.
+
+    Args:
+        repo: Directory to initialize.
+        tag: Release tag to cut at the seed commit.
+    """
+    init_git_repo(repo)
+    (repo / "seed.txt").write_text("seed\n")
+    commit_all(repo, "seed")
+    subprocess.run(["git", "tag", tag], cwd=repo, env=GIT_ENV, check=True)
+
+
+def test_main_next_version_prints_computed_version_and_level(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`next-version` prints `vX.Y.Z (level)` from latest tag + max pending level."""
+    _init_tagged_repo(tmp_path)
+    _write_fragment(tmp_path / "changelog.d", "a.added.md", "bump: minor\n- x\n")
+    _write_fragment(tmp_path / "changelog.d", "b.fixed.md", "bump: patch\n- y\n")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    assert main(["next-version"]) == 0
+    assert capsys.readouterr().out.strip() == "v1.1.0 (minor)"
+
+
+def test_main_next_version_exit_two_without_tag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No v* tag → exit 2, message names the missing baseline."""
+    init_git_repo(tmp_path)
+    _write_fragment(tmp_path / "changelog.d", "a.added.md", "bump: minor\n- x\n")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    assert main(["next-version"]) == 2
+    assert "no v* tag" in capsys.readouterr().out
+
+
+def test_main_next_version_exit_two_without_fragments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No pending fragments → exit 2, message says nothing is pending."""
+    _init_tagged_repo(tmp_path)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    assert main(["next-version"]) == 2
+    assert "no pending fragments" in capsys.readouterr().out
+
+
+def test_main_next_version_exit_two_on_invalid_fragment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An invalid pending fragment → exit 2, its error reported."""
+    _init_tagged_repo(tmp_path)
+    _write_fragment(tmp_path / "changelog.d", "bad.bogus.md", "bump: minor\n- x\n")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    assert main(["next-version"]) == 2
+    assert "unknown type 'bogus'" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# main() — release
+# ---------------------------------------------------------------------------
+
+
+def test_main_release_with_manifest_stages_everything_commits_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`release` assembles, rewrites the manifest, stages all — never commits.
+
+    SCENARIO: a plugin repo at tag ``v1.0.0`` (manifest parked at
+    ``1.0.0``) with a minor and a patch fragment pending.
+    EXPECTED BEHAVIOR: CHANGELOG.md gains ``## v1.1.0`` with both
+    entries; both fragments are deleted and their deletions staged; the
+    manifest reads ``1.1.0`` and is staged; the version is printed
+    prominently; ``HEAD`` still points at the seed commit (no commit
+    made).
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
+        '{\n  "name": "x",\n  "version": "1.0.0"\n}\n'
+    )
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragment(tmp_path / "changelog.d", "a.added.md", "bump: minor\n- new\n")
+    _write_fragment(tmp_path / "changelog.d", "b.fixed.md", "bump: patch\n- fix\n")
+    commit_all(tmp_path, "seed")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=GIT_ENV, check=True)
+    head_before = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+
+    assert main(["release"]) == 0
+
+    changelog_text = (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## v1.1.0" in changelog_text
+    assert "- new" in changelog_text
+    assert "- fix" in changelog_text
+    manifest_text = (tmp_path / ".claude-plugin" / "plugin.json").read_text(
+        encoding="utf-8"
+    )
+    assert manifest_text == '{\n  "name": "x",\n  "version": "1.1.0"\n}\n'
+    status = subprocess.run(
+        ["git", "diff", "--cached", "--name-status"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "M\tCHANGELOG.md" in status
+    assert "D\tchangelog.d/a.added.md" in status
+    assert "D\tchangelog.d/b.fixed.md" in status
+    assert "M\t.claude-plugin/plugin.json" in status
+    head_after = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert head_after == head_before
+    assert "Release v1.1.0 prepared" in capsys.readouterr().out
+
+
+def test_main_release_without_manifest_prints_version_for_tag_flow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A manifest-less (tag-versioned) repo assembles and prints the version."""
+    init_git_repo(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragment(tmp_path / "changelog.d", "a.added.md", "bump: patch\n- x\n")
+    commit_all(tmp_path, "seed")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=GIT_ENV, check=True)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+
+    assert main(["release"]) == 0
+
+    assert not (tmp_path / ".claude-plugin").exists()
+    assert "## v1.0.1" in (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "Release v1.0.1 prepared" in capsys.readouterr().out
+
+
+def test_main_release_manifest_refusal_leaves_tree_untouched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A manifest render refusal fires before ANY write — no half-release.
+
+    Compute-then-write pin (mirrors rebump's invariant): a manifest with
+    no ``"version"`` field refuses at render time, so the changelog is
+    not assembled, no fragment is deleted, and nothing is staged.
+    """
+    _init_tagged_repo(tmp_path)
+    original = "# Changelog\n"
+    (tmp_path / "CHANGELOG.md").write_text(original)
+    _write_fragment(tmp_path / "changelog.d", "ok.added.md", "bump: minor\n- x\n")
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir(exist_ok=True)
+    (plugin_dir / "plugin.json").write_text('{"name": "forge"}\n')
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+
+    assert main(["release"]) == 2
+
+    assert 'no "version" field' in capsys.readouterr().out
+    assert (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8") == original
+    assert (tmp_path / "changelog.d" / "ok.added.md").exists()
+
+
+def test_main_release_exit_two_on_invalid_fragment_touches_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An invalid pending fragment blocks the release before any write."""
+    _init_tagged_repo(tmp_path)
+    original = "# Changelog\n"
+    (tmp_path / "CHANGELOG.md").write_text(original)
+    _write_fragment(tmp_path / "changelog.d", "bad.bogus.md", "bump: minor\n- x\n")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    assert main(["release"]) == 2
+    assert "unknown type 'bogus'" in capsys.readouterr().out
+    assert (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8") == original
+
+
+def test_main_release_exit_two_without_fragments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Nothing pending → exit 2; a release needs at least one fragment."""
+    _init_tagged_repo(tmp_path)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    assert main(["release"]) == 2
+    assert "no pending fragments" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

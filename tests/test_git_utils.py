@@ -707,6 +707,70 @@ def test_read_plugin_version_returns_none_on_malformed_json(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
+# render_plugin_version / write_plugin_version
+# ---------------------------------------------------------------------------
+
+
+def test_render_plugin_version_rewrites_only_the_version_value() -> None:
+    """The version value changes; every other byte of the manifest survives."""
+    source = '{\n  "name": "forge",\n  "version": "1.0.0",\n  "extra": "kept"\n}\n'
+    result = git_utils.render_plugin_version(source, "2.0.0")
+    assert result == (
+        '{\n  "name": "forge",\n  "version": "2.0.0",\n  "extra": "kept"\n}\n'
+    )
+
+
+def test_render_plugin_version_raises_without_version_field() -> None:
+    """A manifest with no version field cannot be rewritten → ValueError."""
+    with pytest.raises(ValueError, match='no "version" field'):
+        git_utils.render_plugin_version('{"name": "forge"}', "1.0.0")
+
+
+def test_render_plugin_version_refuses_json_escape_injection() -> None:
+    r"""A version field carrying JSON escapes must refuse, never return broken JSON.
+
+    CWE-116 pin (mirrors the ``forge-rebump`` regression): a
+    branch-authored ``"version"`` like ``99.0.0\\", \\"pwned\\": \\"x``
+    defeats the textual rewrite (the regex stops at the payload's first
+    embedded quote), so the fail-closed post-rewrite validation must
+    raise instead of returning corrupt text.
+    """
+    source = (
+        '{\n  "name": "forge",\n'
+        '  "version": "99.0.0\\", \\"pwned\\": \\"x",\n'
+        '  "other": "field"\n}\n'
+    )
+    with pytest.raises(ValueError, match=r"invalid JSON|did not land"):
+        git_utils.render_plugin_version(source, "99.0.0")
+
+
+def test_write_plugin_version_rewrites_manifest_on_disk(tmp_path: Path) -> None:
+    """The on-disk manifest carries the target version, formatting preserved."""
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text(
+        '{\n  "name": "forge",\n  "version": "1.0.0"\n}\n', encoding="utf-8"
+    )
+    git_utils.write_plugin_version(tmp_path, "1.1.0")
+    assert (plugin_dir / "plugin.json").read_text(encoding="utf-8") == (
+        '{\n  "name": "forge",\n  "version": "1.1.0"\n}\n'
+    )
+
+
+def test_write_plugin_version_fail_closed_leaves_file_untouched(
+    tmp_path: Path,
+) -> None:
+    """A manifest that fails validation is never (partially) written."""
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    original = '{"name": "forge"}\n'
+    (plugin_dir / "plugin.json").write_text(original, encoding="utf-8")
+    with pytest.raises(ValueError, match='no "version" field'):
+        git_utils.write_plugin_version(tmp_path, "1.1.0")
+    assert (plugin_dir / "plugin.json").read_text(encoding="utf-8") == original
+
+
+# ---------------------------------------------------------------------------
 # Real-git helpers for run_git / get_tree_sha / read_plugin_version_at_ref
 # (_GIT_ENV + _init_git_repo are imported from tests.conftest — #85)
 # ---------------------------------------------------------------------------
