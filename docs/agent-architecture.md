@@ -218,6 +218,7 @@ graph LR
   cli_forge_continuation_append[("forge-continuation-append<br/>CLI")]
   cli_forge_pr_plan[("forge-pr-plan<br/>CLI")]
   cli_forge_pr_squash_comment[("forge-pr-squash-comment<br/>CLI")]
+  cli_forge_rebump[("forge-rebump<br/>CLI")]
   sk_pr(["/pr<br/>skill"])
   prior_art["prior-art<br/>AI agent"]
   pr_manager["pr-manager<br/>AI agent"]
@@ -234,6 +235,7 @@ graph LR
   precommit_fixer -->|delegates| docs_types_checker
   precommit_fixer -->|delegates| design_checker
   sk_pr -->|invokes| cli_forge_pr_plan
+  sk_pr -->|invokes, on plugin.json+CHANGELOG conflict| cli_forge_rebump
   sk_pr -->|invokes| design_checker
   sk_pr -->|invokes| security_checker
   sk_pr -->|invokes| docs_types_checker
@@ -260,6 +262,7 @@ graph LR
   class cli_forge_continuation_append cli
   class cli_forge_pr_plan cli
   class cli_forge_pr_squash_comment cli
+  class cli_forge_rebump cli
   class sk_pr skill
   class pr_manager agent
   class pr_manager mutator

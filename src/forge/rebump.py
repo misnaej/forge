@@ -40,6 +40,7 @@ Exits 0 on success (including nothing-to-do), 1 on refusal.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import re
 import subprocess
@@ -285,8 +286,12 @@ def _resolve_version(
     )
     current_tuple = parse_semver(current) if current else None
     latest_tuple = parse_semver(latest)
-    if current and current_tuple and latest_tuple and current_tuple > latest_tuple:
-        return current
+    if current_tuple and latest_tuple and current_tuple > latest_tuple:
+        # Reconstruct from the parsed tuple, never the raw manifest string:
+        # the field is branch-authored (untrusted) and a JSON-escaped
+        # payload would otherwise round-trip verbatim into the regex
+        # rewrite and the changelog heading (CWE-116).
+        return "{}.{}.{}".format(*current_tuple)
     return next_version(latest, bump_class).removeprefix("v")
 
 
@@ -310,7 +315,9 @@ def _render_plugin_version(
         file already carries *version* (nothing to write).
 
     Raises:
-        _RefusalError: When the version field cannot be located.
+        _RefusalError: When the version field cannot be located, or when
+            the rewritten text fails fail-closed validation (invalid
+            JSON, or a version field not exactly the target).
     """
     source: str | None = None
     if mid_merge:
@@ -320,6 +327,25 @@ def _render_plugin_version(
     rewritten, count = _VERSION_FIELD_RE.subn(rf"\g<1>{version}\g<2>", source, count=1)
     if count != 1:
         msg = f'{PLUGIN_PATH}: no "version" field found to rewrite.'
+        raise _RefusalError(msg)
+    # Fail-closed output validation (CWE-116): the source is
+    # branch-authored, and a version value carrying JSON escapes defeats
+    # a textual rewrite (the regex stops at the first quote, leaving the
+    # payload's remainder in place). Refuse unless the rewritten text is
+    # valid JSON whose version field is exactly the target.
+    try:
+        reparsed = json.loads(rewritten)
+    except json.JSONDecodeError as exc:
+        msg = (
+            f"{PLUGIN_PATH}: rewrite produced invalid JSON ({exc}) — "
+            "malformed or adversarial version field; resolve by hand."
+        )
+        raise _RefusalError(msg) from exc
+    if reparsed.get("version") != version:
+        msg = (
+            f"{PLUGIN_PATH}: rewrite did not land cleanly on version "
+            f"{version} — resolve by hand."
+        )
         raise _RefusalError(msg)
     if rewritten == source and not mid_merge:
         return None
@@ -344,8 +370,9 @@ def _render_changelog(
 
     Raises:
         _RefusalError: On a CHANGELOG conflict in fragments mode (single-writer
-            assembly makes that unexpected — a human must look), or when a
-            conflicted CHANGELOG's merge stages are unreadable.
+            assembly makes that unexpected — a human must look), when a
+            conflicted CHANGELOG's merge stages are unreadable, or when the
+            branch side has no release heading to restack.
     """
     fragments = (
         read_tool_forge_section(repo_root, "changelog").get("mode") == "fragments"
@@ -369,6 +396,12 @@ def _render_changelog(
         theirs = _read_index_stage(repo_root, 3, CHANGELOG_PATH)
         if ours is None or theirs is None:
             msg = f"{CHANGELOG_PATH}: cannot read merge stages for restack."
+            raise _RefusalError(msg)
+        if top_release_heading(ours) is None:
+            msg = (
+                f"{CHANGELOG_PATH}: the branch side has no ## vX.Y.Z heading "
+                "to restack — resolve the conflict by hand."
+            )
             raise _RefusalError(msg)
         return "restacked", restack_changelog(ours, theirs, heading)
     text = changelog.read_text(encoding="utf-8")
@@ -405,9 +438,11 @@ def rebump(repo_root: Path) -> RebumpOutcome:
     except _RefusalError as refusal:
         return RebumpOutcome("", "", "", (), refusal=str(refusal))
     to_stage = []
-    if plugin_text is not None or mid_merge:
-        if plugin_text is not None:
-            (repo_root / PLUGIN_PATH).write_text(plugin_text, encoding="utf-8")
+    # Mid-merge _render_plugin_version always returns text (its None
+    # short-circuit is clean-tree-only), so this branch alone also covers
+    # re-staging an auto-merged manifest.
+    if plugin_text is not None:
+        (repo_root / PLUGIN_PATH).write_text(plugin_text, encoding="utf-8")
         to_stage.append(PLUGIN_PATH)
     if changelog_text is not None:
         (repo_root / CHANGELOG_PATH).write_text(changelog_text, encoding="utf-8")

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import rebump
-from tests.conftest import GIT_ENV, init_git_repo
+from tests.conftest import GIT_ENV, commit_all, init_git_repo
 
 
 if TYPE_CHECKING:
@@ -98,19 +98,6 @@ def _tag(repo: Path, tag: str) -> None:
         tag: Tag name (e.g. ``"v1.0.0"``).
     """
     subprocess.run(["git", "tag", tag], cwd=repo, env=GIT_ENV, check=True)
-
-
-def _commit_all(repo: Path, message: str) -> None:
-    """Stage everything and commit with *message*.
-
-    Args:
-        repo: Repo root.
-        message: Commit message.
-    """
-    subprocess.run(["git", "add", "-A"], cwd=repo, env=GIT_ENV, check=True)
-    subprocess.run(
-        ["git", "commit", "-q", "-m", message], cwd=repo, env=GIT_ENV, check=True
-    )
 
 
 def _checkout_new_branch(repo: Path, name: str) -> None:
@@ -194,7 +181,7 @@ def test_rebump_mid_merge_same_slot_restacks_changelog(tmp_path: Path) -> None:
     init_git_repo(tmp_path)
     _write_plugin(tmp_path, "1.0.0")
     _write_changelog(tmp_path, "# Changelog\n\n## v1.0.0\n\n- initial\n")
-    _commit_all(tmp_path, "release v1.0.0")
+    commit_all(tmp_path, "release v1.0.0")
     _tag(tmp_path, "v1.0.0")
 
     _checkout_new_branch(tmp_path, "other")
@@ -203,10 +190,10 @@ def test_rebump_mid_merge_same_slot_restacks_changelog(tmp_path: Path) -> None:
         tmp_path,
         "# Changelog\n\n## v1.1.0\n\n- other entry\n\n## v1.0.0\n\n- initial\n",
     )
-    _commit_all(tmp_path, "other: bump + entry")
+    commit_all(tmp_path, "other: bump + entry")
     _checkout(tmp_path, "main")
     assert _merge_no_commit(tmp_path, "other") == 0
-    _commit_all(tmp_path, "merge other")
+    commit_all(tmp_path, "merge other")
 
     _checkout(tmp_path, "main")
     _checkout_new_branch(tmp_path, "feat/x")
@@ -220,7 +207,7 @@ def test_rebump_mid_merge_same_slot_restacks_changelog(tmp_path: Path) -> None:
     _write_changelog(
         tmp_path, "# Changelog\n\n## v1.1.0\n\n- feat entry\n\n## v1.0.0\n\n- initial\n"
     )
-    _commit_all(tmp_path, "feat: bump + entry")
+    commit_all(tmp_path, "feat: bump + entry")
 
     assert _merge_no_commit(tmp_path, "main") != 0
 
@@ -253,15 +240,15 @@ def test_rebump_mid_merge_genuine_plugin_conflict_classifies_from_own_delta(
     """
     init_git_repo(tmp_path)
     _write_plugin(tmp_path, "1.0.0")
-    _commit_all(tmp_path, "release v1.0.0")
+    commit_all(tmp_path, "release v1.0.0")
     _tag(tmp_path, "v1.0.0")
 
     _checkout_new_branch(tmp_path, "other")
     _write_plugin(tmp_path, "2.0.0")
-    _commit_all(tmp_path, "other: major bump")
+    commit_all(tmp_path, "other: major bump")
     _checkout(tmp_path, "main")
     assert _merge_no_commit(tmp_path, "other") == 0
-    _commit_all(tmp_path, "merge other")
+    commit_all(tmp_path, "merge other")
 
     _checkout(tmp_path, "main")
     _checkout_new_branch(tmp_path, "feat/x")
@@ -272,7 +259,7 @@ def test_rebump_mid_merge_genuine_plugin_conflict_classifies_from_own_delta(
         check=True,
     )
     _write_plugin(tmp_path, "1.1.0")
-    _commit_all(tmp_path, "feat: minor bump")
+    commit_all(tmp_path, "feat: minor bump")
 
     assert _merge_no_commit(tmp_path, "main") != 0
 
@@ -300,7 +287,7 @@ def test_rebump_clean_tree_post_tag_retitles_stale_heading(tmp_path: Path) -> No
     init_git_repo(tmp_path)
     _write_plugin(tmp_path, "1.0.0")
     _write_changelog(tmp_path, "# Changelog\n\n## v1.0.0\n\n- initial\n")
-    _commit_all(tmp_path, "release v1.0.0")
+    commit_all(tmp_path, "release v1.0.0")
     _tag(tmp_path, "v1.0.0")
 
     _checkout_new_branch(tmp_path, "feat/x")
@@ -308,7 +295,7 @@ def test_rebump_clean_tree_post_tag_retitles_stale_heading(tmp_path: Path) -> No
     _write_changelog(
         tmp_path, "# Changelog\n\n## v1.1.0\n\n- feat entry\n\n## v1.0.0\n\n- initial\n"
     )
-    _commit_all(tmp_path, "feat: bump + entry")
+    commit_all(tmp_path, "feat: bump + entry")
 
     _checkout(tmp_path, "main")
     _write_plugin(tmp_path, "1.1.0")
@@ -316,7 +303,7 @@ def test_rebump_clean_tree_post_tag_retitles_stale_heading(tmp_path: Path) -> No
         tmp_path,
         "# Changelog\n\n## v1.1.0\n\n- other entry\n\n## v1.0.0\n\n- initial\n",
     )
-    _commit_all(tmp_path, "other: bump + entry, released")
+    commit_all(tmp_path, "other: bump + entry, released")
     _tag(tmp_path, "v1.1.0")
 
     _checkout(tmp_path, "feat/x")
@@ -347,16 +334,16 @@ def test_rebump_refuses_on_unrelated_merge_conflict(tmp_path: Path) -> None:
     """
     init_git_repo(tmp_path)
     (tmp_path / "shared.txt").write_text("base\n")
-    _commit_all(tmp_path, "add shared.txt")
+    commit_all(tmp_path, "add shared.txt")
 
     _checkout_new_branch(tmp_path, "other")
     (tmp_path / "shared.txt").write_text("other change\n")
-    _commit_all(tmp_path, "other edit")
+    commit_all(tmp_path, "other edit")
     _checkout(tmp_path, "main")
 
     _checkout_new_branch(tmp_path, "feat/x")
     (tmp_path / "shared.txt").write_text("feat change\n")
-    _commit_all(tmp_path, "feat edit")
+    commit_all(tmp_path, "feat edit")
 
     assert _merge_no_commit(tmp_path, "other") != 0
 
@@ -391,7 +378,7 @@ def test_rebump_refuses_on_protected_branch(
     init_git_repo(tmp_path)
     _write_config(tmp_path, dev_branch=dev_branch, base_branch=base_branch)
     _write_plugin(tmp_path, "1.0.0")
-    _commit_all(tmp_path, "config + plugin")
+    commit_all(tmp_path, "config + plugin")
     _tag(tmp_path, "v1.0.0")
     if branch != "main":
         _checkout_new_branch(tmp_path, branch)
@@ -413,7 +400,7 @@ def test_rebump_refuses_when_no_v_tag_exists(tmp_path: Path) -> None:
     init_git_repo(tmp_path)
     _checkout_new_branch(tmp_path, "feat/x")
     _write_plugin(tmp_path, "1.0.0")
-    _commit_all(tmp_path, "add plugin")
+    commit_all(tmp_path, "add plugin")
 
     outcome = rebump.rebump(tmp_path)
 
@@ -429,7 +416,7 @@ def test_rebump_refuses_on_stray_markers_without_a_merge(tmp_path: Path) -> None
     _write_changelog(
         tmp_path, "<<<<<<< HEAD\n## v1.1.0\n=======\n## v1.2.0\n>>>>>>> other\n"
     )
-    _commit_all(tmp_path, "half-resolved changelog")
+    commit_all(tmp_path, "half-resolved changelog")
     _tag(tmp_path, "v1.0.0")
 
     outcome = rebump.rebump(tmp_path)
@@ -443,7 +430,7 @@ def test_rebump_refuses_when_manifest_version_unreadable(tmp_path: Path) -> None
     init_git_repo(tmp_path)
     _checkout_new_branch(tmp_path, "feat/x")
     (tmp_path / "a.txt").write_text("x\n")
-    _commit_all(tmp_path, "no plugin.json here")
+    commit_all(tmp_path, "no plugin.json here")
     _tag(tmp_path, "v1.0.0")
 
     outcome = rebump.rebump(tmp_path)
@@ -457,17 +444,17 @@ def test_rebump_refuses_on_changelog_modify_delete_conflict(tmp_path: Path) -> N
     init_git_repo(tmp_path)
     _write_plugin(tmp_path, "1.0.0")
     _write_changelog(tmp_path, "# Changelog\n\n## v1.0.0\n\n- initial\n")
-    _commit_all(tmp_path, "release v1.0.0")
+    commit_all(tmp_path, "release v1.0.0")
     _tag(tmp_path, "v1.0.0")
 
     _checkout_new_branch(tmp_path, "other")
     (tmp_path / rebump.CHANGELOG_PATH).unlink()
-    _commit_all(tmp_path, "other: delete changelog")
+    commit_all(tmp_path, "other: delete changelog")
     _checkout(tmp_path, "main")
 
     _checkout_new_branch(tmp_path, "feat/x")
     _write_changelog(tmp_path, "# Changelog\n\n## v1.0.0\n\n- initial\n- feat entry\n")
-    _commit_all(tmp_path, "feat: edit changelog")
+    commit_all(tmp_path, "feat: edit changelog")
 
     assert _merge_no_commit(tmp_path, "other") != 0
 
@@ -477,21 +464,58 @@ def test_rebump_refuses_on_changelog_modify_delete_conflict(tmp_path: Path) -> N
     assert "cannot read merge stages for restack" in outcome.refusal
 
 
+def test_rebump_refuses_when_ours_changelog_has_no_release_heading(
+    tmp_path: Path,
+) -> None:
+    """A conflicted CHANGELOG whose branch side lacks ``## vX.Y.Z`` refuses cleanly.
+
+    Regression pin: this used to escape as a raw ``ValueError`` traceback
+    from ``restack_changelog`` instead of the documented refusal/exit-1
+    contract.
+    """
+    init_git_repo(tmp_path)
+    _write_plugin(tmp_path, "1.0.0")
+    _write_changelog(tmp_path, "# Changelog\n\n## v1.0.0\n\n- initial\n")
+    commit_all(tmp_path, "release v1.0.0")
+    _tag(tmp_path, "v1.0.0")
+
+    _checkout_new_branch(tmp_path, "other")
+    _write_changelog(
+        tmp_path,
+        "# Changelog\n\n## v1.1.0\n\n- other entry\n\n## v1.0.0\n\n- initial\n",
+    )
+    commit_all(tmp_path, "other: bump + entry")
+    _checkout(tmp_path, "main")
+
+    _checkout_new_branch(tmp_path, "feat/x")
+    _write_changelog(tmp_path, "# Changelog\n\n## Unreleased\n\n- feat entry\n")
+    commit_all(tmp_path, "feat: headingless changelog edit")
+
+    assert _merge_no_commit(tmp_path, "other") != 0
+    plugin_before = (tmp_path / rebump.PLUGIN_PATH).read_bytes()
+
+    outcome = rebump.rebump(tmp_path)
+
+    assert outcome.refusal is not None
+    assert "no ## vX.Y.Z heading to restack" in outcome.refusal
+    assert (tmp_path / rebump.PLUGIN_PATH).read_bytes() == plugin_before
+
+
 def test_rebump_fragments_mode_is_a_noop_on_clean_tree(tmp_path: Path) -> None:
     """Fragments mode never touches the changelog — even when the manifest reslots."""
     init_git_repo(tmp_path)
     _write_config(tmp_path, fragments=True)
     _write_plugin(tmp_path, "1.0.0")
-    _commit_all(tmp_path, "config + release v1.0.0")
+    commit_all(tmp_path, "config + release v1.0.0")
     _tag(tmp_path, "v1.0.0")
 
     _checkout_new_branch(tmp_path, "feat/x")
     _write_plugin(tmp_path, "1.1.0")
-    _commit_all(tmp_path, "feat: bump")
+    commit_all(tmp_path, "feat: bump")
 
     _checkout(tmp_path, "main")
     _write_plugin(tmp_path, "1.1.0")
-    _commit_all(tmp_path, "other: bump, released")
+    commit_all(tmp_path, "other: bump, released")
     _tag(tmp_path, "v1.1.0")
     _checkout(tmp_path, "feat/x")
 
@@ -518,7 +542,7 @@ def test_rebump_fragments_mode_conflicted_changelog_refuses_tree_untouched(
     _write_config(tmp_path, fragments=True)
     _write_plugin(tmp_path, "1.0.0")
     _write_changelog(tmp_path, "# Changelog\n\n## v1.0.0\n\n- initial\n")
-    _commit_all(tmp_path, "config + release v1.0.0")
+    commit_all(tmp_path, "config + release v1.0.0")
     _tag(tmp_path, "v1.0.0")
 
     _checkout_new_branch(tmp_path, "other")
@@ -527,10 +551,10 @@ def test_rebump_fragments_mode_conflicted_changelog_refuses_tree_untouched(
         tmp_path,
         "# Changelog\n\n## v1.1.0\n\n- other entry\n\n## v1.0.0\n\n- initial\n",
     )
-    _commit_all(tmp_path, "other: bump + entry")
+    commit_all(tmp_path, "other: bump + entry")
     _checkout(tmp_path, "main")
     assert _merge_no_commit(tmp_path, "other") == 0
-    _commit_all(tmp_path, "merge other")
+    commit_all(tmp_path, "merge other")
 
     _checkout(tmp_path, "main")
     _checkout_new_branch(tmp_path, "feat/x")
@@ -545,7 +569,7 @@ def test_rebump_fragments_mode_conflicted_changelog_refuses_tree_untouched(
     _write_changelog(
         tmp_path, "# Changelog\n\n## v1.1.0\n\n- feat entry\n\n## v1.0.0\n\n- initial\n"
     )
-    _commit_all(tmp_path, "feat: bump + entry")
+    commit_all(tmp_path, "feat: bump + entry")
 
     assert _merge_no_commit(tmp_path, "main") != 0
 
@@ -564,16 +588,16 @@ def test_rebump_no_changelog_file_action_on_clean_tree(tmp_path: Path) -> None:
     """Clean tree, shared-heading mode, but no CHANGELOG.md — "no-changelog" action."""
     init_git_repo(tmp_path)
     _write_plugin(tmp_path, "1.0.0")
-    _commit_all(tmp_path, "release v1.0.0")
+    commit_all(tmp_path, "release v1.0.0")
     _tag(tmp_path, "v1.0.0")
 
     _checkout_new_branch(tmp_path, "feat/x")
     _write_plugin(tmp_path, "1.1.0")
-    _commit_all(tmp_path, "feat: bump")
+    commit_all(tmp_path, "feat: bump")
 
     _checkout(tmp_path, "main")
     _write_plugin(tmp_path, "1.1.0")
-    _commit_all(tmp_path, "other: bump, released")
+    commit_all(tmp_path, "other: bump, released")
     _tag(tmp_path, "v1.1.0")
     _checkout(tmp_path, "feat/x")
 
@@ -591,7 +615,7 @@ def test_rebump_already_correct_keeps_own_version_marks_changelog_unchanged(
     init_git_repo(tmp_path)
     _write_plugin(tmp_path, "1.0.0")
     _write_changelog(tmp_path, "# Changelog\n\n## v1.0.0\n\n- initial\n")
-    _commit_all(tmp_path, "release v1.0.0")
+    commit_all(tmp_path, "release v1.0.0")
     _tag(tmp_path, "v1.0.0")
 
     _checkout_new_branch(tmp_path, "feat/x")
@@ -599,7 +623,7 @@ def test_rebump_already_correct_keeps_own_version_marks_changelog_unchanged(
     _write_changelog(
         tmp_path, "# Changelog\n\n## v1.1.0\n\n- feat entry\n\n## v1.0.0\n\n- initial\n"
     )
-    _commit_all(tmp_path, "feat: bump + entry")
+    commit_all(tmp_path, "feat: bump + entry")
 
     outcome = rebump.rebump(tmp_path)
 
@@ -613,12 +637,12 @@ def test_rebump_full_noop_stages_nothing_in_the_index(tmp_path: Path) -> None:
     """A fully-resolved branch touches the git index not at all, not just returns ()."""
     init_git_repo(tmp_path)
     _write_plugin(tmp_path, "1.0.0")
-    _commit_all(tmp_path, "release v1.0.0")
+    commit_all(tmp_path, "release v1.0.0")
     _tag(tmp_path, "v1.0.0")
 
     _checkout_new_branch(tmp_path, "feat/x")
     _write_plugin(tmp_path, "1.1.0")
-    _commit_all(tmp_path, "feat: bump")
+    commit_all(tmp_path, "feat: bump")
 
     outcome = rebump.rebump(tmp_path)
 
@@ -684,6 +708,26 @@ def test_render_plugin_version_raises_when_no_version_field(tmp_path: Path) -> N
         rebump._render_plugin_version(tmp_path, "1.0.0", mid_merge=False)
 
 
+def test_render_plugin_version_refuses_json_escape_injection(tmp_path: Path) -> None:
+    r"""A version field carrying JSON escapes must refuse, never write broken JSON.
+
+    CWE-116 regression pin: a branch-authored ``"version"`` like
+    ``99.0.0\\", \\"pwned\\": \\"x`` defeats the textual rewrite (the regex
+    stops at the payload's first embedded quote), so the fail-closed
+    post-rewrite validation must raise instead of returning corrupt text.
+    """
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text(
+        '{\n  "name": "forge",\n'
+        '  "version": "99.0.0\\", \\"pwned\\": \\"x",\n'
+        '  "other": "field"\n}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(rebump._RefusalError, match=r"invalid JSON|did not land"):
+        rebump._render_plugin_version(tmp_path, "99.0.0", mid_merge=False)
+
+
 # ---------------------------------------------------------------------------
 # _read_index_stage
 # ---------------------------------------------------------------------------
@@ -693,16 +737,16 @@ def test_read_index_stage_reads_base_ours_and_theirs(tmp_path: Path) -> None:
     """A real conflicted file's stages 1/2/3 read the base/ours/theirs blobs."""
     init_git_repo(tmp_path)
     (tmp_path / "shared.txt").write_text("base\n")
-    _commit_all(tmp_path, "add shared.txt")
+    commit_all(tmp_path, "add shared.txt")
 
     _checkout_new_branch(tmp_path, "other")
     (tmp_path / "shared.txt").write_text("theirs\n")
-    _commit_all(tmp_path, "other edit")
+    commit_all(tmp_path, "other edit")
     _checkout(tmp_path, "main")
 
     _checkout_new_branch(tmp_path, "feat/x")
     (tmp_path / "shared.txt").write_text("ours\n")
-    _commit_all(tmp_path, "feat edit")
+    commit_all(tmp_path, "feat edit")
 
     assert _merge_no_commit(tmp_path, "other") != 0
 
@@ -715,7 +759,7 @@ def test_read_index_stage_missing_stage_returns_none(tmp_path: Path) -> None:
     """A path with no conflict (never staged as unmerged) has no stage entries."""
     init_git_repo(tmp_path)
     (tmp_path / "a.txt").write_text("x\n")
-    _commit_all(tmp_path, "add a.txt")
+    commit_all(tmp_path, "add a.txt")
     assert rebump._read_index_stage(tmp_path, 2, "a.txt") is None
 
 
@@ -728,15 +772,15 @@ def test_main_exit_0_logs_resolution(
     """A successful rebump exits 0 and logs the resolved version + staged paths."""
     init_git_repo(tmp_path)
     _write_plugin(tmp_path, "1.0.0")
-    _commit_all(tmp_path, "release v1.0.0")
+    commit_all(tmp_path, "release v1.0.0")
     _tag(tmp_path, "v1.0.0")
     _checkout_new_branch(tmp_path, "feat/x")
     _write_plugin(tmp_path, "1.1.0")
-    _commit_all(tmp_path, "feat: bump")
+    commit_all(tmp_path, "feat: bump")
 
     _checkout(tmp_path, "main")
     _write_plugin(tmp_path, "1.1.0")
-    _commit_all(tmp_path, "other: bump, released")
+    commit_all(tmp_path, "other: bump, released")
     _tag(tmp_path, "v1.1.0")
     _checkout(tmp_path, "feat/x")
 
@@ -772,11 +816,11 @@ def test_main_nothing_to_stage_logs_that_message(
     """A fully-resolved branch exits 0 and logs the nothing-to-stage message."""
     init_git_repo(tmp_path)
     _write_plugin(tmp_path, "1.0.0")
-    _commit_all(tmp_path, "release v1.0.0")
+    commit_all(tmp_path, "release v1.0.0")
     _tag(tmp_path, "v1.0.0")
     _checkout_new_branch(tmp_path, "feat/x")
     _write_plugin(tmp_path, "1.1.0")
-    _commit_all(tmp_path, "feat: bump")
+    commit_all(tmp_path, "feat: bump")
 
     monkeypatch.setattr(rebump.Path, "cwd", staticmethod(lambda: tmp_path))
     monkeypatch.setattr("sys.argv", ["forge-rebump"])
