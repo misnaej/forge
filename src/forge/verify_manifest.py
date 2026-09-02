@@ -31,10 +31,12 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
-# Strict bare semver — no ``v`` prefix, no suffixes, no whitespace. The
-# manifest carries the exact release triple; anything else is either a
-# mistake or a payload (module-local by convention, like next_prep's).
-_STRICT_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+# Strict bare semver — no ``v`` prefix, no suffixes, no whitespace.
+# Applied via fullmatch (``$`` alone would tolerate one trailing
+# newline). The manifest carries the exact release triple; anything else
+# is either a mistake or a payload (module-local by convention, like
+# next_prep's).
+_STRICT_SEMVER_RE = re.compile(r"\d+\.\d+\.\d+")
 
 
 def _parse_json_error(manifest: Path) -> str | None:
@@ -84,7 +86,7 @@ def _version_error(manifest: Path) -> str | None:
         return (
             f"{manifest.name}: version must be a string, got {type(version).__name__}"
         )
-    if not _STRICT_SEMVER_RE.match(version):
+    if not _STRICT_SEMVER_RE.fullmatch(version):
         return (
             f"{manifest.name}: version {version!r} is not bare semver "
             "(expected X.Y.Z — no v prefix, no suffix)"

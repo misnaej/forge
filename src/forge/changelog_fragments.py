@@ -27,6 +27,10 @@ Usage:
   fragment deletions (never commits).
 - ``forge-changelog check`` — validate pending fragments (the same gate
   the ``changelog_version`` pre-commit step runs in fragment mode).
+- ``forge-changelog restrand`` — shared-heading repos only: mechanically
+  move entries stranded under a released heading to the next open
+  ``## vX.Y.Z`` slot (self-skips in fragment mode, where entries cannot
+  strand); stages ``CHANGELOG.md``, never commits.
 """
 
 from __future__ import annotations
