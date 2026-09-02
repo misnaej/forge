@@ -741,10 +741,12 @@ true` when opting into deferred mode.
 
 | Key | Default | What it does |
 |---|---|---|
-| `hold_newest_minor` | `false` | Withhold the newest dev minor from promotion until its successor tags: `forge-next-prep --promotion-status` lists it as held (visible line, never a silent cap) and `forge-check-main-tags` refuses to relocate it. Keeps `@dev` version derivation clean across promotions — see `docs/release-process.md` §2. |
+| `hold_newest_minor` | `false` | Withhold the newest dev minor from promotion until its successor tags: `forge-next-prep --promotion-status` lists it as held (visible line, never a silent cap) and `forge-check-main-tags` refuses to relocate it. Keeps `@dev` version derivation clean across promotions. |
 
-A forge-repo mechanism: forge's own `pyproject.toml` sets it; the default
-(off) leaves consumers — dual-track ones included — exactly as before.
+A dual-track mechanism (forge itself is single-track and no longer sets
+it — see `docs/release-process.md`, "Deprecated: dual-track"); the
+default (off) leaves consumers — dual-track ones included — exactly as
+before.
 
 ## `[tool.forge.badges]` — README status badges
 

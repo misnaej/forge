@@ -301,9 +301,7 @@ graph LR
   sk_promote(["/promote<br/>skill"])
   main_agent -->|runs| sk_next
   main_agent -->|runs| sk_promote
-  sk_next -->|chains| sk_promote
   sk_next -->|invokes| cli_forge_next_prep
-  sk_next -->|invokes| cli_forge_check_main_tags
   sk_promote -->|invokes| cli_forge_changelog
   class human person
   class main_agent orchestrator

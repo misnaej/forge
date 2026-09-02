@@ -2,21 +2,21 @@
 
 Notable changes to forge, by release on **`main`**.
 
-forge's slow channel (`@main`) ships **minor releases only** — patches
-accumulate on `dev` between minors and fold into the next minor's
-promotion. Pin `@main` to track the entries below; pin `@dev` for every
-patch. Each entry corresponds to one `dev → main` promotion.
+Every forge release ships on `main` — pin `@main` to track the entries
+below, or pin a `vX.Y.Z` tag to freeze. Each release's entry is
+assembled at release time from the per-PR `changelog.d/` fragments its
+PRs shipped.
 
-**Reading this as a forge consumer.** You're usually jumping several
-minors at once: read every entry newer than your current version, top to
-bottom, and read each **⚠️ Upgrade notes** lane first — that's the
-actions your repo may need (breaking changes, config, new mandatory
-behavior). Releases without that lane are additive or internal and need
-nothing from you.
+**Reading this as a forge consumer.** When jumping several versions at
+once: read every entry newer than your current version, top to bottom,
+and read each **⚠️ Upgrade notes** lane first — that's the actions your
+repo may need (breaking changes, config, new mandatory behavior).
+Releases without that lane are additive or internal and need nothing
+from you.
 
 **Format.** Per release: an optional **⚠️ Upgrade notes** lane, then
 change groups by conventional-commit type (**Features / Fixes / Refactor
-/ Tooling / Docs / Chore**) mirroring the promotion squash message.
+/ Tooling / Docs / Chore**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 

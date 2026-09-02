@@ -59,9 +59,9 @@ silently merge.** Which variant depends on Step 0:
   set and the branch is feature work, else the repo default branch).
 
 - **`mergeable: CONFLICTING`** → do not finalize yet. Resolve by
-  merging the base in (`git merge origin/<base>`, resolve conflicts —
-  CHANGELOG per `docs/release-process.md` §5, care per FOUNDATION §6's
-  resolution rule), then re-run from Step 0.5. When the conflict is
+  merging the base in (`git merge origin/<base>`, resolve conflicts
+  with care per FOUNDATION §6's resolution rule), then re-run from Step
+  0.5. When the conflict is
   confined to `.claude-plugin/plugin.json` + `CHANGELOG.md` (the
   rolling-next version-slot collision), run **`forge-rebump`** instead
   of hand-resolving: it classifies the branch's bump intent, takes the
@@ -181,8 +181,8 @@ Documentation must stay in sync with code. For each item below, update **only if
     [`docs/consumer-release.md`](../../docs/consumer-release.md) (which
     owns the heading format, grouping, and timing rules). Skip silently
     when there is no root `CHANGELOG.md`, and on repos whose changelog
-    is written at release/promotion time instead of per PR (e.g. a
-    dual-track plugin repo per
+    is written at release time instead of per PR (e.g. a
+    fragments-mode plugin repo per
     [`docs/release-process.md`](../../docs/release-process.md)) —
     follow that repo's own release process. In deferred-mode repos
     (`[tool.forge.changelog].precommit_enforce = false`) this step is

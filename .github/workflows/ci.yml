@@ -4,14 +4,14 @@
 name: CI
 
 # Runs the same checks the local pre-commit hook runs, on every PR + push to
-# `main` or `dev`. Everything is invoked via forge's own CLIs
+# `main`. Everything is invoked via forge's own CLIs
 # (`forge-precommit`, `verify-forge-docstrings`, `forge-doctor`,
 # `install-forge-claude-md`) — no bash duplication of what those CLIs already
 # do. If the hook passes locally, CI passes here.
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
     # ready_for_review added to the default trigger set so a draft opened
     # via /pr's escape hatch gets its first CI run when marked ready.

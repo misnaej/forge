@@ -19,15 +19,14 @@ dev = [
 ]
 ```
 
-`@main` = slow channel (minor releases only). `@dev` = fast channel
-(every patch). See the [release-channel table](../README.md#pick-a-release-channel)
-in the README.
+`@main` = every release (forge is single-track). See the
+[pin table](../README.md#pick-a-pin) in the README.
 
 A tag pin (`@v1.9.1`) is also supported for one-off frozen releases.
 For ongoing automated upgrades the channel pin is the recommended
 default: it requires no per-version maintenance and the scheduled
 workflow below handles the rest. Switching an existing branch pin to a
-tag pin? Read ["About `@main` / `@dev` pins"](../README.md#about-main--dev-pins)
+tag pin? Read ["About branch pins (`@main`)"](../README.md#about-branch-pins-main)
 first — branch-only refresh wrappers silently stop updating forge after
 the switch; `forge-upgrade` and `forge-doctor` now detect the mismatch.
 
@@ -261,7 +260,7 @@ jobs:
 How it works:
 
 - `forge-upgrade --apply` force-reinstalls `forge-scripts` from the
-  channel ref (`@main` / `@dev`) and re-runs `install-forge-bootstrap`.
+  pinned ref (`@main`) and re-runs `install-forge-bootstrap`.
   Because pip caches branch refs by `(package_name, version)`, the
   `--force-reinstall --no-deps` inside `--apply` is what actually
   pulls the new content; a plain `pip install` would silent-no-op.
@@ -287,7 +286,7 @@ Pick a cadence that matches how aggressively you want forge updates:
 
 ### Scheduled resync (drift without a pin change)
 
-An `@main`- or `@dev`-pinned repo drifts even when its pin never moves:
+An `@main`-pinned repo drifts even when its pin never moves:
 each forge release changes the canonical content of committed managed
 artifacts (`FOUNDATION.md`, generated docs, hook wrappers). Upgrade ≠
 resync — the workflow above PRs *pin* changes; `forge-resync` PRs the
@@ -379,13 +378,13 @@ branch checkout. Only the `push` trigger is safe here — never run a
 
 ### Dual-track plugin repos (manifest-declared version)
 
-Same idea, tagging the fast channel with the rolling-next version from
+Same idea, tagging with the rolling-next version from
 `.claude-plugin/plugin.json`. **The reference implementation is forge's
 own `.github/workflows/tag-release.yml`** — a workflow separate from
-the read-only CI one, gated via `workflow_run`, with a second job that
-relocates promoted minor tags on pushes to the base branch
-(`forge-check-main-tags --fix`). Copy that file, not a trimmed
-illustration.
+the read-only CI one, gated via `workflow_run` (single-track: one
+tag-on-merge job). A dual-track repo adds a second, equally-gated job
+on pushes to its base branch that relocates promoted minor tags
+(`forge-check-main-tags --fix`).
 
 One `workflow_run` gotcha: GitHub evaluates the trigger from the
 workflow definition on the repo's **default branch** — a

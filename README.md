@@ -208,13 +208,14 @@ from GitHub:
 pip install --upgrade "git+https://github.com/misnaej/forge.git@main"
 ```
 
-Pin to a specific version or channel:
+Pin to the release branch or a specific version:
 
 | Pin | Cadence |
 |---|---|
-| `@main` | Slow channel — minor versions only; trails `dev`'s newest minor by one release, by design |
-| `@dev` | Fast channel — every patch |
+| `@main` | Every release, as it ships |
 | `@v1.3.0` | Frozen at a specific tag |
+
+(`@dev` is deprecated — pin `@main` or a tag instead.)
 
 For a project's `pyproject.toml`:
 
@@ -365,9 +366,9 @@ Two commands cover the lifecycle:
 - **`forge-upgrade --apply`** — full one-shot upgrade for human-run
   setup scripts: rewrites the pin, runs the force-reinstall pip
   command, then runs `install-forge-bootstrap`. Use this when your
-  consumer pins forge to `@main` / `@dev` (a moving branch ref);
+  consumer pins forge to `@main` (a moving branch ref);
   without the force-reinstall, pip silently freezes at the first
-  install — see ["About `@main` / `@dev` pins"](#about-main--dev-pins)
+  install — see ["About branch pins (`@main`)"](#about-branch-pins-main)
   below.
 
 **`Makefile`**
@@ -390,7 +391,7 @@ upgrade:
 set -euo pipefail
 pip install -e ".[dev]"
 install-forge-bootstrap
-# After upgrades: `forge-upgrade --apply --channel main` (or @dev / @vX.Y.Z)
+# After upgrades: `forge-upgrade --apply --channel main` (or @vX.Y.Z)
 ```
 
 **`uv` project**
@@ -418,7 +419,7 @@ The CLI inspects on-disk state to decide what each step needs to do —
 first-time install or refresh after a forge bump. No `--update` flag
 needed.
 
-### About `@main` / `@dev` pins
+### About branch pins (`@main`)
 
 When your `pyproject.toml` pins forge via a branch ref
 (`forge-scripts @ git+https://github.com/.../forge.git@main`), pip
@@ -475,7 +476,7 @@ in a CI job:
 
 ### The recipe
 
-Channel-pinned forge (`@main` / `@dev`) + a scheduled GitHub Actions
+Branch-pinned forge (`@main`) + a scheduled GitHub Actions
 workflow that runs `forge-upgrade --apply` and opens a PR whenever
 the upgrade produces a diff. No third-party bot, no per-version pin
 maintenance, every upgrade exercised by your own CI before it
@@ -542,18 +543,17 @@ command in the warning line.
 
 ## Upgrading forge in your repo
 
-### Pick a release channel
+### Pick a pin
 
-Forge ships on two channels — pin whichever fits your update cadence:
+Every forge release ships on `main` — pin the branch or a tag:
 
 | Pin target | Cadence | Best for |
 |---|---|---|
-| `@main` | Minor-only (`vX.Y.0`) | Repos that want fewer, larger updates after dev-channel bake time |
-| `@dev`  | Every patch (`vX.Y.Z`)  | Repos that want every fix as it ships |
+| `@main` | Every release (`vX.Y.Z`) | Repos that track forge as it ships |
 | `@v1.2.3` | Frozen at a specific version | CI / production pinning |
 
-Both channels publish stable semver. Neither is pre-release. The
-difference is cadence, not stability tier.
+`@dev` is deprecated — pin `@main` or a tag instead
+(`forge-upgrade --channel main`).
 
 ### Upgrade flow
 
@@ -563,8 +563,7 @@ agents from running `pip install`:
 
 ```bash
 # Phase 1 — rewrite the pin + print the exact pip command.
-forge-upgrade --channel main          # pin @main (slow channel)
-forge-upgrade --channel dev           # pin @dev (every patch)
+forge-upgrade --channel main          # pin @main (every release)
 forge-upgrade --to v1.3.0             # pin a specific tag
 forge-upgrade --check                 # dry-run; print without writing
 
@@ -582,7 +581,7 @@ The same upgrade run by hand:
 
 ```bash
 # 1. Bump the pin in pyproject.toml.
-#    "forge-scripts @ git+https://github.com/misnaej/forge.git@v1.3.0"   (or @main / @dev)
+#    "forge-scripts @ git+https://github.com/misnaej/forge.git@v1.3.0"   (or @main)
 pip install --upgrade --force-reinstall --no-deps \
     "forge-scripts @ git+https://github.com/misnaej/forge.git@v1.3.0"
 

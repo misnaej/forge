@@ -1,0 +1,2 @@
+bump: patch
+- **forge is single-track now** — the dual-track dev/main model is retired: every PR targets `main`, every merge tags, and the `@dev` channel is deprecated (pin `@main`, or a tag for stability). Promotion machinery self-skips (`dev_branch == base_branch`) and will be deleted in a follow-up major. Patch, not major: no shipped capability changes — the `/next` skill's promotion phase was forge's own dogfood instruction (consumers substitute their own release step, and the underlying CLI advisory still fires for dual-track consumers).

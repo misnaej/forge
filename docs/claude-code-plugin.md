@@ -24,7 +24,7 @@ merge-preserving; also run by `install-forge-bootstrap`):
 
 ```bash
 install-forge-claude-settings        # marketplace ref tracks your pip pin, else main
-install-forge-claude-settings --ref dev    # or pin a channel explicitly
+install-forge-claude-settings --ref main   # or pin a ref explicitly
 install-forge-claude-settings --check      # verify only (CI / drift)
 ```
 
@@ -62,10 +62,10 @@ To pin a specific plugin version (recommended):
 Keep two version pins aligned: the pip `forge-scripts @ ...@vX.Y.Z` dep
 and the Claude plugin version. Releases bump both together.
 
-## Switching channels (dev ↔ main)
+## Changing the marketplace `ref`
 
-To move between forge release channels — `main` (tagged releases) and
-`dev` (rolling-next, where new work lands first) — editing the `ref`
+To change the ref the forge marketplace is pinned to (`main` ↔ a
+specific tag, or a fork's branch), editing the `ref`
 field in `~/.claude/settings.json` and running `/plugin marketplace
 update forge` is **not enough**. Claude Code keeps the cached
 marketplace `ref` frozen at the value it was first registered with.
@@ -79,9 +79,9 @@ forge skills loaded.
 ```
 
 Then edit `~/.claude/settings.json` by hand: in the `forge.source`
-block, add or change `"ref": "dev"` (or `"main"`). This is the step
-that actually changes channels — the slash commands alone cannot
-update an already-cached marketplace `ref`.
+block, add or change `"ref"` to the target (e.g. `"main"` or a tag).
+This is the step that actually changes the pin — the slash commands
+alone cannot update an already-cached marketplace `ref`.
 
 ```
 /plugin marketplace update forge

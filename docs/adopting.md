@@ -207,7 +207,7 @@ forge-upgrade --continue              # phase 2: install-forge-bootstrap re-sync
 
 After a successful upgrade, forge prints the **⚠️ Upgrade notes** for the
 new releases (the consumer-action items) — review any newer than your
-previous version. Channel choice (`@main` minors-only vs `@dev` every
-version vs a `@vX.Y.Z` pin) and the full flow:
+previous version. Pin choice (`@main` every release vs a frozen
+`@vX.Y.Z` tag) and the full flow:
 [`Upgrading forge`](../README.md#upgrading-forge-in-your-repo). CI
 integration: [`ci-recipe.md`](../forge-docs/ci-recipe.md).
