@@ -1,2 +1,0 @@
-bump: minor
-- **`forge-changelog restrand`** — mechanical repair for stranded changelog entries in shared-heading repos (no plugin manifest required): moves exactly the entries this branch added under released headings to the next open heading (`--bump patch|minor|major`, default patch), self-verifies against the gate's own detectors, stages, never commits. Stranded-gate messages and the `/pr` skill now route to it.

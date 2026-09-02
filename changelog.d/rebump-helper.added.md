@@ -1,2 +1,0 @@
-bump: minor
-- **`forge-rebump` CLI** — mechanically resolves the rolling-next `plugin.json` version-slot collision (and, in shared-heading changelog repos, the CHANGELOG stack) on a feature branch, mid-merge or after another PR's merge consumed the slot. Classifies the branch's own bump intent from its fork-point manifest delta, refuses loudly on unrelated conflicts, stages the result, never commits.
