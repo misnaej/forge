@@ -282,6 +282,15 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "to blocking — severity vs timing.",
     ),
     ConfigKey(
+        ("tool", "forge", "changelog", "mode"),
+        "headings",
+        "Changelog model: 'headings' (default — per-PR bullets under the "
+        "shared top `## vX.Y.Z` heading) or 'fragments' (per-PR "
+        "changelog.d/<slug>.<type>.md files, level-only bump front-matter, "
+        "assembled into CHANGELOG.md once at release by forge-changelog — "
+        "zero merge conflicts by construction).",
+    ),
+    ConfigKey(
         ("tool", "forge", "layering", "paths"),
         "unset (source_dirs → auto-detect)",
         "Granular scan-root override for forge-audit-layering (source-only "

@@ -58,6 +58,7 @@ forge-doctor = "forge.doctor:main"
 forge-next-prep = "forge.next_prep:main"
 forge-check-main-tags = "forge.verify_main_tags:main"
 forge-release = "forge.release:main"
+forge-changelog = "forge.changelog_fragments:main"
 forge-smart-test = "forge.smart_test.cli:main"
 forge-precommit = "forge.precommit:main"
 forge-post-merge = "forge.post_merge:main"
@@ -178,6 +179,9 @@ name = "smart-test"
 package = "forge.smart_test"
 composes_all_of = ["import-graph"]
 exempt = ["coverage", "git_helpers", "runner", "lifecycle"]
+
+[tool.forge.changelog]
+mode = "fragments"
 
 [tool.forge.smart_test]
 # Dogfood the depth model: commits run depth-2 selection; the

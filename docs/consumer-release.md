@@ -182,6 +182,40 @@ branch adds no changelog bullets for its stranded-entry check to flag.
   (`## v1.6.0 — 2026-07-01`), matching what `release_headings`
   recognizes, rather than KaC's bracketed `## [1.6.0] - 2026-07-01`.
 
+### Fragments mode (opt-in, zero merge conflicts)
+
+`[tool.forge.changelog].mode = "fragments"` replaces the shared-heading
+convention entirely. Each PR adds one unique file:
+
+```
+changelog.d/<slug>.<type>.md     # type: added|changed|fixed|removed|docs
+```
+
+whose first line is `bump: patch|minor|major` — the semver LEVEL only.
+A concrete version number anywhere in a fragment (filename or body) is
+invalid and gate-rejected: versions are written exactly once, by the
+assembler. The rest of the file is the entry's markdown, verbatim.
+
+Consequences, by design:
+
+- **Zero merge conflicts** — two PRs never touch the same file, and
+  levels aggregate by `max()` at release, so nothing needs manual
+  reconciliation per merge.
+- **CHANGELOG.md becomes an output, never an input.** It is assembled
+  once per release (`forge-changelog assemble --version vX.Y.Z
+  --delete`, run in the release/promotion flow's own commit), grouping
+  fragments by type in fixed order. No CI step or tool may read the
+  changelog as a version/bump signal in this mode — the
+  `changelog_version` step becomes the *fragment gate* (fragments parse,
+  levels valid, no version strings), and `changelog_updated` requires a
+  fragment instead of a CHANGELOG edit. The stranded-entries race cannot
+  occur: fragments carry no version to strand.
+- The trade-off: the changelog is no longer release-ready at all times —
+  which is exactly why the mode is opt-in.
+
+No-version opt-outs (`NO_VERSION=1`, branch token, commit marker) apply
+unchanged.
+
 ## Choosing the bump
 
 The same decision axis governs both forge's own manifest-versioned

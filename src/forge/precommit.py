@@ -81,6 +81,8 @@ from forge.changelog import (
     stranded_added_versions,
     wants_no_version,
 )
+from forge.changelog_fragments import FRAGMENTS_DIR
+from forge.changelog_fragments import check_pending as check_pending_fragments
 from forge.config import installed_console_scripts, resolve_model_section
 from forge.git_utils import (
     SCOPE_ALL,
@@ -1928,6 +1930,64 @@ def _tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool:
     )
 
 
+def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
+    """Check all skip conditions for changelog_version step.
+
+    Returns a complete StepResult to exit early, or None to continue
+    with the main tag/stranded-entries validation logic.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        A StepResult to skip/fragment-gate the step, or None to continue.
+    """
+    name = "changelog_version"
+    changelog = repo_root / "CHANGELOG.md"
+    if not changelog.exists():
+        return StepResult(
+            name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
+        )
+    if (repo_root / ".claude-plugin" / "plugin.json").exists():
+        return StepResult(
+            name=name,
+            passed=True,
+            output=(
+                "Manifest-versioned repo — verify-forge-plugin-version owns "
+                "the declared-version invariant; skipped."
+            ),
+            skipped=True,
+        )
+    cfg = config.load_config(repo_root)
+    if cfg.dual_track:
+        return StepResult(
+            name=name,
+            passed=True,
+            output="Dual-track repo — changelog is curated at promotion; skipped.",
+            skipped=True,
+        )
+    if _forge_step_config(repo_root, "changelog").get("mode") == "fragments":
+        # Fragment mode: CHANGELOG.md is an OUTPUT of release, never an
+        # input — no declared-version/stranded checks apply. The step
+        # becomes the FRAGMENT GATE instead of a bare skip: every
+        # pending fragment must parse (name, type, bump level) and carry
+        # no version-shaped string.
+        errors = check_pending_fragments(repo_root)
+        return StepResult(
+            name=name,
+            passed=not errors,
+            output=(
+                "Fragment mode — validated pending changelog.d/ fragments "
+                "(CHANGELOG.md is assembled at release, never read as a "
+                "version signal)."
+                if not errors
+                else "Fragment mode — invalid changelog.d/ fragment(s):\n"
+                + "\n".join(errors)
+            ),
+        )
+    return None
+
+
 def step_changelog_version(repo_root: Path) -> StepResult:
     """Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
 
@@ -1971,30 +2031,12 @@ def step_changelog_version(repo_root: Path) -> StepResult:
         StepResult; blocking unless ``[tool.forge.changelog].blocking``
         is ``false``.
     """
+    skip_result = _changelog_version_skip_gate(repo_root)
+    if skip_result is not None:
+        return skip_result
     name = "changelog_version"
-    changelog = repo_root / "CHANGELOG.md"
-    if not changelog.exists():
-        return StepResult(
-            name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
-        )
-    if (repo_root / ".claude-plugin" / "plugin.json").exists():
-        return StepResult(
-            name=name,
-            passed=True,
-            output=(
-                "Manifest-versioned repo — verify-forge-plugin-version owns "
-                "the declared-version invariant; skipped."
-            ),
-            skipped=True,
-        )
     cfg = config.load_config(repo_root)
-    if cfg.dual_track:
-        return StepResult(
-            name=name,
-            passed=True,
-            output="Dual-track repo — changelog is curated at promotion; skipped.",
-            skipped=True,
-        )
+    changelog = repo_root / "CHANGELOG.md"
     text = changelog.read_text(encoding="utf-8")
     # The gate's reference point is the live latest tag: a stale local
     # tag set wrongly accepts a behind-the-tag heading, and a CI
@@ -2082,47 +2124,20 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     )
 
 
-def step_changelog_updated(repo_root: Path) -> StepResult:
-    """Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
+def _changelog_updated_skip_gate(
+    repo_root: Path, cfg: config.ForgeConfig
+) -> StepResult | None:
+    """Check all skip conditions for changelog_updated step.
 
-    The per-PR freshness rule from ``docs/consumer-release.md``: every
-    change with a user-facing effect adds its bullet in the same PR, so
-    the changelog stays release-ready. Fails when the change set (branch
-    commits + staged + unstaged vs the base branch) touches a
-    changelog-requiring path but not ``CHANGELOG.md``.
-
-    Path policy: ``[tool.forge.changelog].require_paths`` prefixes always
-    require an entry (checked first), ``exempt_paths`` prefixes never do,
-    everything else requires one. Timing policy:
-    ``[tool.forge.changelog].precommit_enforce`` (default ``True``) gates
-    every local commit; when ``False`` (deferred mode) local runs — human
-    or agent — self-skip and the entry is written at PR wrap-up, while
-    genuine CI keeps failing (with an expected-until-wrap-up message) so
-    the entry cannot be forgotten — provided ``[tool.forge.changelog].blocking``
-    stays ``True``; with both ``False`` the CI failure degrades to a
-    non-blocking WARN and that guarantee no longer holds, so both the
-    local skip notice and the CI output carry an explicit caveat pointing
-    back at ``blocking = True``. Gated on ``is_ci()`` — NOT
-    ``is_non_interactive()``: agent-driven local commits are the primary
-    audience of the deferred skip and have a non-tty stdin (same
-    reasoning as :func:`step_changelog_version`'s tag-fetch gate). The
-    no-version opt-out
-    (:func:`forge.changelog.wants_no_version`) skips the gate on any of
-    three signals: a truthy ``NO_VERSION`` / ``SKIP_CHANGELOG_CHECK``
-    env var (local-only — absent in CI), a delimited ``no-version``
-    token in the branch name, or a ``[no-version]`` tag in a commit
-    message over ``<base>..HEAD`` (the two CI-durable forms). Self-skips
-    without a root ``CHANGELOG.md`` and on the base branch or a detached
-    HEAD with no ``GITHUB_HEAD_REF`` (it is a per-PR guard; branch
-    resolution via :func:`forge.git_utils.resolve_current_branch` keeps
-    the gate live on CI ``pull_request`` checkouts).
+    Returns a complete StepResult to exit early, or None to continue
+    with the changelog-freshness validation logic.
 
     Args:
         repo_root: Git repo root.
+        cfg: Loaded forge configuration.
 
     Returns:
-        StepResult; blocking unless ``[tool.forge.changelog].blocking``
-        is ``false``.
+        A StepResult to skip/defer the step, or None to continue.
     """
     name = "changelog_updated"
     changelog = repo_root / "CHANGELOG.md"
@@ -2130,7 +2145,6 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
         return StepResult(
             name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
         )
-    cfg = config.load_config(repo_root)
     resolved = resolve_current_branch(repo_root)
     current = resolved[0] if resolved is not None else ""
     if not current or current == cfg.base_branch:
@@ -2175,20 +2189,116 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
             output=output,
             skipped=True,
         )
-    exempt = tuple(_cfg_str_list(step_cfg, "exempt_paths", []))
-    require = tuple(_cfg_str_list(step_cfg, "require_paths", []))
-    # drop_deleted=False: a deleted file is still a change that may require
-    # a changelog entry — the default would silently exempt deletions.
-    files = config.select_diff_files(repo_root, suffix="", drop_deleted=False)
-    triggers = [
+    return None
+
+
+def _changelog_triggers(
+    files: list[str],
+    require: tuple[str, ...],
+    exempt: tuple[str, ...],
+) -> list[str]:
+    """Return changed files that require a changelog entry.
+
+    Changelog artifacts themselves (``CHANGELOG.md``, ``changelog.d/``
+    fragments) never trigger; ``require`` narrows to matching prefixes,
+    otherwise ``exempt`` prefixes are excluded.
+
+    Args:
+        files: Changed files from the diff.
+        require: Paths that require changelog entries.
+        exempt: Paths exempt from requiring entries.
+
+    Returns:
+        The triggering subset of *files*, order preserved.
+    """
+    return [
         path
         for path in files
         if path != "CHANGELOG.md"
+        and not path.startswith(f"{FRAGMENTS_DIR}/")
         and (
             (require and path.startswith(require))
             or not (exempt and path.startswith(exempt))
         )
     ]
+
+
+def _handle_fragment_mode(
+    repo_root: Path,
+    files: list[str],
+    require: tuple[str, ...],
+    exempt: tuple[str, ...],
+) -> StepResult:
+    """Handle fragment-mode changelog validation.
+
+    Args:
+        repo_root: Git repo root.
+        files: Changed files from the diff.
+        require: Paths that require changelog entries.
+        exempt: Paths exempt from requiring entries.
+
+    Returns:
+        StepResult for the changelog_updated step.
+    """
+    name = "changelog_updated"
+    triggers = _changelog_triggers(files, require, exempt)
+    has_fragment = any(p.startswith(f"{FRAGMENTS_DIR}/") for p in files)
+    if triggers and not has_fragment:
+        blocking = _changelog_blocking(repo_root)
+        return StepResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(triggers)} changed file(s) require a changelog "
+                f"fragment (first: {triggers[0]}). Add "
+                f"{FRAGMENTS_DIR}/<slug>.<type>.md with a "
+                "'bump: patch|minor|major' first line "
+                "(docs/consumer-release.md, fragments mode). "
+                "No-version opt-outs apply unchanged."
+            ),
+            non_blocking=not blocking,
+        )
+    frag_errors = check_pending_fragments(repo_root)
+    if frag_errors:
+        return StepResult(
+            name=name,
+            passed=False,
+            output="Invalid changelog.d/ fragment(s):\n" + "\n".join(frag_errors),
+            non_blocking=not _changelog_blocking(repo_root),
+        )
+    return StepResult(
+        name=name,
+        passed=True,
+        output=(
+            "Changelog fragment present alongside the change set."
+            if triggers
+            else "No changelog-requiring changes."
+        ),
+    )
+
+
+def _handle_standard_mode(
+    repo_root: Path,
+    files: list[str],
+    *,
+    enforce: bool,
+    require: tuple[str, ...],
+    exempt: tuple[str, ...],
+) -> StepResult:
+    """Handle standard-mode changelog validation.
+
+    Args:
+        repo_root: Git repo root.
+        files: Changed files from the diff.
+        enforce: Whether precommit enforcement is enabled.
+        require: Paths that require changelog entries.
+        exempt: Paths exempt from requiring entries.
+
+    Returns:
+        StepResult for the changelog_updated step.
+    """
+    name = "changelog_updated"
+    triggers = _changelog_triggers(files, require, exempt)
     if triggers and "CHANGELOG.md" not in files:
         if enforce:
             output = (
@@ -2228,6 +2338,67 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
             if triggers
             else "No changelog-requiring changes."
         ),
+    )
+
+
+def step_changelog_updated(repo_root: Path) -> StepResult:
+    """Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
+
+    The per-PR freshness rule from ``docs/consumer-release.md``: every
+    change with a user-facing effect adds its bullet in the same PR, so
+    the changelog stays release-ready. Fails when the change set (branch
+    commits + staged + unstaged vs the base branch) touches a
+    changelog-requiring path but not ``CHANGELOG.md``.
+
+    Path policy: ``[tool.forge.changelog].require_paths`` prefixes always
+    require an entry (checked first), ``exempt_paths`` prefixes never do,
+    everything else requires one. Timing policy:
+    ``[tool.forge.changelog].precommit_enforce`` (default ``True``) gates
+    every local commit; when ``False`` (deferred mode) local runs — human
+    or agent — self-skip and the entry is written at PR wrap-up, while
+    genuine CI keeps failing (with an expected-until-wrap-up message) so
+    the entry cannot be forgotten — provided ``[tool.forge.changelog].blocking``
+    stays ``True``; with both ``False`` the CI failure degrades to a
+    non-blocking WARN and that guarantee no longer holds, so both the
+    local skip notice and the CI output carry an explicit caveat pointing
+    back at ``blocking = True``. Gated on ``is_ci()`` — NOT
+    ``is_non_interactive()``: agent-driven local commits are the primary
+    audience of the deferred skip and have a non-tty stdin (same
+    reasoning as :func:`step_changelog_version`'s tag-fetch gate). The
+    no-version opt-out
+    (:func:`forge.changelog.wants_no_version`) skips the gate on any of
+    three signals: a truthy ``NO_VERSION`` / ``SKIP_CHANGELOG_CHECK``
+    env var (local-only — absent in CI), a delimited ``no-version``
+    token in the branch name, or a ``[no-version]`` tag in a commit
+    message over ``<base>..HEAD`` (the two CI-durable forms). Self-skips
+    without a root ``CHANGELOG.md`` and on the base branch or a detached
+    HEAD with no ``GITHUB_HEAD_REF`` (it is a per-PR guard; branch
+    resolution via :func:`forge.git_utils.resolve_current_branch` keeps
+    the gate live on CI ``pull_request`` checkouts).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        StepResult; blocking unless ``[tool.forge.changelog].blocking``
+        is ``false``.
+    """
+    cfg = config.load_config(repo_root)
+    skip_result = _changelog_updated_skip_gate(repo_root, cfg)
+    if skip_result is not None:
+        return skip_result
+    step_cfg = _forge_step_config(repo_root, "changelog")
+    exempt = tuple(_cfg_str_list(step_cfg, "exempt_paths", []))
+    require = tuple(_cfg_str_list(step_cfg, "require_paths", []))
+    fragments_mode = step_cfg.get("mode") == "fragments"
+    # drop_deleted=False: a deleted file is still a change that may require
+    # a changelog entry — the default would silently exempt deletions.
+    files = config.select_diff_files(repo_root, suffix="", drop_deleted=False)
+    if fragments_mode:
+        return _handle_fragment_mode(repo_root, files, require, exempt)
+    enforce = bool(step_cfg.get("precommit_enforce", True))
+    return _handle_standard_mode(
+        repo_root, files, enforce=enforce, require=require, exempt=exempt
     )
 
 

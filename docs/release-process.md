@@ -127,6 +127,14 @@ test. When you find an invariant with no test, that gap is a bug to close.
 
 ## 5. CHANGELOG at release
 
+> **Fragments mode note**: with `[tool.forge.changelog].mode =
+> "fragments"`, dev accumulates `changelog.d/` files and the promotion
+> release-branch commit is the single assembly point — `forge-changelog
+> assemble --version vX.Y.Z --delete` collates them for curation and
+> stages their deletion; the release fingerprint tolerates both the
+> CHANGELOG divergence and the fragment deletions
+> (`git_utils._RELEASE_EQUAL_IGNORE`).
+
 `CHANGELOG.md` is the **`@main` channel log**: one **curated, condensed
 entry per promoted minor** (`vX.Y.0`). The slow channel ships minors
 only, so patches do **not** get their own entry — they fold into the next

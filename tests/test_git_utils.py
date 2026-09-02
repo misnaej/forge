@@ -1804,6 +1804,69 @@ def test_release_fingerprint_none_when_tree_is_only_changelog(tmp_path: Path) ->
     assert git_utils.release_tree_fingerprint(tmp_path, "HEAD") is None
 
 
+def test_release_fingerprint_equal_when_only_changelog_fragments_differ(
+    tmp_path: Path,
+) -> None:
+    """Two commits differing ONLY under `changelog.d/*.md` share a fingerprint.
+
+    Fragment mode's pending entries are excluded the same way
+    `CHANGELOG.md` is — they're deleted at assembly, so their presence or
+    content must never affect the release-equal comparison.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "a.py").write_text("x = 1\n")
+    (tmp_path / "changelog.d").mkdir()
+    (tmp_path / "changelog.d" / "note.added.md").write_text("bump: minor\n- x\n")
+    _commit_all(tmp_path, "base")
+    base_fp = git_utils.release_tree_fingerprint(tmp_path, "HEAD")
+    # Change ONLY the pending fragment.
+    (tmp_path / "changelog.d" / "note.added.md").write_text("bump: minor\n- y\n")
+    _commit_all(tmp_path, "fragment only")
+    assert git_utils.release_tree_fingerprint(tmp_path, "HEAD") == base_fp
+
+
+def test_release_fingerprint_differs_for_changelog_md_prefix_similar_path(
+    tmp_path: Path,
+) -> None:
+    """A `CHANGELOG.md.orig` file is NOT excluded — guards the exact-match boundary.
+
+    `CHANGELOG.md.orig` shares its first eleven characters with
+    `CHANGELOG.md`; a naive prefix check (rather than the exact-equality
+    match `_release_ignored` uses for non-directory entries) would
+    wrongly swallow it too. Symmetric with
+    ``test_release_fingerprint_differs_for_prefix_similar_non_fragment_path``,
+    which guards the same boundary for the ``changelog.d/`` member.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "CHANGELOG.md.orig").write_text("x\n")
+    _commit_all(tmp_path, "base")
+    base_fp = git_utils.release_tree_fingerprint(tmp_path, "HEAD")
+    (tmp_path / "CHANGELOG.md.orig").write_text("y\n")
+    _commit_all(tmp_path, "prefix-similar path changed")
+    assert git_utils.release_tree_fingerprint(tmp_path, "HEAD") != base_fp
+
+
+def test_release_fingerprint_differs_for_prefix_similar_non_fragment_path(
+    tmp_path: Path,
+) -> None:
+    """A `changelog.dev/` path is NOT excluded — guards `startswith` over-matching.
+
+    `changelog.dev/` shares its first ten characters with `changelog.d/`;
+    a naive prefix check that forgot the trailing slash would wrongly
+    exclude it too. The trailing slash in `_RELEASE_EQUAL_IGNORE` makes
+    this an ordinary tracked file, so a change to it still moves the
+    fingerprint.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "changelog.dev").mkdir()
+    (tmp_path / "changelog.dev" / "note.md").write_text("x\n")
+    _commit_all(tmp_path, "base")
+    base_fp = git_utils.release_tree_fingerprint(tmp_path, "HEAD")
+    (tmp_path / "changelog.dev" / "note.md").write_text("y\n")
+    _commit_all(tmp_path, "prefix-similar path changed")
+    assert git_utils.release_tree_fingerprint(tmp_path, "HEAD") != base_fp
+
+
 # ---------------------------------------------------------------------------
 # write_tree
 # ---------------------------------------------------------------------------

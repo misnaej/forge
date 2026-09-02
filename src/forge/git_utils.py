@@ -791,28 +791,49 @@ def write_tree(repo_root: Path) -> str | None:
 # Paths treated as release-channel curated content: excluded from the
 # release fingerprint so a release branch that finalizes them does not
 # break tree-equality with the tagged dev release. The @main CHANGELOG is
-# condensed per promotion (release-process.md §5), so it is the one file a
-# correct release branch always diverges on.
-_RELEASE_EQUAL_IGNORE = ("CHANGELOG.md",)
+# condensed per promotion (release-process.md §5); changelog.d/ fragments
+# are consumed (deleted) by that same promotion commit in fragments mode —
+# both are divergences a correct release branch always carries. Entries
+# ending in "/" match by directory prefix; all others match exactly (so
+# "CHANGELOG.md" never swallows a hypothetical CHANGELOG.md.orig).
+_RELEASE_EQUAL_IGNORE = ("CHANGELOG.md", "changelog.d/")
+
+
+def _release_ignored(path: str) -> bool:
+    """Return whether *path* is release-curated content (fingerprint-exempt).
+
+    Args:
+        path: Repo-relative path from ``git ls-tree``.
+
+    Returns:
+        ``True`` for an exact file match or a path under an ignored
+        directory prefix.
+    """
+    return any(
+        path.startswith(entry) if entry.endswith("/") else path == entry
+        for entry in _RELEASE_EQUAL_IGNORE
+    )
 
 
 def release_tree_fingerprint(repo_root: Path, ref: str) -> str | None:
-    """Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
+    """Return a content fingerprint of *ref*'s tree, ignoring changelog paths.
 
     Like :func:`get_tree_sha`, but two refs whose trees differ **only** in
-    ``CHANGELOG.md`` share a fingerprint. forge's ``@main`` CHANGELOG is
-    curated and condensed per promotion — authored in the
-    ``release/vX.Y.Z`` branch — so a release branch's tree never
-    byte-matches the tagged ``dev`` release's tree, yet it is the *same
-    release*. The rolling-next guard
+    the :data:`_RELEASE_EQUAL_IGNORE` paths — ``CHANGELOG.md`` (exact) and
+    pending ``changelog.d/`` fragments (prefix) — share a fingerprint.
+    forge's ``@main`` CHANGELOG is curated and condensed per promotion —
+    authored in the ``release/vX.Y.Z`` branch, where fragments-mode
+    assembly also deletes the pending fragments — so a release branch's
+    tree never byte-matches the tagged ``dev`` release's tree, yet it is
+    the *same release*. The rolling-next guard
     (:func:`forge.verify_plugin_version._is_release_commit`) and the
     main-tag aligner (``forge-check-main-tags``) compare on this
-    fingerprint so curated-CHANGELOG divergence is tolerated while any
+    fingerprint so curated-changelog divergence is tolerated while any
     other file difference still counts (the match stays release-exact).
 
     The value is the SHA-256 of ``git ls-tree -r <ref>`` (mode, type, blob
-    SHA, path per file) with the ``CHANGELOG.md`` entry removed. Excluding
-    one path from a recursive blob listing — rather than diffing two refs —
+    SHA, path per file) with the ignored entries removed. Excluding
+    paths from a recursive blob listing — rather than diffing two refs —
     keeps the result usable as a dict key, so callers can index many base
     commits by fingerprint in a single pass.
 
@@ -822,7 +843,7 @@ def release_tree_fingerprint(repo_root: Path, ref: str) -> str | None:
 
     Returns:
         A 64-char hex fingerprint, or ``None`` when *ref* does not resolve
-        or its tree has no files outside ``CHANGELOG.md``.
+        or its tree has no files outside the ignored changelog paths.
     """
     raw = run_git("ls-tree", "-r", ref, cwd=repo_root, check=False)
     if not raw:
@@ -830,7 +851,7 @@ def release_tree_fingerprint(repo_root: Path, ref: str) -> str | None:
     kept = [
         line
         for line in raw.splitlines()
-        if line.partition("\t")[2] not in _RELEASE_EQUAL_IGNORE
+        if not _release_ignored(line.partition("\t")[2])
     ]
     if not kept:
         # Tree resolves only to ignored paths (e.g. a repo tracking nothing

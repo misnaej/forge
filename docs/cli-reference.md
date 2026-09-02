@@ -221,6 +221,23 @@ options:
                         code_health/audit_<name>.log.
 ```
 
+## forge-changelog
+
+```text
+usage: forge-changelog [-h] {check,assemble} ...
+
+Changelog fragments: validate pending entries, assemble them into CHANGELOG.md
+at release (single writer).
+
+positional arguments:
+  {check,assemble}
+    check           validate pending changelog.d/ fragments
+    assemble        collate fragments into CHANGELOG.md under a version
+
+options:
+  -h, --help        show this help message and exit
+```
+
 ## forge-check-main-tags
 
 ```text
