@@ -300,6 +300,88 @@ def test_deleted_two_version_loss_returns_old_text_file_order() -> None:
 
 
 # ---------------------------------------------------------------------------
+# restrand_changelog
+# ---------------------------------------------------------------------------
+
+
+def test_restrand_creates_next_slot_heading_above_released() -> None:
+    """A stranded bullet with no existing draft heading opens a fresh slot.
+
+    No ahead-of-tag heading exists in *new_text*, so the repair opens a
+    brand new ``## vX.Y.Z`` heading (``next_version(latest_tag, bump)``)
+    above the released section and moves the stranded bullet under it.
+    """
+    old_text = "## v1.0.0\n\n- old\n"
+    new_text = "## v1.0.0\n\n- old\n- new bullet\n"
+    result = changelog.restrand_changelog(old_text, new_text, "v1.0.0", "patch")
+    assert result == "## v1.0.1\n\n- new bullet\n\n## v1.0.0\n\n- old\n"
+
+
+def test_restrand_merges_into_existing_ahead_of_tag_heading() -> None:
+    """A stranded bullet merges above the existing bullets of a draft heading.
+
+    *new_text* already carries an ahead-of-tag draft heading
+    (``## v1.1.0``) with its own bullets — the moved entry lands directly
+    under that heading, above the entries already there, rather than
+    opening a second new heading.
+    """
+    old_text = "## v1.1.0\n\n- feature A\n\n## v1.0.0\n\n- old\n"
+    new_text = "## v1.1.0\n\n- feature A\n\n## v1.0.0\n\n- old\n- stray bullet\n"
+    result = changelog.restrand_changelog(old_text, new_text, "v1.0.0", "patch")
+    assert result == (
+        "## v1.1.0\n\n- stray bullet\n- feature A\n\n## v1.0.0\n\n- old\n"
+    )
+
+
+def test_restrand_drops_fully_drained_introduced_heading() -> None:
+    """A heading the PR itself introduced is dropped once fully drained.
+
+    *new_text* introduces ``## v1.0.0`` from scratch (absent from
+    *old_text*) already carrying its one stranded bullet. Moving that
+    bullet out to the new slot leaves the introduced heading with no
+    content at all, so it is dropped along with its (now-empty) section
+    rather than left behind as a dangling heading.
+    """
+    old_text = ""
+    new_text = "## v1.0.0\n\n- stray\n"
+    result = changelog.restrand_changelog(old_text, new_text, "v1.0.0", "patch")
+    assert "## v1.0.0\n" not in result
+    assert "\n\n\n" not in result
+    assert "- stray" in result
+
+
+def test_restrand_nothing_stranded_returns_new_text_unchanged() -> None:
+    """Nothing stranded → *new_text* comes back byte-identical (early return)."""
+    text = "## v1.0.0\n\n- old\n"
+    result = changelog.restrand_changelog(text, text, "v1.0.0", "patch")
+    assert result == text
+
+
+def test_restrand_raises_on_failed_strict_shrink(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A post-repair verification residue raises rather than returning silently.
+
+    SCENARIO: ``restrand_changelog`` re-runs ``stranded_added_versions`` on
+    its own repaired output as a self-check — this exercises that guard,
+    which natural input cannot reach (the function's own repair algorithm
+    always produces a genuine strict shrink; only a corrupted detector
+    could make the post-repair check disagree).
+    MOCK SETUP: ``changelog.stranded_added_versions`` is stubbed to always
+    report ``["v9.9.9"]`` regardless of its arguments — both the initial
+    call (driving which lines move) and the final self-check see a
+    non-empty result, so the self-check fails closed.
+    EXPECTED BEHAVIOR: ``ValueError`` naming the "strict shrink" failure.
+    """
+    monkeypatch.setattr(
+        changelog, "stranded_added_versions", lambda *_a, **_kw: ["v9.9.9"]
+    )
+    text = "## v1.0.0\n\n- entry\n"
+    with pytest.raises(ValueError, match="did not verify as a strict shrink"):
+        changelog.restrand_changelog(text, text, "v1.0.0", "patch")
+
+
+# ---------------------------------------------------------------------------
 # top_release_heading
 # ---------------------------------------------------------------------------
 

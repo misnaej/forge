@@ -27,6 +27,10 @@ Usage:
   fragment deletions (never commits).
 - ``forge-changelog check`` — validate pending fragments (the same gate
   the ``changelog_version`` pre-commit step runs in fragment mode).
+- ``forge-changelog restrand`` — shared-heading repos only: mechanically
+  move entries stranded under a released heading to the next open
+  ``## vX.Y.Z`` slot (self-skips in fragment mode, where entries cannot
+  strand); stages ``CHANGELOG.md``, never commits.
 """
 
 from __future__ import annotations
@@ -39,8 +43,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from forge.changelog import top_release_heading
-from forge.git_utils import configure_cli_logging, emit, repo_root, run_git
+from forge.changelog import restrand_changelog, top_release_heading
+from forge.config import load_config, read_tool_forge_section
+from forge.git_utils import (
+    configure_cli_logging,
+    emit,
+    latest_v_tag,
+    merge_base_with_head,
+    repo_root,
+    run_git,
+)
 
 
 configure_cli_logging()
@@ -377,6 +389,104 @@ def _cmd_assemble(root: Path, version: str, date: str, *, delete: bool) -> int:
     return 0
 
 
+def _restrand_old_text(root: Path) -> str | None:
+    """Return the comparison-point ``CHANGELOG.md`` for the restrand.
+
+    Prefers the merge base with the configured base branch (the same
+    reference the ``changelog_version`` pre-commit step diffs against);
+    falls back to the latest tag's copy (``forge-release``'s reference)
+    when no base resolves.
+
+    Args:
+        root: Repository root directory.
+
+    Returns:
+        The old changelog text, or ``None`` when neither reference
+        yields one.
+    """
+    base = merge_base_with_head(root, load_config(root).base_branch)
+    refs = [base] if base else []
+    latest = latest_v_tag(root)
+    if latest:
+        refs.append(latest)
+    for ref in refs:
+        text = run_git("show", f"{ref}:CHANGELOG.md", cwd=root, check=False)
+        if text:
+            return text
+    return None
+
+
+def _restrand_preflight(root: Path) -> int | tuple[Path, str, str, str]:
+    """Resolve restrand preconditions or the early-exit code for a missing one.
+
+    Args:
+        root: Repository root directory.
+
+    Returns:
+        The early-exit code (``0`` or ``2``, with message already emitted)
+        when the restrand cannot proceed; otherwise a tuple of
+        ``(changelog_path, new_text, old_text, latest_tag)``.
+    """
+    if read_tool_forge_section(root, "changelog").get("mode") == "fragments":
+        emit("restrand: fragments mode — entries cannot strand; nothing to do.")
+        return 0
+    changelog = root / "CHANGELOG.md"
+    if not changelog.is_file():
+        emit("restrand: no CHANGELOG.md — nothing to do.")
+        return 0
+    latest = latest_v_tag(root)
+    if latest is None:
+        emit("restrand: no v* tag — nothing can be stranded.")
+        return 0
+    old_text = _restrand_old_text(root)
+    if old_text is None:
+        emit("restrand: no comparison point (merge base or tagged CHANGELOG.md).")
+        return 2
+    new_text = changelog.read_text(encoding="utf-8")
+    return changelog, new_text, old_text, latest
+
+
+def _cmd_restrand(root: Path, bump: str) -> int:
+    """Repair stranded changelog entries mechanically; stage the result.
+
+    The shared-heading counterpart to fragments mode's immunity: entries
+    that landed under a now-released heading (a release tag cut while
+    the branch was open) move to the next open slot via
+    :func:`forge.changelog.restrand_changelog`. Self-skips in fragments
+    mode (nothing can strand there). Stages ``CHANGELOG.md``; never
+    commits.
+
+    Args:
+        root: Repository root directory.
+        bump: Slot class for the restranded entries
+            (``patch``/``minor``/``major``).
+
+    Returns:
+        ``0`` on success or nothing-to-do; ``2`` when prerequisites are
+        missing or the repair does not verify.
+    """
+    preflight = _restrand_preflight(root)
+    if isinstance(preflight, int):
+        return preflight
+    changelog, new_text, old_text, latest = preflight
+
+    try:
+        repaired = restrand_changelog(old_text, new_text, latest, bump)
+    except ValueError as exc:
+        emit(f"restrand: {exc}")
+        return 2
+    if repaired == new_text:
+        emit("restrand: nothing stranded.")
+        return 0
+    changelog.write_text(repaired, encoding="utf-8")
+    run_git("add", "CHANGELOG.md", cwd=root)
+    emit(
+        f"Restranded entries under the next {bump} slot above {latest}; "
+        "staged CHANGELOG.md — commit is yours."
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the ``forge-changelog`` CLI.
 
@@ -389,7 +499,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="forge-changelog",
         description="Changelog fragments: validate pending entries, assemble "
-        "them into CHANGELOG.md at release (single writer).",
+        "them into CHANGELOG.md at release (single writer). Shared-heading "
+        "repos: `restrand` repairs stranded entries mechanically.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("check", help="validate pending changelog.d/ fragments")
@@ -403,10 +514,23 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="stage fragment deletions with git rm (never commits)",
     )
+    restrand = sub.add_parser(
+        "restrand",
+        help="move entries stranded under released headings to the next slot "
+        "(shared-heading mode; stages, never commits)",
+    )
+    restrand.add_argument(
+        "--bump",
+        choices=("patch", "minor", "major"),
+        default="patch",
+        help="slot class for the restranded entries (default: patch)",
+    )
     args = parser.parse_args(argv)
     root = repo_root()
     if args.command == "check":
         return _cmd_check(root)
+    if args.command == "restrand":
+        return _cmd_restrand(root, args.bump)
     return _cmd_assemble(root, args.version, args.date, delete=args.delete)
 
 

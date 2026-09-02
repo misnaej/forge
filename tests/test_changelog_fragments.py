@@ -24,7 +24,7 @@ from forge.changelog_fragments import (
     max_level,
     validate_fragment,
 )
-from tests.conftest import GIT_ENV, init_git_repo
+from tests.conftest import GIT_ENV, commit_all, init_git_repo
 
 
 def _write_fragment(directory: Path, name: str, body: str) -> Path:
@@ -491,3 +491,202 @@ def test_main_assemble_nothing_pending_exits_two(
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
     assert main(["assemble", "--version", "v1.0.0"]) == 2
     assert "nothing to assemble" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# main() — restrand
+# ---------------------------------------------------------------------------
+
+
+def test_main_restrand_skips_in_fragments_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Fragments mode self-skips — nothing can strand under a shared heading."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.changelog]\nmode = "fragments"\n'
+    )
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    assert main(["restrand"]) == 0
+    assert "fragments mode" in capsys.readouterr().out
+
+
+def test_main_restrand_skips_without_changelog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No CHANGELOG.md at all → exit 0, nothing to do."""
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    assert main(["restrand"]) == 0
+    assert "no CHANGELOG.md" in capsys.readouterr().out
+
+
+def test_main_restrand_skips_without_tag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No v* tag yet → nothing can be stranded, exit 0."""
+    init_git_repo(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## v0.1.0\n\n- x\n")
+    commit_all(tmp_path, "seed changelog")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    assert main(["restrand"]) == 0
+    assert "no v* tag" in capsys.readouterr().out
+
+
+def test_main_restrand_exit_two_when_no_comparison_point(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A tag cut before CHANGELOG.md existed, plus an unresolvable base → exit 2.
+
+    SCENARIO: ``v1.0.0`` is tagged at the initial commit, before
+    CHANGELOG.md is ever added; ``base_branch`` is configured to a branch
+    that does not exist (no remote either), so
+    ``merge_base_with_head`` resolves nothing. Neither reference
+    ``_restrand_old_text`` tries (base, then the tagged copy) yields a
+    CHANGELOG.md — the tagged commit predates the file's existence.
+    EXPECTED BEHAVIOR: exit 2, "no comparison point" reported.
+    """
+    init_git_repo(tmp_path)
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=GIT_ENV, check=True)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nbase_branch = "nonexistent-branch"\n'
+    )
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## v1.0.0\n\n- x\n")
+    commit_all(tmp_path, "add changelog after the tag")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    assert main(["restrand"]) == 2
+    assert "no comparison point" in capsys.readouterr().out
+
+
+def test_main_restrand_end_to_end_moves_stranded_bullet_and_stages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A stranded bullet on a feature branch moves to a fresh slot and stages.
+
+    SCENARIO: CHANGELOG.md carries ``## v1.0.0`` with one bullet at the
+    shared merge-base commit. A ``feature`` branch diverges and adds a
+    second bullet under that heading; ``v1.0.0`` is then tagged on a
+    LATER ``main`` commit whose CHANGELOG.md gained a released-only
+    bullet — so the merge-base copy and the tagged copy differ, and only
+    the merge-base copy classifies the released-only bullet as
+    pre-existing. The stranded-entries race, with a discriminating
+    fixture: preferring the tag over the merge base would make the
+    branch look like it DELETED the released-only bullet, tripping the
+    released-deleted verifier and exiting 2 instead of 0.
+    EXPECTED BEHAVIOR: ``restrand`` (default ``--bump patch``) exits 0,
+    opens ``## v1.0.1`` above the released section with the second
+    bullet — and only it — moved under it, and stages CHANGELOG.md
+    (``git diff --cached`` reports a modification, never a commit).
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## v1.0.0\n\n- one bullet\n")
+    commit_all(tmp_path, "seed changelog")
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        check=True,
+    )
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## v1.0.0\n\n- one bullet\n- second bullet\n"
+    )
+    commit_all(tmp_path, "add second bullet")
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=tmp_path, env=GIT_ENV, check=True
+    )
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## v1.0.0\n\n- one bullet\n- released-only bullet\n"
+    )
+    commit_all(tmp_path, "release adds its own bullet")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "feature"], cwd=tmp_path, env=GIT_ENV, check=True
+    )
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+
+    assert main(["restrand"]) == 0
+
+    changelog_text = (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## v1.0.1" in changelog_text
+    assert changelog_text.index("- second bullet") < changelog_text.index("## v1.0.0")
+    assert "- released-only bullet" not in changelog_text.split("## v1.0.0")[0]
+    status = subprocess.run(
+        ["git", "diff", "--cached", "--name-status"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "M\tCHANGELOG.md" in status
+
+
+def test_main_restrand_falls_back_to_tagged_changelog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With no resolvable base branch, the tagged CHANGELOG.md is the old text.
+
+    SCENARIO: ``base_branch`` points at a branch that does not exist, so
+    the merge-base reference fails — but ``v1.0.0`` is tagged at a
+    commit whose CHANGELOG.md exists, so ``_restrand_old_text``'s tag
+    fallback supplies the comparison point. A later commit strands one
+    bullet under the released heading.
+    EXPECTED BEHAVIOR: exit 0; ``## v1.0.1`` opens with the stranded
+    bullet moved under it.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nbase_branch = "nonexistent-branch"\n'
+    )
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## v1.0.0\n\n- one bullet\n")
+    commit_all(tmp_path, "seed changelog")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=GIT_ENV, check=True)
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## v1.0.0\n\n- one bullet\n- stranded bullet\n"
+    )
+    commit_all(tmp_path, "strand a bullet")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+
+    assert main(["restrand"]) == 0
+    assert "Restranded" in capsys.readouterr().out
+    changelog_text = (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## v1.0.1" in changelog_text
+    assert changelog_text.index("- stranded bullet") < changelog_text.index("## v1.0.0")
+
+
+def test_main_restrand_bump_minor_opens_minor_slot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--bump minor` opens `## v1.1.0`, not the default patch `## v1.0.1`."""
+    init_git_repo(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## v1.0.0\n\n- one bullet\n")
+    commit_all(tmp_path, "seed changelog")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        check=True,
+    )
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## v1.0.0\n\n- one bullet\n- second bullet\n"
+    )
+    commit_all(tmp_path, "add second bullet")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+
+    assert main(["restrand", "--bump", "minor"]) == 0
+
+    changelog_text = (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## v1.1.0" in changelog_text
+    assert "## v1.0.1" not in changelog_text

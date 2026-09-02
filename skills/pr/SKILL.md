@@ -79,9 +79,12 @@ silently merge.** Which variant depends on Step 0:
 PR's entries under an already-released heading — nothing conflicts, so
 neither git nor the checks above notice. After the fetch, run
 `forge-precommit --only changelog_version` (self-skips on repos where
-the convention doesn't apply). A `stranded` finding means: bump the top
-`## vX.Y.Z` heading to the next version, move this PR's entries under
-it, commit, and re-run from Step 0.5.
+the convention doesn't apply). A `stranded` finding means: run
+`forge-changelog restrand` (mechanical — moves this PR's entries under
+the next open `## vX.Y.Z` heading and stages the result; `--bump
+minor|major` when the change deserves more than a patch slot), commit,
+and re-run from Step 0.5. (`forge-rebump` is the plugin-repo tool —
+rolling-next manifest repos only; manifest-less repos use `restrand`.)
 
 Merging the base re-triggers CI. Do **not** wait for it: per FOUNDATION §6
 "PR finalization", the wrap-up never blocks on CI — it posts as soon as the

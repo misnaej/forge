@@ -250,9 +250,10 @@ def _stranded_entries_error(repo_root: Path, tag: str) -> str | None:
     return (
         f"CHANGELOG.md changed since {tag} but the top heading still "
         f"declares {tag} — entries are stranded under an already-released "
-        "heading and their commits would ship untagged. Open the next "
-        "`## vX.Y.Z` heading, move the stranded entries under it, and "
-        "merge; the next tag-release run will cut it."
+        "heading and their commits would ship untagged. Run "
+        "`forge-changelog restrand` (mechanical repair — moves them under "
+        "the next open `## vX.Y.Z` heading and stages the result), commit, "
+        "and merge; the next tag-release run will cut it."
     )
 
 

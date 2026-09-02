@@ -65,7 +65,8 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
-_SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+# Applied via fullmatch — a bare `$` would tolerate one trailing newline.
+_SEMVER_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 _GONE_BRANCH_RE = re.compile(r"^\*?\s*(\S+)\s+[0-9a-f]+\s+\[origin/\S+: gone\]")
 
 
@@ -101,7 +102,7 @@ def _check_promote_pending_message(
     base_ver = read_plugin_version_at_ref(repo_root, f"origin/{base_branch}")
     if dev_ver is None or base_ver is None:
         return None
-    if not (_SEMVER_RE.match(dev_ver) and _SEMVER_RE.match(base_ver)):
+    if not (_SEMVER_RE.fullmatch(dev_ver) and _SEMVER_RE.fullmatch(base_ver)):
         return None
     bump_class = classify_bump(parse_semver(base_ver), parse_semver(dev_ver))
     if bump_class not in ("major", "minor"):

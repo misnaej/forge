@@ -297,7 +297,8 @@ def missing_console_scripts(repo_root: Path) -> list[str]:
     """Declared ``[project.scripts]`` names not registered as console scripts.
 
     The shared staleness signal: ``step_env_sync`` blocks on it,
-    ``step_auto_rebuild`` heals on it. Empty when there is nothing to compare
+    ``step_auto_rebuild`` heals on it, ``step_regen_docs`` warns on it
+    (stale cli-reference regeneration). Empty when there is nothing to compare
     — no ``[project.scripts]`` table, or the distribution is not installed at
     all (a fresh checkout that legitimately predates install, which neither
     step treats as stale).
@@ -1735,8 +1736,10 @@ def step_regen_docs(repo_root: Path) -> StepResult:
         ``StepResult`` (``non_blocking=True``); skipped when neither doc
         exists or when unstaged changes are present (partial commit — the
         generators read the worktree, which then differs from what the
-        commit records). ``passed`` is False only when a present generator
-        errored.
+        commit records). ``passed`` is False when a present generator
+        errored, or when the editable install is stale (declared console
+        scripts absent from the install the cli-reference generator reads
+        — the regenerated doc silently omits them; renders WARN).
 
     Raises:
         SystemExit: If a needed ``forge-gen-*`` CLI is not on PATH.
@@ -1768,6 +1771,22 @@ def step_regen_docs(repo_root: Path) -> StepResult:
         )
     passed = True
     sections: list[str] = []
+    # Stale-install advisory: forge-gen-cli-reference discovers CLIs from
+    # INSTALLED entry points, and the healing steps (auto_rebuild,
+    # env_sync) self-skip non-interactively — so a commit adding a
+    # [project.scripts] entry can regenerate the doc from stale metadata,
+    # silently omitting the new CLI. Detect and WARN; never block
+    # (detection only, no auto-install — FOUNDATION §2).
+    if any(rel == "docs/cli-reference.md" for _, rel in targets):
+        stale = missing_console_scripts(repo_root)
+        if stale:
+            passed = False
+            sections.append(
+                "⚠️ install is stale — declared console script(s) absent "
+                "from the install that docs/cli-reference.md is regenerated "
+                f"from: {', '.join(stale)}. Re-run ./dev/setup.sh (or your "
+                "editable install refresh) and re-commit to include them."
+            )
     for cli, _rel in targets:
         require_cli(cli, caller="forge-precommit")
         ok, output = _run([cli], cwd=repo_root)
@@ -2080,8 +2099,10 @@ def step_changelog_version(repo_root: Path) -> StepResult:
                 if old_text:
                     findings.extend(
                         f"Entries added under released heading {version} (not "
-                        f"ahead of latest tag {latest}) — stranded; move them "
-                        "under the next `## vX.Y.Z` heading."
+                        f"ahead of latest tag {latest}) — stranded; run "
+                        "`forge-changelog restrand` (mechanical repair — "
+                        "moves them under the next open `## vX.Y.Z` heading "
+                        "and stages the result)."
                         for version in stranded_added_versions(old_text, text, latest)
                     )
                     findings.extend(
