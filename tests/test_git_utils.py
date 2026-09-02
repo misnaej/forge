@@ -2452,3 +2452,98 @@ def test_is_ancestor_rejects_flag_shaped_refs() -> None:
     """
     assert git_utils.is_ancestor(None, "-v1.0.0", "HEAD") is False
     assert git_utils.is_ancestor(None, "v1.0.0", "--all") is False
+
+
+# ---------------------------------------------------------------------------
+# classify_bump
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected"),
+    [
+        ((1, 2, 3), (2, 0, 0), "major"),
+        ((1, 2, 3), (1, 3, 0), "minor"),
+        ((1, 2, 3), (1, 2, 4), "patch"),
+        ((1, 2, 3), (1, 2, 3), None),
+        (None, (1, 2, 3), None),
+        ((1, 2, 3), None, None),
+        (None, None, None),
+    ],
+)
+def test_classify_bump_reads_highest_order_differing_component(
+    old: tuple[int, int, int] | None,
+    new: tuple[int, int, int] | None,
+    expected: str | None,
+) -> None:
+    """The highest-order differing component wins; equal or missing sides → None.
+
+    Shared by ``forge-next-prep``'s promotion advisory and ``forge-rebump``'s
+    intent classifier — one table pins the mapping both depend on.
+
+    Args:
+        old: Baseline semver tuple fed to the classifier.
+        new: Candidate semver tuple fed to the classifier.
+        expected: The class the delta must map to.
+    """
+    assert git_utils.classify_bump(old, new) == expected
+
+
+# ---------------------------------------------------------------------------
+# has_conflict_markers
+# ---------------------------------------------------------------------------
+
+
+def test_has_conflict_markers_true_on_open_marker() -> None:
+    """A ``<<<<<<< `` opener at line start is detected."""
+    text = "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n"
+    assert git_utils.has_conflict_markers(text) is True
+
+
+def test_has_conflict_markers_false_on_plain_text() -> None:
+    """Ordinary text with no marker-shaped lines → False."""
+    assert git_utils.has_conflict_markers("just some prose\n") is False
+
+
+def test_has_conflict_markers_false_on_bare_equals_line() -> None:
+    """A bare ``=======`` line (e.g. a markdown setext underline) is not enough.
+
+    Only the open marker signals an unresolved conflict — a closer or
+    separator line alone (as legitimately appears in markdown / quoted
+    diffs) must not false-positive.
+    """
+    assert git_utils.has_conflict_markers("Title\n=======\n") is False
+
+
+def test_has_conflict_markers_false_without_open_marker() -> None:
+    """A closer line with no matching opener → False."""
+    assert git_utils.has_conflict_markers(">>>>>>> branch\n") is False
+
+
+def test_has_conflict_markers_false_on_eight_angle_brackets() -> None:
+    """Eight ``<`` at line start does not match the exact 7-``<`` opener shape.
+
+    ``^<{7}( |$)`` requires the 8th character to be a space or end-of-line;
+    an 8th ``<`` fails that immediately after the line-anchored match
+    attempt, so this stays unmatched rather than a false positive.
+    """
+    assert git_utils.has_conflict_markers("<<<<<<<<\n") is False
+
+
+# ---------------------------------------------------------------------------
+# file_has_conflict_markers
+# ---------------------------------------------------------------------------
+
+
+def test_file_has_conflict_markers_true_for_real_conflicted_file(
+    tmp_path: Path,
+) -> None:
+    """A file on disk holding an open marker → True."""
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n")
+    assert git_utils.file_has_conflict_markers(path) is True
+
+
+def test_file_has_conflict_markers_false_for_missing_file(tmp_path: Path) -> None:
+    """A path that does not exist is simply not mid-conflict → False."""
+    assert git_utils.file_has_conflict_markers(tmp_path / "absent.md") is False

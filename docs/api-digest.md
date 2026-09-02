@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_67 modules, 799 symbols._
+_68 modules, 818 symbols._
 
 ## `forge`
 
@@ -219,6 +219,9 @@ _67 modules, 799 symbols._
 - `changelog_lacks_entry(changelog_text: str, tag: str) -> bool` — Return ``True`` when *changelog_text* has no ``## <tag>`` heading.
 - `_recognized_version(token: str) -> str | None` _(internal)_ — Return the ``vX.Y.Z`` a heading *token* names, or ``None``.
 - `top_release_heading(text: str) -> str | None` — Return the first (topmost) recognized ``vX.Y.Z`` release heading.
+- `_top_heading_span(text: str) -> tuple[int, int]` _(internal)_ — Return the ``(start, end)`` character span of the top release heading line.
+- `retitle_top_release(text: str, version: str) -> str` — Rewrite the top release heading to name *version*.
+- `restack_changelog(ours: str, theirs: str, version: str) -> str` — Stack *ours*' unreleased top section onto *theirs* under *version*.
 - `changelog_version_findings(text: str, latest_tag: str | None) -> list[str]` — Validate *text*'s release headings against each other and *latest_tag*.
 - `action_items(text: str) -> list[tuple[str, str]]` — Return ``(version, action)`` pairs for every ``**Action:**`` line.
 - `_governing_versions(text: str) -> list[str | None]` _(internal)_ — Map each line in *text* to its governing release version heading.
@@ -498,6 +501,7 @@ _67 modules, 799 symbols._
 - `emit(msg: str) -> None` — Write *msg* to stdout with a trailing newline.
 - `parse_semver(version: str) -> tuple[int, int, int] | None` — Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
 - `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
+- `classify_bump(old: tuple[int, int, int] | None, new: tuple[int, int, int] | None) -> str | None` — Classify the semver increment from *old* to *new*.
 - `latest_v_tag(root: Path) -> str | None` — Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
 - `minor_tags(repo_root: Path) -> list[str]` — Return every ``vX.Y.0`` tag (patch == 0), semver-sorted ascending.
 - `fetch_tags_best_effort(repo_root: Path, *, timeout: int = 10) -> list[str]` — Refresh local tags from ``origin``, reporting degradations as notes.
@@ -515,6 +519,8 @@ _67 modules, 799 symbols._
 - `resolve_current_branch(repo_root: Path) -> tuple[str, str] | None` — Return the current branch name and where it came from, or ``None``.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
 - `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
+- `has_conflict_markers(text: str) -> bool` — Return whether *text* contains unresolved git conflict markers.
+- `file_has_conflict_markers(path: Path) -> bool` — Return whether the file at *path* holds unresolved conflict markers.
 - `resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref diff-scoped checks should compare against, origin-first.
 - `merge_base_with_head(root: Path | None, base_branch: str) -> str` — Return the merge-base SHA of ``HEAD`` and the resolved base ref.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
@@ -802,6 +808,24 @@ _67 modules, 799 symbols._
 - `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
 - `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
 - `main() -> int` — CLI entry point.
+
+## `forge.rebump`
+
+> _forge-rebump — mechanical post-merge version-slot + changelog resolution._
+
+- `class _RefusalError` _(internal)_ — Internal control flow: a state this tool must not resolve.
+- `class RebumpOutcome` — Result of one rebump run.
+- `_require_latest_tag(repo_root: Path) -> str` _(internal)_ — Return the latest ``v*`` tag, refusing when none exists.
+- `_unmerged_paths(repo_root: Path) -> list[str]` _(internal)_ — Return the repo-relative paths currently in an unmerged index state.
+- `_read_index_stage(repo_root: Path, stage: int, path: str) -> str | None` _(internal)_ — Return *path*'s contents at merge-index *stage*, or ``None``.
+- `_guard_entry_state(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) -> None` _(internal)_ — Refuse states the tool must not touch.
+- `_mid_merge_versions(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Return the ``(fork, ours)`` manifest versions during a merge.
+- `_classify_intent(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) -> str` _(internal)_ — Classify the branch's own semver intent from its fork-point delta.
+- `_resolve_version(repo_root: Path, latest: str, bump_class: str, *, mid_merge: bool) -> str` _(internal)_ — Return the bare version the manifest should carry after the rebump.
+- `_render_plugin_version(repo_root: Path, version: str, *, mid_merge: bool) -> str | None` _(internal)_ — Return the manifest text carrying *version*, or ``None`` when current.
+- `_render_changelog(repo_root: Path, version: str, *, mid_merge: bool) -> tuple[str, str | None]` _(internal)_ — Compute the changelog half of the rebump without touching disk.
+- `rebump(repo_root: Path) -> RebumpOutcome` — Resolve the rolling-next version slot and changelog stack, then stage.
+- `main() -> int` — Run the rebump against the current directory's repo.
 
 ## `forge.release`
 
