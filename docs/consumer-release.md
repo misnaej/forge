@@ -207,9 +207,9 @@ Consequences, by design:
   levels aggregate by `max()` at release, so nothing needs manual
   reconciliation per merge.
 - **CHANGELOG.md becomes an output, never an input.** It is assembled
-  once per release (`forge-changelog assemble --version vX.Y.Z
-  --delete`, run in the release/promotion flow's own commit), grouping
-  fragments by type in fixed order. No CI step or tool may read the
+  once per release (`forge-changelog release`, or `assemble --version
+  vX.Y.Z --delete` with an explicit version — see "Releasing in
+  fragments mode" below), grouping fragments by type in fixed order. No CI step or tool may read the
   changelog as a version/bump signal in this mode — the
   `changelog_version` step becomes the *fragment gate* (fragments parse,
   levels valid, no version strings), and `changelog_updated` requires a
@@ -217,6 +217,39 @@ Consequences, by design:
   occur: fragments carry no version to strand.
 - The trade-off: the changelog is no longer release-ready at all times —
   which is exactly why the mode is opt-in.
+
+**Releasing in fragments mode** — the version is assembler-owned: the
+next release is always `latest v* tag + max(bump level over pending
+fragments)`, so no PR ever carries a version number.
+
+- `forge-changelog next-version` prints the computed next version and
+  its level (`v1.3.0 (minor)`); exit 2 when there is no tag, nothing
+  pending, or an invalid fragment.
+- `forge-changelog release` computes the version, assembles
+  `CHANGELOG.md` under it, and stages the result (fragment deletions
+  included). Plugin repos: it also rewrites `.claude-plugin/plugin.json`
+  to the computed version and stages it — the manifest's single writer.
+  Tag-versioned (manifest-less) repos: no manifest write; use the
+  printed version for the tag (`git tag vX.Y.Z && git push origin
+  vX.Y.Z`, or `forge-release`). It never commits — branch, run it,
+  open an ordinary PR, merge, tag.
+- **The tagging handoff is the changelog itself**: `release` writes a
+  real `## vX.Y.Z` heading, so a tagger already running `forge-release
+  --from-changelog` on pushes to the base branch picks the release up
+  on merge with **no further change** — do not build a separate
+  fragments-aware tagger.
+- **Release cadence changes — deliberately.** A push-triggered tagger
+  tags every merge today; in fragments mode ordinary merges leave
+  fragments pending and produce no new heading, so the tagger no-ops
+  and tags appear only when a release PR merges. Releases become
+  deliberate instead of a side effect of merging. If you mitigated the
+  pre-fragments gap by guarding your tagger to **fail while fragments
+  are pending**, remove that guard when adopting this — post-adoption
+  it fires on every ordinary merge.
+- Between releases a plugin manifest **parks at the latest tag**: the
+  `plugin_version` guard accepts equality while every pending fragment
+  is valid, keeps the strictly-ahead pass for the release PR, and still
+  blocks a manifest below the tag.
 
 No-version opt-outs (`NO_VERSION=1`, branch token, commit marker) apply
 unchanged.

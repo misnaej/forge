@@ -17,14 +17,24 @@ to remove. The rest of the body is the entry's markdown, verbatim.
 Direction of truth is one-way: fragments → assembler → CHANGELOG +
 version. In fragment mode nothing may read ``CHANGELOG.md`` as a
 version or bump signal — the changelog is an OUTPUT of release, written
-by :func:`assemble_changelog`'s single writer (the dual-track promotion
-commit, or ``forge-changelog assemble`` in a single-track release flow).
+by :func:`assemble_changelog`'s single writer. The version itself is
+assembler-owned too: the next release is always ``latest v* tag +
+max(bump level over pending fragments)``
+(:func:`next_version_from_fragments`), computed at release, never
+carried per-PR.
 
 Usage:
 
+- ``forge-changelog release`` — compute the next version from the
+  latest tag + pending fragments, assemble ``CHANGELOG.md`` under it,
+  write ``.claude-plugin/plugin.json`` to it (when a manifest exists —
+  the manifest's single writer), and stage everything (never commits).
+  Merge the resulting PR; tag-on-merge cuts the tag.
+- ``forge-changelog next-version`` — read-only print of the computed
+  next version and its bump level.
 - ``forge-changelog assemble --version vX.Y.Z`` — collate every pending
-  fragment into ``CHANGELOG.md`` under a new heading and stage the
-  fragment deletions (never commits).
+  fragment into ``CHANGELOG.md`` under an explicit version and stage
+  the fragment deletions (never commits).
 - ``forge-changelog check`` — validate pending fragments (the same gate
   the ``changelog_version`` pre-commit step runs in fragment mode).
 - ``forge-changelog restrand`` — shared-heading repos only: mechanically
@@ -44,12 +54,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from forge.changelog import restrand_changelog, top_release_heading
-from forge.config import load_config, read_tool_forge_section
+from forge.config import is_fragments_mode, load_config
 from forge.git_utils import (
     configure_cli_logging,
     emit,
     latest_v_tag,
     merge_base_with_head,
+    next_version,
+    render_plugin_version,
     repo_root,
     run_git,
 )
@@ -300,12 +312,33 @@ def assemble_changelog(
     return text[:anchor_pos] + entry + "\n" + text[anchor_pos:]
 
 
+def _collect_valid_fragments(root: Path) -> tuple[list[Fragment], list[str]]:
+    """Parse every pending fragment, splitting valid ones from errors.
+
+    Args:
+        root: Repository root directory.
+
+    Returns:
+        ``(fragments, errors)`` — parsed fragments in discovery order,
+        plus every validation error across the pending set.
+    """
+    fragments: list[Fragment] = []
+    errors: list[str] = []
+    for path in discover_fragments(root):
+        fragment, frag_errors = validate_fragment(path)
+        if fragment is not None:
+            fragments.append(fragment)
+        errors.extend(frag_errors)
+    return fragments, errors
+
+
 def check_pending(root: Path) -> list[str]:
     """Validate every pending fragment under *root*.
 
     The shared gate seam: the ``changelog_version`` pre-commit step (in
-    fragment mode) and the ``check`` subcommand both consume this, so
-    the gate cannot drift between the two.
+    fragment mode), the fragment-mode branch of
+    ``verify-forge-plugin-version``, and the ``check`` subcommand all
+    consume this, so the gate cannot drift between them.
 
     Args:
         root: Repository root directory.
@@ -314,11 +347,37 @@ def check_pending(root: Path) -> list[str]:
         Every validation error across pending fragments; empty when all
         are valid or none exist.
     """
-    errors: list[str] = []
-    for path in discover_fragments(root):
-        _, frag_errors = validate_fragment(path)
-        errors.extend(frag_errors)
-    return errors
+    return _collect_valid_fragments(root)[1]
+
+
+def next_version_from_fragments(root: Path, latest_tag: str) -> tuple[str, str] | None:
+    """Compute the next release version from pending fragments.
+
+    The assembler-owned version computation: the next release is always
+    *latest_tag* bumped by the strongest level declared across pending
+    fragments, so version numbers exist nowhere but the release commit
+    — no per-PR slot to collide on.
+
+    Args:
+        root: Repository root directory.
+        latest_tag: Latest ``v*`` release tag (the bump baseline).
+
+    Returns:
+        ``(bare_version, level)`` — e.g. ``("1.3.0", "minor")`` — or
+        ``None`` when no fragments are pending.
+
+    Raises:
+        ValueError: When any pending fragment is invalid; the message
+            lists every validation error.
+    """
+    fragments, errors = _collect_valid_fragments(root)
+    if errors:
+        msg = "invalid pending fragment(s):\n" + "\n".join(errors)
+        raise ValueError(msg)
+    if not fragments:
+        return None
+    level = max_level(fragments)
+    return next_version(latest_tag, level).removeprefix("v"), level
 
 
 def _cmd_check(root: Path) -> int:
@@ -345,30 +404,24 @@ def _cmd_check(root: Path) -> int:
     return 0
 
 
-def _cmd_assemble(root: Path, version: str, date: str, *, delete: bool) -> int:
-    """Collate pending fragments into ``CHANGELOG.md`` under *version*.
+def _assemble_and_stage(
+    root: Path, fragments: list[Fragment], version: str, date: str, *, delete: bool
+) -> int:
+    """Assemble *fragments* into ``CHANGELOG.md`` under *version*; maybe stage.
+
+    The shared assembly core behind ``assemble`` (explicit version) and
+    ``release`` (computed version).
 
     Args:
         root: Repository root directory.
+        fragments: Validated fragments to collate (non-empty).
         version: Release version for the new heading (``vX.Y.Z``).
         date: Optional heading date override.
         delete: Stage fragment deletions via ``git rm`` (never commits).
 
     Returns:
-        ``0`` on success; ``2`` on validation/assembly failure.
+        ``0`` on success; ``2`` on assembly failure.
     """
-    paths = discover_fragments(root)
-    if not paths:
-        emit("changelog.d: nothing to assemble.")
-        return 2
-    fragments: list[Fragment] = []
-    for path in paths:
-        fragment, errors = validate_fragment(path)
-        if errors:
-            for err in errors:
-                emit(f"changelog.d: INVALID — {err}")
-            return 2
-        fragments.append(fragment)  # type: ignore[arg-type]
     changelog = root / "CHANGELOG.md"
     text = changelog.read_text(encoding="utf-8") if changelog.is_file() else ""
     try:
@@ -386,6 +439,126 @@ def _cmd_assemble(root: Path, version: str, date: str, *, delete: bool) -> int:
         for fragment in fragments:
             run_git("rm", "-q", str(fragment.path.relative_to(root)), cwd=root)
         emit("Staged CHANGELOG.md and fragment deletions — commit is yours.")
+    return 0
+
+
+def _cmd_assemble(root: Path, version: str, date: str, *, delete: bool) -> int:
+    """Collate pending fragments into ``CHANGELOG.md`` under *version*.
+
+    Args:
+        root: Repository root directory.
+        version: Release version for the new heading (``vX.Y.Z``).
+        date: Optional heading date override.
+        delete: Stage fragment deletions via ``git rm`` (never commits).
+
+    Returns:
+        ``0`` on success; ``2`` on validation/assembly failure.
+    """
+    fragments, errors = _collect_valid_fragments(root)
+    if errors:
+        for err in errors:
+            emit(f"changelog.d: INVALID — {err}")
+        return 2
+    if not fragments:
+        emit("changelog.d: nothing to assemble.")
+        return 2
+    return _assemble_and_stage(root, fragments, version, date, delete=delete)
+
+
+def _cmd_next_version(root: Path) -> int:
+    """Print the computed next release version: latest tag + max pending level.
+
+    Args:
+        root: Repository root directory.
+
+    Returns:
+        ``0`` with ``vX.Y.Z (level)`` printed; ``2`` when there is no
+        ``v*`` tag, no pending fragment, or an invalid fragment (the
+        message says which).
+    """
+    latest = latest_v_tag(root)
+    if latest is None:
+        emit("next-version: no v* tag — no release baseline to bump from.")
+        return 2
+    try:
+        computed = next_version_from_fragments(root, latest)
+    except ValueError as exc:
+        emit(f"next-version: {exc}")
+        return 2
+    if computed is None:
+        emit("next-version: no pending fragments — nothing to release.")
+        return 2
+    bare_version, level = computed
+    emit(f"v{bare_version} ({level})")
+    return 0
+
+
+def _cmd_release(root: Path, date: str) -> int:
+    """Prepare the release commit: assemble + manifest write, all staged.
+
+    Computes the version once (:func:`next_version_from_fragments`),
+    assembles ``CHANGELOG.md`` under it with fragment deletions staged,
+    and — when the repo ships a plugin manifest — writes
+    ``.claude-plugin/plugin.json`` to the computed version and stages
+    it. Never commits: the caller branches, commits, and opens the
+    release PR; tag-on-merge cuts the tag. Manifest-less (tag-versioned)
+    repos skip the manifest write and use the printed version for their
+    own tag flow.
+
+    Args:
+        root: Repository root directory.
+        date: Optional heading date override.
+
+    Returns:
+        ``0`` on success; ``2`` when there is no ``v*`` tag, no pending
+        fragment, an invalid fragment, or the assembly/manifest write
+        fails.
+    """
+    latest = latest_v_tag(root)
+    if latest is None:
+        emit("release: no v* tag — no release baseline to bump from.")
+        return 2
+    try:
+        computed = next_version_from_fragments(root, latest)
+    except ValueError as exc:
+        emit(f"release: {exc}")
+        return 2
+    if computed is None:
+        emit("release: no pending fragments — nothing to release.")
+        return 2
+    bare_version, _level = computed
+    # Compute-then-write (rebump's invariant, mirrored): render the
+    # manifest FIRST — it is pure and carries the fail-closed
+    # validation — so a manifest refusal leaves the tree untouched
+    # instead of stranding a half-release (heading written, fragments
+    # already deleted, manifest stale).
+    manifest = root / ".claude-plugin" / "plugin.json"
+    manifest_text: str | None = None
+    if manifest.is_file():
+        try:
+            manifest_text = render_plugin_version(
+                manifest.read_text(encoding="utf-8"), bare_version
+            )
+        except ValueError as exc:
+            emit(f"release: {exc}")
+            return 2
+    # next_version_from_fragments already proved every fragment valid,
+    # so this re-collection cannot surface errors — it only recovers the
+    # Fragment list the tuple result does not carry.
+    fragments, _errors = _collect_valid_fragments(root)
+    outcome = _assemble_and_stage(
+        root, fragments, f"v{bare_version}", date, delete=True
+    )
+    if outcome != 0:
+        return outcome
+    if manifest_text is not None:
+        manifest.write_text(manifest_text, encoding="utf-8")
+        run_git("add", ".claude-plugin/plugin.json", cwd=root)
+        emit(f"Staged .claude-plugin/plugin.json at {bare_version}.")
+    emit(
+        f"Release v{bare_version} prepared — commit, PR, merge; "
+        "tag-on-merge cuts the tag."
+    )
     return 0
 
 
@@ -427,7 +600,7 @@ def _restrand_preflight(root: Path) -> int | tuple[Path, str, str, str]:
         when the restrand cannot proceed; otherwise a tuple of
         ``(changelog_path, new_text, old_text, latest_tag)``.
     """
-    if read_tool_forge_section(root, "changelog").get("mode") == "fragments":
+    if is_fragments_mode(root):
         emit("restrand: fragments mode — entries cannot strand; nothing to do.")
         return 0
     changelog = root / "CHANGELOG.md"
@@ -504,6 +677,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("check", help="validate pending changelog.d/ fragments")
+    sub.add_parser(
+        "next-version",
+        help="print the computed next release version "
+        "(latest v* tag + max pending bump level)",
+    )
+    rel = sub.add_parser(
+        "release",
+        help="assemble CHANGELOG.md under the computed next version, write "
+        "plugin.json to it (when present), stage everything — never commits",
+    )
+    rel.add_argument("--date", default="", help="heading date (default: today, UTC)")
     asm = sub.add_parser(
         "assemble", help="collate fragments into CHANGELOG.md under a version"
     )
@@ -529,6 +713,10 @@ def main(argv: list[str] | None = None) -> int:
     root = repo_root()
     if args.command == "check":
         return _cmd_check(root)
+    if args.command == "next-version":
+        return _cmd_next_version(root)
+    if args.command == "release":
+        return _cmd_release(root, args.date)
     if args.command == "restrand":
         return _cmd_restrand(root, args.bump)
     return _cmd_assemble(root, args.version, args.date, delete=args.delete)

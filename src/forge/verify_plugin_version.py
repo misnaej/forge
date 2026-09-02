@@ -15,6 +15,14 @@ Skipped when:
   when its ``plugin.json`` sits below the global-max tag, and even when it
   finalizes the curated ``@main`` CHANGELOG entry.
 
+Fragment mode (``[tool.forge.changelog].mode = "fragments"``): the
+manifest parks at the latest tag between releases — the bump lives in
+``changelog.d/`` fragments and ``forge-changelog release`` is the single
+writer that advances ``plugin.json``. Equality with the latest tag is
+therefore healthy, provided every pending fragment passes the gate (the
+next version must stay derivable); ``plugin.json`` *below* the latest
+tag stays an error in every mode.
+
 ``forge-precommit`` shells out to this CLI; agents may invoke it
 standalone to refresh just ``plugin_version.log``.
 """
@@ -26,6 +34,8 @@ import logging
 import sys
 from pathlib import Path
 
+from forge.changelog_fragments import check_pending, discover_fragments
+from forge.config import is_fragments_mode
 from forge.git_utils import (
     capturing_to_step_log,
     configure_cli_logging,
@@ -98,9 +108,12 @@ def main() -> int:
     """Enforce plugin.json version > latest git tag.
 
     Returns:
-        ``0`` on success or when skipped. ``1`` when ``plugin.json["version"]``
-        is not strictly ahead of the latest semver-style tag, or when either
-        version string is unparseable.
+        ``0`` on success or when skipped — including fragment mode
+        parked at the latest tag with valid pending fragments (see
+        :func:`_not_ahead_verdict`). ``1`` when ``plugin.json["version"]``
+        is below the latest semver-style tag, at the tag outside a
+        healthy fragment-mode parked state, or when either version
+        string is unparseable.
     """
     argparse.ArgumentParser(
         prog="verify-forge-plugin-version",
@@ -138,28 +151,96 @@ def main() -> int:
                 plugin_version_str,
             )
             return 1
-        # Cheap version check first: a rolling-next bump (plugin.json strictly
-        # ahead) is the common dev commit and passes immediately. Only when
-        # plugin.json is NOT ahead do we reach the release-commit check —
-        # which fingerprints every v* tag — so normal dev commits never pay
-        # that per-tag `git ls-tree` cost; it runs only on release branches.
+        # An ahead manifest is the release window (shared-heading mode's
+        # common dev commit; fragments mode's release PR). In fragments
+        # mode an ahead manifest with NEW pending fragments is a stale
+        # release computation — a bump merged after `release` ran, and
+        # tagging now would ship that change under the wrong version.
         if plugin_ver > tag_ver:
+            if is_fragments_mode(repo_root) and discover_fragments(repo_root):
+                logger.error(
+                    "fragment mode: plugin.json %s is ahead of tag %s but "
+                    "pending changelog.d/ fragments exist — the release "
+                    "computation is stale (a bump merged after "
+                    "`forge-changelog release` ran). Sync the base and "
+                    "recompute the release before committing.",
+                    plugin_ver,
+                    latest_tag,
+                )
+                return 1
             logger.info(
                 "plugin.json %s > latest tag %s (%s)", plugin_ver, latest_tag, tag_ver
             )
             return 0
-        if _is_release_commit(repo_root):
-            logger.info("(HEAD reproduces a published v* release tag — skipped)")
-            return 0
-        logger.error(
-            "plugin.json version %s must be strictly greater than the latest "
-            "tag %s (%s). Bump .claude-plugin/plugin.json before the next "
-            "commit.",
-            plugin_ver,
-            latest_tag,
-            tag_ver,
-        )
+        return _not_ahead_verdict(repo_root, plugin_ver, tag_ver, latest_tag)
+
+
+def _not_ahead_verdict(
+    repo_root: Path,
+    plugin_ver: tuple[int, int, int],
+    tag_ver: tuple[int, int, int],
+    latest_tag: str,
+) -> int:
+    """Resolve the verdict when ``plugin.json`` is NOT ahead of the latest tag.
+
+    Args:
+        repo_root: Git repo root.
+        plugin_ver: Parsed ``plugin.json`` version.
+        tag_ver: Parsed latest-tag version.
+        latest_tag: Latest ``v*`` tag name (for messages).
+
+    Returns:
+        ``0`` when the state is healthy (release commit, or fragment
+        mode parked at the tag with valid pending fragments); ``1``
+        otherwise.
+    """
+    # Parked check first: in fragments mode EVERY ordinary commit sits at
+    # == tag, so the fingerprint fallback (per-tag `git ls-tree` over the
+    # whole tag set) must not run on the common path. A release commit
+    # has zero pending fragments and passes the parked check anyway.
+    if is_fragments_mode(repo_root) and plugin_ver == tag_ver:
+        return _fragment_parked_verdict(repo_root, latest_tag)
+    if _is_release_commit(repo_root):
+        logger.info("(HEAD reproduces a published v* release tag — skipped)")
+        return 0
+    logger.error(
+        "plugin.json version %s must be strictly greater than the latest "
+        "tag %s (%s). Bump .claude-plugin/plugin.json before the next "
+        "commit.",
+        plugin_ver,
+        latest_tag,
+        tag_ver,
+    )
+    return 1
+
+
+def _fragment_parked_verdict(repo_root: Path, latest_tag: str) -> int:
+    """Gate the fragment-mode resting state: manifest == latest tag.
+
+    Healthy only while the next version stays derivable — every pending
+    fragment must pass the gate. Zero pending fragments is also healthy
+    (the just-released resting state).
+
+    Args:
+        repo_root: Git repo root.
+        latest_tag: Latest ``v*`` tag name (for messages).
+
+    Returns:
+        ``0`` when every pending fragment is valid; ``1`` when any
+        fragment fails validation (each error logged).
+    """
+    errors = check_pending(repo_root)
+    if errors:
+        for err in errors:
+            logger.error("plugin_version: invalid fragment — %s", err)
         return 1
+    logger.info(
+        "fragment mode: manifest parked at latest tag %s; %d pending "
+        "fragment(s) carry the bump",
+        latest_tag,
+        len(discover_fragments(repo_root)),
+    )
+    return 0
 
 
 if __name__ == "__main__":

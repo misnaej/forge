@@ -30,9 +30,13 @@ unless the branch's version is already strictly ahead of the latest tag
 (its slot is still open — kept as-is). The changelog half applies only
 in shared-heading mode: mid-merge, the branch's unreleased top section
 is restacked onto the base's changelog under the new heading; on a
-clean tree the stale top heading is retitled. In fragments mode
-(``[tool.forge.changelog].mode = "fragments"``) per-PR entries are
-unique files that cannot collide, so the changelog half is a no-op.
+clean tree the stale top heading is retitled. **Fragments mode**
+(``[tool.forge.changelog].mode = "fragments"``) sidelines this tool
+entirely: per-PR entries are unique files that cannot collide (changelog
+half no-ops) and versions are assembler-owned — ``forge-changelog
+release`` is the manifest's single writer, so the manifest half no-ops
+too, and a fragments-mode manifest conflict (a release-PR race) is
+refused with a pointer at ``forge-changelog release``.
 
 Exits 0 on success (including nothing-to-do), 1 on refusal.
 """
@@ -40,9 +44,7 @@ Exits 0 on success (including nothing-to-do), 1 on refusal.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -53,7 +55,7 @@ from forge.changelog import (
     retitle_top_release,
     top_release_heading,
 )
-from forge.config import ForgeConfig, load_config, read_tool_forge_section
+from forge.config import ForgeConfig, is_fragments_mode, load_config
 from forge.git_utils import (
     classify_bump,
     configure_cli_logging,
@@ -65,6 +67,7 @@ from forge.git_utils import (
     parse_semver,
     read_local_plugin_version,
     read_plugin_version_at_ref,
+    render_plugin_version,
     run_git,
 )
 
@@ -75,10 +78,6 @@ logger = logging.getLogger(__name__)
 
 PLUGIN_PATH = ".claude-plugin/plugin.json"
 CHANGELOG_PATH = "CHANGELOG.md"
-
-# Targeted version-field rewrite: preserves the manifest's formatting
-# byte-for-byte outside the one value (a json round-trip would reformat).
-_VERSION_FIELD_RE = re.compile(r'("version"\s*:\s*")[^"]+(")')
 
 
 class _RefusalError(Exception):
@@ -173,7 +172,9 @@ def _guard_entry_state(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) ->
 
     Raises:
         _RefusalError: On a protected branch, on unrelated conflicts
-            (mid-merge), or on stray conflict markers (clean tree).
+            (mid-merge), on a fragments-mode manifest conflict (a
+            release-PR race owned by ``forge-changelog release``), or on
+            stray conflict markers (clean tree).
     """
     branch = run_git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo_root, check=False)
     if branch in (cfg.dev_branch, cfg.base_branch):
@@ -183,15 +184,22 @@ def _guard_entry_state(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) ->
         )
         raise _RefusalError(msg)
     if mid_merge:
-        extras = [
-            p
-            for p in _unmerged_paths(repo_root)
-            if p not in (PLUGIN_PATH, CHANGELOG_PATH)
-        ]
+        unmerged = _unmerged_paths(repo_root)
+        extras = [p for p in unmerged if p not in (PLUGIN_PATH, CHANGELOG_PATH)]
         if extras:
             msg = (
                 "unrelated merge conflicts present — resolve these by hand "
                 f"first: {', '.join(sorted(extras))}"
+            )
+            raise _RefusalError(msg)
+        if PLUGIN_PATH in unmerged and is_fragments_mode(repo_root):
+            msg = (
+                "fragments mode: a plugin.json conflict is a release-PR "
+                "race. Recovery: take the BASE side of CHANGELOG.md and "
+                "plugin.json, restore this branch's consumed fragments "
+                "from the merge base (`git checkout $(git merge-base HEAD "
+                "MERGE_HEAD) -- changelog.d/`), then re-run "
+                "`forge-changelog release` to recompute."
             )
             raise _RefusalError(msg)
         return
@@ -324,29 +332,15 @@ def _render_plugin_version(
         source = _read_index_stage(repo_root, 2, PLUGIN_PATH)
     if source is None:
         source = (repo_root / PLUGIN_PATH).read_text(encoding="utf-8")
-    rewritten, count = _VERSION_FIELD_RE.subn(rf"\g<1>{version}\g<2>", source, count=1)
-    if count != 1:
-        msg = f'{PLUGIN_PATH}: no "version" field found to rewrite.'
-        raise _RefusalError(msg)
-    # Fail-closed output validation (CWE-116): the source is
-    # branch-authored, and a version value carrying JSON escapes defeats
-    # a textual rewrite (the regex stops at the first quote, leaving the
-    # payload's remainder in place). Refuse unless the rewritten text is
-    # valid JSON whose version field is exactly the target.
+    # Rewrite + fail-closed CWE-116 validation live in the shared
+    # git_utils.render_plugin_version core (also the `forge-changelog
+    # release` writer); this wrapper only picks the source (stage 2 vs
+    # disk) and converts the failure into a refusal.
     try:
-        reparsed = json.loads(rewritten)
-    except json.JSONDecodeError as exc:
-        msg = (
-            f"{PLUGIN_PATH}: rewrite produced invalid JSON ({exc}) — "
-            "malformed or adversarial version field; resolve by hand."
-        )
+        rewritten = render_plugin_version(source, version)
+    except ValueError as exc:
+        msg = f"{exc} Resolve by hand."
         raise _RefusalError(msg) from exc
-    if reparsed.get("version") != version:
-        msg = (
-            f"{PLUGIN_PATH}: rewrite did not land cleanly on version "
-            f"{version} — resolve by hand."
-        )
-        raise _RefusalError(msg)
     if rewritten == source and not mid_merge:
         return None
     return rewritten
@@ -374,9 +368,7 @@ def _render_changelog(
             conflicted CHANGELOG's merge stages are unreadable, or when the
             branch side has no release heading to restack.
     """
-    fragments = (
-        read_tool_forge_section(repo_root, "changelog").get("mode") == "fragments"
-    )
+    fragments = is_fragments_mode(repo_root)
     conflicted = mid_merge and CHANGELOG_PATH in _unmerged_paths(repo_root)
     if fragments:
         if conflicted:
@@ -428,10 +420,18 @@ def rebump(repo_root: Path) -> RebumpOutcome:
         cfg = load_config(repo_root)
         mid_merge = merge_in_progress(repo_root)
         _guard_entry_state(repo_root, cfg, mid_merge=mid_merge)
+        fragments = is_fragments_mode(repo_root)
         latest = _require_latest_tag(repo_root)
         bump_class = _classify_intent(repo_root, cfg, mid_merge=mid_merge)
         version = _resolve_version(repo_root, latest, bump_class, mid_merge=mid_merge)
-        plugin_text = _render_plugin_version(repo_root, version, mid_merge=mid_merge)
+        # Fragments mode: versions are assembler-owned (forge-changelog
+        # release is the manifest's single writer) — never render or
+        # stage the manifest here, mirroring the changelog half's no-op.
+        plugin_text = (
+            None
+            if fragments
+            else _render_plugin_version(repo_root, version, mid_merge=mid_merge)
+        )
         changelog_action, changelog_text = _render_changelog(
             repo_root, version, mid_merge=mid_merge
         )

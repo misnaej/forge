@@ -46,7 +46,13 @@ import sys
 from pathlib import Path
 
 from forge.changelog import changelog_lacks_entry
-from forge.config import ForgeConfig, load_config, read_tool_forge_section
+from forge.changelog_fragments import discover_fragments
+from forge.config import (
+    ForgeConfig,
+    is_fragments_mode,
+    load_config,
+    read_tool_forge_section,
+)
 from forge.git_utils import (
     classify_bump,
     configure_cli_logging,
@@ -600,6 +606,19 @@ def _tag_and_report(repo_root: Path, cfg: ForgeConfig, args: argparse.Namespace)
 
     if not args.no_prune_branches:
         _log_prune_result(repo_root)
+
+    # Fragment-accumulation advisory. Self-gating on fragments mode
+    # (FOUNDATION §16, pattern C): pending changelog.d/ entries mean an
+    # unreleased bump is waiting — surface the release command; silent
+    # for shared-heading repos and when nothing is pending.
+    if is_fragments_mode(repo_root):
+        pending_fragments = len(discover_fragments(repo_root))
+        if pending_fragments:
+            logger.info(
+                "%d pending changelog fragment(s) — release when ready: "
+                "forge-changelog release",
+                pending_fragments,
+            )
 
     # Promotion-pending advisory. Self-gating: only emits when
     # ``[tool.forge]`` declares a separate ``dev_branch`` (dual-track
