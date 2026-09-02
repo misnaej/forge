@@ -253,6 +253,10 @@ def _cmd_start(root: Path, reason: str, ttl_hours: float) -> int:
             "unauthenticated, or the label is absent) — no ledger, no mode."
         )
         return 1
+    # A fresh, disjoint event must never inherit mutex state from a
+    # settled-but-unrepaid (or crash-interrupted) previous one — a stale
+    # lock would falsely refuse this event's single legitimate consume.
+    (root / _CONSUME_LOCK).unlink(missing_ok=True)
     write_state(
         root,
         EmergencyState(ledger_issue=ledger, reason=reason, expires_at=expires_at),

@@ -354,6 +354,45 @@ def test_main_dispatches_status_against_repo_root(
     assert "ARMED" in capsys.readouterr().out
 
 
+def test_fresh_start_clears_stale_lock_from_prior_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new event's consume is not blocked by the previous event's lock.
+
+    Regression pin: event A consumes (lock created) and its debt stays
+    outstanding (`end` → 1, files kept); a fresh `start` for event B must
+    clear the stale lock so B's single legitimate consume succeeds —
+    otherwise the mode falsely refuses exactly when it is needed.
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setenv("FORGE_EMERGENCY_ACK", "1")
+    fake, _calls = _fake_gh(
+        [
+            FakeProc(stdout="https://github.com/o/r/issues/1\n"),  # A start
+            FakeProc(),  # A consume comment
+            FakeProc(stdout="https://github.com/o/r/issues/2\n"),  # B start
+            FakeProc(),  # B consume comment
+        ]
+    )
+    monkeypatch.setattr(emergency, "_gh", fake)
+
+    assert emergency._cmd_start(tmp_path, "event A", 4.0) == 0
+    assert emergency._cmd_consume(tmp_path) == 0
+    assert emergency._cmd_end(tmp_path) == 1  # debt outstanding, files kept
+    assert (tmp_path / emergency._CONSUME_LOCK).exists()
+
+    # A spent sentinel is not "armed", so a fresh start proceeds — and
+    # must clear the stale lock on its way in.
+    assert emergency._cmd_start(tmp_path, "event B", 4.0) == 0
+    assert not (tmp_path / emergency._CONSUME_LOCK).exists()
+    assert emergency._cmd_consume(tmp_path) == 0
+    state = emergency.read_state(tmp_path)
+    assert state is not None
+    assert state.ledger_issue == 2
+    assert state.spent is True
+
+
 def test_main_dispatches_end_against_repo_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
