@@ -121,6 +121,83 @@ def top_release_heading(text: str) -> str | None:
     return None
 
 
+def _top_heading_span(text: str) -> tuple[int, int]:
+    """Return the ``(start, end)`` character span of the top release heading line.
+
+    Args:
+        text: Full ``CHANGELOG.md`` contents.
+
+    Returns:
+        Span of the first ``## vX.Y.Z`` heading line (end excludes the
+        newline).
+
+    Raises:
+        ValueError: When *text* has no recognized release heading.
+    """
+    match = _HEADING_RE.search(text)
+    if match is None:
+        msg = "no vX.Y.Z release heading found in changelog text"
+        raise ValueError(msg)
+    end = text.find("\n", match.start())
+    return match.start(), len(text) if end == -1 else end
+
+
+def retitle_top_release(text: str, version: str) -> str:
+    """Rewrite the top release heading to name *version*.
+
+    The clean-tree half of the post-merge rebump (``forge-rebump``): the
+    branch's unreleased entries stay in place and only the heading —
+    whose version slot another PR's merge just consumed — moves to the
+    next open one. Any trailing suffix on the old heading (a stale date)
+    is dropped: the release date belongs to the release, not the draft.
+
+    Args:
+        text: Full ``CHANGELOG.md`` contents.
+        version: New heading version, ``v``-prefixed (e.g. ``"v1.3.0"``).
+
+    Returns:
+        *text* with its top release heading line replaced by
+        ``## <version>``.
+
+    Raises:
+        ValueError: When *text* has no recognized release heading.
+    """
+    start, end = _top_heading_span(text)
+    return f"{text[:start]}## {version}{text[end:]}"
+
+
+def restack_changelog(ours: str, theirs: str, version: str) -> str:
+    """Stack *ours*' unreleased top section onto *theirs* under *version*.
+
+    The mid-merge half of the post-merge rebump: *ours* is the feature
+    branch's changelog (its entries under a now-taken next heading),
+    *theirs* the base branch's (the released stack). The resolution keeps
+    the base's text verbatim — preamble and released headings — and
+    inserts the branch's entries above its top release heading under the
+    next open *version*. Pure text transform; the caller owns reading the
+    merge stages and writing the result.
+
+    Args:
+        ours: Feature-branch ``CHANGELOG.md`` contents.
+        theirs: Base-branch ``CHANGELOG.md`` contents.
+        version: Heading for the restacked entries, ``v``-prefixed.
+
+    Returns:
+        The merged changelog text.
+
+    Raises:
+        ValueError: When *ours* has no recognized release heading (there
+            is no section to restack).
+    """
+    _start, end = _top_heading_span(ours)
+    next_heading = _HEADING_RE.search(ours, end)
+    body = ours[end : next_heading.start() if next_heading else len(ours)]
+    section = f"## {version}{body.rstrip()}\n\n"
+    theirs_match = _HEADING_RE.search(theirs)
+    insert_at = theirs_match.start() if theirs_match else len(theirs)
+    return f"{theirs[:insert_at]}{section}{theirs[insert_at:]}"
+
+
 def changelog_version_findings(text: str, latest_tag: str | None) -> list[str]:
     """Validate *text*'s release headings against each other and *latest_tag*.
 

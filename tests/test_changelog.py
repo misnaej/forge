@@ -322,6 +322,110 @@ def test_top_release_heading_none_without_versions() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _top_heading_span
+# ---------------------------------------------------------------------------
+
+
+def test_top_heading_span_bounds_the_heading_line() -> None:
+    """The span slices exactly the ``## vX.Y.Z`` heading line, no more."""
+    text = "# Changelog\n\n## v1.2.0\n\n- entry\n"
+    start, end = changelog._top_heading_span(text)
+    assert text[start:end] == "## v1.2.0"
+
+
+def test_top_heading_span_raises_without_a_release_heading() -> None:
+    """No recognized release heading in *text* → ``ValueError``."""
+    with pytest.raises(ValueError, match=r"no vX\.Y\.Z release heading"):
+        changelog._top_heading_span("# Changelog\n\nnothing here.\n")
+
+
+# ---------------------------------------------------------------------------
+# retitle_top_release
+# ---------------------------------------------------------------------------
+
+
+def test_retitle_top_release_replaces_heading_version() -> None:
+    """The top heading's version is swapped; the body below is untouched."""
+    text = "## v1.2.0\n\n- entry one\n- entry two\n"
+    result = changelog.retitle_top_release(text, "v1.3.0")
+    assert result == "## v1.3.0\n\n- entry one\n- entry two\n"
+
+
+def test_retitle_top_release_drops_trailing_date_suffix() -> None:
+    """A stale ``— <date>`` suffix on the old heading is dropped, not carried over.
+
+    The release date belongs to the release being cut, not the branch's
+    draft heading.
+    """
+    text = "## v1.2.0 — 2026-01-01\n\n- entry\n"
+    result = changelog.retitle_top_release(text, "v1.3.0")
+    assert result == "## v1.3.0\n\n- entry\n"
+
+
+def test_retitle_top_release_raises_without_a_release_heading() -> None:
+    """No recognized release heading in *text* → ``ValueError``."""
+    with pytest.raises(ValueError, match=r"no vX\.Y\.Z release heading"):
+        changelog.retitle_top_release("# Changelog\n", "v1.0.0")
+
+
+# ---------------------------------------------------------------------------
+# restack_changelog
+# ---------------------------------------------------------------------------
+
+
+def test_restack_changelog_inserts_ours_section_above_theirs_top() -> None:
+    """*ours*' unreleased top section is inserted above *theirs*' top heading."""
+    ours = "## v1.3.0\n\n- branch entry\n"
+    theirs = "# Changelog\n\n## v1.2.0\n\n- base entry\n"
+    result = changelog.restack_changelog(ours, theirs, "v1.3.0")
+    assert result == (
+        "# Changelog\n\n## v1.3.0\n\n- branch entry\n\n## v1.2.0\n\n- base entry\n"
+    )
+
+
+def test_restack_changelog_keeps_theirs_preamble_and_headings_verbatim() -> None:
+    """*theirs*' preamble and every already-released heading survive untouched."""
+    ours = "## v1.3.0\n\n- branch entry\n"
+    theirs = "# Changelog\n\nSome preamble.\n\n## v1.2.0\n\n- a\n\n## v1.1.0\n\n- b\n"
+    result = changelog.restack_changelog(ours, theirs, "v1.3.0")
+    assert "Some preamble." in result
+    assert "## v1.2.0\n\n- a" in result
+    assert "## v1.1.0\n\n- b" in result
+
+
+def test_restack_changelog_ours_body_runs_to_end_when_no_lower_heading() -> None:
+    """*ours* with a single heading — the whole remainder is the stacked body."""
+    ours = "## v1.3.0\n\n- only entry\n- another\n"
+    theirs = "## v1.2.0\n\n- base entry\n"
+    result = changelog.restack_changelog(ours, theirs, "v1.3.0")
+    assert "- only entry\n- another" in result
+    assert result.index("## v1.3.0") < result.index("## v1.2.0")
+
+
+def test_restack_changelog_ours_body_stops_before_next_heading() -> None:
+    """*ours* with multiple headings — only the top section is stacked, not the rest."""
+    ours = "## v1.3.0\n\n- branch entry\n\n## v1.2.0\n\n- old ours entry\n"
+    theirs = "## v1.2.0\n\n- base entry\n"
+    result = changelog.restack_changelog(ours, theirs, "v1.3.0")
+    assert "- branch entry" in result
+    assert "old ours entry" not in result
+
+
+def test_restack_changelog_inserts_at_end_when_theirs_has_no_heading() -> None:
+    """*theirs* with no recognized heading — the section is appended at the end."""
+    ours = "## v1.3.0\n\n- branch entry\n"
+    theirs = "# Changelog\n\nNo releases yet.\n"
+    result = changelog.restack_changelog(ours, theirs, "v1.3.0")
+    assert result == "# Changelog\n\nNo releases yet.\n## v1.3.0\n\n- branch entry\n\n"
+
+
+def test_restack_changelog_raises_when_ours_has_no_release_heading() -> None:
+    """*ours* with no recognized heading — nothing to restack → ``ValueError``."""
+    with pytest.raises(ValueError, match=r"no vX\.Y\.Z release heading"):
+        changelog.restack_changelog("# Changelog\n", "## v1.2.0\n", "v1.3.0")
+
+
+# ---------------------------------------------------------------------------
 # action_items
 # ---------------------------------------------------------------------------
 

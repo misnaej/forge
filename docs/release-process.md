@@ -23,6 +23,10 @@ be released** — never the last-released version.
   enforces `plugin.json["version"] > latest tag` on every commit.
 - After tagging `vX.Y.Z`, the next PR must bump `plugin.json` to the next
   rolling-next version, or its commits fail the guard.
+- Surviving feature branches hit the same slot collision on every merge —
+  the mechanical resolution (mid-merge conflict or post-tag clean-tree
+  mismatch) is **`forge-rebump`**; the two-state mechanics live in the
+  `src/forge/rebump.py` module docstring.
 
 ## 2. Dual-track tag cadence
 

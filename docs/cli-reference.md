@@ -508,6 +508,19 @@ options:
                         separated).
 ```
 
+## forge-rebump
+
+```text
+usage: forge-rebump [-h]
+
+Mechanically resolve the rolling-next plugin.json version slot (and, in
+shared-heading repos, the CHANGELOG stack) on a feature branch — mid-merge or
+after another PR's merge consumed the slot. Stages the result; never commits.
+
+options:
+  -h, --help  show this help message and exit
+```
+
 ## forge-release
 
 ```text

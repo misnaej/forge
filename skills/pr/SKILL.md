@@ -61,7 +61,12 @@ silently merge.** Which variant depends on Step 0:
 - **`mergeable: CONFLICTING`** → do not finalize yet. Resolve by
   merging the base in (`git merge origin/<base>`, resolve conflicts —
   CHANGELOG per `docs/release-process.md` §5, care per FOUNDATION §6's
-  resolution rule), then re-run from Step 0.5.
+  resolution rule), then re-run from Step 0.5. When the conflict is
+  confined to `.claude-plugin/plugin.json` + `CHANGELOG.md` (the
+  rolling-next version-slot collision), run **`forge-rebump`** instead
+  of hand-resolving: it classifies the branch's bump intent, takes the
+  next open slot, restacks the changelog (shared-heading mode), and
+  stages — refusing loudly if any other file conflicts.
 - **Behind but clean** (left count > 0, not conflicting) → merge the
   base in and proceed, saying what was done — **no confirmation
   needed** (FOUNDATION §6's resolution rule governs): it refreshes the

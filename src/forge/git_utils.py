@@ -85,6 +85,10 @@ def emit(msg: str) -> None:
 
 _SEMVER_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)")
 
+# Unresolved-conflict hunk opener: seven ``<`` at line start, then a
+# space or end-of-line (git always appends the ref label after a space).
+_CONFLICT_OPEN_RE = re.compile(r"^<{7}( |$)", re.MULTILINE)
+
 
 def parse_semver(version: str) -> tuple[int, int, int] | None:
     """Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
@@ -141,6 +145,35 @@ def next_version(latest_tag: str | None, bump: str) -> str:
         return f"v{major}.{minor}.{patch + 1}"
     msg = f"unknown bump {bump!r}: expected 'major', 'minor', or 'patch'"
     raise ValueError(msg)
+
+
+def classify_bump(
+    old: tuple[int, int, int] | None,
+    new: tuple[int, int, int] | None,
+) -> str | None:
+    """Classify the semver increment from *old* to *new*.
+
+    The one place that maps a version delta onto a bump class — shared
+    by the promotion-pending advisory (``forge-next-prep``) and the
+    version-slot resolver (``forge-rebump``) so the MAJOR/MINOR/PATCH
+    reading of a manifest delta cannot drift between them.
+
+    Args:
+        old: Baseline ``(major, minor, patch)`` tuple, or ``None``.
+        new: Candidate ``(major, minor, patch)`` tuple, or ``None``.
+
+    Returns:
+        ``"major"``, ``"minor"``, or ``"patch"`` for the highest-order
+        component that differs; ``None`` when the tuples are equal or
+        either side is ``None`` (nothing classifiable).
+    """
+    if old is None or new is None or old == new:
+        return None
+    if old[0] != new[0]:
+        return "major"
+    if old[1] != new[1]:
+        return "minor"
+    return "patch"
 
 
 def latest_v_tag(root: Path) -> str | None:
@@ -673,6 +706,43 @@ def merge_in_progress(repo_root: Path) -> bool:
         "rev-parse", "--git-path", "MERGE_HEAD", cwd=repo_root, check=False
     )
     return bool(git_path) and (repo_root / git_path).exists()
+
+
+def has_conflict_markers(text: str) -> bool:
+    """Return whether *text* contains unresolved git conflict markers.
+
+    Detects the ``<<<<<<< `` open marker at line start — the one marker
+    every conflict style (merge, diff3, zdiff3) emits, so its absence
+    means git left no unresolved hunk in the file. Deliberately not
+    matching ``=======``/``>>>>>>>`` alone: those appear legitimately in
+    markdown (setext underlines, quoted diffs) and only open markers
+    make a file mid-conflict.
+
+    Args:
+        text: File contents to scan.
+
+    Returns:
+        ``True`` when an unresolved conflict hunk opener is present.
+    """
+    return _CONFLICT_OPEN_RE.search(text) is not None
+
+
+def file_has_conflict_markers(path: Path) -> bool:
+    """Return whether the file at *path* holds unresolved conflict markers.
+
+    Args:
+        path: File to scan.
+
+    Returns:
+        ``True`` when the file exists, is readable, and
+        :func:`has_conflict_markers` matches; ``False`` otherwise
+        (missing or unreadable files are simply not mid-conflict).
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return has_conflict_markers(text)
 
 
 def resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None:
