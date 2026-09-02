@@ -501,8 +501,13 @@ def test_rebump_refuses_when_ours_changelog_has_no_release_heading(
     assert (tmp_path / rebump.PLUGIN_PATH).read_bytes() == plugin_before
 
 
-def test_rebump_fragments_mode_is_a_noop_on_clean_tree(tmp_path: Path) -> None:
-    """Fragments mode never touches the changelog — even when the manifest reslots."""
+def test_rebump_fragments_mode_is_a_full_noop_on_clean_tree(tmp_path: Path) -> None:
+    """Fragments mode never touches manifest or changelog — assembler-owned versions.
+
+    `forge-changelog release` is the manifest's single writer in fragments
+    mode; rebump computes the would-be slot for its report but writes and
+    stages nothing.
+    """
     init_git_repo(tmp_path)
     _write_config(tmp_path, fragments=True)
     _write_plugin(tmp_path, "1.0.0")
@@ -518,13 +523,44 @@ def test_rebump_fragments_mode_is_a_noop_on_clean_tree(tmp_path: Path) -> None:
     commit_all(tmp_path, "other: bump, released")
     _tag(tmp_path, "v1.1.0")
     _checkout(tmp_path, "feat/x")
+    plugin_before = (tmp_path / rebump.PLUGIN_PATH).read_bytes()
 
     outcome = rebump.rebump(tmp_path)
 
     assert outcome.refusal is None
     assert outcome.version == "1.2.0"
     assert outcome.changelog_action == "fragments-noop"
-    assert outcome.staged == (rebump.PLUGIN_PATH,)
+    assert outcome.staged == ()
+    assert (tmp_path / rebump.PLUGIN_PATH).read_bytes() == plugin_before
+
+
+def test_rebump_fragments_mode_manifest_conflict_refuses_to_release_cli(
+    tmp_path: Path,
+) -> None:
+    """A fragments-mode plugin.json conflict is a release-PR race — refused.
+
+    The refusal points at `forge-changelog release` (the single writer);
+    rebump must not adjudicate racing release PRs.
+    """
+    init_git_repo(tmp_path)
+    _write_config(tmp_path, fragments=True)
+    _write_plugin(tmp_path, "1.0.0")
+    commit_all(tmp_path, "config + release v1.0.0")
+    _tag(tmp_path, "v1.0.0")
+
+    _checkout_new_branch(tmp_path, "release-a")
+    _write_plugin(tmp_path, "1.1.0")
+    commit_all(tmp_path, "release A bump")
+    _checkout(tmp_path, "main")
+    _write_plugin(tmp_path, "1.2.0")
+    commit_all(tmp_path, "release B bump")
+    _checkout(tmp_path, "release-a")
+    assert _merge_no_commit(tmp_path, "main") != 0
+
+    outcome = rebump.rebump(tmp_path)
+
+    assert outcome.refusal is not None
+    assert "forge-changelog release" in outcome.refusal
 
 
 def test_rebump_fragments_mode_conflicted_changelog_refuses_tree_untouched(

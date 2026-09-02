@@ -47,7 +47,12 @@ from pathlib import Path
 
 from forge.changelog import changelog_lacks_entry
 from forge.changelog_fragments import discover_fragments
-from forge.config import ForgeConfig, load_config, read_tool_forge_section
+from forge.config import (
+    ForgeConfig,
+    is_fragments_mode,
+    load_config,
+    read_tool_forge_section,
+)
 from forge.git_utils import (
     classify_bump,
     configure_cli_logging,
@@ -606,7 +611,7 @@ def _tag_and_report(repo_root: Path, cfg: ForgeConfig, args: argparse.Namespace)
     # (FOUNDATION §16, pattern C): pending changelog.d/ entries mean an
     # unreleased bump is waiting — surface the release command; silent
     # for shared-heading repos and when nothing is pending.
-    if read_tool_forge_section(repo_root, "changelog").get("mode") == "fragments":
+    if is_fragments_mode(repo_root):
         pending_fragments = len(discover_fragments(repo_root))
         if pending_fragments:
             logger.info(

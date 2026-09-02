@@ -35,7 +35,7 @@ import sys
 from pathlib import Path
 
 from forge.changelog_fragments import check_pending, discover_fragments
-from forge.config import read_tool_forge_section
+from forge.config import is_fragments_mode
 from forge.git_utils import (
     capturing_to_step_log,
     configure_cli_logging,
@@ -108,9 +108,12 @@ def main() -> int:
     """Enforce plugin.json version > latest git tag.
 
     Returns:
-        ``0`` on success or when skipped. ``1`` when ``plugin.json["version"]``
-        is not strictly ahead of the latest semver-style tag, or when either
-        version string is unparseable.
+        ``0`` on success or when skipped — including fragment mode
+        parked at the latest tag with valid pending fragments (see
+        :func:`_not_ahead_verdict`). ``1`` when ``plugin.json["version"]``
+        is below the latest semver-style tag, at the tag outside a
+        healthy fragment-mode parked state, or when either version
+        string is unparseable.
     """
     argparse.ArgumentParser(
         prog="verify-forge-plugin-version",
@@ -183,9 +186,7 @@ def _not_ahead_verdict(
     if _is_release_commit(repo_root):
         logger.info("(HEAD reproduces a published v* release tag — skipped)")
         return 0
-    fragments_mode = (
-        read_tool_forge_section(repo_root, "changelog").get("mode") == "fragments"
-    )
+    fragments_mode = is_fragments_mode(repo_root)
     if fragments_mode and plugin_ver == tag_ver:
         return _fragment_parked_verdict(repo_root, latest_tag)
     logger.error(

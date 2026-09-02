@@ -54,7 +54,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from forge.changelog import restrand_changelog, top_release_heading
-from forge.config import load_config, read_tool_forge_section
+from forge.config import is_fragments_mode, load_config
 from forge.git_utils import (
     configure_cli_logging,
     emit,
@@ -589,7 +589,7 @@ def _restrand_preflight(root: Path) -> int | tuple[Path, str, str, str]:
         when the restrand cannot proceed; otherwise a tuple of
         ``(changelog_path, new_text, old_text, latest_tag)``.
     """
-    if read_tool_forge_section(root, "changelog").get("mode") == "fragments":
+    if is_fragments_mode(root):
         emit("restrand: fragments mode — entries cannot strand; nothing to do.")
         return 0
     changelog = root / "CHANGELOG.md"

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_68 modules, 833 symbols._
+_68 modules, 834 symbols._
 
 ## `forge`
 
@@ -275,6 +275,7 @@ _68 modules, 833 symbols._
 - `class ForgeConfig` — Repo configuration sourced from ``[tool.forge]``.
   - `dual_track(self) -> bool` — Return ``True`` when base and dev are distinct branches.
 - `read_pyproject_raw(repo_root: Path) -> dict` — Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
+- `is_fragments_mode(repo_root: Path) -> bool` — Return whether the repo runs changelog fragments mode.
 - `read_tool_forge_section(repo_root: Path, section: str = '') -> dict` — Return a ``[tool.forge.<section>]`` table, or ``{}`` when absent.
 - `_read_toml_file(path: Path) -> dict | None` _(internal)_ — Parse a standalone TOML file, degrading to ``None`` on any failure.
 - `resolve_model_section(repo_root: Path) -> dict | None` — Locate the C4 model table — external file or inline pyproject.

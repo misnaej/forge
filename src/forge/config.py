@@ -204,6 +204,22 @@ def read_pyproject_raw(repo_root: Path) -> dict:
         return {}
 
 
+def is_fragments_mode(repo_root: Path) -> bool:
+    """Return whether the repo runs changelog fragments mode.
+
+    The one predicate for ``[tool.forge.changelog].mode == "fragments"``
+    — mode-dispatching call sites share it instead of re-deriving the
+    config read.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``True`` when fragments mode is configured.
+    """
+    return read_tool_forge_section(repo_root, "changelog").get("mode") == "fragments"
+
+
 def read_tool_forge_section(repo_root: Path, section: str = "") -> dict:
     """Return a ``[tool.forge.<section>]`` table, or ``{}`` when absent.
 

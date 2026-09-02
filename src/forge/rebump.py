@@ -30,9 +30,13 @@ unless the branch's version is already strictly ahead of the latest tag
 (its slot is still open — kept as-is). The changelog half applies only
 in shared-heading mode: mid-merge, the branch's unreleased top section
 is restacked onto the base's changelog under the new heading; on a
-clean tree the stale top heading is retitled. In fragments mode
-(``[tool.forge.changelog].mode = "fragments"``) per-PR entries are
-unique files that cannot collide, so the changelog half is a no-op.
+clean tree the stale top heading is retitled. **Fragments mode**
+(``[tool.forge.changelog].mode = "fragments"``) sidelines this tool
+entirely: per-PR entries are unique files that cannot collide (changelog
+half no-ops) and versions are assembler-owned — ``forge-changelog
+release`` is the manifest's single writer, so the manifest half no-ops
+too, and a fragments-mode manifest conflict (a release-PR race) is
+refused with a pointer at ``forge-changelog release``.
 
 Exits 0 on success (including nothing-to-do), 1 on refusal.
 """
@@ -51,7 +55,7 @@ from forge.changelog import (
     retitle_top_release,
     top_release_heading,
 )
-from forge.config import ForgeConfig, load_config, read_tool_forge_section
+from forge.config import ForgeConfig, is_fragments_mode, load_config
 from forge.git_utils import (
     classify_bump,
     configure_cli_logging,
@@ -168,7 +172,9 @@ def _guard_entry_state(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) ->
 
     Raises:
         _RefusalError: On a protected branch, on unrelated conflicts
-            (mid-merge), or on stray conflict markers (clean tree).
+            (mid-merge), on a fragments-mode manifest conflict (a
+            release-PR race owned by ``forge-changelog release``), or on
+            stray conflict markers (clean tree).
     """
     branch = run_git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo_root, check=False)
     if branch in (cfg.dev_branch, cfg.base_branch):
@@ -178,15 +184,19 @@ def _guard_entry_state(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) ->
         )
         raise _RefusalError(msg)
     if mid_merge:
-        extras = [
-            p
-            for p in _unmerged_paths(repo_root)
-            if p not in (PLUGIN_PATH, CHANGELOG_PATH)
-        ]
+        unmerged = _unmerged_paths(repo_root)
+        extras = [p for p in unmerged if p not in (PLUGIN_PATH, CHANGELOG_PATH)]
         if extras:
             msg = (
                 "unrelated merge conflicts present — resolve these by hand "
                 f"first: {', '.join(sorted(extras))}"
+            )
+            raise _RefusalError(msg)
+        if PLUGIN_PATH in unmerged and is_fragments_mode(repo_root):
+            msg = (
+                "fragments mode: a plugin.json conflict is a release-PR "
+                "race, not a per-PR slot collision — recompute with "
+                "`forge-changelog release` instead."
             )
             raise _RefusalError(msg)
         return
@@ -355,9 +365,7 @@ def _render_changelog(
             conflicted CHANGELOG's merge stages are unreadable, or when the
             branch side has no release heading to restack.
     """
-    fragments = (
-        read_tool_forge_section(repo_root, "changelog").get("mode") == "fragments"
-    )
+    fragments = is_fragments_mode(repo_root)
     conflicted = mid_merge and CHANGELOG_PATH in _unmerged_paths(repo_root)
     if fragments:
         if conflicted:
@@ -409,10 +417,18 @@ def rebump(repo_root: Path) -> RebumpOutcome:
         cfg = load_config(repo_root)
         mid_merge = merge_in_progress(repo_root)
         _guard_entry_state(repo_root, cfg, mid_merge=mid_merge)
+        fragments = is_fragments_mode(repo_root)
         latest = _require_latest_tag(repo_root)
         bump_class = _classify_intent(repo_root, cfg, mid_merge=mid_merge)
         version = _resolve_version(repo_root, latest, bump_class, mid_merge=mid_merge)
-        plugin_text = _render_plugin_version(repo_root, version, mid_merge=mid_merge)
+        # Fragments mode: versions are assembler-owned (forge-changelog
+        # release is the manifest's single writer) — never render or
+        # stage the manifest here, mirroring the changelog half's no-op.
+        plugin_text = (
+            None
+            if fragments
+            else _render_plugin_version(repo_root, version, mid_merge=mid_merge)
+        )
         changelog_action, changelog_text = _render_changelog(
             repo_root, version, mid_merge=mid_merge
         )

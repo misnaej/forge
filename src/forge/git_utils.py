@@ -1019,8 +1019,11 @@ def render_plugin_version(source_text: str, version: str) -> str:
             produces invalid JSON, or the reparsed version field is not
             exactly *version*.
     """
+    # Callable replacement, never a template string: *version* is caller
+    # input to a public helper, and a template would parse backslash
+    # escapes in it as backreferences (replacement-string injection).
     rewritten, count = _VERSION_FIELD_RE.subn(
-        rf"\g<1>{version}\g<2>", source_text, count=1
+        lambda m: f"{m.group(1)}{version}{m.group(2)}", source_text, count=1
     )
     if count != 1:
         msg = 'plugin.json: no "version" field found to rewrite.'
