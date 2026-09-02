@@ -70,6 +70,7 @@ change that violates an invariant must turn its test red.
 | The fragment gate rejects a concrete version number in a fragment's filename or body | `changelog_fragments.validate_fragment` | `tests/test_changelog_fragments.py::test_validate_fragment_version_shaped_filename` / `::test_validate_fragment_version_shaped_body` |
 | An invalid fragment fails the gate (exit 2) | `changelog_fragments.main` | `tests/test_changelog_fragments.py::test_main_check_exit_two_on_invalid_fragment` |
 | `assemble --delete` writes the curated entry into `CHANGELOG.md` and stages the fragment deletions | `changelog_fragments.main` | `tests/test_changelog_fragments.py::test_main_assemble_with_delete_stages_changelog_and_fragment_deletion` |
+| The release-commit skip tolerates a `CHANGELOG.md`/`changelog.d/`-only divergence from the tag — a release commit may assemble the changelog — yet still fails when any other file diverges | `git_utils.release_tree_fingerprint` via `verify_plugin_version._is_release_commit` | `tests/test_verify_plugin_version.py::test_skips_when_release_branch_only_adds_changelog` / `::test_fails_when_release_branch_changes_non_changelog_file`; `tests/test_git_utils.py::test_release_fingerprint_equal_when_only_changelog_differs` / `::test_release_fingerprint_differs_when_other_file_changes` |
 
 When you add a versioning behavior, add a row here **and** its test. When
 you find an invariant with no test, that gap is a bug to close.
@@ -77,11 +78,15 @@ you find an invariant with no test, that gap is a bug to close.
 ### Retired invariants (dual-track)
 
 The dual-track invariants — promotion status and staged catch-up, minor
-tag relocation (`forge-check-main-tags`), release-fingerprint tolerances,
-changelog-history preservation across promotion merges, and the
-newest-minor hold — are retired. Their machinery self-skips on a
-single-track repo (`dev_branch == base_branch`) and is scheduled for
-deletion along with its tests (see below).
+tag relocation (`forge-check-main-tags`), changelog-history preservation
+across promotion merges, and the newest-minor hold — are retired. Their
+machinery self-skips on a single-track repo (`dev_branch ==
+base_branch`) and is scheduled for deletion along with its tests (see
+below). The release fingerprint itself
+(`git_utils.release_tree_fingerprint`) is **not** retired: the
+rolling-next guard's release-commit skip still depends on its
+changelog-tolerant matching (table above) — only the tag aligner's use
+of it retires.
 
 ## Deprecated: dual-track
 

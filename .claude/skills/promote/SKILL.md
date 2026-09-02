@@ -5,9 +5,13 @@ description: Forge-only — open a dev→main promotion PR when a MINOR or MAJOR
 
 # Promote dev → main (forge-only)
 
-> **Spec:** [`docs/release-process.md`](../../../docs/release-process.md) is the
-> source of truth for the versioning + promotion model and its invariant→test
-> contract. This skill is the *operational* runbook for that model.
+> **DEPRECATED — forge is single-track.** The dual-track dev/main model
+> was retired (one-shot promotion v3.40.0); every PR now targets `main`
+> and every merge tags. Do NOT run this skill. It is kept only until the
+> promotion machinery is deleted; see the "Deprecated: dual-track"
+> section of [`docs/release-process.md`](../../../docs/release-process.md).
+> The section references below describe the retired spec and no longer
+> match that document.
 
 Opens a `dev → main` promotion PR after a MINOR (`Y+1, Z→0`) or
 MAJOR (`X+1, Y→0, Z→0`) bump to `.claude-plugin/plugin.json` lands on
