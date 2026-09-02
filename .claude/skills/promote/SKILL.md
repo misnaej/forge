@@ -106,7 +106,13 @@ git merge origin/main
 
 # 4. Reconcile CHANGELOG.md per the rule below, then add the curated
 #    `## v$NEW — <date>` @main entry (group the release's dev PRs by
-#    conventional-commit type, one bullet per theme); commit the merge.
+#    conventional-commit type, one bullet per theme). In FRAGMENTS mode
+#    ([tool.forge.changelog].mode = "fragments") the raw material is the
+#    pending changelog.d/ files — run `forge-changelog assemble
+#    --version v$NEW --delete` to collate them and stage their deletion,
+#    then curate the assembled entry into the @main style; the deleted
+#    fragments ride this same commit (the release fingerprint tolerates
+#    both divergences). Commit the merge.
 
 git log origin/main..release/v$NEW --oneline    # SANITY: only this release's commits, not all of dev
 ```

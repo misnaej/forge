@@ -137,11 +137,18 @@ PR check".
 
 **Recovery when the gate fires mid-branch**: the check is
 branch-cumulative — a tag cut while the branch is open strands *all*
-its earlier entries at once, and editing headings cannot fix it. The
-one cure is merging the base in (`git merge origin/<base>`); with
-uncommitted work in the tree, use the stash dance [`FOUNDATION.md` §2](../FOUNDATION.md#2-core-safety-rules)
-sanctions (`git stash -u` → merge → `git stash pop`; on any failure
-leave the stash alone) — never `git reset --hard`.
+its earlier entries at once, and editing headings cannot fix it. First
+merge the base in (`git merge origin/<base>`); with uncommitted work
+in the tree, follow the sync ladder
+[`FOUNDATION.md` §2](../FOUNDATION.md#2-core-safety-rules) sanctions
+(probe with `git merge-tree --write-tree`, merge directly when nothing
+overlaps, otherwise secure the work as a `wip-sync:` checkpoint commit
+first) — never `git reset --hard`, never untracked-including stash.
+Then run **`forge-changelog restrand`** (`--bump minor|major` when the
+change deserves more than a patch slot): it moves exactly the entries
+this branch added under released headings to the next open
+`## vX.Y.Z` heading, verifies the repair against the gate's own
+detectors, and stages `CHANGELOG.md` — the by-hand re-slot is gone.
 
 **Deferred entry timing** (`[tool.forge.changelog].precommit_enforce =
 false`): by default `changelog_updated` gates every local commit, which
@@ -179,6 +186,40 @@ branch adds no changelog bullets for its stranded-entry check to flag.
 - **Headings are `v`-prefixed and dated with an em dash**
   (`## v1.6.0 — 2026-07-01`), matching what `release_headings`
   recognizes, rather than KaC's bracketed `## [1.6.0] - 2026-07-01`.
+
+### Fragments mode (opt-in, zero merge conflicts)
+
+`[tool.forge.changelog].mode = "fragments"` replaces the shared-heading
+convention entirely. Each PR adds one unique file:
+
+```
+changelog.d/<slug>.<type>.md     # type: added|changed|fixed|removed|docs
+```
+
+whose first line is `bump: patch|minor|major` — the semver LEVEL only.
+A concrete version number anywhere in a fragment (filename or body) is
+invalid and gate-rejected: versions are written exactly once, by the
+assembler. The rest of the file is the entry's markdown, verbatim.
+
+Consequences, by design:
+
+- **Zero merge conflicts** — two PRs never touch the same file, and
+  levels aggregate by `max()` at release, so nothing needs manual
+  reconciliation per merge.
+- **CHANGELOG.md becomes an output, never an input.** It is assembled
+  once per release (`forge-changelog assemble --version vX.Y.Z
+  --delete`, run in the release/promotion flow's own commit), grouping
+  fragments by type in fixed order. No CI step or tool may read the
+  changelog as a version/bump signal in this mode — the
+  `changelog_version` step becomes the *fragment gate* (fragments parse,
+  levels valid, no version strings), and `changelog_updated` requires a
+  fragment instead of a CHANGELOG edit. The stranded-entries race cannot
+  occur: fragments carry no version to strand.
+- The trade-off: the changelog is no longer release-ready at all times —
+  which is exactly why the mode is opt-in.
+
+No-version opt-outs (`NO_VERSION=1`, branch token, commit marker) apply
+unchanged.
 
 ## Choosing the bump
 

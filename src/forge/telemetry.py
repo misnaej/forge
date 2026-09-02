@@ -19,8 +19,14 @@ and in streaming mode (the CLI) its stdout/stderr pass straight through.
 Invocation is always explicit (the CLI or a flag) — there is no ambient
 "enabled" switch, so consumers who never ask for telemetry never pay for it.
 
+Every run also appends one summary line to the append-only
+``code_health/telemetry_history.log``; ``forge-telemetry --history``
+renders that ledger as a trend table — a read-only mode that needs
+neither a wrapped command nor ``psutil``.
+
 Exit codes (CLI):
     <child's>  the wrapped command's own exit code, unchanged
+    0          ``--history`` (always — reading the ledger never gates)
     1          psutil not installed (install hint printed)
     2          no command given after ``--``, or ``--label`` is not a
                safe artifact suffix
@@ -301,6 +307,69 @@ def _append_history(root: Path, history: _RunHistory, label: str) -> None:
         fh.write(line)
 
 
+def _parse_history(text: str) -> list[dict[str, str]]:
+    """Parse ``telemetry_history.log`` lines into field mappings.
+
+    Tolerant by design: a line that doesn't split into ``key=value``
+    fields (hand-edited, truncated) is skipped rather than failing the
+    whole read — the ledger is append-only and long-lived.
+
+    Args:
+        text: The raw ledger contents.
+
+    Returns:
+        One dict per parsable line, in file (chronological) order. The
+        ``cmd=`` field keeps embedded spaces (it is always last).
+    """
+    rows: list[dict[str, str]] = []
+    for line in text.splitlines():
+        if "=" not in line:
+            continue
+        row: dict[str, str] = {}
+        head, sep, cmd = line.partition("  cmd=")
+        for field in head.split():
+            key, eq, value = field.partition("=")
+            if eq:
+                row[key] = value
+        if sep:
+            row["cmd"] = cmd
+        if row:
+            rows.append(row)
+    return rows
+
+
+def _render_history(root: Path) -> int:
+    """Print the run-history trend table for ``forge-telemetry --history``.
+
+    Renders the append-only ledger newest-last so trends read
+    top-to-bottom; ``mean_cpu`` is not in the ledger format and is
+    therefore absent here (widening the writer is #425's concern).
+
+    Args:
+        root: Repository root directory.
+
+    Returns:
+        ``0`` always — reading history is informational, never a gate.
+    """
+    path = root / "code_health" / "telemetry_history.log"
+    if not path.is_file():
+        logger.info("No telemetry history at %s — run forge-telemetry first.", path)
+        return 0
+    rows = _parse_history(path.read_text(encoding="utf-8"))
+    if not rows:
+        logger.info("Telemetry history at %s holds no parsable runs.", path)
+        return 0
+    header = f"{'ts':<20} {'label':<14} {'exit':>4} {'wall':>9} {'peak_rss':>10}"
+    lines = [f"Telemetry history ({len(rows)} runs):", header]
+    lines += [
+        f"{r.get('ts', '?'):<20} {r.get('label', '-'):<14} "
+        f"{r.get('exit', '?'):>4} {r.get('wall', '?'):>9} {r.get('peak_rss', '?'):>10}"
+        for r in rows
+    ]
+    logger.info("%s", "\n".join(lines))
+    return 0
+
+
 def _render_plot(root: Path, samples: list[Sample], label: str = "") -> None:
     """Write ``code_health/telemetry[_<label>].png``, or log why it was skipped.
 
@@ -455,7 +524,17 @@ def main(argv: list[str] | None = None) -> int:
         "never overwrites the run before it (env: FORGE_TELEMETRY_LABEL; "
         "the flag wins)",
     )
+    parser.add_argument(
+        "--history",
+        action="store_true",
+        help="print the run-history trend table from "
+        "code_health/telemetry_history.log and exit (no command, no psutil)",
+    )
     args = parser.parse_args(flags)
+    if args.history:
+        # Reads a text ledger only: needs neither a wrapped command nor
+        # psutil, so it must precede both gates below.
+        return _render_history(repo_root())
     if not cmd:
         logger.error(
             "forge-telemetry: no command given — usage: forge-telemetry -- <cmd> ..."

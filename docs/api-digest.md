@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_65 modules, 750 symbols._
+_68 modules, 824 symbols._
 
 ## `forge`
 
@@ -219,6 +219,9 @@ _65 modules, 750 symbols._
 - `changelog_lacks_entry(changelog_text: str, tag: str) -> bool` — Return ``True`` when *changelog_text* has no ``## <tag>`` heading.
 - `_recognized_version(token: str) -> str | None` _(internal)_ — Return the ``vX.Y.Z`` a heading *token* names, or ``None``.
 - `top_release_heading(text: str) -> str | None` — Return the first (topmost) recognized ``vX.Y.Z`` release heading.
+- `_top_heading_span(text: str) -> tuple[int, int]` _(internal)_ — Return the ``(start, end)`` character span of the top release heading line.
+- `retitle_top_release(text: str, version: str) -> str` — Rewrite the top release heading to name *version*.
+- `restack_changelog(ours: str, theirs: str, version: str) -> str` — Stack *ours*' unreleased top section onto *theirs* under *version*.
 - `changelog_version_findings(text: str, latest_tag: str | None) -> list[str]` — Validate *text*'s release headings against each other and *latest_tag*.
 - `action_items(text: str) -> list[tuple[str, str]]` — Return ``(version, action)`` pairs for every ``**Action:**`` line.
 - `_governing_versions(text: str) -> list[str | None]` _(internal)_ — Map each line in *text* to its governing release version heading.
@@ -227,6 +230,28 @@ _65 modules, 750 symbols._
 - `_section_content(text: str) -> dict[str, set[str]]` _(internal)_ — Map each release version to its normalized non-heading content lines.
 - `stranded_added_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections gained content vs *old_text*.
 - `released_deleted_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections lost content vs *old_text*.
+- `_version_heading_span(text: str, version: str) -> tuple[int | None, int | None]` _(internal)_ — Return the character span of *version*'s heading line plus its newline.
+- `restrand_changelog(old_text: str, new_text: str, latest_tag: str, bump: str) -> str` — Move entries stranded under released headings to the next open slot.
+
+## `forge.changelog_fragments`
+
+> _forge-changelog — changelog fragments: validation, discovery, assembly._
+
+- `class Fragment` — One parsed pending changelog fragment.
+- `_parse_and_validate_filename(name: str) -> tuple[str, str, list[str]]` _(internal)_ — Validate filename and extract slug and type.
+- `_parse_bump_line_and_body(path: Path, lines: list[str]) -> tuple[str, str, list[str]]` _(internal)_ — Validate bump line and extract level and body.
+- `_check_no_versions_or_headings(name: str, body: str) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
+- `validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]` — Parse *path* into a :class:`Fragment`, collecting every violation.
+- `discover_fragments(root: Path) -> list[Path]` — Return pending fragment files under ``changelog.d/``, filename-sorted.
+- `max_level(fragments: list[Fragment]) -> str` — Return the strongest bump level among *fragments*.
+- `assemble_changelog(text: str, fragments: list[Fragment], version: str, *, date: str = '') -> str` — Insert a new release heading built from *fragments* into *text*.
+- `check_pending(root: Path) -> list[str]` — Validate every pending fragment under *root*.
+- `_cmd_check(root: Path) -> int` _(internal)_ — Report on pending fragments; gate on validity.
+- `_cmd_assemble(root: Path, version: str, date: str, *, delete: bool) -> int` _(internal)_ — Collate pending fragments into ``CHANGELOG.md`` under *version*.
+- `_restrand_old_text(root: Path) -> str | None` _(internal)_ — Return the comparison-point ``CHANGELOG.md`` for the restrand.
+- `_restrand_preflight(root: Path) -> int | tuple[Path, str, str, str]` _(internal)_ — Resolve restrand preconditions or the early-exit code for a missing one.
+- `_cmd_restrand(root: Path, bump: str) -> int` _(internal)_ — Repair stranded changelog entries mechanically; stage the result.
+- `main(argv: list[str] | None = None) -> int` — Run the ``forge-changelog`` CLI.
 
 ## `forge.claude_settings_schema`
 
@@ -266,7 +291,13 @@ _65 modules, 750 symbols._
 - `_today_iso() -> str` _(internal)_ — Return today's date as ``YYYY-MM-DD``.
 - `_ensure_file_and_section(path: Path) -> None` _(internal)_ — Create the file with the canonical headers if missing.
 - `_append_line(path: Path, line: str) -> None` _(internal)_ — Append *line* to *path* with a trailing newline.
-- `main() -> int` — Append one activity-log line to ``.plan/CONTINUATION.md``.
+- `_split_sections(text: str) -> tuple[str, list[str], list[str], list[str]]` _(internal)_ — Split the file into head, digest lines, recent entries, and strays.
+- `_parse_digests(digest_lines: list[str]) -> dict[str, tuple[int, int, int, int, set[str]]]` _(internal)_ — Parse existing digest lines into per-day accumulators.
+- `_condense_into(acc: dict[str, tuple[int, int, int, int, set[str]]], overflow: list[str]) -> dict[str, tuple[int, int, int, int, set[str]]]` _(internal)_ — Fold rotated raw entries into the per-day digest accumulators.
+- `_render_digest(acc: dict[str, tuple[int, int, int, int, set[str]]]) -> list[str]` _(internal)_ — Render accumulators back into sorted digest lines.
+- `_partition_recent(recent: list[str], head: str, *, max_entries: int, cutoff: str) -> tuple[list[str], list[str], int]` _(internal)_ — Partition recent entries into keep/overflow with floor/cap constraints.
+- `_rotate(path: Path, archive: Path, *, max_entries: int, max_age_days: int) -> None` _(internal)_ — Rotate aged/overflowing recent entries into digest + archive.
+- `main() -> int` — Append one activity-log line and/or rotate the ledger tail.
 
 ## `forge.doctor`
 
@@ -475,6 +506,7 @@ _65 modules, 750 symbols._
 - `emit(msg: str) -> None` — Write *msg* to stdout with a trailing newline.
 - `parse_semver(version: str) -> tuple[int, int, int] | None` — Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
 - `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
+- `classify_bump(old: tuple[int, int, int] | None, new: tuple[int, int, int] | None) -> str | None` — Classify the semver increment from *old* to *new*.
 - `latest_v_tag(root: Path) -> str | None` — Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
 - `minor_tags(repo_root: Path) -> list[str]` — Return every ``vX.Y.0`` tag (patch == 0), semver-sorted ascending.
 - `fetch_tags_best_effort(repo_root: Path, *, timeout: int = 10) -> list[str]` — Refresh local tags from ``origin``, reporting degradations as notes.
@@ -492,11 +524,14 @@ _65 modules, 750 symbols._
 - `resolve_current_branch(repo_root: Path) -> tuple[str, str] | None` — Return the current branch name and where it came from, or ``None``.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
 - `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
+- `has_conflict_markers(text: str) -> bool` — Return whether *text* contains unresolved git conflict markers.
+- `file_has_conflict_markers(path: Path) -> bool` — Return whether the file at *path* holds unresolved conflict markers.
 - `resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref diff-scoped checks should compare against, origin-first.
 - `merge_base_with_head(root: Path | None, base_branch: str) -> str` — Return the merge-base SHA of ``HEAD`` and the resolved base ref.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 - `write_tree(repo_root: Path) -> str | None` — Return the tree SHA of the current **index** via ``git write-tree``.
-- `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
+- `_release_ignored(path: str) -> bool` _(internal)_ — Return whether *path* is release-curated content (fingerprint-exempt).
+- `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring changelog paths.
 - `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
 - `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
@@ -677,6 +712,8 @@ _65 modules, 750 symbols._
 - `configured_docs_only_globs(repo_root: Path) -> tuple[str, ...]` — Return the consumer's extra docs-only globs from ``[tool.forge.pr]``.
 - `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
 - `regen_only_diff(changed_paths: list[str]) -> bool` — Return whether every changed path is a forge-managed regen artifact.
+- `touches_source_paths(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`SOURCE_PATHS`.
+- `light_wrapup_decision(*, line_count: int, changed_paths: list[str], added_paths: list[str]) -> tuple[bool, str]` — Decide whether a diff qualifies for the light wrap-up path.
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
 
 ## `forge.pr_plan`
@@ -685,6 +722,7 @@ _65 modules, 750 symbols._
 
 - `class PrPlan` — The finalization plan for one classification run.
 - `_changed_paths(root: Path, diff_range: str) -> list[str]` _(internal)_ — Return the repo-relative paths changed across *diff_range*.
+- `_added_paths(root: Path, diff_range: str) -> list[str]` _(internal)_ — Return the new paths across *diff_range* (``--diff-filter=ACR``).
 - `_line_count(root: Path, diff_range: str) -> int` _(internal)_ — Return insertions + deletions across *diff_range*.
 - `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.
 - `_try_delta(root: Path, pr_number: int | None, reasons: list[str]) -> bool` _(internal)_ — Evaluate delta-mode eligibility, appending the trail to *reasons*.
@@ -746,6 +784,7 @@ _65 modules, 750 symbols._
 - `_one_step_successors(tag: tuple[int, int, int]) -> set[tuple[int, int, int]]` _(internal)_ — Return the three valid rolling-next successors of a tagged release.
 - `step_release_tag_guard(repo_root: Path) -> StepResult` — Block when an intermediate rolling-next release was never tagged (#66).
 - `step_smart_test(repo_root: Path) -> StepResult` — Run smart-test depth-N selection when opted in (off by default).
+- `_cadence_note(mode: str, *, age: float | None, age_txt: str, max_age: float) -> str` _(internal)_ — Return the informational cadence line for a non-escalating mode.
 - `step_changelog_history(repo_root: Path) -> StepResult` — Run ``verify-forge-changelog-history`` — the dropped-``@base``-entry guard.
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
@@ -757,16 +796,41 @@ _65 modules, 750 symbols._
 - `step_vendored_integrity(repo_root: Path) -> StepResult` — Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
 - `_changelog_blocking(repo_root: Path) -> bool` _(internal)_ — Return whether the changelog steps block the commit (default yes).
 - `_tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool` _(internal)_ — Return whether *tag* is reachable from the base branch but not HEAD.
+- `_changelog_version_skip_gate(repo_root: Path) -> StepResult | None` _(internal)_ — Check all skip conditions for changelog_version step.
 - `step_changelog_version(repo_root: Path) -> StepResult` — Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
+- `_changelog_updated_skip_gate(repo_root: Path, cfg: config.ForgeConfig) -> StepResult | None` _(internal)_ — Check all skip conditions for changelog_updated step.
+- `_changelog_triggers(files: list[str], require: tuple[str, ...], exempt: tuple[str, ...]) -> list[str]` _(internal)_ — Return changed files that require a changelog entry.
+- `_handle_fragment_mode(repo_root: Path, files: list[str], require: tuple[str, ...], exempt: tuple[str, ...]) -> StepResult` _(internal)_ — Handle fragment-mode changelog validation.
+- `_handle_standard_mode(repo_root: Path, files: list[str], *, enforce: bool, require: tuple[str, ...], exempt: tuple[str, ...]) -> StepResult` _(internal)_ — Handle standard-mode changelog validation.
 - `step_changelog_updated(repo_root: Path) -> StepResult` — Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
+- `_step_marker(result: StepResult) -> str` _(internal)_ — Return *result*'s bare status marker (``SKIP``/``PASS``/``WARN``/``FAIL``).
 - `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
+- `_format_timing_log(results: list[StepResult]) -> str` _(internal)_ — Render the per-step timing report for ``code_health/precommit_timing.log``.
 - `_validate_step_names(names: Sequence[str]) -> None` _(internal)_ — Raise ``ValueError`` listing any *names* that are not registered steps.
 - `_resolve_steps(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepDef]` _(internal)_ — Resolve which steps to run, in registry order.
 - `_release_merge_context(repo_root: Path) -> str | None` _(internal)_ — Return the release tag a promotion merge commit is locked to, or ``None``.
 - `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
 - `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
 - `main() -> int` — CLI entry point.
+
+## `forge.rebump`
+
+> _forge-rebump — mechanical post-merge version-slot + changelog resolution._
+
+- `class _RefusalError` _(internal)_ — Internal control flow: a state this tool must not resolve.
+- `class RebumpOutcome` — Result of one rebump run.
+- `_require_latest_tag(repo_root: Path) -> str` _(internal)_ — Return the latest ``v*`` tag, refusing when none exists.
+- `_unmerged_paths(repo_root: Path) -> list[str]` _(internal)_ — Return the repo-relative paths currently in an unmerged index state.
+- `_read_index_stage(repo_root: Path, stage: int, path: str) -> str | None` _(internal)_ — Return *path*'s contents at merge-index *stage*, or ``None``.
+- `_guard_entry_state(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) -> None` _(internal)_ — Refuse states the tool must not touch.
+- `_mid_merge_versions(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Return the ``(fork, ours)`` manifest versions during a merge.
+- `_classify_intent(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) -> str` _(internal)_ — Classify the branch's own semver intent from its fork-point delta.
+- `_resolve_version(repo_root: Path, latest: str, bump_class: str, *, mid_merge: bool) -> str` _(internal)_ — Return the bare version the manifest should carry after the rebump.
+- `_render_plugin_version(repo_root: Path, version: str, *, mid_merge: bool) -> str | None` _(internal)_ — Return the manifest text carrying *version*, or ``None`` when current.
+- `_render_changelog(repo_root: Path, version: str, *, mid_merge: bool) -> tuple[str, str | None]` _(internal)_ — Compute the changelog half of the rebump without touching disk.
+- `rebump(repo_root: Path) -> RebumpOutcome` — Resolve the rolling-next version slot and changelog stack, then stage.
+- `main() -> int` — Run the rebump against the current directory's repo.
 
 ## `forge.release`
 
@@ -815,6 +879,10 @@ _65 modules, 750 symbols._
 - `class Duration` — One test-phase timing parsed from a pytest durations section.
 - `parse_durations(text: str) -> list[Duration]` — Extract and rank every durations entry in a pytest log.
 - `format_report(durations: list[Duration], top: int) -> str` — Render a ranked durations table as plain text.
+- `_baseline_key(duration: Duration) -> str` _(internal)_ — Return *duration*'s flat JSON key (``nodeid::phase``).
+- `save_baseline(durations: list[Duration], path: Path) -> None` — Write *durations* as the committed baseline JSON at *path*.
+- `load_baseline(path: Path) -> dict[str, float]` — Load the baseline mapping from *path*.
+- `format_baseline_delta(durations: list[Duration], baseline: dict[str, float]) -> str` — Render the regression block comparing *durations* to *baseline*.
 - `_read_source(log: str) -> str` _(internal)_ — Read the pytest log from a file path or stdin.
 - `main() -> int` — Entry point for ``forge-slow-tests-report``.
 
@@ -830,8 +898,8 @@ _65 modules, 750 symbols._
 - `_smart_test_config(repo_root: Path) -> dict[str, object]` _(internal)_ — Return the ``[tool.forge.smart_test]`` table, or ``{}`` when absent.
 - `_depth_from_commit(repo_root: Path, cfg: dict[str, object]) -> str | None` _(internal)_ — Read a depth directive from ``HEAD``'s commit message, if present.
 - `_parse_depth(raw: str) -> int | str` _(internal)_ — Map a ``--depth`` token to an int tier or the ``full`` sentinel.
-- `_write_log(repo_root: Path, body: str) -> None` _(internal)_ — Write *body* to ``code_health/smart_test.log``.
-- `_run_full(repo_root: Path, *, telemetry: bool = False) -> tuple[int, str]` _(internal)_ — Run the entire suite (the ``full`` tier), always with coverage.
+- `_write_log(repo_root: Path, body: str) -> None` _(internal)_ — Write *body* to ``code_health/smart_test.log`` and ``pytest.log``.
+- `_run_full(repo_root: Path, cfg: dict[str, object], changed: set[str], *, all_tests: bool = False, telemetry: bool = False) -> tuple[int, str]` _(internal)_ — Run the ``full`` tier with lifecycle deselection and metrics.
 - `class _RunConfig` _(internal)_ — Configuration for a tiered test run.
 - `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
@@ -853,6 +921,7 @@ _65 modules, 750 symbols._
   - `tests_up_to(self, depth: int) -> list[str]` — Return the sorted unique test relpaths selected at *depth* or below.
 - `_roots(repo_root: Path) -> tuple[list[Path], list[Path]]` _(internal)_ — Return ``(source_dir_paths, test_dir_paths)`` as absolute paths.
 - `_iter_py(roots: Iterable[Path]) -> Iterable[Path]` _(internal)_ — Yield every ``.py`` file under *roots*.
+- `all_test_files(repo_root: Path) -> set[str]` — Return every repo-relative test file under the configured test roots.
 - `_dotted(node: ast.expr) -> str | None` _(internal)_ — Return the dotted name of an attribute/name chain, or ``None``.
 - `_string_literals(args: list[ast.expr]) -> list[str]` _(internal)_ — Return the string-constant values among *args*, in order.
 - `_classify_patch_call(node: ast.Call) -> str | None` _(internal)_ — Classify a call node as a patch variant: ``"patch"``, ``"dict"``, or ``None``.
@@ -870,7 +939,24 @@ _65 modules, 750 symbols._
 - `_ref_exists(repo_root: Path, ref: str) -> bool` _(internal)_ — Return whether *ref* resolves to a commit in the repo.
 - `resolve_base_ref(repo_root: Path, override: str | None = None) -> str` — Resolve the ref to diff ``HEAD`` against for change detection.
 - `head_commit_message(repo_root: Path) -> str` — Return ``HEAD``'s full commit message (subject + body).
+- `_changed_files_all_sources(repo_root: Path, base_ref: str) -> set[str]` _(internal)_ — Union every changed path across the four change sources.
 - `changed_python_files(repo_root: Path, base_ref: str) -> set[str]` — Return repo-relative ``.py`` files changed vs *base_ref*.
+- `changed_non_python_files(repo_root: Path, base_ref: str, *, ignore_globs: tuple[str, ...] = ()) -> set[str]` — Return changed non-``.py`` files the selector cannot map to tests.
+
+## `forge.smart_test.lifecycle`
+
+> _Test-lifecycle mechanics for forge-smart-test (FOUNDATION §8)._
+
+- `class RunMetrics` — Per-run metrics appended to the smart-test history ledger.
+- `development_marked_files(repo_root: Path, test_files: set[str]) -> set[str]` — Return the subset of *test_files* classified as development tests.
+- `_has_development_pytestmark(text: str) -> bool` _(internal)_ — Return whether *text* carries a top-level development pytestmark.
+- `days_since_last_touch(repo_root: Path, rel_path: str) -> float` — Return days since *rel_path*'s last commit.
+- `lifecycle_skippable(repo_root: Path, test_files: set[str], changed: set[str], *, skip_days: float = DEFAULT_SKIP_DAYS) -> set[str]` — Return development files an ordinary full run may deselect.
+- `read_stamp(repo_root: Path) -> _dt.datetime | None` — Return the last truly-all run's timestamp, or ``None``.
+- `write_stamp(repo_root: Path) -> Path` — Write the stamp with the current UTC time.
+- `stamp_age_hours(repo_root: Path) -> float | None` — Return the stamp's age in hours, or ``None`` when unreadable.
+- `failed_files(pytest_output: str) -> set[str]` — Extract failing test-file paths from pytest output.
+- `append_history(repo_root: Path, metrics: RunMetrics) -> None` — Append one record-only metrics line for a full run.
 
 ## `forge.smart_test.runner`
 
@@ -895,6 +981,8 @@ _65 modules, 750 symbols._
 - `class _RunHistory` _(internal)_ — Information to append to the telemetry history log.
 - `_summarize(samples: list[Sample]) -> _Summary | None` _(internal)_ — Return the run's aggregate summary, or ``None`` for empty samples.
 - `_append_history(root: Path, history: _RunHistory, label: str) -> None` _(internal)_ — Append one summary line for this run to ``telemetry_history.log``.
+- `_parse_history(text: str) -> list[dict[str, str]]` _(internal)_ — Parse ``telemetry_history.log`` lines into field mappings.
+- `_render_history(root: Path) -> int` _(internal)_ — Print the run-history trend table for ``forge-telemetry --history``.
 - `_render_plot(root: Path, samples: list[Sample], label: str = '') -> None` _(internal)_ — Write ``code_health/telemetry[_<label>].png``, or log why it was skipped.
 - `run_command(cmd: Sequence[str], root: Path, *, capture: bool = False, cwd: Path | None = None, label: str = '') -> tuple[int, str]` — Run *cmd* under resource sampling and write the telemetry artifacts.
 - `main(argv: list[str] | None = None) -> int` — Run the telemetry CLI: ``forge-telemetry -- <cmd> ...``.
@@ -1045,9 +1133,10 @@ _65 modules, 750 symbols._
 
 ## `forge.verify_manifest`
 
-> _Validate that ``.claude-plugin/*.json`` files parse as JSON._
+> _Validate ``.claude-plugin/*.json`` files: JSON parse + version schema._
 
 - `_parse_json_error(manifest: Path) -> str | None` _(internal)_ — Return a formatted error if *manifest* is invalid JSON, else None.
+- `_version_error(manifest: Path) -> str | None` _(internal)_ — Return an error when ``plugin.json``'s version is not strict semver.
 - `main() -> int` — Validate every ``.claude-plugin/*.json`` file and write the log.
 
 ## `forge.verify_plugin_version`

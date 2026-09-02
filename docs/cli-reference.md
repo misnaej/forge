@@ -221,6 +221,26 @@ options:
                         code_health/audit_<name>.log.
 ```
 
+## forge-changelog
+
+```text
+usage: forge-changelog [-h] {check,assemble,restrand} ...
+
+Changelog fragments: validate pending entries, assemble them into CHANGELOG.md
+at release (single writer). Shared-heading repos: `restrand` repairs stranded
+entries mechanically.
+
+positional arguments:
+  {check,assemble,restrand}
+    check               validate pending changelog.d/ fragments
+    assemble            collate fragments into CHANGELOG.md under a version
+    restrand            move entries stranded under released headings to the
+                        next slot (shared-heading mode; stages, never commits)
+
+options:
+  -h, --help            show this help message and exit
+```
+
 ## forge-check-main-tags
 
 ```text
@@ -253,19 +273,22 @@ options:
 ## forge-continuation-append
 
 ```text
-usage: forge-continuation-append [-h] (--commit HASH | --pr NUMBER |
-                                 --merge HASH)
-                                 subject
+usage: forge-continuation-append [-h] (--rotate | --commit HASH |
+                                 --pr NUMBER | --merge HASH)
+                                 [subject]
 
 Append one line to .plan/CONTINUATION.md's auto-appended activity section.
 Single source of truth for the format used by forge:git-commit-push and
 forge:pr-manager.
 
 positional arguments:
-  subject        Subject line — commit subject, PR title, or merge subject.
+  subject        Subject line — commit subject, PR title, or merge subject
+                 (omitted with --rotate).
 
 options:
   -h, --help     show this help message and exit
+  --rotate       Run rotation/condensation only, without appending — the
+                 continuation-hygiene entry point for the /next skill.
   --commit HASH  Record a commit. HASH is the short SHA.
   --pr NUMBER    Record a PR wrap-up. NUMBER is the PR number (no leading #).
   --merge HASH   Record a PR merge on main. HASH is the short SHA.
@@ -488,6 +511,19 @@ options:
                         separated).
 ```
 
+## forge-rebump
+
+```text
+usage: forge-rebump [-h]
+
+Mechanically resolve the rolling-next plugin.json version slot (and, in
+shared-heading repos, the CHANGELOG stack) on a feature branch — mid-merge or
+after another PR's merge consumed the slot. Stages the result; never commits.
+
+options:
+  -h, --help  show this help message and exit
+```
+
 ## forge-release
 
 ```text
@@ -525,24 +561,34 @@ options:
 
 ```text
 usage: forge-slow-tests-report [-h] [--log LOG] [--top TOP] [--out OUT]
+                               [--baseline [BASELINE]]
+                               [--update-baseline [UPDATE_BASELINE]]
 
 Parse pytest --durations sections from a log (or stdin) and print the slowest
 tests, merged across all batches.
 
 options:
-  -h, --help  show this help message and exit
-  --log LOG   Path to the pytest log to parse, or '-' for stdin (default:
-              code_health/pytest.log).
-  --top TOP   Number of slowest tests to show (default: 25).
-  --out OUT   Also write the report to this file (e.g.
-              code_health/slow_tests.log).
+  -h, --help            show this help message and exit
+  --log LOG             Path to the pytest log to parse, or '-' for stdin
+                        (default: code_health/pytest.log).
+  --top TOP             Number of slowest tests to show (default: 25).
+  --out OUT             Also write the report to this file (e.g.
+                        code_health/slow_tests.log).
+  --baseline [BASELINE]
+                        Compare against a committed duration baseline and
+                        append a WARN-shaped regression block (default path:
+                        .forge-test-durations.json).
+  --update-baseline [UPDATE_BASELINE]
+                        Rewrite the baseline from this run's durations — run
+                        deliberately, in a dedicated chore(perf) PR (default
+                        path: .forge-test-durations.json).
 ```
 
 ## forge-smart-test
 
 ```text
 usage: forge-smart-test [-h] [--depth {0,1,2,full}] [--show-files]
-                        [--coverage] [--telemetry] [--base BASE]
+                        [--coverage] [--all-tests] [--telemetry] [--base BASE]
                         [--from-commit-message]
                         [--coverage-json COVERAGE_JSON]
 
@@ -556,6 +602,9 @@ options:
   --show-files          Print the selected-test plan and exit without running
                         pytest.
   --coverage            Enable coverage (always on for --depth full).
+  --all-tests           With --depth full: run truly everything — disable the
+                        lifecycle deselection of stale development-marked
+                        files.
   --telemetry           Sample RSS/CPU during the run via forge-telemetry
                         (needs the [telemetry] extra; degrades to an
                         unprofiled run when absent).
@@ -573,7 +622,7 @@ options:
 ## forge-telemetry
 
 ```text
-usage: forge-telemetry [-h] [--label LABEL]
+usage: forge-telemetry [-h] [--label LABEL] [--history]
 
 Sample process-tree RSS + host CPU while a command runs; write
 code_health/telemetry.log (+ .png with matplotlib).
@@ -583,6 +632,9 @@ options:
   --label LABEL  suffix the artifacts as telemetry_<label>.log/.png so a retry
                  never overwrites the run before it (env:
                  FORGE_TELEMETRY_LABEL; the flag wins)
+  --history      print the run-history trend table from
+                 code_health/telemetry_history.log and exit (no command, no
+                 psutil)
 ```
 
 ## forge-upgrade
@@ -824,7 +876,8 @@ options:
 ```text
 usage: verify-forge-manifest [-h]
 
-Validate that every .claude-plugin/*.json file parses as JSON. Writes
+Validate that every .claude-plugin/*.json file parses as JSON and that
+plugin.json's version field, when present, is bare X.Y.Z semver. Writes
 code_health/manifest_json.log.
 
 options:

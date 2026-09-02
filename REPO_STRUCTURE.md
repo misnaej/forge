@@ -28,13 +28,17 @@ Code.
 ## Forge Package (`src/forge/`)
 
 1. **CLI Modules**
-   - precommit.py: `forge-precommit` — pre-commit dispatcher; most steps shell out to their own SRP CLI, a few (env_sync, pip_audit) run in-process for speed / single-invocation sharing
+   - precommit.py: `forge-precommit` — pre-commit dispatcher; most steps shell out to their own SRP CLI, a few (env_sync, pip_audit) run in-process for speed / single-invocation sharing; every run wall-clocks each step and writes `code_health/precommit_timing.log` (per-step elapsed + total, `elapsed_s` in `--json`)
    - next_prep.py: `forge-next-prep` — refresh main, optional rolling-next tag bump, prune stale branches; used by `/next` skill
+   - rebump.py: `forge-rebump` — mechanical post-merge version-slot resolver: classifies a feature branch's bump intent from its fork-point manifest delta (merge stages mid-merge, merge-base on a clean tree), takes the next open slot above the latest tag, restacks/retitles the CHANGELOG in shared-heading mode (fragments mode: no-op), stages, never commits; refuses on unrelated conflicts
    - release.py: `forge-release` — single-track release orchestrator for tag-versioned (setuptools-scm) consumer repos: guards (clean tree, on base branch, single-track model, CHANGELOG entry) → annotated tag + push (exempt in `cli_wiring_exempt.toml`)
-   - continuation_append.py: `forge-continuation-append` — single source of truth for `.plan/CONTINUATION.md` append format; called by `forge:git-commit-push` and `forge:pr-manager`
+   - continuation_append.py: `forge-continuation-append` — single source of truth for `.plan/CONTINUATION.md` append format; called by `forge:git-commit-push` and `forge:pr-manager`; every append (and `--rotate`) rotates done entries older than one week to `.plan/CONTINUATION-archive.md` + per-day digests, pinning entries the structured sections still reference
    - pr_squash_comment.py: `forge-pr-squash-comment` — validates + posts the squash-merge comment; canonical `CONVENTIONAL_COMMIT_TYPES` source
-   - pr_delta.py: shared delta-mode thresholds/regex for the pr-manager agent
-   - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; read-only CI/local reporter (exempt in `cli_wiring_exempt.toml`)
+   - changelog_fragments.py: `forge-changelog` — changelog fragments (changelog.d/): per-PR `<slug>.<type>.md` files with level-only `bump:` front-matter, validated by the fragment gate and assembled into CHANGELOG.md once at release (single writer; zero merge conflicts by construction); `restrand` subcommand mechanically repairs stranded entries in shared-heading repos (no manifest needed; stages, never commits)
+   - pr_delta.py: the finalization-path classification primitives — every threshold, glob, and predicate (delta, docs-only, regen-only, light-code) consumed by `forge-pr-plan`, the pr-manager agent, and the wrap-up publish hook
+   - pr_plan.py: `forge-pr-plan` — deterministic finalization-path classifier for the `/pr` skill; composes the pr_delta primitives over the real diff and emits the JSON plan (mode/reporters/precommit_scope/reasons)
+   - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; `--baseline`/`--update-baseline` compare against the committed `.forge-test-durations.json` (WARN-shaped, never gates); wired via the `/perf` skill
+   - telemetry.py: `forge-telemetry` — process-tree RSS + host CPU sampler around a wrapped command; per-run log/plot artifacts, append-only `telemetry_history.log`, `--history` trend reader
    - forge_config.py: `forge-config` — lists every `[tool.forge.*]` key forge reads (value/default + description), names native sections like `[tool.interrogate]`, and advises on recommended-but-unset config; read-only, surfaced by `install-forge-bootstrap`
    - fix_ruff.py: `fix-forge-ruff` — runs `ruff format` + `ruff check --fix --unsafe-fixes`, re-stages modified tracked files, writes `code_health/ruff.log`
    - verify_docstrings.py: `verify-forge-docstrings` — docstring accuracy
@@ -93,6 +97,7 @@ Code.
    - git_helpers.py: diff-base resolution + changed-`.py` enumeration (committed delta + staged/unstaged/untracked), layered on `git_utils`
    - dependencies.py: reverse test→source import graph (built on `import_graph`) + depth expansion; `SelectionPlan`, `render_plan`
    - runner.py: import-cache hygiene + a single deterministic `pytest` invocation per batch (coverage only on `full`)
+   - lifecycle.py: test-lifecycle mechanics — development-marker detection, 30d lifecycle-skip filter, the tracked `.forge-full-run` 48h stamp, full-run history ledger, depth-2 differential check
    - coverage.py: opt-in coverage-validated selection — maps changed lines → covering tests via per-test coverage contexts (json or `.coverage` DB); unioned into the static pass
    - cli.py: `forge-smart-test` — `--depth 0/1/2/full`, `--show-files`, `--coverage`, `--base`, `--coverage-db`, `--from-commit-message`; depth batching with fail-fast; writes `code_health/smart_test.log`
 
@@ -133,6 +138,7 @@ subdirectory holds a single `SKILL.md`:
 - fix/: invoke precommit-fixer to clear all pre-commit failures
 - memory-audit/: audit agent memory against the repo's rule surface
 - next/: clean up state and pick next task
+- perf/: opt-in perf read-side — analyze ledgers/baseline, file findings as issues (report), re-check open performance issues (watch)
 - plan-issue/: human-validated planning for one issue — records a plan-validated execution spec + plan-ready label
 - pr/: full PR finalization flow
 - pr-comments/: address PR review comments
@@ -162,7 +168,8 @@ enforcement:
 - check_commit_format.sh: enforce conventional commit format
 - check_foundation_sync.sh: verify FOUNDATION.md sync
 - warn_pr_checks.sh: warn on PR check status
-- block_git_destructive.sh: block destructive git recovery verbs from agents — all `git reset` forms, forced `git clean`, literal `git checkout .` / `git restore .`, `git stash drop`/`clear` (no bypass — stop-and-report is the sanctioned recovery)
+- block_git_destructive.sh: block destructive git recovery verbs from agents — all `git reset` forms, forced `git clean`, literal `git checkout .` / `git restore .`, `git stash drop`/`clear`, untracked-including stash (`-u`/`-a`) (no bypass — stop-and-report is the sanctioned recovery)
+- block_amend_pushed_commit.sh: block `git commit --amend` when `HEAD` already exists on a remote-tracking ref — the single-commit form of a rebase; unpushed amends stay allowed (no bypass; live-state check anchored to the payload cwd)
 - git_anchor.sh: NOT a hook — sourced library holding the shared `GIT_ANCHOR`/`SEG_ANCHOR` invocation anchors for the git-guard family (single home; never registered in plugin.json)
 - block_fixer_recon.sh: agent-scoped Bash allowlist for the precommit-fixer (gate CLIs + targeted pytest node-ids only; other agents unaffected)
 - block_raw_git.sh: hard-block raw `git commit` / `git push` from agents (bypass: `git-commit-push` subagent)
@@ -212,10 +219,11 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_install_labels.py: tests for install_labels
    - test_manifests.py: tests for plugin manifests
    - test_next_prep.py: tests for next_prep
+   - test_rebump.py: tests for rebump (forge-rebump post-merge version-slot + changelog resolver)
    - test_release.py: tests for release (forge-release CLI guards + tagging)
    - test_release_e2e.py: end-to-end single-track consumer release fixture (recipes + changelog steps)
    - test_changelog.py: tests for changelog (release_headings / changelog_lacks_entry)
-   - test_pr_delta.py: tests for pr_delta shared thresholds/regex
+   - test_pr_delta.py: tests for pr_delta classification primitives (delta, docs-only, regen-only, light-code)
    - test_pr_squash_comment.py: tests for pr_squash_comment
    - test_precommit.py: tests for precommit dispatcher
    - test_run_context.py: tests for run_context (CI vs workstation detection)
@@ -288,9 +296,10 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 
 ### Proposals (`docs/proposals/`)
 
-Architecture RFCs — aspirational, not descriptions of current behavior. Each carries its own accept/reject status.
+Architecture RFCs and research reports — aspirational or advisory, not descriptions of current behavior. RFCs carry their own accept/reject status; research reports feed a maintainer decision.
 
 - rust-core.md: RFC for splitting forge into a Rust governance-core binary + optional Python analysis pack
+- test-lifecycle.md: research report for the test-suite lifecycle policy (issue #396) — baseline profile, prior art, five proposals awaiting decision
 
 ## Configuration Files
 
@@ -301,6 +310,7 @@ Architecture RFCs — aspirational, not descriptions of current behavior. Each c
    - ruff.toml: ruff lint and format configuration (strict, ALL rules)
    - pyrefly.toml: pyrefly type-checker config for the opt-in `typecheck` step (strict return-type checking; interrogate's attrs `__init__` silenced via `replace-imports-with-any`)
    - c4.toml: standalone C4 architecture-model skeleton consumed by `forge-gen-c4` (kept out of pyproject; pointed at by `[tool.forge.c4].config`)
+   - .forge-full-run: tracked one-line ISO stamp of the last truly-all test run — the 48h full-run cadence guarantee, rewritten and restaged by the `smart_test` pre-commit step
 
 3. **Documentation**
    - CLAUDE.md: project guidance for Claude Code and developers

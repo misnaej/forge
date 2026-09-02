@@ -12,8 +12,10 @@
 from __future__ import annotations
 
 import contextlib
+import datetime as _dt
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 from typing import TYPE_CHECKING, NamedTuple
@@ -23,12 +25,27 @@ import pytest
 
 from forge import config, git_utils, precommit
 from forge.pip_audit_json import AuditRun
+from forge.smart_test import lifecycle as _lifecycle
 from tests.conftest import GIT_ENV, _detach_head, init_git_repo, init_single_track_repo
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+
+@pytest.fixture(autouse=True)
+def _clear_wip_sync_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip FORGE_WIP_SYNC from the environment before every test.
+
+    main()'s wip-sync short-circuit (#404 sync ladder) reads this var
+    directly from os.environ, so an ambient value left over from a real
+    wip-sync checkpoint commit in the developer's shell would silently
+    short-circuit every main()-calling test in this module. Tests that
+    exercise the short-circuit itself set it explicitly via
+    monkeypatch.setenv.
+    """
+    monkeypatch.delenv("FORGE_WIP_SYNC", raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +518,52 @@ def test_release_guard_blocks_on_skipped_release(
     assert "forge-next-prep --tag" in result.output
 
 
+def test_release_guard_failure_names_both_cures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The two-minor-gap failure names both the dev-tag cure and the re-slot cure.
+
+    See #405.
+    """
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="1.26.0", latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert "forge-next-prep --tag" in result.output
+    assert "re-slot" in result.output
+
+
+def test_release_guard_failure_names_dev_branch_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both causes — untagged dev release and a feature branch's stale slot.
+
+    See #405.
+    """
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="1.26.0", latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert "dev" in result.output
+    assert "feature branch" in result.output
+
+
+def test_release_guard_failure_has_agents_directive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failure explicitly forbids an agent from self-clearing via a release action.
+
+    See #405.
+    """
+    _setup_release_guard(
+        tmp_path, monkeypatch, plugin_version="1.26.0", latest_tag="v1.24.1"
+    )
+    result = precommit.step_release_tag_guard(tmp_path)
+    assert "AGENTS:" in result.output
+    assert "report only" in result.output
+    assert "never run" in result.output
+
+
 def test_release_guard_skips_single_track(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -753,6 +816,437 @@ def test_main_emits_json(
         "vendored_integrity",
         "pip_audit",
     }
+
+
+# ---------------------------------------------------------------------------
+# Per-step timing (#417): _step_marker / _format_timing_log / run_all's
+# elapsed_s stamping / the timing surfaced by main() (JSON + human output).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("skipped", "passed", "non_blocking", "expected"),
+    [
+        (True, True, False, "SKIP"),
+        (False, True, False, "PASS"),
+        (False, False, True, "WARN"),
+        (False, False, False, "FAIL"),
+        # Precedence: a skipped non-blocking step is SKIP, never WARN.
+        (True, False, True, "SKIP"),
+    ],
+)
+def test_step_marker_maps_skip_pass_warn_fail(
+    *,
+    skipped: bool,
+    passed: bool,
+    non_blocking: bool,
+    expected: str,
+) -> None:
+    """`_step_marker` maps every StepResult flag combination to its marker.
+
+    Args:
+        skipped: The `StepResult.skipped` flag under test.
+        passed: The `StepResult.passed` flag under test.
+        non_blocking: The `StepResult.non_blocking` flag under test.
+        expected: The marker `_step_marker` must return for this
+            combination.
+
+    SCENARIO: the colored progress line and the timing log both render
+    from this one mapping, so every reachable flag combination must
+    resolve deterministically — skipped beats passed/failed, and a
+    non-blocking failure renders distinctly from a blocking one.
+    EXPECTED BEHAVIOR: `_step_marker` returns *expected* for the given
+    flag combination.
+    """
+    result = precommit.StepResult(
+        name="x", passed=passed, output="", skipped=skipped, non_blocking=non_blocking
+    )
+    assert precommit._step_marker(result) == expected
+
+
+def test_format_timing_log_renders_header_rows_and_total() -> None:
+    """`_format_timing_log` renders a header, one row per step, and an exact total.
+
+    SCENARIO: `code_health/precommit_timing.log` is read by a human
+    scanning for the slow step, so each row must show the step name, a
+    one-decimal elapsed time, and its marker — and the trailing total
+    must be the exact sum of the per-step values, not an approximation.
+    EXPECTED BEHAVIOR: the rendered text opens with the fixed banner
+    line, has one row per `StepResult` in order (name + 1-decimal
+    elapsed + marker), and ends with a `total` row whose value equals
+    `sum(r.elapsed_s for r in results)`.
+    """
+    results = [
+        precommit.StepResult(name="ruff", passed=True, output="", elapsed_s=1.2),
+        precommit.StepResult(
+            name="env_sync", passed=True, output="", skipped=True, elapsed_s=0.5
+        ),
+        precommit.StepResult(
+            name="pip_audit",
+            passed=False,
+            output="",
+            non_blocking=True,
+            elapsed_s=2.3,
+        ),
+    ]
+
+    rendered = precommit._format_timing_log(results)
+    lines = rendered.splitlines()
+
+    assert lines[0] == "forge-precommit per-step timing (newest run overwrites)"
+    assert lines[1] == ""
+
+    ruff_line, env_sync_line, pip_audit_line = lines[2:5]
+    assert "ruff" in ruff_line
+    assert "1.2s" in ruff_line
+    assert "PASS" in ruff_line
+    assert "env_sync" in env_sync_line
+    assert "0.5s" in env_sync_line
+    assert "SKIP" in env_sync_line
+    assert "pip_audit" in pip_audit_line
+    assert "2.3s" in pip_audit_line
+    assert "WARN" in pip_audit_line
+
+    assert lines[5] == ""
+    assert len(lines) == 7
+    total = sum(r.elapsed_s for r in results)
+    assert lines[6].startswith("total")
+    assert f"{total:.1f}s" in lines[6]
+
+
+def test_run_all_stamps_elapsed_s_from_monotonic_delta(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_all stamps each StepResult.elapsed_s from a real monotonic delta.
+
+    SCENARIO: mirrors test_run_all_only_dispatches_monkeypatched_steps —
+    two monkeypatched steps run via `only=`. Here the assertion is on
+    timing, not dispatch: elapsed_s must come from an actual per-step
+    (end - start) delta rather than being left at its 0.0 default or
+    shared across steps.
+    MOCK SETUP: step_ruff / step_pip_audit replaced with canned passing
+    stubs; precommit.time.monotonic is replaced with a scripted clock
+    yielding fixed, strictly increasing timestamps (0.0, 1.0, 2.0, 4.0)
+    so the two steps land on distinct, easy-to-verify deltas.
+    EXPECTED BEHAVIOR: results[0].elapsed_s == 1.0 (from 1.0 - 0.0) and
+    results[1].elapsed_s == 2.0 (from 4.0 - 2.0), exactly.
+    """
+
+    def _ruff(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="ruff", passed=True, output="x")
+
+    def _audit(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="pip_audit", passed=True, output="x")
+
+    monkeypatch.setattr(precommit, "step_ruff", _ruff)
+    monkeypatch.setattr(precommit, "step_pip_audit", _audit)
+    scripted_monotonic = iter([0.0, 1.0, 2.0, 4.0]).__next__
+    monkeypatch.setattr(precommit.time, "monotonic", scripted_monotonic)
+
+    results = precommit.run_all(
+        tmp_path, print_progress=False, only=["ruff", "pip_audit"]
+    )
+
+    assert results[0].elapsed_s == 1.0
+    assert results[1].elapsed_s == 2.0
+
+
+def test_run_all_writes_precommit_timing_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_all persists `code_health/precommit_timing.log` with consistent format.
+
+    SCENARIO: `run_all` must write the same rendering `_format_timing_log`
+    produces from its own returned results — the log is a downstream
+    consumer's ground truth, so a self-consistency check catches drift
+    between the write and the render, not the render's format itself
+    (covered by test_format_timing_log_renders_header_rows_and_total).
+    MOCK SETUP: reuses the `_stub_*` passing/skipping helpers from
+    test_run_all_writes_code_health_logs so no real CLI / network call
+    fires.
+    EXPECTED BEHAVIOR: `code_health/precommit_timing.log`'s contents
+    equal `precommit._format_timing_log(results)` for the results
+    `run_all` actually returned.
+    """
+    _stub_env_sync_skipped(monkeypatch)
+    _stub_docstrings_passing(monkeypatch)
+    _stub_test_naming_passing(monkeypatch)
+    _stub_repo_structure_passing(monkeypatch)
+    _stub_pip_audit_skipped(monkeypatch)
+    _stub_docstring_coverage_skipped(monkeypatch)
+    results = precommit.run_all(repo_root=tmp_path, print_progress=False)
+
+    log_path = tmp_path / "code_health" / "precommit_timing.log"
+    assert log_path.read_text(encoding="utf-8").rstrip(
+        "\n"
+    ) == precommit._format_timing_log(results).rstrip("\n")
+
+
+def test_main_json_includes_elapsed_s(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--json output carries a valid elapsed_s on every step, including a failing one.
+
+    SCENARIO: a JSON consumer must be able to read per-step timing even
+    when a step fails — elapsed_s should never be omitted or left
+    non-numeric on the failure path.
+    MOCK SETUP: get_repo_root pinned to tmp_path; step_docstrings is
+    replaced with a blocking FAIL (passed=False, non_blocking=False);
+    step_test_naming, step_repo_structure, step_pip_audit, and
+    step_docstring_coverage are stubbed to pass/skip as usual; argv
+    drives `forge-precommit --json`.
+    EXPECTED BEHAVIOR: every parsed element has a float elapsed_s >= 0.0,
+    and the failed docstring_verification element in particular reports
+    passed=False alongside a valid elapsed_s.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+
+    def _failing_docstrings(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(
+            name="docstring_verification",
+            passed=False,
+            output="(simulated docstring error)",
+        )
+
+    monkeypatch.setattr(precommit, "step_docstrings", _failing_docstrings)
+    _stub_test_naming_passing(monkeypatch)
+    _stub_repo_structure_passing(monkeypatch)
+    _stub_pip_audit_skipped(monkeypatch)
+    _stub_docstring_coverage_skipped(monkeypatch)
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--json"]):
+        precommit.main()
+    parsed = json.loads(capsys.readouterr().out)
+
+    for entry in parsed:
+        assert isinstance(entry["elapsed_s"], float)
+        assert entry["elapsed_s"] >= 0.0
+
+    failed = next(r for r in parsed if r["name"] == "docstring_verification")
+    assert failed["passed"] is False
+    assert isinstance(failed["elapsed_s"], float)
+    assert failed["elapsed_s"] >= 0.0
+
+
+def test_main_prints_per_step_elapsed_and_total_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Non-JSON main() prints a per-step `X.Xs` suffix and a self-consistent total line.
+
+    SCENARIO: the human-readable run must let a contributor see per-step
+    cost at a glance, and the trailing total line must actually be the
+    sum of the printed per-step numbers rather than an independent
+    figure that could drift from them.
+    MOCK SETUP: get_repo_root pinned to tmp_path; step_ruff and
+    step_pip_audit stubbed to canned passing results; argv drives
+    `forge-precommit --only ruff,pip_audit` (no --json).
+    EXPECTED BEHAVIOR: every step progress line ends in a `<N.N>s`
+    suffix, and the final `total <N.N>s (per-step:
+    code_health/precommit_timing.log)` line's value equals the sum of
+    the parsed per-step values.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+
+    def _ruff(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="ruff", passed=True, output="x")
+
+    def _audit(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="pip_audit", passed=True, output="x")
+
+    monkeypatch.setattr(precommit, "step_ruff", _ruff)
+    monkeypatch.setattr(precommit, "step_pip_audit", _audit)
+    with patch.object(
+        precommit.sys, "argv", ["forge-precommit", "--only", "ruff,pip_audit"]
+    ):
+        rc = precommit.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+
+    per_step = [
+        float(m) for m in re.findall(r"^\S+\s+\S+\s+(\d+\.\d)s$", out, re.MULTILINE)
+    ]
+    assert len(per_step) == 2
+
+    total_match = re.search(
+        r"^total (\d+\.\d)s \(per-step: code_health/precommit_timing\.log\)$",
+        out,
+        re.MULTILINE,
+    )
+    assert total_match is not None
+    assert float(total_match.group(1)) == sum(per_step)
+
+
+# ---------------------------------------------------------------------------
+# FORGE_WIP_SYNC short-circuit (#404 sync ladder): main() defers the full
+# battery for a wip-sync checkpoint commit, before run_all ever executes.
+# ---------------------------------------------------------------------------
+
+
+def _run_all_spy() -> tuple[
+    Callable[..., list[precommit.StepResult]], list[tuple[object, ...]]
+]:
+    """Build a ``run_all`` replacement that records every call's args/kwargs.
+
+    Returns:
+        A tuple of the spy callable (returns an empty step list so
+        main()'s post-processing has nothing to summarize) and the list
+        it appends ``(args, kwargs)`` to on each call.
+    """
+    calls: list[tuple[object, ...]] = []
+
+    def _spy(*args: object, **kwargs: object) -> list[precommit.StepResult]:
+        calls.append((args, kwargs))
+        return []
+
+    return _spy, calls
+
+
+def test_main_wip_sync_env_short_circuits_before_run_all(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """FORGE_WIP_SYNC=1 returns 0 with the checkpoint banner and never calls run_all.
+
+    SCENARIO: a wip-sync checkpoint commit sets FORGE_WIP_SYNC=1 to defer
+    the full battery to the next real commit (FOUNDATION §2 sync ladder).
+    MOCK SETUP: get_repo_root is pinned to tmp_path; run_all is replaced
+    with a spy that must never fire; sys.argv drives the bare
+    `forge-precommit` invocation.
+    EXPECTED BEHAVIOR: main() returns 0, stdout names the wip-sync
+    checkpoint, and the run_all spy recorded zero calls.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("FORGE_WIP_SYNC", "1")
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+    with patch.object(precommit.sys, "argv", ["forge-precommit"]):
+        rc = precommit.main()
+    assert rc == 0
+    assert "wip-sync checkpoint" in capsys.readouterr().out
+    assert calls == []
+
+
+def test_main_wip_sync_env_unset_runs_normal_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No FORGE_WIP_SYNC set takes the normal path — the short-circuit is opt-in.
+
+    SCENARIO: a normal (non-checkpoint) commit runs with no FORGE_WIP_SYNC
+    set, so main() must take its regular path and run the full battery.
+    MOCK SETUP: get_repo_root pinned to tmp_path; FORGE_WIP_SYNC removed
+    from the environment; run_all replaced with a spy recording calls.
+    EXPECTED BEHAVIOR: the run_all spy fires exactly once and no wip-sync
+    banner appears in stdout.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    monkeypatch.delenv("FORGE_WIP_SYNC", raising=False)
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+    with patch.object(precommit.sys, "argv", ["forge-precommit"]):
+        rc = precommit.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wip-sync checkpoint" not in out
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("value", ["true", "0"])
+def test_main_wip_sync_near_miss_values_run_normal_path(
+    value: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Only the exact string "1" trips the short-circuit — "true"/"0" do not.
+
+    Args:
+        value: A FORGE_WIP_SYNC value that must NOT trigger the
+            short-circuit (near-miss truthy/falsy strings).
+
+    SCENARIO: a near-miss FORGE_WIP_SYNC value ("true"/"0") looks
+    truthy/falsy but must not silently skip the full battery — only the
+    exact string "1" is the opt-in gate.
+    MOCK SETUP: get_repo_root pinned to tmp_path; FORGE_WIP_SYNC set to
+    *value*; run_all replaced with a spy recording calls.
+    EXPECTED BEHAVIOR: the run_all spy fires once and no wip-sync banner
+    appears.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("FORGE_WIP_SYNC", value)
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+    with patch.object(precommit.sys, "argv", ["forge-precommit"]):
+        rc = precommit.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wip-sync checkpoint" not in out
+    assert len(calls) == 1
+
+
+def test_main_wip_sync_short_circuit_beats_json_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """FORGE_WIP_SYNC=1 emits the plain-text banner even under --json.
+
+    SCENARIO: a wip-sync checkpoint commit runs `forge-precommit --json`
+    (e.g. a CI wrapper expecting machine-readable output), but the
+    short-circuit runs before the --json branch, so it must still emit
+    the human text banner, not JSON — locks the current contract so a
+    future refactor doesn't silently move the check below --json.
+    MOCK SETUP: get_repo_root pinned to tmp_path; run_all replaced with a
+    spy that must never fire; sys.argv drives `forge-precommit --json`.
+    EXPECTED BEHAVIOR: raw stdout contains the plain-text banner and does
+    not parse as JSON.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("FORGE_WIP_SYNC", "1")
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--json"]):
+        rc = precommit.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wip-sync checkpoint" in out
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(out)
+    assert calls == []
+
+
+def test_main_wip_sync_short_circuit_beats_only_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """FORGE_WIP_SYNC=1 short-circuits even when --only narrows the step set.
+
+    SCENARIO: a wip-sync checkpoint commit runs `forge-precommit --only
+    ruff` (a narrowed manual invocation), and the short-circuit must
+    still fire before --only ever reaches run_all.
+    MOCK SETUP: get_repo_root pinned to tmp_path; run_all replaced with a
+    spy that must never fire; sys.argv drives `forge-precommit --only ruff`.
+    EXPECTED BEHAVIOR: main() returns 0, the banner appears, and --only
+    never reaches run_all.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("FORGE_WIP_SYNC", "1")
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--only", "ruff"]):
+        rc = precommit.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wip-sync checkpoint" in out
+    assert calls == []
 
 
 def test_step_pip_audit_loud_warn_when_cli_missing(
@@ -2606,6 +3100,133 @@ def test_step_regen_docs_partial_failure_when_second_generator_fails(
     assert "forge-gen-cli-reference" in result.output
 
 
+def _raise_if_missing_console_scripts_called(_repo_root: Path) -> list[str]:
+    """A `missing_console_scripts` stand-in that fails the test if invoked.
+
+    Args:
+        _repo_root: Ignored (signature compatibility).
+
+    Raises:
+        AssertionError: Always — the stale-install check must be scoped to
+            targets that include ``docs/cli-reference.md``.
+    """
+    msg = "missing_console_scripts must not be called without cli-reference.md"
+    raise AssertionError(msg)
+
+
+def test_step_regen_docs_warns_when_console_scripts_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A declared-but-uninstalled console script → non-blocking WARN (#436).
+
+    SCENARIO: docs/cli-reference.md exists; the editable install is stale
+    (a declared [project.scripts] entry is absent from the install the
+    generator reads), so the regenerated doc would silently omit it.
+    MOCK SETUP: shutil.which → valid path; precommit._run → (True, "");
+        precommit.stage_modified_paths → []; precommit.missing_console_scripts
+        → ["forge-foo"].
+    EXPECTED BEHAVIOR: passed=False, non_blocking=True; output carries the
+        "⚠️" marker and the missing script name.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "cli-reference.md").write_text("old\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, ""))
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+    monkeypatch.setattr(
+        precommit, "missing_console_scripts", lambda _root: ["forge-foo"]
+    )
+    result = precommit.step_regen_docs(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+    assert "⚠️" in result.output
+    assert "forge-foo" in result.output
+
+
+def test_step_regen_docs_no_warning_when_console_scripts_fresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fully-installed editable install → no stale-install WARN.
+
+    SCENARIO: docs/cli-reference.md exists; every declared console script
+    is already installed.
+    MOCK SETUP: shutil.which → valid path; precommit._run → (True, "");
+        precommit.stage_modified_paths → []; precommit.missing_console_scripts
+        → [] (nothing missing).
+    EXPECTED BEHAVIOR: passed=True; no "⚠️" marker in output.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "cli-reference.md").write_text("old\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, ""))
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+    monkeypatch.setattr(precommit, "missing_console_scripts", lambda _root: [])
+    result = precommit.step_regen_docs(tmp_path)
+    assert result.passed
+    assert "⚠️" not in result.output
+
+
+def test_step_regen_docs_stale_check_scoped_to_cli_reference_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stale-install check never fires when cli-reference.md is absent.
+
+    SCENARIO: only docs/api-digest.md exists — cli-reference.md is not
+    among the regeneration targets, so the generator that would go stale
+    from a missing console script never runs.
+    MOCK SETUP: shutil.which → valid path; precommit._run → (True, "");
+        precommit.stage_modified_paths → []; precommit.missing_console_scripts
+        → a stub that raises AssertionError if called at all.
+    EXPECTED BEHAVIOR: passed=True (no AssertionError propagates), proving
+        the check is scoped to targets containing cli-reference.md.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api-digest.md").write_text("old\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, ""))
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+    monkeypatch.setattr(
+        precommit, "missing_console_scripts", _raise_if_missing_console_scripts_called
+    )
+    result = precommit.step_regen_docs(tmp_path)
+    assert result.passed
+
+
+def test_step_regen_docs_warns_even_when_non_interactive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stale-install WARN fires in CI too — it is not gated on interactivity.
+
+    SCENARIO: docs/cli-reference.md exists; is_non_interactive() reports
+    True (CI-like environment), same as the healing steps (auto_rebuild,
+    env_sync) that self-skip non-interactively. Unlike those, this WARN
+    is unconditional on interactivity — it is detection-only, never an
+    auto-heal, so there is no unattended-prompt risk to guard against
+    and it must fire in CI too.
+    MOCK SETUP: precommit.is_non_interactive → lambda: True; shutil.which
+        → valid path; precommit._run → (True, ""); stage_modified_paths →
+        []; precommit.missing_console_scripts → ["forge-foo"].
+    EXPECTED BEHAVIOR: passed=False; "⚠️" and "forge-foo" still in output.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "cli-reference.md").write_text("old\n")
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, ""))
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+    monkeypatch.setattr(
+        precommit, "missing_console_scripts", lambda _root: ["forge-foo"]
+    )
+    result = precommit.step_regen_docs(tmp_path)
+    assert not result.passed
+    assert "⚠️" in result.output
+    assert "forge-foo" in result.output
+
+
 # ---------------------------------------------------------------------------
 # Group 2b: step_regen_docs partial-commit guard (real git repos — the
 # guard reads the actual worktree via `git diff --name-only`, so a fake
@@ -3134,25 +3755,61 @@ def test_step_smart_test_skips_without_config(tmp_path: Path) -> None:
     assert "skipped" in result.output
 
 
+def _fake_run_capturing(
+    calls: list[list[str]],
+    *,
+    expected_results: dict[str, tuple[bool, str]] | None = None,
+) -> Callable[..., tuple[bool, str]]:
+    """Build a ``precommit._run`` replacement that records argv and stamps results.
+
+    Args:
+        calls: List appended with each invocation's argv, in call order.
+        expected_results: Optional ``{argv_key: (passed, output)}`` map, keyed by the
+            joined argv string, for tests needing per-command results.
+            Unmatched argvs default to ``(False, "ERR")``.
+
+    Returns:
+        A callable compatible with ``precommit._run``'s ``(cmd, cwd)``
+        signature.
+    """
+
+    def _fake(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        calls.append(list(cmd))
+        if expected_results is not None:
+            key = " ".join(cmd)
+            if key in expected_results:
+                return expected_results[key]
+        return False, "ERR"
+
+    return _fake
+
+
 def test_step_smart_test_non_blocking_by_default_on_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failing smart-test run is non-blocking (WARN) when blocking is not opted in.
 
-    SCENARIO: ``[tool.forge.smart_test] precommit_depth = 1``; forge-smart-test
-        exits non-zero; no ``blocking = true`` key.
-    MOCK SETUP: precommit.require_cli → no-op; precommit._run → (False, "ERR").
-    EXPECTED BEHAVIOR: passed=False, non_blocking=True.
+    SCENARIO: ``[tool.forge.smart_test] precommit_depth = 1``; no
+        ``.forge-full-run`` stamp exists, so the run escalates to a full,
+        ``--all-tests`` run (missing stamp always escalates); that run fails;
+        no ``blocking = true`` key.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (False, "ERR") for the escalated full-suite command.
+    EXPECTED BEHAVIOR: passed=False, non_blocking=True; the escalated
+        ``forge-smart-test --depth full --all-tests`` argv was used, not the
+        plain ``--depth 1`` command.
     """
     (tmp_path / "pyproject.toml").write_text(
         "[tool.forge.smart_test]\nprecommit_depth = 1\n", encoding="utf-8"
     )
     monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
-    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "ERR"))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(precommit, "_run", _fake_run_capturing(calls))
     result = precommit.step_smart_test(tmp_path)
     assert not result.passed
     assert result.non_blocking
+    assert calls == [["forge-smart-test", "--depth", "full", "--all-tests"]]
 
 
 def test_step_smart_test_blocking_when_opted_in(
@@ -3161,19 +3818,438 @@ def test_step_smart_test_blocking_when_opted_in(
 ) -> None:
     """``[tool.forge.smart_test].blocking = true`` makes a failure a hard FAIL.
 
-    SCENARIO: same failure as the default case but ``blocking = true`` is set.
-    MOCK SETUP: precommit.require_cli → no-op; precommit._run → (False, "ERR").
-    EXPECTED BEHAVIOR: passed=False, non_blocking=False.
+    SCENARIO: same missing-stamp escalation as the default case, but
+        ``blocking = true`` is set.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (False, "ERR").
+    EXPECTED BEHAVIOR: passed=False, non_blocking=False; the escalated
+        full-suite argv was used.
     """
     (tmp_path / "pyproject.toml").write_text(
         "[tool.forge.smart_test]\nprecommit_depth = 1\nblocking = true\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
-    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (False, "ERR"))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(precommit, "_run", _fake_run_capturing(calls))
     result = precommit.step_smart_test(tmp_path)
     assert not result.passed
     assert not result.non_blocking
+    assert calls == [["forge-smart-test", "--depth", "full", "--all-tests"]]
+
+
+def test_step_smart_test_fresh_stamp_runs_normal_depth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh (well within max-age) stamp runs the plain configured depth.
+
+    SCENARIO: ``precommit_depth = "2"``; a stamp written just now (age ≈0h,
+        well under the 48h default).
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok").
+    EXPECTED BEHAVIOR: the normal ``forge-smart-test --depth 2`` argv runs —
+        no escalation, no stamp rewrite.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\nprecommit_depth = "2"\n', encoding="utf-8"
+    )
+    _lifecycle.write_stamp(tmp_path)
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 2": (True, "ok")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert result.passed
+    assert calls == [["forge-smart-test", "--depth", "2"]]
+
+
+def test_step_smart_test_stale_stamp_escalates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stamp older than ``full_run_max_age_hours`` escalates to a full run.
+
+    SCENARIO: default 48h max age; stamp written 50 hours ago.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv.
+    EXPECTED BEHAVIOR: the escalated ``--depth full --all-tests`` argv runs,
+        not the configured ``--depth 1``.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nprecommit_depth = 1\n", encoding="utf-8"
+    )
+    stale = _dt.datetime.now(tz=_dt.UTC) - _dt.timedelta(hours=50)
+    (tmp_path / _lifecycle.STAMP_RELPATH).write_text(
+        stale.isoformat() + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls,
+            expected_results={
+                "forge-smart-test --depth full --all-tests": (True, "ok")
+            },
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert result.passed
+    assert calls[0] == ["forge-smart-test", "--depth", "full", "--all-tests"]
+
+
+def test_step_smart_test_escalated_pass_rewrites_stamp_and_stages_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An escalated run that passes rewrites the stamp and stages it via git.
+
+    SCENARIO: no stamp (missing → escalate); the escalated run passes.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok") for the escalated command and (True, "") for the
+        ``git add`` call.
+    EXPECTED BEHAVIOR: a ``git add .forge-full-run`` call is captured after
+        the escalated run; the output carries both cadence lines (the
+        escalation notice and the stamp-refreshed confirmation).
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nprecommit_depth = 1\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls,
+            expected_results={
+                "forge-smart-test --depth full --all-tests": (True, "ok"),
+            },
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert result.passed
+    assert ["git", "add", str(_lifecycle.STAMP_RELPATH)] in calls
+    assert "missing or invalid" in result.output
+    assert "ran the full suite with --all-tests" in result.output
+    assert "stamp refreshed and staged into this commit" in result.output
+
+
+def test_step_smart_test_escalated_fail_does_not_rewrite_stamp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An escalated run that fails leaves the stamp untouched and never stages it.
+
+    SCENARIO: no stamp (missing → escalate); the escalated run fails.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (False, "ERR").
+    EXPECTED BEHAVIOR: no ``git add`` call is captured; the stamp file still
+        does not exist.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nprecommit_depth = 1\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(precommit, "_run", _fake_run_capturing(calls))
+    result = precommit.step_smart_test(tmp_path)
+    assert not result.passed
+    assert not any(cmd[:2] == ["git", "add"] for cmd in calls)
+    assert not (tmp_path / _lifecycle.STAMP_RELPATH).exists()
+
+
+def test_step_smart_test_full_run_max_age_hours_config_honored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tightened ``full_run_max_age_hours`` escalates on stale stamps.
+
+    SCENARIO: ``full_run_max_age_hours = 1``; stamp written 2 hours ago.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv.
+    EXPECTED BEHAVIOR: the escalated ``--depth full --all-tests`` argv runs.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nprecommit_depth = 1\nfull_run_max_age_hours = 1\n",
+        encoding="utf-8",
+    )
+    two_hours_ago = _dt.datetime.now(tz=_dt.UTC) - _dt.timedelta(hours=2)
+    (tmp_path / _lifecycle.STAMP_RELPATH).write_text(
+        two_hours_ago.isoformat() + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls,
+            expected_results={
+                "forge-smart-test --depth full --all-tests": (True, "ok")
+            },
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert result.passed
+    assert calls[0] == ["forge-smart-test", "--depth", "full", "--all-tests"]
+
+
+def test_step_smart_test_full_run_max_age_hours_non_numeric_falls_back_to_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-numeric ``full_run_max_age_hours`` falls back to the 48h default.
+
+    SCENARIO: ``full_run_max_age_hours = "not-a-number"`` (a malformed
+        config value); a stamp written just now (age ~0h, well under the
+        48h default).
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv.
+    EXPECTED BEHAVIOR: the fresh stamp does not escalate under the 48h
+        fallback — the normal ``forge-smart-test --depth 1`` argv runs, not
+        ``--depth full``.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nprecommit_depth = 1\n"
+        'full_run_max_age_hours = "not-a-number"\n',
+        encoding="utf-8",
+    )
+    _lifecycle.write_stamp(tmp_path)
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 1": (True, "ok")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert result.passed
+    assert calls == [["forge-smart-test", "--depth", "1"]]
+
+
+def test_step_smart_test_advisory_missing_stamp_never_escalates_or_blocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``cadence_mode = "advisory"`` never escalates; blocking survives.
+
+    SCENARIO: ``cadence_mode = "advisory"``, ``precommit_depth = 1``,
+        ``blocking = true``; no ``.forge-full-run`` stamp exists; the
+        configured-depth run FAILS.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (False, "boom") for the plain configured-depth command.
+    EXPECTED BEHAVIOR: only the configured-depth argv runs — no escalated
+        full-suite command, no ``git add`` of the stamp; the output carries
+        the advisory cadence line; the REAL failure still gates —
+        ``non_blocking`` stays False because the repo opted into
+        ``blocking = true`` (stamp staleness must never disable it).
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\ncadence_mode = "advisory"\n'
+        "precommit_depth = 1\nblocking = true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 1": (False, "boom")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert calls == [["forge-smart-test", "--depth", "1"]]
+    assert "cadence: advisory" in result.output
+    assert result.passed is False
+    assert result.non_blocking is False
+
+
+def test_step_smart_test_advisory_fresh_stamp_no_cadence_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``cadence_mode = "advisory"`` with a fresh stamp adds no cadence line.
+
+    SCENARIO: ``cadence_mode = "advisory"``, ``precommit_depth = "2"``; a
+        stamp written just now (age ≈0h, well under the 48h default).
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok") for the plain configured-depth command.
+    EXPECTED BEHAVIOR: only the configured-depth argv runs; the output
+        carries no ``cadence:`` line at all — the stamp isn't stale, so
+        advisory has nothing to warn about.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\ncadence_mode = "advisory"\nprecommit_depth = "2"\n',
+        encoding="utf-8",
+    )
+    _lifecycle.write_stamp(tmp_path)
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 2": (True, "ok")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert calls == [["forge-smart-test", "--depth", "2"]]
+    assert "cadence:" not in result.output
+
+
+def test_step_smart_test_external_stamp_past_2x_window_warns_broken(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``cadence_mode = "external"`` warns once a stamp is stale past 2x the window.
+
+    SCENARIO: ``cadence_mode = "external"``, ``precommit_depth = 1``, default
+        48h window; stamp written 100 hours ago (> 2 * 48h).
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok") for the plain configured-depth command.
+    EXPECTED BEHAVIOR: only the configured-depth argv runs — external mode
+        never escalates; the output warns the CI cadence job may be broken.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\ncadence_mode = "external"\nprecommit_depth = 1\n',
+        encoding="utf-8",
+    )
+    stale = _dt.datetime.now(tz=_dt.UTC) - _dt.timedelta(hours=100)
+    (tmp_path / _lifecycle.STAMP_RELPATH).write_text(
+        stale.isoformat() + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 1": (True, "ok")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert calls == [["forge-smart-test", "--depth", "1"]]
+    assert "may be broken" in result.output
+
+
+def test_step_smart_test_external_stamp_stale_under_2x_no_cadence_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``cadence_mode = "external"`` stays silent for a stamp stale but under 2x.
+
+    Regression guard for the 2x threshold: a stamp past the plain 48h
+    window but short of the 96h (2x) broken-pipeline threshold must not
+    warn — external mode only detects a *broken* cadence job, not routine
+    staleness the scheduled job hasn't refreshed yet.
+
+    SCENARIO: ``cadence_mode = "external"``, ``precommit_depth = 1``,
+        default 48h window; stamp written 60 hours ago (stale, but
+        < 2 * 48h = 96h).
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok") for the plain configured-depth command.
+    EXPECTED BEHAVIOR: only the configured-depth argv runs; the output
+        carries no ``cadence:`` line.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\ncadence_mode = "external"\nprecommit_depth = 1\n',
+        encoding="utf-8",
+    )
+    stale = _dt.datetime.now(tz=_dt.UTC) - _dt.timedelta(hours=60)
+    (tmp_path / _lifecycle.STAMP_RELPATH).write_text(
+        stale.isoformat() + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 1": (True, "ok")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert calls == [["forge-smart-test", "--depth", "1"]]
+    assert "cadence:" not in result.output
+
+
+def test_step_smart_test_external_missing_stamp_warns_broken(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``cadence_mode = "external"`` treats a missing stamp as past the 2x threshold.
+
+    SCENARIO: ``cadence_mode = "external"``, ``precommit_depth = 1``; no
+        ``.forge-full-run`` stamp exists.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok") for the plain configured-depth command.
+    EXPECTED BEHAVIOR: only the configured-depth argv runs; the output
+        warns the CI cadence job may be broken and reports the stamp as
+        missing or invalid.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\ncadence_mode = "external"\nprecommit_depth = 1\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls, expected_results={"forge-smart-test --depth 1": (True, "ok")}
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert calls == [["forge-smart-test", "--depth", "1"]]
+    assert "may be broken" in result.output
+    assert "missing or invalid" in result.output
+
+
+def test_step_smart_test_unknown_cadence_mode_falls_back_to_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unrecognized ``cadence_mode`` falls back to ``"commit"`` behavior.
+
+    SCENARIO: ``cadence_mode = "cron"`` (not one of ``commit`` /
+        ``advisory`` / ``external``); no ``.forge-full-run`` stamp exists.
+    MOCK SETUP: precommit.require_cli → no-op; precommit._run → records argv,
+        returns (True, "ok") for the escalated full-suite command and
+        (True, "") for the ``git add`` call.
+    EXPECTED BEHAVIOR: escalates exactly like the ``"commit"`` default —
+        the escalated ``--depth full --all-tests`` argv runs first, and on
+        success the stamp is rewritten on disk and staged via ``git add``.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\ncadence_mode = "cron"\nprecommit_depth = 1\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(precommit, "require_cli", lambda *_a, **_kw: None)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        precommit,
+        "_run",
+        _fake_run_capturing(
+            calls,
+            expected_results={
+                "forge-smart-test --depth full --all-tests": (True, "ok"),
+            },
+        ),
+    )
+    result = precommit.step_smart_test(tmp_path)
+    assert result.passed
+    assert calls[0] == ["forge-smart-test", "--depth", "full", "--all-tests"]
+    assert ["git", "add", str(_lifecycle.STAMP_RELPATH)] in calls
+    assert (tmp_path / _lifecycle.STAMP_RELPATH).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -4406,6 +5482,195 @@ def test_step_changelog_version_no_tag_visible_warns_structural_only(
     result = precommit.step_changelog_version(tmp_path)
     assert result.passed is True
     assert "no `v*` tag visible" in result.output
+
+
+# ---------------------------------------------------------------------------
+# step_changelog_version / step_changelog_updated — fragments mode
+# ---------------------------------------------------------------------------
+#
+# Shared fixture recipe: CHANGELOG.md present (so the steps don't self-skip),
+# no `.claude-plugin/plugin.json` (not manifest-versioned), no `dev_branch`
+# (not dual-track), `pyproject.toml` opting into
+# `[tool.forge.changelog] mode = "fragments"`.
+
+
+def _write_fragments_pyproject(tmp_path: Path) -> None:
+    """Write a `pyproject.toml` opting into `[tool.forge.changelog] mode = "fragments"`.
+
+    Args:
+        tmp_path: Repo root to write into.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.changelog]\nmode = "fragments"\n'
+    )
+
+
+def _write_pending_fragment(tmp_path: Path, name: str, body: str) -> None:
+    """Write a `changelog.d/<name>` pending fragment with *body*.
+
+    Args:
+        tmp_path: Repo root.
+        name: Fragment filename.
+        body: Fragment file contents, written verbatim.
+    """
+    directory = tmp_path / "changelog.d"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / name).write_text(body)
+
+
+def test_step_changelog_version_fragments_mode_valid_pending_passes(
+    tmp_path: Path,
+) -> None:
+    """Fragment mode with a valid pending fragment passes, naming "Fragment mode"."""
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    _write_pending_fragment(tmp_path, "a.added.md", "bump: minor\n- x\n")
+    result = precommit.step_changelog_version(tmp_path)
+    assert result.passed
+    assert "Fragment mode" in result.output
+
+
+def test_step_changelog_version_fragments_mode_invalid_pending_fails(
+    tmp_path: Path,
+) -> None:
+    """Fragment mode with an invalid pending fragment fails, blocking by default."""
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    _write_pending_fragment(tmp_path, "a.bogus.md", "bump: minor\n- x\n")
+    result = precommit.step_changelog_version(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+    assert "unknown type 'bogus'" in result.output
+
+
+def test_step_changelog_version_fragments_mode_no_pending_passes(
+    tmp_path: Path,
+) -> None:
+    """Fragment mode with no `changelog.d/` at all passes cleanly."""
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    result = precommit.step_changelog_version(tmp_path)
+    assert result.passed
+    assert "Fragment mode" in result.output
+
+
+def test_step_changelog_updated_fragments_mode_trigger_without_fragment_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A change requiring a changelog entry, with no fragment anywhere, fails."""
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(
+        precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert not result.passed
+    assert "changelog.d/" in result.output
+
+
+def test_step_changelog_updated_fragments_mode_trigger_with_valid_fragment_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A trigger plus a valid fragment present in both the diff and on disk passes."""
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    _write_pending_fragment(tmp_path, "a.added.md", "bump: minor\n- x\n")
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(
+        precommit.config,
+        "select_diff_files",
+        lambda *_a, **_kw: ["src/pkg/mod.py", "changelog.d/a.added.md"],
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.passed
+    assert "fragment present" in result.output
+
+
+def test_step_changelog_updated_fragments_mode_invalid_on_disk_fragment_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A trigger with a fragment in the diff that fails validation still fails."""
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    _write_pending_fragment(tmp_path, "a.bogus.md", "bump: minor\n- x\n")
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(
+        precommit.config,
+        "select_diff_files",
+        lambda *_a, **_kw: ["src/pkg/mod.py", "changelog.d/a.bogus.md"],
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert not result.passed
+    assert "Invalid changelog.d/" in result.output
+
+
+def test_step_changelog_updated_fragments_mode_fragment_only_diff_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A diff touching only a fragment carries no changelog-requiring trigger.
+
+    Fragments live under the excluded `changelog.d/` prefix, so a
+    fragment-only diff never itself counts as a trigger — the gate is
+    satisfied by having nothing left to require an entry for.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    _write_pending_fragment(tmp_path, "a.added.md", "bump: minor\n- x\n")
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(
+        precommit.config,
+        "select_diff_files",
+        lambda *_a, **_kw: ["changelog.d/a.added.md"],
+    )
+    result = precommit.step_changelog_updated(tmp_path)
+    assert result.passed
+    assert "No changelog-requiring changes." in result.output
+
+
+def test_step_changelog_updated_fragments_mode_validates_even_without_triggers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An invalid on-disk fragment fails the gate even with an empty diff.
+
+    Locks that fragment validation is unconditional: `check_pending_fragments`
+    runs regardless of whether `triggers` is empty, so a stray invalid
+    fragment left behind by an earlier commit still blocks — it is not
+    gated on there being a changelog-requiring change in this diff.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    _write_pending_fragment(tmp_path, "a.bogus.md", "bump: minor\n- x\n")
+    monkeypatch.delenv("NO_VERSION", raising=False)
+    monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.setattr(
+        precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
+    )
+    monkeypatch.setattr(precommit.config, "select_diff_files", lambda *_a, **_kw: [])
+    result = precommit.step_changelog_updated(tmp_path)
+    assert not result.passed
+    assert "Invalid changelog.d/" in result.output
 
 
 # ---------------------------------------------------------------------------

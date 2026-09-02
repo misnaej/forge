@@ -49,6 +49,22 @@ def init_git_repo(repo: Path) -> None:
         subprocess.run(cmd, cwd=repo, env=GIT_ENV, check=True)
 
 
+def commit_all(repo: Path, message: str) -> None:
+    """Stage everything and commit with *message*.
+
+    Shared by the real-git suites (``git_utils``, ``rebump``) — one
+    stage-and-commit helper instead of per-file copies.
+
+    Args:
+        repo: Repo root.
+        message: Commit message.
+    """
+    subprocess.run(["git", "add", "-A"], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", message], cwd=repo, env=GIT_ENV, check=True
+    )
+
+
 def init_single_track_repo(base: Path) -> tuple[Path, Path]:
     """Initialize a paired work/bare single-track git repository under *base*.
 

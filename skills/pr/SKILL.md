@@ -61,7 +61,12 @@ silently merge.** Which variant depends on Step 0:
 - **`mergeable: CONFLICTING`** → do not finalize yet. Resolve by
   merging the base in (`git merge origin/<base>`, resolve conflicts —
   CHANGELOG per `docs/release-process.md` §5, care per FOUNDATION §6's
-  resolution rule), then re-run from Step 0.5.
+  resolution rule), then re-run from Step 0.5. When the conflict is
+  confined to `.claude-plugin/plugin.json` + `CHANGELOG.md` (the
+  rolling-next version-slot collision), run **`forge-rebump`** instead
+  of hand-resolving: it classifies the branch's bump intent, takes the
+  next open slot, restacks the changelog (shared-heading mode), and
+  stages — refusing loudly if any other file conflicts.
 - **Behind but clean** (left count > 0, not conflicting) → merge the
   base in and proceed, saying what was done — **no confirmation
   needed** (FOUNDATION §6's resolution rule governs): it refreshes the
@@ -74,9 +79,12 @@ silently merge.** Which variant depends on Step 0:
 PR's entries under an already-released heading — nothing conflicts, so
 neither git nor the checks above notice. After the fetch, run
 `forge-precommit --only changelog_version` (self-skips on repos where
-the convention doesn't apply). A `stranded` finding means: bump the top
-`## vX.Y.Z` heading to the next version, move this PR's entries under
-it, commit, and re-run from Step 0.5.
+the convention doesn't apply). A `stranded` finding means: run
+`forge-changelog restrand` (mechanical — moves this PR's entries under
+the next open `## vX.Y.Z` heading and stages the result; `--bump
+minor|major` when the change deserves more than a patch slot), commit,
+and re-run from Step 0.5. (`forge-rebump` is the plugin-repo tool —
+rolling-next manifest repos only; manifest-less repos use `restrand`.)
 
 Merging the base re-triggers CI. Do **not** wait for it: per FOUNDATION §6
 "PR finalization", the wrap-up never blocks on CI — it posts as soon as the
@@ -101,6 +109,7 @@ do not re-derive the classification in prose.
 |---|---|---|---|
 | `light-docs` | `docs-types-checker` only | `forge-precommit --only <precommit_scope>` (changelog + doc gates; add other path-relevant steps as applicable) | Whole diff is doc-shaped, nothing high-blast-radius. Steps 3–4 run as normal; tell `pr-manager` so the wrap-up says so. Residuals documented in `pr_delta.docs_only_diff`: path-string classification only — docs-types-checker + human review stay reviewers of record. |
 | `light-regen` | none — **after earning it** | The provenance gates in `precommit_scope` | **Eligibility only** (resync PRs: every path in `pr_delta.MANAGED_REGEN_PATHS`). **Earn** the escape: `forge-precommit --only foundation_md_check,cli_reference_check,api_digest_check`. Every gate passes (absent-file skips fine) → skip all three reporters; the wrap-up embeds the gate outputs verbatim as evidence. **Any gate FAILS → full round, no exceptions** (covers the editable-install self-reference case and hand-edits to managed files — the byte check exists to catch exactly that). Steps 3–4 run as normal. |
+| `light-code` | none | Strict whole-tree battery (empty `precommit_scope`) | Small code diff (`pr_delta.light_wrapup_decision`: under `LIGHT_WRAPUP_LINE_THRESHOLD`, **no added files** — the prior-art gate stays independent — no `src/` path, nothing high-blast-radius). Reporters skipped; Step 3.92 authors the **short-form** wrap-up (`wrapup-mode: light` header + one-line rationale + the classifier's reasons verbatim; squash message still mandatory). Never agent discretion: `block_unverified_pr_create` re-runs `forge-pr-plan` at `gh pr create` and blocks unless it agrees — classifier missing/erroring/disagreeing → full wrap-up applies. Skip the `/code-review` offer (no reporter round to overlap); say so in the wrap-up. |
 | `delta` | none | none | An existing PR's prior wrap-up carries a `verified-at:` SHA and the diff since it is small and out of high-blast-radius paths — **skip Step 1 entirely**, jump to Step 4 (`pr-manager` posts a delta comment + refreshed squash comment; orchestration detail in [`pr-manager.md` "Task: Verification (Wrap-up)"](../../agents/pr-manager.md#task-verification-wrap-up)). |
 | `full` | all three below | Strict whole-tree battery (empty `precommit_scope`) | The default round. |
 
@@ -259,7 +268,12 @@ squash-merge message, and writes the wrap-up to
 
 The `block_unverified_pr_create` hook enforces this: `gh pr create` is
 blocked unless `code_health/pr_wrapup.md` names the current `HEAD` —
-authoring at one SHA and publishing another re-runs this step. When the
+authoring at one SHA and publishing another re-runs this step. On
+`mode: light-code` the wrap-up is the short form instead — first line
+`verified-at: <HEAD sha>`, second line `wrapup-mode: light`, then a
+one-line rationale, the classifier's `reasons` verbatim, and the squash
+message (still mandatory) — and the hook re-runs `forge-pr-plan`
+fail-closed before letting the create through. When the
 user explicitly asks to skip the gate, prefix the create command with
 `FORGE_SKIP_WRAPUP_GATE=1` — never on the agent's own judgment.
 Promotion PRs self-exempt only with provenance: the `release/vX.Y.Z`

@@ -23,6 +23,10 @@ be released** — never the last-released version.
   enforces `plugin.json["version"] > latest tag` on every commit.
 - After tagging `vX.Y.Z`, the next PR must bump `plugin.json` to the next
   rolling-next version, or its commits fail the guard.
+- Surviving feature branches hit the same slot collision on every merge —
+  the mechanical resolution (mid-merge conflict or post-tag clean-tree
+  mismatch) is **`forge-rebump`**; the two-state mechanics live in the
+  `src/forge/rebump.py` module docstring.
 
 ## 2. Dual-track tag cadence
 
@@ -126,6 +130,14 @@ When you add a versioning/promotion behavior, add a row here **and** its
 test. When you find an invariant with no test, that gap is a bug to close.
 
 ## 5. CHANGELOG at release
+
+> **Fragments mode note**: with `[tool.forge.changelog].mode =
+> "fragments"`, dev accumulates `changelog.d/` files and the promotion
+> release-branch commit is the single assembly point — `forge-changelog
+> assemble --version vX.Y.Z --delete` collates them for curation and
+> stages their deletion; the release fingerprint tolerates both the
+> CHANGELOG divergence and the fragment deletions
+> (`git_utils._RELEASE_EQUAL_IGNORE`).
 
 `CHANGELOG.md` is the **`@main` channel log**: one **curated, condensed
 entry per promoted minor** (`vX.Y.0`). The slow channel ships minors

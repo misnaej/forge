@@ -164,6 +164,54 @@ that pre-merge, run the step as its own **required status check**:
   `permissions: contents: read`** added in the §2 snippet — no
   per-job permissions block needed.
 
+### Smart-test cadence in CI (the classic schema)
+
+When CI is the testing fleet (most repos), pair
+`[tool.forge.smart_test].cadence_mode = "external"` (or `"advisory"`
+for mixed fleets) with two jobs: tiered smart tests on PRs, the full
+suite on every main-branch push. Event-driven — the main path needs no
+clock; add the `schedule:` trigger as a quiet-period backstop.
+
+```yaml
+  smart-test-pr:            # PR job: change-scoped tiers
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e ".[dev]"
+      - run: forge-smart-test --depth 2
+
+  full-suite-main:          # main-push (+ optional cron) job: truly all
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e ".[dev]"
+      - run: forge-smart-test --depth full --all-tests
+      # OPTIONAL stamp refresh — keeps `external` mode's 2x-window
+      # broken-pipeline detector honest. Needs `contents: write` on
+      # THIS job only; skip it and expect (truthful) stale-stamp WARNs.
+      # - run: |
+      #     git config user.name github-actions
+      #     git config user.email github-actions@github.com
+      #     git add .forge-full-run
+      #     git commit -m "chore: refresh full-run cadence stamp" || true
+      #     git push
+```
+
+- Add `schedule: [{cron: "0 4 * * *"}]` to the workflow triggers if
+  main can go quiet for days — the scheduler then owns the cadence
+  clock instead of the merge stream.
+- Workstations in these repos set `cadence_mode = "advisory"` (or the
+  step stays unopted) — the committed-stamp escalation is for
+  repos whose testing genuinely happens locally. Decision table:
+  smart-test doc, "Who carries the cadence".
+
 ## 3. Scheduled `forge-upgrade --apply` workflow
 
 `.github/workflows/forge-upgrade.yml`:

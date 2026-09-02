@@ -1,0 +1,8 @@
+{
+  "tests/test_gen_cli_reference.py::test_main_check_returns_one_on_drift::call": 2.91,
+  "tests/test_gen_cli_reference.py::test_main_check_returns_one_when_doc_missing::call": 3.11,
+  "tests/test_gen_cli_reference.py::test_main_check_returns_zero_when_in_sync::call": 5.93,
+  "tests/test_gen_cli_reference.py::test_main_writes_doc_and_returns_zero::call": 2.86,
+  "tests/test_verify_main_tags.py::test_fix_refuses_to_relocate_newest_dev_minor::call": 1.07,
+  "tests/test_verify_main_tags.py::test_fix_relocates_all_minors_when_hold_unset::call": 1.21
+}

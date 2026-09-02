@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from forge.config import load_config
 from forge.git_utils import (
+    next_version,
     parse_semver,
     resolve_base_branch_ref,
     resolve_current_branch,
@@ -119,6 +120,83 @@ def top_release_heading(text: str) -> str | None:
         if version is not None:
             return version
     return None
+
+
+def _top_heading_span(text: str) -> tuple[int, int]:
+    """Return the ``(start, end)`` character span of the top release heading line.
+
+    Args:
+        text: Full ``CHANGELOG.md`` contents.
+
+    Returns:
+        Span of the first ``## vX.Y.Z`` heading line (end excludes the
+        newline).
+
+    Raises:
+        ValueError: When *text* has no recognized release heading.
+    """
+    match = _HEADING_RE.search(text)
+    if match is None:
+        msg = "no vX.Y.Z release heading found in changelog text"
+        raise ValueError(msg)
+    end = text.find("\n", match.start())
+    return match.start(), len(text) if end == -1 else end
+
+
+def retitle_top_release(text: str, version: str) -> str:
+    """Rewrite the top release heading to name *version*.
+
+    The clean-tree half of the post-merge rebump (``forge-rebump``): the
+    branch's unreleased entries stay in place and only the heading —
+    whose version slot another PR's merge just consumed — moves to the
+    next open one. Any trailing suffix on the old heading (a stale date)
+    is dropped: the release date belongs to the release, not the draft.
+
+    Args:
+        text: Full ``CHANGELOG.md`` contents.
+        version: New heading version, ``v``-prefixed (e.g. ``"v1.3.0"``).
+
+    Returns:
+        *text* with its top release heading line replaced by
+        ``## <version>``.
+
+    Raises:
+        ValueError: When *text* has no recognized release heading.
+    """
+    start, end = _top_heading_span(text)
+    return f"{text[:start]}## {version}{text[end:]}"
+
+
+def restack_changelog(ours: str, theirs: str, version: str) -> str:
+    """Stack *ours*' unreleased top section onto *theirs* under *version*.
+
+    The mid-merge half of the post-merge rebump: *ours* is the feature
+    branch's changelog (its entries under a now-taken next heading),
+    *theirs* the base branch's (the released stack). The resolution keeps
+    the base's text verbatim — preamble and released headings — and
+    inserts the branch's entries above its top release heading under the
+    next open *version*. Pure text transform; the caller owns reading the
+    merge stages and writing the result.
+
+    Args:
+        ours: Feature-branch ``CHANGELOG.md`` contents.
+        theirs: Base-branch ``CHANGELOG.md`` contents.
+        version: Heading for the restacked entries, ``v``-prefixed.
+
+    Returns:
+        The merged changelog text.
+
+    Raises:
+        ValueError: When *ours* has no recognized release heading (there
+            is no section to restack).
+    """
+    _start, end = _top_heading_span(ours)
+    next_heading = _HEADING_RE.search(ours, end)
+    body = ours[end : next_heading.start() if next_heading else len(ours)]
+    section = f"## {version}{body.rstrip()}\n\n"
+    theirs_match = _HEADING_RE.search(theirs)
+    insert_at = theirs_match.start() if theirs_match else len(theirs)
+    return f"{theirs[:insert_at]}{section}{theirs[insert_at:]}"
 
 
 def changelog_version_findings(text: str, latest_tag: str | None) -> list[str]:
@@ -433,3 +511,118 @@ def released_deleted_versions(
         if old_sections.get(version, set()) - new_sections.get(version, set()):
             shrunk.append(version)
     return shrunk
+
+
+def _version_heading_span(text: str, version: str) -> tuple[int | None, int | None]:
+    """Return the character span of *version*'s heading line plus its newline.
+
+    Args:
+        text: Full ``CHANGELOG.md`` contents.
+        version: The ``vX.Y.Z`` heading to locate.
+
+    Returns:
+        ``(start, end)`` where ``end`` sits after the trailing newline
+        (so slicing the span out removes the whole line), or
+        ``(None, None)`` when no heading for *version* exists.
+    """
+    for match in _HEADING_RE.finditer(text):
+        if match.group(1) == version:
+            newline = text.find("\n", match.start())
+            end = len(text) if newline == -1 else newline + 1
+            return match.start(), end
+    return None, None
+
+
+def restrand_changelog(old_text: str, new_text: str, latest_tag: str, bump: str) -> str:
+    """Move entries stranded under released headings to the next open slot.
+
+    The mechanical repair for the stranded-entries race
+    (:func:`stranded_added_versions`): every line a released section
+    *gained* versus *old_text* moves — verbatim, in order — under the
+    next open heading (``next_version(latest_tag, bump)``), or merges
+    into an existing ahead-of-tag top heading when one is already
+    present. The result is exactly the "strict shrink" the gate's
+    membership detectors bless: re-running both
+    :func:`stranded_added_versions` and
+    :func:`released_deleted_versions` on it returns empty, which this
+    function verifies before returning. A heading the change set itself
+    introduced (absent from *old_text*) that ends up empty after the
+    move is dropped with its section.
+
+    Args:
+        old_text: ``CHANGELOG.md`` contents at the comparison point —
+            the merge base, or the released tag's copy.
+        new_text: Full current ``CHANGELOG.md`` contents.
+        latest_tag: Latest ``v*`` tag (required — with no tags nothing
+            can be stranded).
+        bump: ``"major"`` / ``"minor"`` / ``"patch"`` — the slot class
+            for the restranded entries.
+
+    Returns:
+        The repaired changelog text; *new_text* unchanged when nothing
+        is stranded.
+
+    Raises:
+        ValueError: When the repair does not verify as a strict shrink
+            (both detectors empty on the result) — a state needing a
+            human read, never a silent partial rewrite.
+    """
+    stranded = stranded_added_versions(old_text, new_text, latest_tag)
+    if not stranded:
+        return new_text
+    old_sections = _section_content(old_text)
+    old_headings = release_headings(old_text)
+    lines = new_text.splitlines()
+    governing = _governing_versions(new_text)
+    moved: list[str] = []
+    kept: list[str] = []
+    for line, version in zip(lines, governing, strict=True):
+        stripped = line.strip()
+        is_heading = bool(_ANY_HEADING_RE.match(line))
+        if (
+            version is not None
+            and version in stranded
+            and not is_heading
+            and stripped
+            and stripped not in old_sections.get(version, set())
+        ):
+            moved.append(line)
+        else:
+            kept.append(line)
+    text = "\n".join(kept) + ("\n" if new_text.endswith("\n") else "")
+    # Drop headings this change set itself introduced that are now empty.
+    remaining = _section_content(text)
+    for version in stranded:
+        if version not in old_headings and not remaining.get(version):
+            start, end = _version_heading_span(text, version)
+            if start is not None and end is not None:
+                text = text[:start] + text[end:]
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    tag_tuple = parse_semver(latest_tag)
+    top = top_release_heading(text)
+    top_tuple = parse_semver(top) if top else None
+    section_body = "\n".join(moved)
+    if top and top_tuple and tag_tuple and top_tuple > tag_tuple:
+        # Merge into the existing ahead-of-tag draft section: entries land
+        # directly above the section's existing bullets (after the blank
+        # line that follows the heading, when present).
+        _start, end = _top_heading_span(text)
+        newline = text.find("\n", end)
+        insert_at = newline + 1 if newline != -1 else len(text)
+        if text[insert_at : insert_at + 1] == "\n":
+            insert_at += 1
+        text = f"{text[:insert_at]}{section_body}\n{text[insert_at:]}"
+    else:
+        heading = next_version(latest_tag, bump)
+        match = _HEADING_RE.search(text)
+        insert_at = match.start() if match else len(text)
+        text = f"{text[:insert_at]}## {heading}\n\n{section_body}\n\n{text[insert_at:]}"
+    if stranded_added_versions(old_text, text, latest_tag) or (
+        released_deleted_versions(old_text, text, latest_tag)
+    ):
+        msg = (
+            "restrand did not verify as a strict shrink — the changelog "
+            "needs a human read."
+        )
+        raise ValueError(msg)
+    return text

@@ -15,7 +15,7 @@ prior wrap-up comments on the delta path) and the mode→plan mapping.
 Output contract (single JSON object on stdout; diagnostics go to stderr)::
 
     {
-        "mode": "full" | "light-docs" | "light-regen" | "delta",
+        "mode": "full" | "light-docs" | "light-regen" | "light-code" | "delta",
         "reporters": [...],
         "precommit_scope": [...],
         "reasons": [...],
@@ -24,14 +24,20 @@ Output contract (single JSON object on stdout; diagnostics go to stderr)::
 
 ``reporters`` names the verification agents the skill must run.
 ``precommit_scope`` lists step names for ``forge-precommit --only``; empty
-means the full strict battery for "full" and no pre-commit run at all for
-"delta". ``reasons`` is the human-readable classification trail.
+means the full strict battery for "full" and "light-code", and no
+pre-commit run at all for "delta". ``reasons`` is the human-readable
+classification trail.
 ``classified_at`` is HEAD at classification time; ``pr-manager`` warns when
 posting at a different HEAD.
 
 ``light-regen`` is *eligibility only*: the skill still earns the escape by
 running the provenance gates (``precommit_scope`` lists them); any gate
-failure falls back to the full round. The delta path degrades, never
+failure falls back to the full round. ``light-code`` (small, no added
+files, no ``src/`` or high-blast-radius path) skips the reporters and
+authorizes the short-form ``wrapup-mode: light`` wrap-up — enforced
+fail-closed by ``block_unverified_pr_create``, which re-runs this
+classifier at ``gh pr create`` time; the strict pre-commit battery still
+runs in full. The delta path degrades, never
 crashes: no ``--pr``, a missing/unauthenticated ``gh``, or no
 ``verified-at:`` comment each add a reason and classification continues
 to ``full``.
@@ -59,6 +65,7 @@ from forge.pr_delta import (
     delta_decision,
     docs_only_diff,
     extract_verified_shas,
+    light_wrapup_decision,
     regen_only_diff,
 )
 
@@ -92,11 +99,11 @@ class PrPlan:
 
     Attributes:
         mode: One of ``full`` / ``light-docs`` / ``light-regen`` /
-            ``delta``.
+            ``light-code`` / ``delta``.
         reporters: Verification agents the skill must invoke for this mode.
         precommit_scope: Step names for ``forge-precommit --only``; empty
-            means the full strict battery in ``full`` mode and no
-            pre-commit run at all in ``delta`` mode.
+            means the full strict battery in ``full`` and ``light-code``
+            modes and no pre-commit run at all in ``delta`` mode.
         reasons: Human-readable classification trail, one entry per
             decision taken (including why higher-priority modes were
             rejected).
@@ -122,6 +129,33 @@ def _changed_paths(root: Path, diff_range: str) -> list[str]:
         One path per changed file, empty for an empty diff.
     """
     out = run_git("diff", "--name-only", diff_range, cwd=root)
+    return [line for line in out.splitlines() if line]
+
+
+def _added_paths(root: Path, diff_range: str) -> list[str]:
+    """Return the new paths across *diff_range* (``--diff-filter=ACR``).
+
+    The light-code class excludes file-adding diffs outright — the
+    prior-art gate is an independent refusal the light path must never
+    bypass. Copies and renames count too: a rename-plus-heavy-edit is a
+    new module in a new place exactly as an add is, and ``A`` alone
+    would let it slip the gate.
+
+    Args:
+        root: Repository root directory.
+        diff_range: A git range spec (e.g. ``origin/dev...HEAD``).
+
+    Returns:
+        One path per added file, empty when nothing was added.
+    """
+    out = run_git(
+        "diff",
+        "--name-only",
+        "--diff-filter=ACR",
+        "--find-renames",
+        diff_range,
+        cwd=root,
+    )
     return [line for line in out.splitlines() if line]
 
 
@@ -240,7 +274,8 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
 
     Reproduces the ``/pr`` skill's decision order exactly: docs-only
     first, then regen-only eligibility, then delta (only with an existing
-    PR), else the full round.
+    PR — the cheapest path for an already-verified PR's follow-up), then
+    light-code, else the full round.
 
     Args:
         root: Repository root directory.
@@ -291,6 +326,27 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
             reasons=reasons,
             classified_at=head,
         )
+
+    added = _added_paths(root, f"{base}...HEAD")
+    use_light, why = light_wrapup_decision(
+        line_count=_line_count(root, f"{base}...HEAD"),
+        changed_paths=paths,
+        added_paths=added,
+    )
+    if use_light:
+        reasons.append(
+            f"light-code: {why}; reporters skipped, wrap-up is short-form "
+            "(wrapup-mode: light) — the publish hook re-runs this "
+            "classifier fail-closed; strict pre-commit still runs in full"
+        )
+        return PrPlan(
+            mode="light-code",
+            reporters=[],
+            precommit_scope=[],
+            reasons=reasons,
+            classified_at=head,
+        )
+    reasons.append(f"not light-code: {why}")
 
     reasons.append("full round: strict whole-tree pre-commit + all reporters")
     return PrPlan(

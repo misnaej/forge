@@ -1,12 +1,15 @@
 """pr_delta — thresholds and helpers for pr-manager finalization short-circuits.
 
-`forge:pr-manager` (via the `/pr` skill) has two independent ways to skip
-the full three-agent re-verification: **delta mode**, when the diff since
-the last verified SHA is small and stays out of high-blast-radius areas,
-and the **docs-only light path**, when the whole diff is doc-shaped and
-touches no high-blast-radius path. The thresholds, path globs, and the
-SHA-extraction helper live here so the agent prompt, future audit guards,
-and any consumer wrapper read them from one source of truth.
+`forge:pr-manager` (via the `/pr` skill) has four independent ways to
+skip the full three-agent re-verification: **delta mode** (diff since
+the last verified SHA is small, out of high-blast-radius areas),
+the **docs-only light path** (whole diff doc-shaped), **regen-only
+eligibility** (managed artifacts, earned via provenance gates), and the
+**light-code path** (small, no added files, no source or blast-radius
+path — earned at publish time by the hook's classifier re-run). The
+thresholds, path globs, and the SHA-extraction helper live here so the
+agent prompt, future audit guards, and any consumer wrapper read them from
+one source of truth.
 
 The agent prompt references this module by path; the constants are not
 imported by the agent runtime (agents are markdown). Anything that
@@ -95,6 +98,22 @@ PROVENANCE_GATE_STEPS: Final[tuple[str, ...]] = (
     "cli_reference_check",
     "api_digest_check",
 )
+
+
+# Maximum line-count diff (insertions + deletions) below which a PR with
+# no added files, no source-under-src change, and no high-blast-radius
+# path qualifies for the LIGHT wrap-up (`wrapup-mode: light`): reporters
+# skipped, short-form wrap-up, strict pre-commit still in full. The
+# escape is never agent discretion — `block_unverified_pr_create`
+# re-runs the classifier at publish time and blocks on disagreement.
+LIGHT_WRAPUP_LINE_THRESHOLD: Final[int] = 50
+
+
+# Path prefixes that count as "source" for the light wrap-up: a diff
+# touching shipped package code always takes the full reporter round,
+# however small. Deliberately narrower than HIGH_BLAST_RADIUS_PATHS
+# (adding src/ there would silently narrow the delta path too).
+SOURCE_PATHS: Final[tuple[str, ...]] = ("src/",)
 
 
 # Matches the reporter-agent header contract documented in
@@ -236,6 +255,91 @@ def regen_only_diff(changed_paths: list[str]) -> bool:
     if not changed_paths:
         return False
     return all(path in MANAGED_REGEN_PATHS for path in changed_paths)
+
+
+def touches_source_paths(changed_paths: list[str]) -> list[str]:
+    """Return the subset of *changed_paths* under :data:`SOURCE_PATHS`.
+
+    Casefolded prefix match, same rationale as
+    :func:`touches_high_blast_radius` — a case-varied path must not
+    dodge the source net on a case-insensitive filesystem.
+
+    Args:
+        changed_paths: Repo-relative paths from ``git diff --name-only``.
+
+    Returns:
+        Subset of paths under a source prefix, in input order.
+    """
+    return [
+        path
+        for path in changed_paths
+        if any(path.casefold().startswith(prefix) for prefix in SOURCE_PATHS)
+    ]
+
+
+def light_wrapup_decision(
+    *,
+    line_count: int,
+    changed_paths: list[str],
+    added_paths: list[str],
+) -> tuple[bool, str]:
+    """Decide whether a diff qualifies for the light wrap-up path.
+
+    Objective signals only — never agent judgment, checked in this
+    order: non-empty diff, no added files (the prior-art gate stays
+    independent and fires before any size check), line count under the
+    threshold, no high-blast-radius path, no source-package change.
+    Mirrors
+    :func:`delta_decision`'s ``(verdict, reason)`` shape so callers and
+    the publish-time hook re-check render the same trail.
+
+    Args:
+        line_count: Insertions + deletions across the whole PR diff.
+        changed_paths: Repo-relative paths from ``git diff --name-only``.
+        added_paths: Paths from ``git diff --name-only --diff-filter=A``.
+
+    Returns:
+        ``(use_light, reason)`` — ``True`` only when every signal
+        passes; the reason names the first failing signal otherwise.
+    """
+    if not changed_paths:
+        return (False, "empty diff; nothing to classify")
+    if added_paths:
+        return (
+            False,
+            (
+                f"diff adds file(s): {', '.join(added_paths)}; the "
+                "prior-art gate requires the full wrap-up"
+            ),
+        )
+    if line_count > LIGHT_WRAPUP_LINE_THRESHOLD:
+        return (
+            False,
+            (
+                f"diff is {line_count} lines "
+                f"(> {LIGHT_WRAPUP_LINE_THRESHOLD}); full wrap-up required"
+            ),
+        )
+    hot = touches_high_blast_radius(changed_paths)
+    if hot:
+        return (
+            False,
+            f"diff touches high-blast-radius path(s): {', '.join(hot)}",
+        )
+    src = touches_source_paths(changed_paths)
+    if src:
+        return (
+            False,
+            f"diff touches source package path(s): {', '.join(src)}",
+        )
+    return (
+        True,
+        (
+            f"diff is {line_count} lines under "
+            f"{LIGHT_WRAPUP_LINE_THRESHOLD}, adds no files, touches no "
+            "source or high-blast-radius paths"
+        ),
+    )
 
 
 def delta_decision(

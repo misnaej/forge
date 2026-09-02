@@ -20,6 +20,189 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v3.40.0 — 2026-09-02
+
+### Features
+- **Changelog fragments end the shared-heading conflict grind.** Opt-in
+  `[tool.forge.changelog].mode = "fragments"`: each PR ships one unique
+  `changelog.d/<slug>.<type>.md` file (level-only `bump:` front-matter —
+  version numbers are gate-rejected), so parallel PRs cannot conflict and
+  the stranded-entries race cannot occur. New `forge-changelog` CLI
+  (`check` = the fragment gate; `assemble --delete` = the single
+  release-time writer that collates fragments into CHANGELOG.md and
+  stages their deletion). The changelog gates become fragment gates in
+  this mode; the release fingerprint tolerates fragment deletions on
+  promotion branches. Forge dogfoods — this entry is the first fragment.
+- **`forge-changelog restrand`** — mechanical repair for stranded changelog entries in shared-heading repos (no plugin manifest required): moves exactly the entries this branch added under released headings to the next open heading (`--bump patch|minor|major`, default patch), self-verifies against the gate's own detectors, stages, never commits. Stranded-gate messages and the `/pr` skill now route to it.
+- **Manifest version schema check** — `verify-forge-manifest` now rejects a `plugin.json` `version` value that is not bare `X.Y.Z` semver (non-string, `v` prefix, suffixes, or JSON-escape payloads that smuggle injected keys past textual rewrites). Missing field stays legal; `marketplace.json` keeps plain-parse behavior.
+- **`forge-rebump` CLI** — mechanically resolves the rolling-next `plugin.json` version-slot collision (and, in shared-heading changelog repos, the CHANGELOG stack) on a feature branch, mid-merge or after another PR's merge consumed the slot. Classifies the branch's own bump intent from its fork-point manifest delta, refuses loudly on unrelated conflicts, stages the result, never commits.
+
+### Fixes
+- **`regen_docs` stale-install advisory** — the pre-commit doc-regen step now WARNs (never blocks) when declared console scripts are absent from the install `docs/cli-reference.md` is regenerated from, instead of silently omitting new CLIs in non-interactive runs.
+
+## v3.37.0 — 2026-09-01
+
+### Features
+- **Trivial PRs get a proportionate wrap-up — earned, never taken.**
+  `forge-pr-plan` gains the `light-code` class: a diff under 50 lines
+  that adds no files and touches no `src/` or high-blast-radius path
+  skips the three reporters, and the wrap-up shrinks to a short form
+  (`wrapup-mode: light` + the classifier's reasons). The escape is
+  never agent discretion: `block_unverified_pr_create` re-runs the
+  classifier at `gh pr create` and blocks fail-closed on any
+  disagreement, missing classifier, or unresolvable base. Strict
+  pre-commit still runs in full; file-adding diffs stay on the full
+  path (the prior-art gate is independent).
+
+## v3.36.0 — 2026-09-01
+
+### Features
+- **The performance loop closes: forge now reads the perf data it
+  writes.** `forge-slow-tests-report` gains a committed duration
+  baseline (`.forge-test-durations.json`, flat reviewable JSON):
+  `--baseline` appends a WARN-shaped regression block (1.5x factor,
+  1s floor — never a gate; wall-clock on shared runners is
+  non-reproducible) and `--update-baseline` refreshes it deliberately
+  in a dedicated chore(perf) PR. `forge-telemetry --history` renders
+  the append-only run ledger as a trend table. `forge-smart-test` now
+  also writes `code_health/pytest.log`, making the reporter's
+  no-argument default true locally; forge's own CI runs the full
+  suite with durations captured plus the reporter on every run. New
+  opt-in `/perf` skill: analyze (readers + baseline compare, deep
+  dives via `forge:perf-optimizer`), report (file findings as a
+  `performance`-labeled issue), watch (re-check open performance
+  issues against current data).
+
+## v3.35.0 — 2026-09-01
+
+### Features
+- **Tests now have a lifecycle, and the depth model is safe by
+  contract.** FOUNDATION §8 gains the behavior-vs-development test
+  classes (`pytestmark = pytest.mark.development` at module level;
+  unmarked = behavior, the permanent default) with an authoring
+  necessity gate wired into `test-advisor`/`test-writer`. forge-smart-
+  test gains four guarantees: non-Python changes it cannot map escalate
+  to `full` (safe fallback, with a `nonpython_ignore` allowlist); the
+  tracked `.forge-full-run` stamp forces a truly-all run at least every
+  48h, restaged into the commit that earned it — governed by
+  `cadence_mode`: `commit` (workstation fleet, the escalation above),
+  `advisory` (warn only — never escalates; the note itself never gates), `external` (a
+  scheduled CI job owns the cadence; warns at 2x the window as a
+  broken-pipeline detector), with the classic CI-fleet schema —
+  PR tiers + main-push full suite — documented with ready-made
+  workflow snippets in the CI recipe; stale development files
+  (30d untouched) are loudly lifecycle-skipped from ordinary full runs
+  — never deleted, auto-re-included on touch, always executed by the
+  cadence run; and a record-only depth-2 differential check plus
+  wall/count/dev-fraction metrics append to
+  `code_health/smart_test_history.log` per full run. Forge dogfoods
+  with `precommit_depth = "2"`.
+
+## v3.34.0 — 2026-09-01
+
+### Features
+- **forge-precommit times itself.** Every run wall-clocks each step
+  (monotonic, a clock read per step — no added subprocess cost) and
+  writes `code_health/precommit_timing.log`: one `<step> <elapsed>s
+  <PASS|FAIL|SKIP|WARN>` line per step plus a total, newest run
+  overwriting. The human output gains a quiet per-step elapsed and a
+  one-line total; `--json` elements gain an additive `elapsed_s` field
+  (the output stays a list — sum the field for the run total). No more
+  hand-stopwatching `--only <step>` to find the slow check.
+
+## v3.33.0 — 2026-09-01
+
+### Docs
+- **FOUNDATION §1 closes two ask-instead-of-check loopholes.** "Ask
+  before acting on ambiguity" now requires that the ambiguity survive
+  investigation — run the search or read that would settle it before
+  asking, and when one reading is strongly favoured, take it and state
+  the assumption in one line ("investigation outranks clarification").
+  "Your own actions invalidate your reads" gains the no-action sibling:
+  beliefs formed earlier in the same session (your own briefs and
+  summaries, an issue's labels at read time) are snapshots that decay
+  with nothing signalling it — re-verify against the live source before
+  repeating them.
+
+## v3.32.0 — 2026-09-01
+
+### Features
+- **Amending a pushed commit is now blocked at the cause.** New
+  `block_amend_pushed_commit` Claude Code hook (no bypass): rejects
+  `git commit --amend` whenever `HEAD` already exists on a
+  remote-tracking ref — the single-commit form of a rebase, previously
+  caught only when the resulting force-push hit its own wall, one step
+  too late. Amending an unpushed commit stays allowed. FOUNDATION §2
+  gains the matching "NEVER amend a pushed commit" rule, and
+  `git-commit-push` the "never amend — always a new commit" invariant.
+
+## v3.31.1 — 2026-09-01
+
+### Docs
+- **Test-suite lifecycle research report.** New
+  `docs/proposals/test-lifecycle.md` (issue #396, which stays open):
+  measured baseline (2,319 tests, 60.9 s, four tests over 1 s), cited
+  prior art (test-impact selection, Google size taxonomy, extreme
+  mutation, quarantine lanes, the delete-vs-de-brittle tension), and
+  five proposals for decision — behavior/development classification,
+  demote-then-delete retirement, per-test duration artifact, a
+  three-metric compromise, selector guarantees. The profiling run also
+  caught and fixed a stale `plugin-roster.toml` (missing the
+  `report-to-forge` skill and the `git_anchor` hook), restoring a green
+  suite on dev.
+## v3.31.0 — 2026-09-01
+
+### Features
+- **The continuation ledger is bounded; done work clears in one week.**
+  `forge-continuation-append` now rotates on every append (and via a
+  new `--rotate` standalone mode): done activity entries older than
+  `max_recent_age_days` (default 7) or beyond `max_recent_entries`
+  (default 50) move verbatim to the append-only
+  `.plan/CONTINUATION-archive.md` and collapse into per-day digest
+  lines; entries referencing PRs/issues still named in the structured
+  sections are pinned — undone work stays raw, no network needed.
+  `/next` gains a continuation-hygiene step: the mechanical rotate plus
+  a critical curation pass that deletes stale structured-section
+  content (FOUNDATION §10 protects the file and the archive, not stale
+  prose). Forge's own 506-line file dropped to ~100 on first rotation.
+
+## v3.30.1 — 2026-08-31
+
+### Fixes
+- **The precommit-fixer can never run release actions, and the tag
+  guard stops telling it to.** After an incident where the fixer
+  "cured" a `release_tag_guard` failure by creating and pushing a
+  release tag: the fixer's contract now forbids `forge-next-prep`,
+  `git tag`, `git push`, `gh release`, and branch switches outright —
+  including laundering them through a delegated Task — and the guard's
+  failure message distinguishes the human-on-dev skipped-tag case from
+  parallel-PR version stacking (cure: re-slot to latest-tag+1), ending
+  with an explicit "AGENTS: report only" line. Root cause of the
+  runtime gap was plugin staleness (cached v3.8.1 predating the #354
+  allowlist hook) — enforcement tests now pin the allowlist's
+  release-action denials.
+
+## v3.30.0 — 2026-08-31
+
+### Features
+- **The stash dance is retired; dirty-tree base sync is now the sync
+  ladder.** Research-backed (git docs + git source): `git stash -u`
+  runs `git clean` internally and its untracked-restore path has a
+  documented failure class, so FOUNDATION §2 now sanctions (1) a
+  zero-risk conflict probe via `git merge-tree --write-tree`, (2) a
+  plain merge when nothing overlaps, (3) a `wip-sync:` checkpoint
+  commit (`FORGE_WIP_SYNC=1`, gate deferred, erased by the PR squash)
+  when it does. `git merge --abort` is permitted post-checkpoint only.
+  `forge-precommit` gains the wip-sync mode; `check_commit_format`
+  blocks unpaired marker/message use both directions; and
+  `block_git_destructive` now blocks untracked-including stash
+  (`-u`/`-a`/long forms) while plain tracked-only stash verbs stay
+  usable. Semver rationale (deliberate MINOR, not MAJOR): the
+  recommended→blocked inversion binds **agents only** — humans keep
+  every stash form via `! git ...` — and the old procedure was a
+  workflow rule, not a programmatic surface consumers script against;
+  no consumer action beyond reading the new §2 is required.
+
 ## v3.29.0 — 2026-08-31
 
 ### Features

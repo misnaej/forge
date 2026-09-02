@@ -48,6 +48,7 @@ from pathlib import Path
 from forge.changelog import changelog_lacks_entry
 from forge.config import ForgeConfig, load_config, read_tool_forge_section
 from forge.git_utils import (
+    classify_bump,
     configure_cli_logging,
     create_annotated_tag,
     fetch_tags_best_effort,
@@ -64,7 +65,8 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
-_SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+# Applied via fullmatch — a bare `$` would tolerate one trailing newline.
+_SEMVER_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 _GONE_BRANCH_RE = re.compile(r"^\*?\s*(\S+)\s+[0-9a-f]+\s+\[origin/\S+: gone\]")
 
 
@@ -100,16 +102,12 @@ def _check_promote_pending_message(
     base_ver = read_plugin_version_at_ref(repo_root, f"origin/{base_branch}")
     if dev_ver is None or base_ver is None:
         return None
-    if not (_SEMVER_RE.match(dev_ver) and _SEMVER_RE.match(base_ver)):
+    if not (_SEMVER_RE.fullmatch(dev_ver) and _SEMVER_RE.fullmatch(base_ver)):
         return None
-    dev_major, dev_minor, _ = dev_ver.split(".")
-    base_major, base_minor, _ = base_ver.split(".")
-    if dev_major != base_major:
-        bump = "MAJOR"
-    elif dev_minor != base_minor:
-        bump = "MINOR"
-    else:
-        return None
+    bump_class = classify_bump(parse_semver(base_ver), parse_semver(dev_ver))
+    if bump_class not in ("major", "minor"):
+        return None  # patch-only differences accumulate on dev (rolling-next)
+    bump = bump_class.upper()
     return (
         f"Pending promotion: {dev_branch} at v{dev_ver}; "
         f"{base_branch} at v{base_ver} ({bump} bump). "

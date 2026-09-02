@@ -282,6 +282,15 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "to blocking — severity vs timing.",
     ),
     ConfigKey(
+        ("tool", "forge", "changelog", "mode"),
+        "headings",
+        "Changelog model: 'headings' (default — per-PR bullets under the "
+        "shared top `## vX.Y.Z` heading) or 'fragments' (per-PR "
+        "changelog.d/<slug>.<type>.md files, level-only bump front-matter, "
+        "assembled into CHANGELOG.md once at release by forge-changelog — "
+        "zero merge conflicts by construction).",
+    ),
+    ConfigKey(
         ("tool", "forge", "layering", "paths"),
         "unset (source_dirs → auto-detect)",
         "Granular scan-root override for forge-audit-layering (source-only "
@@ -354,6 +363,49 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "built-in [depth-N] / [full] regex",
         "Override the commit-message directive pattern --from-commit-message "
         "reads to drive the tier from a CI commit.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "lifecycle_skip_days"),
+        default=30,
+        description="Quiet window (days) after which an untouched "
+        "development-marked test file leaves ordinary full runs "
+        "(lifecycle-skipped, always reported; --all-tests re-includes).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "full_run_max_age_hours"),
+        default=48,
+        description="Max age of the tracked .forge-full-run stamp before "
+        "the smart_test pre-commit step escalates to a truly-all run and "
+        "restages the refreshed stamp into the same commit.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "cadence_mode"),
+        "commit",
+        "Who carries the truly-all cadence guarantee: 'commit' "
+        "(workstation fleet — stale stamp escalates the commit), "
+        "'advisory' (warn only — never escalates; the run keeps its "
+        "own blocking semantics), 'external' "
+        "(a scheduled CI job owns it; warn at 2x the window as a "
+        "broken-pipeline detector).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "smart_test", "nonpython_ignore"),
+        "built-in list (*.md, plugin.json, stamp, .plan/*, .gitignore)",
+        "fnmatch globs for changed non-Python paths that cannot affect "
+        "tests; any other non-Python change escalates the run to full "
+        "(the safe-fallback guarantee).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "continuation", "max_recent_entries"),
+        default=50,
+        description="Count cap for CONTINUATION.md's raw Recent-activity "
+        "tail; overflow rotates to the archive and the per-day digest.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "continuation", "max_recent_age_days"),
+        default=7,
+        description="Age bound for DONE ledger entries (undone-pinned "
+        "entries stay); older lines rotate to the archive + digest.",
     ),
     ConfigKey(
         ("tool", "forge", "telemetry", "sample_interval"),

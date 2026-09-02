@@ -35,18 +35,27 @@ pr=$(gh pr view --json number --jq '.number' 2>/dev/null || echo "?")
 
 1. Read the target module(s): public functions, classes, branches, error
    conditions, I/O seams.
-2. Emit a recommendation: mirrored test-file path
+2. **Necessity gate first** (§8 "Test lifecycle"): reject planned
+   cases that duplicate existing coverage (cite the covering test —
+   `code_health/audit_dup.log` is admissible evidence) or that mirror
+   the implementation line-by-line; classify each surviving case
+   behavior vs development.
+3. Emit a recommendation: mirrored test-file path
    (`src/foo/bar.py` → `tests/foo/test_bar.py`), suggested cases (at least a
-   happy-path + an edge/error case per public function), fixtures needed
-   (named for *what they contain*), and which collaborators want Null
-   Objects vs real instances.
+   happy-path + an edge/error case per public function) each tagged
+   with its lifecycle class, fixtures needed (named for *what they
+   contain*), and which collaborators want Null Objects vs real
+   instances.
 
 **Review mode** (caller asks "are these tests good?"):
 
-3. Read the test file(s) and check each against the §8 testing
-   documentation standards (see *Source of truth*).
-4. Emit a compliance report: ✅ / ⚠️ / ❌ per dimension with `file:line`,
-   naming the §8 rule each finding maps to.
+4. Read the test file(s) and check each against the §8 testing
+   documentation standards (see *Source of truth*), including the
+   lifecycle class: a wholly-scaffolding file missing its module-level
+   `pytestmark = pytest.mark.development` is a finding.
+5. Emit a compliance report: ✅ / ⚠️ / ❌ per dimension with `file:line`,
+   naming the §8 rule each finding maps to; when the smart-test history
+   ledger shows lifecycle-skip candidates, list them (report-only).
 
 ## Scope Boundaries
 

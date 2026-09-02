@@ -8,6 +8,7 @@ from forge.pr_delta import (
     DELTA_LINE_THRESHOLD,
     DOCS_ONLY_GLOBS,
     HIGH_BLAST_RADIUS_PATHS,
+    LIGHT_WRAPUP_LINE_THRESHOLD,
     MANAGED_REGEN_PATHS,
     PROVENANCE_GATE_STEPS,
     VERIFIED_AT_RE,
@@ -15,8 +16,10 @@ from forge.pr_delta import (
     delta_decision,
     docs_only_diff,
     extract_verified_shas,
+    light_wrapup_decision,
     regen_only_diff,
     touches_high_blast_radius,
+    touches_source_paths,
 )
 
 
@@ -252,3 +255,104 @@ def test_regen_only_diff_case_varied_path_not_eligible() -> None:
     """
     assert not regen_only_diff(["FOUNDATION.MD"])
     assert not regen_only_diff(["Docs/Cli-Reference.md"])
+
+
+def test_touches_source_paths_matches_src_prefix() -> None:
+    """A path under `src/` is flagged as source."""
+    hits = touches_source_paths(["src/forge/pr_delta.py", "tests/test_pr_delta.py"])
+    assert hits == ["src/forge/pr_delta.py"]
+
+
+def test_touches_source_paths_empty_when_clean() -> None:
+    """Empty list when no path is under a source prefix."""
+    assert touches_source_paths(["tests/test_pr_delta.py", "docs/guide.md"]) == []
+
+
+def test_touches_source_paths_case_insensitive_collision() -> None:
+    """A case-varied `Src/` path cannot dodge the source net (APFS collision)."""
+    assert touches_source_paths(["Src/forge/pr_delta.py"]) == ["Src/forge/pr_delta.py"]
+
+
+def test_light_wrapup_decision_empty_diff_refuses() -> None:
+    """An empty diff refuses the light wrap-up — nothing to classify."""
+    use_light, reason = light_wrapup_decision(
+        line_count=0, changed_paths=[], added_paths=[]
+    )
+    assert use_light is False
+    assert "empty diff" in reason
+
+
+def test_light_wrapup_decision_added_file_refuses_naming_file() -> None:
+    """An added file refuses and names it — the prior-art gate stays independent."""
+    use_light, reason = light_wrapup_decision(
+        line_count=5, changed_paths=["src/foo.py"], added_paths=["src/foo.py"]
+    )
+    assert use_light is False
+    assert "src/foo.py" in reason
+    assert "prior-art" in reason
+
+
+def test_light_wrapup_decision_over_threshold_refuses() -> None:
+    """A diff one line over the threshold refuses."""
+    use_light, reason = light_wrapup_decision(
+        line_count=LIGHT_WRAPUP_LINE_THRESHOLD + 1,
+        changed_paths=["tests/foo.py"],
+        added_paths=[],
+    )
+    assert use_light is False
+    assert "51" in reason
+
+
+def test_light_wrapup_decision_at_threshold_boundary_succeeds() -> None:
+    """A diff exactly at the threshold succeeds — the code checks `>`, not `>=`."""
+    use_light, _reason = light_wrapup_decision(
+        line_count=LIGHT_WRAPUP_LINE_THRESHOLD,
+        changed_paths=["tests/foo.py"],
+        added_paths=[],
+    )
+    assert use_light is True
+
+
+def test_light_wrapup_decision_high_blast_radius_refuses() -> None:
+    """A high-blast-radius path refuses even under the line threshold."""
+    use_light, reason = light_wrapup_decision(
+        line_count=5, changed_paths=["agents/foo.md"], added_paths=[]
+    )
+    assert use_light is False
+    assert "high-blast-radius" in reason
+
+
+def test_light_wrapup_decision_source_path_refuses() -> None:
+    """A `src/` path refuses even under the line threshold."""
+    use_light, reason = light_wrapup_decision(
+        line_count=5, changed_paths=["src/forge/pr_delta.py"], added_paths=[]
+    )
+    assert use_light is False
+    assert "source package path" in reason
+
+
+def test_light_wrapup_decision_success_reason_names_signals() -> None:
+    """A qualifying diff's reason cites the line count and the passed signals."""
+    use_light, reason = light_wrapup_decision(
+        line_count=10, changed_paths=["tests/foo.py"], added_paths=[]
+    )
+    assert use_light is True
+    assert "10 lines" in reason
+    assert "adds no files" in reason
+
+
+def test_light_wrapup_decision_added_file_precedence_over_threshold() -> None:
+    """An added-file refusal is reported even when the line count also disqualifies.
+
+    Pins the check order in `light_wrapup_decision`: the added-files
+    refusal fires before the line-threshold check, so with BOTH signals
+    failing the reason names the added file, not the line count.
+    """
+    use_light, reason = light_wrapup_decision(
+        line_count=LIGHT_WRAPUP_LINE_THRESHOLD + 1,
+        changed_paths=["src/foo.py"],
+        added_paths=["src/foo.py"],
+    )
+    assert use_light is False
+    assert "src/foo.py" in reason
+    assert "prior-art" in reason

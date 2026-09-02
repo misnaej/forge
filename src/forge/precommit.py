@@ -42,11 +42,14 @@ commit call ``pytest`` directly in ``.githooks/pre-commit``.
 
 Step outputs are written to ``code_health/<step>.log`` per FOUNDATION §13
 so downstream tooling can read the latest results without re-running.
+Every run also times each step (monotonic clock) and writes the per-step
+report to ``code_health/precommit_timing.log`` — newest run overwrites.
 
 Usage:
 
 - ``forge-precommit`` — run the default sequence
-- ``forge-precommit --json`` — machine-readable summary on stdout
+- ``forge-precommit --json`` — machine-readable summary on stdout (a list
+  of step objects; each carries ``elapsed_s``, so the run total is the sum)
 - ``forge-precommit --only ruff,doctest`` — run just these steps
 - ``forge-precommit --skip pip_audit`` — default sequence minus a step
 
@@ -66,6 +69,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass
 from importlib import resources
 from typing import TYPE_CHECKING
@@ -77,6 +81,8 @@ from forge.changelog import (
     stranded_added_versions,
     wants_no_version,
 )
+from forge.changelog_fragments import FRAGMENTS_DIR
+from forge.changelog_fragments import check_pending as check_pending_fragments
 from forge.config import installed_console_scripts, resolve_model_section
 from forge.git_utils import (
     SCOPE_ALL,
@@ -102,6 +108,7 @@ from forge.git_utils import (
 from forge.git_utils import repo_root as get_repo_root
 from forge.install_claudemd import foundation_matches_installed
 from forge.run_context import is_ci, is_non_interactive
+from forge.smart_test import lifecycle as _lifecycle
 
 
 if TYPE_CHECKING:
@@ -147,6 +154,9 @@ class StepResult:
             ``pip-audit``) where a non-zero result is informational, not
             grounds to refuse a commit. Reported as ``WARN`` instead of
             ``FAIL`` in the step summary.
+        elapsed_s: Wall-clock seconds the step took (monotonic clock),
+            stamped by ``run_all``. Steps it never invoked (release-lock
+            skips) keep the ``0.0`` default.
     """
 
     name: str
@@ -154,6 +164,7 @@ class StepResult:
     output: str
     skipped: bool = False
     non_blocking: bool = False
+    elapsed_s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -286,7 +297,8 @@ def missing_console_scripts(repo_root: Path) -> list[str]:
     """Declared ``[project.scripts]`` names not registered as console scripts.
 
     The shared staleness signal: ``step_env_sync`` blocks on it,
-    ``step_auto_rebuild`` heals on it. Empty when there is nothing to compare
+    ``step_auto_rebuild`` heals on it, ``step_regen_docs`` warns on it
+    (stale cli-reference regeneration). Empty when there is nothing to compare
     — no ``[project.scripts]`` table, or the distribution is not installed at
     all (a fresh checkout that legitimately predates install, which neither
     step treats as stale).
@@ -1315,10 +1327,15 @@ def step_release_tag_guard(repo_root: Path) -> StepResult:
     Forge tags **every** merge to its dev branch (``forge-next-prep --tag``),
     so ``plugin.json`` — which names the *next* release — must always sit
     **exactly one** rolling-next step (patch+1 / minor+1 / major+1) ahead of
-    the latest ``v*`` tag. A larger gap means a prior release's tag was
-    skipped and is about to be buried by a further bump (the failure mode of
-    #66, where v1.25.0 shipped untagged). This guard refuses that commit and
-    points at ``forge-next-prep --tag``.
+    the latest ``v*`` tag. A larger gap has two distinct causes, and the
+    failure message names both: (a) on dev, a prior release's tag was
+    skipped and is about to be buried (the #66 failure mode, where v1.25.0
+    shipped untagged) — a HUMAN runs ``forge-next-prep --tag``; (b) on a
+    feature branch, other open PRs hold the intermediate version slots —
+    nothing was skipped, the cure is re-slotting ``plugin.json`` to
+    latest-tag+1. The message ends with an explicit agents-report-only
+    directive: no agent may run the tag command (or any release action) to
+    clear this step (#405).
 
     Self-skips (passes) for any repo this cadence does not apply to: a
     single-track repo, one without ``.claude-plugin/plugin.json``, one with
@@ -1330,8 +1347,8 @@ def step_release_tag_guard(repo_root: Path) -> StepResult:
         repo_root: Git repo root.
 
     Returns:
-        ``StepResult`` — blocking failure only on a genuine tag gap;
-        skipped/pass otherwise.
+        ``StepResult`` — blocking failure whenever the gap exceeds one step,
+        whichever cause produced it; skipped/pass otherwise.
     """
     if not config.load_config(repo_root).dual_track:
         return StepResult(
@@ -1369,9 +1386,15 @@ def step_release_tag_guard(repo_root: Path) -> StepResult:
         passed=False,
         output=(
             f"plugin.json {plugin_ver} is more than one release ahead of the "
-            f"latest tag v{latest} — an intermediate rolling-next release was "
-            f"never tagged and will be lost. Run `forge-next-prep --tag` to "
-            f"tag it before bumping further (FOUNDATION / docs/release-process)."
+            f"latest tag v{latest}. Two distinct causes — pick the right "
+            "cure. (a) On the dev branch after a merge whose release was "
+            "never tagged: a HUMAN runs `forge-next-prep --tag` on dev. "
+            "(b) On a feature branch while other open PRs hold the "
+            "intermediate version slots: nothing was skipped — re-slot "
+            "this branch's plugin.json to latest-tag+1; merge-order "
+            "re-bumping resolves the rest (docs/release-process). "
+            "AGENTS: report only — never run the tag command or any "
+            "release action to clear this step."
         ),
     )
 
@@ -1388,12 +1411,23 @@ def step_smart_test(repo_root: Path) -> StepResult:
     ``[tool.forge.smart_test].blocking = true`` to make it refuse the
     commit. See forge-docs/smart-test.md and #8.
 
+    The 48h cadence guarantee rides this step, governed by
+    ``[tool.forge.smart_test].cadence_mode``: ``"commit"`` (default)
+    escalates a stale-stamp commit to ``--depth full --all-tests`` and
+    stages the refreshed stamp; ``"advisory"`` and ``"external"`` never
+    escalate — they only prepend an informational cadence note to the
+    configured-depth run, which itself keeps its normal ``blocking``
+    semantics. Per-mode specifics (thresholds, who owns the guarantee):
+    forge-docs/smart-test.md "Who carries the cadence". Unknown values
+    fall back to ``"commit"``.
+
     Args:
         repo_root: Git repo root.
 
     Returns:
-        ``StepResult`` mirroring the CLI exit code, or a skip when not
-        opted in.
+        ``StepResult`` mirroring the CLI exit code — possibly from an
+        escalated truly-all cadence run rather than the configured
+        depth — or a skip when not opted in.
 
     Raises:
         SystemExit: If ``forge-smart-test`` is not on PATH.
@@ -1409,10 +1443,84 @@ def step_smart_test(repo_root: Path) -> StepResult:
     depth = str(cfg.get("precommit_depth"))
     blocking = bool(cfg.get("blocking", False))
     require_cli("forge-smart-test", caller="forge-precommit")
-    passed, output = _run(["forge-smart-test", "--depth", depth], cwd=repo_root)
+
+    # 48h-cadence guarantee (FOUNDATION §8/§17): when the shared
+    # .forge-full-run stamp is older than full_run_max_age_hours (or
+    # missing), this commit escalates to a truly-all run — lifecycle
+    # deselection off — and the refreshed stamp is staged into the same
+    # commit (fix-forge-ruff restage precedent), so the guarantee
+    # travels through git to every contributor and CI.
+    max_age_raw = cfg.get(
+        "full_run_max_age_hours", _lifecycle.DEFAULT_STAMP_MAX_AGE_HOURS
+    )
+    max_age = (
+        float(max_age_raw)
+        if isinstance(max_age_raw, (int, float))
+        else float(_lifecycle.DEFAULT_STAMP_MAX_AGE_HOURS)
+    )
+    mode_raw = cfg.get("cadence_mode", "commit")
+    mode = mode_raw if mode_raw in ("commit", "advisory", "external") else "commit"
+    age = _lifecycle.stamp_age_hours(repo_root)
+    stale = age is None or age >= max_age
+    age_txt = "missing or invalid" if age is None else f"{age:.1f}h old"
+    if stale and mode == "commit":
+        passed, output = _run(
+            ["forge-smart-test", "--depth", "full", "--all-tests"], cwd=repo_root
+        )
+        output = (
+            f"cadence: .forge-full-run stamp {age_txt} (max {max_age:g}h) — "
+            f"ran the full suite with --all-tests.\n" + output
+        )
+        if passed:
+            stamp = _lifecycle.write_stamp(repo_root)
+            _run(["git", "add", str(stamp.relative_to(repo_root))], cwd=repo_root)
+            output += "\ncadence: stamp refreshed and staged into this commit.\n"
+    else:
+        passed, output = _run(["forge-smart-test", "--depth", depth], cwd=repo_root)
+        # The cadence note is informational text only — the run's own
+        # pass/fail and the repo's `blocking` setting are never altered
+        # by stamp staleness (a real test failure must still gate when
+        # the repo opted into blocking).
+        output = _cadence_note(mode, age=age, age_txt=age_txt, max_age=max_age) + output
     return StepResult(
         name="smart_test", passed=passed, output=output, non_blocking=not blocking
     )
+
+
+def _cadence_note(mode: str, *, age: float | None, age_txt: str, max_age: float) -> str:
+    """Return the informational cadence line for a non-escalating mode.
+
+    Single dispatch point for the non-``commit`` cadence modes, so adding
+    a mode touches one place. Threshold semantics per mode:
+    forge-docs/smart-test.md "Who carries the cadence".
+
+    Args:
+        mode: The resolved cadence mode (``advisory``/``external``/other).
+        age: Stamp age in hours, or ``None`` when missing/invalid.
+        age_txt: Human rendering of *age*.
+        max_age: The configured cadence window in hours.
+
+    Returns:
+        A newline-terminated note to prepend, or ``""`` when the mode and
+        stamp state warrant none.
+    """
+    stale = age is None or age >= max_age
+    if mode == "advisory" and stale:
+        return (
+            f"cadence: advisory — .forge-full-run stamp {age_txt} "
+            f"(max {max_age:g}h); run `forge-smart-test --depth full "
+            f"--all-tests` when convenient.\n"
+        )
+    if mode == "external" and (age is None or age >= 2 * max_age):
+        # A scheduled CI job owns the cadence — a stamp stale past twice
+        # the window means that job stopped running (or never refreshes
+        # the stamp; the CI recipe's optional refresh step keeps this
+        # detector honest).
+        return (
+            f"cadence: external — stamp {age_txt} exceeds 2x the "
+            f"{max_age:g}h window; the CI cadence job may be broken.\n"
+        )
+    return ""
 
 
 def step_changelog_history(repo_root: Path) -> StepResult:
@@ -1628,8 +1736,10 @@ def step_regen_docs(repo_root: Path) -> StepResult:
         ``StepResult`` (``non_blocking=True``); skipped when neither doc
         exists or when unstaged changes are present (partial commit — the
         generators read the worktree, which then differs from what the
-        commit records). ``passed`` is False only when a present generator
-        errored.
+        commit records). ``passed`` is False when a present generator
+        errored, or when the editable install is stale (declared console
+        scripts absent from the install the cli-reference generator reads
+        — the regenerated doc silently omits them; renders WARN).
 
     Raises:
         SystemExit: If a needed ``forge-gen-*`` CLI is not on PATH.
@@ -1661,6 +1771,22 @@ def step_regen_docs(repo_root: Path) -> StepResult:
         )
     passed = True
     sections: list[str] = []
+    # Stale-install advisory: forge-gen-cli-reference discovers CLIs from
+    # INSTALLED entry points, and the healing steps (auto_rebuild,
+    # env_sync) self-skip non-interactively — so a commit adding a
+    # [project.scripts] entry can regenerate the doc from stale metadata,
+    # silently omitting the new CLI. Detect and WARN; never block
+    # (detection only, no auto-install — FOUNDATION §2).
+    if any(rel == "docs/cli-reference.md" for _, rel in targets):
+        stale = missing_console_scripts(repo_root)
+        if stale:
+            passed = False
+            sections.append(
+                "⚠️ install is stale — declared console script(s) absent "
+                "from the install that docs/cli-reference.md is regenerated "
+                f"from: {', '.join(stale)}. Re-run ./dev/setup.sh (or your "
+                "editable install refresh) and re-commit to include them."
+            )
     for cli, _rel in targets:
         require_cli(cli, caller="forge-precommit")
         ok, output = _run([cli], cwd=repo_root)
@@ -1823,6 +1949,64 @@ def _tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool:
     )
 
 
+def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
+    """Check all skip conditions for changelog_version step.
+
+    Returns a complete StepResult to exit early, or None to continue
+    with the main tag/stranded-entries validation logic.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        A StepResult to skip/fragment-gate the step, or None to continue.
+    """
+    name = "changelog_version"
+    changelog = repo_root / "CHANGELOG.md"
+    if not changelog.exists():
+        return StepResult(
+            name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
+        )
+    if (repo_root / ".claude-plugin" / "plugin.json").exists():
+        return StepResult(
+            name=name,
+            passed=True,
+            output=(
+                "Manifest-versioned repo — verify-forge-plugin-version owns "
+                "the declared-version invariant; skipped."
+            ),
+            skipped=True,
+        )
+    cfg = config.load_config(repo_root)
+    if cfg.dual_track:
+        return StepResult(
+            name=name,
+            passed=True,
+            output="Dual-track repo — changelog is curated at promotion; skipped.",
+            skipped=True,
+        )
+    if _forge_step_config(repo_root, "changelog").get("mode") == "fragments":
+        # Fragment mode: CHANGELOG.md is an OUTPUT of release, never an
+        # input — no declared-version/stranded checks apply. The step
+        # becomes the FRAGMENT GATE instead of a bare skip: every
+        # pending fragment must parse (name, type, bump level) and carry
+        # no version-shaped string.
+        errors = check_pending_fragments(repo_root)
+        return StepResult(
+            name=name,
+            passed=not errors,
+            output=(
+                "Fragment mode — validated pending changelog.d/ fragments "
+                "(CHANGELOG.md is assembled at release, never read as a "
+                "version signal)."
+                if not errors
+                else "Fragment mode — invalid changelog.d/ fragment(s):\n"
+                + "\n".join(errors)
+            ),
+        )
+    return None
+
+
 def step_changelog_version(repo_root: Path) -> StepResult:
     """Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
 
@@ -1866,30 +2050,12 @@ def step_changelog_version(repo_root: Path) -> StepResult:
         StepResult; blocking unless ``[tool.forge.changelog].blocking``
         is ``false``.
     """
+    skip_result = _changelog_version_skip_gate(repo_root)
+    if skip_result is not None:
+        return skip_result
     name = "changelog_version"
-    changelog = repo_root / "CHANGELOG.md"
-    if not changelog.exists():
-        return StepResult(
-            name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
-        )
-    if (repo_root / ".claude-plugin" / "plugin.json").exists():
-        return StepResult(
-            name=name,
-            passed=True,
-            output=(
-                "Manifest-versioned repo — verify-forge-plugin-version owns "
-                "the declared-version invariant; skipped."
-            ),
-            skipped=True,
-        )
     cfg = config.load_config(repo_root)
-    if cfg.dual_track:
-        return StepResult(
-            name=name,
-            passed=True,
-            output="Dual-track repo — changelog is curated at promotion; skipped.",
-            skipped=True,
-        )
+    changelog = repo_root / "CHANGELOG.md"
     text = changelog.read_text(encoding="utf-8")
     # The gate's reference point is the live latest tag: a stale local
     # tag set wrongly accepts a behind-the-tag heading, and a CI
@@ -1933,8 +2099,10 @@ def step_changelog_version(repo_root: Path) -> StepResult:
                 if old_text:
                     findings.extend(
                         f"Entries added under released heading {version} (not "
-                        f"ahead of latest tag {latest}) — stranded; move them "
-                        "under the next `## vX.Y.Z` heading."
+                        f"ahead of latest tag {latest}) — stranded; run "
+                        "`forge-changelog restrand` (mechanical repair — "
+                        "moves them under the next open `## vX.Y.Z` heading "
+                        "and stages the result)."
                         for version in stranded_added_versions(old_text, text, latest)
                     )
                     findings.extend(
@@ -1961,7 +2129,9 @@ def step_changelog_version(repo_root: Path) -> StepResult:
             f"'{cfg.base_branch}' but not on this branch — no commit can "
             "pass until the base is merged in. Cure: "
             f"`git merge origin/{cfg.base_branch}` (never rebase). Dirty "
-            f"tree: `git stash -u` then merge, then `git stash pop`. "
+            "tree: FOUNDATION §2's sync ladder — probe with "
+            "`git merge-tree --write-tree`, merge directly when clean, "
+            "else a `wip-sync:` checkpoint commit first. "
             "Hand-adding the missing headings or a [no-version] marker "
             "will not work — both are rejected by this gate."
         )
@@ -1972,6 +2142,223 @@ def step_changelog_version(repo_root: Path) -> StepResult:
             (findings or ["CHANGELOG release headings consistent with tags."]) + notes
         ),
         non_blocking=not _changelog_blocking(repo_root),
+    )
+
+
+def _changelog_updated_skip_gate(
+    repo_root: Path, cfg: config.ForgeConfig
+) -> StepResult | None:
+    """Check all skip conditions for changelog_updated step.
+
+    Returns a complete StepResult to exit early, or None to continue
+    with the changelog-freshness validation logic.
+
+    Args:
+        repo_root: Git repo root.
+        cfg: Loaded forge configuration.
+
+    Returns:
+        A StepResult to skip/defer the step, or None to continue.
+    """
+    name = "changelog_updated"
+    changelog = repo_root / "CHANGELOG.md"
+    if not changelog.exists():
+        return StepResult(
+            name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
+        )
+    resolved = resolve_current_branch(repo_root)
+    current = resolved[0] if resolved is not None else ""
+    if not current or current == cfg.base_branch:
+        return StepResult(
+            name=name,
+            passed=True,
+            output=(
+                "Per-PR guard — base branch, or detached HEAD with no "
+                "GITHUB_HEAD_REF; skipped."
+            ),
+            skipped=True,
+        )
+    signal = wants_no_version(repo_root)
+    if signal is not None:
+        return StepResult(
+            name=name,
+            passed=True,
+            output=f"no-version opt-out — {signal}; skipped.",
+            skipped=True,
+        )
+    step_cfg = _forge_step_config(repo_root, "changelog")
+    enforce = bool(step_cfg.get("precommit_enforce", True))
+    if not enforce and not is_ci():
+        output = (
+            "Deferred mode ([tool.forge.changelog].precommit_enforce = "
+            "false) — no entry required yet; write the CHANGELOG bullet "
+            "at PR wrap-up (just before merge). CI's changelog check "
+            "stays red until then by design."
+        )
+        if not _changelog_blocking(repo_root):
+            # Deferred mode's guarantee is CI staying red until the entry
+            # lands; blocking=false degrades that failure to a WARN, so
+            # the guarantee silently stops holding — surface it.
+            output += (
+                "\n⚠️  blocking = false too: CI's deferred check is only a "
+                "WARN, so the red-until-wrap-up guarantee does NOT hold — "
+                "set [tool.forge.changelog].blocking = true."
+            )
+        return StepResult(
+            name=name,
+            passed=True,
+            output=output,
+            skipped=True,
+        )
+    return None
+
+
+def _changelog_triggers(
+    files: list[str],
+    require: tuple[str, ...],
+    exempt: tuple[str, ...],
+) -> list[str]:
+    """Return changed files that require a changelog entry.
+
+    Changelog artifacts themselves (``CHANGELOG.md``, ``changelog.d/``
+    fragments) never trigger; ``require`` narrows to matching prefixes,
+    otherwise ``exempt`` prefixes are excluded.
+
+    Args:
+        files: Changed files from the diff.
+        require: Paths that require changelog entries.
+        exempt: Paths exempt from requiring entries.
+
+    Returns:
+        The triggering subset of *files*, order preserved.
+    """
+    return [
+        path
+        for path in files
+        if path != "CHANGELOG.md"
+        and not path.startswith(f"{FRAGMENTS_DIR}/")
+        and (
+            (require and path.startswith(require))
+            or not (exempt and path.startswith(exempt))
+        )
+    ]
+
+
+def _handle_fragment_mode(
+    repo_root: Path,
+    files: list[str],
+    require: tuple[str, ...],
+    exempt: tuple[str, ...],
+) -> StepResult:
+    """Handle fragment-mode changelog validation.
+
+    Args:
+        repo_root: Git repo root.
+        files: Changed files from the diff.
+        require: Paths that require changelog entries.
+        exempt: Paths exempt from requiring entries.
+
+    Returns:
+        StepResult for the changelog_updated step.
+    """
+    name = "changelog_updated"
+    triggers = _changelog_triggers(files, require, exempt)
+    has_fragment = any(p.startswith(f"{FRAGMENTS_DIR}/") for p in files)
+    if triggers and not has_fragment:
+        blocking = _changelog_blocking(repo_root)
+        return StepResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(triggers)} changed file(s) require a changelog "
+                f"fragment (first: {triggers[0]}). Add "
+                f"{FRAGMENTS_DIR}/<slug>.<type>.md with a "
+                "'bump: patch|minor|major' first line "
+                "(docs/consumer-release.md, fragments mode). "
+                "No-version opt-outs apply unchanged."
+            ),
+            non_blocking=not blocking,
+        )
+    frag_errors = check_pending_fragments(repo_root)
+    if frag_errors:
+        return StepResult(
+            name=name,
+            passed=False,
+            output="Invalid changelog.d/ fragment(s):\n" + "\n".join(frag_errors),
+            non_blocking=not _changelog_blocking(repo_root),
+        )
+    return StepResult(
+        name=name,
+        passed=True,
+        output=(
+            "Changelog fragment present alongside the change set."
+            if triggers
+            else "No changelog-requiring changes."
+        ),
+    )
+
+
+def _handle_standard_mode(
+    repo_root: Path,
+    files: list[str],
+    *,
+    enforce: bool,
+    require: tuple[str, ...],
+    exempt: tuple[str, ...],
+) -> StepResult:
+    """Handle standard-mode changelog validation.
+
+    Args:
+        repo_root: Git repo root.
+        files: Changed files from the diff.
+        enforce: Whether precommit enforcement is enabled.
+        require: Paths that require changelog entries.
+        exempt: Paths exempt from requiring entries.
+
+    Returns:
+        StepResult for the changelog_updated step.
+    """
+    name = "changelog_updated"
+    triggers = _changelog_triggers(files, require, exempt)
+    if triggers and "CHANGELOG.md" not in files:
+        if enforce:
+            output = (
+                f"{len(triggers)} changed file(s) require a CHANGELOG.md entry "
+                f"(first: {triggers[0]}). Add a bullet under the top "
+                "`## vX.Y.Z` heading (docs/consumer-release.md). For a "
+                "genuine no-version change, opt out with NO_VERSION=1 "
+                "(local), a `no-version` branch token, or a [no-version] "
+                "commit tag (CI-durable)."
+            )
+        else:
+            output = (
+                f"{len(triggers)} changed file(s) and no CHANGELOG.md entry "
+                "yet — deferred mode: the bullet is written at wrap-up, just "
+                "before merge. Add it now to turn this check green (or use a "
+                "no-version opt-out). A red result earlier in the PR is "
+                "expected."
+            )
+        blocking = _changelog_blocking(repo_root)
+        if not enforce and not blocking:
+            output += (
+                "\n⚠️  blocking = false too: this failure is only a WARN, so "
+                "the red-until-wrap-up guarantee does NOT hold — set "
+                "[tool.forge.changelog].blocking = true."
+            )
+        return StepResult(
+            name=name,
+            passed=False,
+            output=output,
+            non_blocking=not blocking,
+        )
+    return StepResult(
+        name=name,
+        passed=True,
+        output=(
+            "CHANGELOG.md updated alongside the change set."
+            if triggers
+            else "No changelog-requiring changes."
+        ),
     )
 
 
@@ -2017,110 +2404,22 @@ def step_changelog_updated(repo_root: Path) -> StepResult:
         StepResult; blocking unless ``[tool.forge.changelog].blocking``
         is ``false``.
     """
-    name = "changelog_updated"
-    changelog = repo_root / "CHANGELOG.md"
-    if not changelog.exists():
-        return StepResult(
-            name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
-        )
     cfg = config.load_config(repo_root)
-    resolved = resolve_current_branch(repo_root)
-    current = resolved[0] if resolved is not None else ""
-    if not current or current == cfg.base_branch:
-        return StepResult(
-            name=name,
-            passed=True,
-            output=(
-                "Per-PR guard — base branch, or detached HEAD with no "
-                "GITHUB_HEAD_REF; skipped."
-            ),
-            skipped=True,
-        )
-    signal = wants_no_version(repo_root)
-    if signal is not None:
-        return StepResult(
-            name=name,
-            passed=True,
-            output=f"no-version opt-out — {signal}; skipped.",
-            skipped=True,
-        )
+    skip_result = _changelog_updated_skip_gate(repo_root, cfg)
+    if skip_result is not None:
+        return skip_result
     step_cfg = _forge_step_config(repo_root, "changelog")
-    enforce = bool(step_cfg.get("precommit_enforce", True))
-    if not enforce and not is_ci():
-        output = (
-            "Deferred mode ([tool.forge.changelog].precommit_enforce = "
-            "false) — no entry required yet; write the CHANGELOG bullet "
-            "at PR wrap-up (just before merge). CI's changelog check "
-            "stays red until then by design."
-        )
-        if not _changelog_blocking(repo_root):
-            # Deferred mode's guarantee is CI staying red until the entry
-            # lands; blocking=false degrades that failure to a WARN, so
-            # the guarantee silently stops holding — surface it.
-            output += (
-                "\n⚠️  blocking = false too: CI's deferred check is only a "
-                "WARN, so the red-until-wrap-up guarantee does NOT hold — "
-                "set [tool.forge.changelog].blocking = true."
-            )
-        return StepResult(
-            name=name,
-            passed=True,
-            output=output,
-            skipped=True,
-        )
     exempt = tuple(_cfg_str_list(step_cfg, "exempt_paths", []))
     require = tuple(_cfg_str_list(step_cfg, "require_paths", []))
+    fragments_mode = step_cfg.get("mode") == "fragments"
     # drop_deleted=False: a deleted file is still a change that may require
     # a changelog entry — the default would silently exempt deletions.
     files = config.select_diff_files(repo_root, suffix="", drop_deleted=False)
-    triggers = [
-        path
-        for path in files
-        if path != "CHANGELOG.md"
-        and (
-            (require and path.startswith(require))
-            or not (exempt and path.startswith(exempt))
-        )
-    ]
-    if triggers and "CHANGELOG.md" not in files:
-        if enforce:
-            output = (
-                f"{len(triggers)} changed file(s) require a CHANGELOG.md entry "
-                f"(first: {triggers[0]}). Add a bullet under the top "
-                "`## vX.Y.Z` heading (docs/consumer-release.md). For a "
-                "genuine no-version change, opt out with NO_VERSION=1 "
-                "(local), a `no-version` branch token, or a [no-version] "
-                "commit tag (CI-durable)."
-            )
-        else:
-            output = (
-                f"{len(triggers)} changed file(s) and no CHANGELOG.md entry "
-                "yet — deferred mode: the bullet is written at wrap-up, just "
-                "before merge. Add it now to turn this check green (or use a "
-                "no-version opt-out). A red result earlier in the PR is "
-                "expected."
-            )
-        blocking = _changelog_blocking(repo_root)
-        if not enforce and not blocking:
-            output += (
-                "\n⚠️  blocking = false too: this failure is only a WARN, so "
-                "the red-until-wrap-up guarantee does NOT hold — set "
-                "[tool.forge.changelog].blocking = true."
-            )
-        return StepResult(
-            name=name,
-            passed=False,
-            output=output,
-            non_blocking=not blocking,
-        )
-    return StepResult(
-        name=name,
-        passed=True,
-        output=(
-            "CHANGELOG.md updated alongside the change set."
-            if triggers
-            else "No changelog-requiring changes."
-        ),
+    if fragments_mode:
+        return _handle_fragment_mode(repo_root, files, require, exempt)
+    enforce = bool(step_cfg.get("precommit_enforce", True))
+    return _handle_standard_mode(
+        repo_root, files, enforce=enforce, require=require, exempt=exempt
     )
 
 
@@ -2142,6 +2441,30 @@ def _write_log(repo_root: Path, result: StepResult) -> None:
     write_step_log(repo_root, result.name, result.output)
 
 
+def _step_marker(result: StepResult) -> str:
+    """Return *result*'s bare status marker (``SKIP``/``PASS``/``WARN``/``FAIL``).
+
+    The one canonical home of the marker mapping — the colored progress
+    line and the timing log both render from it.
+
+    Args:
+        result: Step outcome.
+
+    Returns:
+        The marker string, without color codes.
+    """
+    if result.skipped:
+        return "SKIP"
+    if result.passed:
+        return "PASS"
+    if result.non_blocking:
+        return "WARN"
+    return "FAIL"
+
+
+_MARKER_COLORS = {"SKIP": "", "PASS": GREEN, "WARN": YELLOW, "FAIL": RED}
+
+
 def _print_step_line(result: StepResult) -> None:
     """Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
 
@@ -2152,15 +2475,29 @@ def _print_step_line(result: StepResult) -> None:
     Args:
         result: Step outcome.
     """
-    if result.skipped:
-        marker, color = "SKIP", ""
-    elif result.passed:
-        marker, color = "PASS", GREEN
-    elif result.non_blocking:
-        marker, color = "WARN", YELLOW
-    else:
-        marker, color = "FAIL", RED
-    emit(f"{result.name:<24} {color}{marker}{NC}")
+    marker = _step_marker(result)
+    color = _MARKER_COLORS[marker]
+    emit(f"{result.name:<24} {color}{marker}{NC}  {result.elapsed_s:.1f}s")
+
+
+def _format_timing_log(results: list[StepResult]) -> str:
+    """Render the per-step timing report for ``code_health/precommit_timing.log``.
+
+    One line per step (name, elapsed seconds, marker) plus a total, so an
+    operator can see which step costs a slow commit without stopwatching
+    each one by hand.
+
+    Args:
+        results: All step outcomes from a run, in execution order.
+
+    Returns:
+        The full log body.
+    """
+    lines = ["forge-precommit per-step timing (newest run overwrites)", ""]
+    lines += [f"{r.name:<28} {r.elapsed_s:>7.1f}s  {_step_marker(r)}" for r in results]
+    total = sum(r.elapsed_s for r in results)
+    lines += ["", f"{'total':<28} {total:>7.1f}s"]
+    return "\n".join(lines)
 
 
 # Ordered registry — the single source of truth for which steps exist,
@@ -2360,6 +2697,10 @@ def run_all(
     without running — the tree already passed its own era's gate at
     tagging time and cannot be changed here anyway.
 
+    Each invoked step is wall-clocked (monotonic) into its result's
+    ``elapsed_s``, and the run's per-step timing report is (re)written to
+    ``code_health/precommit_timing.log`` before returning.
+
     Args:
         repo_root: Override the auto-detected git repo root. Useful in tests.
         print_progress: Print one-line PASS/FAIL/SKIP per step. Disable for
@@ -2400,11 +2741,14 @@ def run_all(
         # invisible to a direct ``step_def.fn`` call. Re-resolving by name is
         # the load-bearing seam that keeps per-step monkeypatching working.
         fn = getattr(this_module, step_def.fn.__name__)
+        started = time.monotonic()
         result = fn(root)
+        result.elapsed_s = time.monotonic() - started
         if print_progress:
             _print_step_line(result)
         _write_log(root, result)
         results.append(result)
+    write_step_log(root, "precommit_timing", _format_timing_log(results))
     return results
 
 
@@ -2430,7 +2774,9 @@ def main() -> int:
     """CLI entry point.
 
     Returns:
-        ``0`` if every non-skipped step passed; ``1`` otherwise.
+        ``0`` if every non-skipped step passed (or the run was a
+        ``FORGE_WIP_SYNC=1`` checkpoint, which runs no steps); ``1``
+        otherwise.
     """
     parser = argparse.ArgumentParser(
         prog="forge-precommit",
@@ -2468,6 +2814,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if os.environ.get("FORGE_WIP_SYNC") == "1":
+        emit(
+            f"{YELLOW}wip-sync checkpoint — full gate deferred to the next "
+            f"real commit.{NC}"
+        )
+        emit(
+            "This commit only secures in-progress work before a base merge "
+            "(FOUNDATION §2 sync ladder); every non-wip commit and the PR "
+            "squash still run the full battery."
+        )
+        return 0
+
     skip = _split_csv(args.skip)
     only = _split_csv(args.only)
     try:
@@ -2500,6 +2858,8 @@ def main() -> int:
                 emit(f"  - {r.name}: see code_health/{r.name}.log")
         else:
             emit(f"{GREEN}All checks passed.{NC}")
+        total_elapsed = sum(r.elapsed_s for r in results)
+        emit(f"total {total_elapsed:.1f}s (per-step: code_health/precommit_timing.log)")
 
     return 1 if blocking_failures else 0
 

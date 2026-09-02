@@ -83,6 +83,16 @@ a reason to re-check. Before repeating a claim about a file, ask whether
 anything since the read could have rewritten it — and if you ran a sync
 yourself, assume yes.
 
+**A read can also be superseded with no action at all.** An earlier
+belief formed in the same session — a brief you wrote, an issue's labels
+at the time you saw them, your own first summary — is a snapshot, not a
+fact. The existing rule triggers on *an action you took*; this sibling
+triggers on *elapsed session time and your own prior output*, which
+nothing signals. When a claim rests on something established earlier in
+the session rather than on something just read, re-verify against the
+live source before repeating it — the fresh read wins over the remembered
+one, every time.
+
 **A contradiction from the user is a prompt to re-read, not to
 re-explain.** When a user disputes a factual claim about the codebase,
 re-check the artifact first; restating the reasoning is correct only once
@@ -100,10 +110,27 @@ follow-on edits in a review loop the user drives.
 
 ### Ask before acting on ambiguity
 
-Pause and ask when (a) the instruction has two reasonable readings and the user
-hasn't picked, (b) the plan produces an unauthorized side effect (extra commits,
-version bumps, branch switches), or (c) you're about to act on a remembered
-convention without checking current code still matches. Asking beats reverting.
+Pause and ask when (a) the instruction has two reasonable readings, the user
+hasn't picked, **and neither the repo nor the session so far determines
+which** (how to check: next paragraph); (b) the plan produces an
+unauthorized side effect (extra commits, version bumps, branch switches),
+or (c) you're about to act on a remembered convention without checking
+current code still matches. Asking beats reverting.
+
+**Investigation outranks clarification — case (a) only.** Run the
+search or read the file that would settle the ambiguity *before* asking;
+ambiguity that survives a coverage-checked search (per "Absence of
+evidence is not evidence of absence" above) is the user's to resolve —
+ambiguity that doesn't is yours. When one reading is strongly favoured —
+by the session's own history, by what the repo contains, by what every
+artifact so far points at — take it, state the assumption in one line,
+and continue: a stated assumption is corrected faster than a menu is
+answered, and each question costs a round trip on work the user asked to
+be finished. Two bounds: no search settles *authorization* — cases (b)
+and (c) still require the pause, however confident the favoured
+reading — and where "Plan before executing" also applies, the stated
+assumption folds into the plan awaiting go-ahead; it never bypasses that
+gate.
 
 ---
 
@@ -124,16 +151,36 @@ convention without checking current code still matches. Asking beats reverting.
   origin/<base>`), never a rebase. The `block_git_rebase` hook enforces this with
   **no bypass**: it blocks `git rebase` and `git pull --rebase` / `-r`. A human
   rebases via `! git rebase ...`.
+- **NEVER amend a pushed commit** — the single-commit form of a rebase: it
+  rewrites published history and forces the same (blocked) force-push,
+  leaving the branch diverged from origin. Make a **new commit** instead
+  (squash-merge erases fixup noise anyway). Amending an *unpushed* commit
+  stays allowed. The `block_amend_pushed_commit` hook enforces this with
+  **no bypass** — it blocks `git commit --amend` whenever `HEAD` already
+  exists on a remote-tracking ref. A human amends via `! git commit --amend
+  ...`.
 - **NEVER destructive git recovery: no `git reset` (ANY form), no forced
   `git clean`, no `git checkout .` / `git restore .`, no `git stash drop` /
-  `clear`.** Rewinds un-commit published history on a synced branch; the
-  rest destroy uncommitted or untracked work — `clean` with no recovery at
-  all. Unstage with `git restore --staged <path>`. The sanctioned dirty-tree
-  base sync is the **stash dance**: `git stash -u` → `git merge
-  origin/<base>` → `git stash pop`; on ANY failure mid-dance leave the
-  stash alone, verify with `git stash list`, and report. The
-  `block_git_destructive` hook enforces all of this with **no bypass**; a
-  human runs the blocked form via `! git ...`.
+  `clear`, no untracked-including stash (`git stash -u` / `-a` — it runs
+  `git clean` internally).** Rewinds un-commit published history on a
+  synced branch; the rest destroy uncommitted or untracked work — `clean`
+  with no recovery at all. Unstage with `git restore --staged <path>`.
+  The sanctioned dirty-tree base sync is the **sync ladder**: (1) probe
+  with `git merge-tree --write-tree origin/<base> HEAD` — it performs the
+  real merge touching neither tree nor index; judge by **exit status**
+  (0 clean / 1 conflicts), never by output emptiness; (2) probe clean and
+  index clean → plain `git merge origin/<base>` (git's own dirty-overlap
+  guard is the backstop); (3) otherwise secure the work as a
+  **checkpoint commit** first — `git add -A`, then
+  `FORGE_WIP_SYNC=1 git commit -m "wip-sync: <what>"` (the gate defers to
+  the next real commit; the PR squash erases the checkpoint) — and merge
+  on the clean tree. `git merge --abort` is the permitted recovery verb
+  **only after** a checkpoint secured the work (git documents it as lossy
+  for uncommitted changes). Stash is no longer part of any sanctioned
+  procedure. Humans: never `export FORGE_WIP_SYNC` in a persistent shell
+  — it would silently defer the gate on every later commit; use it
+  inline, once. The `block_git_destructive` hook enforces all of this with
+  **no bypass**; a human runs the blocked form via `! git ...`.
 - **On deviation: STOP and report.** When you detect you have deviated from
   instructions or repository state is not what you expected, halt and
   surface it — never undo, rewind, or clean. An unwanted commit is
@@ -353,7 +400,10 @@ advisories with the suggested pin; they never edit pins.
   branch is published. Order: verify locally → fix → commit → **author the
   wrap-up + squash message** → push → open PR → post them. The
   `block_unverified_pr_create` hook blocks `gh pr create` until the authored
-  wrap-up names the current `HEAD` (`FORGE_SKIP_WRAPUP_GATE=1` on explicit
+  wrap-up names the current `HEAD` — and, when the wrap-up declares
+  `wrapup-mode: light`, additionally re-runs the `forge-pr-plan`
+  classifier fail-closed, blocking unless it agrees the diff is
+  light-code (`FORGE_SKIP_WRAPUP_GATE=1` on explicit
   user request only; promotion PRs self-exempt when the `release/vX.Y.Z`
   tree reproduces its tag modulo the curated changelog). A **draft PR** is
   the escape hatch when the PR should be visible earlier.
@@ -385,7 +435,7 @@ advisories with the suggested pin; they never edit pins.
 
   Resolving a conflict — by whoever picks the work up, never the
   monitor — is a plain base merge: `git merge origin/<base>` (§2 —
-  never rebase; dirty tree → §2's stash dance, never `reset --hard`).
+  never rebase; dirty tree → §2's sync ladder, never `reset --hard`).
   It needs no permission: a base merge adds a merge commit and destroys
   nothing, and keeping a branch current with its base is routine work
   CI correctness depends on. The care belongs in resolving the conflict
@@ -506,6 +556,50 @@ Test code is documented for **signal, not uniformly** — the canonical "what";
   for when a Null Object costs more than it saves.
 - **Coverage intent:** each public function gets a happy-path plus an edge/error case.
 
+### Test lifecycle — behavior vs development tests
+
+Runtime and authoring are both costs: a suite grows monotonically unless
+tests carry a lifecycle. Two classes, marked at authoring time:
+
+- **Behavior tests** (the unmarked default) pin observable contracts —
+  CLI output shapes, gate verdicts, invariants, every regression from a
+  real bug. Permanent; retirement does not apply.
+- **Development tests** drove an implementation to correctness —
+  per-step probes, near-duplicate variants, implementation-mirroring
+  assertions. A file that is wholly scaffolding declares it at module
+  level: `pytestmark = pytest.mark.development` (file-level, matching
+  the selection model's granularity).
+
+**The necessity gate comes first**: `forge:test-advisor` (advise mode)
+rejects planned tests that duplicate existing coverage or mirror the
+implementation, and `forge:test-writer` states each test's class and a
+one-line justification before writing — not writing an unnecessary test
+beats retiring it later.
+
+**Lifecycle rule (skip, never delete)**: a development file untouched
+for 30 days (`[tool.forge.smart_test].lifecycle_skip_days`) leaves
+ordinary full runs — always reported as `lifecycle-skipped: N`, never
+silent — and re-enters automatically the moment its file changes. The
+48-hour cadence run (below) executes truly everything, so nothing rots
+unobserved. Deletion is deliberately not part of the policy.
+
+**Selection guarantees** (spec: [`forge-docs/smart-test.md`](forge-docs/smart-test.md)):
+depth-tier selection is safe by contract — any changed non-Python path
+the selector cannot map escalates the run to `full`; the tracked
+`.forge-full-run` stamp guarantees a truly-all run at least every 48
+hours (`full_run_max_age_hours`), staged into the commit that earned
+it — that committed-stamp escalation is `cadence_mode = "commit"`, for
+repos whose testing happens on workstations; CI-fleet repos use
+`advisory`/`external` with the classic PR-tiers + main-push-full CI
+schema (spec's "Who carries the cadence"); after full runs a depth-2
+differential check records (never gates) any failing file selection
+would have missed.
+
+**Metrics are record-only**: wall time, file counts, development
+fraction, lifecycle skips, and differential mismatches append to
+`code_health/smart_test_history.log` per full run — trends inform
+reviews; nothing blocks on a health metric.
+
 ---
 
 ## 9. Logging Pattern
@@ -561,6 +655,15 @@ branch / PR / commit refs) · `Next potential work` (ranked) · `Open follow-ups
 - Foundation agents append one line on success — even invoked outside the
   `/commit` / `/pr` skills — and never delete or overwrite existing content;
   the main agent owns structured-section rewrites.
+- **The ledger is bounded; the archive is not.** Every append rotates the
+  activity tail: done entries older than one week (or beyond the count
+  cap) move verbatim to `.plan/CONTINUATION-archive.md` — never deleted —
+  and collapse into per-day digest lines; entries referencing PRs/issues
+  still named in the structured sections are pinned (undone work stays).
+  `/next`'s continuation-hygiene step adds the judgment layer: a critical
+  curation pass that deletes stale structured-section content outright —
+  the file owes the next session orientation, not a museum. Session
+  starts read only `CONTINUATION.md`, never the archive.
 
 ---
 

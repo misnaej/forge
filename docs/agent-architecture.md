@@ -108,6 +108,7 @@ graph LR
   hk_block_force_push[/"block_force_push<br/>hook"/]
   hk_block_no_verify[/"block_no_verify<br/>hook"/]
   hk_block_git_destructive[/"block_git_destructive<br/>hook"/]
+  hk_block_amend_pushed_commit[/"block_amend_pushed_commit<br/>hook"/]
   hk_block_fixer_recon[/"block_fixer_recon<br/>hook"/]
   sk_commit(["/commit<br/>skill"])
   design_checker["⚖️ design-checker<br/>AI agent"]
@@ -122,12 +123,19 @@ graph LR
   prior_art["prior-art<br/>AI agent"]
   precommit_fixer["⚖️ precommit-fixer<br/>AI agent"]
   sk_smart_test(["/smart-test<br/>skill"])
+  sk_perf(["/perf<br/>skill"])
+  cli_forge_slow_tests_report[("forge-slow-tests-report<br/>CLI")]
+  cli_forge_telemetry[("forge-telemetry<br/>CLI")]
   sk_test(["/test<br/>skill"])
   test_advisor["⚖️ test-advisor<br/>AI agent"]
   test_writer["test-writer<br/>AI agent"]
   main_agent -->|runs| sk_commit
   main_agent -->|runs| sk_fix
   main_agent -->|runs| sk_smart_test
+  main_agent -->|runs| sk_perf
+  sk_perf -->|invokes| cli_forge_slow_tests_report
+  sk_perf -->|invokes| cli_forge_telemetry
+  sk_perf -.->|delegates deep dives| perf_optimizer
   main_agent -->|runs| sk_test
   main_agent -. §3 pre-write review .-> design_checker
   main_agent -. §3 before creating files .-> prior_art
@@ -148,12 +156,14 @@ graph LR
   git_commit_push -.->|guarded by| hk_block_no_verify
   git_commit_push -.->|guarded by| hk_block_force_push
   git_commit_push -.->|guarded by| hk_block_git_destructive
+  git_commit_push -.->|guarded by| hk_block_amend_pushed_commit
   precommit_fixer -.->|guarded by| hk_block_fixer_recon
   class human person
   class main_agent orchestrator
   class hk_block_force_push hook
   class hk_block_no_verify hook
   class hk_block_git_destructive hook
+  class hk_block_amend_pushed_commit hook
   class hk_block_fixer_recon hook
   class sk_commit skill
   class design_checker agent
@@ -175,6 +185,9 @@ graph LR
   class precommit_fixer agent
   class precommit_fixer mutator
   class sk_smart_test skill
+  class sk_perf skill
+  class cli_forge_slow_tests_report cli
+  class cli_forge_telemetry cli
   class sk_test skill
   class test_advisor agent
   class test_advisor reporter
@@ -205,6 +218,8 @@ graph LR
   cli_forge_continuation_append[("forge-continuation-append<br/>CLI")]
   cli_forge_pr_plan[("forge-pr-plan<br/>CLI")]
   cli_forge_pr_squash_comment[("forge-pr-squash-comment<br/>CLI")]
+  cli_forge_rebump[("forge-rebump<br/>CLI")]
+  cli_forge_changelog[("forge-changelog<br/>CLI")]
   sk_pr(["/pr<br/>skill"])
   prior_art["prior-art<br/>AI agent"]
   pr_manager["pr-manager<br/>AI agent"]
@@ -221,6 +236,8 @@ graph LR
   precommit_fixer -->|delegates| docs_types_checker
   precommit_fixer -->|delegates| design_checker
   sk_pr -->|invokes| cli_forge_pr_plan
+  sk_pr -->|invokes, on plugin.json+CHANGELOG conflict| cli_forge_rebump
+  sk_pr -->|invokes restrand, on stranded entries| cli_forge_changelog
   sk_pr -->|invokes| design_checker
   sk_pr -->|invokes| security_checker
   sk_pr -->|invokes| docs_types_checker
@@ -247,6 +264,8 @@ graph LR
   class cli_forge_continuation_append cli
   class cli_forge_pr_plan cli
   class cli_forge_pr_squash_comment cli
+  class cli_forge_rebump cli
+  class cli_forge_changelog cli
   class sk_pr skill
   class pr_manager agent
   class pr_manager mutator
@@ -277,6 +296,7 @@ graph LR
   human -->|drives| main_agent
   cli_forge_check_main_tags[("forge-check-main-tags<br/>CLI")]
   cli_forge_next_prep[("forge-next-prep<br/>CLI")]
+  cli_forge_changelog[("forge-changelog<br/>CLI")]
   sk_next(["/next<br/>skill"])
   sk_promote(["/promote<br/>skill"])
   main_agent -->|runs| sk_next
@@ -284,10 +304,12 @@ graph LR
   sk_next -->|chains| sk_promote
   sk_next -->|invokes| cli_forge_next_prep
   sk_next -->|invokes| cli_forge_check_main_tags
+  sk_promote -->|invokes| cli_forge_changelog
   class human person
   class main_agent orchestrator
   class cli_forge_check_main_tags cli
   class cli_forge_next_prep cli
+  class cli_forge_changelog cli
   class sk_next skill
   class sk_promote skill
 ```

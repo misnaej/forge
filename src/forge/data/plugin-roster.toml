@@ -11,9 +11,11 @@ names = [
     "fix",
     "memory-audit",
     "next",
+    "perf",
     "plan-issue",
     "pr",
     "pr-comments",
+    "report-to-forge",
     "sentinel",
     "smart-test",
     "test",
@@ -23,6 +25,7 @@ names = [
 
 [hooks]
 names = [
+    "block_amend_pushed_commit",
     "block_branch_deletion",
     "block_claude_attribution",
     "block_continuation_delete",
@@ -41,5 +44,6 @@ names = [
     "block_unverified_pr_create",
     "check_commit_format",
     "check_foundation_sync",
+    "git_anchor",
     "warn_pr_checks",
 ]

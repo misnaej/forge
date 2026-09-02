@@ -85,6 +85,10 @@ def emit(msg: str) -> None:
 
 _SEMVER_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)")
 
+# Unresolved-conflict hunk opener: seven ``<`` at line start, then a
+# space or end-of-line (git always appends the ref label after a space).
+_CONFLICT_OPEN_RE = re.compile(r"^<{7}( |$)", re.MULTILINE)
+
 
 def parse_semver(version: str) -> tuple[int, int, int] | None:
     """Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
@@ -141,6 +145,35 @@ def next_version(latest_tag: str | None, bump: str) -> str:
         return f"v{major}.{minor}.{patch + 1}"
     msg = f"unknown bump {bump!r}: expected 'major', 'minor', or 'patch'"
     raise ValueError(msg)
+
+
+def classify_bump(
+    old: tuple[int, int, int] | None,
+    new: tuple[int, int, int] | None,
+) -> str | None:
+    """Classify the semver increment from *old* to *new*.
+
+    The one place that maps a version delta onto a bump class — shared
+    by the promotion-pending advisory (``forge-next-prep``) and the
+    version-slot resolver (``forge-rebump``) so the MAJOR/MINOR/PATCH
+    reading of a manifest delta cannot drift between them.
+
+    Args:
+        old: Baseline ``(major, minor, patch)`` tuple, or ``None``.
+        new: Candidate ``(major, minor, patch)`` tuple, or ``None``.
+
+    Returns:
+        ``"major"``, ``"minor"``, or ``"patch"`` for the highest-order
+        component that differs; ``None`` when the tuples are equal or
+        either side is ``None`` (nothing classifiable).
+    """
+    if old is None or new is None or old == new:
+        return None
+    if old[0] != new[0]:
+        return "major"
+    if old[1] != new[1]:
+        return "minor"
+    return "patch"
 
 
 def latest_v_tag(root: Path) -> str | None:
@@ -675,6 +708,43 @@ def merge_in_progress(repo_root: Path) -> bool:
     return bool(git_path) and (repo_root / git_path).exists()
 
 
+def has_conflict_markers(text: str) -> bool:
+    """Return whether *text* contains unresolved git conflict markers.
+
+    Detects the ``<<<<<<< `` open marker at line start — the one marker
+    every conflict style (merge, diff3, zdiff3) emits, so its absence
+    means git left no unresolved hunk in the file. Deliberately not
+    matching ``=======``/``>>>>>>>`` alone: those appear legitimately in
+    markdown (setext underlines, quoted diffs) and only open markers
+    make a file mid-conflict.
+
+    Args:
+        text: File contents to scan.
+
+    Returns:
+        ``True`` when an unresolved conflict hunk opener is present.
+    """
+    return _CONFLICT_OPEN_RE.search(text) is not None
+
+
+def file_has_conflict_markers(path: Path) -> bool:
+    """Return whether the file at *path* holds unresolved conflict markers.
+
+    Args:
+        path: File to scan.
+
+    Returns:
+        ``True`` when the file exists, is readable, and
+        :func:`has_conflict_markers` matches; ``False`` otherwise
+        (missing or unreadable files are simply not mid-conflict).
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return has_conflict_markers(text)
+
+
 def resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None:
     """Return the ref diff-scoped checks should compare against, origin-first.
 
@@ -791,28 +861,49 @@ def write_tree(repo_root: Path) -> str | None:
 # Paths treated as release-channel curated content: excluded from the
 # release fingerprint so a release branch that finalizes them does not
 # break tree-equality with the tagged dev release. The @main CHANGELOG is
-# condensed per promotion (release-process.md §5), so it is the one file a
-# correct release branch always diverges on.
-_RELEASE_EQUAL_IGNORE = ("CHANGELOG.md",)
+# condensed per promotion (release-process.md §5); changelog.d/ fragments
+# are consumed (deleted) by that same promotion commit in fragments mode —
+# both are divergences a correct release branch always carries. Entries
+# ending in "/" match by directory prefix; all others match exactly (so
+# "CHANGELOG.md" never swallows a hypothetical CHANGELOG.md.orig).
+_RELEASE_EQUAL_IGNORE = ("CHANGELOG.md", "changelog.d/")
+
+
+def _release_ignored(path: str) -> bool:
+    """Return whether *path* is release-curated content (fingerprint-exempt).
+
+    Args:
+        path: Repo-relative path from ``git ls-tree``.
+
+    Returns:
+        ``True`` for an exact file match or a path under an ignored
+        directory prefix.
+    """
+    return any(
+        path.startswith(entry) if entry.endswith("/") else path == entry
+        for entry in _RELEASE_EQUAL_IGNORE
+    )
 
 
 def release_tree_fingerprint(repo_root: Path, ref: str) -> str | None:
-    """Return a content fingerprint of *ref*'s tree, ignoring ``CHANGELOG.md``.
+    """Return a content fingerprint of *ref*'s tree, ignoring changelog paths.
 
     Like :func:`get_tree_sha`, but two refs whose trees differ **only** in
-    ``CHANGELOG.md`` share a fingerprint. forge's ``@main`` CHANGELOG is
-    curated and condensed per promotion — authored in the
-    ``release/vX.Y.Z`` branch — so a release branch's tree never
-    byte-matches the tagged ``dev`` release's tree, yet it is the *same
-    release*. The rolling-next guard
+    the :data:`_RELEASE_EQUAL_IGNORE` paths — ``CHANGELOG.md`` (exact) and
+    pending ``changelog.d/`` fragments (prefix) — share a fingerprint.
+    forge's ``@main`` CHANGELOG is curated and condensed per promotion —
+    authored in the ``release/vX.Y.Z`` branch, where fragments-mode
+    assembly also deletes the pending fragments — so a release branch's
+    tree never byte-matches the tagged ``dev`` release's tree, yet it is
+    the *same release*. The rolling-next guard
     (:func:`forge.verify_plugin_version._is_release_commit`) and the
     main-tag aligner (``forge-check-main-tags``) compare on this
-    fingerprint so curated-CHANGELOG divergence is tolerated while any
+    fingerprint so curated-changelog divergence is tolerated while any
     other file difference still counts (the match stays release-exact).
 
     The value is the SHA-256 of ``git ls-tree -r <ref>`` (mode, type, blob
-    SHA, path per file) with the ``CHANGELOG.md`` entry removed. Excluding
-    one path from a recursive blob listing — rather than diffing two refs —
+    SHA, path per file) with the ignored entries removed. Excluding
+    paths from a recursive blob listing — rather than diffing two refs —
     keeps the result usable as a dict key, so callers can index many base
     commits by fingerprint in a single pass.
 
@@ -822,7 +913,7 @@ def release_tree_fingerprint(repo_root: Path, ref: str) -> str | None:
 
     Returns:
         A 64-char hex fingerprint, or ``None`` when *ref* does not resolve
-        or its tree has no files outside ``CHANGELOG.md``.
+        or its tree has no files outside the ignored changelog paths.
     """
     raw = run_git("ls-tree", "-r", ref, cwd=repo_root, check=False)
     if not raw:
@@ -830,7 +921,7 @@ def release_tree_fingerprint(repo_root: Path, ref: str) -> str | None:
     kept = [
         line
         for line in raw.splitlines()
-        if line.partition("\t")[2] not in _RELEASE_EQUAL_IGNORE
+        if not _release_ignored(line.partition("\t")[2])
     ]
     if not kept:
         # Tree resolves only to ignored paths (e.g. a repo tracking nothing

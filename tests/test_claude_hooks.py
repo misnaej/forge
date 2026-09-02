@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import GIT_ENV, init_git_repo
+from tests.conftest import GIT_ENV, init_git_repo, init_single_track_repo
 
 
 _HOOKS_DIR = Path(__file__).resolve().parents[1] / "claude-hooks"
@@ -436,8 +436,8 @@ def test_force_push_allows_non_push_git() -> None:
 
 
 # --- git_anchor.sh: shared lib integrity (#348 dedup contract) -------------
-# GIT_ANCHOR/SEG_ANCHOR moved to one sourced home so the four git-guard
-# hooks share a single anchor definition instead of four copies drifting
+# GIT_ANCHOR/SEG_ANCHOR moved to one sourced home so the git-guard
+# hooks share a single anchor definition instead of per-hook copies drifting
 # independently. This pins the dedup: every consumer sources the lib, and
 # none keeps a local `GIT_ANCHOR=` fallback that could silently diverge.
 
@@ -447,11 +447,12 @@ _GIT_GUARD_HOOKS = (
     "block_git_rebase.sh",
     "block_raw_git.sh",
     "block_git_destructive.sh",
+    "block_amend_pushed_commit.sh",
 )
 
 
 def test_git_guard_hooks_source_shared_anchor_lib() -> None:
-    """All four git-guard hooks source `git_anchor.sh`, failing CLOSED.
+    """All git-guard hooks source `git_anchor.sh`, failing CLOSED.
 
     The guarded-source shape (existence check exiting 2 before `source`)
     is the security contract: a missing lib in a corrupted plugin cache
@@ -472,7 +473,7 @@ def test_git_guard_hooks_source_shared_anchor_lib() -> None:
 
 
 def test_git_guard_hooks_have_no_local_anchor_definition() -> None:
-    """None of the four hooks keeps a local `GIT_ANCHOR='...'` definition.
+    """None of the git-guard hooks keeps a local `GIT_ANCHOR='...'` definition.
 
     A local copy would defeat the point of extracting the anchor into one
     shared lib (#348) — two definitions can silently drift apart.
@@ -498,6 +499,7 @@ _GIT_GUARD_BLOCKING_COMMANDS = {
     "block_git_rebase.sh": "git rebase origin/dev",
     "block_raw_git.sh": "git commit -m x",
     "block_git_destructive.sh": "git reset --hard",
+    "block_amend_pushed_commit.sh": "git commit --amend",
 }
 
 
@@ -712,9 +714,13 @@ def test_destructive_reset_flag_in_other_compound_segment_stays_scoped() -> None
     assert _run_hook(_DESTRUCTIVE, "echo done --hard; echo unrelated") == 0
 
 
-def test_destructive_allows_reset_stash_push() -> None:
-    """`git stash -u` — the sanctioned dirty-tree sync step — is allowed."""
-    assert _run_hook(_DESTRUCTIVE, "git stash -u") == 0
+def test_destructive_blocks_stash_push_untracked() -> None:
+    """`git stash -u` is blocked (#404) — it runs `git clean` internally.
+
+    FOUNDATION §2's sync ladder (probe, direct merge, or a wip-sync
+    checkpoint commit) is the sanctioned dirty-tree sync now.
+    """
+    assert _run_hook(_DESTRUCTIVE, "git stash -u") == 2
 
 
 # --- git clean: -f/-d/-x/-X/--force block; dry-run (-n/--dry-run) allowed --
@@ -861,9 +867,80 @@ def test_destructive_allows_stash_list() -> None:
     assert _run_hook(_DESTRUCTIVE, "git stash list") == 0
 
 
-def test_destructive_allows_stash_push_with_message() -> None:
-    """`git stash push -u -m "wip"` (the sanctioned dirty-tree sync) is allowed."""
-    assert _run_hook(_DESTRUCTIVE, 'git stash push -u -m "wip"') == 0
+def test_destructive_allows_stash_push_with_message_no_untracked() -> None:
+    """`git stash push -m "wip"` (tracked-only, message-bearing) is allowed."""
+    assert _run_hook(_DESTRUCTIVE, 'git stash push -m "wip"') == 0
+
+
+def test_destructive_allows_stash_push_bare() -> None:
+    """A bare `git stash push` (tracked-only, no message) is allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git stash push") == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git stash push -u",
+        "git stash -u",
+        "git stash save -a",
+        "git stash push --include-untracked",
+        "git stash --all",
+        "git stash push -qu",
+        "git stash push -uq",
+        "GIT_DIR=/tmp/x git stash -u",
+        "git --no-pager stash -u",
+        "git -c foo=bar stash --all",
+        'git stash push -u -m "wip"',
+        "git stash --quiet -u",
+        "git stash -q -u",
+        "git stash --keep-index -u",
+        "git stash save --quiet -u",
+    ],
+)
+def test_destructive_blocks_stash_untracked_forms(command: str) -> None:
+    """Block all stash operations with untracked-file flags.
+
+    Every untracked-including stash shape (flags, wrapper, global option,
+    and an interposed flag ahead of `-u`/`-a`) should be blocked per issue
+    #404 — the interposed-token forms were the short-flag bypass a
+    security review refuted, since closed by making the short-flag branch
+    token-tolerant like the long-flag branch.
+
+    Args:
+        command: The stash invocation under test.
+    """
+    assert _run_hook(_DESTRUCTIVE, command) == 2
+
+
+def test_destructive_allows_stash_apply() -> None:
+    """`git stash apply` (no untracked flag) is allowed."""
+    assert _run_hook(_DESTRUCTIVE, "git stash apply") == 0
+
+
+def test_destructive_blocks_stash_show_untracked_known_over_block() -> None:
+    """Verify false-positive block of stash show --include-untracked.
+
+    The untracked-stash guard tolerates interposed tokens between `stash`
+    and `--include-untracked`/`--all` so wrapper/global-option forms still
+    match; the tradeoff is that a read-only `stash show` invocation with
+    the same long flag also matches. This is documented and accepted rather
+    than narrowing the pattern and risking a real bypass (issue #404).
+    """
+    assert _run_hook(_DESTRUCTIVE, "git stash show --include-untracked") == 2
+
+
+def test_destructive_blocks_stash_show_untracked_short_flag() -> None:
+    """Verify the short-flag branch now matches interposed tokens too.
+
+    The short-flag branch was made token-tolerant (like the long-flag
+    branch) to close the interposed-token bypass a security review
+    surfaced — a flag between `stash` and `-u`/`-a` (e.g. `save`,
+    `--quiet`) must still trip the guard. The tradeoff, now symmetric
+    with the long-flag branch, is that a read-only `stash show -u` also
+    blocks as an accepted false positive rather than left as a bypass
+    seam (issue #404).
+    """
+    assert _run_hook(_DESTRUCTIVE, "git stash show -u") == 2
 
 
 # --- shared anchor idiom, one representative case per family ---------------
@@ -1019,6 +1096,12 @@ def test_raw_git_blocks_commit_after_no_pager_global_option() -> None:
     assert _run_hook(_RAW_GIT, "git --no-pager commit -m x") == 2
 
 
+def test_amend_blocks_after_no_pager_global_option(tmp_path: Path) -> None:
+    """`git --no-pager commit --amend` (global option) is blocked when pushed."""
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "git --no-pager commit --amend", cwd=work) == 2
+
+
 # --- registration / retirement -----------------------------------------
 
 
@@ -1041,6 +1124,303 @@ def test_destructive_registered_and_reset_hard_retired() -> None:
 def test_destructive_old_hook_file_removed() -> None:
     """The retired `block_git_reset_hard.sh` file no longer exists on disk."""
     assert not (_HOOKS_DIR / "block_git_reset_hard.sh").exists()
+
+
+# --- block_amend_pushed_commit.sh: amending a pushed commit is a rebase (#414) -
+# Amending a commit already on a remote is the single-commit analogue of
+# rebase: it rewrites published history, forcing a force-push that
+# block_force_push.sh then refuses. This hook blocks the amend itself.
+# Amending an UNPUSHED commit stays allowed — nothing published is rewritten.
+
+_AMEND = "block_amend_pushed_commit.sh"
+
+
+def test_amend_blocks_pushed_commit(tmp_path: Path) -> None:
+    """Amending HEAD when it's already contained in a remote-tracking ref is blocked.
+
+    The core case: `init_single_track_repo` pushes `main` to `origin.git`,
+    so HEAD is reachable from `refs/remotes/origin/main` — the containment
+    check the hook shells out to `git for-each-ref` for.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    proc = _run_hook_proc(_AMEND, 'git commit --amend -m "fix"', cwd=work)
+    assert proc.returncode == 2
+    assert "remote" in proc.stderr
+    assert "force-push" in proc.stderr
+
+
+def test_amend_allows_unpushed_commit(tmp_path: Path) -> None:
+    """Amending a commit made AFTER the last push is allowed.
+
+    Proves the guard checks containment of the CURRENT HEAD, not merely
+    "does this branch have a remote" — HEAD has moved past
+    `refs/remotes/origin/main` to a local-only commit, so nothing
+    published would be rewritten.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "wip"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    assert _run_hook(_AMEND, 'git commit --amend -m "fix"', cwd=work) == 0
+
+
+def test_amend_blocks_abbreviated_flag(tmp_path: Path) -> None:
+    """The `--am` abbreviation for `--amend` is blocked."""
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "git commit --am", cwd=work) == 2
+
+
+def test_amend_allows_message_mentioning_amend(tmp_path: Path) -> None:
+    """`--amend` appearing only inside a quoted commit MESSAGE is allowed.
+
+    Regression pin for the quote-strip in the hook's cheap text bail —
+    without it, a message merely mentioning `--amend` would false-positive.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, 'git commit -m "use --amend later"', cwd=work) == 0
+
+
+def test_amend_allows_plain_commit(tmp_path: Path) -> None:
+    """A plain `git commit` with no `--amend` flag is allowed."""
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, 'git commit -m "fix"', cwd=work) == 0
+
+
+def test_amend_allows_commit_tree_and_commit_graph(tmp_path: Path) -> None:
+    """`git commit-tree` / `git commit-graph` are not `git commit` and stay allowed.
+
+    The anchor's `commit([[:space:]]|$)` requires whitespace or end-of-line
+    right after `commit`, excluding the hyphenated plumbing subcommands.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "git commit-tree HEAD^{tree} -m x", cwd=work) == 0
+    assert _run_hook(_AMEND, "git commit-graph write", cwd=work) == 0
+
+
+def test_amend_blocks_env_var_prefix(tmp_path: Path) -> None:
+    """`GIT_DIR=/tmp/x git commit --amend` (inline env assignment) is blocked."""
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "GIT_DIR=/tmp/x git commit --amend", cwd=work) == 2
+
+
+def test_amend_blocks_sudo_wrapper(tmp_path: Path) -> None:
+    """A `sudo -n`-wrapped amend is blocked."""
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "sudo -n git commit --amend", cwd=work) == 2
+
+
+def test_amend_blocks_subshell_wrapper(tmp_path: Path) -> None:
+    """A subshell-wrapped amend (`(git commit --amend)`) is blocked.
+
+    The flag tail accepts any non-flag character — not just whitespace —
+    so the closing `)` of a subshell wrap cannot slip the gate.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "(git commit --amend)", cwd=work) == 2
+
+
+def test_amend_allows_longer_flag_false_positive(tmp_path: Path) -> None:
+    """A longer flag merely prefixed by `--amend` (`--amend-ish`) is not blocked.
+
+    Pins the flag tail's `([^[:alnum:]_-]|$)` class, which rejects any
+    alnum/`_`/`-` continuation — so `--amend-ish` fails the match and
+    stays allowed, distinct from the true amend forms above.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "git commit --amend-ish -m x", cwd=work) == 0
+
+
+def test_amend_blocks_escaped_double_quote_desync(tmp_path: Path) -> None:
+    r"""A backslash-escaped `\\"` inside a message cannot hide a live `--amend`.
+
+    Security-review PoC: with a naive stripper, `-m "\\""` desynchronizes
+    the quote pairing and swallows the real `--amend` into a phantom
+    quoted span, silently allowing the amend. The escape-aware
+    double-quote rule keeps the flag visible — blocked.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = 'git commit -m "\\"" --amend -m "z"'
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+
+
+def test_amend_blocks_quote_char_inside_single_quotes(tmp_path: Path) -> None:
+    """A `"` character carried inside a single-quoted arg cannot desync the stripper.
+
+    Single-quote spans strip first (bash has no escapes inside them), so
+    `-m '"'` disappears before the double-quote rule runs and the live
+    `--amend` stays visible — blocked.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = 'git commit -m \'"\' --amend -m "z"'
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+
+
+def test_amend_blocks_apostrophe_cross_pairing(tmp_path: Path) -> None:
+    """Apostrophes inside two double-quoted args cannot hide a live `--amend`.
+
+    Security-review PoC #2: with independent regex passes, the naive
+    single-quote rule pairs the `'` of `"it's"` with the `'` of
+    `"don't"` and swallows the real `--amend` between them — an
+    accidental, non-adversarial pattern (two contractions). The
+    single-pass quote-state machine tracks that both apostrophes sit
+    inside double-quoted spans — blocked.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = 'git commit -m "it\'s" --amend -m "don\'t"'
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+
+
+def test_amend_blocks_dquote_inside_single_quotes_cross_pairing(
+    tmp_path: Path,
+) -> None:
+    """The symmetric case: `"` inside two single-quoted args cannot hide `--amend`.
+
+    Mirror of the apostrophe cross-pairing PoC with the quote styles
+    swapped — pins that the state machine closes BOTH directions, not
+    just the one a particular pass ordering happens to fix.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = "git commit -m 'say \"hi' --amend -m 'there\"'"
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+
+
+def test_amend_blocks_backslash_escaped_flag_and_subcommand(
+    tmp_path: Path,
+) -> None:
+    r"""An unquoted backslash cannot hide the flag or the subcommand.
+
+    Bash removes an unquoted `\\` and keeps the next char (`\\-` is `-`),
+    so `git commit \\--amend` and `git \\commit --amend` both run a real
+    amend. The stripper consumes state-0 backslashes the same way, so
+    the anchor and flag regexes see the true tokens — blocked.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "git commit \\--amend", cwd=work) == 2
+    assert _run_hook(_AMEND, "git \\commit --amend", cwd=work) == 2
+
+
+def test_amend_blocks_ansi_c_quoted_message(tmp_path: Path) -> None:
+    r"""A `$'…'` message with an escaped quote cannot desync the stripper.
+
+    ANSI-C quoting honors backslash escapes (unlike plain `'…'`), so
+    `$'it\\'s ok'` ends at its real closing quote; a naive single-quote
+    state would close early and swallow the live `--amend` — blocked.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = "git commit -m $'it\\'s ok' --amend"
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+
+
+def test_amend_blocks_line_continuation_split_flag(tmp_path: Path) -> None:
+    r"""A backslash-newline split of `--amend` cannot dodge the flag match.
+
+    Bash joins `--a\\<newline>mend` back into one `--amend` token; the
+    stripper joins continuation lines the same way before matching —
+    blocked. (A split with intervening whitespace produces two tokens in
+    real bash and stays allowed — semantics, not a gap.)
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert _run_hook(_AMEND, "git commit --a\\\nmend", cwd=work) == 2
+
+
+def test_amend_blocks_escaped_dollar_before_quote(tmp_path: Path) -> None:
+    r"""`\\$'…'` (escaped dollar) opens a PLAIN quote — cannot hide `--amend`.
+
+    Security-review PoC #4: bash strips the backslash from `\\$`, so the
+    following `'…'` is an ordinary single-quoted string, not ANSI-C. A
+    raw-text lookbehind misroutes it into the escape-aware ANSI-C state,
+    where a backslash inside the string swallows the real closing quote
+    and the live `--amend` after it. The live-dollar emission flag keeps
+    the classification faithful — blocked.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = "git commit -m \\$'X\\' --amend puppy"
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+
+
+def test_amend_blocks_double_dollar_before_quote(tmp_path: Path) -> None:
+    """`$$'…'` (PID parameter, then quote) opens a PLAIN quote — blocked.
+
+    Security-review PoC #5: bash consumes `$$` atomically, so the quote
+    after it is ordinary single-quoting, not ANSI-C. The live-dollar
+    flag TOGGLES on consecutive `$` (parity: `$'` ANSI-C, `$$'` plain,
+    `$$$'` ANSI-C), so an interior backslash cannot swallow the live
+    `--amend` that follows.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    cmd = "git commit -m $$'x\\' --amend puppy"
+    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+
+
+def test_amend_has_no_agent_bypass(tmp_path: Path) -> None:
+    """Even forge:git-commit-push — the one agent that runs `git commit` — cannot amend.
+
+    Its own contract is "never amend — always a new commit"; this hook
+    deliberately carries no sanctioned-agent bypass.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    assert (
+        _run_hook(
+            _AMEND,
+            'git commit --amend -m "fix"',
+            cwd=work,
+            agent_type="forge:git-commit-push",
+        )
+        == 2
+    )
+
+
+def test_amend_allows_non_git_repo_cwd(tmp_path: Path) -> None:
+    """Amending in a plain (non-git) directory is allowed, with no leaked git noise.
+
+    `HEAD_SHA` resolution fails closed-to-allow (nothing published to
+    protect), and the hook's own `2>/dev/null` on the git queries must
+    keep stderr clean of git's own error text.
+    """
+    plain_dir = tmp_path / "not-a-repo"
+    plain_dir.mkdir()
+    proc = _run_hook_proc(_AMEND, 'git commit --amend -m "fix"', cwd=plain_dir)
+    assert proc.returncode == 0
+    assert proc.stderr == ""
+
+
+def test_amend_uses_payload_cwd_not_process_cwd(tmp_path: Path) -> None:
+    """The hook resolves state via the JSON payload's `cwd`, not the hook process's own.
+
+    `_run_hook_proc` never sets a top-level payload `"cwd"` field — only
+    the subprocess's working directory. This test builds the payload by
+    hand with `"cwd"` pointing at the pushed repo while the subprocess
+    itself runs from an unrelated, non-repo directory, so a pass proves
+    the hook reads `.cwd`, not its own `$PWD`.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    payload = json.dumps(
+        {"tool_input": {"command": 'git commit --amend -m "fix"'}, "cwd": str(work)}
+    )
+    proc = subprocess.run(
+        ["bash", str(_HOOKS_DIR / _AMEND)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=elsewhere,
+    )
+    assert proc.returncode == 2
+
+
+def test_amend_pushed_commit_registered_in_plugin_json() -> None:
+    """Verify hook is wired into plugin.json's Bash PreToolUse group."""
+    manifest = json.loads(
+        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
+    )
+    pre_tool_use = manifest["hooks"]["PreToolUse"]
+    commands = [hook["command"] for group in pre_tool_use for hook in group["hooks"]]
+    assert any(_AMEND in cmd for cmd in commands)
 
 
 _CONTINUATION_DELETE = "block_continuation_delete.sh"
@@ -1503,6 +1883,279 @@ def test_unverified_pr_create_provenance_check_is_cwd_independent(
     assert "promotion exemption withheld" in proc.stderr
 
 
+# --- block_unverified_pr_create.sh: LIGHT wrap-up re-check -----------------
+
+
+def _write_wrapup_light(
+    repo: Path,
+    sha: str,
+    *,
+    mode_line: str = "wrapup-mode: light",
+    padding: int = 0,
+) -> None:
+    """Write a `code_health/pr_wrapup.md` naming *sha*, with a mode header line.
+
+    Args:
+        repo: Repo root to write under — matches the hook's
+            `--show-toplevel` resolution.
+        sha: Commit sha (full or short) to embed in the `verified-at:` line.
+        mode_line: The wrap-up-mode header line to embed. Defaults to the
+            canonical `wrapup-mode: light` declaration; callers vary this to
+            exercise a non-light value or to check the regex matches the
+            VALUE, not merely the key's presence.
+        padding: Number of filler lines inserted between `verified-at:` and
+            *mode_line* — pushes the mode line past the hook's `head -5`
+            window while `verified-at:` itself stays inside it.
+    """
+    code_health = repo / "code_health"
+    code_health.mkdir(parents=True, exist_ok=True)
+    lines = ["# PR Wrap-up", "", f"verified-at: {sha}"]
+    lines.extend(["filler"] * padding)
+    lines.append(mode_line)
+    (code_health / "pr_wrapup.md").write_text("\n".join(lines) + "\n")
+
+
+def _write_forge_dev_branch_config(repo: Path, branch: str = "main") -> None:
+    """Write a `pyproject.toml` declaring `[tool.forge] dev_branch = *branch*`.
+
+    The hook's light re-check resolves its base ref ONLY from this config
+    (never from the command's own `--base` text) — tests exercising the
+    re-check need this fixture in place for `BASE` to resolve at all.
+
+    Args:
+        repo: Repo root to write under — matches the hook's
+            `--show-toplevel` resolution.
+        branch: The `dev_branch` value to declare. Defaults to `main`.
+    """
+    (repo / "pyproject.toml").write_text(f'[tool.forge]\ndev_branch = "{branch}"\n')
+
+
+def _stub_forge_pr_plan(tmp_path: Path, mode: str) -> dict[str, str]:
+    """Build an executable `forge-pr-plan` stub on PATH that reports *mode*.
+
+    Args:
+        tmp_path: Pytest `tmp_path` fixture directory to build the stub under.
+        mode: The `mode` value the stub's JSON payload reports — the hook
+            only reads this field back out.
+
+    Returns:
+        A copy of the current process environment with the stub's
+        directory PREPENDED to `PATH`, shadowing any real `forge-pr-plan`
+        install so the hook's re-check exercises this stub instead.
+    """
+    stub_dir = tmp_path / "stub_bin"
+    stub_dir.mkdir()
+    stub = stub_dir / "forge-pr-plan"
+    stub.write_text(f'#!/usr/bin/env bash\necho \'{{"mode": "{mode}"}}\'\n')
+    stub.chmod(0o755)
+    return {**os.environ, "PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+
+def _stub_forge_pr_plan_failing(tmp_path: Path) -> dict[str, str]:
+    """Build an executable `forge-pr-plan` stub that exits 1 printing nothing.
+
+    Simulates the classifier itself erroring out (crash, bad invocation) as
+    opposed to being absent from PATH — the hook's `if !` guard must absorb
+    this into an empty `MODE` rather than dying under `set -e` at exit 1,
+    which would fail the hook OPEN before the mode check ran.
+
+    Args:
+        tmp_path: Pytest `tmp_path` fixture directory to build the stub under.
+
+    Returns:
+        A copy of the current process environment with the stub's
+        directory PREPENDED to `PATH`, shadowing any real `forge-pr-plan`
+        install so the hook's re-check exercises this stub instead.
+    """
+    stub_dir = tmp_path / "stub_bin"
+    stub_dir.mkdir()
+    stub = stub_dir / "forge-pr-plan"
+    stub.write_text("#!/usr/bin/env bash\nexit 1\n")
+    stub.chmod(0o755)
+    return {**os.environ, "PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+
+def test_unverified_pr_create_light_classifier_error_blocks(
+    git_repo_with_commit: tuple[Path, str],
+    tmp_path: Path,
+) -> None:
+    """A crashing `forge-pr-plan` fails the light re-check CLOSED, not open.
+
+    Regression guard for the `errexit` fail-open bug: under `set -e`, a bare
+    `MODE=$(forge-pr-plan ... | python3 ...)` would die at the classifier's
+    exit 1 — before the `[ "$MODE" != "light-code" ]` check ever ran — and
+    the hook would exit at the shell's own errexit code rather than at the
+    deliberate `exit 2` block, or (worse) let the command through. The `if
+    !` guard absorbs the failure into an empty `MODE`, which the mode check
+    then blocks on.
+
+    MOCK SETUP: `forge-pr-plan` is replaced with an executable stub
+    (`_stub_forge_pr_plan_failing`) that exits 1 printing nothing —
+    distinct from `forge-pr-plan` being absent from PATH, which is covered
+    separately.
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup_light(repo, sha)
+    _write_forge_dev_branch_config(repo)
+    env = _stub_forge_pr_plan_failing(tmp_path)
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo, env=env
+    )
+    assert proc.returncode == 2
+    assert "unclassifiable" in proc.stderr
+    assert "not earned" in proc.stderr
+
+
+def test_unverified_pr_create_light_mode_stub_light_code_allows(
+    git_repo_with_commit: tuple[Path, str],
+    tmp_path: Path,
+) -> None:
+    """A `wrapup-mode: light` wrap-up passes when the stubbed classifier agrees.
+
+    MOCK SETUP: `forge-pr-plan` is replaced with an executable stub
+    (`_stub_forge_pr_plan`) printing `{"mode": "light-code"}` — this
+    exercises only the hook's re-check wiring, not the real classifier
+    (already covered end-to-end in `test_pr_plan.py`).
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup_light(repo, sha)
+    _write_forge_dev_branch_config(repo)
+    env = _stub_forge_pr_plan(tmp_path, "light-code")
+    assert (
+        _run_hook(
+            _UNVERIFIED_PR_CREATE,
+            "gh pr create --title x --base main",
+            cwd=repo,
+            env=env,
+        )
+        == 0
+    )
+
+
+def test_unverified_pr_create_light_mode_stub_full_blocks(
+    git_repo_with_commit: tuple[Path, str],
+    tmp_path: Path,
+) -> None:
+    """A `wrapup-mode: light` wrap-up is blocked when the classifier disagrees.
+
+    MOCK SETUP: the stub reports `{"mode": "full"}` — simulating a diff
+    that no longer qualifies as light-code at publish time (e.g. a
+    follow-up commit added a file after the wrap-up was authored).
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup_light(repo, sha)
+    _write_forge_dev_branch_config(repo)
+    env = _stub_forge_pr_plan(tmp_path, "full")
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE,
+        "gh pr create --title x --base main",
+        cwd=repo,
+        env=env,
+    )
+    assert proc.returncode == 2
+    assert "not earned" in proc.stderr
+    assert "'full'" in proc.stderr
+
+
+def test_unverified_pr_create_light_mode_missing_cli_blocks(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A `wrapup-mode: light` wrap-up is blocked when `forge-pr-plan` is unreachable.
+
+    Fails CLOSED per the hook's header comment: a missing classifier must
+    never silently let the light escape through.
+
+    MOCK SETUP: PATH is stripped of every directory that actually resolves
+    a `forge-pr-plan` binary — portable, since hard-coding the real
+    conda/venv install location would break on a differently-configured
+    machine or CI runner.
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup_light(repo, sha)
+    stripped_path = os.pathsep.join(
+        d
+        for d in os.environ.get("PATH", "").split(os.pathsep)
+        if not (Path(d) / "forge-pr-plan").is_file()
+    )
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE,
+        "gh pr create --title x --base main",
+        cwd=repo,
+        env={**os.environ, "PATH": stripped_path},
+    )
+    assert proc.returncode == 2
+    assert "not on PATH" in proc.stderr
+
+
+def test_unverified_pr_create_light_mode_unresolvable_base_blocks(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A `wrapup-mode: light` wrap-up is blocked when no base ref can be resolved.
+
+    No `[tool.forge]` branch config in `pyproject.toml` — the base ref
+    comes ONLY from that config (never from the command's own `--base`
+    text, included here as an irrelevant distractor), so the hook has
+    nothing to diff against and fails closed rather than guessing one.
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup_light(repo, sha)
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE, "gh pr create --title x --base main", cwd=repo
+    )
+    assert proc.returncode == 2
+    assert "no [tool.forge] dev_branch/base_branch config" in proc.stderr
+
+
+def test_unverified_pr_create_full_mode_line_skips_light_recheck(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A `wrapup-mode: full` header line takes the normal path — no re-check needed.
+
+    Regression guard for the mode-line regex: it must test the VALUE
+    (`light`), not merely the presence of the `wrapup-mode:` key — a
+    `full` value must not trip the classifier re-check at all.
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup_light(repo, sha, mode_line="wrapup-mode: full")
+    assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo) == 0
+
+
+def test_unverified_pr_create_light_mode_line_past_head5_still_rechecks(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """A `wrapup-mode: light` line beyond the old `head -5` window is still re-checked.
+
+    Regression guard: the mode-line scan is a WHOLE-FILE grep, not a
+    `head -5` window — a window would be dodgeable by padding the file
+    (a scan a light-code diff's author fully controls). `verified-at:`
+    stays inside the first 5 lines (satisfying the earlier HEAD-match
+    gate) while padding pushes `wrapup-mode: light` well past line 5;
+    the re-check must still fire — proven here by stripping
+    `forge-pr-plan` from PATH and observing the fail-closed block.
+
+    MOCK SETUP: PATH is stripped of every directory that actually
+    resolves a `forge-pr-plan` binary (portable — no hard-coded install
+    location), so the re-check's own "missing classifier" branch is what
+    produces the block, distinguishing "re-check fired" from "re-check
+    skipped, PR create allowed".
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup_light(repo, sha, padding=5)
+    stripped_path = os.pathsep.join(
+        d
+        for d in os.environ.get("PATH", "").split(os.pathsep)
+        if not (Path(d) / "forge-pr-plan").is_file()
+    )
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE,
+        "gh pr create --title x",
+        cwd=repo,
+        env={**os.environ, "PATH": stripped_path},
+    )
+    assert proc.returncode == 2
+    assert "not on PATH" in proc.stderr
+
+
 # --- block_fixer_recon.sh: agent-scoped Bash allowlist ---------------------
 
 _FIXER_RECON = "block_fixer_recon.sh"
@@ -1558,6 +2211,51 @@ def test_fixer_recon_blocks_chained_recon() -> None:
         _run_hook(
             _FIXER_RECON,
             "forge-precommit && git diff",
+            agent_type="forge:precommit-fixer",
+        )
+        == 2
+    )
+
+
+def test_fixer_recon_blocks_next_prep_tag() -> None:
+    """`forge-next-prep --tag` is a release action, not on the fixer's allowlist.
+
+    See #405.
+    """
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "forge-next-prep --tag",
+            agent_type="forge:precommit-fixer",
+        )
+        == 2
+    )
+
+
+def test_fixer_recon_blocks_git_tag() -> None:
+    """`git tag v9.9.9` is a release action the fixer must never self-clear with.
+
+    See #405.
+    """
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "git tag v9.9.9",
+            agent_type="forge:precommit-fixer",
+        )
+        == 2
+    )
+
+
+def test_fixer_recon_blocks_git_push_tag() -> None:
+    """`git push origin v9.9.9` is a release action, blocked like tag commands.
+
+    See #405.
+    """
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "git push origin v9.9.9",
             agent_type="forge:precommit-fixer",
         )
         == 2
@@ -1688,6 +2386,30 @@ def test_fixer_recon_ignores_missing_agent_type() -> None:
     assert _run_hook(_FIXER_RECON, "git status") == 0
 
 
+def test_fixer_recon_next_prep_tag_fail_open_without_agent_type() -> None:
+    """Without an `agent_type` payload, `forge-next-prep --tag` fails open.
+
+    See #405.
+    """
+    assert _run_hook(_FIXER_RECON, "forge-next-prep --tag") == 0
+
+
+def test_fixer_recon_git_tag_fail_open_without_agent_type() -> None:
+    """Without an `agent_type` payload, `git tag v9.9.9` fails open.
+
+    See #405.
+    """
+    assert _run_hook(_FIXER_RECON, "git tag v9.9.9") == 0
+
+
+def test_fixer_recon_git_push_tag_fail_open_without_agent_type() -> None:
+    """Without an `agent_type` payload, `git push origin v9.9.9` fails open.
+
+    See #405.
+    """
+    assert _run_hook(_FIXER_RECON, "git push origin v9.9.9") == 0
+
+
 def test_fixer_recon_matches_unprefixed_agent_form() -> None:
     """The unprefixed `precommit-fixer` agent-type form is scoped too."""
     assert _run_hook(_FIXER_RECON, "git status", agent_type="precommit-fixer") == 2
@@ -1813,3 +2535,160 @@ def test_forge_docs_edits_registered_for_edit_and_write() -> None:
         assert any(_FORGE_DOCS_EDITS in cmd for cmd in commands), (
             f"{_FORGE_DOCS_EDITS} not registered under {matcher}"
         )
+
+
+# --- check_commit_format.sh: conventional format + wip-sync pairing (#404) --
+
+_COMMIT_FORMAT = "check_commit_format.sh"
+
+_HEREDOC_COMMIT_OK = "git commit -m \"$(cat <<'EOF'\nfeat: add x\n\nbody text\nEOF\n)\""
+
+_HEREDOC_WIP_SYNC_PAIRED = (
+    "FORGE_WIP_SYNC=1 git commit -m \"$(cat <<'EOF'\n"
+    "wip-sync: checkpoint before merge\n"
+    "EOF\n"
+    ')"'
+)
+
+_WARNING = "WARNING: Commit message should follow conventional format"
+
+
+def test_commit_format_allows_single_line_conventional() -> None:
+    """A single-line conventional message passes with no WARNING."""
+    proc = _run_hook_proc(_COMMIT_FORMAT, 'git commit -m "feat: add x"')
+    assert proc.returncode == 0
+    assert _WARNING not in proc.stdout
+
+
+def test_commit_format_allows_heredoc_conventional() -> None:
+    """The multi-line heredoc `-m "$(cat <<'EOF' ...)"` form passes too."""
+    proc = _run_hook_proc(_COMMIT_FORMAT, _HEREDOC_COMMIT_OK)
+    assert proc.returncode == 0
+    assert _WARNING not in proc.stdout
+
+
+def test_commit_format_allows_paired_wip_sync_single_line() -> None:
+    """FORGE_WIP_SYNC=1 paired with a `wip-sync:` single-line message passes."""
+    proc = _run_hook_proc(
+        _COMMIT_FORMAT,
+        'FORGE_WIP_SYNC=1 git commit -m "wip-sync: checkpoint before merge"',
+    )
+    assert proc.returncode == 0
+    assert _WARNING not in proc.stdout
+
+
+def test_commit_format_allows_paired_wip_sync_heredoc() -> None:
+    """FORGE_WIP_SYNC=1 paired with a `wip-sync:` heredoc message passes too."""
+    proc = _run_hook_proc(_COMMIT_FORMAT, _HEREDOC_WIP_SYNC_PAIRED)
+    assert proc.returncode == 0
+    assert _WARNING not in proc.stdout
+
+
+def test_commit_format_blocks_env_without_wip_sync_prefix() -> None:
+    """FORGE_WIP_SYNC=1 with a normal-looking message is blocked (silent skip risk)."""
+    proc = _run_hook_proc(
+        _COMMIT_FORMAT, 'FORGE_WIP_SYNC=1 git commit -m "feat: normal work"'
+    )
+    assert proc.returncode == 2
+    assert "BLOCKED" in proc.stderr
+
+
+def test_commit_format_blocks_wip_sync_prefix_without_env() -> None:
+    """Reject wip-sync prefix without the FORGE_WIP_SYNC environment gate.
+
+    A `wip-sync:` message without FORGE_WIP_SYNC=1 mislabels a gated
+    commit and must be blocked.
+    """
+    proc = _run_hook_proc(_COMMIT_FORMAT, 'git commit -m "wip-sync: sneaky"')
+    assert proc.returncode == 2
+    assert "BLOCKED" in proc.stderr
+
+
+def test_commit_format_blocks_env_with_no_message() -> None:
+    """FORGE_WIP_SYNC=1 with no `-m` at all has nothing to pair against — blocked."""
+    proc = _run_hook_proc(_COMMIT_FORMAT, "FORGE_WIP_SYNC=1 git commit")
+    assert proc.returncode == 2
+    assert "BLOCKED" in proc.stderr
+
+
+def test_commit_format_allows_lookalike_env_var_name() -> None:
+    """Allow commits with superstring env var names.
+
+    `MY_FORGE_WIP_SYNC=1` (superstring, not the exact marker) is not
+    the pairing gate and should allow normal commits.
+    """
+    assert _run_hook(_COMMIT_FORMAT, 'MY_FORGE_WIP_SYNC=1 git commit -m "feat: x"') == 0
+
+
+def test_commit_format_allows_lookalike_env_var_value() -> None:
+    """`FORGE_WIP_SYNC=10` (value != "1") does not trip the pairing gate either."""
+    assert _run_hook(_COMMIT_FORMAT, 'FORGE_WIP_SYNC=10 git commit -m "feat: x"') == 0
+
+
+def test_commit_format_blocks_env_with_semicolon_boundary() -> None:
+    """`export FORGE_WIP_SYNC=1;` (semicolon boundary) still trips the gate.
+
+    A shell-metacharacter boundary (`;` after `export FORGE_WIP_SYNC=1`,
+    not a space) previously slipped past the whitespace-only boundary
+    regex, letting the deferred-gate marker pair with a normal-looking
+    message undetected. Now closed.
+    """
+    proc = _run_hook_proc(
+        _COMMIT_FORMAT, 'export FORGE_WIP_SYNC=1; git commit -m "feat: sneaky"'
+    )
+    assert proc.returncode == 2
+    assert "BLOCKED" in proc.stderr
+
+
+def test_commit_format_blocks_env_with_and_boundary() -> None:
+    """`FORGE_WIP_SYNC=1&&` (`&&` boundary, no space) also trips the gate."""
+    proc = _run_hook_proc(
+        _COMMIT_FORMAT, 'FORGE_WIP_SYNC=1&&git commit -m "feat: sneaky"'
+    )
+    assert proc.returncode == 2
+    assert "BLOCKED" in proc.stderr
+
+
+def test_commit_format_allows_paired_wip_sync_semicolon_boundary() -> None:
+    """The semicolon-boundary form still passes when correctly paired."""
+    proc = _run_hook_proc(
+        _COMMIT_FORMAT, 'export FORGE_WIP_SYNC=1; git commit -m "wip-sync: ok"'
+    )
+    assert proc.returncode == 0
+    assert _WARNING not in proc.stdout
+
+
+def test_commit_format_warns_on_non_conventional_message() -> None:
+    """A message with no recognized type prefix gets the WARNING on stdout (exit 0)."""
+    proc = _run_hook_proc(_COMMIT_FORMAT, 'git commit -m "add x"')
+    assert proc.returncode == 0
+    assert _WARNING in proc.stdout
+
+
+def test_commit_format_allows_non_commit_command_with_wip_env_literal() -> None:
+    """A non-commit command carrying the literal `FORGE_WIP_SYNC=1` text passes.
+
+    Regression for the IS_COMMIT gate (design-review fix): this hook fires
+    on every Bash call, not just `git commit`. Before scoping the pairing
+    rule to commands that actually invoke `git ... commit`, a command like
+    a `forge-precommit` run under the deferred-gate env var was mistaken
+    for an unpaired wip-sync checkpoint and blocked.
+    """
+    assert (
+        _run_hook(_COMMIT_FORMAT, "FORGE_WIP_SYNC=1 forge-precommit --only ruff") == 0
+    )
+
+
+def test_commit_format_allows_grep_for_wip_env_marker_literal() -> None:
+    """Grepping the source for the marker string itself is not over-blocked.
+
+    Regression for the IS_COMMIT gate: a command that merely searches for
+    the literal `FORGE_WIP_SYNC=1` text (no `commit` subcommand present)
+    must not trip the pairing block either — the hook inspects command
+    text, not intent, so any non-commit command containing that substring
+    is a false-positive risk without the gate.
+    """
+    assert (
+        _run_hook(_COMMIT_FORMAT, "grep -n FORGE_WIP_SYNC=1 src/forge/precommit.py")
+        == 0
+    )
