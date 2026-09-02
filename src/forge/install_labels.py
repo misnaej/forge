@@ -75,6 +75,11 @@ CANONICAL_LABELS: list[dict[str, str]] = [
         "color": "0E8A16",
         "description": "Validated plan attached; cleared for autonomous execution",
     },
+    {
+        "name": "emergency-mode",
+        "color": "B60205",
+        "description": "forge-emergency ledger: verification deferred, debt open",
+    },
     # Type
     {"name": "bug", "color": "D73A4A", "description": "Something is broken"},
     {"name": "feature", "color": "A2EEEF", "description": "New capability"},

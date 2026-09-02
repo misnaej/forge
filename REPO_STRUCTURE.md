@@ -30,6 +30,7 @@ Code.
 1. **CLI Modules**
    - precommit.py: `forge-precommit` — pre-commit dispatcher; most steps shell out to their own SRP CLI, a few (env_sync, pip_audit) run in-process for speed / single-invocation sharing; every run wall-clocks each step and writes `code_health/precommit_timing.log` (per-step elapsed + total, `elapsed_s` in `--json`)
    - next_prep.py: `forge-next-prep` — refresh main, optional rolling-next tag bump, prune stale branches; used by `/next` skill
+   - emergency.py: `forge-emergency` — one-shot deferred-verification bypass (start/status/consume/end): ledger issue first, gitignored sentinel, the wrap-up gate consumes the single allowed `wrapup-mode: emergency` publication, retroactive verification closes the ledger after delivery; pre-commit and §2 hooks never relieved
    - rebump.py: `forge-rebump` — mechanical post-merge version-slot resolver: classifies a feature branch's bump intent from its fork-point manifest delta (merge stages mid-merge, merge-base on a clean tree), takes the next open slot above the latest tag, restacks/retitles the CHANGELOG in shared-heading mode (fragments mode: no-op), stages, never commits; refuses on unrelated conflicts
    - release.py: `forge-release` — single-track release orchestrator for tag-versioned (setuptools-scm) consumer repos: guards (clean tree, on base branch, single-track model, CHANGELOG entry) → annotated tag + push (exempt in `cli_wiring_exempt.toml`)
    - continuation_append.py: `forge-continuation-append` — single source of truth for `.plan/CONTINUATION.md` append format; called by `forge:git-commit-push` and `forge:pr-manager`; every append (and `--rotate`) rotates done entries older than one week to `.plan/CONTINUATION-archive.md` + per-day digests, pinning entries the structured sections still reference
@@ -219,6 +220,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_install_labels.py: tests for install_labels
    - test_manifests.py: tests for plugin manifests
    - test_next_prep.py: tests for next_prep
+   - test_emergency.py: tests for emergency (forge-emergency start/status/consume/end, ledger parsing, TTL clamping)
    - test_rebump.py: tests for rebump (forge-rebump post-merge version-slot + changelog resolver)
    - test_release.py: tests for release (forge-release CLI guards + tagging)
    - test_release_e2e.py: end-to-end single-track consumer release fixture (recipes + changelog steps)

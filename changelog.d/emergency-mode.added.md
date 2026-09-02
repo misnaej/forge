@@ -1,0 +1,2 @@
+bump: minor
+- **`forge-emergency` — one-shot deferred-verification bypass with a public ledger.** `start --reason` files a tier-1 ledger issue, then arms exactly ONE `wrapup-mode: emergency` publication (the wrap-up gate consumes the sentinel; TTL backstops an unused arm). Pre-commit and every safety hook stay fully enforced — only the reporter/wrap-up ceremony defers. Repayment after delivery: the PR's retroactive verification closes the ledger (`end`).

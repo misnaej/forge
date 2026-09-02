@@ -219,6 +219,7 @@ graph LR
   cli_forge_pr_plan[("forge-pr-plan<br/>CLI")]
   cli_forge_pr_squash_comment[("forge-pr-squash-comment<br/>CLI")]
   cli_forge_rebump[("forge-rebump<br/>CLI")]
+  cli_forge_emergency[("forge-emergency<br/>CLI")]
   cli_forge_changelog[("forge-changelog<br/>CLI")]
   sk_pr(["/pr<br/>skill"])
   prior_art["prior-art<br/>AI agent"]
@@ -237,6 +238,7 @@ graph LR
   precommit_fixer -->|delegates| design_checker
   sk_pr -->|invokes| cli_forge_pr_plan
   sk_pr -->|invokes, on plugin.json+CHANGELOG conflict| cli_forge_rebump
+  sk_pr -->|invokes, Step 0.9 emergency short-circuit| cli_forge_emergency
   sk_pr -->|invokes restrand, on stranded entries| cli_forge_changelog
   sk_pr -->|invokes| design_checker
   sk_pr -->|invokes| security_checker
@@ -265,6 +267,7 @@ graph LR
   class cli_forge_pr_plan cli
   class cli_forge_pr_squash_comment cli
   class cli_forge_rebump cli
+  class cli_forge_emergency cli
   class cli_forge_changelog cli
   class sk_pr skill
   class pr_manager agent

@@ -406,7 +406,12 @@ advisories with the suggested pin; they never edit pins.
   light-code (`FORGE_SKIP_WRAPUP_GATE=1` on explicit
   user request only; promotion PRs self-exempt when the `release/vX.Y.Z`
   tree reproduces its tag modulo the curated changelog). A **draft PR** is
-  the escape hatch when the PR should be visible earlier.
+  the escape hatch when the PR should be visible earlier. A genuine
+  emergency uses **`forge-emergency`** — one human-armed, ledger-backed
+  `wrapup-mode: emergency` publication that defers only the verification
+  ceremony (never pre-commit, never a §2 hook) and owes retroactive
+  verification after delivery; agents arm it only on explicit user
+  instruction.
 - **Verification starts itself.** The moment a branch's implementation
   commits are done, run the finalization reviews automatically — they are
   read-only and need no permission. Stopping at "ready to finalize?" with
