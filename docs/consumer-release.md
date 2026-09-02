@@ -233,6 +233,19 @@ fragments)`, so no PR ever carries a version number.
   printed version for the tag (`git tag vX.Y.Z && git push origin
   vX.Y.Z`, or `forge-release`). It never commits — branch, run it,
   open an ordinary PR, merge, tag.
+- **The tagging handoff is the changelog itself**: `release` writes a
+  real `## vX.Y.Z` heading, so a tagger already running `forge-release
+  --from-changelog` on pushes to the base branch picks the release up
+  on merge with **no further change** — do not build a separate
+  fragments-aware tagger.
+- **Release cadence changes — deliberately.** A push-triggered tagger
+  tags every merge today; in fragments mode ordinary merges leave
+  fragments pending and produce no new heading, so the tagger no-ops
+  and tags appear only when a release PR merges. Releases become
+  deliberate instead of a side effect of merging. If you mitigated the
+  pre-fragments gap by guarding your tagger to **fail while fragments
+  are pending**, remove that guard when adopting this — post-adoption
+  it fires on every ordinary merge.
 - Between releases a plugin manifest **parks at the latest tag**: the
   `plugin_version` guard accepts equality while every pending fragment
   is valid, keeps the strictly-ahead pass for the release PR, and still
