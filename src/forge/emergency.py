@@ -11,10 +11,15 @@ every FOUNDATION §2 safety hook (none of them read the sentinel).
 
 The mode is impossible to use quietly:
 
-1. ``forge-emergency start --reason <why>`` files the **ledger issue**
-   FIRST (label ``emergency-mode``, tier-1) — no ledger, no mode — then
-   writes the gitignored ``.forge-emergency`` sentinel (ledger number,
-   expiry, reason).
+1. ``FORGE_EMERGENCY_ACK=1 forge-emergency start --reason <why>`` files
+   the **ledger issue** FIRST (label ``emergency-mode``, tier-1) — no
+   ledger, no mode — then writes the gitignored ``.forge-emergency``
+   sentinel (ledger number, expiry, reason). The env-var prefix is the
+   auditable human-authorization marker (same convention as
+   ``FORGE_SKIP_WRAPUP_GATE``); ``start`` refuses without it. The
+   no-ledger-no-mode guarantee holds for CLI-managed sentinels — a
+   hand-written sentinel is the same trust boundary as editing the
+   hooks themselves and is not defended against.
 2. The wrap-up gate consumes the sentinel on its single allowed
    ``gh pr create`` (``forge-emergency consume``) and the consumption is
    ledger-commented with the head SHA. A second emergency needs a fresh
@@ -36,6 +41,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, replace
@@ -52,6 +58,10 @@ logger = logging.getLogger(__name__)
 
 SENTINEL_RELPATH = Path(".forge-emergency")
 
+# Consume-time mutex sibling — created O_EXCL so "exactly one" holds
+# under concurrent gate invocations; removed together with the sentinel.
+_CONSUME_LOCK = Path(".forge-emergency.lock")
+
 _DEFAULT_TTL_HOURS = 4.0
 _MAX_TTL_HOURS = 24.0
 
@@ -67,12 +77,17 @@ class EmergencyState:
         reason: The human-stated justification given at ``start``.
         expires_at: ISO-8601 UTC instant after which the arm is void.
         spent: ``True`` once the single allowed bypass was consumed.
+        pr_number: The emergency PR, recorded structurally by
+            ``record-pr`` after publication — repayment never trusts
+            free-text ledger comments (anyone can comment on a public
+            issue).
     """
 
     ledger_issue: int
     reason: str
     expires_at: str
     spent: bool = False
+    pr_number: int | None = None
 
 
 def read_state(root: Path) -> EmergencyState | None:
@@ -95,6 +110,9 @@ def read_state(root: Path) -> EmergencyState | None:
             reason=str(data["reason"]),
             expires_at=str(data["expires_at"]),
             spent=bool(data.get("spent", False)),
+            pr_number=(
+                int(data["pr_number"]) if data.get("pr_number") is not None else None
+            ),
         )
     except (OSError, ValueError, KeyError, TypeError):
         return None
@@ -216,6 +234,13 @@ def _cmd_start(root: Path, reason: str, ttl_hours: float) -> int:
     Returns:
         ``0`` armed; ``1`` refused.
     """
+    if os.environ.get("FORGE_EMERGENCY_ACK") != "1":
+        emit(
+            "emergency: refused — arming requires the explicit human "
+            "authorization marker: FORGE_EMERGENCY_ACK=1 forge-emergency "
+            "start --reason ... (agents: only on explicit user instruction)."
+        )
+        return 1
     if armed_state(root) is not None:
         emit("emergency: already armed — one event at a time (see status).")
         return 1
@@ -278,6 +303,15 @@ def _cmd_consume(root: Path) -> int:
     if state is None:
         emit("emergency: no armed bypass — gate stays closed.")
         return 1
+    # One-shot under concurrency: O_CREAT|O_EXCL makes the armed→spent
+    # transition a race-safe critical section — the second of two
+    # concurrent consumers loses on EEXIST and the gate stays closed for
+    # it. The lock lives until `end` removes it with the sentinel.
+    try:
+        os.close(os.open(root / _CONSUME_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except FileExistsError:
+        emit("emergency: bypass already being consumed — gate stays closed.")
+        return 1
     write_state(root, replace(state, spent=True))
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -286,7 +320,7 @@ def _cmd_consume(root: Path) -> int:
         text=True,
         check=False,
     ).stdout.strip()
-    _gh(
+    proc = _gh(
         "issue",
         "comment",
         str(state.ledger_issue),
@@ -294,60 +328,89 @@ def _cmd_consume(root: Path) -> int:
         f"Bypass consumed at `{head or 'unknown'}` — one PR publishes "
         "without verification. Retro-verification owed.",
     )
+    if proc.returncode != 0:
+        # The one-shot spend already happened (never double-spend on a
+        # transient gh failure) — but the missing ledger line must be
+        # LOUD, not silent: the hook forwards this stderr verbatim.
+        emit(
+            f"emergency: WARNING — ledger comment on #{state.ledger_issue} "
+            "FAILED; the bypass is spent but unrecorded. Comment the head "
+            "SHA on the ledger manually."
+        )
     emit(f"emergency: bypass consumed (ledger #{state.ledger_issue}).")
     return 0
 
 
-def _repayment_evidence(ledger_issue: int) -> tuple[int | None, bool]:
-    """Return ``(pr_number, repaid)`` for the ledger's emergency PR.
+def _cmd_record_pr(root: Path, pr_number: int) -> int:
+    """Record the emergency PR number structurally in the sentinel.
 
-    The PR number comes from the ledger comments (the ``/pr`` flow posts
-    ``PR #N`` after publication). Repaid means the PR's newest posted
-    ``verified-at:`` SHA prefixes its current head — real verification
-    landed after delivery.
+    Called by the ``/pr`` flow right after ``gh pr create``. Repayment
+    reads this field — never free-text ledger comments, which anyone can
+    post on a public issue (PR-number spoofing). A human-readable ledger
+    comment is still posted as the audit trail, but it is not the source
+    of truth.
 
     Args:
-        ledger_issue: The ledger issue number.
+        root: Repo root.
+        pr_number: The published emergency PR.
 
     Returns:
-        ``(pr_number, repaid)`` — ``(None, False)`` when no PR is
-        recorded or ``gh`` fails.
+        ``0`` recorded; ``1`` when no sentinel exists to record into.
     """
-    proc = _gh(
+    state = read_state(root)
+    if state is None:
+        emit("emergency: no sentinel — nothing to record the PR into.")
+        return 1
+    write_state(root, replace(state, pr_number=pr_number))
+    _gh(
         "issue",
-        "view",
-        str(ledger_issue),
-        "--json",
-        "comments",
-        "--jq",
-        '[.comments[].body] | join("\\n")',
+        "comment",
+        str(state.ledger_issue),
+        "--body",
+        f"Emergency PR published: PR #{pr_number} (recorded in the "
+        "sentinel; repayment closes this ledger).",
     )
-    if proc.returncode != 0:
-        return None, False
-    pr_number = None
-    for token in proc.stdout.replace("PR #", "\nPR #").splitlines():
-        if token.startswith("PR #") and token[4:].split()[0].isdigit():
-            pr_number = int(token[4:].split()[0])
-    if pr_number is None:
+    emit(f"emergency: PR #{pr_number} recorded (ledger #{state.ledger_issue}).")
+    return 0
+
+
+def _repayment_evidence(state: EmergencyState) -> tuple[int | None, bool]:
+    """Return ``(pr_number, repaid)`` for the sentinel's recorded PR.
+
+    The PR number comes from the sentinel's structural ``pr_number``
+    field (``record-pr``) — free-text ledger comments are never trusted
+    (anyone can comment on a public issue). Repaid means the PR's newest
+    posted ``verified-at:`` SHA prefixes its current head — real
+    verification landed after delivery.
+
+    Args:
+        state: The sentinel state.
+
+    Returns:
+        ``(pr_number, repaid)`` — ``(None, False)`` when no PR was
+        recorded; ``(pr_number, False)`` when ``gh`` fails or no
+        matching wrap-up exists.
+    """
+    if state.pr_number is None:
         return None, False
     pr = _gh(
         "pr",
         "view",
-        str(pr_number),
+        str(state.pr_number),
         "--json",
         "headRefOid,comments",
     )
     if pr.returncode != 0:
-        return pr_number, False
+        return state.pr_number, False
     try:
         data = json.loads(pr.stdout)
     except json.JSONDecodeError:
-        return pr_number, False
+        return state.pr_number, False
     shas = extract_verified_shas(
         "\n".join(c.get("body", "") for c in data.get("comments", []))
     )
     head = data.get("headRefOid", "")
-    return pr_number, bool(shas and head.startswith(shas[-1]))
+    return state.pr_number, bool(shas and head.startswith(shas[-1]))
 
 
 def _cmd_end(root: Path) -> int:
@@ -363,7 +426,22 @@ def _cmd_end(root: Path) -> int:
     if state is None:
         emit("emergency: no sentinel — nothing to end.")
         return 0
-    pr_number, repaid = _repayment_evidence(state.ledger_issue)
+    if not state.spent:
+        # Armed but never consumed (or expired unused): cancel cleanly.
+        _gh(
+            "issue",
+            "comment",
+            str(state.ledger_issue),
+            "--body",
+            "Emergency cancelled — the bypass was never consumed. "
+            "Closing the ledger; no verification debt exists.",
+        )
+        _gh("issue", "close", str(state.ledger_issue))
+        (root / SENTINEL_RELPATH).unlink(missing_ok=True)
+        (root / _CONSUME_LOCK).unlink(missing_ok=True)
+        emit(f"emergency: unused arm cancelled; ledger #{state.ledger_issue} closed.")
+        return 0
+    pr_number, repaid = _repayment_evidence(state)
     if not repaid:
         emit(
             f"emergency: debt outstanding on ledger #{state.ledger_issue} — "
@@ -383,8 +461,16 @@ def _cmd_end(root: Path) -> int:
         f"Repaid: PR #{pr_number} carries a posted wrap-up naming its "
         "head. Closing the ledger.",
     )
-    _gh("issue", "close", str(state.ledger_issue))
+    close = _gh("issue", "close", str(state.ledger_issue))
     (root / SENTINEL_RELPATH).unlink(missing_ok=True)
+    (root / _CONSUME_LOCK).unlink(missing_ok=True)
+    if close.returncode != 0:
+        emit(
+            f"emergency: WARNING — closing ledger #{state.ledger_issue} "
+            "FAILED; the debt is repaid but the issue is still open. "
+            "Close it manually."
+        )
+        return 1
     emit(f"emergency: ledger #{state.ledger_issue} repaid and closed.")
     return 0
 
@@ -420,6 +506,11 @@ def main(argv: list[str] | None = None) -> int:
         "consume",
         help="spend the armed bypass (called by the wrap-up gate hook)",
     )
+    record = sub.add_parser(
+        "record-pr",
+        help="record the published emergency PR number in the sentinel",
+    )
+    record.add_argument("pr_number", type=int, help="the emergency PR number")
     sub.add_parser("end", help="close the ledger once the debt is repaid")
     args = parser.parse_args(argv)
     root = repo_root()
@@ -429,6 +520,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_status(root)
     if args.command == "consume":
         return _cmd_consume(root)
+    if args.command == "record-pr":
+        return _cmd_record_pr(root, args.pr_number)
     return _cmd_end(root)
 
 

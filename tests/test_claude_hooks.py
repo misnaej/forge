@@ -2323,19 +2323,32 @@ def test_unverified_pr_create_emergency_addition_leaves_light_mode_unaffected(
     git_repo_with_commit: tuple[Path, str],
     tmp_path: Path,
 ) -> None:
-    """Light mode still passes when classifier agrees; unaffected by EMERGENCY.
+    """A `light` wrap-up allows even with `forge-emergency` absent from PATH.
 
-    Regression guard: the EMERGENCY branch sits ahead of the LIGHT re-check
-    in the hook script — it must not shadow or short-circuit it.
+    Regression guard: the EMERGENCY branch sits ahead of the LIGHT
+    re-check in the hook script (a `grep` on `wrapup-mode: emergency`),
+    so adding it must not make LIGHT wrap-ups newly depend on
+    `forge-emergency` being installed. Distinguishes this from its
+    sibling `test_unverified_pr_create_light_mode_stub_light_code_allows`
+    (same wrap-up + classifier stub, `forge-emergency` untouched): here
+    `forge-emergency` is stripped from PATH entirely — proving the
+    EMERGENCY branch's own `command -v` guard (which would otherwise
+    block, per `test_unverified_pr_create_emergency_missing_cli_blocks`)
+    is never reached for a `light` mode line.
 
     MOCK SETUP: reuses `_stub_forge_pr_plan` (already covers the LIGHT
-    re-check's own wiring in the section above) — no `forge-emergency`
-    stub needed since a `light` mode line never reaches that branch.
+    re-check's own wiring in the section above), layered on a PATH with
+    every `forge-emergency`-resolving directory removed.
     """
     repo, sha = git_repo_with_commit
     _write_wrapup_light(repo, sha)
     _write_forge_dev_branch_config(repo)
     env = _stub_forge_pr_plan(tmp_path, "light-code")
+    env["PATH"] = os.pathsep.join(
+        d
+        for d in env["PATH"].split(os.pathsep)
+        if not (Path(d) / "forge-emergency").is_file()
+    )
     assert (
         _run_hook(
             _UNVERIFIED_PR_CREATE,

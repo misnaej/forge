@@ -317,18 +317,20 @@ options:
 ## forge-emergency
 
 ```text
-usage: forge-emergency [-h] {start,status,consume,end} ...
+usage: forge-emergency [-h] {start,status,consume,record-pr,end} ...
 
 One-shot deferred-verification bypass with a public ledger issue. Arms exactly
 one `wrapup-mode: emergency` publication; pre-commit and every safety hook
 stay fully enforced.
 
 positional arguments:
-  {start,status,consume,end}
+  {start,status,consume,record-pr,end}
     start               arm one bypass (files the ledger first)
     status              print armed/spent/expired state
     consume             spend the armed bypass (called by the wrap-up gate
                         hook)
+    record-pr           record the published emergency PR number in the
+                        sentinel
     end                 close the ledger once the debt is repaid
 
 options:

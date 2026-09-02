@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_69 modules, 837 symbols._
+_69 modules, 838 symbols._
 
 ## `forge`
 
@@ -339,7 +339,8 @@ _69 modules, 837 symbols._
 - `_cmd_start(root: Path, reason: str, ttl_hours: float) -> int` _(internal)_ — Arm the one-shot bypass: ledger issue first, then the sentinel.
 - `_cmd_status(root: Path) -> int` _(internal)_ — Print the sentinel state.
 - `_cmd_consume(root: Path) -> int` _(internal)_ — Spend the armed bypass (called by the wrap-up gate hook).
-- `_repayment_evidence(ledger_issue: int) -> tuple[int | None, bool]` _(internal)_ — Return ``(pr_number, repaid)`` for the ledger's emergency PR.
+- `_cmd_record_pr(root: Path, pr_number: int) -> int` _(internal)_ — Record the emergency PR number structurally in the sentinel.
+- `_repayment_evidence(state: EmergencyState) -> tuple[int | None, bool]` _(internal)_ — Return ``(pr_number, repaid)`` for the sentinel's recorded PR.
 - `_cmd_end(root: Path) -> int` _(internal)_ — Close the ledger when the emergency PR's verification debt is repaid.
 - `main(argv: list[str] | None = None) -> int` — Run the ``forge-emergency`` CLI.
 

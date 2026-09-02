@@ -44,6 +44,18 @@ def test_canonical_labels_colors_are_six_hex() -> None:
         int(color, 16)  # raises if not hex
 
 
+def test_canonical_labels_include_emergency_mode() -> None:
+    """`emergency-mode` is provisioned by `forge-emergency start`.
+
+    Pin for the `forge.emergency` / `install_labels` provisioning contract:
+    `_create_ledger_issue` files every ledger issue with the `emergency-mode`
+    label, so it must exist in the canonical schema for `install-forge-labels`
+    to create it up front.
+    """
+    names = {label["name"] for label in install_labels.CANONICAL_LABELS}
+    assert "emergency-mode" in names
+
+
 def test_existing_labels_parses_gh_json(monkeypatch: pytest.MonkeyPatch) -> None:
     """_existing_labels returns the set of names from gh label list JSON output."""
     stdout = json.dumps([{"name": "bug"}, {"name": "tier-1-critical"}])

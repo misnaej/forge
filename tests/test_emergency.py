@@ -8,9 +8,14 @@
 # "no re-comment on refusal", etc.), not a single canned return value.
 # ``_cmd_consume``'s bare ``git rev-parse HEAD`` shells out directly (not
 # through ``_gh``), so that one case runs against a real ephemeral repo
-# built by ``tests.conftest.init_git_repo`` instead of being faked. No test
-# freezes time: TTL/expiry assertions compare a freshly computed
-# ``datetime.now(UTC)`` delta with a generous tolerance instead.
+# built by ``tests.conftest.init_git_repo`` instead of being faked. The
+# ``O_CREAT|O_EXCL`` consume lock is likewise real filesystem state (a
+# plain ``.forge-emergency.lock`` file under ``tmp_path``), not faked —
+# the lock-contention test pre-creates it directly. Every ``_cmd_start``
+# test that expects arming to succeed sets ``FORGE_EMERGENCY_ACK=1`` via
+# ``monkeypatch.setenv`` — the human-authorization marker `start` refuses
+# without. No test freezes time: TTL/expiry assertions compare a freshly
+# computed ``datetime.now(UTC)`` delta with a generous tolerance instead.
 """
 
 from __future__ import annotations
@@ -201,6 +206,7 @@ def test_cmd_start_arms_on_ledger_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A successful ledger-issue creation writes the sentinel and returns 0."""
+    monkeypatch.setenv("FORGE_EMERGENCY_ACK", "1")
     fake, calls = _fake_gh([FakeProc(stdout="https://github.com/o/r/issues/17\n")])
     monkeypatch.setattr(emergency, "_gh", fake)
 
@@ -218,12 +224,33 @@ def test_cmd_start_arms_on_ledger_success(
     assert hours == pytest.approx(4.0, abs=0.01)
     assert "ARMED" in capsys.readouterr().out
     assert calls[0][:2] == ("issue", "create")
+    label = calls[0][calls[0].index("--label") + 1]
+    assert "emergency-mode" in label
+
+
+def test_cmd_start_refuses_without_ack_env_var(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Without `FORGE_EMERGENCY_ACK=1`, `start` refuses before touching `gh`."""
+    monkeypatch.delenv("FORGE_EMERGENCY_ACK", raising=False)
+    fake, calls = _fake_gh([])
+    monkeypatch.setattr(emergency, "_gh", fake)
+
+    rc = emergency._cmd_start(tmp_path, "prod is down", 4.0)
+
+    assert rc == 1
+    assert "FORGE_EMERGENCY_ACK" in capsys.readouterr().out
+    assert calls == []
+    assert emergency.read_state(tmp_path) is None
 
 
 def test_cmd_start_refuses_when_already_armed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An already-armed sentinel refuses `start` without any `gh` call."""
+    monkeypatch.setenv("FORGE_EMERGENCY_ACK", "1")
     emergency.write_state(
         tmp_path,
         emergency.EmergencyState(ledger_issue=1, reason="first", expires_at=_iso_in(1)),
@@ -241,6 +268,7 @@ def test_cmd_start_writes_no_sentinel_when_ledger_creation_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A failing `gh issue create` leaves no sentinel — no ledger, no mode."""
+    monkeypatch.setenv("FORGE_EMERGENCY_ACK", "1")
     fake, calls = _fake_gh([FakeProc(returncode=1)])
     monkeypatch.setattr(emergency, "_gh", fake)
 
@@ -268,6 +296,7 @@ def test_cmd_start_clamps_ttl_to_bounds(
         raw_ttl: The requested ``--ttl`` value.
         expected_hours: The clamped lifetime the sentinel must record.
     """
+    monkeypatch.setenv("FORGE_EMERGENCY_ACK", "1")
     fake, _calls = _fake_gh([FakeProc(stdout="https://github.com/o/r/issues/9\n")])
     monkeypatch.setattr(emergency, "_gh", fake)
 
@@ -294,6 +323,8 @@ def test_create_ledger_issue_parses_number_from_url_tail(
 
     assert emergency._create_ledger_issue("reason", _iso_in(1)) == 123
     assert calls[0][:2] == ("issue", "create")
+    label = calls[0][calls[0].index("--label") + 1]
+    assert "emergency-mode" in label
 
 
 # --- main() ------------------------------------------------------------
@@ -333,6 +364,24 @@ def test_main_dispatches_end_against_repo_root(
 
     assert emergency.main(["end"]) == 0
     assert "nothing to end" in capsys.readouterr().out
+
+
+def test_main_dispatches_record_pr_against_repo_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`main(["record-pr", "17"])` reaches `_cmd_record_pr` via `repo_root()`."""
+    monkeypatch.setattr(emergency, "repo_root", lambda: tmp_path)
+    emergency.write_state(tmp_path, emergency.EmergencyState(7, "dispatch", _iso_in(1)))
+    fake, _calls = _fake_gh([FakeProc()])
+    monkeypatch.setattr(emergency, "_gh", fake)
+
+    assert emergency.main(["record-pr", "17"]) == 0
+    assert "PR #17" in capsys.readouterr().out
+    state = emergency.read_state(tmp_path)
+    assert state is not None
+    assert state.pr_number == 17
 
 
 # --- _cmd_status -------------------------------------------------------
@@ -413,6 +462,64 @@ def test_cmd_consume_spends_armed_state_and_comments_head_sha(
     assert state.spent is True
     assert calls[0][:3] == ("issue", "comment", "5")
     assert head in calls[0][-1]
+    assert (tmp_path / emergency._CONSUME_LOCK).is_file()
+
+
+def test_cmd_consume_refuses_lock_contention_leaves_sentinel_unspent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A pre-existing consume lock refuses `consume` — race-safe one-shot pin.
+
+    Simulates the second of two concurrent consumers: the lock file is
+    pre-created (as the first consumer's `O_CREAT|O_EXCL` would leave it)
+    before an armed sentinel is consumed, so this consumer must lose on
+    `EEXIST` without ever spending the sentinel.
+    """
+    state = emergency.EmergencyState(ledger_issue=5, reason="x", expires_at=_iso_in(1))
+    emergency.write_state(tmp_path, state)
+    (tmp_path / emergency._CONSUME_LOCK).write_text("")
+    fake, calls = _fake_gh([])
+    monkeypatch.setattr(emergency, "_gh", fake)
+
+    rc = emergency._cmd_consume(tmp_path)
+
+    assert rc == 1
+    assert "already being consumed" in capsys.readouterr().out
+    assert calls == []
+    assert emergency.read_state(tmp_path) == state
+
+
+def test_cmd_consume_still_spends_and_warns_on_ledger_comment_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A failing ledger comment does not un-spend the bypass — it warns LOUDLY.
+
+    The one-shot spend already happened by the time the comment is
+    attempted (never double-spend on a transient `gh` failure), so a
+    failing comment degrades to a loud stderr-forwarded warning, not a
+    reverted spend.
+    """
+    init_git_repo(tmp_path)
+    emergency.write_state(
+        tmp_path,
+        emergency.EmergencyState(ledger_issue=5, reason="x", expires_at=_iso_in(1)),
+    )
+    fake, _calls = _fake_gh([FakeProc(returncode=1)])
+    monkeypatch.setattr(emergency, "_gh", fake)
+
+    rc = emergency._cmd_consume(tmp_path)
+
+    assert rc == 0
+    state = emergency.read_state(tmp_path)
+    assert state is not None
+    assert state.spent is True
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "unrecorded" in out
 
 
 def test_cmd_consume_refuses_when_nothing_armed(
@@ -462,102 +569,127 @@ def test_cmd_consume_refuses_already_spent_without_recommenting(
     assert emergency.read_state(tmp_path) == state
 
 
+# --- _cmd_record_pr ----------------------------------------------------
+
+
+def test_cmd_record_pr_refuses_when_no_sentinel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No sentinel at all refuses `record-pr` without touching `gh`."""
+    fake, calls = _fake_gh([])
+    monkeypatch.setattr(emergency, "_gh", fake)
+
+    rc = emergency._cmd_record_pr(tmp_path, 17)
+
+    assert rc == 1
+    assert calls == []
+
+
+def test_cmd_record_pr_persists_pr_number_and_comments_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An existing sentinel records the PR number and posts a ledger comment."""
+    emergency.write_state(
+        tmp_path,
+        emergency.EmergencyState(ledger_issue=5, reason="x", expires_at=_iso_in(1)),
+    )
+    fake, calls = _fake_gh([FakeProc()])
+    monkeypatch.setattr(emergency, "_gh", fake)
+
+    rc = emergency._cmd_record_pr(tmp_path, 17)
+
+    assert rc == 0
+    state = emergency.read_state(tmp_path)
+    assert state is not None
+    assert state.pr_number == 17
+    assert calls[0][:3] == ("issue", "comment", "5")
+    assert "17" in calls[0][-1]
+
+
 # --- _repayment_evidence ----------------------------------------------------
 
 
-def test_repayment_evidence_returns_true_when_head_prefixed_by_verified_sha(
+def test_repayment_evidence_returns_none_false_when_no_pr_recorded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A PR whose head is prefixed by its newest `verified-at:` SHA is repaid."""
-    issue_stdout = "Bypass consumed at `abc123`\nPR #99 opened\n"
-    pr_stdout = json.dumps(
-        {
-            "headRefOid": "deadbeefcafe",
-            "comments": [{"body": "verified-at: deadbee wrap-up"}],
-        }
-    )
-    fake, _calls = _fake_gh([FakeProc(stdout=issue_stdout), FakeProc(stdout=pr_stdout)])
+    """No `pr_number` recorded in the sentinel degrades to `(None, False)`.
+
+    No comment parsing left to fall back to — `record-pr` is the only way
+    a PR number ever reaches the sentinel — so absence means no `gh` call
+    at all.
+    """
+    state = emergency.EmergencyState(ledger_issue=5, reason="x", expires_at=_iso_in(1))
+    fake, calls = _fake_gh([])
     monkeypatch.setattr(emergency, "_gh", fake)
 
-    assert emergency._repayment_evidence(5) == (99, True)
-
-
-def test_repayment_evidence_returns_none_false_on_issue_view_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A failing `gh issue view` degrades to `(None, False)`, no `pr view` attempted."""
-    fake, calls = _fake_gh([FakeProc(returncode=1)])
-    monkeypatch.setattr(emergency, "_gh", fake)
-
-    assert emergency._repayment_evidence(5) == (None, False)
-    assert len(calls) == 1
-
-
-def test_repayment_evidence_returns_none_false_when_no_pr_token_found(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """No `PR #N` token in the ledger comments degrades to `(None, False)`."""
-    fake, calls = _fake_gh([FakeProc(stdout="just chatting, no pr reference\n")])
-    monkeypatch.setattr(emergency, "_gh", fake)
-
-    assert emergency._repayment_evidence(5) == (None, False)
-    assert len(calls) == 1
+    assert emergency._repayment_evidence(state) == (None, False)
+    assert calls == []
 
 
 def test_repayment_evidence_keeps_pr_number_on_pr_view_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A resolved PR number survives a failing `gh pr view` as `(pr, False)`."""
-    fake, _calls = _fake_gh(
-        [FakeProc(stdout="PR #42 opened\n"), FakeProc(returncode=1)]
+    """A failing `gh pr view` keeps the recorded PR number as `(pr, False)`."""
+    state = emergency.EmergencyState(
+        ledger_issue=5, reason="x", expires_at=_iso_in(1), pr_number=42
     )
+    fake, calls = _fake_gh([FakeProc(returncode=1)])
     monkeypatch.setattr(emergency, "_gh", fake)
 
-    assert emergency._repayment_evidence(5) == (42, False)
+    assert emergency._repayment_evidence(state) == (42, False)
+    assert calls[0][:3] == ("pr", "view", "42")
 
 
 def test_repayment_evidence_keeps_pr_number_on_invalid_pr_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Unparseable `gh pr view` JSON keeps the PR number, still unrepaid."""
-    fake, _calls = _fake_gh(
-        [FakeProc(stdout="PR #42 opened\n"), FakeProc(stdout="not json")]
+    state = emergency.EmergencyState(
+        ledger_issue=5, reason="x", expires_at=_iso_in(1), pr_number=42
     )
+    fake, _calls = _fake_gh([FakeProc(stdout="not json")])
     monkeypatch.setattr(emergency, "_gh", fake)
 
-    assert emergency._repayment_evidence(5) == (42, False)
+    assert emergency._repayment_evidence(state) == (42, False)
 
 
-def test_repayment_evidence_last_pr_token_wins(
+def test_repayment_evidence_returns_true_when_head_prefixed_by_verified_sha(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Among several `PR #N` tokens (edits, reopens), the last one posted wins."""
-    issue_stdout = "PR #10 opened\nsome update\nPR #20 reopened after edits\n"
-    pr_stdout = json.dumps({"headRefOid": "abc", "comments": []})
-    fake, calls = _fake_gh([FakeProc(stdout=issue_stdout), FakeProc(stdout=pr_stdout)])
+    """A PR whose head is prefixed by its newest `verified-at:` SHA is repaid."""
+    state = emergency.EmergencyState(
+        ledger_issue=5, reason="x", expires_at=_iso_in(1), pr_number=99
+    )
+    pr_stdout = json.dumps(
+        {
+            "headRefOid": "deadbeefcafe",
+            "comments": [{"body": "verified-at: deadbee wrap-up"}],
+        }
+    )
+    fake, calls = _fake_gh([FakeProc(stdout=pr_stdout)])
     monkeypatch.setattr(emergency, "_gh", fake)
 
-    pr_number, _repaid = emergency._repayment_evidence(5)
-
-    assert pr_number == 20
-    assert calls[1][:3] == ("pr", "view", "20")
+    assert emergency._repayment_evidence(state) == (99, True)
+    assert calls[0][:3] == ("pr", "view", "99")
 
 
-def test_repayment_evidence_returns_false_when_head_not_prefixed(
+def test_repayment_evidence_returns_false_when_no_verified_at_match(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A `verified-at:` SHA that does not prefix the PR's head is not repaid."""
-    issue_stdout = "PR #7 opened\n"
+    state = emergency.EmergencyState(
+        ledger_issue=5, reason="x", expires_at=_iso_in(1), pr_number=7
+    )
     pr_stdout = json.dumps(
         {
             "headRefOid": "1234567890",
             "comments": [{"body": "verified-at: ffffff wrap-up"}],
         }
     )
-    fake, _calls = _fake_gh([FakeProc(stdout=issue_stdout), FakeProc(stdout=pr_stdout)])
+    fake, _calls = _fake_gh([FakeProc(stdout=pr_stdout)])
     monkeypatch.setattr(emergency, "_gh", fake)
 
-    assert emergency._repayment_evidence(5) == (7, False)
+    assert emergency._repayment_evidence(state) == (7, False)
 
 
 # --- _cmd_end ------------------------------------------------------------
@@ -576,45 +708,108 @@ def test_cmd_end_returns_zero_when_no_sentinel(
     assert calls == []
 
 
+def test_cmd_end_cancels_unspent_armed_sentinel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An armed-but-never-consumed sentinel cancels cleanly: comment, close, unlink."""
+    emergency.write_state(
+        tmp_path,
+        emergency.EmergencyState(ledger_issue=5, reason="x", expires_at=_iso_in(1)),
+    )
+    (tmp_path / emergency._CONSUME_LOCK).write_text("")
+    fake, calls = _fake_gh([FakeProc(), FakeProc()])
+    monkeypatch.setattr(emergency, "_gh", fake)
+
+    rc = emergency._cmd_end(tmp_path)
+
+    assert rc == 0
+    assert "cancelled" in capsys.readouterr().out
+    assert calls[0][:2] == ("issue", "comment")
+    assert calls[1][:2] == ("issue", "close")
+    assert not (tmp_path / emergency.SENTINEL_RELPATH).exists()
+    assert not (tmp_path / emergency._CONSUME_LOCK).exists()
+
+
 def test_cmd_end_reports_debt_and_keeps_sentinel_when_no_pr_recorded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No PR recorded on the ledger reports outstanding debt and keeps the sentinel."""
-    state = emergency.EmergencyState(ledger_issue=5, reason="x", expires_at=_iso_in(1))
+    """A spent sentinel with no recorded PR reports outstanding debt, no `gh` call."""
+    state = emergency.EmergencyState(
+        ledger_issue=5, reason="x", expires_at=_iso_in(1), spent=True
+    )
     emergency.write_state(tmp_path, state)
-    fake, _calls = _fake_gh([FakeProc(stdout="no pr reference here\n")])
+    fake, calls = _fake_gh([])
     monkeypatch.setattr(emergency, "_gh", fake)
 
     rc = emergency._cmd_end(tmp_path)
 
     assert rc == 1
     assert emergency.read_state(tmp_path) == state
+    assert calls == []
 
 
 def test_cmd_end_reports_debt_and_keeps_sentinel_when_pr_unverified(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A recorded but unverified PR reports outstanding debt and keeps the sentinel."""
-    state = emergency.EmergencyState(ledger_issue=5, reason="x", expires_at=_iso_in(1))
+    state = emergency.EmergencyState(
+        ledger_issue=5, reason="x", expires_at=_iso_in(1), spent=True, pr_number=9
+    )
     emergency.write_state(tmp_path, state)
     pr_stdout = json.dumps({"headRefOid": "abcdef1234", "comments": []})
-    fake, calls = _fake_gh(
-        [FakeProc(stdout="PR #9 opened\n"), FakeProc(stdout=pr_stdout)]
-    )
+    fake, calls = _fake_gh([FakeProc(stdout=pr_stdout)])
     monkeypatch.setattr(emergency, "_gh", fake)
 
     rc = emergency._cmd_end(tmp_path)
 
     assert rc == 1
     assert emergency.read_state(tmp_path) == state
-    assert len(calls) == 2  # no comment/close attempted on outstanding debt
+    assert len(calls) == 1  # no comment/close attempted on outstanding debt
 
 
 def test_cmd_end_closes_ledger_and_removes_sentinel_when_repaid(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A repaid PR closes the ledger (comment THEN close) and unlinks the sentinel."""
-    state = emergency.EmergencyState(ledger_issue=5, reason="x", expires_at=_iso_in(1))
+    state = emergency.EmergencyState(
+        ledger_issue=5, reason="x", expires_at=_iso_in(1), spent=True, pr_number=9
+    )
+    emergency.write_state(tmp_path, state)
+    (tmp_path / emergency._CONSUME_LOCK).write_text("")
+    pr_stdout = json.dumps(
+        {
+            "headRefOid": "deadbeefcafe",
+            "comments": [{"body": "verified-at: deadbee wrap-up"}],
+        }
+    )
+    fake, calls = _fake_gh([FakeProc(stdout=pr_stdout), FakeProc(), FakeProc()])
+    monkeypatch.setattr(emergency, "_gh", fake)
+
+    rc = emergency._cmd_end(tmp_path)
+
+    assert rc == 0
+    assert not (tmp_path / emergency.SENTINEL_RELPATH).exists()
+    assert not (tmp_path / emergency._CONSUME_LOCK).exists()
+    assert calls[1][:2] == ("issue", "comment")
+    assert calls[2][:2] == ("issue", "close")
+
+
+def test_cmd_end_close_failure_warns_but_still_unlinks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A failing `gh issue close` on a repaid debt warns and exits 1, files unlinked.
+
+    The debt is repaid (evidence exists) even though the ledger issue
+    itself could not be closed — files are still unlinked since the
+    bypass's local lifecycle is over regardless of GitHub API health.
+    """
+    state = emergency.EmergencyState(
+        ledger_issue=5, reason="x", expires_at=_iso_in(1), spent=True, pr_number=9
+    )
     emergency.write_state(tmp_path, state)
     pr_stdout = json.dumps(
         {
@@ -622,19 +817,13 @@ def test_cmd_end_closes_ledger_and_removes_sentinel_when_repaid(
             "comments": [{"body": "verified-at: deadbee wrap-up"}],
         }
     )
-    fake, calls = _fake_gh(
-        [
-            FakeProc(stdout="PR #9 opened\n"),
-            FakeProc(stdout=pr_stdout),
-            FakeProc(),
-            FakeProc(),
-        ]
+    fake, _calls = _fake_gh(
+        [FakeProc(stdout=pr_stdout), FakeProc(), FakeProc(returncode=1)]
     )
     monkeypatch.setattr(emergency, "_gh", fake)
 
     rc = emergency._cmd_end(tmp_path)
 
-    assert rc == 0
+    assert rc == 1
+    assert "WARNING" in capsys.readouterr().out
     assert not (tmp_path / emergency.SENTINEL_RELPATH).exists()
-    assert calls[2][:2] == ("issue", "comment")
-    assert calls[3][:2] == ("issue", "close")
