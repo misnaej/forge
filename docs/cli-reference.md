@@ -319,12 +319,6 @@ options:
                         for consumers who only adopt the pip CLIs.
 ```
 
-## forge-emergency
-
-```text
-(--help unavailable for forge-emergency)
-```
-
 ## forge-gen-api-digest
 
 ```text

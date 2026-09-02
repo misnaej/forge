@@ -61,9 +61,9 @@ from forge.git_utils import (
     latest_v_tag,
     merge_base_with_head,
     next_version,
+    render_plugin_version,
     repo_root,
     run_git,
-    write_plugin_version,
 )
 
 
@@ -527,6 +527,21 @@ def _cmd_release(root: Path, date: str) -> int:
         emit("release: no pending fragments — nothing to release.")
         return 2
     bare_version, _level = computed
+    # Compute-then-write (rebump's invariant, mirrored): render the
+    # manifest FIRST — it is pure and carries the fail-closed
+    # validation — so a manifest refusal leaves the tree untouched
+    # instead of stranding a half-release (heading written, fragments
+    # already deleted, manifest stale).
+    manifest = root / ".claude-plugin" / "plugin.json"
+    manifest_text: str | None = None
+    if manifest.is_file():
+        try:
+            manifest_text = render_plugin_version(
+                manifest.read_text(encoding="utf-8"), bare_version
+            )
+        except ValueError as exc:
+            emit(f"release: {exc}")
+            return 2
     # next_version_from_fragments already proved every fragment valid,
     # so this re-collection cannot surface errors — it only recovers the
     # Fragment list the tuple result does not carry.
@@ -536,12 +551,8 @@ def _cmd_release(root: Path, date: str) -> int:
     )
     if outcome != 0:
         return outcome
-    if (root / ".claude-plugin" / "plugin.json").is_file():
-        try:
-            write_plugin_version(root, bare_version)
-        except ValueError as exc:
-            emit(f"release: {exc}")
-            return 2
+    if manifest_text is not None:
+        manifest.write_text(manifest_text, encoding="utf-8")
         run_git("add", ".claude-plugin/plugin.json", cwd=root)
         emit(f"Staged .claude-plugin/plugin.json at {bare_version}.")
     emit(

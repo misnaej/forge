@@ -195,8 +195,11 @@ def _guard_entry_state(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) ->
         if PLUGIN_PATH in unmerged and is_fragments_mode(repo_root):
             msg = (
                 "fragments mode: a plugin.json conflict is a release-PR "
-                "race, not a per-PR slot collision — recompute with "
-                "`forge-changelog release` instead."
+                "race. Recovery: take the BASE side of CHANGELOG.md and "
+                "plugin.json, restore this branch's consumed fragments "
+                "from the merge base (`git checkout $(git merge-base HEAD "
+                "MERGE_HEAD) -- changelog.d/`), then re-run "
+                "`forge-changelog release` to recompute."
             )
             raise _RefusalError(msg)
         return

@@ -66,7 +66,11 @@ silently merge.** Which variant depends on Step 0:
   rolling-next version-slot collision), run **`forge-rebump`** instead
   of hand-resolving: it classifies the branch's bump intent, takes the
   next open slot, restacks the changelog (shared-heading mode), and
-  stages — refusing loudly if any other file conflicts.
+  stages — refusing loudly if any other file conflicts. **Fragments
+  mode**: rebump refuses here by design — a manifest conflict is a
+  racing release PR; follow the refusal's recovery (base side of both
+  files, restore consumed fragments from the merge base, re-run
+  `forge-changelog release`).
 - **Behind but clean** (left count > 0, not conflicting) → merge the
   base in and proceed, saying what was done — **no confirmation
   needed** (FOUNDATION §6's resolution rule governs): it refreshes the

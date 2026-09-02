@@ -151,12 +151,23 @@ def main() -> int:
                 plugin_version_str,
             )
             return 1
-        # Cheap version check first: a rolling-next bump (plugin.json strictly
-        # ahead) is the common dev commit and passes immediately. Only when
-        # plugin.json is NOT ahead do we reach the release-commit check —
-        # which fingerprints every v* tag — so normal dev commits never pay
-        # that per-tag `git ls-tree` cost; it runs only on release branches.
+        # An ahead manifest is the release window (shared-heading mode's
+        # common dev commit; fragments mode's release PR). In fragments
+        # mode an ahead manifest with NEW pending fragments is a stale
+        # release computation — a bump merged after `release` ran, and
+        # tagging now would ship that change under the wrong version.
         if plugin_ver > tag_ver:
+            if is_fragments_mode(repo_root) and discover_fragments(repo_root):
+                logger.error(
+                    "fragment mode: plugin.json %s is ahead of tag %s but "
+                    "pending changelog.d/ fragments exist — the release "
+                    "computation is stale (a bump merged after "
+                    "`forge-changelog release` ran). Sync the base and "
+                    "recompute the release before committing.",
+                    plugin_ver,
+                    latest_tag,
+                )
+                return 1
             logger.info(
                 "plugin.json %s > latest tag %s (%s)", plugin_ver, latest_tag, tag_ver
             )
@@ -183,12 +194,15 @@ def _not_ahead_verdict(
         mode parked at the tag with valid pending fragments); ``1``
         otherwise.
     """
+    # Parked check first: in fragments mode EVERY ordinary commit sits at
+    # == tag, so the fingerprint fallback (per-tag `git ls-tree` over the
+    # whole tag set) must not run on the common path. A release commit
+    # has zero pending fragments and passes the parked check anyway.
+    if is_fragments_mode(repo_root) and plugin_ver == tag_ver:
+        return _fragment_parked_verdict(repo_root, latest_tag)
     if _is_release_commit(repo_root):
         logger.info("(HEAD reproduces a published v* release tag — skipped)")
         return 0
-    fragments_mode = is_fragments_mode(repo_root)
-    if fragments_mode and plugin_ver == tag_ver:
-        return _fragment_parked_verdict(repo_root, latest_tag)
     logger.error(
         "plugin.json version %s must be strictly greater than the latest "
         "tag %s (%s). Bump .claude-plugin/plugin.json before the next "

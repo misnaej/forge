@@ -706,6 +706,33 @@ def test_main_release_without_manifest_prints_version_for_tag_flow(
     assert "Release v1.0.1 prepared" in capsys.readouterr().out
 
 
+def test_main_release_manifest_refusal_leaves_tree_untouched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A manifest render refusal fires before ANY write — no half-release.
+
+    Compute-then-write pin (mirrors rebump's invariant): a manifest with
+    no ``"version"`` field refuses at render time, so the changelog is
+    not assembled, no fragment is deleted, and nothing is staged.
+    """
+    _init_tagged_repo(tmp_path)
+    original = "# Changelog\n"
+    (tmp_path / "CHANGELOG.md").write_text(original)
+    _write_fragment(tmp_path / "changelog.d", "ok.added.md", "bump: minor\n- x\n")
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir(exist_ok=True)
+    (plugin_dir / "plugin.json").write_text('{"name": "forge"}\n')
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+
+    assert main(["release"]) == 2
+
+    assert 'no "version" field' in capsys.readouterr().out
+    assert (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8") == original
+    assert (tmp_path / "changelog.d" / "ok.added.md").exists()
+
+
 def test_main_release_exit_two_on_invalid_fragment_touches_nothing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

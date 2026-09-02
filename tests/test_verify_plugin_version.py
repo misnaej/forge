@@ -442,8 +442,9 @@ def test_fragments_mode_manifest_ahead_of_tag_still_passes(
 ) -> None:
     """Fragments mode: plugin.json > latest tag (the release window) → 0.
 
-    The release PR itself carries the advanced manifest; the pre-existing
-    strictly-ahead pass must survive fragment mode unchanged.
+    The release PR itself carries the advanced manifest with ZERO pending
+    fragments (its release commit consumed them); the strictly-ahead pass
+    survives fragment mode only in that clean release window.
     """
     _init_fragments_repo(tmp_path)
     _write_plugin_overwrite(tmp_path, "1.1.0")
@@ -453,6 +454,29 @@ def test_fragments_mode_manifest_ahead_of_tag_still_passes(
     assert verify_plugin_version.main() == 0
     log = (tmp_path / "code_health" / "plugin_version.log").read_text()
     assert "> latest tag" in log
+
+
+def test_fragments_mode_manifest_ahead_with_pending_fragments_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fragments mode: manifest ahead of the tag PLUS pending fragments → 1.
+
+    The mis-tag race: a release PR computed its version, then a new bump
+    fragment merged in from the base — tagging now would ship that change
+    under the stale version (a major could surface one release late).
+    The guard blocks the state; the fix is syncing and recomputing the
+    release.
+    """
+    _init_fragments_repo(tmp_path)
+    _write_plugin_overwrite(tmp_path, "1.1.0")
+    _commit_post_tag_work(
+        tmp_path, fragment="bump: major\n- late-merged breaking change\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 1
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "release computation is stale" in log
 
 
 def test_headings_mode_manifest_at_tag_still_fails(

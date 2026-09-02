@@ -78,7 +78,13 @@ Forge runs `[tool.forge.changelog].mode = "fragments"`:
     single writer; skipped in manifest-less tag-versioned repos), and
     stages everything. It never commits: branch → run it → ordinary PR
     → merge → tag-on-merge cuts the tag. Racing release PRs collapse
-    into an ordinary PR conflict; the loser recomputes on resolve.
+    into an ordinary PR conflict; the loser recovers by taking the
+    BASE side of `CHANGELOG.md` and `plugin.json`, restoring its
+    consumed fragments from the merge base
+    (`git checkout $(git merge-base HEAD MERGE_HEAD) -- changelog.d/`),
+    and re-running `forge-changelog release` — its own release commit
+    already deleted its fragments, so a bare re-run has nothing to
+    compute from.
   - `forge-changelog assemble --version vX.Y.Z --delete` remains the
     explicit-version core for flows that supply their own version.
 - `forge-next-prep` logs a pending-fragment advisory (count + the
