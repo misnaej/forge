@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_68 modules, 824 symbols._
+_69 modules, 837 symbols._
 
 ## `forge`
 
@@ -324,6 +324,24 @@ _68 modules, 824 symbols._
 - `_check_under_used_capabilities(repo_root: Path) -> list[CheckResult]` _(internal)_ — Surface installed-but-never-run forge capabilities.
 - `_print_human(results: list[CheckResult]) -> None` _(internal)_ — Print a human-readable report, separating blocking and INFO results.
 - `main() -> int` — Run all forge-doctor checks and print the results.
+
+## `forge.emergency`
+
+> _forge-emergency — one-shot deferred-verification bypass with a public ledger._
+
+- `class EmergencyState` — The armed (or spent) one-shot bypass recorded in the sentinel file.
+- `read_state(root: Path) -> EmergencyState | None` — Return the sentinel state, or ``None`` when absent or unreadable.
+- `write_state(root: Path, state: EmergencyState) -> None` — Write the sentinel file and make sure it stays out of version control.
+- `_ensure_gitignored(root: Path, name: str) -> None` _(internal)_ — Append *name* to the root ``.gitignore`` when not already covered.
+- `armed_state(root: Path) -> EmergencyState | None` — Return the state only when the bypass is currently usable.
+- `_gh(*args: str) -> subprocess.CompletedProcess[str]` _(internal)_ — Run a ``gh`` command, captured, never raising on non-zero exit.
+- `_create_ledger_issue(reason: str, expires_at: str) -> int | None` _(internal)_ — File the public ledger issue; return its number, or ``None`` on failure.
+- `_cmd_start(root: Path, reason: str, ttl_hours: float) -> int` _(internal)_ — Arm the one-shot bypass: ledger issue first, then the sentinel.
+- `_cmd_status(root: Path) -> int` _(internal)_ — Print the sentinel state.
+- `_cmd_consume(root: Path) -> int` _(internal)_ — Spend the armed bypass (called by the wrap-up gate hook).
+- `_repayment_evidence(ledger_issue: int) -> tuple[int | None, bool]` _(internal)_ — Return ``(pr_number, repaid)`` for the ledger's emergency PR.
+- `_cmd_end(root: Path) -> int` _(internal)_ — Close the ledger when the emergency PR's verification debt is repaid.
+- `main(argv: list[str] | None = None) -> int` — Run the ``forge-emergency`` CLI.
 
 ## `forge.fix_ruff`
 

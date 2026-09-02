@@ -77,6 +77,26 @@ if ! head -5 "$WRAPUP" | grep -qE "verified-at:.*(${HEAD_SHA}|${HEAD_SHA:0:7})";
     exit 2
 fi
 
+# EMERGENCY wrap-up (`wrapup-mode: emergency`): the one-shot
+# deferred-verification bypass. The earn is the armed forge-emergency
+# sentinel — consumed here, so exactly one PR publishes this way per
+# `forge-emergency start` (which filed the public ledger issue first).
+# The verified-at HEAD match above still applied: traceability is never
+# deferred, only verification. Fail CLOSED: missing CLI or no armed
+# sentinel (never started, expired, already spent) blocks.
+if grep -qE '^wrapup-mode:[[:space:]]*emergency[[:space:]]*$' "$WRAPUP"; then
+    if ! command -v forge-emergency >/dev/null 2>&1; then
+        echo "BLOCKED: wrap-up declares wrapup-mode: emergency but forge-emergency is not on PATH — install forge-scripts or author the full wrap-up." >&2
+        exit 2
+    fi
+    if (cd "$REPO_ROOT" && forge-emergency consume >&2); then
+        echo "NOTE: EMERGENCY bypass consumed — this PR publishes without verification; retro-verification is owed on the ledger issue." >&2
+        exit 0
+    fi
+    echo "BLOCKED: wrapup-mode: emergency but no armed bypass (not started, expired, or already spent). A human arms one with \`forge-emergency start --reason ...\` — agents only on explicit user instruction." >&2
+    exit 2
+fi
+
 # LIGHT wrap-up (`wrapup-mode: light` ANYWHERE in the file — a scan
 # window would be dodgeable by formatting): the short-form wrap-up skips
 # the reporter round, so the escape must be EARNED at publish time,

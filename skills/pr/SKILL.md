@@ -90,6 +90,21 @@ Merging the base re-triggers CI. Do **not** wait for it: per FOUNDATION §6
 "PR finalization", the wrap-up never blocks on CI — it posts as soon as the
 checks are done and states CI's status plainly.
 
+## Step 0.9: Emergency short-circuit (armed `forge-emergency` only)
+
+When `forge-emergency status` reports ARMED (a human ran `start` — an
+agent never arms it on its own judgment), skip Steps 1–3.9 entirely:
+author a minimal wrap-up at `code_health/pr_wrapup.md` — first line
+`verified-at: <HEAD sha>`, a `wrapup-mode: emergency` line, the ledger
+issue number, and one paragraph on what ships — then push, `gh pr
+create` (the gate consumes the one-shot sentinel), post the wrap-up
+and a title-only squash comment, comment `PR #<N>` on the ledger
+issue, and spawn the monitor as normal. **Repayment after delivery**:
+when the emergency PR merges, run the full verification retroactively
+(`/pr <N>` against the landed state), post the real wrap-up, then
+`forge-emergency end` closes the ledger. Everything below is the
+normal path.
+
 ## Step 1: Run verification agents (1–3 in parallel)
 
 **The finalization path is decided by a CLI, not judgment.** Run:

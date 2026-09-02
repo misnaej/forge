@@ -126,23 +126,24 @@ def _write_wrapup(repo: Path, sha: str) -> None:
 _PROTECTED = "block_protected_branches.sh"
 
 
-def test_protected_blocks_push_head_to_dev() -> None:
-    """`git push origin HEAD:dev` is blocked by the refspec-destination guard (#74).
+def test_protected_blocks_push_head_to_main() -> None:
+    """`git push origin HEAD:main` is blocked by the refspec-destination guard.
 
     The current branch is unprotected, but the refspec DESTINATION is the
-    protected `dev` — the gap that let a direct push to dev slip through.
+    protected `main` — the gap that once let a direct push to a protected
+    branch slip through the current-branch-only check.
     """
-    assert _run_hook(_PROTECTED, "git push origin HEAD:dev") == 2
+    assert _run_hook(_PROTECTED, "git push origin HEAD:main") == 2
 
 
-def test_protected_blocks_push_feature_to_dev() -> None:
-    """`git push origin feature:dev` (explicit src:dst to protected) is blocked."""
-    assert _run_hook(_PROTECTED, "git push origin my-feat:dev") == 2
+def test_protected_blocks_push_feature_to_main() -> None:
+    """`git push origin feature:main` (explicit src:dst to protected) is blocked."""
+    assert _run_hook(_PROTECTED, "git push origin my-feat:main") == 2
 
 
-def test_protected_blocks_push_fully_qualified_dev_ref() -> None:
-    """`feature:refs/heads/dev` is blocked (refs/heads/ prefix normalized)."""
-    assert _run_hook(_PROTECTED, "git push -u origin my-feat:refs/heads/dev") == 2
+def test_protected_blocks_push_fully_qualified_main_ref() -> None:
+    """`feature:refs/heads/main` is blocked (refs/heads/ prefix normalized)."""
+    assert _run_hook(_PROTECTED, "git push -u origin my-feat:refs/heads/main") == 2
 
 
 def test_protected_destination_guard_has_no_agent_bypass() -> None:
@@ -155,7 +156,7 @@ def test_protected_destination_guard_has_no_agent_bypass() -> None:
     assert (
         _run_hook(
             _PROTECTED,
-            "git push origin HEAD:dev",
+            "git push origin HEAD:main",
             agent_type="forge:git-commit-push",
         )
         == 2
@@ -2154,6 +2155,246 @@ def test_unverified_pr_create_light_mode_line_past_head5_still_rechecks(
     )
     assert proc.returncode == 2
     assert "not on PATH" in proc.stderr
+
+
+# --- block_unverified_pr_create.sh: EMERGENCY wrap-up bypass ---------------
+
+
+def _write_wrapup_emergency(repo: Path, sha: str) -> None:
+    """Write a `code_health/pr_wrapup.md` naming *sha* with `wrapup-mode: emergency`.
+
+    Thin convenience wrapper around `_write_wrapup_light` — same wrap-up
+    shape, different declared mode.
+
+    Args:
+        repo: Repo root to write under — matches the hook's
+            `--show-toplevel` resolution.
+        sha: Commit sha (full or short) to embed in the `verified-at:` line.
+    """
+    _write_wrapup_light(repo, sha, mode_line="wrapup-mode: emergency")
+
+
+def _stub_forge_emergency(tmp_path: Path, exit_code: int) -> dict[str, str]:
+    """Build an executable `forge-emergency` stub on PATH exiting with *exit_code*.
+
+    The hook redirects the stub's own stdout to stderr and only branches on
+    its exit code (`if forge-emergency consume >&2; then ... fi`), so the
+    stub needs no subcommand-aware behavior — every invocation just exits
+    with *exit_code*.
+
+    Args:
+        tmp_path: Pytest `tmp_path` fixture directory to build the stub under.
+        exit_code: Exit code the stub reports — `0` simulates a spent
+            (successfully consumed) bypass, non-zero simulates refusal
+            (nothing armed, expired, or already spent).
+
+    Returns:
+        A copy of the current process environment with the stub's
+        directory PREPENDED to `PATH`, shadowing any real `forge-emergency`
+        install so the hook's emergency branch exercises this stub instead.
+    """
+    stub_dir = tmp_path / "stub_bin"
+    stub_dir.mkdir()
+    stub = stub_dir / "forge-emergency"
+    stub.write_text(f"#!/usr/bin/env bash\nexit {exit_code}\n")
+    stub.chmod(0o755)
+    return {**os.environ, "PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+
+def test_unverified_pr_create_emergency_missing_cli_blocks(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """Blocked when `forge-emergency` CLI is unreachable in emergency mode.
+
+    A `wrapup-mode: emergency` wrap-up fails CLOSED, mirroring the LIGHT
+    re-check's missing-classifier guard: a missing CLI must never silently
+    let the emergency bypass through.
+
+    MOCK SETUP: PATH is stripped of every directory that actually resolves
+    a `forge-emergency` binary — portable, since hard-coding the real
+    conda/venv install location would break on a differently-configured
+    machine or CI runner.
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup_emergency(repo, sha)
+    stripped_path = os.pathsep.join(
+        d
+        for d in os.environ.get("PATH", "").split(os.pathsep)
+        if not (Path(d) / "forge-emergency").is_file()
+    )
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE,
+        "gh pr create --title x",
+        cwd=repo,
+        env={**os.environ, "PATH": stripped_path},
+    )
+    assert proc.returncode == 2
+    assert "not on PATH" in proc.stderr
+
+
+def test_unverified_pr_create_emergency_consume_success_allows(
+    git_repo_with_commit: tuple[Path, str],
+    tmp_path: Path,
+) -> None:
+    """A successful `forge-emergency consume` allows the `gh pr create` through.
+
+    MOCK SETUP: `forge-emergency` is replaced with an executable stub
+    (`_stub_forge_emergency`) exiting 0 — simulating a currently-armed
+    sentinel being spent, without exercising `forge.emergency` itself
+    (already unit-tested in `test_emergency.py`).
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup_emergency(repo, sha)
+    env = _stub_forge_emergency(tmp_path, 0)
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo, env=env
+    )
+    assert proc.returncode == 0
+    assert "EMERGENCY bypass consumed" in proc.stderr
+
+
+def test_unverified_pr_create_emergency_mode_line_past_head5_still_detected(
+    git_repo_with_commit: tuple[Path, str],
+    tmp_path: Path,
+) -> None:
+    """A `wrapup-mode: emergency` line beyond the `head -5` window still fires.
+
+    Parity with the LIGHT-mode regression guard: the mode-line scan is a
+    whole-file grep, so padding cannot dodge the emergency branch either.
+    Proven via the consume path — the padded wrap-up still reaches the
+    stub and the bypass is consumed.
+
+    MOCK SETUP: `_stub_forge_emergency` exits 0 (armed sentinel);
+    `verified-at:` stays inside the first 5 lines while padding pushes
+    the mode line past line 5.
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup_light(repo, sha, mode_line="wrapup-mode: emergency", padding=10)
+    env = _stub_forge_emergency(tmp_path, 0)
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo, env=env
+    )
+    assert proc.returncode == 0
+    assert "EMERGENCY bypass consumed" in proc.stderr
+
+
+def test_unverified_pr_create_emergency_consume_failure_blocks(
+    git_repo_with_commit: tuple[Path, str],
+    tmp_path: Path,
+) -> None:
+    """A refusing `forge-emergency consume` (no armed bypass) blocks the PR create.
+
+    MOCK SETUP: the stub (`_stub_forge_emergency`) exits 1 — simulating no
+    armed sentinel (never started, expired, or already spent).
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup_emergency(repo, sha)
+    env = _stub_forge_emergency(tmp_path, 1)
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo, env=env
+    )
+    assert proc.returncode == 2
+    assert "no armed bypass" in proc.stderr
+
+
+def test_unverified_pr_create_emergency_head_mismatch_blocks_before_emergency_branch(
+    git_repo_with_commit: tuple[Path, str],
+    tmp_path: Path,
+) -> None:
+    """A wrap-up naming a stale HEAD is blocked by the HEAD-match gate first.
+
+    The `verified-at:` HEAD check runs BEFORE the emergency-mode branch —
+    traceability is never deferred, only verification (hook header
+    comment) — so a stale wrap-up is blocked with the ordinary
+    HEAD-mismatch message even though it declares `wrapup-mode: emergency`
+    and a stubbed `forge-emergency` would otherwise allow it.
+    """
+    repo, _sha = git_repo_with_commit
+    _write_wrapup_emergency(repo, "0" * 40)
+    env = _stub_forge_emergency(tmp_path, 0)
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo, env=env
+    )
+    assert proc.returncode == 2
+    assert "does not name current HEAD" in proc.stderr
+
+
+def test_unverified_pr_create_emergency_addition_leaves_light_mode_unaffected(
+    git_repo_with_commit: tuple[Path, str],
+    tmp_path: Path,
+) -> None:
+    """Light mode still passes when classifier agrees; unaffected by EMERGENCY.
+
+    Regression guard: the EMERGENCY branch sits ahead of the LIGHT re-check
+    in the hook script — it must not shadow or short-circuit it.
+
+    MOCK SETUP: reuses `_stub_forge_pr_plan` (already covers the LIGHT
+    re-check's own wiring in the section above) — no `forge-emergency`
+    stub needed since a `light` mode line never reaches that branch.
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup_light(repo, sha)
+    _write_forge_dev_branch_config(repo)
+    env = _stub_forge_pr_plan(tmp_path, "light-code")
+    assert (
+        _run_hook(
+            _UNVERIFIED_PR_CREATE,
+            "gh pr create --title x --base main",
+            cwd=repo,
+            env=env,
+        )
+        == 0
+    )
+
+
+def test_unverified_pr_create_full_mode_skips_emergency_branch(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """No `wrapup-mode:` line takes the plain path — emergency branch skipped.
+
+    MOCK SETUP: PATH is stripped of every directory that actually resolves
+    a `forge-emergency` binary — proves the emergency branch is never even
+    attempted (which would otherwise block on the missing-CLI message)
+    when the wrap-up declares no emergency mode.
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup(repo, sha)
+    stripped_path = os.pathsep.join(
+        d
+        for d in os.environ.get("PATH", "").split(os.pathsep)
+        if not (Path(d) / "forge-emergency").is_file()
+    )
+    assert (
+        _run_hook(
+            _UNVERIFIED_PR_CREATE,
+            "gh pr create --title x",
+            cwd=repo,
+            env={**os.environ, "PATH": stripped_path},
+        )
+        == 0
+    )
+
+
+def test_no_safety_hook_reads_the_emergency_sentinel() -> None:
+    """Only `block_unverified_pr_create.sh` ever references the emergency sentinel.
+
+    Architectural pin for the module docstring's claim
+    (`src/forge/emergency.py`): FOUNDATION §2's safety hooks (force-push,
+    rebase, destructive-recovery, protected-branch, etc.) are never
+    "relieved" by emergency mode. Greps every other `block_*.sh` hook for
+    the sentinel path or CLI name and pins zero matches.
+    """
+    offenders = [
+        path.name
+        for path in sorted(_HOOKS_DIR.glob("block_*.sh"))
+        if path.name != _UNVERIFIED_PR_CREATE
+        and (
+            "forge-emergency" in path.read_text(encoding="utf-8")
+            or ".forge-emergency" in path.read_text(encoding="utf-8")
+        )
+    ]
+
+    assert offenders == []
 
 
 # --- block_fixer_recon.sh: agent-scoped Bash allowlist ---------------------

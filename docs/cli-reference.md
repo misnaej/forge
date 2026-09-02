@@ -314,6 +314,27 @@ options:
                         for consumers who only adopt the pip CLIs.
 ```
 
+## forge-emergency
+
+```text
+usage: forge-emergency [-h] {start,status,consume,end} ...
+
+One-shot deferred-verification bypass with a public ledger issue. Arms exactly
+one `wrapup-mode: emergency` publication; pre-commit and every safety hook
+stay fully enforced.
+
+positional arguments:
+  {start,status,consume,end}
+    start               arm one bypass (files the ledger first)
+    status              print armed/spent/expired state
+    consume             spend the armed bypass (called by the wrap-up gate
+                        hook)
+    end                 close the ledger once the debt is repaid
+
+options:
+  -h, --help            show this help message and exit
+```
+
 ## forge-gen-api-digest
 
 ```text
