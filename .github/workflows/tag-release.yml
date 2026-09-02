@@ -3,9 +3,13 @@ name: tag-release
 # Tag-on-merge automation, separated from the read-only CI workflow so
 # `ci.yml` never carries write permissions. Single-track: one job —
 #
-# - tag-main: after CI succeeds on a push to main, cut the rolling-next
-#   tag `.claude-plugin/plugin.json` declares (idempotent no-op when the
-#   version equals the latest tag).
+# - tag-main: after CI succeeds on a push to main, two steps:
+#   (1) `forge-changelog auto-tag` — tag-per-merge: cut the tag computed
+#       from the fragments merged since the last tag (loud `::warning`
+#       instead when [tool.forge.release].auto != "merge");
+#   (2) `forge-next-prep --tag` — covers assembly-PR merges, where the
+#       manifest is ahead and no new fragments exist.
+#   Both idempotent no-ops when nothing applies.
 #
 # Gating uses `workflow_run` because `needs:` cannot cross workflow
 # files: this workflow fires when CI completes, and the job checks the

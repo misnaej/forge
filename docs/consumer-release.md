@@ -248,10 +248,10 @@ fragments)`, so no PR ever carries a version number.
   If you mitigated the pre-fragments gap by guarding your tagger to
   **fail while fragments are pending**, remove that guard when adopting
   fragments — released fragments legitimately persist until assembly.
-- Between releases a plugin manifest **parks at the latest tag**: the
-  `plugin_version` guard accepts equality while every pending fragment
-  is valid, keeps the strictly-ahead pass for the release PR, and still
-  blocks a manifest below the tag.
+- Between assemblies a plugin manifest **parks at or lags the latest
+  tag** (auto-cut tags advance past it): the `plugin_version` guard
+  accepts `manifest <= tag` while every pending fragment is valid, and
+  keeps the strictly-ahead pass for the assembly PR.
 
 No-version opt-outs (`NO_VERSION=1`, branch token, commit marker) apply
 unchanged.

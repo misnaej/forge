@@ -25,6 +25,9 @@ carried per-PR.
 
 Usage:
 
+- ``forge-changelog auto-tag`` — tag-per-merge CI seam: cut and push an
+  annotated tag from the fragments merged since the last tag (tag-tree
+  membership marks consumption); never touches the base branch.
 - ``forge-changelog release`` — compute the next version from the
   latest tag + pending fragments, assemble ``CHANGELOG.md`` under it,
   write ``.claude-plugin/plugin.json`` to it (when a manifest exists —

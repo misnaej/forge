@@ -16,12 +16,13 @@ Skipped when:
   finalizes the curated ``@main`` CHANGELOG entry.
 
 Fragment mode (``[tool.forge.changelog].mode = "fragments"``): the
-manifest parks at the latest tag between releases — the bump lives in
-``changelog.d/`` fragments and ``forge-changelog release`` is the single
-writer that advances ``plugin.json``. Equality with the latest tag is
-therefore healthy, provided every pending fragment passes the gate (the
-next version must stay derivable); ``plugin.json`` *below* the latest
-tag stays an error in every mode.
+manifest parks at or behind the latest tag between assembly PRs — the
+bump lives in ``changelog.d/`` fragments, tag-per-merge (``forge-changelog
+auto-tag``) advances tags past the manifest, and ``forge-changelog
+release`` is the single writer that re-syncs ``plugin.json``.
+``plugin.json <= tag`` is therefore healthy, provided every pending
+fragment passes the gate (the next version must stay derivable);
+below-tag stays an error only in shared-heading mode.
 
 ``forge-precommit`` shells out to this CLI; agents may invoke it
 standalone to refresh just ``plugin_version.log``.
