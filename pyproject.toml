@@ -127,6 +127,13 @@ markers = [
 base_branch = "main"
 dev_branch = "main"
 
+[tool.forge.release]
+# Tag-per-merge: every push to main carrying new changelog fragments is
+# auto-tagged by the tag-release workflow (forge-changelog auto-tag) —
+# last tag + max fragment level. Anything but "merge" downgrades the
+# job to a loud pending-fragments warning; it can never be silent.
+auto = "merge"
+
 [tool.forge.cli_wiring]
 # Opt-in to the cli_wiring pre-commit step. Forge enables it because
 # its layout matches WIRING_SOURCES in src/forge/verify_cli_wiring.py.

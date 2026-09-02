@@ -737,6 +737,24 @@ severity. With both `false`, CI's deferred check degrades to a WARN, so
 the "red until wrap-up" guarantee no longer holds; keep `blocking =
 true` when opting into deferred mode.
 
+## `[tool.forge.release]` — fragments-mode release cadence
+
+```toml
+[tool.forge.release]
+auto = "merge"
+```
+
+- **`auto`** (string, default unset): `"merge"` enables tag-per-merge —
+  the tag-release workflow runs `forge-changelog auto-tag` on every
+  push to the base branch, cutting an annotated tag from the last tag
+  plus the strongest semver level among the fragments merged since it
+  (tag-tree membership marks fragments consumed). Tag refs sit outside
+  branch rulesets, so no base-branch write access is needed. Any other
+  value downgrades the job to a **loud pending-fragments warning** — a
+  fragments-mode repo can never accumulate unreleased merges silently.
+  Changelog assembly and manifest sync happen at `forge-changelog
+  release` PRs, which may collate several auto-cut tags.
+
 ## `[tool.forge.promotion]` — dual-track promotion hold
 
 | Key | Default | What it does |

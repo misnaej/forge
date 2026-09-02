@@ -238,14 +238,16 @@ fragments)`, so no PR ever carries a version number.
   --from-changelog` on pushes to the base branch picks the release up
   on merge with **no further change** — do not build a separate
   fragments-aware tagger.
-- **Release cadence changes — deliberately.** A push-triggered tagger
-  tags every merge today; in fragments mode ordinary merges leave
-  fragments pending and produce no new heading, so the tagger no-ops
-  and tags appear only when a release PR merges. Releases become
-  deliberate instead of a side effect of merging. If you mitigated the
-  pre-fragments gap by guarding your tagger to **fail while fragments
-  are pending**, remove that guard when adopting this — post-adoption
-  it fires on every ordinary merge.
+- **Tag-per-merge is automatic** with `[tool.forge.release].auto =
+  "merge"`: the tag job runs `forge-changelog auto-tag` on every push
+  to the base branch — last tag + strongest level among the fragments
+  merged since it → annotated tag, no base-branch commit. Without the
+  opt-in the job emits a loud pending-fragments warning instead (it is
+  never silent). Changelog assembly and manifest sync happen at the
+  next `forge-changelog release` PR, which may collate several tags.
+  If you mitigated the pre-fragments gap by guarding your tagger to
+  **fail while fragments are pending**, remove that guard when adopting
+  fragments — released fragments legitimately persist until assembly.
 - Between releases a plugin manifest **parks at the latest tag**: the
   `plugin_version` guard accepts equality while every pending fragment
   is valid, keeps the strictly-ahead pass for the release PR, and still

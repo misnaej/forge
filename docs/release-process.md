@@ -43,20 +43,30 @@ conflict-free `changelog.d/` fragment, and the release PR — prepared by
 
 ## 2. Tag-on-merge
 
-A merge to `main` is a release exactly when `plugin.json` is ahead of
-the latest tag: the squash commit is tagged with the version
-`plugin.json` declares. In fragment mode that is the release PR alone —
-ordinary merges leave the manifest parked at the tag, so the tag job
-no-ops and releases become deliberate.
+Every fragment-carrying merge to `main` is a release: the `tag-main`
+job runs `forge-changelog auto-tag`, which reads the last tag, takes
+the strongest semver level among the fragments **new since that tag**
+(tag-tree membership marks a fragment as consumed), bumps, and pushes
+the annotated tag. No commit to `main` is involved — tag refs sit
+outside the branch rulesets. Fragment files persist until an assembly
+PR (`forge-changelog release`) collates the changelog and syncs the
+manifest; between assemblies the manifest lags the tag by design.
 
 - **Primary path**: the `tag-main` job in
   [`.github/workflows/tag-release.yml`](../.github/workflows/tag-release.yml)
   — after CI succeeds on a push to `main`, it checks out the exact
-  CI-validated commit and runs `forge-next-prep --tag`.
-- **Manual fallback**: `forge-next-prep --tag` (run by `/next`) tags and
-  pushes locally when the workflow has not done it.
-- Both paths are **idempotent**: a tag is cut only when `plugin.json` is
-  strictly ahead of the latest `v*` tag; otherwise the step is a no-op.
+  CI-validated commit and runs `forge-changelog auto-tag`, then
+  `forge-next-prep --tag` (which covers assembly-PR merges, where the
+  manifest is ahead and no new fragments exist).
+- **Opt-in / warn floor**: `[tool.forge.release].auto = "merge"` enables
+  auto-tagging; without it the job still emits a loud pending-fragments
+  warning — a fragments-mode repo can never accumulate unreleased
+  merges silently.
+- **Manual fallback**: `forge-changelog auto-tag` locally, or
+  `forge-next-prep --tag` after an assembly.
+- All paths are **idempotent and race-tolerant**: an existing or
+  concurrently created tag defers with an "another runner won" no-op;
+  nothing double-tags.
 
 ## 3. Changelog fragments
 

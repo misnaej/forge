@@ -958,3 +958,232 @@ def test_main_restrand_bump_minor_opens_minor_slot(
     changelog_text = (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## v1.1.0" in changelog_text
     assert "## v1.0.1" not in changelog_text
+
+
+# ---------------------------------------------------------------------------
+# main() — auto-tag (tag-per-merge)
+# ---------------------------------------------------------------------------
+
+
+def _init_autotag_repo(repo: Path, origin: Path, *, auto: str | None = "merge") -> None:
+    """Init a fragments-mode repo with a bare origin, seeded and pushed.
+
+    Args:
+        repo: Working repo directory.
+        origin: Bare repository path to use as ``origin``.
+        auto: ``[tool.forge.release].auto`` value; ``None`` omits the table.
+    """
+    subprocess.run(
+        ["git", "init", "-q", "--bare", str(origin)], env=GIT_ENV, check=True
+    )
+    init_git_repo(repo)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(origin)],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    release = f'\n[tool.forge.release]\nauto = "{auto}"\n' if auto else "\n"
+    (repo / "pyproject.toml").write_text(
+        '[tool.forge]\nbase_branch = "main"\ndev_branch = "main"\n\n'
+        '[tool.forge.changelog]\nmode = "fragments"\n' + release
+    )
+    (repo / "changelog.d").mkdir()
+    (repo / "changelog.d" / "first.added.md").write_text("bump: minor\n- first\n")
+    commit_all(repo, "seed")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=repo, env=GIT_ENV, check=True
+    )
+
+
+def _remote_tags(origin: Path) -> list[str]:
+    """Return tag names present on the bare *origin*.
+
+    Args:
+        origin: Bare repository path.
+
+    Returns:
+        Tag names (dereference suffixes dropped), sorted.
+    """
+    out = subprocess.run(
+        ["git", "ls-remote", "--tags", str(origin)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return sorted(
+        line.split("refs/tags/")[-1] for line in out.splitlines() if "^{}" not in line
+    )
+
+
+def test_main_auto_tag_cuts_and_pushes_tag_from_merged_fragment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Merge with a new fragment → tag computed, cut, and pushed to origin.
+
+    Spec scenario 1 (verify-by-execution): the tag actually appears on the
+    remote; bootstrap case (no prior tag → next_version from v0.0.0).
+    """
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_autotag_repo(repo, origin)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
+
+    assert main(["auto-tag"]) == 0
+
+    assert "cut v0.1.0 (minor)" in capsys.readouterr().out
+    assert _remote_tags(origin) == ["v0.1.0"]
+
+
+def test_main_auto_tag_no_new_fragments_is_a_visible_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No fragments newer than the last tag → exit 0 with a stated reason.
+
+    Spec scenario 2: never a silent no-op — and the fragment already
+    counted by the previous tag (tag-tree membership) must not re-bump.
+    """
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_autotag_repo(repo, origin)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
+    assert main(["auto-tag"]) == 0
+    capsys.readouterr()
+
+    assert main(["auto-tag"]) == 0
+
+    assert "no new fragments since v0.1.0" in capsys.readouterr().out
+    assert _remote_tags(origin) == ["v0.1.0"]
+
+
+def test_main_auto_tag_takes_strongest_new_level(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A major fragment merged after a minor tag drives a major bump.
+
+    Spec scenario 3's level-fidelity half: the bump comes from the
+    fragments present at the tagged commit, never a stale computation.
+    """
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_autotag_repo(repo, origin)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
+    assert main(["auto-tag"]) == 0
+    (repo / "changelog.d" / "big.added.md").write_text("bump: major\n- breaking\n")
+    commit_all(repo, "feat: breaking")
+    capsys.readouterr()
+
+    assert main(["auto-tag"]) == 0
+
+    assert "cut v1.0.0 (major)" in capsys.readouterr().out
+    assert _remote_tags(origin) == ["v0.1.0", "v1.0.0"]
+
+
+def test_main_auto_tag_invalid_new_fragment_blocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An invalid newly merged fragment blocks the tag with each error listed."""
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_autotag_repo(repo, origin)
+    (repo / "changelog.d" / "bad.bogus.md").write_text("bump: minor\n- x\n")
+    commit_all(repo, "bad fragment")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
+
+    assert main(["auto-tag"]) == 2
+
+    assert "unknown type 'bogus'" in capsys.readouterr().out
+    assert _remote_tags(origin) == []
+
+
+def test_main_auto_tag_existing_tag_defers_to_winner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The computed tag already existing → another-runner-won no-op, exit 0.
+
+    Spec scenario: idempotent and race-tolerant — a re-triggered workflow
+    or concurrent runner never double-tags.
+    """
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_autotag_repo(repo, origin)
+    subprocess.run(["git", "tag", "v0.1.0"], cwd=repo, env=GIT_ENV, check=True)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
+
+    assert main(["auto-tag"]) == 0
+
+    out = capsys.readouterr().out
+    assert "no new fragments since v0.1.0" in out or "another runner won" in out
+
+
+def test_main_auto_tag_warn_floor_when_not_opted_in(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    r"""Fragments pending without `auto = \"merge\"` → exit 3 loud warning.
+
+    Spec requirement: no configuration may leave merges accumulating
+    fragments silently — the warn floor is the minimum.
+    """
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_autotag_repo(repo, origin, auto=None)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
+
+    assert main(["auto-tag"]) == 3
+
+    out = capsys.readouterr().out
+    assert "no tag will be cut" in out
+    assert _remote_tags(origin) == []
+
+
+def test_main_auto_tag_not_fragments_mode_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Shared-heading repos: auto-tag states it does not apply, exit 0."""
+    init_git_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text("[tool.forge]\n")
+    commit_all(tmp_path, "seed")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+
+    assert main(["auto-tag"]) == 0
+    assert "not a fragments-mode repo" in capsys.readouterr().out
+
+
+def test_fragments_new_since_tag_excludes_tag_tree_members(
+    tmp_path: Path,
+) -> None:
+    """Fragments already in the tag's tree are consumed; only later ones count."""
+    init_git_repo(tmp_path)
+    (tmp_path / "changelog.d").mkdir()
+    (tmp_path / "changelog.d" / "old.added.md").write_text("bump: minor\n- old\n")
+    commit_all(tmp_path, "old fragment")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=GIT_ENV, check=True)
+    (tmp_path / "changelog.d" / "new.added.md").write_text("bump: patch\n- new\n")
+    commit_all(tmp_path, "new fragment")
+
+    new = changelog_fragments.fragments_new_since_tag(tmp_path, "v1.0.0")
+
+    assert [p.name for p in new] == ["new.added.md"]
+    assert [
+        p.name for p in changelog_fragments.fragments_new_since_tag(tmp_path, None)
+    ] == ["new.added.md", "old.added.md"]

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_69 modules, 848 symbols._
+_69 modules, 853 symbols._
 
 ## `forge`
 
@@ -253,6 +253,11 @@ _69 modules, 848 symbols._
 - `_cmd_assemble(root: Path, version: str, date: str, *, delete: bool) -> int` _(internal)_ — Collate pending fragments into ``CHANGELOG.md`` under *version*.
 - `_cmd_next_version(root: Path) -> int` _(internal)_ — Print the computed next release version: latest tag + max pending level.
 - `_cmd_release(root: Path, date: str) -> int` _(internal)_ — Prepare the release commit: assemble + manifest write, all staged.
+- `fragments_new_since_tag(root: Path, tag: str | None) -> list[Path]` — Return pending fragments absent from *tag*'s tree — the newly merged.
+- `_tag_exists(root: Path, version: str) -> bool` _(internal)_ — Check if a tag already exists in the repository.
+- `_validate_auto_tag_fragments(new_paths: list[Path]) -> tuple[list[Fragment], list[str]]` _(internal)_ — Validate fragments and separate valid ones from errors.
+- `_create_and_push_tag(root: Path, version: str, level: str, n_fragments: int) -> int` _(internal)_ — Create and push an annotated tag, handling concurrent-runner races.
+- `_cmd_auto_tag(root: Path) -> int` _(internal)_ — Tag the current commit from its newly merged fragments (CI seam).
 - `_restrand_old_text(root: Path) -> str | None` _(internal)_ — Return the comparison-point ``CHANGELOG.md`` for the restrand.
 - `_restrand_preflight(root: Path) -> int | tuple[Path, str, str, str]` _(internal)_ — Resolve restrand preconditions or the early-exit code for a missing one.
 - `_cmd_restrand(root: Path, bump: str) -> int` _(internal)_ — Repair stranded changelog entries mechanically; stage the result.
@@ -1173,7 +1178,7 @@ _69 modules, 848 symbols._
 - `_is_release_commit(repo_root: Path) -> bool` _(internal)_ — Return True when ``HEAD``'s release fingerprint matches ANY published ``v*`` tag.
 - `main() -> int` — Enforce plugin.json version > latest git tag.
 - `_not_ahead_verdict(repo_root: Path, plugin_ver: tuple[int, int, int], tag_ver: tuple[int, int, int], latest_tag: str) -> int` _(internal)_ — Resolve the verdict when ``plugin.json`` is NOT ahead of the latest tag.
-- `_fragment_parked_verdict(repo_root: Path, latest_tag: str) -> int` _(internal)_ — Gate the fragment-mode resting state: manifest == latest tag.
+- `_fragment_parked_verdict(repo_root: Path, latest_tag: str) -> int` _(internal)_ — Gate the fragment-mode resting state: manifest at or behind the tag.
 
 ## `forge.verify_repo_structure`
 

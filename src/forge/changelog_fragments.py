@@ -48,15 +48,17 @@ from __future__ import annotations
 import argparse
 import logging
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from forge.changelog import restrand_changelog, top_release_heading
-from forge.config import is_fragments_mode, load_config
+from forge.config import is_fragments_mode, load_config, read_tool_forge_section
 from forge.git_utils import (
     configure_cli_logging,
+    create_annotated_tag,
     emit,
     latest_v_tag,
     merge_base_with_head,
@@ -562,6 +564,182 @@ def _cmd_release(root: Path, date: str) -> int:
     return 0
 
 
+def fragments_new_since_tag(root: Path, tag: str | None) -> list[Path]:
+    """Return pending fragments absent from *tag*'s tree — the newly merged.
+
+    Tag-tree membership is the consumption marker in the tag-per-merge
+    model: a fragment already present in the latest tag's tree was
+    counted by that tag's bump and must not bump again. ``None`` (no
+    tags yet) treats every pending fragment as new.
+
+    Args:
+        root: Repository root directory.
+        tag: Latest ``v*`` tag, or ``None``.
+
+    Returns:
+        Pending fragment paths not in *tag*'s tree, filename-sorted.
+    """
+    pending = discover_fragments(root)
+    if tag is None:
+        return pending
+    in_tag = set(
+        run_git(
+            "ls-tree",
+            "-r",
+            "--name-only",
+            tag,
+            "--",
+            str(FRAGMENTS_DIR),
+            cwd=root,
+            check=False,
+        ).splitlines()
+    )
+    return [p for p in pending if str(p.relative_to(root)) not in in_tag]
+
+
+def _tag_exists(root: Path, version: str) -> bool:
+    """Check if a tag already exists in the repository.
+
+    Args:
+        root: Repository root directory.
+        version: The tag to check (e.g., "v1.2.3").
+
+    Returns:
+        ``True`` if the tag exists locally or remotely, ``False`` otherwise.
+    """
+    return bool(
+        run_git(
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            f"refs/tags/{version}",
+            cwd=root,
+            check=False,
+        )
+    )
+
+
+def _validate_auto_tag_fragments(
+    new_paths: list[Path],
+) -> tuple[list[Fragment], list[str]]:
+    """Validate fragments and separate valid ones from errors.
+
+    Args:
+        new_paths: List of fragment file paths to validate.
+
+    Returns:
+        A tuple of (valid_fragments, error_messages). The error_messages
+        list contains all validation errors found; if non-empty, the
+        fragments should not be used.
+    """
+    fragments: list[Fragment] = []
+    errors: list[str] = []
+    for path in new_paths:
+        fragment, frag_errors = validate_fragment(path)
+        if frag_errors:
+            errors.extend(frag_errors)
+        else:
+            fragments.append(fragment)  # type: ignore[arg-type]
+    return fragments, errors
+
+
+def _create_and_push_tag(root: Path, version: str, level: str, n_fragments: int) -> int:
+    """Create and push an annotated tag, handling concurrent-runner races.
+
+    This function checks whether the tag already exists locally before
+    creating it, and after a push failure, checks remotely to distinguish
+    a lost race (another runner's push arrived first) from a genuine push
+    failure. Two race checkpoints exist because two runners may both pass
+    the "new fragments" gate and reach tag-creation before either pushes.
+
+    Args:
+        root: Repository root directory.
+        version: The version string to tag (e.g., "v1.2.3").
+        level: The bump level that produced this version (e.g., "minor").
+        n_fragments: Count of fragments contributing to this tag (for logging).
+
+    Returns:
+        ``0`` if the tag was created and pushed, or if another runner won
+        the race; ``2`` if the push failed and no concurrent winner was
+        detected.
+    """
+    if _tag_exists(root, version):
+        emit(f"auto-tag: {version} already exists — another runner won.")
+        return 0
+    create_annotated_tag(root, version)
+    push = subprocess.run(
+        ["git", "push", "origin", version],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if push.returncode != 0:
+        run_git("fetch", "--tags", "origin", cwd=root, check=False)
+        if _tag_exists(root, version):
+            emit(f"auto-tag: {version} appeared remotely — another runner won.")
+            return 0
+        emit(
+            f"auto-tag: pushing {version} FAILED and no concurrent winner "
+            f"explains it: {push.stderr.strip()}"
+        )
+        return 2
+    emit(
+        f"auto-tag: cut {version} ({level}) from {n_fragments} newly "
+        "merged fragment(s)."
+    )
+    return 0
+
+
+def _cmd_auto_tag(root: Path) -> int:
+    """Tag the current commit from its newly merged fragments (CI seam).
+
+    The tag-per-merge mechanism: read the last tag, read the levels of
+    the fragments merged since it (tag-tree membership — see
+    :func:`fragments_new_since_tag`), bump, tag, push the tag. Tag refs
+    sit outside branch rulesets, so no commit to the base branch is
+    needed; fragment files persist until an assembly PR collates the
+    changelog and syncs the manifest. Never silent: every path emits
+    what happened or why nothing did.
+
+    Args:
+        root: Repository root directory.
+
+    Returns:
+        ``0`` tagged, already-tagged (another runner won), or nothing
+        new to tag; ``2`` on invalid fragments or a push failure that no
+        concurrent winner explains; ``3`` when ``[tool.forge.release]``
+        does not opt in (``auto = "merge"``) but new fragments are
+        pending — the caller surfaces this as a loud warning.
+    """
+    if not is_fragments_mode(root):
+        emit("auto-tag: not a fragments-mode repo — nothing to do.")
+        return 0
+    latest = latest_v_tag(root)
+    new_paths = fragments_new_since_tag(root, latest)
+    if not new_paths:
+        emit(
+            f"auto-tag: no new fragments since {latest or '(no tag)'} — nothing to tag."
+        )
+        return 0
+    if read_tool_forge_section(root, "release").get("auto") != "merge":
+        emit(
+            f"auto-tag: {len(new_paths)} new fragment(s) pending but "
+            '[tool.forge.release].auto != "merge" — no tag will be cut '
+            "until `forge-changelog release` runs or auto-tagging is "
+            "enabled."
+        )
+        return 3
+    fragments, errors = _validate_auto_tag_fragments(new_paths)
+    if errors:
+        for err in errors:
+            emit(f"auto-tag: INVALID — {err}")
+        return 2
+    level = max_level(fragments)
+    version = next_version(latest, level)
+    return _create_and_push_tag(root, version, level, len(fragments))
+
+
 def _restrand_old_text(root: Path) -> str | None:
     """Return the comparison-point ``CHANGELOG.md`` for the restrand.
 
@@ -698,6 +876,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="stage fragment deletions with git rm (never commits)",
     )
+    sub.add_parser(
+        "auto-tag",
+        help="tag HEAD from fragments merged since the last tag "
+        "(tag-per-merge CI seam; pushes the tag only)",
+    )
     restrand = sub.add_parser(
         "restrand",
         help="move entries stranded under released headings to the next slot "
@@ -717,6 +900,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_next_version(root)
     if args.command == "release":
         return _cmd_release(root, args.date)
+    if args.command == "auto-tag":
+        return _cmd_auto_tag(root)
     if args.command == "restrand":
         return _cmd_restrand(root, args.bump)
     return _cmd_assemble(root, args.version, args.date, delete=args.delete)

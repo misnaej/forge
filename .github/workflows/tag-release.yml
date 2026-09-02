@@ -55,5 +55,17 @@ jobs:
       - name: Install forge-scripts
         run: pip install -e .
 
+      - name: Auto-tag newly merged fragments (tag-per-merge)
+        run: |
+          set +e
+          out=$(forge-changelog auto-tag 2>&1); rc=$?
+          echo "$out"
+          echo "$out" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" = "3" ]; then
+            echo "::warning::$out"
+            rc=0
+          fi
+          exit $rc
+
       - name: Tag the rolling-next release when plugin.json is ahead
         run: forge-next-prep --tag --no-sync --no-prune-branches

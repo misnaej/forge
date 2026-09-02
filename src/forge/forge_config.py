@@ -229,6 +229,15 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "the repo-wide [tool.forge].source_dirs + test_dirs.",
     ),
     ConfigKey(
+        ("tool", "forge", "release", "auto"),
+        default="",
+        description='Fragments-mode release cadence: "merge" lets the '
+        "tag-release workflow auto-tag every fragment-carrying merge "
+        "(forge-changelog auto-tag: last tag + strongest new fragment "
+        "level). Any other value downgrades the job to a loud "
+        "pending-fragments warning — never silent.",
+    ),
+    ConfigKey(
         ("tool", "forge", "changelog", "blocking"),
         default=True,
         description="Make the opt-in changelog_version / changelog_updated "

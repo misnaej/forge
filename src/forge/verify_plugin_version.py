@@ -195,10 +195,12 @@ def _not_ahead_verdict(
         otherwise.
     """
     # Parked check first: in fragments mode EVERY ordinary commit sits at
-    # == tag, so the fingerprint fallback (per-tag `git ls-tree` over the
-    # whole tag set) must not run on the common path. A release commit
-    # has zero pending fragments and passes the parked check anyway.
-    if is_fragments_mode(repo_root) and plugin_ver == tag_ver:
+    # or behind the tag (auto-tag advances tags per merge while the
+    # manifest waits for the next assembly PR), so the fingerprint
+    # fallback (per-tag `git ls-tree` over the whole tag set) must not
+    # run on the common path. A release/assembly commit has zero pending
+    # fragments and passes the parked check anyway.
+    if is_fragments_mode(repo_root) and plugin_ver <= tag_ver:
         return _fragment_parked_verdict(repo_root, latest_tag)
     if _is_release_commit(repo_root):
         logger.info("(HEAD reproduces a published v* release tag — skipped)")
@@ -215,11 +217,13 @@ def _not_ahead_verdict(
 
 
 def _fragment_parked_verdict(repo_root: Path, latest_tag: str) -> int:
-    """Gate the fragment-mode resting state: manifest == latest tag.
+    """Gate the fragment-mode resting state: manifest at or behind the tag.
 
-    Healthy only while the next version stays derivable — every pending
-    fragment must pass the gate. Zero pending fragments is also healthy
-    (the just-released resting state).
+    Tag-per-merge advances tags on every fragment-carrying merge while
+    the manifest syncs only at assembly PRs, so lagging the tag is the
+    normal state — healthy while the next version stays derivable:
+    every pending fragment must pass the gate. Zero pending fragments is
+    also healthy (the just-assembled resting state).
 
     Args:
         repo_root: Git repo root.
@@ -235,7 +239,7 @@ def _fragment_parked_verdict(repo_root: Path, latest_tag: str) -> int:
             logger.error("plugin_version: invalid fragment — %s", err)
         return 1
     logger.info(
-        "fragment mode: manifest parked at latest tag %s; %d pending "
+        "fragment mode: manifest parked at/behind latest tag %s; %d pending "
         "fragment(s) carry the bump",
         latest_tag,
         len(discover_fragments(repo_root)),
