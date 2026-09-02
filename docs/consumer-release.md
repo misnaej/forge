@@ -5,10 +5,10 @@ How a consumer repo whose version is **derived from `v*` git tags**
 `.claude-plugin/plugin.json`) cuts `vX.Y.Z` releases with forge instead
 of hand-rolling the flow.
 
-This is the single-track counterpart to forge's own release process
-([`release-process.md`](release-process.md), forge-only): one trunk
-(`base_branch`, default `main`), no dev→main promotion, the tag **is**
-the release.
+This is the tag-versioned counterpart to forge's own manifest-versioned
+release process ([`release-process.md`](release-process.md), forge-only):
+one trunk (`base_branch`, default `main`), and the tag **is** the
+release.
 
 ## `forge-release`
 
@@ -58,7 +58,7 @@ in spirit; the deliberate divergences are listed at the end.
 - **No `## Unreleased` section.** The top heading always names the
   version **about to be released** — the CHANGELOG *declares* the next
   version, and the tag `forge-release` cuts *confirms* it. This is the
-  single-track analogue of forge's own rolling-next invariant
+  tag-versioned analogue of forge's own rolling-next invariant
   ([`release-process.md`](release-process.md), forge-only). Right after
   a release is cut, top heading and latest tag are **equal** — that
   window is valid; the **first PR after a tag opens the next

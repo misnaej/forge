@@ -285,7 +285,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - claude-code-plugin.md: optional Claude Code plugin install + extension
 - cli-reference.md: generated CLI reference (`forge-gen-cli-reference`)
 - adopting.md: modular adoption guide — three independent install tracks (CLIs / + git hooks / + plugin) + "what lands on disk" table + drift/upgrade explainer
-- release-process.md: forge-only single source of truth for versioning + dev→main promotion + the invariant→test contract
+- release-process.md: forge-only single source of truth for versioning + tag-on-merge releases + the invariant→test contract
 - consumer-release.md: single-track (tag-versioned/setuptools-scm) consumer release recipe — `forge-release` usage + the stable public Python import surface
 - customizing-precommit.md: adding repo-specific steps to `.githooks/pre-commit`
 - step-invocation.md: contributor rule for how pre-commit steps invoke their tools — orchestrator is the contract; standalone CLI only when it *is* the tool or does real orchestration

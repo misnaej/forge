@@ -11,7 +11,7 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
     # ready_for_review added to the default trigger set so a draft opened
     # via /pr's escape hatch gets its first CI run when marked ready.
