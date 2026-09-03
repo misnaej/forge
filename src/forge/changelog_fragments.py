@@ -815,11 +815,41 @@ Scheduled changelog assembly ({version}): collates the pending
 syncs `.claude-plugin/plugin.json` (when present).
 
 **Merging this PR is the release act for the changelog**: the fragments
-are consumed, and `forge-next-prep --tag` in the tag-release workflow
-tags the merge when the manifest is ahead. Merge stays a human decision.
+are consumed. {tagging} Merge stays a human decision.
 
 Opened by `forge-changelog release-pr` (assemble-release workflow).
 """
+
+# The tagging sentence must match the repo's version source: a manifest
+# repo's tag-release workflow tags the merge (`forge-next-prep --tag`
+# sees the manifest ahead); a manifest-less repo has nothing ahead and
+# `auto-tag` no-ops on the merge (the fragments were just deleted), so
+# the tag is a post-merge step the body must name — not claim happened.
+_TAGGING_WITH_MANIFEST = (
+    "`forge-next-prep --tag` in the tag-release workflow tags the merge "
+    "(the manifest is ahead)."
+)
+_TAGGING_MANIFEST_LESS = (
+    "No plugin manifest: cut the release tag after merging — "
+    "`forge-release --from-changelog` reads the heading this PR writes "
+    "(auto-tag cannot cover it; the fragments are deleted by this very "
+    "assembly)."
+)
+
+
+def _assembly_pr_body(root: Path, version: str) -> str:
+    """Render the assembly PR body with the repo-correct tagging sentence.
+
+    Args:
+        root: Repository root directory.
+        version: Release version tag name (``vX.Y.Z``).
+
+    Returns:
+        The formatted PR body.
+    """
+    manifest = (root / ".claude-plugin" / "plugin.json").is_file()
+    tagging = _TAGGING_WITH_MANIFEST if manifest else _TAGGING_MANIFEST_LESS
+    return _ASSEMBLY_PR_BODY.format(version=version, tagging=tagging)
 
 
 def _gate_evidence(root: Path) -> tuple[bool, str]:
@@ -1049,7 +1079,7 @@ def _push_and_open_pr(
             "--title",
             f"chore(release): assemble {version}",
             "--body",
-            _ASSEMBLY_PR_BODY.format(version=version) + "\n" + evidence,
+            _assembly_pr_body(root, version) + "\n" + evidence,
         ],
         capture_output=True,
         text=True,

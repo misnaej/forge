@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_67 modules, 844 symbols._
+_67 modules, 845 symbols._
 
 ## `forge`
 
@@ -260,6 +260,7 @@ _67 modules, 844 symbols._
 - `_validate_auto_tag_fragments(new_paths: list[Path]) -> tuple[list[Fragment], list[str]]` _(internal)_ — Validate fragments and separate valid ones from errors.
 - `_create_and_push_tag(root: Path, version: str, level: str, n_fragments: int) -> int` _(internal)_ — Create and push an annotated tag, handling concurrent-runner races.
 - `_cmd_auto_tag(root: Path) -> int` _(internal)_ — Tag the current commit from its newly merged fragments (CI seam).
+- `_assembly_pr_body(root: Path, version: str) -> str` _(internal)_ — Render the assembly PR body with the repo-correct tagging sentence.
 - `_gate_evidence(root: Path) -> tuple[bool, str]` _(internal)_ — Run the versioning gates and format PR-body evidence.
 - `_computed_next_version(root: Path, cmd: str, *, none_pending_rc: int) -> tuple[int | None, tuple[str, str] | None]` _(internal)_ — Run the shared version-computation guard for a subcommand.
 - `_gh_preflight() -> int | None` _(internal)_ — Refuse loudly up front when ``gh`` is missing or unauthenticated.

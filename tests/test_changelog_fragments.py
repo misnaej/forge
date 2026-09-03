@@ -1291,6 +1291,40 @@ def test_main_auto_tag_push_failure_without_winner_reports_failure(
 
 
 # ---------------------------------------------------------------------------
+# _assembly_pr_body
+# ---------------------------------------------------------------------------
+
+
+def test_assembly_pr_body_manifest_less_names_post_merge_tagging(
+    tmp_path: Path,
+) -> None:
+    """A repo without a plugin manifest gets the post-merge tagging sentence.
+
+    Regression for the PR #456 review finding: the body must not claim
+    the tag-release workflow tags the merge (`forge-next-prep --tag`) when
+    there is no manifest for `plugin_version` to race ahead of.
+    """
+    body = changelog_fragments._assembly_pr_body(tmp_path, "v1.1.0")
+
+    assert "forge-release --from-changelog" in body
+    assert "forge-next-prep --tag" not in body
+
+
+def test_assembly_pr_body_with_manifest_says_workflow_tags_merge(
+    tmp_path: Path,
+) -> None:
+    """A repo with a plugin manifest gets the auto-tag-on-merge sentence."""
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text('{"name": "forge"}\n')
+
+    body = changelog_fragments._assembly_pr_body(tmp_path, "v1.1.0")
+
+    assert "forge-next-prep --tag" in body
+    assert "forge-release --from-changelog" not in body
+
+
+# ---------------------------------------------------------------------------
 # main() — release-pr (scheduled assembly PR)
 # ---------------------------------------------------------------------------
 
@@ -1547,6 +1581,12 @@ def test_main_release_pr_happy_path_opens_pr_with_assembled_commit(
     create_argv = gh_pr_create_calls[0]
     assert "--base" in create_argv
     assert create_argv[create_argv.index("--base") + 1] == "main"
+    # No plugin.json in this fixture repo (bare pyproject setup) — the real
+    # publish path must emit the manifest-less tagging sentence, not the
+    # auto-tag-on-merge one.
+    assert (
+        "forge-release --from-changelog" in create_argv[create_argv.index("--body") + 1]
+    )
 
     remote_branches = subprocess.run(
         ["git", "ls-remote", "--heads", str(origin), "chore/assemble-v1.1.0"],
