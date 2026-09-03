@@ -355,6 +355,41 @@ def check_pending(root: Path) -> list[str]:
     return _collect_valid_fragments(root)[1]
 
 
+def branch_added_fragments(root: Path) -> list[str]:
+    """Return the fragment paths this branch adds over its fork point.
+
+    Enforcement seam for the one-fragment-per-PR convention: diffs the
+    merge-base with the configured base branch against the working tree
+    (``--diff-filter=A``), so only fragments the branch itself
+    introduces — committed or staged — count. Fragments consumed on the
+    base after the fork (assembly deletions) and fragments that existed
+    at the fork never appear.
+
+    Args:
+        root: Repository root directory.
+
+    Returns:
+        Repo-relative paths of added fragments, sorted; empty when the
+        base ref cannot be resolved (fresh clone, no remote) — the
+        count check degrades open rather than failing on repos where
+        the fork point is unknowable.
+    """
+    base = merge_base_with_head(root, load_config(root).base_branch)
+    if not base:
+        return []
+    raw = run_git(
+        "diff",
+        "--name-only",
+        "--diff-filter=A",
+        base,
+        "--",
+        str(FRAGMENTS_DIR),
+        cwd=root,
+        check=False,
+    )
+    return sorted(line for line in raw.splitlines() if line.endswith(".md"))
+
+
 def next_version_from_fragments(root: Path, latest_tag: str) -> tuple[str, str] | None:
     """Compute the next release version from pending fragments.
 

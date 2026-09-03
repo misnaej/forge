@@ -26,7 +26,13 @@ import pytest
 from forge import config, git_utils, precommit
 from forge.pip_audit_json import AuditRun
 from forge.smart_test import lifecycle as _lifecycle
-from tests.conftest import GIT_ENV, _detach_head, init_git_repo, init_single_track_repo
+from tests.conftest import (
+    GIT_ENV,
+    _detach_head,
+    commit_all,
+    init_git_repo,
+    init_single_track_repo,
+)
 
 
 if TYPE_CHECKING:
@@ -5327,6 +5333,64 @@ def test_step_changelog_version_fragments_mode_no_pending_passes(
     result = precommit.step_changelog_version(tmp_path)
     assert result.passed
     assert "Fragment mode" in result.output
+
+
+def _init_fragments_mode_repo(base: Path) -> Path:
+    """Build a single-track fragments-mode repo, checked out on ``feat/x``.
+
+    Real-git counterpart to the synthetic fixtures above: a
+    ``base_branch = "main"`` + fragments-mode ``pyproject.toml`` and a
+    ``CHANGELOG.md`` are committed and pushed to ``origin/main`` before
+    branching, so ``branch_added_fragments`` has a real fork point to
+    diff against. Callers add their own fragment(s) on ``feat/x``.
+
+    Args:
+        base: Base directory for the test repo.
+
+    Returns:
+        Path to the work repository, checked out on ``feat/x``.
+    """
+    work, _bare = init_single_track_repo(base)
+    (work / "pyproject.toml").write_text(
+        '[tool.forge]\nbase_branch = "main"\n\n'
+        '[tool.forge.changelog]\nmode = "fragments"\n'
+    )
+    (work / "CHANGELOG.md").write_text("# Changelog\n")
+    commit_all(work, "chore: fragments mode setup")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=work, env=GIT_ENV, check=True
+    )
+    return work
+
+
+def test_fragment_gate_blocks_second_branch_added_fragment(tmp_path: Path) -> None:
+    """Two fragments added on one branch trip the one-fragment-per-PR gate.
+
+    Cited by ``docs/release-process.md``'s invariant table as the
+    enforcing test for "a branch adds at most ONE fragment" — do not
+    rename without updating that reference.
+    """
+    work = _init_fragments_mode_repo(tmp_path)
+    (work / "changelog.d").mkdir()
+    (work / "changelog.d" / "a.added.md").write_text("bump: minor\n- a\n")
+    (work / "changelog.d" / "b.added.md").write_text("bump: patch\n- b\n")
+    commit_all(work, "feat: two fragments")
+    result = precommit.step_changelog_version(work)
+    assert not result.passed
+    assert "one fragment per PR" in result.output
+
+
+def test_fragment_gate_passes_single_branch_added_fragment(tmp_path: Path) -> None:
+    """A single fragment added on the branch passes the fragment gate."""
+    work = _init_fragments_mode_repo(tmp_path)
+    (work / "changelog.d").mkdir()
+    (work / "changelog.d" / "a.added.md").write_text("bump: minor\n- a\n")
+    commit_all(work, "feat: one fragment")
+    result = precommit.step_changelog_version(work)
+    assert result.passed
 
 
 def test_step_changelog_updated_fragments_mode_trigger_without_fragment_fails(

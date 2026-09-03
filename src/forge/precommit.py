@@ -81,7 +81,7 @@ from forge.changelog import (
     stranded_added_versions,
     wants_no_version,
 )
-from forge.changelog_fragments import FRAGMENTS_DIR
+from forge.changelog_fragments import FRAGMENTS_DIR, branch_added_fragments
 from forge.changelog_fragments import check_pending as check_pending_fragments
 from forge.config import installed_console_scripts, resolve_model_section
 from forge.git_utils import (
@@ -1850,8 +1850,17 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
         # input — no declared-version/stranded checks apply. The step
         # becomes the FRAGMENT GATE instead of a bare skip: every
         # pending fragment must parse (name, type, bump level) and carry
-        # no version-shaped string.
+        # no version-shaped string, and the branch adds at most ONE
+        # fragment (one unique file per PR; several bullets go in it).
         errors = check_pending_fragments(repo_root)
+        added = branch_added_fragments(repo_root)
+        if len(added) > 1:
+            errors.append(
+                f"{len(added)} fragments added on this branch "
+                f"({', '.join(added)}) — one fragment per PR: merge the "
+                "bullets into a single <slug>.<type>.md (strongest bump "
+                "level wins)."
+            )
         return StepResult(
             name=name,
             passed=not errors,

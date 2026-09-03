@@ -18,6 +18,7 @@ from forge import changelog_fragments
 from forge.changelog_fragments import (
     Fragment,
     assemble_changelog,
+    branch_added_fragments,
     check_pending,
     discover_fragments,
     main,
@@ -1274,3 +1275,63 @@ def test_fragments_new_since_tag_excludes_tag_tree_members(
     assert [
         p.name for p in changelog_fragments.fragments_new_since_tag(tmp_path, None)
     ] == ["new.added.md", "old.added.md"]
+
+
+# ---------------------------------------------------------------------------
+# branch_added_fragments — one-fragment-per-PR enforcement seam
+# ---------------------------------------------------------------------------
+
+
+def test_branch_added_fragments_excludes_fork_point_and_base_side_deletions(
+    tmp_path: Path,
+) -> None:
+    """Only fragments the branch itself adds since its fork point count.
+
+    Guards against a regression that diffs the live base tip instead of
+    the merge-base: the seeded fragment here is both present at the fork
+    and later deleted on the base — a tip-based diff would resurrect it
+    as "added"; the merge-base diff never sees it.
+    """
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_autotag_repo(repo, origin)
+
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=repo, env=GIT_ENV, check=True
+    )
+    (repo / "changelog.d" / "second.added.md").write_text("bump: patch\n- second\n")
+    commit_all(repo, "feat: second fragment")
+
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "rm", "-q", "changelog.d/first.added.md"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    commit_all(repo, "chore: assemble release")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=repo, env=GIT_ENV, check=True
+    )
+
+    subprocess.run(
+        ["git", "checkout", "-q", "feat/x"], cwd=repo, env=GIT_ENV, check=True
+    )
+
+    assert branch_added_fragments(repo) == ["changelog.d/second.added.md"]
+
+
+def test_branch_added_fragments_unresolvable_base_returns_empty(
+    tmp_path: Path,
+) -> None:
+    """An unresolvable configured base branch degrades to an empty list."""
+    init_git_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nbase_branch = "no-such-branch"\n'
+    )
+    (tmp_path / "changelog.d").mkdir()
+    (tmp_path / "changelog.d" / "a.added.md").write_text("bump: minor\n- a\n")
+    commit_all(tmp_path, "feat: fragment")
+
+    assert branch_added_fragments(tmp_path) == []
