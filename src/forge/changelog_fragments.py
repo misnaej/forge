@@ -76,6 +76,7 @@ from forge.git_utils import (
     render_plugin_version,
     repo_root,
     require_cli,
+    resolve_base_branch_ref,
     run_gate_evidence,
     run_git,
 )
@@ -369,38 +370,71 @@ def check_pending(root: Path) -> list[str]:
 
 
 def branch_added_fragments(root: Path) -> list[str]:
-    """Return the fragment paths this branch adds over its fork point.
+    """Return the fragment paths this branch adds and the base does not have.
 
-    Enforcement seam for the one-fragment-per-PR convention: diffs the
-    merge-base with the configured base branch against the working tree
-    (``--diff-filter=A``), so only fragments the branch itself
-    introduces — committed or staged — count. Fragments consumed on the
-    base after the fork (assembly deletions) and fragments that existed
-    at the fork never appear.
+    Enforcement seam for the one-fragment-per-PR convention. A fragment
+    counts as the branch's own only when BOTH hold:
+
+    1. it is added relative to the merge-base with the configured base
+       branch (``--diff-filter=A`` against the working tree, so staged
+       additions count before they are committed), and
+    2. it is absent from the base branch's tip tree — tree membership
+       in the base means the fragment belongs to another (already
+       landed) PR, the same membership idea the auto-tagger uses with
+       tag trees. (Assumes a path collision denotes the same logical
+       fragment: a same-named-but-different fragment independently
+       landed on base excludes the branch's own — distinctive slugs
+       are the namespace.)
+
+    Condition 2 is what keeps the count correct mid-merge: a conflicted
+    base merge runs pre-commit while ``HEAD`` is still the pre-merge
+    commit, so every fragment the merge brings in from the base looks
+    "added since the fork" — but each is in the base tip's tree, so
+    none is counted as this branch's.
 
     Args:
         root: Repository root directory.
 
     Returns:
-        Repo-relative paths of added fragments, sorted; empty when the
-        base ref cannot be resolved (fresh clone, no remote) — the
-        count check degrades open rather than failing on repos where
-        the fork point is unknowable.
+        Repo-relative paths of branch-added fragments, sorted; empty
+        when the base ref cannot be resolved (fresh clone, no remote) —
+        the count check degrades open rather than failing on repos
+        where the fork point is unknowable.
     """
-    base = merge_base_with_head(root, load_config(root).base_branch)
-    if not base:
+    base_ref = resolve_base_branch_ref(root, load_config(root).base_branch)
+    if base_ref is None:
+        return []
+    fork = run_git("merge-base", base_ref, "HEAD", cwd=root, check=False)
+    if not fork:
         return []
     raw = run_git(
         "diff",
         "--name-only",
         "--diff-filter=A",
-        base,
+        fork,
         "--",
         str(FRAGMENTS_DIR),
         cwd=root,
         check=False,
     )
-    return sorted(line for line in raw.splitlines() if line.endswith(".md"))
+    # ls-tree failure must degrade OPEN (skip the count), not to an
+    # empty membership set — an empty set would silently reproduce the
+    # very over-count this exclusion exists to prevent.
+    ls_tree = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", base_ref, "--", str(FRAGMENTS_DIR)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=root,
+    )
+    if ls_tree.returncode != 0:
+        return []
+    in_base = set(ls_tree.stdout.splitlines())
+    return sorted(
+        line
+        for line in raw.splitlines()
+        if line.endswith(".md") and line not in in_base
+    )
 
 
 def next_version_from_fragments(root: Path, latest_tag: str) -> tuple[str, str] | None:

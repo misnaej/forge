@@ -26,7 +26,13 @@ from forge.changelog_fragments import (
     next_version_from_fragments,
     validate_fragment,
 )
-from tests.conftest import GIT_ENV, FakeProc, commit_all, init_git_repo
+from tests.conftest import (
+    GIT_ENV,
+    FakeProc,
+    commit_all,
+    init_git_repo,
+    init_single_track_repo,
+)
 
 
 # Captured at import time, before any test monkeypatches `subprocess.run` —
@@ -1917,6 +1923,60 @@ def test_branch_added_fragments_excludes_fork_point_and_base_side_deletions(
     )
 
     assert branch_added_fragments(repo) == ["changelog.d/second.added.md"]
+
+
+def test_branch_added_fragments_excludes_base_fragments_mid_merge(
+    tmp_path: Path,
+) -> None:
+    """A conflicted base merge must not count base-only fragments as branch-added.
+
+    Pre-commit fires at ``git commit`` while ``HEAD`` is still the
+    pre-merge commit, so a fork-point-to-working-tree-only diff would see
+    every fragment the merge brings in from the base as "added" —
+    tripping the one-fragment-per-PR gate on an unavoidable merge.
+    Fixture: ``feat/x`` forks before ``a``/``b`` land on ``main``, so the
+    merge-base stays at the fork; ``git merge --no-ff --no-commit
+    origin/main`` reproduces the exact pre-commit-at-merge state
+    (``MERGE_HEAD`` set, ``a``/``b`` staged from the merge) — no real
+    textual conflict needed, since the gate doesn't care why the commit
+    hasn't landed.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    (work / "pyproject.toml").write_text(
+        '[tool.forge]\nbase_branch = "main"\n\n'
+        '[tool.forge.changelog]\nmode = "fragments"\n'
+    )
+    commit_all(work, "chore: fragments mode setup")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=work, env=GIT_ENV, check=True
+    )
+    _write_fragment(work / "changelog.d", "d.added.md", "bump: minor\n- d\n")
+    commit_all(work, "feat: add fragment d")
+
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=work, env=GIT_ENV, check=True)
+    _write_fragment(work / "changelog.d", "a.added.md", "bump: patch\n- a\n")
+    _write_fragment(work / "changelog.d", "b.added.md", "bump: patch\n- b\n")
+    commit_all(work, "chore: assemble a and b")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+
+    subprocess.run(
+        ["git", "checkout", "-q", "feat/x"], cwd=work, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "origin/main"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    assert (work / ".git" / "MERGE_HEAD").exists()  # sanity: genuinely mid-merge
+
+    assert branch_added_fragments(work) == ["changelog.d/d.added.md"]
 
 
 def test_branch_added_fragments_unresolvable_base_returns_empty(
