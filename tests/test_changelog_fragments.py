@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from forge import changelog_fragments
+from forge import changelog_fragments, git_utils
 from forge.changelog_fragments import (
     Fragment,
     assemble_changelog,
@@ -1516,11 +1516,14 @@ def test_main_release_pr_happy_path_opens_pr_with_assembled_commit(
     )
 
     real_run = subprocess.run  # captured BEFORE patching, for the git argv below
+    gh_pr_create_calls: list[list[str]] = []
 
     # MOCKING: selective dispatcher — `git` argv is routed to the real
     # `subprocess.run` (so the branch really gets pushed to the bare
     # origin above), while `gh` argv returns a canned success, since no
     # real `gh` binary can authenticate or open a PR in a test sandbox.
+    # `gh pr create` argv is also recorded, to assert the `--base` wiring
+    # below.
     def _dispatch(
         cmd: list[str], *_a: object, **kwargs: object
     ) -> subprocess.CompletedProcess[str] | FakeProc:
@@ -1529,6 +1532,7 @@ def test_main_release_pr_happy_path_opens_pr_with_assembled_commit(
         if cmd[:2] == ["gh", "auth"]:
             return FakeProc(0)
         if cmd[:2] == ["gh", "pr"]:
+            gh_pr_create_calls.append(cmd)
             return FakeProc(0, stdout="https://github.com/x/y/pull/42\n")
         msg = f"unexpected subprocess.run call: {cmd}"
         raise AssertionError(msg)
@@ -1539,6 +1543,10 @@ def test_main_release_pr_happy_path_opens_pr_with_assembled_commit(
 
     out = capsys.readouterr().out
     assert "release-pr: opened https://github.com/x/y/pull/42" in out
+    assert len(gh_pr_create_calls) == 1
+    create_argv = gh_pr_create_calls[0]
+    assert "--base" in create_argv
+    assert create_argv[create_argv.index("--base") + 1] == "main"
 
     remote_branches = subprocess.run(
         ["git", "ls-remote", "--heads", str(origin), "chore/assemble-v1.1.0"],
@@ -1596,7 +1604,7 @@ def test_gate_evidence_pass_formats_success_headline(
 ) -> None:
     """A zero exit formats a ✅ headline with the gate output fenced below."""
     monkeypatch.setattr(
-        changelog_fragments.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(0, stdout="ok\n"),
     )
@@ -1614,7 +1622,7 @@ def test_gate_evidence_fail_formats_warning_headline(
 ) -> None:
     """A non-zero exit formats a ⚠️ headline — a gate failure never blocks the PR."""
     monkeypatch.setattr(
-        changelog_fragments.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(1, stderr="boom"),
     )
@@ -1633,14 +1641,14 @@ def test_gate_evidence_truncates_long_output(
     """Output beyond the cap is truncated with a trailing marker, not balloon the PR."""
     oversized = "x" * 5000
     monkeypatch.setattr(
-        changelog_fragments.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(0, stdout=oversized),
     )
 
     _passed, evidence = changelog_fragments._gate_evidence(tmp_path)
 
-    assert evidence.count("x") == changelog_fragments._EVIDENCE_OUTPUT_CAP
+    assert evidence.count("x") == git_utils.EVIDENCE_OUTPUT_CAP
     assert evidence.endswith("… (truncated)\n````\n")
 
 
@@ -1654,7 +1662,7 @@ def test_gate_evidence_invokes_precommit_with_exact_argv_and_cwd(
         calls.append((cmd, kwargs.get("cwd")))
         return FakeProc(0)
 
-    monkeypatch.setattr(changelog_fragments.subprocess, "run", _fake_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
 
     changelog_fragments._gate_evidence(tmp_path)
 
@@ -1686,7 +1694,7 @@ def test_push_and_open_pr_push_race_defers_to_open_pr(
     )
 
     rc = changelog_fragments._push_and_open_pr(
-        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", draft=False
+        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", "main", draft=False
     )
 
     assert rc == 0
@@ -1710,7 +1718,7 @@ def test_push_and_open_pr_push_failure_without_race_exits_two(
     )
 
     rc = changelog_fragments._push_and_open_pr(
-        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", draft=False
+        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", "main", draft=False
     )
 
     assert rc == 2
@@ -1737,7 +1745,7 @@ def test_push_and_open_pr_create_race_defers_to_open_pr(
     )
 
     rc = changelog_fragments._push_and_open_pr(
-        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", draft=False
+        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", "main", draft=False
     )
 
     assert rc == 0
@@ -1763,7 +1771,7 @@ def test_push_and_open_pr_create_failure_without_race_exits_two(
     )
 
     rc = changelog_fragments._push_and_open_pr(
-        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", draft=False
+        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", "main", draft=False
     )
 
     assert rc == 2
@@ -1793,7 +1801,7 @@ def test_publish_assembly_pr_mid_step_exception_still_restores_branch(
 
     with pytest.raises(BoomError):
         changelog_fragments._publish_assembly_pr(
-            tmp_path, "", "v1.1.0", "1.1.0", draft=False
+            tmp_path, "v1.1.0", "1.1.0", date="", draft=False
         )
 
     current_branch = subprocess.run(

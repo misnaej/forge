@@ -583,6 +583,58 @@ def create_annotated_tag(
     run_git(*_fallback_identity_args(repo_root), *args, cwd=repo_root)
 
 
+# Cap on gate output embedded in a PR body: trusted but unbounded text
+# must not balloon the PR. Shared by every automation that opens PRs
+# with in-body verification evidence.
+EVIDENCE_OUTPUT_CAP = 4000
+
+
+def run_gate_evidence(
+    repo_root: Path,
+    gates: str,
+    *,
+    pass_headline: str,
+    fail_headline: str,
+    section_title: str,
+) -> tuple[bool, str]:
+    """Run ``forge-precommit --only`` gates and format PR-body evidence.
+
+    The shared evidence seam for automation-opened PRs (``forge-resync``,
+    ``forge-changelog release-pr``): a PR opened outside the ``/pr``
+    wrap-up flow — possibly with a token whose events trigger no CI —
+    must carry its verification evidence in its own body. A gate
+    failure never blocks the PR; the body flags it loudly and the
+    reviewer takes over.
+
+    Args:
+        repo_root: Repo root passed to the gate subprocess as cwd.
+        gates: Comma-joined step list for ``forge-precommit --only``.
+        pass_headline: Markdown headline when every gate exits 0.
+        fail_headline: Markdown headline on any gate failure.
+        section_title: ``##`` section title for the evidence block.
+
+    Returns:
+        ``(passed, evidence_block)`` — markdown section headlined by
+        the verdict with the verbatim gate output fenced below it
+        (four-backtick fence; capped at :data:`EVIDENCE_OUTPUT_CAP`).
+    """
+    proc = subprocess.run(
+        ["forge-precommit", "--only", gates],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=repo_root,
+    )
+    passed = proc.returncode == 0
+    headline = pass_headline if passed else fail_headline
+    output = "\n".join(
+        part for part in (proc.stdout.strip(), proc.stderr.strip()) if part
+    )
+    if len(output) > EVIDENCE_OUTPUT_CAP:
+        output = f"{output[:EVIDENCE_OUTPUT_CAP]}\n… (truncated)"
+    return passed, (f"## {section_title}\n\n{headline}\n\n````\n{output}\n````\n")
+
+
 def find_open_pr_by_head_prefix(repo_root: Path, prefix: str) -> str | None:
     """Return the URL of an open PR whose head branch starts with *prefix*.
 

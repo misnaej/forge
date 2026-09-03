@@ -211,7 +211,7 @@ def test_provenance_evidence_pass_states_byte_verified_provenance(
         "byte-verified" language and the verbatim stdout.
     """
     monkeypatch.setattr(
-        resync.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(0, stdout="all good"),
     )
@@ -237,7 +237,7 @@ def test_provenance_evidence_fail_emits_full_review_warning(
         "full review" and carries both the stdout and stderr text.
     """
     monkeypatch.setattr(
-        resync.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(1, stdout="drift found", stderr="mismatch"),
     )
@@ -272,7 +272,7 @@ def test_provenance_evidence_argv_and_kwargs(
         calls.append((cmd, kwargs))
         return FakeProc(0)
 
-    monkeypatch.setattr(resync.subprocess, "run", _fake_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
 
     resync._provenance_evidence(tmp_path)
 
@@ -296,16 +296,16 @@ def test_provenance_evidence_truncates_oversized_output(
     """Gate output past the cap is truncated with a marker; the fence survives.
 
     SCENARIO: a passing gate run whose stdout exceeds
-        `resync._EVIDENCE_OUTPUT_CAP`.
+        `git_utils.EVIDENCE_OUTPUT_CAP`.
     MOCK SETUP: `subprocess.run` replaced with a fake returning
         `FakeProc(0, stdout=<oversized payload>)`.
     EXPECTED BEHAVIOR: the evidence block carries the "… (truncated)"
         marker, does not contain the full original output, and the
         four-backtick fence is intact.
     """
-    oversized = "x" * (resync._EVIDENCE_OUTPUT_CAP + 500)
+    oversized = "x" * (git_utils.EVIDENCE_OUTPUT_CAP + 500)
     monkeypatch.setattr(
-        resync.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(0, stdout=oversized),
     )

@@ -28,6 +28,10 @@ Usage:
 - ``forge-changelog auto-tag`` — tag-per-merge CI seam: cut and push an
   annotated tag from the fragments merged since the last tag (tag-tree
   membership marks consumption); never touches the base branch.
+- ``forge-changelog release-pr`` — unattended counterpart of
+  ``release``: branch ``chore/assemble-vX.Y.Z``, stage, commit, push,
+  and open the assembly PR with in-body gate evidence; idempotent and
+  race-tolerant; merging stays human.
 - ``forge-changelog release`` — compute the next version from the
   latest tag + pending fragments, assemble ``CHANGELOG.md`` under it,
   write ``.claude-plugin/plugin.json`` to it (when a manifest exists —
@@ -72,6 +76,7 @@ from forge.git_utils import (
     render_plugin_version,
     repo_root,
     require_cli,
+    run_gate_evidence,
     run_git,
 )
 
@@ -802,10 +807,6 @@ def _cmd_auto_tag(root: Path) -> int:
 
 ASSEMBLY_BRANCH_PREFIX = "chore/assemble-"
 
-# Cap on gate output embedded in the PR body (mirrors forge-resync's
-# evidence cap): trusted but unbounded text must not balloon the PR.
-_EVIDENCE_OUTPUT_CAP = 4000
-
 # The assembly PR is opened by unattended automation, so the PR body —
 # not a cron log nobody reads — carries what the merger must know.
 _ASSEMBLY_PR_BODY = """\
@@ -826,39 +827,30 @@ def _gate_evidence(root: Path) -> tuple[bool, str]:
 
     ``release-pr`` may open its PR with a token whose events trigger no
     CI (GitHub's anti-recursion rule for ``GITHUB_TOKEN``), so the PR
-    body itself must carry verification evidence — the same technique
-    as ``forge-resync``'s provenance block. A gate failure never blocks
-    the PR: the body flags it loudly and the reviewer takes over.
+    body itself must carry verification evidence. Formatting and the
+    failure-never-blocks contract live in
+    :func:`forge.git_utils.run_gate_evidence`.
 
     Args:
         root: Repo root passed to the gate subprocess as cwd.
 
     Returns:
-        ``(passed, evidence_block)`` — markdown section headlined by
-        the verdict with the verbatim gate output fenced below it.
+        ``(passed, evidence_block)`` per ``run_gate_evidence``.
     """
     gates = "changelog_version,plugin_version"
-    proc = subprocess.run(
-        ["forge-precommit", "--only", gates],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=root,
+    return run_gate_evidence(
+        root,
+        gates,
+        pass_headline=(
+            f"✅ **Versioning gates pass on the assembled tree** "
+            f"(`forge-precommit --only {gates}`)."
+        ),
+        fail_headline=(
+            "⚠️ **Versioning gates FAILED on the assembled tree — do not "
+            "merge without a full review.**"
+        ),
+        section_title="Assembly verification",
     )
-    passed = proc.returncode == 0
-    headline = (
-        f"✅ **Versioning gates pass on the assembled tree** "
-        f"(`forge-precommit --only {gates}`)."
-        if passed
-        else "⚠️ **Versioning gates FAILED on the assembled tree — do not "
-        "merge without a full review.**"
-    )
-    output = "\n".join(
-        part for part in (proc.stdout.strip(), proc.stderr.strip()) if part
-    )
-    if len(output) > _EVIDENCE_OUTPUT_CAP:
-        output = f"{output[:_EVIDENCE_OUTPUT_CAP]}\n… (truncated)"
-    return passed, (f"## Assembly verification\n\n{headline}\n\n````\n{output}\n````\n")
 
 
 def _computed_next_version(
@@ -903,7 +895,9 @@ def _gh_preflight() -> int | None:
     a pushed branch on a late ``gh`` failure.
 
     Returns:
-        ``2`` on a missing/unauthenticated ``gh``; ``None`` when ready.
+        ``2`` when ``gh`` is unauthenticated; ``None`` when ready. A
+        missing ``gh`` never returns — ``require_cli`` aborts with
+        ``SystemExit(2)``.
     """
     require_cli("gh", caller="forge-changelog", hint="install GitHub CLI (gh)")
     auth = subprocess.run(
@@ -933,8 +927,8 @@ def _cmd_release_pr(root: Path, date: str, *, draft: bool) -> int:
     Returns:
         ``0`` — PR opened, an assembly PR already exists, or nothing is
         pending (the quiet weekly case); ``2`` on a guard failure (no
-        tag, invalid fragment, gh missing/unauthenticated, git/gh
-        failure no race explains).
+        tag, invalid fragment, unauthenticated gh, git/gh failure no
+        race explains); a missing ``gh`` aborts via ``SystemExit(2)``.
     """
     if not is_fragments_mode(root):
         emit("release-pr: not a fragments-mode repo — nothing to do.")
@@ -951,20 +945,45 @@ def _cmd_release_pr(root: Path, date: str, *, draft: bool) -> int:
         return 0
     bare_version, _level = computed
     version = f"v{bare_version}"
-    return _publish_assembly_pr(root, date, version, bare_version, draft=draft)
+    return _publish_assembly_pr(root, version, bare_version, date=date, draft=draft)
+
+
+def _stage_and_commit_assembly(
+    root: Path, date: str, bare_version: str, version: str
+) -> int:
+    """Stage and commit the assembly changelog and manifest.
+
+    Args:
+        root: Repository root directory.
+        date: Optional heading date override.
+        bare_version: The computed release version (no ``v`` prefix).
+        version: Release version tag name (``vX.Y.Z``) for the commit message.
+
+    Returns:
+        ``0`` on success; ``2`` on staging failure.
+    """
+    outcome = _stage_release(root, date, bare_version)
+    if outcome != 0:
+        return outcome
+    create_commit(root, f"chore(release): assemble {version}")
+    return 0
 
 
 def _publish_assembly_pr(
-    root: Path, date: str, version: str, bare_version: str, *, draft: bool
+    root: Path,
+    version: str,
+    bare_version: str,
+    *,
+    date: str = "",
+    draft: bool = False,
 ) -> int:
     """Branch, stage, commit, push the assembly and open its PR.
 
     Args:
         root: Repository root directory.
-        date: Optional heading date override.
         version: Release version tag name (``vX.Y.Z``) for the branch and titles.
-        bare_version: The computed release version (no ``v`` prefix), passed
-            through to :func:`_stage_release`.
+        bare_version: The computed release version (no ``v`` prefix).
+        date: Optional heading date override (defaults to today).
         draft: Open the PR as a draft.
 
     Returns:
@@ -972,27 +991,30 @@ def _publish_assembly_pr(
         push/create failure; ``2`` on a guard or push failure no race
         explains.
     """
+    base_branch = load_config(root).base_branch
     branch = f"{ASSEMBLY_BRANCH_PREFIX}{version}"
     start_branch = run_git("branch", "--show-current", cwd=root, check=False)
     run_git("switch", "-c", branch, cwd=root)
     try:
-        outcome = _stage_release(root, date, bare_version)
+        outcome = _stage_and_commit_assembly(root, date, bare_version, version)
         if outcome != 0:
             return outcome
-        create_commit(root, f"chore(release): assemble {version}")
-        return _push_and_open_pr(root, branch, version, draft=draft)
+        return _push_and_open_pr(root, branch, version, base_branch, draft=draft)
     finally:
         if start_branch:
             run_git("switch", start_branch, cwd=root, check=False)
 
 
-def _push_and_open_pr(root: Path, branch: str, version: str, *, draft: bool) -> int:
+def _push_and_open_pr(
+    root: Path, branch: str, version: str, base_branch: str, *, draft: bool
+) -> int:
     """Push the assembly branch and open its PR, deferring to race winners.
 
     Args:
         root: Repository root directory.
         branch: The assembly branch (already committed, checked out).
         version: Release version tag name (``vX.Y.Z``) for titles.
+        base_branch: PR base — the repo's ``[tool.forge].base_branch``.
         draft: Open the PR as a draft.
 
     Returns:
@@ -1020,6 +1042,8 @@ def _push_and_open_pr(root: Path, branch: str, version: str, *, draft: bool) -> 
             "pr",
             "create",
             *(["--draft"] if draft else []),
+            "--base",
+            base_branch,
             "--head",
             branch,
             "--title",
