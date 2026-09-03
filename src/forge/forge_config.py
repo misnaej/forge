@@ -63,14 +63,7 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ConfigKey(
         ("tool", "forge", "base_branch"),
         "main",
-        "Slow-channel / release branch (protected; promotion target).",
-    ),
-    ConfigKey(
-        ("tool", "forge", "dev_branch"),
-        "main",
-        "Fast-channel integration branch (protected). Defaults to "
-        "base_branch (single-track); set to e.g. 'dev' to opt into "
-        "dual-track.",
+        "Protected base branch every PR targets and every release tags.",
     ),
     ConfigKey(
         ("tool", "forge", "source_dirs"),
@@ -212,15 +205,6 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         description="Make the pip_audit step fail the commit on a CVE "
         "finding (default: non-blocking WARN; a missing pip-audit binary "
         "stays a WARN regardless).",
-    ),
-    ConfigKey(
-        ("tool", "forge", "promotion", "hold_newest_minor"),
-        default=False,
-        description="Withhold the newest dev minor from promotion until "
-        "its successor tags: forge-next-prep --promotion-status lists it "
-        "as held and forge-check-main-tags refuses to relocate it, so "
-        "@dev version derivation stays clean (forge-repo mechanism; "
-        "default off — consumers unaffected).",
     ),
     ConfigKey(
         ("tool", "forge", "cve_usage", "paths"),

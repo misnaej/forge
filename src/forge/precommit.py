@@ -95,15 +95,12 @@ from forge.git_utils import (
     merge_base_with_head,
     merge_in_progress,
     parse_semver,
-    read_local_plugin_version,
-    release_tree_fingerprint,
     require_cli,
     resolve_base_branch_ref,
     resolve_current_branch,
     run_git,
     stage_modified_paths,
     write_step_log,
-    write_tree,
 )
 from forge.git_utils import repo_root as get_repo_root
 from forge.install_claudemd import foundation_matches_installed
@@ -173,29 +170,18 @@ class StepDef:
 
     Co-locating the properties keeps the step registry a single source of
     truth — a name can't drift between a separate ordered list and a
-    separate default-on set, and a step's era-sensitivity can't drift
-    from its registration. ``default_on=False`` marks an opt-in step that
+    separate default-on set. ``default_on=False`` marks an opt-in step that
     runs only when listed in ``[tool.forge.precommit] enable`` (or
-    ``--only``). ``tree_content`` is set explicitly on every entry (no
-    default) so each new step makes the release-lock call deliberately.
+    ``--only``).
 
     Attributes:
         name: Step identifier used in config, CLI flags, and the log slug.
         fn: The ``step_*`` callable producing this step's ``StepResult``.
         default_on: Whether the step is part of the default sequence.
-        tree_content: True when the step validates or mutates tree
-            content with the *current* toolchain — suppressed during a
-            promotion merge whose staged tree is release-locked to a
-            historical tag (see :func:`_release_merge_context`), where
-            such checks are unsatisfiable by design and fixes would
-            poison the release fingerprint. False for steps about the
-            environment, versioning guards, or ``CHANGELOG.md`` — the
-            one file a release merge may legitimately change.
     """
 
     name: str
     fn: StepFn
-    tree_content: bool
     default_on: bool = True
 
 
@@ -1307,98 +1293,6 @@ def step_plugin_version(repo_root: Path) -> StepResult:
     )
 
 
-def _one_step_successors(tag: tuple[int, int, int]) -> set[tuple[int, int, int]]:
-    """Return the three valid rolling-next successors of a tagged release.
-
-    Args:
-        tag: The latest tag's ``(major, minor, patch)``.
-
-    Returns:
-        The set of versions exactly one rolling-next step ahead — a patch
-        bump, a minor bump, or a major bump.
-    """
-    major, minor, patch = tag
-    return {(major, minor, patch + 1), (major, minor + 1, 0), (major + 1, 0, 0)}
-
-
-def step_release_tag_guard(repo_root: Path) -> StepResult:
-    """Block when an intermediate rolling-next release was never tagged (#66).
-
-    Forge tags **every** merge to its dev branch (``forge-next-prep --tag``),
-    so ``plugin.json`` — which names the *next* release — must always sit
-    **exactly one** rolling-next step (patch+1 / minor+1 / major+1) ahead of
-    the latest ``v*`` tag. A larger gap has two distinct causes, and the
-    failure message names both: (a) on dev, a prior release's tag was
-    skipped and is about to be buried (the #66 failure mode, where v1.25.0
-    shipped untagged) — a HUMAN runs ``forge-next-prep --tag``; (b) on a
-    feature branch, other open PRs hold the intermediate version slots —
-    nothing was skipped, the cure is re-slotting ``plugin.json`` to
-    latest-tag+1. The message ends with an explicit agents-report-only
-    directive: no agent may run the tag command (or any release action) to
-    clear this step (#405).
-
-    Self-skips (passes) for any repo this cadence does not apply to: a
-    single-track repo, one without ``.claude-plugin/plugin.json``, one with
-    no tags yet, or when ``plugin.json`` is not strictly ahead of the latest
-    tag (the ``plugin_version`` step owns the "must be ahead" rule, and an
-    equal value is a reproduced-release tree).
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        ``StepResult`` — blocking failure whenever the gap exceeds one step,
-        whichever cause produced it; skipped/pass otherwise.
-    """
-    if not config.load_config(repo_root).dual_track:
-        return StepResult(
-            name="release_tag_guard",
-            passed=True,
-            output="(single-track repo — skipped)",
-            skipped=True,
-        )
-    plugin_ver = read_local_plugin_version(repo_root)
-    latest = latest_v_tag(repo_root)
-    if plugin_ver is None or latest is None:
-        return StepResult(
-            name="release_tag_guard",
-            passed=True,
-            output="(no plugin.json or no v* tags — skipped)",
-            skipped=True,
-        )
-    pv = parse_semver(plugin_ver)
-    lv = parse_semver(latest)
-    if pv is None or lv is None or pv <= lv:
-        return StepResult(
-            name="release_tag_guard",
-            passed=True,
-            output="(plugin.json not strictly ahead of latest tag — skipped)",
-            skipped=True,
-        )
-    if pv in _one_step_successors(lv):
-        return StepResult(
-            name="release_tag_guard",
-            passed=True,
-            output=f"plugin.json {plugin_ver} is one step ahead of v{latest}.",
-        )
-    return StepResult(
-        name="release_tag_guard",
-        passed=False,
-        output=(
-            f"plugin.json {plugin_ver} is more than one release ahead of the "
-            f"latest tag v{latest}. Two distinct causes — pick the right "
-            "cure. (a) On the dev branch after a merge whose release was "
-            "never tagged: a HUMAN runs `forge-next-prep --tag` on dev. "
-            "(b) On a feature branch while other open PRs hold the "
-            "intermediate version slots: nothing was skipped — re-slot "
-            "this branch's plugin.json to latest-tag+1; merge-order "
-            "re-bumping resolves the rest (docs/release-process). "
-            "AGENTS: report only — never run the tag command or any "
-            "release action to clear this step."
-        ),
-    )
-
-
 def step_smart_test(repo_root: Path) -> StepResult:
     """Run smart-test depth-N selection when opted in (off by default).
 
@@ -1521,32 +1415,6 @@ def _cadence_note(mode: str, *, age: float | None, age_txt: str, max_age: float)
             f"{max_age:g}h window; the CI cadence job may be broken.\n"
         )
     return ""
-
-
-def step_changelog_history(repo_root: Path) -> StepResult:
-    """Run ``verify-forge-changelog-history`` — the dropped-``@base``-entry guard.
-
-    Thin shell-out (matching ``step_plugin_version``). The CLI self-skips
-    unless ``origin/<base>`` is an ancestor of ``HEAD`` — a ``dev → main``
-    promotion or other main-merge — so it fires only when main's curated
-    CHANGELOG history could be regressed by a conflict resolved blindly
-    toward dev. See ``docs/release-process.md`` §5 and #120.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        ``StepResult`` mirroring the CLI exit code.
-
-    Raises:
-        SystemExit: If ``verify-forge-changelog-history`` is not on PATH.
-    """
-    require_cli("verify-forge-changelog-history", caller="forge-precommit")
-    passed, output = _run(["verify-forge-changelog-history"], cwd=repo_root)
-    skipped = "skipped" in output
-    return StepResult(
-        name="changelog_history", passed=passed, output=output, skipped=skipped
-    )
 
 
 def _cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]:
@@ -1975,14 +1843,6 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
                 "Manifest-versioned repo — verify-forge-plugin-version owns "
                 "the declared-version invariant; skipped."
             ),
-            skipped=True,
-        )
-    cfg = config.load_config(repo_root)
-    if cfg.dual_track:
-        return StepResult(
-            name=name,
-            passed=True,
-            output="Dual-track repo — changelog is curated at promotion; skipped.",
             skipped=True,
         )
     if _forge_step_config(repo_root, "changelog").get("mode") == "fragments":
@@ -2508,57 +2368,47 @@ def _format_timing_log(results: list[StepResult]) -> str:
 # follow because they mutate + re-stage files before any validator sees the
 # diff (regen_docs refreshes generated docs, ruff reformats source).
 _STEP_REGISTRY: tuple[StepDef, ...] = (
-    StepDef("auto_rebuild", step_auto_rebuild, tree_content=False),
-    StepDef("env_sync", step_env_sync, tree_content=False),
-    StepDef("regen_docs", step_regen_docs, tree_content=True),
-    StepDef("ruff", step_ruff, tree_content=True),
-    StepDef("docstring_verification", step_docstrings, tree_content=True),
-    StepDef("docstring_coverage", step_docstring_coverage, tree_content=True),
-    StepDef("test_naming_check", step_test_naming, tree_content=True),
-    StepDef("repo_structure_check", step_repo_structure, tree_content=True),
-    StepDef("manifest_json", step_manifest_json, tree_content=True),
-    StepDef("cli_wiring", step_cli_wiring, tree_content=True),
-    StepDef("agent_doc", step_agent_doc, tree_content=True),
-    StepDef("commit_types_parity", step_commit_types_parity, tree_content=True),
-    StepDef("plugin_version", step_plugin_version, tree_content=False),
-    StepDef("release_tag_guard", step_release_tag_guard, tree_content=False),
-    StepDef("changelog_history", step_changelog_history, tree_content=False),
-    StepDef("vendored_integrity", step_vendored_integrity, tree_content=True),
-    StepDef("pip_audit", step_pip_audit, tree_content=False),
-    StepDef("cve_usage", step_cve_usage, tree_content=True),
-    StepDef("doctest", step_doctest, tree_content=True, default_on=False),
-    StepDef("typecheck", step_typecheck, tree_content=True, default_on=False),
-    StepDef(
-        "doc_consistency", step_doc_consistency, tree_content=True, default_on=False
-    ),
-    StepDef("c4", step_c4, tree_content=True, default_on=False),
-    StepDef(
-        "api_digest_check", step_api_digest_check, tree_content=True, default_on=False
-    ),
+    StepDef("auto_rebuild", step_auto_rebuild),
+    StepDef("env_sync", step_env_sync),
+    StepDef("regen_docs", step_regen_docs),
+    StepDef("ruff", step_ruff),
+    StepDef("docstring_verification", step_docstrings),
+    StepDef("docstring_coverage", step_docstring_coverage),
+    StepDef("test_naming_check", step_test_naming),
+    StepDef("repo_structure_check", step_repo_structure),
+    StepDef("manifest_json", step_manifest_json),
+    StepDef("cli_wiring", step_cli_wiring),
+    StepDef("agent_doc", step_agent_doc),
+    StepDef("commit_types_parity", step_commit_types_parity),
+    StepDef("plugin_version", step_plugin_version),
+    StepDef("vendored_integrity", step_vendored_integrity),
+    StepDef("pip_audit", step_pip_audit),
+    StepDef("cve_usage", step_cve_usage),
+    StepDef("doctest", step_doctest, default_on=False),
+    StepDef("typecheck", step_typecheck, default_on=False),
+    StepDef("doc_consistency", step_doc_consistency, default_on=False),
+    StepDef("c4", step_c4, default_on=False),
+    StepDef("api_digest_check", step_api_digest_check, default_on=False),
     StepDef(
         "cli_reference_check",
         step_cli_reference_check,
-        tree_content=True,
         default_on=False,
     ),
     StepDef(
         "foundation_md_check",
         step_foundation_md_check,
-        tree_content=True,
         default_on=False,
     ),
-    StepDef("smart_test", step_smart_test, tree_content=True, default_on=False),
-    StepDef("layering", step_layering, tree_content=True, default_on=False),
+    StepDef("smart_test", step_smart_test, default_on=False),
+    StepDef("layering", step_layering, default_on=False),
     StepDef(
         "changelog_version",
         step_changelog_version,
-        tree_content=False,
         default_on=False,
     ),
     StepDef(
         "changelog_updated",
         step_changelog_updated,
-        tree_content=False,
         default_on=False,
     ),
 )
@@ -2622,60 +2472,6 @@ def _resolve_steps(
     return [d for d in _STEP_REGISTRY if d.name in chosen]
 
 
-# A promotion PR's head branch (the `promote` skill): the name pins exactly
-# which release tag the staged tree must reproduce for the era-gap
-# suppression to engage.
-_RELEASE_BRANCH_RE = re.compile(r"^release/(v\d+\.\d+\.\d+)$")
-
-
-def _release_merge_context(repo_root: Path) -> str | None:
-    """Return the release tag a promotion merge commit is locked to, or ``None``.
-
-    Detects the one commit where content gates are unsatisfiable by
-    design: the merge commit of a ``release/vX.Y.Z`` promotion branch
-    (release-process.md §5). Its tree is release-locked — the fingerprint
-    guards require byte-equality with the promoted tag outside
-    ``CHANGELOG.md`` — so running *today's* toolchain against that
-    historical tree can only fail (rules adopted since the tag) or
-    corrupt it (auto-fixes diverge the fingerprint). All three must hold:
-
-    1. a merge is in progress (``MERGE_HEAD`` present);
-    2. the current branch names a promotion (``release/vX.Y.Z``);
-    3. the **staged** tree's release fingerprint equals the tag's —
-       compared via :func:`forge.git_utils.release_tree_fingerprint` on
-       the ``git write-tree`` result, since pre-commit runs before the
-       merge commit exists.
-
-    Condition 3 is the safety invariant: a staged tree touched beyond
-    ``CHANGELOG.md`` (e.g. by an auto-fixer) breaks the fingerprint
-    match, so suppression disengages and the gate fails loud instead of
-    committing a poisoned release.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        The matched tag (``vX.Y.Z``) when the staged merge reproduces
-        that release, ``None`` otherwise.
-    """
-    if not merge_in_progress(repo_root):
-        return None
-    resolved = resolve_current_branch(repo_root)
-    if resolved is None:
-        return None
-    match = _RELEASE_BRANCH_RE.match(resolved[0])
-    if match is None:
-        return None
-    tag = match.group(1)
-    staged_tree = write_tree(repo_root)
-    if staged_tree is None:
-        return None
-    tag_fp = release_tree_fingerprint(repo_root, tag)
-    if tag_fp is None or release_tree_fingerprint(repo_root, staged_tree) != tag_fp:
-        return None
-    return tag
-
-
 def run_all(
     repo_root: Path | None = None,
     *,
@@ -2691,11 +2487,6 @@ def run_all(
     ``step_env_sync``'s freshness gate would block on it); ``step_regen_docs``
     and ``step_ruff`` follow and mutate + re-stage files (regenerated docs,
     ruff fixes) before any validator sees the diff; the rest verify only.
-
-    During a promotion merge whose staged tree is release-locked
-    (:func:`_release_merge_context`), ``tree_content`` steps are skipped
-    without running — the tree already passed its own era's gate at
-    tagging time and cannot be changed here anyway.
 
     Each invoked step is wall-clocked (monotonic) into its result's
     ``elapsed_s``, and the run's per-step timing report is (re)written to
@@ -2717,23 +2508,7 @@ def run_all(
     root = repo_root if repo_root is not None else get_repo_root()
     results: list[StepResult] = []
     this_module = sys.modules[__name__]
-    release_lock = _release_merge_context(root)
     for step_def in _resolve_steps(root, skip=skip, only=only):
-        if release_lock is not None and step_def.tree_content:
-            result = StepResult(
-                name=step_def.name,
-                passed=True,
-                output=(
-                    f"(promotion merge reproduces {release_lock} — "
-                    "release-locked tree, content check skipped)"
-                ),
-                skipped=True,
-            )
-            if print_progress:
-                _print_step_line(result)
-            _write_log(root, result)
-            results.append(result)
-            continue
         # Resolve each step by name through the module namespace rather than
         # calling ``step_def.fn`` directly. The registry captured the
         # original function objects at import time, so a test that does

@@ -985,7 +985,7 @@ def _init_autotag_repo(repo: Path, origin: Path, *, auto: str | None = "merge") 
     )
     release = f'\n[tool.forge.release]\nauto = "{auto}"\n' if auto else "\n"
     (repo / "pyproject.toml").write_text(
-        '[tool.forge]\nbase_branch = "main"\ndev_branch = "main"\n\n'
+        '[tool.forge]\nbase_branch = "main"\n\n'
         '[tool.forge.changelog]\nmode = "fragments"\n' + release
     )
     (repo / "changelog.d").mkdir()
@@ -1167,6 +1167,93 @@ def test_main_auto_tag_not_fragments_mode_noop(
 
     assert main(["auto-tag"]) == 0
     assert "not a fragments-mode repo" in capsys.readouterr().out
+
+
+def test_main_auto_tag_push_race_defers_to_remote_winner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Push failure with a genuinely competing remote tag defers to the winner.
+
+    Two runners race to cut ``v0.1.0`` from the same seed fragment. A
+    ``winner`` clone commits a divergent change, tags it ``v0.1.0``, and
+    pushes the tag to origin first; the main ``repo`` then loses its own
+    push. The losing runner must exit 0 with "appeared remotely", and the
+    remote must still carry only the winner's tag at the winner's commit —
+    the losing runner's local tag never reaches origin.
+    """
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_autotag_repo(repo, origin)
+
+    winner = tmp_path / "winner"
+    subprocess.run(
+        ["git", "clone", "-q", str(origin), str(winner)], env=GIT_ENV, check=True
+    )
+    (winner / "winner.txt").write_text("winner change\n")
+    commit_all(winner, "winner: divergent change")
+    subprocess.run(
+        ["git", "tag", "-a", "v0.1.0", "-m", "winner tag"],
+        cwd=winner,
+        env=GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "v0.1.0"], cwd=winner, env=GIT_ENV, check=True
+    )
+    winner_commit = subprocess.run(
+        ["git", "rev-parse", "v0.1.0^{commit}"],
+        cwd=winner,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
+
+    assert main(["auto-tag"]) == 0
+
+    assert "appeared remotely" in capsys.readouterr().out
+    assert _remote_tags(origin) == ["v0.1.0"]
+    remote_commit = subprocess.run(
+        ["git", "ls-remote", str(origin), "v0.1.0^{}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()[0]
+    assert remote_commit == winner_commit
+
+
+def test_main_auto_tag_push_failure_without_winner_reports_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A push failure with no reachable remote reports failure, not a false winner.
+
+    Origin is repointed at a nonexistent path after seeding, so both the
+    tag push and the remote-winner check fail to reach anything — there is
+    no competing tag to explain the failure. The push failure must surface
+    as a real failure (exit 2, "no concurrent winner") instead of being
+    misread as a lost race.
+    """
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_autotag_repo(repo, origin)
+    subprocess.run(
+        ["git", "remote", "set-url", "origin", "/nonexistent/xyz.git"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
+
+    assert main(["auto-tag"]) == 2
+
+    assert "no concurrent winner" in capsys.readouterr().out
 
 
 def test_fragments_new_since_tag_excludes_tag_tree_members(

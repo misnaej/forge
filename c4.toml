@@ -87,7 +87,7 @@ modules = ["forge.post_merge", "forge.post_checkout", "forge._hook_helpers"]
 tags = ["component"]
 name = "Release tooling"
 technology = "Python + git/gh"
-description = "Rolling-next versioning, dev→main promotion, PR squash messages, continuation log"
+description = "Rolling-next versioning, tag-per-merge releases, PR squash messages, continuation log"
 modules = ["forge.next_prep", "forge.upgrade", "forge.pr_squash_comment", "forge.pr_delta", "forge.continuation_append"]
 
 [[component]]

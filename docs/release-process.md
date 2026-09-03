@@ -125,23 +125,14 @@ you find an invariant with no test, that gap is a bug to close.
 
 ### Retired invariants (dual-track)
 
-The dual-track invariants — promotion status and staged catch-up, minor
-tag relocation (`forge-check-main-tags`), changelog-history preservation
-across promotion merges, and the newest-minor hold — are retired. Their
-machinery self-skips on a single-track repo (`dev_branch ==
-base_branch`) and is scheduled for deletion along with its tests (see
-below). The release fingerprint itself
+The dual-track model — a `dev` integration branch promoted into `main`
+per minor — is retired and its machinery deleted: promotion status and
+staged catch-up, minor tag relocation (`forge-check-main-tags`),
+changelog-history preservation across promotion merges
+(`verify-forge-changelog-history`), the newest-minor hold, the
+`/promote` skill, and the era-gap pre-commit suppression are gone, with
+their tests. The release fingerprint
 (`git_utils.release_tree_fingerprint`) is **not** retired: the
 rolling-next guard's release-commit skip still depends on its
 changelog-tolerant matching (table above) — only the tag aligner's use
-of it retires.
-
-## Deprecated: dual-track
-
-Forge previously shipped on two branches — `dev` (every patch) and `main`
-(minors only, via a staged `dev → main` promotion). That model is
-retired: the `dev` branch is frozen, and every release now ships on
-`main`. The promotion machinery (`/promote`, `forge-check-main-tags`,
-`forge-next-prep --promotion-status`, `verify-forge-changelog-history`)
-self-skips because `dev_branch == base_branch`; its deletion is
-scheduled (#441 Phase C).
+of it retired.

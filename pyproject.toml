@@ -41,7 +41,6 @@ verify-forge-docstrings = "forge.verify_docstrings:main"
 verify-forge-docstring-coverage = "forge.verify_docstring_coverage:main"
 verify-forge-manifest = "forge.verify_manifest:main"
 verify-forge-plugin-version = "forge.verify_plugin_version:main"
-verify-forge-changelog-history = "forge.verify_changelog_history:main"
 verify-forge-repo-structure = "forge.verify_repo_structure:main"
 install-forge-labels = "forge.install_labels:main"
 verify-forge-test-naming = "forge.verify_test_naming:main"
@@ -58,7 +57,6 @@ forge-doctor = "forge.doctor:main"
 forge-next-prep = "forge.next_prep:main"
 forge-emergency = "forge.emergency:main"
 forge-rebump = "forge.rebump:main"
-forge-check-main-tags = "forge.verify_main_tags:main"
 forge-release = "forge.release:main"
 forge-changelog = "forge.changelog_fragments:main"
 forge-smart-test = "forge.smart_test.cli:main"
@@ -121,11 +119,8 @@ markers = [
 ]
 
 [tool.forge]
-# Single-track: every PR targets main; every merge tags. The dual-track
-# dev/main model was retired (one-shot promotion v3.40.0) — dual-track
-# machinery self-skips when dev_branch == base_branch.
+# Single-track: every PR targets main; every merge tags.
 base_branch = "main"
-dev_branch = "main"
 
 [tool.forge.release]
 # Tag-per-merge: every push to main carrying new changelog fragments is

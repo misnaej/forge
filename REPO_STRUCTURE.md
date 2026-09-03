@@ -55,8 +55,6 @@ Code.
    - pip_audit_json.py: shared single-invocation pip-audit JSON helper (`run_json` + `ids_from_data` / `has_vulns` / `render_report`); the neutral seam both `precommit.step_pip_audit` and `verify_cve_usage` depend on so pip-audit runs once per commit
    - install_readme_badges.py: `install-forge-readme-badges` — write/verify a drift-aware README status-badge managed block (shields.io + local docstring-coverage SVG); opt-in via `[tool.forge.badges]`; `--check` mode
    - verify_plugin_version.py: `verify-forge-plugin-version` — rolling-next guard (plugin.json["version"] > latest git tag)
-   - verify_main_tags.py: `forge-check-main-tags` — verify/repair minor-boundary (`vX.Y.0`) tag placement on the base branch
-   - verify_changelog_history.py: `verify-forge-changelog-history` — guard that a promotion branch (base merged in) retains every curated `## vX.Y.0` CHANGELOG heading on the base branch
    - gen_cli_reference.py: `forge-gen-cli-reference` — CLI reference
      doc generator
    - gen_api_digest.py: `forge-gen-api-digest` — public-symbol API
@@ -162,7 +160,7 @@ enforcement:
 - block_forge_docs_edits.sh: block agent edits inside the forge-managed forge-docs/ mirror
 - block_git_rebase.sh: block `git rebase` and `git pull --rebase` from agents (no bypass — sync via plain base merge)
 - block_install_deps.sh: block dependency installation
-- block_protected_branches.sh: block direct pushes to protected branches (`[tool.forge].base_branch` + `dev_branch`)
+- block_protected_branches.sh: block direct pushes to the protected base branch (`[tool.forge].base_branch`)
 - block_no_verify.sh: block `--no-verify`
 - block_pr_merge.sh: block autonomous PR merges
 - block_protected_files.sh: protect foundation-owned files
@@ -242,8 +240,6 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_pip_audit_json.py: tests for pip_audit_json (run_json binary-missing/parse paths, ids_from_data alias collection + malformed-shape filtering, render_report primary-id-only, advisory-count invariant)
    - test_install_readme_badges.py: tests for install_readme_badges (badge sources, drift-aware injection, opt-in gating, --check)
    - test_verify_plugin_version.py: tests for verify_plugin_version
-   - test_verify_main_tags.py: tests for verify_main_tags
-   - test_verify_changelog_history.py: tests for verify_changelog_history
    - test_verify_repo_structure.py: tests for verify_repo_structure
    - test_verify_test_naming.py: tests for verify_test_naming
 

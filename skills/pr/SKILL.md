@@ -55,8 +55,8 @@ silently merge.** Which variant depends on Step 0:
   git merge-tree --write-tree "origin/<base>" HEAD >/dev/null \
     || echo CONFLICTING
   ```
-  `<base>` is the branch the PR will target (`[tool.forge].dev_branch` when
-  set and the branch is feature work, else the repo default branch).
+  `<base>` is the branch the PR will target (`[tool.forge].base_branch`
+  when set, else the repo default branch).
 
 - **`mergeable: CONFLICTING`** → do not finalize yet. Resolve by
   merging the base in (`git merge origin/<base>`, resolve conflicts

@@ -168,10 +168,9 @@ def test_skipped_when_tree_matches_tag_via_ours_merge(
 ) -> None:
     """A ``-s ours`` merge whose tree equals the tag's tree skips the guard.
 
-    Models the dual-track promotion scenario: dev merges main with ``-s
-    ours`` to absorb past promotion squash commits without changing any
-    file content. HEAD is a new commit SHA, but its tree equals the
-    tag's tree — the guard must skip.
+    Models an ``-s ours`` absorption merge that changes no file content:
+    HEAD is a new commit SHA, but its tree equals the tag's tree — the
+    guard must skip.
     """
     env = _GIT_ENV
     _init_git_repo(tmp_path)

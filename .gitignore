@@ -16,9 +16,8 @@ node_modules/
 # Per-user Claude Code settings live in .claude/settings.local.json.
 # Exceptions tracked in the repo so every contributor gets them on
 # clone:
-# - .claude/skills/ — forge-private project-local skills (e.g.
-#   /promote — forge's dev→main release ceremony). Not exported via
-#   the plugin manifest.
+# - .claude/skills/ — forge-private project-local skills. Not exported
+#   via the plugin manifest.
 # - .claude/agents/ — forge-private project-local agent wrappers (e.g.
 #   issue-triage-forge — adds the forge-internal label rule on top of
 #   forge:issue-triage). Not exported via the plugin manifest.

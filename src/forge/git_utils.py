@@ -208,30 +208,6 @@ def latest_v_tag(root: Path) -> str | None:
     return out.splitlines()[0]
 
 
-def minor_tags(repo_root: Path) -> list[str]:
-    """Return every ``vX.Y.0`` tag (patch == 0), semver-sorted ascending.
-
-    The single source of truth for "which tags are promotion targets":
-    ``forge-check-main-tags`` walks it to align tags with the base
-    branch, and ``forge-next-prep --promotion-status`` filters it into
-    the pending-promotion list — both instead of carrying their own
-    patch-tag filter (the same sharing precedent as :func:`parse_semver`).
-
-    Args:
-        repo_root: Repo root for the git invocation.
-
-    Returns:
-        Minor tag names; empty when the repo has no ``v*`` tags.
-    """
-    raw = run_git("tag", "--list", "v*", cwd=repo_root, check=False)
-    minors = [
-        tag
-        for tag in raw.split()
-        if (parsed := parse_semver(tag)) is not None and parsed[2] == 0
-    ]
-    return sorted(minors, key=lambda tag: parse_semver(tag) or (0, 0, 0))
-
-
 def fetch_tags_best_effort(repo_root: Path, *, timeout: int = 10) -> list[str]:
     """Refresh local tags from ``origin``, reporting degradations as notes.
 

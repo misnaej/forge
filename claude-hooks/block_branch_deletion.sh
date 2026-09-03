@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Block agent-initiated DELETION of the protected remote branches
-# (base_branch + dev_branch, default `main` + `dev`).
+# Block agent-initiated DELETION of the protected remote branch
+# (base_branch, default `main`).
 #
 # Why this exists separately from block_raw_git / block_protected_branches:
 #   - block_raw_git blocks raw `git push` from Bash, BUT the
@@ -11,7 +11,7 @@
 #   - Server-side rulesets that "restrict deletions" do NOT stop a
 #     privileged (bypass-actor) account — and an agent runs with the
 #     user's credentials. The client-side guard is the only thing that
-#     reliably catches a main/dev delete before it leaves the machine.
+#     reliably catches a base-branch delete before it leaves the machine.
 #
 # Scope: REMOTE deletion only. Local `git branch -d/-D` is untouched
 # (forge-next-prep prunes local [gone] branches with `-d` by design).
@@ -23,14 +23,14 @@
 #   - gh api (-X|--method)[ =]DELETE .../(refs/heads/|branches/)<branch>
 #
 # No agent_type bypass: there is no legitimate reason for ANY agent to
-# delete main/dev. If a human truly intends it, they run the command
+# delete the base branch. If a human truly intends it, they run the command
 # directly with `! ...` (user shell commands do not pass through agent
 # PreToolUse hooks).
 #
 # Reads `[tool.forge]` via an inline python3 heredoc (no forge-scripts
 # import) so the hook works without forge installed. Default-deny on a
-# recognized delete that targets a protected name; default protected set
-# is `main` + `dev` on any parse failure.
+# recognized delete that targets a protected name; default protected
+# branch is `main` on any parse failure.
 set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
@@ -52,28 +52,24 @@ if [ -z "$REPO_ROOT" ] || ! echo "$REPO_ROOT" | grep -qE '^/'; then
     REPO_ROOT="."
 fi
 
-# Protected branches: base_branch + dev_branch (default main + dev).
-protected=$(python3 - "$REPO_ROOT" <<'PY' 2>/dev/null || printf 'main\ndev\n'
+# Protected branch: base_branch (default main).
+protected=$(python3 - "$REPO_ROOT" <<'PY' 2>/dev/null || printf 'main\n'
 import sys
 from pathlib import Path
 try:
     import tomllib
 except ImportError:
-    print("main"); print("dev"); raise SystemExit(0)
+    print("main"); raise SystemExit(0)
 root = Path(sys.argv[1])
 pp = root / "pyproject.toml"
 if not pp.is_file():
-    print("main"); print("dev"); raise SystemExit(0)
+    print("main"); raise SystemExit(0)
 try:
     data = tomllib.loads(pp.read_text())
 except Exception:
-    print("main"); print("dev"); raise SystemExit(0)
+    print("main"); raise SystemExit(0)
 sec = data.get("tool", {}).get("forge", {})
-base = sec.get("base_branch", "main")
-dev = sec.get("dev_branch", "dev")
-print(base)
-if dev != base:
-    print(dev)
+print(sec.get("base_branch", "main"))
 PY
 )
 
@@ -86,9 +82,9 @@ while IFS= read -r seg; do
 
     if echo "$seg" | grep -qE 'git[[:space:]]+push'; then
         # Blanket-dangerous push modes: delete remote refs without naming
-        # a branch, so they threaten main/dev regardless of the target.
+        # a branch, so they threaten the base branch regardless of target.
         if echo "$seg" | grep -qE '(--mirror|--prune)([[:space:]=]|$)'; then
-            blocked="main/dev"
+            blocked="protected"
             reason="git push --mirror/--prune can delete remote branches"
             break
         fi
@@ -120,7 +116,7 @@ $SEGMENTS
 EOF
 
 if [ -n "$blocked" ]; then
-    echo "BLOCKED: refusing to delete a protected remote branch (${reason}). Deleting main/dev is irreversible and bypasses server-side rulesets when run with a privileged account (an agent runs with your credentials). If this is genuinely intended, run it yourself: ! ${COMMAND}" >&2
+    echo "BLOCKED: refusing to delete a protected remote branch (${reason}). Deleting the base branch is irreversible and bypasses server-side rulesets when run with a privileged account (an agent runs with your credentials). If this is genuinely intended, run it yourself: ! ${COMMAND}" >&2
     exit 2
 fi
 exit 0

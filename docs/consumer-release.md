@@ -21,8 +21,7 @@ enforces, in order — all failures reported at once, exit `1`:
 
 1. **Clean working tree.**
 2. **On `base_branch`** (`[tool.forge].base_branch`, default `main`).
-3. **Single-track release model** — refuses on a dual-track repo
-   (`dev_branch != base_branch`) and on a manifest-versioned repo
+3. **Single-track release model** — refuses on a manifest-versioned repo
    (`.claude-plugin/plugin.json` present → use `forge-next-prep --tag`).
 4. **CHANGELOG gate** — when `CHANGELOG.md` exists, it must already
    carry a `## vX.Y.Z` heading for the tag being cut. A repo with no

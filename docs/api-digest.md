@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_69 modules, 853 symbols._
+_67 modules, 833 symbols._
 
 ## `forge`
 
@@ -278,7 +278,6 @@ _69 modules, 853 symbols._
 - `detect_source_dirs(repo_root: Path) -> list[str]` — Smart-detect the repo's source roots when ``source_dirs`` is unset.
 - `detect_test_dirs(repo_root: Path) -> list[str]` — Smart-detect the repo's test roots when ``test_dirs`` is unset.
 - `class ForgeConfig` — Repo configuration sourced from ``[tool.forge]``.
-  - `dual_track(self) -> bool` — Return ``True`` when base and dev are distinct branches.
 - `read_pyproject_raw(repo_root: Path) -> dict` — Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
 - `is_fragments_mode(repo_root: Path) -> bool` — Return whether the repo runs changelog fragments mode.
 - `read_tool_forge_section(repo_root: Path, section: str = '') -> dict` — Return a ``[tool.forge.<section>]`` table, or ``{}`` when absent.
@@ -538,7 +537,6 @@ _69 modules, 853 symbols._
 - `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
 - `classify_bump(old: tuple[int, int, int] | None, new: tuple[int, int, int] | None) -> str | None` — Classify the semver increment from *old* to *new*.
 - `latest_v_tag(root: Path) -> str | None` — Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
-- `minor_tags(repo_root: Path) -> list[str]` — Return every ``vX.Y.0`` tag (patch == 0), semver-sorted ascending.
 - `fetch_tags_best_effort(repo_root: Path, *, timeout: int = 10) -> list[str]` — Refresh local tags from ``origin``, reporting degradations as notes.
 - `forge_install_command(extra: str | None = None) -> str` — Format the consumer-valid install command for forge-scripts.
 - `missing_dependency_hint(package: str, *, extra: str | None = None) -> str` — Format a user-facing hint for a missing dependency.
@@ -698,19 +696,15 @@ _69 modules, 853 symbols._
 
 > _forge-next-prep — prepare main for the next task (fetch, pull, tag, prune)._
 
-- `_check_promote_pending_message(repo_root: Path, dev_branch: str, base_branch: str) -> str | None` _(internal)_ — Return a one-line user-facing prompt when promotion is pending, else ``None``.
-- `_withhold_newest_minor(repo_root: Path, staged: list[tuple[tuple[int, int, int], str]]) -> tuple[list[tuple[tuple[int, int, int], str]], str | None]` _(internal)_ — Split the newest minor off *staged* when the promotion hold is on.
-- `_promotion_status_lines(repo_root: Path, dev_branch: str, base_branch: str) -> list[str]` _(internal)_ — Build the read-only promotion-status report.
 - `_is_newer(plugin_ver: str, latest_tag: str | None) -> bool` _(internal)_ — Return True when ``v<plugin_ver>`` would sort *after* ``latest_tag``.
 - `tag_staleness_warning(repo_root: Path) -> str | None` — Return a warning when the integration branch owes a rolling-next tag.
-- `_tag_misuse_warning(repo_root: Path, cfg: ForgeConfig) -> str | None` _(internal)_ — Return a warning when ``--tag`` is used outside the rolling-next model.
+- `_tag_misuse_warning(repo_root: Path) -> str | None` _(internal)_ — Return a warning when ``--tag`` is used outside the rolling-next model.
 - `_maybe_tag_release(repo_root: Path) -> str | None` _(internal)_ — Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
 - `_gone_branches(repo_root: Path) -> list[str]` _(internal)_ — Return local branch names whose tracking remote is ``[origin/...: gone]``.
 - `_prune_gone_branches(repo_root: Path) -> tuple[list[str], list[str]]` _(internal)_ — ``git branch -d`` every branch whose remote is gone.
-- `_emit_promotion_status(repo_root: Path, dev_branch: str, base_branch: str) -> int` _(internal)_ — Fetch tags and log the read-only promotion-status report.
 - `_log_prune_result(repo_root: Path) -> None` _(internal)_ — Prune stale local branches and log the outcome.
 - `main() -> int` — Refresh main, optionally tag the release, prune stale local branches.
-- `_tag_and_report(repo_root: Path, cfg: ForgeConfig, args: argparse.Namespace) -> int` _(internal)_ — Run the post-sync tail: optional tag, optional prune, advisory.
+- `_tag_and_report(repo_root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run the post-sync tail: optional tag, optional prune, advisory.
 
 ## `forge.pip_audit_json`
 
@@ -813,11 +807,8 @@ _69 modules, 853 symbols._
 - `_cli_wiring_enabled(repo_root: Path) -> bool` _(internal)_ — Return True when the repo has opted into the cli_wiring check.
 - `step_agent_doc(repo_root: Path) -> StepResult` — Run ``verify-forge-agent-doc`` — keep a hand-maintained agent doc in sync.
 - `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
-- `_one_step_successors(tag: tuple[int, int, int]) -> set[tuple[int, int, int]]` _(internal)_ — Return the three valid rolling-next successors of a tagged release.
-- `step_release_tag_guard(repo_root: Path) -> StepResult` — Block when an intermediate rolling-next release was never tagged (#66).
 - `step_smart_test(repo_root: Path) -> StepResult` — Run smart-test depth-N selection when opted in (off by default).
 - `_cadence_note(mode: str, *, age: float | None, age_txt: str, max_age: float) -> str` _(internal)_ — Return the informational cadence line for a non-escalating mode.
-- `step_changelog_history(repo_root: Path) -> StepResult` — Run ``verify-forge-changelog-history`` — the dropped-``@base``-entry guard.
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the resolved scope (opt-in).
@@ -841,7 +832,6 @@ _69 modules, 853 symbols._
 - `_format_timing_log(results: list[StepResult]) -> str` _(internal)_ — Render the per-step timing report for ``code_health/precommit_timing.log``.
 - `_validate_step_names(names: Sequence[str]) -> None` _(internal)_ — Raise ``ValueError`` listing any *names* that are not registered steps.
 - `_resolve_steps(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepDef]` _(internal)_ — Resolve which steps to run, in registry order.
-- `_release_merge_context(repo_root: Path) -> str | None` _(internal)_ — Return the release tag a promotion merge commit is locked to, or ``None``.
 - `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
 - `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
 - `main() -> int` — CLI entry point.
@@ -870,14 +860,14 @@ _69 modules, 853 symbols._
 
 - `_dirty_tree_error(repo_root: Path) -> str | None` _(internal)_ — Return an error when the working tree has uncommitted changes.
 - `_wrong_branch_error(repo_root: Path, base_branch: str) -> str | None` _(internal)_ — Return an error when ``HEAD`` is not on *base_branch*.
-- `_wrong_release_model_error(repo_root: Path, cfg: ForgeConfig) -> str | None` _(internal)_ — Return an error when this repo's release model isn't single-track.
+- `_wrong_release_model_error(repo_root: Path) -> str | None` _(internal)_ — Return an error when this repo's release model isn't single-track.
 - `_changelog_gate_error(repo_root: Path, tag: str) -> str | None` _(internal)_ — Return an error when ``CHANGELOG.md`` exists but lacks *tag*'s entry.
 - `_detached_head_error(repo_root: Path, base_branch: str) -> str | None` _(internal)_ — Return an error unless ``HEAD`` is the tip of ``origin/<base_branch>``.
 - `_declared_tag_or_error(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Resolve the tag ``--from-changelog`` should cut.
 - `_stranded_entries_error(repo_root: Path, tag: str) -> str | None` _(internal)_ — Return an error when ``CHANGELOG.md`` changed since released *tag*.
 - `_tag_exists(repo_root: Path, tag: str) -> bool` _(internal)_ — Return whether *tag* already exists locally or on ``origin``.
 - `_select_branch_guard(repo_root: Path, base_branch: str, *, from_changelog_mode: bool) -> str | None` _(internal)_ — Choose the appropriate branch guard for the release mode.
-- `_prepare_from_changelog(repo_root: Path, cfg: ForgeConfig) -> tuple[str | None, str | None]` _(internal)_ — Resolve and validate the tag declared in CHANGELOG.md.
+- `_prepare_from_changelog(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Resolve and validate the tag declared in CHANGELOG.md.
 - `_cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> int` _(internal)_ — Create the annotated *tag* on ``HEAD`` and push it to ``origin``.
 - `main() -> int` — Cut the ``vX.Y.Z`` release tag — bumped off the latest tag, or declared.
 
@@ -1074,12 +1064,6 @@ _69 modules, 853 symbols._
 - `_handle_normal_mode(root: Path, doc: str, roster: dict[str, set[str]], path: str) -> int` _(internal)_ — Check coverage, dangling references, and edge structure in normal mode.
 - `main(argv: list[str] | None = None) -> int` — Run the agent-doc verifier.
 
-## `forge.verify_changelog_history`
-
-> _verify-forge-changelog-history — guard main's curated CHANGELOG history._
-
-- `main() -> int` — Fail when the working tree's CHANGELOG drops a curated ``@base`` entry.
-
 ## `forge.verify_cli_wiring`
 
 > _verify-forge-cli-wiring — assert every project script has a real caller._
@@ -1146,22 +1130,6 @@ _69 modules, 853 symbols._
 - `_log_warnings_grouped(warnings: list[Issue], repo_root_str: str) -> None` _(internal)_ — Log warnings grouped by file.
 - `_log_issues(errors: list[Issue], warnings: list[Issue], infos: list[Issue], repo_root: Path, *, file_count: int) -> None` _(internal)_ — Log categorized issues and print a summary line.
 - `main() -> int` — Main entry point for docstring verification.
-
-## `forge.verify_main_tags`
-
-> _forge-check-main-tags — keep minor release tags on the base branch._
-
-- `class _TagState` _(internal)_ — Where a minor tag currently sits versus where it belongs.
-  - `needs_move(self) -> bool` — ``True`` when a base commit reproduces the tag but it sits elsewhere.
-- `_short(sha: str | None) -> str` _(internal)_ — Return a 9-char abbreviation of *sha*, or ``(none)`` when absent.
-- `_held_tag(repo_root: Path) -> str | None` _(internal)_ — Return the newest minor tag when the promotion hold withholds it.
-- `_base_tree_index(repo_root: Path, base_ref: str) -> dict[str, str]` _(internal)_ — Map each base commit's release fingerprint to its commit SHA.
-- `_tag_states(repo_root: Path, base_ref: str) -> list[_TagState]` _(internal)_ — Resolve every minor tag's current vs. target commit on *base_ref*.
-- `_force_move_tag(repo_root: Path, tag: str, commit_sha: str) -> None` _(internal)_ — Annotated-retag *tag* at *commit_sha* and force-push it.
-- `_report_unreproduced(states: list[_TagState], base_ref: str) -> None` _(internal)_ — Warn about un-reproduced minor tags, ignoring ancient (skipped) ones.
-- `_verify(states: list[_TagState], base_ref: str) -> int` _(internal)_ — Report drift read-only and return the process exit code.
-- `_repair(repo_root: Path, states: list[_TagState], base_ref: str, *, dry_run: bool) -> int` _(internal)_ — Move every misplaced minor tag onto its base commit (or preview).
-- `main() -> int` — Verify or repair minor release tags on the base branch.
 
 ## `forge.verify_manifest`
 

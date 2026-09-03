@@ -20,14 +20,6 @@
 # unless the classifier itself says light-code — fail closed on a
 # missing classifier, unresolvable base, or any disagreement. The light
 # escape is earned at publish time, never taken on agent say-so.
-#
-# Promotion PRs self-exempt: a release/vX.Y.Z branch is an era-locked
-# tree whose verification is the release-fingerprint check, not a /pr
-# reporter wrap-up — the /promote flow has no Step 3.92. The exemption
-# demands provenance, not just naming: the vX.Y.Z tag must exist AND
-# HEAD's tree must reproduce it modulo CHANGELOG.md (the curated entry
-# is the one tolerated divergence). A branch merely NAMED release/*
-# whose content diverges falls through to the normal gate.
 set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
@@ -45,19 +37,6 @@ fi
 if echo "$COMMAND" | grep -qE '(^|[[:space:]]*[|;&]+[[:space:]]*)FORGE_SKIP_WRAPUP_GATE=1[[:space:]]+gh[[:space:]]+pr[[:space:]]+create\b' \
     || [ "${FORGE_SKIP_WRAPUP_GATE:-}" = "1" ]; then
     exit 0
-fi
-
-BRANCH=$(git branch --show-current 2>/dev/null || true)
-if echo "$BRANCH" | grep -qE '^release/v[0-9]+\.[0-9]+\.[0-9]+$'; then
-    TAG="${BRANCH#release/}"
-    # Top-anchored pathspecs (':/', ':(exclude,top)') — a bare '.' is
-    # cwd-relative and would silently narrow the divergence check when
-    # the hook fires from a subdirectory.
-    if git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null 2>&1 \
-        && [ -z "$(git diff --name-only "$TAG" HEAD -- ':/' ':(exclude,top)CHANGELOG.md')" ]; then
-        exit 0
-    fi
-    echo "NOTE: branch is named $BRANCH but its tree does not reproduce tag $TAG (mod CHANGELOG.md) — promotion exemption withheld, normal wrap-up gate applies." >&2
 fi
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
@@ -115,8 +94,8 @@ if grep -qE '^wrapup-mode:[[:space:]]*light[[:space:]]*$' "$WRAPUP"; then
         echo "BLOCKED: wrap-up declares wrapup-mode: light but forge-pr-plan is not on PATH to verify it — install forge-scripts or author the full wrap-up." >&2
         exit 2
     fi
-    # [tool.forge] config only (dev_branch, falling back to base_branch)
-    # — same python3 heredoc pattern as block_protected_branches.
+    # [tool.forge] config only (base_branch) — same python3 heredoc
+    # pattern as block_protected_branches.
     # pyproject.toml is itself high-blast-radius, so a light-eligible PR
     # cannot have poisoned it.
     BASE=$(python3 - "$REPO_ROOT" 2>/dev/null <<'PY'
@@ -124,13 +103,13 @@ import sys, tomllib, pathlib
 try:
     cfg = tomllib.loads((pathlib.Path(sys.argv[1]) / "pyproject.toml").read_text())
     forge = cfg.get("tool", {}).get("forge", {})
-    print(forge.get("dev_branch") or forge.get("base_branch") or "")
+    print(forge.get("base_branch") or "")
 except Exception:
     print("")
 PY
     )
     if [ -z "$BASE" ]; then
-        echo "BLOCKED: wrapup-mode: light but no [tool.forge] dev_branch/base_branch config resolves the base ref — author the full wrap-up." >&2
+        echo "BLOCKED: wrapup-mode: light but no [tool.forge] base_branch config resolves the base ref — author the full wrap-up." >&2
         exit 2
     fi
     # Guarded assignment: under `set -e` a bare failing pipeline would

@@ -639,10 +639,10 @@ def _validate_auto_tag_fragments(
     errors: list[str] = []
     for path in new_paths:
         fragment, frag_errors = validate_fragment(path)
-        if frag_errors:
-            errors.extend(frag_errors)
+        if fragment is not None:
+            fragments.append(fragment)
         else:
-            fragments.append(fragment)  # type: ignore[arg-type]
+            errors.extend(frag_errors)
     return fragments, errors
 
 
@@ -678,8 +678,17 @@ def _create_and_push_tag(root: Path, version: str, level: str, n_fragments: int)
         check=False,
     )
     if push.returncode != 0:
-        run_git("fetch", "--tags", "origin", cwd=root, check=False)
-        if _tag_exists(root, version):
+        # Local _tag_exists is useless here — this function just created
+        # that ref; only the remote can attest a concurrent winner.
+        remote_tag = run_git(
+            "ls-remote",
+            "--tags",
+            "origin",
+            f"refs/tags/{version}",
+            cwd=root,
+            check=False,
+        )
+        if remote_tag.strip():
             emit(f"auto-tag: {version} appeared remotely — another runner won.")
             return 0
         emit(

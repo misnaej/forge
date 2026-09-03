@@ -140,37 +140,19 @@ def test_wrong_branch_error_reports_detached_head(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_wrong_release_model_error_none_for_single_track_no_manifest(
+def test_wrong_release_model_error_none_when_no_manifest(
     tmp_path: Path,
 ) -> None:
-    """Single-track config with no plugin manifest is a valid release model."""
-    cfg = ForgeConfig(base_branch="main", dev_branch="main")
-    assert release._wrong_release_model_error(tmp_path, cfg) is None
-
-
-def test_wrong_release_model_error_dual_track_wins(tmp_path: Path) -> None:
-    """Dual-track config is refused even when a plugin manifest is ALSO present.
-
-    Asserts the checked-first precedence documented on
-    ``_wrong_release_model_error``: dual-track disqualifies before the
-    manifest check is even reached.
-    """
-    plugin_dir = tmp_path / ".claude-plugin"
-    plugin_dir.mkdir()
-    (plugin_dir / "plugin.json").write_text('{"name": "x", "version": "1.2.3"}')
-    cfg = ForgeConfig(base_branch="main", dev_branch="dev")
-    error = release._wrong_release_model_error(tmp_path, cfg)
-    assert error is not None
-    assert "Dual-track" in error
+    """Config with no plugin manifest is a valid release model."""
+    assert release._wrong_release_model_error(tmp_path) is None
 
 
 def test_wrong_release_model_error_reports_plugin_manifest(tmp_path: Path) -> None:
-    """Single-track config with a valid plugin manifest names ``plugin.json``."""
+    """Config with a valid plugin manifest names ``plugin.json``."""
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()
     (plugin_dir / "plugin.json").write_text('{"name": "x", "version": "1.2.3"}')
-    cfg = ForgeConfig(base_branch="main", dev_branch="main")
-    error = release._wrong_release_model_error(tmp_path, cfg)
+    error = release._wrong_release_model_error(tmp_path)
     assert error is not None
     assert "plugin.json" in error
 
@@ -260,7 +242,7 @@ def test_main_dry_run_reports_next_tag_without_tagging(
     monkeypatch.setattr(
         release,
         "load_config",
-        lambda _root: ForgeConfig(base_branch="main", dev_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     monkeypatch.setattr("sys.argv", ["forge-release", "--bump", "minor", "--dry-run"])
     monkeypatch.chdir(tmp_path)
@@ -286,7 +268,7 @@ def test_main_first_release_when_no_tags_exist(
     monkeypatch.setattr(
         release,
         "load_config",
-        lambda _root: ForgeConfig(base_branch="main", dev_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     monkeypatch.setattr("sys.argv", ["forge-release", "--bump", "minor", "--dry-run"])
     monkeypatch.chdir(tmp_path)
@@ -321,7 +303,7 @@ def test_main_success_creates_and_pushes_tag_when_origin_exists(
     monkeypatch.setattr(
         release,
         "load_config",
-        lambda _root: ForgeConfig(base_branch="main", dev_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     monkeypatch.setattr("sys.argv", ["forge-release", "--bump", "patch"])
     monkeypatch.chdir(work)
@@ -348,7 +330,7 @@ def test_main_success_when_no_changelog_present(
     monkeypatch.setattr(
         release,
         "load_config",
-        lambda _root: ForgeConfig(base_branch="main", dev_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     monkeypatch.setattr("sys.argv", ["forge-release", "--bump", "patch"])
     monkeypatch.chdir(work)
@@ -364,15 +346,22 @@ def test_main_collects_all_guard_failures_and_exits_one(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """SCENARIO: dirty tree + wrong branch + dual-track config, all at once.
+    """SCENARIO: dirty tree + wrong branch + plugin manifest, all at once.
 
-    MOCK SETUP: ``load_config`` → dual-track ``ForgeConfig`` (``dev`` !=
-        ``main``). Real repo checked out on ``feat/x`` with an untracked
-        file.
+    MOCK SETUP: ``load_config`` → ``ForgeConfig(base_branch="main")``. Real
+        repo checked out on ``feat/x`` with an untracked file and a
+        ``.claude-plugin/plugin.json`` manifest (wrong release model).
     EXPECTED BEHAVIOR: returns 1; caplog error records name all three
-        failures ("dirty", the branch name, "Dual-track").
+        failures ("dirty", the branch name, "plugin.json").
     """
     _init_git_repo(tmp_path)
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text('{"name": "x", "version": "1.2.3"}')
+    subprocess.run(["git", "add", "."], cwd=tmp_path, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "manifest"], cwd=tmp_path, env=_GIT_ENV, check=True
+    )
     subprocess.run(
         ["git", "checkout", "-q", "-b", "feat/x"],
         cwd=tmp_path,
@@ -383,7 +372,7 @@ def test_main_collects_all_guard_failures_and_exits_one(
     monkeypatch.setattr(
         release,
         "load_config",
-        lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     monkeypatch.setattr("sys.argv", ["forge-release", "--bump", "patch"])
     monkeypatch.chdir(tmp_path)
@@ -393,7 +382,7 @@ def test_main_collects_all_guard_failures_and_exits_one(
     errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
     assert any("dirty" in m for m in errors)
     assert any("feat/x" in m for m in errors)
-    assert any("Dual-track" in m for m in errors)
+    assert any("plugin.json" in m for m in errors)
 
 
 def test_main_changelog_gate_blocks_missing_entry(
@@ -422,7 +411,7 @@ def test_main_changelog_gate_blocks_missing_entry(
     monkeypatch.setattr(
         release,
         "load_config",
-        lambda _root: ForgeConfig(base_branch="main", dev_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     monkeypatch.setattr("sys.argv", ["forge-release", "--bump", "patch"])
     monkeypatch.chdir(tmp_path)
@@ -449,7 +438,7 @@ def test_main_guard_failure_wins_over_dry_run(
     monkeypatch.setattr(
         release,
         "load_config",
-        lambda _root: ForgeConfig(base_branch="main", dev_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     monkeypatch.setattr("sys.argv", ["forge-release", "--bump", "patch", "--dry-run"])
     monkeypatch.chdir(tmp_path)
@@ -468,7 +457,7 @@ def _single_track_cfg(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         release,
         "load_config",
-        lambda _root: ForgeConfig(base_branch="main", dev_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
 
 
@@ -838,15 +827,19 @@ def test_main_from_changelog_model_guard_beats_idempotency(
 ) -> None:
     """Wrong release model is reported even when the declared tag exists.
 
-    SCENARIO: dual-track repo with a stale tag matching the CHANGELOG
+    SCENARIO: plugin-manifest repo with a stale tag matching the CHANGELOG
         top heading — misconfiguration must not be masked by the
         already-released short-circuit.
-    MOCK SETUP: real repo + tag v1.0.0; load_config → dual-track.
-    EXPECTED BEHAVIOR: exit 1 naming the promotion flow, not "already
+    MOCK SETUP: real repo + tag v1.0.0; a ``.claude-plugin/plugin.json``
+        manifest makes the release model wrong.
+    EXPECTED BEHAVIOR: exit 1 naming the rolling-next flow, not "already
         released" exit 0.
     """
     work, _bare = _repo_with_origin(tmp_path)
     (work / "CHANGELOG.md").write_text("## v1.0.0\n")
+    plugin_dir = work / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text('{"name": "x", "version": "1.0.0"}')
     subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
     subprocess.run(
         ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
@@ -860,10 +853,10 @@ def test_main_from_changelog_model_guard_beats_idempotency(
     monkeypatch.setattr(
         release,
         "load_config",
-        lambda _root: ForgeConfig(base_branch="main", dev_branch="dev"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
     monkeypatch.chdir(work)
     with caplog.at_level(logging.ERROR, logger="forge.release"):
         assert release.main() == 1
-    assert any("Dual-track" in r.getMessage() for r in caplog.records)
+    assert any("plugin.json" in r.getMessage() for r in caplog.records)

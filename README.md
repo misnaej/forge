@@ -132,7 +132,7 @@ graph LR
         installers["<b>Installers</b><br/>[Python + gh]<br/>Install/refresh git hooks, CLAUDE.md, labels, README badges, and Claude settings; bootstrap umbrella"]
         doc_generators["<b>Doc generators</b><br/>[Python]<br/>Generate drift-checked docs: API digest, CLI reference, and this C4 model"]
         git_hook_entrypoints["<b>Git-hook entrypoints</b><br/>[Python]<br/>Managed post-merge / post-checkout hooks: foundation drift check + backgrounded self-refresh"]
-        release_tooling["<b>Release tooling</b><br/>[Python + git/gh]<br/>Rolling-next versioning, dev→main promotion, PR squash messages, continuation log"]
+        release_tooling["<b>Release tooling</b><br/>[Python + git/gh]<br/>Rolling-next versioning, tag-per-merge releases, PR squash messages, continuation log"]
         smart_test["<b>Smart-test</b><br/>[Python (ast) + git/pytest]<br/>Change-driven test selection by import depth: git diff + reverse import graph (+ opt-in mock-patch edges / coverage union) run in depth-tiered pytest batches"]
         config_shared["<b>Config + shared</b><br/>[Python]<br/>Shared foundation: pyproject/[tool.forge] config, git + logging utils, CI run-context, ruff/doctor, single-scan pip-audit helper"]
     end

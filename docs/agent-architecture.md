@@ -297,22 +297,17 @@ graph LR
   human(["Developer<br/>person"])
   main_agent{{"Main agent<br/>orchestrator"}}
   human -->|drives| main_agent
-  cli_forge_check_main_tags[("forge-check-main-tags<br/>CLI")]
   cli_forge_next_prep[("forge-next-prep<br/>CLI")]
   cli_forge_changelog[("forge-changelog<br/>CLI")]
   sk_next(["/next<br/>skill"])
-  sk_promote(["/promote<br/>skill"])
   main_agent -->|runs| sk_next
-  main_agent -->|runs| sk_promote
   sk_next -->|invokes| cli_forge_next_prep
-  sk_promote -->|invokes| cli_forge_changelog
+  main_agent -->|invokes| cli_forge_changelog
   class human person
   class main_agent orchestrator
-  class cli_forge_check_main_tags cli
   class cli_forge_next_prep cli
   class cli_forge_changelog cli
   class sk_next skill
-  class sk_promote skill
 ```
 
 ## Backlog

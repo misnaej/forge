@@ -1,6 +1,6 @@
 """End-to-end exercise of the single-track consumer release path.
 
-Forge itself is dual-track and manifest-versioned, so ``forge-release``
+Forge itself is manifest-versioned (rolling-next), so ``forge-release``
 structurally never runs against this repo — the consumer path would
 ship with unit tests only. These tests build a real single-track
 consumer repo (work tree + bare origin, setuptools-scm shape, canonical

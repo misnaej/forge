@@ -39,7 +39,6 @@ Most repos need only this:
 ```toml
 [tool.forge]
 base_branch = "main"
-dev_branch  = "dev"   # omit for a single-branch repo — it defaults to base_branch ("main")
 ```
 
 Everything else has a sensible default and is opt-in. Run `forge-config --list`
@@ -51,8 +50,7 @@ to see what, if anything, is worth adding for your repo.
 
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
-| `base_branch` | `"main"` | Slow-channel / release branch. Protected from direct agent push; the `dev → main` promotion target. | Your release branch isn't `main`. |
-| `dev_branch` | `"main"` (= `base_branch`) | Fast-channel integration branch. Protected from direct agent push. **Defaults to `base_branch`** → single-track, only one branch protected. | You run dual-track — set e.g. `dev_branch = "dev"` to opt in. |
+| `base_branch` | `"main"` | Protected base branch every PR targets and every release tags; protected from direct agent push. | Your release branch isn't `main`. |
 | `source_dirs` | smart-detect | Repo **source** roots — the single definition every layout-aware tool scans (see below). Unset → smart auto-detect: `src/` if present, else top-level packages. | Your source lives outside `src/` — e.g. `source_dirs = ["src", "projects/lib"]`. |
 | `test_dirs` | smart-detect | Repo **test** roots (added for tools that scan tests too). Unset → smart auto-detect of `tests/` then `test/`. | Your tests aren't under `tests/`. |
 | `exclude` | `[]` | Repo-wide glob patterns (fnmatch on repo-relative paths; a bare dir name excludes its whole subtree) skipped by the **whole-tree** steps `docstring_verification` and `test_naming_check`. See below. | You carry vendored / generated Python you don't author, already excluded from ruff + interrogate. |
@@ -714,9 +712,8 @@ following the [consumer changelog convention](../docs/consumer-release.md)
   normal state right after a release is cut), and on a feature branch no
   entries gain content under an already-released heading since the merge
   base (the stranded-entries race). Self-skips without a root
-  `CHANGELOG.md`, on manifest-versioned repos
-  (`verify-forge-plugin-version` owns the invariant), and on dual-track
-  repos (changelog is curated at promotion).
+  `CHANGELOG.md` and on manifest-versioned repos
+  (`verify-forge-plugin-version` owns the invariant).
 - **`changelog_updated`** — the per-PR freshness gate: a change set that
   touches a changelog-requiring path without touching `CHANGELOG.md`
   fails. Self-skips without a `CHANGELOG.md` and on the base branch;
@@ -754,17 +751,9 @@ auto = "merge"
   fragments-mode repo can never accumulate unreleased merges silently.
   Changelog assembly and manifest sync happen at `forge-changelog
   release` PRs, which may collate several auto-cut tags.
-
-## `[tool.forge.promotion]` — dual-track promotion hold
-
-| Key | Default | What it does |
-|---|---|---|
-| `hold_newest_minor` | `false` | Withhold the newest dev minor from promotion until its successor tags: `forge-next-prep --promotion-status` lists it as held (visible line, never a silent cap) and `forge-check-main-tags` refuses to relocate it. Keeps `@dev` version derivation clean across promotions. |
-
-A dual-track mechanism (forge itself is single-track and no longer sets
-it — see `docs/release-process.md`, "Deprecated: dual-track"); the
-default (off) leaves consumers — dual-track ones included — exactly as
-before.
+  **Single-track model**: tag-tree membership relies on consecutive
+  tags sharing linear ancestry on the base branch — run `auto-tag`
+  only from merges to that one branch (the shipped workflow does).
 
 ## `[tool.forge.badges]` — README status badges
 

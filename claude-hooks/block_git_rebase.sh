@@ -15,7 +15,7 @@ INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
 
 _block() {
-    echo "BLOCKED: '$1' is forbidden for agents. Rebasing rewrites published history and forces a force-push; forge squash-merges PRs, so sync a branch with a plain merge of the base branch instead (e.g. \`git merge origin/main\` / \`origin/dev\`). If a human truly needs to rebase, run it yourself with: ! $COMMAND" >&2
+    echo "BLOCKED: '$1' is forbidden for agents. Rebasing rewrites published history and forces a force-push; forge squash-merges PRs, so sync a branch with a plain merge of the base branch instead (e.g. \`git merge origin/main\`). If a human truly needs to rebase, run it yourself with: ! $COMMAND" >&2
     exit 2
 }
 

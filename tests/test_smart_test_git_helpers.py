@@ -3,7 +3,7 @@
 # MOCKING STRATEGY: ``resolve_base_ref`` tests monkeypatch
 # ``git_helpers.load_config`` (consuming namespace) to inject a ForgeConfig
 # without a real ``pyproject.toml``.  Real git repos are created via
-# ``init_git_repo`` / ``init_dual_track_repo`` from conftest.
+# ``init_git_repo`` / ``init_single_track_repo`` from conftest.
 # ``changed_python_files`` tests use real git operations (commit, stage,
 # unstaged edits, untracked files) so the git-plumbing layer is exercised
 # end-to-end.  No subprocess mocking; the real git binary runs.
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from forge.config import ForgeConfig
 from forge.smart_test import git_helpers
 from tests.conftest import GIT_ENV as _GIT_ENV
-from tests.conftest import init_dual_track_repo, init_git_repo
+from tests.conftest import init_git_repo, init_single_track_repo
 
 
 if TYPE_CHECKING:
@@ -33,16 +33,16 @@ def test_resolve_base_ref_override_resolves(
 ) -> None:
     """An override ref that resolves is returned verbatim, skipping auto-detection.
 
-    SCENARIO: repo has an ``origin/dev`` ref; caller supplies ``--base HEAD``.
-    MOCK SETUP: git_helpers.load_config → ForgeConfig(dev_branch="dev",
-        base_branch="main"); real git repo with a HEAD commit.
+    SCENARIO: caller supplies ``--base HEAD``.
+    MOCK SETUP: git_helpers.load_config → ForgeConfig(base_branch="main");
+        real git repo with a HEAD commit.
     EXPECTED BEHAVIOR: returns ``"HEAD"`` (override wins over candidates).
     """
     init_git_repo(tmp_path)
     monkeypatch.setattr(
         git_helpers,
         "load_config",
-        lambda _root: ForgeConfig(dev_branch="dev", base_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     result = git_helpers.resolve_base_ref(tmp_path, override="HEAD")
     assert result == "HEAD"
@@ -54,10 +54,9 @@ def test_resolve_base_ref_override_missing_falls_through(
 ) -> None:
     """A supplied override that does not resolve is ignored; auto-detection proceeds.
 
-    SCENARIO: caller supplies ``--base nonexistent-branch``; no remote; local
-        ``dev`` does not exist.
-    MOCK SETUP: git_helpers.load_config → ForgeConfig(dev_branch="dev",
-        base_branch="main"); repo has only ``main``.
+    SCENARIO: caller supplies ``--base nonexistent-branch``; no remote.
+    MOCK SETUP: git_helpers.load_config → ForgeConfig(base_branch="main");
+        repo has only ``main``.
     EXPECTED BEHAVIOR: falls through to ``"main"`` (the ``base_branch``
         local candidate).
     """
@@ -65,7 +64,7 @@ def test_resolve_base_ref_override_missing_falls_through(
     monkeypatch.setattr(
         git_helpers,
         "load_config",
-        lambda _root: ForgeConfig(dev_branch="dev", base_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     result = git_helpers.resolve_base_ref(tmp_path, override="nonexistent-branch-xyz")
     assert result == "main"
@@ -77,10 +76,9 @@ def test_resolve_base_ref_flag_shaped_override_falls_through(
 ) -> None:
     """A `-`-prefixed override (option injection) is ignored, not passed to git.
 
-    SCENARIO: caller supplies ``--base --output=pwned``; no remote; local
-        ``dev`` does not exist.
-    MOCK SETUP: git_helpers.load_config → ForgeConfig(dev_branch="dev",
-        base_branch="main"); repo has only ``main``.
+    SCENARIO: caller supplies ``--base --output=pwned``; no remote.
+    MOCK SETUP: git_helpers.load_config → ForgeConfig(base_branch="main");
+        repo has only ``main``.
         git_helpers._ref_exists replaced by a spy recording every ref it
         is asked about, so the flag-shaped override never reaching git is
         directly observable rather than just inferred from the result.
@@ -91,7 +89,7 @@ def test_resolve_base_ref_flag_shaped_override_falls_through(
     monkeypatch.setattr(
         git_helpers,
         "load_config",
-        lambda _root: ForgeConfig(dev_branch="dev", base_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     calls: list[str] = []
 
@@ -105,55 +103,55 @@ def test_resolve_base_ref_flag_shaped_override_falls_through(
     assert "--output=pwned" not in calls
 
 
-def test_resolve_base_ref_prefers_origin_dev_over_local_dev(
+def test_resolve_base_ref_prefers_origin_base_over_local(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``origin/<dev_branch>`` is preferred over the local dev branch.
+    """``origin/<base_branch>`` is preferred over the local base branch.
 
-    SCENARIO: dual-track repo where both ``origin/dev`` and local ``dev`` exist.
-    MOCK SETUP: git_helpers.load_config → ForgeConfig(dev_branch="dev",
-        base_branch="main"); ``init_dual_track_repo`` creates origin/dev.
-    EXPECTED BEHAVIOR: returns ``"origin/dev"``.
+    SCENARIO: repo with a remote where both ``origin/main`` and local
+        ``main`` exist.
+    MOCK SETUP: git_helpers.load_config → ForgeConfig(base_branch="main");
+        ``init_single_track_repo`` pushes ``main`` to a bare origin.
+    EXPECTED BEHAVIOR: returns ``"origin/main"``.
     """
-    work, _bare = init_dual_track_repo(tmp_path)
-    # Fetch so origin/dev is available in the work repo.
+    work, _bare = init_single_track_repo(tmp_path)
+    # Fetch so origin/main is available in the work repo.
     subprocess.run(["git", "fetch", "origin"], cwd=work, env=_GIT_ENV, check=True)
     monkeypatch.setattr(
         git_helpers,
         "load_config",
-        lambda _root: ForgeConfig(dev_branch="dev", base_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     result = git_helpers.resolve_base_ref(work)
-    assert result == "origin/dev"
+    assert result == "origin/main"
 
 
-def test_resolve_base_ref_falls_to_local_dev_when_no_remote(
+def test_resolve_base_ref_falls_to_local_base_when_no_remote(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Falls back to local dev branch when ``origin/dev`` does not exist.
+    """Falls back to the local base branch when ``origin/main`` does not exist.
 
-    SCENARIO: single-remote repo where the remote doesn't have ``dev``; local
-        ``dev`` branch exists.
-    MOCK SETUP: git_helpers.load_config → ForgeConfig(dev_branch="dev",
-        base_branch="main"); create local ``dev`` without pushing it.
-    EXPECTED BEHAVIOR: returns ``"dev"`` (the local dev candidate).
+    SCENARIO: repo without a remote; local ``main`` exists (checked out on a
+        feature branch so the resolved ref is not merely HEAD's branch).
+    MOCK SETUP: git_helpers.load_config → ForgeConfig(base_branch="main").
+    EXPECTED BEHAVIOR: returns ``"main"`` (the local base candidate).
     """
     init_git_repo(tmp_path)
     subprocess.run(
-        ["git", "checkout", "-q", "-b", "dev"], cwd=tmp_path, env=_GIT_ENV, check=True
-    )
-    subprocess.run(
-        ["git", "checkout", "-q", "main"], cwd=tmp_path, env=_GIT_ENV, check=True
+        ["git", "checkout", "-q", "-b", "feature"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
     )
     monkeypatch.setattr(
         git_helpers,
         "load_config",
-        lambda _root: ForgeConfig(dev_branch="dev", base_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     result = git_helpers.resolve_base_ref(tmp_path)
-    assert result == "dev"
+    assert result == "main"
 
 
 def test_resolve_base_ref_falls_to_head_when_nothing_resolves(
@@ -162,19 +160,17 @@ def test_resolve_base_ref_falls_to_head_when_nothing_resolves(
 ) -> None:
     """Returns ``"HEAD"`` as last resort when no candidate resolves.
 
-    SCENARIO: fresh repo, no remote, no ``dev`` or ``main`` candidates beyond
-        the one branch; inject a config whose branches don't exist.
-    MOCK SETUP: git_helpers.load_config → ForgeConfig(dev_branch="nonexistent",
-        base_branch="also-nonexistent"); repo has only ``main``.
+    SCENARIO: fresh repo, no remote; inject a config whose base branch
+        doesn't exist.
+    MOCK SETUP: git_helpers.load_config →
+        ForgeConfig(base_branch="also-nonexistent"); repo has only ``main``.
     EXPECTED BEHAVIOR: returns ``"HEAD"``.
     """
     init_git_repo(tmp_path)
     monkeypatch.setattr(
         git_helpers,
         "load_config",
-        lambda _root: ForgeConfig(
-            dev_branch="nonexistent", base_branch="also-nonexistent"
-        ),
+        lambda _root: ForgeConfig(base_branch="also-nonexistent"),
     )
     result = git_helpers.resolve_base_ref(tmp_path)
     assert result == "HEAD"
@@ -186,18 +182,17 @@ def test_resolve_base_ref_routes_through_resolve_base_branch_ref(
 ) -> None:
     """`resolve_base_ref` routes through `resolve_base_branch_ref`.
 
-    SCENARIO: neither candidate is checked against the filesystem — both
-        resolutions are stubbed, so no real repo state is needed.
-    MOCK SETUP: git_helpers.load_config → ForgeConfig(dev_branch="dev",
-        base_branch="main"); git_helpers.resolve_base_branch_ref replaced
-        by a spy that resolves only on the second (`"main"`) candidate.
-    EXPECTED BEHAVIOR: candidates are tried in `["dev", "main"]` order and
-        the spy's return value for `"main"` is returned verbatim.
+    SCENARIO: the candidate is not checked against the filesystem — the
+        resolution is stubbed, so no real repo state is needed.
+    MOCK SETUP: git_helpers.load_config → ForgeConfig(base_branch="main");
+        git_helpers.resolve_base_branch_ref replaced by a spy.
+    EXPECTED BEHAVIOR: the configured base branch is the only candidate
+        tried and the spy's return value is returned verbatim.
     """
     monkeypatch.setattr(
         git_helpers,
         "load_config",
-        lambda _root: ForgeConfig(dev_branch="dev", base_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     calls: list[str] = []
 
@@ -207,7 +202,7 @@ def test_resolve_base_ref_routes_through_resolve_base_branch_ref(
 
     monkeypatch.setattr(git_helpers, "resolve_base_branch_ref", _spy)
     result = git_helpers.resolve_base_ref(tmp_path)
-    assert calls == ["dev", "main"]
+    assert calls == ["main"]
     assert result == "sentinel/main"
 
 

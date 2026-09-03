@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, NamedTuple
 from forge import config
 from forge.config import (
     DEFAULT_BASE_BRANCH,
-    DEFAULT_DEV_BRANCH,
     ForgeConfig,
     detect_source_dirs,
     detect_test_dirs,
@@ -33,21 +32,13 @@ if TYPE_CHECKING:
     import pytest
 
 
-def test_default_is_single_track() -> None:
-    """Default ForgeConfig has base == dev so dual_track is False.
+def test_default_base_branch_is_main() -> None:
+    """Default ForgeConfig uses ``main`` as the base branch.
 
     Back-compat guarantee for consumer repos without ``[tool.forge]``.
     """
     cfg = ForgeConfig()
     assert cfg.base_branch == DEFAULT_BASE_BRANCH
-    assert cfg.dev_branch == DEFAULT_DEV_BRANCH
-    assert cfg.dual_track is False
-
-
-def test_dual_track_flag_flips_when_branches_differ() -> None:
-    """dual_track flips True the moment dev_branch differs from base_branch."""
-    cfg = ForgeConfig(base_branch="main", dev_branch="dev")
-    assert cfg.dual_track is True
 
 
 def test_load_config_missing_pyproject_returns_defaults(tmp_path: Path) -> None:
@@ -69,26 +60,22 @@ def test_load_config_pyproject_without_tool_forge(tmp_path: Path) -> None:
     assert cfg == ForgeConfig()
 
 
-def test_load_config_reads_dual_track_block(tmp_path: Path) -> None:
-    """``[tool.forge]`` with explicit branch names is parsed correctly."""
+def test_load_config_reads_base_branch(tmp_path: Path) -> None:
+    """``[tool.forge]`` with an explicit branch name is parsed correctly."""
     (tmp_path / "pyproject.toml").write_text(
-        '[tool.forge]\nbase_branch = "main"\ndev_branch = "dev"\n',
+        '[tool.forge]\nbase_branch = "main"\n',
     )
     cfg = load_config(tmp_path)
     assert cfg.base_branch == "main"
-    assert cfg.dev_branch == "dev"
-    assert cfg.dual_track is True
 
 
-def test_load_config_custom_branch_names(tmp_path: Path) -> None:
-    """Custom branch names (e.g. ``master`` / ``next``) round-trip."""
+def test_load_config_custom_branch_name(tmp_path: Path) -> None:
+    """A custom branch name (e.g. ``master``) round-trips."""
     (tmp_path / "pyproject.toml").write_text(
-        '[tool.forge]\nbase_branch = "master"\ndev_branch = "next"\n',
+        '[tool.forge]\nbase_branch = "master"\n',
     )
     cfg = load_config(tmp_path)
     assert cfg.base_branch == "master"
-    assert cfg.dev_branch == "next"
-    assert cfg.dual_track is True
 
 
 def test_load_config_malformed_toml_falls_back_to_defaults(tmp_path: Path) -> None:
@@ -105,13 +92,12 @@ def test_load_config_malformed_toml_falls_back_to_defaults(tmp_path: Path) -> No
 
 
 def test_load_config_partial_block_uses_defaults(tmp_path: Path) -> None:
-    """``[tool.forge]`` with only one of the two keys → other defaults."""
+    """``[tool.forge]`` without ``base_branch`` → the branch defaults."""
     (tmp_path / "pyproject.toml").write_text(
-        '[tool.forge]\ndev_branch = "trunk"\n',
+        '[tool.forge]\nexclude = ["vendor"]\n',
     )
     cfg = load_config(tmp_path)
     assert cfg.base_branch == DEFAULT_BASE_BRANCH
-    assert cfg.dev_branch == "trunk"
 
 
 def test_load_config_default_layout_dirs(tmp_path: Path) -> None:
@@ -169,10 +155,10 @@ def test_read_tool_forge_section_empty_section_returns_whole_table(
     tmp_path: Path,
 ) -> None:
     """An empty ``section`` argument returns the whole ``[tool.forge]`` table."""
-    _forge_toml(tmp_path, 'base_branch = "main"\ndev_branch = "dev"')
+    _forge_toml(tmp_path, 'base_branch = "main"\nexclude = ["vendor"]')
     assert read_tool_forge_section(tmp_path) == {
         "base_branch": "main",
-        "dev_branch": "dev",
+        "exclude": ["vendor"],
     }
 
 
