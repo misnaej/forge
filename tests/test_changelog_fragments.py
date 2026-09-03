@@ -1300,9 +1300,9 @@ def test_assembly_pr_body_manifest_less_names_post_merge_tagging(
 ) -> None:
     """A repo without a plugin manifest gets the post-merge tagging sentence.
 
-    Regression for the PR #456 review finding: the body must not claim
-    the tag-release workflow tags the merge (`forge-next-prep --tag`) when
-    there is no manifest for `plugin_version` to race ahead of.
+    The body must not claim the tag-release workflow tags the merge
+    (`forge-next-prep --tag`) when there is no manifest for
+    `plugin_version` to race ahead of.
     """
     body = changelog_fragments._assembly_pr_body(tmp_path, "v1.1.0")
 
