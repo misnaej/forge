@@ -247,7 +247,7 @@ _67 modules, 845 symbols._
 - `assemble_changelog(text: str, fragments: list[Fragment], version: str, *, date: str = '') -> str` — Insert a new release heading built from *fragments* into *text*.
 - `_collect_valid_fragments(root: Path) -> tuple[list[Fragment], list[str]]` _(internal)_ — Parse every pending fragment, splitting valid ones from errors.
 - `check_pending(root: Path) -> list[str]` — Validate every pending fragment under *root*.
-- `branch_added_fragments(root: Path) -> list[str]` — Return the fragment paths this branch adds over its fork point.
+- `branch_added_fragments(root: Path) -> list[str]` — Return the fragment paths this branch adds and the base does not have.
 - `next_version_from_fragments(root: Path, latest_tag: str) -> tuple[str, str] | None` — Compute the next release version from pending fragments.
 - `_cmd_check(root: Path) -> int` _(internal)_ — Report on pending fragments; gate on validity.
 - `_assemble_and_stage(root: Path, fragments: list[Fragment], version: str, date: str, *, delete: bool) -> int` _(internal)_ — Assemble *fragments* into ``CHANGELOG.md`` under *version*; maybe stage.

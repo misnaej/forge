@@ -76,6 +76,7 @@ from forge.git_utils import (
     render_plugin_version,
     repo_root,
     require_cli,
+    resolve_base_branch_ref,
     run_gate_evidence,
     run_git,
 )
