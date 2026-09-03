@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from forge import resync
+from forge import git_utils, resync
 from forge.config import ForgeConfig
 from tests.conftest import FakeProc
 
@@ -95,7 +95,7 @@ def test_working_tree_dirty_false_when_clean(
 
 
 def test_open_resync_pr_url_finds_matching_prefix(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A PR whose head matches the resync branch prefix returns its URL."""
     payload = json.dumps(
@@ -108,62 +108,62 @@ def test_open_resync_pr_url_finds_matching_prefix(
         ],
     )
     monkeypatch.setattr(
-        resync.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(0, stdout=payload),
     )
-    assert resync._open_resync_pr_url() == "https://github.com/x/y/pull/1"
+    assert resync._open_resync_pr_url(tmp_path) == "https://github.com/x/y/pull/1"
 
 
 def test_open_resync_pr_url_none_when_no_match(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No open PR's head carries the resync prefix → None."""
     payload = json.dumps(
         [{"headRefName": "feat/other", "url": "https://github.com/x/y/pull/2"}],
     )
     monkeypatch.setattr(
-        resync.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(0, stdout=payload),
     )
-    assert resync._open_resync_pr_url() is None
+    assert resync._open_resync_pr_url(tmp_path) is None
 
 
 def test_open_resync_pr_url_none_when_gh_fails(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """`gh pr list` failing (rc != 0) degrades to None rather than raising."""
     monkeypatch.setattr(
-        resync.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(1, stderr="boom"),
     )
-    assert resync._open_resync_pr_url() is None
+    assert resync._open_resync_pr_url(tmp_path) is None
 
 
 def test_open_resync_pr_url_none_on_malformed_json(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """`gh pr list` returning malformed JSON (rc 0) degrades to None."""
     monkeypatch.setattr(
-        resync.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(0, stdout="not json"),
     )
-    assert resync._open_resync_pr_url() is None
+    assert resync._open_resync_pr_url(tmp_path) is None
 
 
 def test_open_resync_pr_url_none_on_empty_pr_list(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An empty PR list (`[]`) yields None."""
     monkeypatch.setattr(
-        resync.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(0, stdout="[]"),
     )
-    assert resync._open_resync_pr_url() is None
+    assert resync._open_resync_pr_url(tmp_path) is None
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +211,7 @@ def test_provenance_evidence_pass_states_byte_verified_provenance(
         "byte-verified" language and the verbatim stdout.
     """
     monkeypatch.setattr(
-        resync.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(0, stdout="all good"),
     )
@@ -237,7 +237,7 @@ def test_provenance_evidence_fail_emits_full_review_warning(
         "full review" and carries both the stdout and stderr text.
     """
     monkeypatch.setattr(
-        resync.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(1, stdout="drift found", stderr="mismatch"),
     )
@@ -272,7 +272,7 @@ def test_provenance_evidence_argv_and_kwargs(
         calls.append((cmd, kwargs))
         return FakeProc(0)
 
-    monkeypatch.setattr(resync.subprocess, "run", _fake_run)
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
 
     resync._provenance_evidence(tmp_path)
 
@@ -296,16 +296,16 @@ def test_provenance_evidence_truncates_oversized_output(
     """Gate output past the cap is truncated with a marker; the fence survives.
 
     SCENARIO: a passing gate run whose stdout exceeds
-        `resync._EVIDENCE_OUTPUT_CAP`.
+        `git_utils.EVIDENCE_OUTPUT_CAP`.
     MOCK SETUP: `subprocess.run` replaced with a fake returning
         `FakeProc(0, stdout=<oversized payload>)`.
     EXPECTED BEHAVIOR: the evidence block carries the "… (truncated)"
         marker, does not contain the full original output, and the
         four-backtick fence is intact.
     """
-    oversized = "x" * (resync._EVIDENCE_OUTPUT_CAP + 500)
+    oversized = "x" * (git_utils.EVIDENCE_OUTPUT_CAP + 500)
     monkeypatch.setattr(
-        resync.subprocess,
+        git_utils.subprocess,
         "run",
         lambda *_a, **_kw: FakeProc(0, stdout=oversized),
     )
@@ -707,7 +707,7 @@ def test_main_aborts_on_dirty_tree(
     monkeypatch.setattr(
         resync,
         "_open_resync_pr_url",
-        lambda: dedup_calls.append("x") or None,
+        lambda _root: dedup_calls.append("x") or None,
     )
     monkeypatch.setattr(
         resync,
@@ -748,7 +748,7 @@ def test_main_requires_forge_precommit_cli(
     monkeypatch.setattr(
         resync,
         "_open_resync_pr_url",
-        lambda: "https://github.com/x/y/pull/1",
+        lambda _root: "https://github.com/x/y/pull/1",
     )
     monkeypatch.setattr(resync.sys, "argv", ["forge-resync"])
 
@@ -770,7 +770,7 @@ def test_main_dedup_guard_short_circuits(
     monkeypatch.setattr(
         resync,
         "_open_resync_pr_url",
-        lambda: "https://github.com/x/y/pull/1",
+        lambda _root: "https://github.com/x/y/pull/1",
     )
     bootstrap_calls: list[str] = []
     publish_calls: list[str] = []
@@ -802,7 +802,7 @@ def test_main_bootstrap_failure_propagates_exit_code(
     monkeypatch.setattr(resync, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(resync, "require_cli", lambda *_a, **_kw: None)
     monkeypatch.setattr(resync, "run_git", lambda *_a, **_kw: "")
-    monkeypatch.setattr(resync, "_open_resync_pr_url", lambda: None)
+    monkeypatch.setattr(resync, "_open_resync_pr_url", lambda _root: None)
     monkeypatch.setattr(resync, "_run_bootstrap", lambda: 3)
     publish_calls: list[str] = []
     monkeypatch.setattr(
@@ -827,7 +827,7 @@ def test_main_no_diff_after_bootstrap_exits_clean(
     monkeypatch.setattr(resync, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(resync, "require_cli", lambda *_a, **_kw: None)
     monkeypatch.setattr(resync, "run_git", lambda *_a, **_kw: "")  # always clean
-    monkeypatch.setattr(resync, "_open_resync_pr_url", lambda: None)
+    monkeypatch.setattr(resync, "_open_resync_pr_url", lambda _root: None)
     monkeypatch.setattr(resync, "_run_bootstrap", lambda: 0)
     publish_calls: list[str] = []
     monkeypatch.setattr(
@@ -872,7 +872,7 @@ def test_main_diff_after_bootstrap_publishes(
     monkeypatch.setattr(resync, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(resync, "require_cli", lambda *_a, **_kw: None)
     monkeypatch.setattr(resync, "run_git", _fake_run_git)
-    monkeypatch.setattr(resync, "_open_resync_pr_url", lambda: None)
+    monkeypatch.setattr(resync, "_open_resync_pr_url", lambda _root: None)
     monkeypatch.setattr(resync, "_run_bootstrap", lambda: 0)
     monkeypatch.setattr(
         resync,

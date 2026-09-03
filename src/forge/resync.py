@@ -29,7 +29,6 @@ Invocation surfaces: manual run, a scheduled CI workflow
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import subprocess
 import sys
@@ -41,8 +40,10 @@ from forge.config import load_config
 from forge.git_utils import (
     configure_cli_logging,
     create_commit,
+    find_open_pr_by_head_prefix,
     repo_root,
     require_cli,
+    run_gate_evidence,
     run_git,
 )
 from forge.install_bootstrap import run_in_process as _bootstrap_run
@@ -59,8 +60,6 @@ logger = logging.getLogger(__name__)
 
 
 _BRANCH_PREFIX = "chore/forge-resync-"
-
-_EVIDENCE_OUTPUT_CAP = 4000
 
 _PR_BODY = """\
 Automated regeneration of forge-managed artifacts (`install-forge-bootstrap`)
@@ -100,34 +99,19 @@ def _working_tree_dirty(root: Path) -> bool:
     return bool(run_git("status", "--porcelain", cwd=root).strip())
 
 
-def _open_resync_pr_url() -> str | None:
+def _open_resync_pr_url(root: Path) -> str | None:
     """Return the URL of an already-open resync PR, or ``None``.
 
-    The dedup guard: resync branches share the ``chore/forge-resync-``
-    prefix, so one open PR with that head means a resync is already in
-    review and a second run must not open a duplicate.
+    Thin prefix binding over the shared automation dedup guard
+    (:func:`forge.git_utils.find_open_pr_by_head_prefix`).
+
+    Args:
+        root: Repo root passed to ``gh`` as cwd.
 
     Returns:
-        The open resync PR's URL, or ``None`` when none exists (or the
-        listing fails — creation then proceeds and ``gh`` surfaces any
-        real conflict).
+        The open resync PR's URL, or ``None`` when none exists.
     """
-    proc = subprocess.run(
-        ["gh", "pr", "list", "--state", "open", "--json", "headRefName,url"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return None
-    try:
-        prs = json.loads(proc.stdout or "[]")
-    except json.JSONDecodeError:
-        return None
-    for pr in prs:
-        if str(pr.get("headRefName", "")).startswith(_BRANCH_PREFIX):
-            return str(pr.get("url", ""))
-    return None
+    return find_open_pr_by_head_prefix(root, _BRANCH_PREFIX)
 
 
 def _run_bootstrap() -> int:
@@ -152,47 +136,29 @@ def _provenance_evidence(root: Path) -> tuple[bool, str]:
     authoring hook cannot see it — so the PR body itself must carry the
     verification evidence: the same ``forge-precommit --only`` gate run
     the ``/pr`` regen-verified light path embeds in its wrap-up
-    (`skills/pr/SKILL.md`). A gate failure never blocks the PR — the
-    body flags it loudly and reviewers take the full round.
+    (`skills/pr/SKILL.md`). Formatting and the failure-never-blocks
+    contract live in :func:`forge.git_utils.run_gate_evidence`.
 
     Args:
         root: Repo root passed to the gate subprocess as cwd.
 
     Returns:
-        ``(passed, evidence_block)`` — ``passed`` is ``True`` only when
-        every gate exited 0; ``evidence_block`` is a markdown section
-        headlined by the verdict with the verbatim gate output fenced
-        below it.
+        ``(passed, evidence_block)`` per ``run_gate_evidence``.
     """
     gates = ",".join(PROVENANCE_GATE_STEPS)
-    proc = subprocess.run(
-        ["forge-precommit", "--only", gates],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=root,
-    )
-    passed = proc.returncode == 0
-    if passed:
-        headline = (
+    return run_gate_evidence(
+        root,
+        gates,
+        pass_headline=(
             "✅ **Regen byte-verified against the installed forge package** "
             f"(`forge-precommit --only {gates}`) — the same evidence the "
             "`/pr` regen-verified light path uses."
-        )
-    else:
-        headline = (
+        ),
+        fail_headline=(
             "⚠️ **Provenance gates FAILED — full review required; do not "
             "take the regen-verified light path.**"
-        )
-    output = "\n".join(
-        part for part in (proc.stdout.strip(), proc.stderr.strip()) if part
-    )
-    # Cap + four-backtick fence: gate output is trusted but unbounded, and
-    # a stray ``` inside it must not break out of the evidence fence.
-    if len(output) > _EVIDENCE_OUTPUT_CAP:
-        output = f"{output[:_EVIDENCE_OUTPUT_CAP]}\n… (truncated)"
-    return passed, (
-        f"## Provenance verification\n\n{headline}\n\n````\n{output}\n````\n"
+        ),
+        section_title="Provenance verification",
     )
 
 
@@ -295,7 +261,7 @@ def main() -> int:
         )
         return 1
 
-    existing = _open_resync_pr_url()
+    existing = _open_resync_pr_url(root)
     if existing:
         logger.info("✓ resync PR already open — nothing to do: %s", existing)
         return 0

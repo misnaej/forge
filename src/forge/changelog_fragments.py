@@ -28,6 +28,10 @@ Usage:
 - ``forge-changelog auto-tag`` — tag-per-merge CI seam: cut and push an
   annotated tag from the fragments merged since the last tag (tag-tree
   membership marks consumption); never touches the base branch.
+- ``forge-changelog release-pr`` — unattended counterpart of
+  ``release``: branch ``chore/assemble-vX.Y.Z``, stage, commit, push,
+  and open the assembly PR with in-body gate evidence; idempotent and
+  race-tolerant; merging stays human.
 - ``forge-changelog release`` — compute the next version from the
   latest tag + pending fragments, assemble ``CHANGELOG.md`` under it,
   write ``.claude-plugin/plugin.json`` to it (when a manifest exists —
@@ -56,20 +60,29 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from forge.changelog import restrand_changelog, top_release_heading
 from forge.config import is_fragments_mode, load_config, read_tool_forge_section
 from forge.git_utils import (
     configure_cli_logging,
     create_annotated_tag,
+    create_commit,
     emit,
+    find_open_pr_by_head_prefix,
     latest_v_tag,
     merge_base_with_head,
     next_version,
     render_plugin_version,
     repo_root,
+    require_cli,
+    run_gate_evidence,
     run_git,
 )
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 configure_cli_logging()
@@ -546,18 +559,9 @@ def _cmd_next_version(root: Path) -> int:
         ``v*`` tag, no pending fragment, or an invalid fragment (the
         message says which).
     """
-    latest = latest_v_tag(root)
-    if latest is None:
-        emit("next-version: no v* tag — no release baseline to bump from.")
-        return 2
-    try:
-        computed = next_version_from_fragments(root, latest)
-    except ValueError as exc:
-        emit(f"next-version: {exc}")
-        return 2
+    rc, computed = _computed_next_version(root, "next-version", none_pending_rc=2)
     if computed is None:
-        emit("next-version: no pending fragments — nothing to release.")
-        return 2
+        return rc if rc is not None else 2
     bare_version, level = computed
     emit(f"v{bare_version} ({level})")
     return 0
@@ -584,19 +588,37 @@ def _cmd_release(root: Path, date: str) -> int:
         fragment, an invalid fragment, or the assembly/manifest write
         fails.
     """
-    latest = latest_v_tag(root)
-    if latest is None:
-        emit("release: no v* tag — no release baseline to bump from.")
-        return 2
-    try:
-        computed = next_version_from_fragments(root, latest)
-    except ValueError as exc:
-        emit(f"release: {exc}")
-        return 2
+    rc, computed = _computed_next_version(root, "release", none_pending_rc=2)
     if computed is None:
-        emit("release: no pending fragments — nothing to release.")
-        return 2
+        return rc if rc is not None else 2
     bare_version, _level = computed
+    outcome = _stage_release(root, date, bare_version)
+    if outcome != 0:
+        return outcome
+    emit(
+        f"Release v{bare_version} prepared — commit, PR, merge; "
+        "tag-on-merge cuts the tag."
+    )
+    return 0
+
+
+def _stage_release(root: Path, date: str, bare_version: str) -> int:
+    """Assemble + manifest-write the release for *bare_version*, all staged.
+
+    The shared body of ``release`` and ``release-pr``: the caller has
+    already computed (and thereby validated) the version via
+    :func:`next_version_from_fragments`; this stages the outcome and
+    never commits.
+
+    Args:
+        root: Repository root directory.
+        date: Optional heading date override.
+        bare_version: The computed release version (no ``v`` prefix).
+
+    Returns:
+        ``0`` on success; ``2`` when the manifest render or assembly
+        fails (tree left untouched on a manifest refusal).
+    """
     # Compute-then-write (rebump's invariant, mirrored): render the
     # manifest FIRST — it is pure and carries the fail-closed
     # validation — so a manifest refusal leaves the tree untouched
@@ -625,10 +647,6 @@ def _cmd_release(root: Path, date: str) -> int:
         manifest.write_text(manifest_text, encoding="utf-8")
         run_git("add", ".claude-plugin/plugin.json", cwd=root)
         emit(f"Staged .claude-plugin/plugin.json at {bare_version}.")
-    emit(
-        f"Release v{bare_version} prepared — commit, PR, merge; "
-        "tag-on-merge cuts the tag."
-    )
     return 0
 
 
@@ -817,6 +835,301 @@ def _cmd_auto_tag(root: Path) -> int:
     return _create_and_push_tag(root, version, level, len(fragments))
 
 
+ASSEMBLY_BRANCH_PREFIX = "chore/assemble-"
+
+# The assembly PR is opened by unattended automation, so the PR body —
+# not a cron log nobody reads — carries what the merger must know.
+_ASSEMBLY_PR_BODY = """\
+Scheduled changelog assembly ({version}): collates the pending
+`changelog.d/` fragments into `CHANGELOG.md` under **{version}** and
+syncs `.claude-plugin/plugin.json` (when present).
+
+**Merging this PR is the release act for the changelog**: the fragments
+are consumed. {tagging} Merge stays a human decision.
+
+Opened by `forge-changelog release-pr` (assemble-release workflow).
+"""
+
+# The tagging sentence must match the repo's version source: a manifest
+# repo's tag-release workflow tags the merge (`forge-next-prep --tag`
+# sees the manifest ahead); a manifest-less repo has nothing ahead and
+# `auto-tag` no-ops on the merge (the fragments were just deleted), so
+# the tag is a post-merge step the body must name — not claim happened.
+_TAGGING_WITH_MANIFEST = (
+    "`forge-next-prep --tag` in the tag-release workflow tags the merge "
+    "(the manifest is ahead)."
+)
+_TAGGING_MANIFEST_LESS = (
+    "No plugin manifest: cut the release tag after merging — "
+    "`forge-release --from-changelog` reads the heading this PR writes "
+    "(auto-tag cannot cover it; the fragments are deleted by this very "
+    "assembly)."
+)
+
+
+def _assembly_pr_body(root: Path, version: str) -> str:
+    """Render the assembly PR body with the repo-correct tagging sentence.
+
+    Args:
+        root: Repository root directory.
+        version: Release version tag name (``vX.Y.Z``).
+
+    Returns:
+        The formatted PR body.
+    """
+    manifest = (root / ".claude-plugin" / "plugin.json").is_file()
+    tagging = _TAGGING_WITH_MANIFEST if manifest else _TAGGING_MANIFEST_LESS
+    return _ASSEMBLY_PR_BODY.format(version=version, tagging=tagging)
+
+
+def _gate_evidence(root: Path) -> tuple[bool, str]:
+    """Run the versioning gates and format PR-body evidence.
+
+    ``release-pr`` may open its PR with a token whose events trigger no
+    CI (GitHub's anti-recursion rule for ``GITHUB_TOKEN``), so the PR
+    body itself must carry verification evidence. Formatting and the
+    failure-never-blocks contract live in
+    :func:`forge.git_utils.run_gate_evidence`.
+
+    Args:
+        root: Repo root passed to the gate subprocess as cwd.
+
+    Returns:
+        ``(passed, evidence_block)`` per ``run_gate_evidence``.
+    """
+    gates = "changelog_version,plugin_version"
+    return run_gate_evidence(
+        root,
+        gates,
+        pass_headline=(
+            f"✅ **Versioning gates pass on the assembled tree** "
+            f"(`forge-precommit --only {gates}`)."
+        ),
+        fail_headline=(
+            "⚠️ **Versioning gates FAILED on the assembled tree — do not "
+            "merge without a full review.**"
+        ),
+        section_title="Assembly verification",
+    )
+
+
+def _computed_next_version(
+    root: Path, cmd: str, *, none_pending_rc: int
+) -> tuple[int | None, tuple[str, str] | None]:
+    """Run the shared version-computation guard for a subcommand.
+
+    The identical guard trio of ``release``, ``release-pr``, and
+    ``next-version``: no baseline tag and an invalid fragment are hard
+    failures; "nothing pending" is quiet or loud per caller.
+
+    Args:
+        root: Repository root directory.
+        cmd: Subcommand name for message prefixes.
+        none_pending_rc: Exit code for the nothing-pending case (``0``
+            quiet for the unattended ``release-pr``; ``2`` for the
+            explicit ``release`` / ``next-version`` invocations).
+
+    Returns:
+        ``(exit_code, None)`` when the guard decides, or
+        ``(None, (bare_version, level))`` to proceed.
+    """
+    latest = latest_v_tag(root)
+    if latest is None:
+        emit(f"{cmd}: no v* tag — no release baseline to bump from.")
+        return 2, None
+    try:
+        computed = next_version_from_fragments(root, latest)
+    except ValueError as exc:
+        emit(f"{cmd}: {exc}")
+        return 2, None
+    if computed is None:
+        emit(f"{cmd}: no pending fragments — nothing to release.")
+        return none_pending_rc, None
+    return None, computed
+
+
+def _gh_preflight() -> int | None:
+    """Refuse loudly up front when ``gh`` is missing or unauthenticated.
+
+    Runs BEFORE any mutation: an unattended cron run must never strand
+    a pushed branch on a late ``gh`` failure.
+
+    Returns:
+        ``2`` when ``gh`` is unauthenticated; ``None`` when ready. A
+        missing ``gh`` never returns — ``require_cli`` aborts with
+        ``SystemExit(2)``.
+    """
+    require_cli("gh", caller="forge-changelog", hint="install GitHub CLI (gh)")
+    auth = subprocess.run(
+        ["gh", "auth", "status"], capture_output=True, text=True, check=False
+    )
+    if auth.returncode != 0:
+        emit(f"release-pr: gh is not authenticated:\n{auth.stderr.strip()}")
+        return 2
+    return None
+
+
+def _cmd_release_pr(root: Path, date: str, *, draft: bool) -> int:
+    """Open the assembly PR for the pending fragments (scheduled CI seam).
+
+    The unattended counterpart of ``release``: guard, branch
+    ``chore/assemble-vX.Y.Z``, stage the assembly via the shared
+    :func:`_stage_release`, commit, push, and open the PR with in-body
+    gate evidence. Merging stays human. Idempotent and race-tolerant:
+    an already-open assembly PR — found up front or surfacing when the
+    push/create loses a race — defers with exit ``0``.
+
+    Args:
+        root: Repository root directory.
+        date: Optional heading date override.
+        draft: Open the PR as a draft.
+
+    Returns:
+        ``0`` — PR opened, an assembly PR already exists, or nothing is
+        pending (the quiet weekly case); ``2`` on a guard failure (no
+        tag, invalid fragment, unauthenticated gh, git/gh failure no
+        race explains); a missing ``gh`` aborts via ``SystemExit(2)``.
+    """
+    if not is_fragments_mode(root):
+        emit("release-pr: not a fragments-mode repo — nothing to do.")
+        return 0
+    preflight = _gh_preflight()
+    if preflight is not None:
+        return preflight
+    rc, computed = _computed_next_version(root, "release-pr", none_pending_rc=0)
+    if computed is None:
+        return rc if rc is not None else 2
+    existing = find_open_pr_by_head_prefix(root, ASSEMBLY_BRANCH_PREFIX)
+    if existing:
+        emit(f"release-pr: assembly PR already open — {existing}")
+        return 0
+    bare_version, _level = computed
+    version = f"v{bare_version}"
+    return _publish_assembly_pr(root, version, bare_version, date=date, draft=draft)
+
+
+def _stage_and_commit_assembly(
+    root: Path, date: str, bare_version: str, version: str
+) -> int:
+    """Stage and commit the assembly changelog and manifest.
+
+    Args:
+        root: Repository root directory.
+        date: Optional heading date override.
+        bare_version: The computed release version (no ``v`` prefix).
+        version: Release version tag name (``vX.Y.Z``) for the commit message.
+
+    Returns:
+        ``0`` on success; ``2`` on staging failure.
+    """
+    outcome = _stage_release(root, date, bare_version)
+    if outcome != 0:
+        return outcome
+    create_commit(root, f"chore(release): assemble {version}")
+    return 0
+
+
+def _publish_assembly_pr(
+    root: Path,
+    version: str,
+    bare_version: str,
+    *,
+    date: str = "",
+    draft: bool = False,
+) -> int:
+    """Branch, stage, commit, push the assembly and open its PR.
+
+    Args:
+        root: Repository root directory.
+        version: Release version tag name (``vX.Y.Z``) for the branch and titles.
+        bare_version: The computed release version (no ``v`` prefix).
+        date: Optional heading date override (defaults to today).
+        draft: Open the PR as a draft.
+
+    Returns:
+        ``0`` — PR opened, or another runner's assembly PR explains the
+        push/create failure; ``2`` on a guard or push failure no race
+        explains.
+    """
+    base_branch = load_config(root).base_branch
+    branch = f"{ASSEMBLY_BRANCH_PREFIX}{version}"
+    start_branch = run_git("branch", "--show-current", cwd=root, check=False)
+    run_git("switch", "-c", branch, cwd=root)
+    try:
+        outcome = _stage_and_commit_assembly(root, date, bare_version, version)
+        if outcome != 0:
+            return outcome
+        return _push_and_open_pr(root, branch, version, base_branch, draft=draft)
+    finally:
+        if start_branch:
+            run_git("switch", start_branch, cwd=root, check=False)
+
+
+def _push_and_open_pr(
+    root: Path, branch: str, version: str, base_branch: str, *, draft: bool
+) -> int:
+    """Push the assembly branch and open its PR, deferring to race winners.
+
+    Args:
+        root: Repository root directory.
+        branch: The assembly branch (already committed, checked out).
+        version: Release version tag name (``vX.Y.Z``) for titles.
+        base_branch: PR base — the repo's ``[tool.forge].base_branch``.
+        draft: Open the PR as a draft.
+
+    Returns:
+        ``0`` — PR opened, or another runner's assembly PR explains the
+        push/create failure; ``2`` on a failure no race explains.
+    """
+    _passed, evidence = _gate_evidence(root)
+    push = subprocess.run(
+        ["git", "push", "-u", "origin", branch],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=root,
+    )
+    if push.returncode != 0:
+        racing = find_open_pr_by_head_prefix(root, ASSEMBLY_BRANCH_PREFIX)
+        if racing:
+            emit(f"release-pr: lost the race — assembly PR open at {racing}")
+            return 0
+        emit(f"release-pr: push FAILED:\n{push.stderr.strip()}")
+        return 2
+    create = subprocess.run(
+        [
+            "gh",
+            "pr",
+            "create",
+            *(["--draft"] if draft else []),
+            "--base",
+            base_branch,
+            "--head",
+            branch,
+            "--title",
+            f"chore(release): assemble {version}",
+            "--body",
+            _assembly_pr_body(root, version) + "\n" + evidence,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=root,
+    )
+    if create.returncode != 0:
+        racing = find_open_pr_by_head_prefix(root, ASSEMBLY_BRANCH_PREFIX)
+        if racing:
+            emit(f"release-pr: assembly PR already open — {racing}")
+            return 0
+        emit(
+            f"release-pr: gh pr create FAILED (branch {branch} pushed — "
+            f"open the PR manually):\n{create.stderr.strip()}"
+        )
+        return 2
+    emit(f"release-pr: opened {create.stdout.strip()}")
+    return 0
+
+
 def _restrand_old_text(root: Path) -> str | None:
     """Return the comparison-point ``CHANGELOG.md`` for the restrand.
 
@@ -958,6 +1271,13 @@ def main(argv: list[str] | None = None) -> int:
         help="tag HEAD from fragments merged since the last tag "
         "(tag-per-merge CI seam; pushes the tag only)",
     )
+    relpr = sub.add_parser(
+        "release-pr",
+        help="branch, stage, commit and open the assembly PR for the "
+        "pending fragments (scheduled CI seam; merge stays human)",
+    )
+    relpr.add_argument("--date", default="", help="heading date (default: today, UTC)")
+    relpr.add_argument("--draft", action="store_true", help="open the PR as a draft")
     restrand = sub.add_parser(
         "restrand",
         help="move entries stranded under released headings to the next slot "
@@ -971,17 +1291,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     root = repo_root()
-    if args.command == "check":
-        return _cmd_check(root)
-    if args.command == "next-version":
-        return _cmd_next_version(root)
-    if args.command == "release":
-        return _cmd_release(root, args.date)
-    if args.command == "auto-tag":
-        return _cmd_auto_tag(root)
-    if args.command == "restrand":
-        return _cmd_restrand(root, args.bump)
-    return _cmd_assemble(root, args.version, args.date, delete=args.delete)
+    handlers: dict[str, Callable[[], int]] = {
+        "check": lambda: _cmd_check(root),
+        "next-version": lambda: _cmd_next_version(root),
+        "release": lambda: _cmd_release(root, args.date),
+        "auto-tag": lambda: _cmd_auto_tag(root),
+        "release-pr": lambda: _cmd_release_pr(root, args.date, draft=args.draft),
+        "restrand": lambda: _cmd_restrand(root, args.bump),
+        "assemble": lambda: _cmd_assemble(
+            root, args.version, args.date, delete=args.delete
+        ),
+    }
+    return handlers[args.command]()
 
 
 if __name__ == "__main__":

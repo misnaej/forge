@@ -232,6 +232,13 @@ fragments)`, so no PR ever carries a version number.
   printed version for the tag (`git tag vX.Y.Z && git push origin
   vX.Y.Z`, or `forge-release`). It never commits — branch, run it,
   open an ordinary PR, merge, tag.
+- `forge-changelog release-pr` automates the whole assembly PR: guard
+  (nothing pending or an assembly PR already open → quiet exit 0),
+  branch `chore/assemble-vX.Y.Z`, stage via the same single-writer path
+  as `release`, commit, push, open the PR with in-body versioning-gate
+  evidence. Built for a scheduled workflow (see the CI recipe); merging
+  stays human. Exit 2 on real failures (no tag, invalid fragment, gh
+  missing/unauthenticated).
 - **The tagging handoff is the changelog itself**: `release` writes a
   real `## vX.Y.Z` heading, so a tagger already running `forge-release
   --from-changelog` on pushes to the base branch picks the release up

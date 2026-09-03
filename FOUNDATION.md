@@ -510,6 +510,13 @@ guarantees; validate only at system boundaries (user input, external APIs).
 - **Returns** required for non-`None` returning functions. Omit for `None`-returning, `@property`, `@abstractmethod`.
 - **Type hints** on all parameters and return types.
 - **Comments explain WHY, not WHAT.** The code already says what.
+- **Generated text is behavior.** Prose a tool emits — PR bodies, CLI
+  messages, advisory lines — is executed by the human who reads it: a
+  false sentence there is a bug of the same class as wrong output, and
+  costlier, because it stops the reader checking. When the code
+  branches (manifest vs manifest-less, opted-in vs not), the emitted
+  prose must branch with it; review generated strings against every
+  path that can emit them.
 - **Docstring body must not restate Args/Returns.** Args/Returns carry the
   WHAT; the body adds WHY (invariants, edge-case rationale, design context) —
   a body repeating what Returns already says is duplication.
