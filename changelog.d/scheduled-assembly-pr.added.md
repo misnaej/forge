@@ -1,0 +1,2 @@
+bump: minor
+- **Scheduled assembly PRs** — `forge-changelog release-pr` automates the fragments-mode assembly PR end to end (guard → branch `chore/assemble-vX.Y.Z` → assemble + manifest sync → commit → push → PR with in-body versioning-gate evidence), and the new `assemble-release` workflow runs it weekly (plus manual dispatch). Idempotent and race-tolerant: an open assembly PR or nothing pending is a quiet no-op. Merging the PR stays a human decision.

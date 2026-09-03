@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_67 modules, 834 symbols._
+_67 modules, 845 symbols._
 
 ## `forge`
 
@@ -254,11 +254,20 @@ _67 modules, 834 symbols._
 - `_cmd_assemble(root: Path, version: str, date: str, *, delete: bool) -> int` _(internal)_ — Collate pending fragments into ``CHANGELOG.md`` under *version*.
 - `_cmd_next_version(root: Path) -> int` _(internal)_ — Print the computed next release version: latest tag + max pending level.
 - `_cmd_release(root: Path, date: str) -> int` _(internal)_ — Prepare the release commit: assemble + manifest write, all staged.
+- `_stage_release(root: Path, date: str, bare_version: str) -> int` _(internal)_ — Assemble + manifest-write the release for *bare_version*, all staged.
 - `fragments_new_since_tag(root: Path, tag: str | None) -> list[Path]` — Return pending fragments absent from *tag*'s tree — the newly merged.
 - `_tag_exists(root: Path, version: str) -> bool` _(internal)_ — Check if a tag already exists in the repository.
 - `_validate_auto_tag_fragments(new_paths: list[Path]) -> tuple[list[Fragment], list[str]]` _(internal)_ — Validate fragments and separate valid ones from errors.
 - `_create_and_push_tag(root: Path, version: str, level: str, n_fragments: int) -> int` _(internal)_ — Create and push an annotated tag, handling concurrent-runner races.
 - `_cmd_auto_tag(root: Path) -> int` _(internal)_ — Tag the current commit from its newly merged fragments (CI seam).
+- `_assembly_pr_body(root: Path, version: str) -> str` _(internal)_ — Render the assembly PR body with the repo-correct tagging sentence.
+- `_gate_evidence(root: Path) -> tuple[bool, str]` _(internal)_ — Run the versioning gates and format PR-body evidence.
+- `_computed_next_version(root: Path, cmd: str, *, none_pending_rc: int) -> tuple[int | None, tuple[str, str] | None]` _(internal)_ — Run the shared version-computation guard for a subcommand.
+- `_gh_preflight() -> int | None` _(internal)_ — Refuse loudly up front when ``gh`` is missing or unauthenticated.
+- `_cmd_release_pr(root: Path, date: str, *, draft: bool) -> int` _(internal)_ — Open the assembly PR for the pending fragments (scheduled CI seam).
+- `_stage_and_commit_assembly(root: Path, date: str, bare_version: str, version: str) -> int` _(internal)_ — Stage and commit the assembly changelog and manifest.
+- `_publish_assembly_pr(root: Path, version: str, bare_version: str, *, date: str = '', draft: bool = False) -> int` _(internal)_ — Branch, stage, commit, push the assembly and open its PR.
+- `_push_and_open_pr(root: Path, branch: str, version: str, base_branch: str, *, draft: bool) -> int` _(internal)_ — Push the assembly branch and open its PR, deferring to race winners.
 - `_restrand_old_text(root: Path) -> str | None` _(internal)_ — Return the comparison-point ``CHANGELOG.md`` for the restrand.
 - `_restrand_preflight(root: Path) -> int | tuple[Path, str, str, str]` _(internal)_ — Resolve restrand preconditions or the early-exit code for a missing one.
 - `_cmd_restrand(root: Path, bump: str) -> int` _(internal)_ — Repair stranded changelog entries mechanically; stage the result.
@@ -549,6 +558,8 @@ _67 modules, 834 symbols._
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `_fallback_identity_args(repo_root: Path) -> list[str]` _(internal)_ — Return ``-c`` identity flags when git has no usable committer identity.
 - `create_annotated_tag(repo_root: Path, tag: str, *, commit: str = 'HEAD', force: bool = False) -> None` — Create annotated *tag* at *commit*, surviving identity-less runners.
+- `run_gate_evidence(repo_root: Path, gates: str, *, pass_headline: str, fail_headline: str, section_title: str) -> tuple[bool, str]` — Run ``forge-precommit --only`` gates and format PR-body evidence.
+- `find_open_pr_by_head_prefix(repo_root: Path, prefix: str) -> str | None` — Return the URL of an open PR whose head branch starts with *prefix*.
 - `create_commit(repo_root: Path, message: str) -> None` — Commit the staged index, surviving identity-less runners.
 - `resolve_current_branch(repo_root: Path) -> tuple[str, str] | None` — Return the current branch name and where it came from, or ``None``.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
@@ -878,7 +889,7 @@ _67 modules, 834 symbols._
 
 - `_forge_version() -> str` _(internal)_ — Return the installed forge-scripts version for branch naming.
 - `_working_tree_dirty(root: Path) -> bool` _(internal)_ — Return ``True`` when the working tree has any pending change.
-- `_open_resync_pr_url() -> str | None` _(internal)_ — Return the URL of an already-open resync PR, or ``None``.
+- `_open_resync_pr_url(root: Path) -> str | None` _(internal)_ — Return the URL of an already-open resync PR, or ``None``.
 - `_run_bootstrap() -> int` _(internal)_ — Run ``install-forge-bootstrap`` in-process and return its exit code.
 - `_provenance_evidence(root: Path) -> tuple[bool, str]` _(internal)_ — Run the provenance gates and format PR-body evidence.
 - `_publish_resync(root: Path, version: str, base_branch: str) -> int` _(internal)_ — Branch, commit, push the regen diff and open the resync PR.

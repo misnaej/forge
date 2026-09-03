@@ -411,6 +411,38 @@ With either job in place, `/next`'s tag step becomes a no-op fallback
 [`consumer-release.md`](../docs/consumer-release.md) remains available for
 repos without the workflow.
 
+## 5. Scheduled assembly PRs (fragments mode)
+
+Fragments-mode repos accumulate `changelog.d/` entries between
+releases; `forge-changelog release-pr` opens the assembly PR that
+collates them (branch `chore/assemble-vX.Y.Z`, `CHANGELOG.md` +
+manifest sync staged and committed, PR opened with in-body
+versioning-gate evidence). Run it on a schedule — forge's own
+`.github/workflows/assemble-release.yml` is the reference: weekly
+cron + `workflow_dispatch`, job-scoped `contents` + `pull-requests`
+write, SHA-pinned actions, and a single `forge-changelog release-pr`
+step. The command is idempotent: nothing pending or an assembly PR
+already open exits 0 quietly, so the cron cadence is safe to leave on.
+
+> **⚠️ Set the PAT secret before adopting the workflow.** A PR created
+> with the default `GITHUB_TOKEN` does **not** trigger `pull_request`
+> CI (GitHub's anti-recursion rule) — the assembly PR looks completely
+> normal while no CI ever ran on it, which is exactly the failure shape
+> nobody notices. Create a fine-grained PAT (contents + pull-requests
+> write, this repo only; forge uses `FORGE_ASSEMBLY_PAT`) and pass it
+> to checkout and the `gh` step. The workflow warns when it is absent,
+> and the PR body's embedded gate evidence is then the only
+> verification. Merging the assembly PR stays a human decision either
+> way.
+
+**Manifest-less (tag-versioned) repos: the assembly merge does not
+self-tag.** `forge-next-prep --tag` needs a manifest to be "ahead", and
+`auto-tag` no-ops on the assembly merge (the fragments were just
+deleted by it). The assembly PR body says so and names the cure: run
+`forge-release --from-changelog` after merging — it reads the heading
+the assembly just wrote. Wire it into your tag workflow as the
+post-assembly step if you want it automatic.
+
 ## Auth troubleshooting
 
 | Symptom | Fix |

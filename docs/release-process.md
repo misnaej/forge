@@ -99,6 +99,11 @@ Forge runs `[tool.forge.changelog].mode = "fragments"`:
     explicit-version core for flows that supply their own version.
 - `forge-next-prep` logs a pending-fragment advisory (count + the
   release command) so accumulating fragments prompt a release.
+- **The assembly PR opens itself**: the `assemble-release` workflow
+  (weekly cron + manual dispatch) runs `forge-changelog release-pr` —
+  guard, branch `chore/assemble-vX.Y.Z`, stage, commit, push, PR with
+  in-body gate evidence. Idempotent (open assembly PR or nothing
+  pending → quiet no-op); merging stays human.
 
 ## 4. Invariants the code MUST satisfy → enforcing tests
 
@@ -118,6 +123,7 @@ change that violates an invariant must turn its test red.
 | Fragment mode: `plugin.json <= latest tag` passes with valid pending fragments (zero included); an invalid fragment blocks even below the tag; shared-heading equality still fails | `verify_plugin_version._not_ahead_verdict` | `tests/test_verify_plugin_version.py::test_fragments_mode_manifest_at_tag_with_valid_pending_passes` / `::test_fragments_mode_manifest_at_tag_with_zero_pending_passes` / `::test_fragments_mode_invalid_fragment_fails_listing_error` / `::test_fragments_mode_manifest_below_tag_with_valid_fragments_passes` / `::test_fragments_mode_manifest_below_tag_invalid_fragment_fails` / `::test_headings_mode_manifest_at_tag_still_fails` |
 | The release version is `latest tag + max(pending fragment level)` — computed, never carried per-PR | `changelog_fragments.next_version_from_fragments` | `tests/test_changelog_fragments.py::test_next_version_from_fragments_uses_max_level` |
 | A branch adds at most ONE fragment (one unique `changelog.d/` file per PR; extra bullets share it) | `changelog_fragments.branch_added_fragments` via the `changelog_version` fragment gate | `tests/test_precommit.py::test_fragment_gate_blocks_second_branch_added_fragment` |
+| `release-pr` opens exactly one assembly PR: an already-open one (found up front or via a lost push/create race) defers with exit 0; nothing pending is a quiet 0; guard failures exit 2 | `changelog_fragments._cmd_release_pr` | `tests/test_changelog_fragments.py::test_main_release_pr_defers_to_open_assembly_pr` / `::test_main_release_pr_nothing_pending_is_quiet_noop` |
 | `forge-changelog release` assembles under the computed version, rewrites + stages the manifest (single writer), and never commits | `changelog_fragments._cmd_release` | `tests/test_changelog_fragments.py::test_main_release_with_manifest_stages_everything_commits_nothing` |
 | The release-commit skip tolerates a `CHANGELOG.md`/`changelog.d/`-only divergence from the tag — a release commit may assemble the changelog — yet still fails when any other file diverges | `git_utils.release_tree_fingerprint` via `verify_plugin_version._is_release_commit` | `tests/test_verify_plugin_version.py::test_skips_when_release_branch_only_adds_changelog` / `::test_fails_when_release_branch_changes_non_changelog_file`; `tests/test_git_utils.py::test_release_fingerprint_equal_when_only_changelog_differs` / `::test_release_fingerprint_differs_when_other_file_changes` |
 

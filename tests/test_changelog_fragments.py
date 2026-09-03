@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from forge import changelog_fragments
+from forge import changelog_fragments, git_utils
 from forge.changelog_fragments import (
     Fragment,
     assemble_changelog,
@@ -26,7 +26,40 @@ from forge.changelog_fragments import (
     next_version_from_fragments,
     validate_fragment,
 )
-from tests.conftest import GIT_ENV, commit_all, init_git_repo
+from tests.conftest import GIT_ENV, FakeProc, commit_all, init_git_repo
+
+
+# Captured at import time, before any test monkeypatches `subprocess.run` —
+# `changelog_fragments` and `git_utils` both do a bare `import subprocess`,
+# so they share this exact module object; a fake installed on it would
+# otherwise recurse into itself if it ever needs to fall back to the real
+# implementation.
+_REAL_SUBPROCESS_RUN = subprocess.run
+
+
+def _fake_gh_auth_ok(
+    cmd: list[str], *args: object, **kwargs: object
+) -> subprocess.CompletedProcess[str] | FakeProc:
+    """Fake a successful `gh auth status`; forward every other argv untouched.
+
+    Shared by the `release-pr` guard tests: `latest_v_tag` and
+    `_stage_release` shell out to real `git` on the sandbox repo, so only
+    the `gh` dependency may be faked — a blanket fake would blind
+    `latest_v_tag`'s own ``subprocess.run`` call too, since it lives on
+    the same shared module object.
+
+    Args:
+        cmd: The argv passed to ``subprocess.run``.
+        *args: Forwarded positional arguments.
+        **kwargs: Forwarded keyword arguments.
+
+    Returns:
+        A canned success for `gh auth status`; the real
+        ``subprocess.run`` result for anything else.
+    """
+    if cmd[:2] == ["gh", "auth"]:
+        return FakeProc(0)
+    return _REAL_SUBPROCESS_RUN(cmd, *args, **kwargs)
 
 
 def _write_fragment(directory: Path, name: str, body: str) -> Path:
@@ -1255,6 +1288,570 @@ def test_main_auto_tag_push_failure_without_winner_reports_failure(
     assert main(["auto-tag"]) == 2
 
     assert "no concurrent winner" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# _assembly_pr_body
+# ---------------------------------------------------------------------------
+
+
+def test_assembly_pr_body_manifest_less_names_post_merge_tagging(
+    tmp_path: Path,
+) -> None:
+    """A repo without a plugin manifest gets the post-merge tagging sentence.
+
+    The body must not claim the tag-release workflow tags the merge
+    (`forge-next-prep --tag`) when there is no manifest for
+    `plugin_version` to race ahead of.
+    """
+    body = changelog_fragments._assembly_pr_body(tmp_path, "v1.1.0")
+
+    assert "forge-release --from-changelog" in body
+    assert "forge-next-prep --tag" not in body
+
+
+def test_assembly_pr_body_with_manifest_says_workflow_tags_merge(
+    tmp_path: Path,
+) -> None:
+    """A repo with a plugin manifest gets the auto-tag-on-merge sentence."""
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text('{"name": "forge"}\n')
+
+    body = changelog_fragments._assembly_pr_body(tmp_path, "v1.1.0")
+
+    assert "forge-next-prep --tag" in body
+    assert "forge-release --from-changelog" not in body
+
+
+# ---------------------------------------------------------------------------
+# main() — release-pr (scheduled assembly PR)
+# ---------------------------------------------------------------------------
+
+
+def test_main_release_pr_not_fragments_mode_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A shared-heading repo self-skips before any `gh` dependency is touched.
+
+    The self-skip must precede `require_cli` — the guard cannot assume
+    `gh` is even installed on a repo that isn't in fragments mode.
+    """
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    require_calls: list[str] = []
+    monkeypatch.setattr(
+        changelog_fragments,
+        "require_cli",
+        lambda name, **_kw: require_calls.append(name),
+    )
+
+    assert main(["release-pr"]) == 0
+
+    assert "not a fragments-mode repo" in capsys.readouterr().out
+    assert require_calls == []
+
+
+def test_main_release_pr_gh_unauthenticated_exits_two(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unauthenticated `gh` aborts before the tag/fragment checks run.
+
+    Pins the pre-flight ordering (`require_cli` -> auth -> version
+    computation): `latest_v_tag` must never be reached once `gh auth
+    status` fails.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.changelog]\nmode = "fragments"\n'
+    )
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(changelog_fragments, "require_cli", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        changelog_fragments.subprocess,
+        "run",
+        lambda *_a, **_kw: FakeProc(1, stderr="not logged in"),
+    )
+    tag_calls: list[str] = []
+    monkeypatch.setattr(
+        changelog_fragments,
+        "latest_v_tag",
+        lambda *_a, **_kw: tag_calls.append("x") or "v1.0.0",
+    )
+
+    assert main(["release-pr"]) == 2
+
+    out = capsys.readouterr().out
+    assert "gh is not authenticated" in out
+    assert "not logged in" in out
+    assert tag_calls == []
+
+
+def test_main_release_pr_exit_two_without_tag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No `v*` tag at all → exit 2, no baseline to bump from."""
+    init_git_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.changelog]\nmode = "fragments"\n'
+    )
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(changelog_fragments, "require_cli", lambda *_a, **_kw: None)
+    monkeypatch.setattr(changelog_fragments.subprocess, "run", _fake_gh_auth_ok)
+
+    assert main(["release-pr"]) == 2
+    assert "no v* tag" in capsys.readouterr().out
+
+
+def test_main_release_pr_exit_two_on_invalid_fragment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An invalid pending fragment blocks before any branch/push is attempted."""
+    _init_tagged_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.changelog]\nmode = "fragments"\n'
+    )
+    _write_fragment(tmp_path / "changelog.d", "bad.bogus.md", "bump: minor\n- x\n")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(changelog_fragments, "require_cli", lambda *_a, **_kw: None)
+    monkeypatch.setattr(changelog_fragments.subprocess, "run", _fake_gh_auth_ok)
+    publish_calls: list[str] = []
+    monkeypatch.setattr(
+        changelog_fragments,
+        "_publish_assembly_pr",
+        lambda *_a, **_kw: publish_calls.append("x") or 2,
+    )
+
+    assert main(["release-pr"]) == 2
+
+    assert "unknown type 'bogus'" in capsys.readouterr().out
+    assert publish_calls == []
+
+
+def test_main_release_pr_nothing_pending_is_quiet_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Zero pending fragments → quiet exit 0, before the dedup check or publish.
+
+    "Quiet" means the dedup lookup and the publish step are never
+    reached at all, not just that nothing visible happens — the claim
+    cited by docs/release-process.md.
+    """
+    _init_tagged_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.changelog]\nmode = "fragments"\n'
+    )
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(changelog_fragments, "require_cli", lambda *_a, **_kw: None)
+    monkeypatch.setattr(changelog_fragments.subprocess, "run", _fake_gh_auth_ok)
+    dedup_calls: list[str] = []
+    monkeypatch.setattr(
+        changelog_fragments,
+        "find_open_pr_by_head_prefix",
+        lambda *_a, **_kw: dedup_calls.append("x") or None,
+    )
+    publish_calls: list[str] = []
+    monkeypatch.setattr(
+        changelog_fragments,
+        "_publish_assembly_pr",
+        lambda *_a, **_kw: publish_calls.append("x") or 0,
+    )
+
+    assert main(["release-pr"]) == 0
+
+    assert "no pending fragments" in capsys.readouterr().out
+    assert dedup_calls == []
+    assert publish_calls == []
+
+
+def test_main_release_pr_defers_to_open_assembly_pr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An already-open assembly PR defers with exit 0, before any publish step.
+
+    Proves the defer happens before any branch/push work — the
+    idempotent-and-race-tolerant contract docs/release-process.md cites.
+    """
+    _init_tagged_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.changelog]\nmode = "fragments"\n'
+    )
+    _write_fragment(tmp_path / "changelog.d", "a.added.md", "bump: minor\n- x\n")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(changelog_fragments, "require_cli", lambda *_a, **_kw: None)
+    monkeypatch.setattr(changelog_fragments.subprocess, "run", _fake_gh_auth_ok)
+    url = "https://github.com/x/y/pull/7"
+    monkeypatch.setattr(
+        changelog_fragments, "find_open_pr_by_head_prefix", lambda *_a, **_kw: url
+    )
+    publish_calls: list[str] = []
+    monkeypatch.setattr(
+        changelog_fragments,
+        "_publish_assembly_pr",
+        lambda *_a, **_kw: publish_calls.append("x") or 0,
+    )
+
+    assert main(["release-pr"]) == 0
+
+    out = capsys.readouterr().out.strip()
+    assert out == f"release-pr: assembly PR already open — {url}"
+    assert publish_calls == []
+
+
+def test_main_release_pr_happy_path_opens_pr_with_assembled_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A pending fragment drives a real branch, commit, push, and PR open.
+
+    The end-to-end wiring check: proves `release-pr` reaches a real
+    `_stage_release` + `create_commit` against a bare origin, without
+    re-deriving assembly correctness already pinned by the `release`
+    tests above (manifest handling, group ordering, …).
+    """
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "--bare", str(origin)], env=GIT_ENV, check=True
+    )
+    init_git_repo(repo)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(origin)],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    (repo / "pyproject.toml").write_text('[tool.forge.changelog]\nmode = "fragments"\n')
+    (repo / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragment(
+        repo / "changelog.d", "note.added.md", "bump: minor\n- new feature\n"
+    )
+    commit_all(repo, "seed")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=repo, env=GIT_ENV, check=True)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
+    monkeypatch.setattr(changelog_fragments, "require_cli", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        changelog_fragments, "_gate_evidence", lambda _root: (True, "<evidence>")
+    )
+    monkeypatch.setattr(
+        changelog_fragments, "find_open_pr_by_head_prefix", lambda *_a, **_kw: None
+    )
+
+    real_run = subprocess.run  # captured BEFORE patching, for the git argv below
+    gh_pr_create_calls: list[list[str]] = []
+
+    # MOCKING: selective dispatcher — `git` argv is routed to the real
+    # `subprocess.run` (so the branch really gets pushed to the bare
+    # origin above), while `gh` argv returns a canned success, since no
+    # real `gh` binary can authenticate or open a PR in a test sandbox.
+    # `gh pr create` argv is also recorded, to assert the `--base` wiring
+    # below.
+    def _dispatch(
+        cmd: list[str], *_a: object, **kwargs: object
+    ) -> subprocess.CompletedProcess[str] | FakeProc:
+        if cmd[0] == "git":
+            return real_run(cmd, *_a, **kwargs)
+        if cmd[:2] == ["gh", "auth"]:
+            return FakeProc(0)
+        if cmd[:2] == ["gh", "pr"]:
+            gh_pr_create_calls.append(cmd)
+            return FakeProc(0, stdout="https://github.com/x/y/pull/42\n")
+        msg = f"unexpected subprocess.run call: {cmd}"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(changelog_fragments.subprocess, "run", _dispatch)
+
+    assert main(["release-pr"]) == 0
+
+    out = capsys.readouterr().out
+    assert "release-pr: opened https://github.com/x/y/pull/42" in out
+    assert len(gh_pr_create_calls) == 1
+    create_argv = gh_pr_create_calls[0]
+    assert "--base" in create_argv
+    assert create_argv[create_argv.index("--base") + 1] == "main"
+    # No plugin.json in this fixture repo (bare pyproject setup) — the real
+    # publish path must emit the manifest-less tagging sentence, not the
+    # auto-tag-on-merge one.
+    assert (
+        "forge-release --from-changelog" in create_argv[create_argv.index("--body") + 1]
+    )
+
+    remote_branches = subprocess.run(
+        ["git", "ls-remote", "--heads", str(origin), "chore/assemble-v1.1.0"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert remote_branches.strip() != ""
+
+    changelog_at_branch = subprocess.run(
+        ["git", "show", "chore/assemble-v1.1.0:CHANGELOG.md"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "## v1.1.0" in changelog_at_branch
+    assert "- new feature" in changelog_at_branch
+
+    fragment_show = subprocess.run(
+        ["git", "show", "chore/assemble-v1.1.0:changelog.d/note.added.md"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert fragment_show.returncode != 0
+
+    commit_message = subprocess.run(
+        ["git", "log", "-1", "--format=%s", "chore/assemble-v1.1.0"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert commit_message == "chore(release): assemble v1.1.0"
+
+    current_branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert current_branch == "main"
+
+
+# ---------------------------------------------------------------------------
+# _gate_evidence
+# ---------------------------------------------------------------------------
+
+
+def test_gate_evidence_pass_formats_success_headline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A zero exit formats a ✅ headline with the gate output fenced below."""
+    monkeypatch.setattr(
+        git_utils.subprocess,
+        "run",
+        lambda *_a, **_kw: FakeProc(0, stdout="ok\n"),
+    )
+
+    passed, evidence = changelog_fragments._gate_evidence(tmp_path)
+
+    assert passed is True
+    assert "✅" in evidence
+    assert "Versioning gates pass" in evidence
+    assert "ok" in evidence
+
+
+def test_gate_evidence_fail_formats_warning_headline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-zero exit formats a ⚠️ headline — a gate failure never blocks the PR."""
+    monkeypatch.setattr(
+        git_utils.subprocess,
+        "run",
+        lambda *_a, **_kw: FakeProc(1, stderr="boom"),
+    )
+
+    passed, evidence = changelog_fragments._gate_evidence(tmp_path)
+
+    assert passed is False
+    assert "⚠️" in evidence
+    assert "FAILED" in evidence
+    assert "boom" in evidence
+
+
+def test_gate_evidence_truncates_long_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Output beyond the cap is truncated with a trailing marker, not balloon the PR."""
+    oversized = "x" * 5000
+    monkeypatch.setattr(
+        git_utils.subprocess,
+        "run",
+        lambda *_a, **_kw: FakeProc(0, stdout=oversized),
+    )
+
+    _passed, evidence = changelog_fragments._gate_evidence(tmp_path)
+
+    assert evidence.count("x") == git_utils.EVIDENCE_OUTPUT_CAP
+    assert evidence.endswith("… (truncated)\n````\n")
+
+
+def test_gate_evidence_invokes_precommit_with_exact_argv_and_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate subprocess is `forge-precommit --only <gates>`, run at *root*."""
+    calls: list[tuple[list[str], object]] = []
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> FakeProc:
+        calls.append((cmd, kwargs.get("cwd")))
+        return FakeProc(0)
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+
+    changelog_fragments._gate_evidence(tmp_path)
+
+    assert calls == [
+        (["forge-precommit", "--only", "changelog_version,plugin_version"], tmp_path)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# _push_and_open_pr
+# ---------------------------------------------------------------------------
+
+
+def test_push_and_open_pr_push_race_defers_to_open_pr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A `git push` rejection explained by a racing PR defers with exit 0."""
+    monkeypatch.setattr(
+        changelog_fragments, "_gate_evidence", lambda _root: (True, "e")
+    )
+    monkeypatch.setattr(
+        changelog_fragments.subprocess,
+        "run",
+        lambda *_a, **_kw: FakeProc(1, stderr="rejected"),
+    )
+    url = "https://github.com/x/y/pull/9"
+    monkeypatch.setattr(
+        changelog_fragments, "find_open_pr_by_head_prefix", lambda *_a, **_kw: url
+    )
+
+    rc = changelog_fragments._push_and_open_pr(
+        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", "main", draft=False
+    )
+
+    assert rc == 0
+    assert "lost the race — assembly PR open at" in capsys.readouterr().out
+
+
+def test_push_and_open_pr_push_failure_without_race_exits_two(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A `git push` failure with no racing PR to explain it exits 2."""
+    monkeypatch.setattr(
+        changelog_fragments, "_gate_evidence", lambda _root: (True, "e")
+    )
+    monkeypatch.setattr(
+        changelog_fragments.subprocess,
+        "run",
+        lambda *_a, **_kw: FakeProc(1, stderr="rejected"),
+    )
+    monkeypatch.setattr(
+        changelog_fragments, "find_open_pr_by_head_prefix", lambda *_a, **_kw: None
+    )
+
+    rc = changelog_fragments._push_and_open_pr(
+        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", "main", draft=False
+    )
+
+    assert rc == 2
+    assert "push FAILED" in capsys.readouterr().out
+
+
+def test_push_and_open_pr_create_race_defers_to_open_pr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A `gh pr create` failure (e.g. 422 duplicate) explained by a racing PR defers."""
+    monkeypatch.setattr(
+        changelog_fragments, "_gate_evidence", lambda _root: (True, "e")
+    )
+
+    def _dispatch(cmd: list[str], *_a: object, **_kw: object) -> FakeProc:
+        if cmd[0] == "git":
+            return FakeProc(0)
+        return FakeProc(1, stderr="422")
+
+    monkeypatch.setattr(changelog_fragments.subprocess, "run", _dispatch)
+    url = "https://github.com/x/y/pull/9"
+    monkeypatch.setattr(
+        changelog_fragments, "find_open_pr_by_head_prefix", lambda *_a, **_kw: url
+    )
+
+    rc = changelog_fragments._push_and_open_pr(
+        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", "main", draft=False
+    )
+
+    assert rc == 0
+    assert "assembly PR already open —" in capsys.readouterr().out
+
+
+def test_push_and_open_pr_create_failure_without_race_exits_two(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A `gh pr create` failure with no racing PR to explain it exits 2."""
+    monkeypatch.setattr(
+        changelog_fragments, "_gate_evidence", lambda _root: (True, "e")
+    )
+
+    def _dispatch(cmd: list[str], *_a: object, **_kw: object) -> FakeProc:
+        if cmd[0] == "git":
+            return FakeProc(0)
+        return FakeProc(1, stderr="422")
+
+    monkeypatch.setattr(changelog_fragments.subprocess, "run", _dispatch)
+    monkeypatch.setattr(
+        changelog_fragments, "find_open_pr_by_head_prefix", lambda *_a, **_kw: None
+    )
+
+    rc = changelog_fragments._push_and_open_pr(
+        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", "main", draft=False
+    )
+
+    assert rc == 2
+    out = capsys.readouterr().out
+    assert "gh pr create FAILED" in out
+    assert "open the PR manually" in out
+
+
+# ---------------------------------------------------------------------------
+# _publish_assembly_pr
+# ---------------------------------------------------------------------------
+
+
+def test_publish_assembly_pr_mid_step_exception_still_restores_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mid-step exception still restores the starting branch via `finally`."""
+
+    class BoomError(Exception):
+        """Local sentinel exception for the `_stage_release` failure."""
+
+    def _raise_boom(*_a: object, **_kw: object) -> int:
+        raise BoomError
+
+    _init_tagged_repo(tmp_path)
+    monkeypatch.setattr(changelog_fragments, "_stage_release", _raise_boom)
+
+    with pytest.raises(BoomError):
+        changelog_fragments._publish_assembly_pr(
+            tmp_path, "v1.1.0", "1.1.0", date="", draft=False
+        )
+
+    current_branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert current_branch == "main"
 
 
 def test_fragments_new_since_tag_excludes_tag_tree_members(

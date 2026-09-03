@@ -1833,9 +1833,6 @@ def _stub_forge_pr_plan_failing(tmp_path: Path) -> dict[str, str]:
     this into an empty `MODE` rather than dying under `set -e` at exit 1,
     which would fail the hook OPEN before the mode check ran.
 
-    Args:
-        tmp_path: Pytest `tmp_path` fixture directory to build the stub under.
-
     Returns:
         A copy of the current process environment with the stub's
         directory PREPENDED to `PATH`, shadowing any real `forge-pr-plan`

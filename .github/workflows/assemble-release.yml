@@ -1,0 +1,67 @@
+name: assemble-release
+
+# Scheduled changelog assembly, the collation half of fragments mode:
+# tag-per-merge (tag-release.yml) cuts a tag on every fragment-carrying
+# merge; this workflow periodically opens the assembly PR that collates
+# the accumulated fragments into CHANGELOG.md and syncs plugin.json
+# (`forge-changelog release-pr` — guard, branch, commit, push, PR).
+# Merging the PR stays a human decision.
+#
+# Idempotent: nothing pending or an assembly PR already open → quiet
+# no-op (exit 0). The PR body carries in-CLI gate evidence because a
+# PR created with the default GITHUB_TOKEN triggers no pull_request CI
+# (GitHub anti-recursion): set the FORGE_ASSEMBLY_PAT secret (fine-
+# grained PAT, contents + pull-requests write) so CI runs on the PR;
+# without it the job still works but warns. Actions are SHA-pinned
+# (write-capable workflow). Consumer recipe: forge-docs/ci-recipe.md.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assemble-release
+  cancel-in-progress: false
+
+jobs:
+  open-assembly-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main (full history + tags)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.FORGE_ASSEMBLY_PAT || github.token }}
+
+      - name: Setup Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install forge-scripts
+        run: pip install -e .
+
+      - name: Warn when the PAT secret is absent
+        env:
+          HAS_PAT: ${{ secrets.FORGE_ASSEMBLY_PAT != '' }}
+        run: |
+          if [ "$HAS_PAT" != "true" ]; then
+            echo "::warning::FORGE_ASSEMBLY_PAT is not set — the assembly PR will be created with GITHUB_TOKEN and pull_request CI will NOT run on it (the PR body's in-CLI gate evidence is the only verification)."
+          fi
+
+      - name: Open the assembly PR
+        env:
+          GH_TOKEN: ${{ secrets.FORGE_ASSEMBLY_PAT || github.token }}
+        run: |
+          out=$(forge-changelog release-pr 2>&1); rc=$?
+          echo "$out"
+          echo "$out" >> "$GITHUB_STEP_SUMMARY"
+          exit $rc

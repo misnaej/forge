@@ -5276,11 +5276,7 @@ def test_step_changelog_version_no_tag_visible_warns_structural_only(
 
 
 def _write_fragments_pyproject(tmp_path: Path) -> None:
-    """Write a `pyproject.toml` opting into `[tool.forge.changelog] mode = "fragments"`.
-
-    Args:
-        tmp_path: Repo root to write into.
-    """
+    """Write `pyproject.toml` opting into fragments mode."""
     (tmp_path / "pyproject.toml").write_text(
         '[tool.forge.changelog]\nmode = "fragments"\n'
     )
