@@ -32,7 +32,6 @@ if TYPE_CHECKING:
 def _write_config(
     repo: Path,
     *,
-    dev_branch: str = "main",
     base_branch: str = "main",
     fragments: bool = False,
 ) -> None:
@@ -40,7 +39,6 @@ def _write_config(
 
     Args:
         repo: Repo root to write into.
-        dev_branch: ``[tool.forge].dev_branch`` value.
         base_branch: ``[tool.forge].base_branch`` value.
         fragments: When True, also writes
             ``[tool.forge.changelog] mode = "fragments"``.
@@ -48,7 +46,6 @@ def _write_config(
     lines = [
         "[tool.forge]",
         f'base_branch = "{base_branch}"',
-        f'dev_branch = "{dev_branch}"',
     ]
     if fragments:
         lines += ["", "[tool.forge.changelog]", 'mode = "fragments"']
@@ -357,36 +354,18 @@ def test_rebump_refuses_on_unrelated_merge_conflict(tmp_path: Path) -> None:
     assert outcome.staged == ()
 
 
-@pytest.mark.parametrize(
-    ("dev_branch", "base_branch", "branch"),
-    [
-        ("main", "main", "main"),
-        ("dev", "main", "dev"),
-    ],
-)
-def test_rebump_refuses_on_protected_branch(
-    tmp_path: Path, dev_branch: str, base_branch: str, branch: str
-) -> None:
-    """Rebump refuses on either integration branch — single-track and dual-track.
-
-    Args:
-        dev_branch: Configured ``[tool.forge].dev_branch``.
-        base_branch: Configured ``[tool.forge].base_branch``.
-        branch: Branch checked out when ``rebump`` runs — matches one of
-            the two configured integration branches.
-    """
+def test_rebump_refuses_on_protected_branch(tmp_path: Path) -> None:
+    """Rebump refuses on the configured base branch."""
     init_git_repo(tmp_path)
-    _write_config(tmp_path, dev_branch=dev_branch, base_branch=base_branch)
+    _write_config(tmp_path, base_branch="main")
     _write_plugin(tmp_path, "1.0.0")
     commit_all(tmp_path, "config + plugin")
     _tag(tmp_path, "v1.0.0")
-    if branch != "main":
-        _checkout_new_branch(tmp_path, branch)
 
     outcome = rebump.rebump(tmp_path)
 
     assert outcome.refusal is not None
-    assert f"on '{branch}'" in outcome.refusal
+    assert "on 'main'" in outcome.refusal
     assert outcome.staged == ()
 
 

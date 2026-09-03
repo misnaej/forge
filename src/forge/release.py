@@ -12,10 +12,9 @@ Guards, in order (all failures reported at once, exit ``1``):
 1. **Clean working tree** — a release tag must point at committed state.
 2. **On the base branch** (``[tool.forge].base_branch``, default
    ``main``) — single-track releases are cut from the trunk.
-3. **Single-track release model** — refuses on a dual-track repo
-   (``dev_branch != base_branch``; promote via its release flow instead)
-   or when a ``.claude-plugin/plugin.json`` manifest drives versioning
-   (use ``forge-next-prep --tag``). Two different version sources, two
+3. **Single-track release model** — refuses when a
+   ``.claude-plugin/plugin.json`` manifest drives versioning (use
+   ``forge-next-prep --tag``). Two different version sources, two
    different orchestrators.
 4. **CHANGELOG gate** — when ``CHANGELOG.md`` exists it must already
    carry a ``## vX.Y.Z`` heading for the tag being cut. A repo with no
@@ -55,7 +54,7 @@ from forge.changelog import (
     stranded_added_versions,
     top_release_heading,
 )
-from forge.config import ForgeConfig, load_config
+from forge.config import load_config
 from forge.git_utils import (
     configure_cli_logging,
     create_annotated_tag,
@@ -106,27 +105,20 @@ def _wrong_branch_error(repo_root: Path, base_branch: str) -> str | None:
     return None
 
 
-def _wrong_release_model_error(repo_root: Path, cfg: ForgeConfig) -> str | None:
+def _wrong_release_model_error(repo_root: Path) -> str | None:
     """Return an error when this repo's release model isn't single-track.
 
-    Two disqualifiers, checked independently: a dual-track branch config
-    (releases reach base via promotion, not direct tagging) and a plugin
-    manifest (the version source is ``plugin.json``, owned by
-    ``forge-next-prep --tag``). Manifest presence alone is not the
-    signal — a dual-track repo without a manifest must also be refused.
+    A plugin manifest disqualifies: the version source is
+    ``plugin.json``, owned by ``forge-next-prep --tag``, so
+    ``forge-release``'s tag computation would fight the rolling-next
+    flow.
 
     Args:
         repo_root: Repo root.
-        cfg: Loaded ``[tool.forge]`` configuration.
 
     Returns:
         One-line error string, or ``None`` when single-track tag-versioned.
     """
-    if cfg.dual_track:
-        return (
-            f"Dual-track repo ({cfg.dev_branch} → {cfg.base_branch}) — "
-            "releases are cut by the promotion flow, not forge-release."
-        )
     if read_local_plugin_version(repo_root) is not None:
         return (
             ".claude-plugin/plugin.json drives this repo's versioning — "
@@ -303,17 +295,16 @@ def _select_branch_guard(
 
 
 def _prepare_from_changelog(
-    repo_root: Path, cfg: ForgeConfig
+    repo_root: Path,
 ) -> tuple[str | None, str | None]:
     """Resolve and validate the tag declared in CHANGELOG.md.
 
-    Model check is performed BEFORE the idempotency short-circuit to ensure
-    that a dual-track misconfiguration is never masked by a stale tag
+    Model check is performed BEFORE the idempotency short-circuit so a
+    manifest-versioned misconfiguration is never masked by a stale tag
     matching the declared version.
 
     Args:
         repo_root: Repo root.
-        cfg: Loaded ``[tool.forge]`` configuration.
 
     Returns:
         ``(tag, error)`` tuple. On success, ``tag`` is the resolved version and
@@ -331,7 +322,7 @@ def _prepare_from_changelog(
     # Model check BEFORE the idempotency short-circuit: "wrong release
     # model" is a configuration signal independent of tag state — a
     # stale tag matching the declared version must not mask it.
-    model_err = _wrong_release_model_error(repo_root, cfg)
+    model_err = _wrong_release_model_error(repo_root)
     if model_err:
         return None, model_err
 
@@ -450,7 +441,7 @@ def main() -> int:
 
     errors: list[str] = []
     if args.from_changelog:
-        tag, changelog_error = _prepare_from_changelog(repo_root, cfg)
+        tag, changelog_error = _prepare_from_changelog(repo_root)
         if changelog_error:
             logger.error("%s", changelog_error)
             return 1
@@ -471,7 +462,7 @@ def main() -> int:
         for err in (
             _dirty_tree_error(repo_root),
             branch_guard,
-            _wrong_release_model_error(repo_root, cfg),
+            _wrong_release_model_error(repo_root),
             _changelog_gate_error(repo_root, tag),
         )
         if err

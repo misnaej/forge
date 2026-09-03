@@ -35,7 +35,7 @@ Code.
    - release.py: `forge-release` — single-track release orchestrator for tag-versioned (setuptools-scm) consumer repos: guards (clean tree, on base branch, single-track model, CHANGELOG entry) → annotated tag + push (exempt in `cli_wiring_exempt.toml`)
    - continuation_append.py: `forge-continuation-append` — single source of truth for `.plan/CONTINUATION.md` append format; called by `forge:git-commit-push` and `forge:pr-manager`; every append (and `--rotate`) rotates done entries older than one week to `.plan/CONTINUATION-archive.md` + per-day digests, pinning entries the structured sections still reference
    - pr_squash_comment.py: `forge-pr-squash-comment` — validates + posts the squash-merge comment; canonical `CONVENTIONAL_COMMIT_TYPES` source
-   - changelog_fragments.py: `forge-changelog` — changelog fragments (changelog.d/): per-PR `<slug>.<type>.md` files with level-only `bump:` front-matter, validated by the fragment gate and assembled into CHANGELOG.md once at release (single writer; zero merge conflicts by construction); `next-version` prints the computed next release (latest tag + max pending level) and `release` assembles under it, writes plugin.json (when present), and stages everything (never commits); `restrand` subcommand mechanically repairs stranded entries in shared-heading repos (no manifest needed; stages, never commits)
+   - changelog_fragments.py: `forge-changelog` — changelog fragments (changelog.d/): per-PR `<slug>.<type>.md` files with level-only `bump:` front-matter, validated by the fragment gate and assembled into CHANGELOG.md once at release (single writer; zero merge conflicts by construction); `next-version` prints the computed next release (latest tag + max pending level) and `release` assembles under it, writes plugin.json (when present), and stages everything (never commits); `restrand` subcommand mechanically repairs stranded entries in shared-heading repos (no manifest needed; stages, never commits); `auto-tag` cuts and pushes the tag-per-merge release tag in CI (fragments not in latest tag's tree -> max level -> next tag)
    - pr_delta.py: the finalization-path classification primitives — every threshold, glob, and predicate (delta, docs-only, regen-only, light-code) consumed by `forge-pr-plan`, the pr-manager agent, and the wrap-up publish hook
    - pr_plan.py: `forge-pr-plan` — deterministic finalization-path classifier for the `/pr` skill; composes the pr_delta primitives over the real diff and emits the JSON plan (mode/reporters/precommit_scope/reasons)
    - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; `--baseline`/`--update-baseline` compare against the committed `.forge-test-durations.json` (WARN-shaped, never gates); wired via the `/perf` skill
@@ -55,8 +55,6 @@ Code.
    - pip_audit_json.py: shared single-invocation pip-audit JSON helper (`run_json` + `ids_from_data` / `has_vulns` / `render_report`); the neutral seam both `precommit.step_pip_audit` and `verify_cve_usage` depend on so pip-audit runs once per commit
    - install_readme_badges.py: `install-forge-readme-badges` — write/verify a drift-aware README status-badge managed block (shields.io + local docstring-coverage SVG); opt-in via `[tool.forge.badges]`; `--check` mode
    - verify_plugin_version.py: `verify-forge-plugin-version` — rolling-next guard (plugin.json["version"] > latest git tag)
-   - verify_main_tags.py: `forge-check-main-tags` — verify/repair minor-boundary (`vX.Y.0`) tag placement on the base branch
-   - verify_changelog_history.py: `verify-forge-changelog-history` — guard that a promotion branch (base merged in) retains every curated `## vX.Y.0` CHANGELOG heading on the base branch
    - gen_cli_reference.py: `forge-gen-cli-reference` — CLI reference
      doc generator
    - gen_api_digest.py: `forge-gen-api-digest` — public-symbol API
@@ -78,7 +76,7 @@ Code.
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
    - resync.py: `forge-resync` — regenerate forge-managed artifacts and open a dedup-guarded resync PR (companion to `upgrade.py`'s pin-rewrite flow)
    - git_utils.py: shared git helpers and CLI logging setup (public API for consumers: `latest_v_tag`, `parse_semver`, `next_version`, `run_git`, `configure_cli_logging`)
-   - changelog.py: shared `## vX.Y.Z` CHANGELOG heading recognition (`release_headings`, `changelog_lacks_entry`) — single source for next_prep, verify_changelog_history, and release; public API for consumers
+   - changelog.py: shared `## vX.Y.Z` CHANGELOG heading recognition (`release_headings`, `changelog_lacks_entry`) — single source for release and the changelog_updated step; public API for consumers
    - import_graph.py: `forge.import_graph` — shared AST import primitives (`extract_import_targets`, `resolve_module_name`, `closest_known`) used by `audit.deps` and `smart_test.dependencies`
    - run_context.py: `forge.run_context` — CI vs workstation detection (`is_non_interactive`, `git_auth_mode`, `progress_logger`) per FOUNDATION §15
 
@@ -162,7 +160,7 @@ enforcement:
 - block_forge_docs_edits.sh: block agent edits inside the forge-managed forge-docs/ mirror
 - block_git_rebase.sh: block `git rebase` and `git pull --rebase` from agents (no bypass — sync via plain base merge)
 - block_install_deps.sh: block dependency installation
-- block_protected_branches.sh: block direct pushes to protected branches (`[tool.forge].base_branch` + `dev_branch`)
+- block_protected_branches.sh: block direct pushes to the protected base branch (`[tool.forge].base_branch`)
 - block_no_verify.sh: block `--no-verify`
 - block_pr_merge.sh: block autonomous PR merges
 - block_protected_files.sh: protect foundation-owned files
@@ -242,8 +240,6 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_pip_audit_json.py: tests for pip_audit_json (run_json binary-missing/parse paths, ids_from_data alias collection + malformed-shape filtering, render_report primary-id-only, advisory-count invariant)
    - test_install_readme_badges.py: tests for install_readme_badges (badge sources, drift-aware injection, opt-in gating, --check)
    - test_verify_plugin_version.py: tests for verify_plugin_version
-   - test_verify_main_tags.py: tests for verify_main_tags
-   - test_verify_changelog_history.py: tests for verify_changelog_history
    - test_verify_repo_structure.py: tests for verify_repo_structure
    - test_verify_test_naming.py: tests for verify_test_naming
 

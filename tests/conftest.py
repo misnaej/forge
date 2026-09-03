@@ -1,7 +1,7 @@
 """Shared test fixtures for forge.
 
 Lives at ``tests/conftest.py`` so pytest auto-discovers it. Exposes the
-real-git helpers ``GIT_ENV``, ``init_git_repo`` and ``init_dual_track_repo``
+real-git helpers ``GIT_ENV``, ``init_git_repo`` and ``init_single_track_repo``
 (ephemeral repos for the git-touching suites), plus the subprocess fakes
 ``FakeProc``, ``CapturedCalls`` and the ``make_fake_run`` factory — used by
 tests that monkeypatch ``subprocess.run`` in any of the forge CLIs.
@@ -35,9 +35,8 @@ GIT_ENV: dict[str, str] = {
 def init_git_repo(repo: Path) -> None:
     """Initialize a minimal git repo with one empty commit on ``main``.
 
-    Shared by the real-git suites (``git_utils``, ``verify_plugin_version``,
-    ``verify_main_tags``) so the ephemeral-repo boilerplate lives in one
-    place.
+    Shared by the real-git suites (``git_utils``, ``verify_plugin_version``)
+    so the ephemeral-repo boilerplate lives in one place.
 
     Args:
         repo: Directory to initialize. Must already exist.
@@ -68,7 +67,6 @@ def commit_all(repo: Path, message: str) -> None:
 def init_single_track_repo(base: Path) -> tuple[Path, Path]:
     """Initialize a paired work/bare single-track git repository under *base*.
 
-    The single-track counterpart to :func:`init_dual_track_repo`:
     ``base/work`` on ``main`` only, wired to ``base/origin.git`` with
     ``main`` pushed. Shared by the ``forge-release`` suites so the
     work-tree/bare-origin plumbing lives in one place; callers layer
@@ -133,51 +131,6 @@ def tag_exists(repo: Path, tag: str) -> bool:
         check=True,
     )
     return result.stdout.strip() == tag
-
-
-def init_dual_track_repo(base: Path) -> tuple[Path, Path]:
-    """Initialize a paired work/bare dual-track git repository under *base*.
-
-    Creates ``base/work`` (git init -b main, initial commit, dev branch) and
-    ``base/origin.git`` (bare repo); wires them via ``git remote add origin``
-    and pushes both ``main`` and ``dev``.  Mirrors the forge dual-track layout
-    (``dev_branch != base_branch``) so tests have a real remote to fetch from
-    and push to.
-
-    Args:
-        base: Parent directory; must already exist.  ``work`` and
-            ``origin.git`` are created inside it.
-
-    Returns:
-        A ``(work, bare)`` tuple of the work-tree and bare-repo paths.
-    """
-    work = base / "work"
-    bare = base / "origin.git"
-    work.mkdir()
-    bare.mkdir()
-
-    for cmd in (
-        ["git", "init", "-q", "-b", "main"],
-        ["git", "commit", "-q", "--allow-empty", "-m", "initial"],
-        ["git", "checkout", "-q", "-b", "dev"],
-        ["git", "checkout", "-q", "main"],
-    ):
-        subprocess.run(cmd, cwd=work, env=GIT_ENV, check=True)
-
-    subprocess.run(["git", "init", "--bare", "-q"], cwd=bare, env=GIT_ENV, check=True)
-    subprocess.run(
-        ["git", "remote", "add", "origin", str(bare)],
-        cwd=work,
-        env=GIT_ENV,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
-    )
-    subprocess.run(
-        ["git", "push", "-q", "origin", "dev"], cwd=work, env=GIT_ENV, check=True
-    )
-    return work, bare
 
 
 @dataclass

@@ -188,15 +188,14 @@ gate.
   to ask, never a prompt to reach the same effect another way.
 - **NEVER add Claude/AI attribution** in commits, PRs, or merge messages (no
   `Co-Authored-By`, no `Generated with Claude`, no AI references).
-- **NEVER push directly to a protected branch** (`base_branch` / `dev_branch`,
-  default `main` / `dev`). Branch first. The `block_protected_branches` hook
-  enforces this, defaulting to the same `main` + `dev` set as
-  `block_branch_deletion`.
+- **NEVER push directly to a protected branch** (`base_branch`, default
+  `main`). Branch first. The `block_protected_branches` hook enforces
+  this, defaulting to the same `main` as `block_branch_deletion`.
 - **NEVER merge PRs autonomously.** Merging is the user's decision — produce the
   squash-merge message and wrap-up comment, then stop. `block_pr_merge` enforces
   this (blocks `gh pr merge` and the equivalent `gh api .../pulls/N/merge`); users
   merge via `! gh pr merge ...`.
-- **NEVER delete a protected remote branch** (`base_branch` / `dev_branch`).
+- **NEVER delete a protected remote branch** (`base_branch`).
   Irreversible, and since an agent runs with the user's credentials it *bypasses*
   server-side deletion rulesets. `block_branch_deletion` enforces this with **no
   bypass** — blocks `git push --delete` / `:ref` and `gh api -X DELETE
@@ -404,8 +403,7 @@ advisories with the suggested pin; they never edit pins.
   `wrapup-mode: light`, additionally re-runs the `forge-pr-plan`
   classifier fail-closed, blocking unless it agrees the diff is
   light-code (`FORGE_SKIP_WRAPUP_GATE=1` on explicit
-  user request only; promotion PRs self-exempt when the `release/vX.Y.Z`
-  tree reproduces its tag modulo the curated changelog). A **draft PR** is
+  user request only). A **draft PR** is
   the escape hatch when the PR should be visible earlier. A genuine
   emergency uses **`forge-emergency`** — one human-armed, ledger-backed
   `wrapup-mode: emergency` publication that defers only the verification
@@ -895,9 +893,10 @@ instruction.
   never the base. For multi-step prose with no natural CLI home.
 - **C — CLI-gated extension**: put the logic IN the foundation CLI, gated on
   `[tool.forge]` config — no wrapper; the shipped skill surfaces it because
-  it already invokes the CLI (e.g. `forge-next-prep`'s `Pending promotion:`
-  advisory, invisible to single-branch consumers). For one-shot checks that
-  fit an existing CLI's scope with the gating signal already in config.
+  it already invokes the CLI (e.g. `forge-changelog auto-tag`'s
+  `[tool.forge.release].auto` gate — a loud warning instead of a tag for
+  repos that haven't opted in). For one-shot checks that fit an existing
+  CLI's scope with the gating signal already in config.
 
 When in doubt, prefer C over B over A: the smaller the divergent surface, the less
 maintenance burden on every foundation upgrade.

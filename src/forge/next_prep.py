@@ -22,16 +22,6 @@ Operations (in order, each idempotent):
    local branches whose remote shows ``[origin/...: gone]``. Uses
    ``git branch -d`` (safe) — never ``-D``.
 
-``--promotion-status`` is a separate read-only mode: it fetches tags,
-prints the base/dev plugin versions and the ordered list of ``v*``
-releases still pending promotion, then exits — no checkout, pull, tag,
-or prune. The ``/promote`` skill calls it instead of hand-rolling the
-git/version comparison.
-
-The ``--target`` flag (forge-internal) lets the CLI refresh a different
-branch when the repo's ``[tool.forge]`` block names one. Standard
-single-branch repos can ignore it.
-
 Exits 0 on success, 1 if the target branch can't fast-forward
 (divergent state).
 """
@@ -45,24 +35,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-from forge.changelog import changelog_lacks_entry
 from forge.changelog_fragments import discover_fragments
 from forge.config import (
-    ForgeConfig,
     is_fragments_mode,
     load_config,
-    read_tool_forge_section,
 )
 from forge.git_utils import (
-    classify_bump,
     configure_cli_logging,
     create_annotated_tag,
     fetch_tags_best_effort,
     latest_v_tag,
-    minor_tags,
     parse_semver,
     read_local_plugin_version,
-    read_plugin_version_at_ref,
     run_git,
 )
 
@@ -74,181 +58,6 @@ logger = logging.getLogger(__name__)
 # Applied via fullmatch — a bare `$` would tolerate one trailing newline.
 _SEMVER_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 _GONE_BRANCH_RE = re.compile(r"^\*?\s*(\S+)\s+[0-9a-f]+\s+\[origin/\S+: gone\]")
-
-
-def _check_promote_pending_message(
-    repo_root: Path,
-    dev_branch: str,
-    base_branch: str,
-) -> str | None:
-    """Return a one-line user-facing prompt when promotion is pending, else ``None``.
-
-    A promotion is "pending" when ``origin/<dev_branch>``'s plugin
-    manifest carries a MINOR or MAJOR version bump over
-    ``origin/<base_branch>``'s. Patch-only differences (`Z+1`)
-    accumulate on dev between releases per the rolling-next convention
-    and do NOT count as pending.
-
-    Args:
-        repo_root: Working directory for git operations.
-        dev_branch: Name of the fast-channel branch (e.g. ``"dev"``).
-        base_branch: Name of the slow-channel branch (e.g. ``"main"``).
-
-    Returns:
-        Pre-formatted one-line prompt string when promotion is pending,
-        ``None`` otherwise. The string includes the bump type and is
-        ready to log directly. ``None`` is returned when: the repo is
-        single-branch (``dev_branch == base_branch``); either branch
-        lacks ``.claude-plugin/plugin.json``; the diff is patch-only;
-        or either version string is not semver-shaped.
-    """
-    if dev_branch == base_branch:
-        return None
-    dev_ver = read_plugin_version_at_ref(repo_root, f"origin/{dev_branch}")
-    base_ver = read_plugin_version_at_ref(repo_root, f"origin/{base_branch}")
-    if dev_ver is None or base_ver is None:
-        return None
-    if not (_SEMVER_RE.fullmatch(dev_ver) and _SEMVER_RE.fullmatch(base_ver)):
-        return None
-    bump_class = classify_bump(parse_semver(base_ver), parse_semver(dev_ver))
-    if bump_class not in ("major", "minor"):
-        return None  # patch-only differences accumulate on dev (rolling-next)
-    bump = bump_class.upper()
-    return (
-        f"Pending promotion: {dev_branch} at v{dev_ver}; "
-        f"{base_branch} at v{base_ver} ({bump} bump). "
-        f"Run /promote (or your repo's equivalent) to open the "
-        f"{dev_branch}→{base_branch} release PR."
-    )
-
-
-def _withhold_newest_minor(
-    repo_root: Path,
-    staged: list[tuple[tuple[int, int, int], str]],
-) -> tuple[list[tuple[tuple[int, int, int], str]], str | None]:
-    """Split the newest minor off *staged* when the promotion hold is on.
-
-    Forge-only mechanism (``[tool.forge.promotion].hold_newest_minor``,
-    default off): the newest dev minor is unpromotable until its
-    successor tags — relocating it would leave ``@dev`` installs
-    describing a dirty version (``docs/release-process.md`` §2). The
-    staged list's top entry is by construction the repo's newest minor
-    tag, so withholding is always exactly one entry.
-
-    Args:
-        repo_root: Repo root for the config read.
-        staged: Ascending ``(semver, tag)`` pending-promotion list.
-
-    Returns:
-        ``(remaining, held)`` — the list without its top entry and that
-        entry's tag name when the hold applies; ``(staged, None)``
-        otherwise.
-    """
-    if not staged:
-        return staged, None
-    hold = read_tool_forge_section(repo_root, "promotion").get(
-        "hold_newest_minor", False
-    )
-    if not hold:
-        return staged, None
-    return staged[:-1], staged[-1][1]
-
-
-def _promotion_status_lines(
-    repo_root: Path,
-    dev_branch: str,
-    base_branch: str,
-) -> list[str]:
-    """Build the read-only promotion-status report.
-
-    Reports the base/dev plugin versions and, when dev is a MINOR/MAJOR
-    ahead, the ordered list of ``X.Y.0`` releases that ``base`` must be
-    promoted up to — one minor per line, ascending. ``base`` is
-    minor-only: interleaved patch tags are excluded because they fold
-    into the next minor's promotion. Shares version-read and
-    pending-detection helpers with the ``/next`` advisory, giving the
-    ``/promote`` skill a single authoritative source for the git/version
-    comparison.
-
-    Args:
-        repo_root: Working directory for git operations.
-        dev_branch: Fast-channel branch name (e.g. ``"dev"``).
-        base_branch: Slow-channel branch name (e.g. ``"main"``).
-
-    Returns:
-        Human-readable report lines (never empty). Reads ``origin/*``
-        tracking refs — the caller is responsible for fetching first.
-    """
-    if dev_branch == base_branch:
-        return ["Single-branch repo — no dev→base promotion model."]
-    base_ver = read_plugin_version_at_ref(repo_root, f"origin/{base_branch}")
-    dev_ver = read_plugin_version_at_ref(repo_root, f"origin/{dev_branch}")
-    if base_ver is None or dev_ver is None:
-        return [f"No plugin manifest on origin/{base_branch} or origin/{dev_branch}."]
-    lines = [
-        f"{base_branch} (origin/{base_branch}): v{base_ver}",
-        f"{dev_branch} (origin/{dev_branch}): v{dev_ver}",
-    ]
-    base_tuple = parse_semver(base_ver)
-    dev_tuple = parse_semver(dev_ver)
-    # Pending only on a MINOR/MAJOR gap with dev ahead — patches
-    # accumulate on dev between releases (rolling-next). Compared from the
-    # already-read versions; no second round of git reads.
-    if base_tuple is None or dev_tuple is None or base_tuple[:2] >= dev_tuple[:2]:
-        lines.append("Up to date — nothing to promote.")
-        return lines
-    # Only MINOR/MAJOR releases (``X.Y.0``) are promotion targets — base
-    # is minor-only, and accumulated patches fold into the next minor's
-    # promotion (e.g. 1.5.1 / 1.5.2 ride along when 1.6.0 is promoted).
-    # ``minor_tags`` (shared with forge-check-main-tags) drops the
-    # interleaved patch tags the version range would otherwise list as
-    # separate promotions.
-    staged = sorted(
-        (pv, tag)
-        for tag in minor_tags(repo_root)
-        if (pv := parse_semver(tag)) is not None and base_tuple < pv <= dev_tuple
-    )
-    if not staged:
-        # MINOR/MAJOR gap detected but no ``X.Y.0`` tag in range — the
-        # minor was never tagged (fresh or mid-flight repo). Don't print a
-        # misleading "promote these (0):" header with an empty list.
-        lines.append(
-            "Promotion pending, but no X.Y.0 release tag found in range "
-            "— check that the target minor was tagged."
-        )
-        return lines
-    staged, held = _withhold_newest_minor(repo_root, staged)
-    held_line = (
-        f"{held} held back (newest dev minor — promotes once the next "
-        "minor tags; docs/release-process.md §2)."
-        if held
-        else None
-    )
-    if not staged:
-        lines.append("Up to date — nothing to promote.")
-        if held_line:
-            lines.append(held_line)
-        return lines
-    lines.append(f"Promotion pending — promote these in order ({len(staged)}):")
-    lines.extend(f"  {tag}" for _, tag in staged)
-    if held_line:
-        lines.append(held_line)
-    # Non-blocking CHANGELOG advisory (docs/release-process.md §5): a
-    # reminder that each pending minor needs a curated entry — authored in
-    # its release/vX.Y.Z branch during promotion. Stays silent for repos
-    # that keep no CHANGELOG (git show → empty).
-    changelog = run_git(
-        "show", f"origin/{dev_branch}:CHANGELOG.md", cwd=repo_root, check=False
-    )
-    if changelog:
-        missing = [tag for _, tag in staged if changelog_lacks_entry(changelog, tag)]
-        if missing:
-            lines.append(
-                f"⚠️  CHANGELOG.md (origin/{dev_branch}) has no entry for "
-                f"{', '.join(missing)} — author it in the release/vX.Y.Z "
-                "branch during promotion (docs/release-process.md §5)."
-            )
-    return lines
 
 
 def _is_newer(plugin_ver: str, latest_tag: str | None) -> bool:
@@ -280,7 +89,7 @@ def _is_newer(plugin_ver: str, latest_tag: str | None) -> bool:
 def tag_staleness_warning(repo_root: Path) -> str | None:
     """Return a warning when the integration branch owes a rolling-next tag.
 
-    Fires only on the configured ``dev_branch`` and only when
+    Fires only on the configured ``base_branch`` and only when
     ``plugin.json``'s version is strictly newer than the latest ``v*``
     tag — i.e. a merge bumped the rolling-next version but
     ``forge-next-prep --tag`` was never run, so the tag silently lags and
@@ -293,12 +102,12 @@ def tag_staleness_warning(repo_root: Path) -> str | None:
         repo_root: Git repo root.
 
     Returns:
-        A one-line warning string, or ``None`` when not on ``dev_branch``,
+        A one-line warning string, or ``None`` when not on ``base_branch``,
         when there is no plugin manifest, or when the tag is already
         current.
     """
     current = run_git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo_root, check=False)
-    if not current or current != load_config(repo_root).dev_branch:
+    if not current or current != load_config(repo_root).base_branch:
         return None
     plugin_ver = read_local_plugin_version(repo_root)
     if plugin_ver is None:
@@ -312,7 +121,7 @@ def tag_staleness_warning(repo_root: Path) -> str | None:
     )
 
 
-def _tag_misuse_warning(repo_root: Path, cfg: ForgeConfig) -> str | None:
+def _tag_misuse_warning(repo_root: Path) -> str | None:
     """Return a warning when ``--tag`` is used outside the rolling-next model.
 
     Per-merge tagging is the plugin-repo pattern: the rolling-next
@@ -323,15 +132,11 @@ def _tag_misuse_warning(repo_root: Path, cfg: ForgeConfig) -> str | None:
 
     Args:
         repo_root: Repo root.
-        cfg: Loaded ``[tool.forge]`` config.
 
     Returns:
-        A one-line warning when the repo is single-track
-        (``dev_branch == base_branch``) and has no plugin manifest;
+        A one-line warning when the repo has no plugin manifest;
         ``None`` when ``--tag`` is applicable.
     """
-    if cfg.dev_branch != cfg.base_branch:
-        return None
     if read_local_plugin_version(repo_root) is not None:
         return None
     return (
@@ -415,28 +220,6 @@ def _prune_gone_branches(repo_root: Path) -> tuple[list[str], list[str]]:
     return deleted, skipped
 
 
-def _emit_promotion_status(
-    repo_root: Path,
-    dev_branch: str,
-    base_branch: str,
-) -> int:
-    """Fetch tags and log the read-only promotion-status report.
-
-    Args:
-        repo_root: Working directory for git operations.
-        dev_branch: Fast-channel branch name.
-        base_branch: Slow-channel branch name.
-
-    Returns:
-        Always ``0`` — this is a pure read-only report.
-    """
-    for note in fetch_tags_best_effort(repo_root):
-        logger.warning("%s", note)
-    for line in _promotion_status_lines(repo_root, dev_branch, base_branch):
-        logger.info("%s", line)
-    return 0
-
-
 def _log_prune_result(repo_root: Path) -> None:
     """Prune stale local branches and log the outcome.
 
@@ -500,41 +283,19 @@ def main() -> int:
             "checkout exists to prevent."
         ),
     )
-    parser.add_argument(
-        "--promotion-status",
-        action="store_true",
-        help=(
-            "Read-only: fetch tags, then print the base/dev plugin versions "
-            "and the ordered list of v* releases pending promotion, and exit. "
-            "No checkout, pull, tag, or prune. Used by the /promote skill."
-        ),
-    )
-    parser.add_argument(
-        "--target",
-        choices=("dev", "base"),
-        default="dev",
-        help=(
-            "Branch to refresh. Resolved through [tool.forge] in "
-            "pyproject.toml; falls back to 'main' if the config is absent. "
-            "Most repos can leave this at the default."
-        ),
-    )
     args = parser.parse_args()
 
     repo_root = Path.cwd()
     cfg = load_config(repo_root)
 
-    if args.promotion_status:
-        return _emit_promotion_status(repo_root, cfg.dev_branch, cfg.base_branch)
-
-    target_branch = cfg.dev_branch if args.target == "dev" else cfg.base_branch
+    target_branch = cfg.base_branch
 
     if args.no_sync:
         # CI tag path: HEAD is already the exact commit CI validated;
         # only the tag set needs refreshing for the version comparison.
         for note in fetch_tags_best_effort(repo_root):
             logger.warning("%s", note)
-        return _tag_and_report(repo_root, cfg, args)
+        return _tag_and_report(repo_root, args)
 
     logger.info("Fetching from origin...")
     run_git("fetch", "--prune", cwd=repo_root)
@@ -547,7 +308,7 @@ def main() -> int:
     # exist. The fallback may still hit the collision on those older
     # gits — a contributor seeing it should upgrade.
     # ``--`` end-of-options separator: defense-in-depth so a malformed
-    # ``[tool.forge].dev_branch`` value starting with ``-`` (e.g.
+    # ``[tool.forge].base_branch`` value starting with ``-`` (e.g.
     # ``"--detach"``) is treated as a branch name, not a flag. Branch
     # names come from a repo-owned file so this is self-inflicted only,
     # but the guard is free for ``switch`` (no "branch vs path" overload
@@ -576,10 +337,10 @@ def main() -> int:
         )
         return 1
 
-    return _tag_and_report(repo_root, cfg, args)
+    return _tag_and_report(repo_root, args)
 
 
-def _tag_and_report(repo_root: Path, cfg: ForgeConfig, args: argparse.Namespace) -> int:
+def _tag_and_report(repo_root: Path, args: argparse.Namespace) -> int:
     """Run the post-sync tail: optional tag, optional prune, advisory.
 
     Shared by the normal (synced) path and ``--no-sync``, so the tag /
@@ -587,14 +348,13 @@ def _tag_and_report(repo_root: Path, cfg: ForgeConfig, args: argparse.Namespace)
 
     Args:
         repo_root: Repo root.
-        cfg: Loaded ``[tool.forge]`` config.
         args: Parsed CLI namespace (``tag``, ``no_prune_branches``).
 
     Returns:
         Always ``0`` — failures in these steps raise.
     """
     if args.tag:
-        misuse = _tag_misuse_warning(repo_root, cfg)
+        misuse = _tag_misuse_warning(repo_root)
         if misuse:
             logger.warning(misuse)
         else:
@@ -619,14 +379,6 @@ def _tag_and_report(repo_root: Path, cfg: ForgeConfig, args: argparse.Namespace)
                 "forge-changelog release",
                 pending_fragments,
             )
-
-    # Promotion-pending advisory. Self-gating: only emits when
-    # ``[tool.forge]`` declares a separate ``dev_branch`` (dual-track
-    # repos like forge itself); silent for the standard single-branch
-    # case. See FOUNDATION §16 "Extending shipped agents, skills, and CLIs".
-    pending = _check_promote_pending_message(repo_root, cfg.dev_branch, cfg.base_branch)
-    if pending:
-        logger.info(pending)
 
     return 0
 

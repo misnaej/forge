@@ -11,8 +11,8 @@
 #   - resync.require_cli: replaced with a no-op (or a raiser, to exercise
 #     the missing-gh abort) so PATH lookups never matter.
 #   - resync.repo_root: pinned to a tmp_path sandbox.
-#   - resync.load_config: stubbed with a real ForgeConfig(base_branch="main",
-#     dev_branch="main") instead of reading pyproject.toml.
+#   - resync.load_config: stubbed with a real ForgeConfig(base_branch="main")
+#     instead of reading pyproject.toml.
 #   - resync.subprocess.run: faked with the shared FakeProc to simulate
 #     `gh pr list` / `gh pr create` / `forge-precommit --only ...` responses.
 #   - resync._bootstrap_run: stubbed to avoid a real bootstrap pass.
@@ -857,7 +857,7 @@ def test_main_diff_after_bootstrap_publishes(
         clean on the first call (pre-bootstrap check) and dirty on the
         second (post-bootstrap check); `_open_resync_pr_url` → None;
         `_run_bootstrap` → 0; `load_config` → a real
-        `ForgeConfig(base_branch="main", dev_branch="main")`.
+        `ForgeConfig(base_branch="main")`.
     EXPECTED BEHAVIOR: `_publish_resync` is called exactly once with
         `(root, forge_version, "main")`.
     """
@@ -877,7 +877,7 @@ def test_main_diff_after_bootstrap_publishes(
     monkeypatch.setattr(
         resync,
         "load_config",
-        lambda _root: ForgeConfig(base_branch="main", dev_branch="main"),
+        lambda _root: ForgeConfig(base_branch="main"),
     )
     monkeypatch.setattr(resync, "_forge_version", lambda: "2.7.0")
 

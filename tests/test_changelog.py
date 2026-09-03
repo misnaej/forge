@@ -1,8 +1,7 @@
 """Tests for the ``forge.changelog`` module.
 
 The single source of truth for recognizing ``## vX.Y.Z`` release headings,
-shared by ``verify-forge-changelog-history``, ``forge-next-prep``, and
-``forge-release``.
+shared by ``forge-next-prep`` and ``forge-release``.
 """
 
 from __future__ import annotations

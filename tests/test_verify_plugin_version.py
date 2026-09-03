@@ -168,10 +168,9 @@ def test_skipped_when_tree_matches_tag_via_ours_merge(
 ) -> None:
     """A ``-s ours`` merge whose tree equals the tag's tree skips the guard.
 
-    Models the dual-track promotion scenario: dev merges main with ``-s
-    ours`` to absorb past promotion squash commits without changing any
-    file content. HEAD is a new commit SHA, but its tree equals the
-    tag's tree — the guard must skip.
+    Models an ``-s ours`` absorption merge that changes no file content:
+    HEAD is a new commit SHA, but its tree equals the tag's tree — the
+    guard must skip.
     """
     env = _GIT_ENV
     _init_git_repo(tmp_path)
@@ -381,7 +380,7 @@ def test_fragments_mode_manifest_at_tag_with_valid_pending_passes(
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 0
     log = (tmp_path / "code_health" / "plugin_version.log").read_text()
-    assert "manifest parked at latest tag" in log
+    assert "manifest parked at/behind latest tag" in log
     assert "1 pending fragment(s)" in log
 
 
@@ -423,18 +422,39 @@ def test_fragments_mode_invalid_fragment_fails_listing_error(
     assert "unknown type 'bogus'" in log
 
 
-def test_fragments_mode_manifest_below_tag_still_fails(
+def test_fragments_mode_manifest_below_tag_with_valid_fragments_passes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Fragments mode never excuses plugin.json BELOW the latest tag → 1."""
+    """Fragments mode: plugin.json BELOW the latest tag is healthy → 0.
+
+    Tag-per-merge advances tags on every fragment-carrying merge while
+    the manifest waits for the next assembly PR — lagging the tag is the
+    designed resting state, gated only on fragment validity.
+    """
     _init_fragments_repo(tmp_path)
     _write_plugin_overwrite(tmp_path, "0.9.0")
     _commit_post_tag_work(tmp_path, fragment="bump: minor\n- x\n")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 0
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "parked at/behind latest tag" in log
+
+
+def test_fragments_mode_manifest_below_tag_invalid_fragment_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Below-tag health is conditional: an invalid pending fragment blocks."""
+    _init_fragments_repo(tmp_path)
+    _write_plugin_overwrite(tmp_path, "0.9.0")
+    _commit_post_tag_work(
+        tmp_path, fragment="no bump line\n", fragment_name="bad.added.md"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 1
     log = (tmp_path / "code_health" / "plugin_version.log").read_text()
-    assert "must be strictly greater" in log
+    assert "invalid fragment" in log
 
 
 def test_fragments_mode_manifest_ahead_of_tag_still_passes(

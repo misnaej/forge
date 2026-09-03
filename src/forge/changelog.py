@@ -1,10 +1,8 @@
 """Changelog-parsing primitives shared by forge's release tooling.
 
 Single source of truth for recognizing ``## vX.Y.Z`` release headings in
-a ``CHANGELOG.md``. Consumed by ``forge-next-prep --promotion-status``
-(missing-entry advisory), ``verify-forge-changelog-history``
-(dropped-entry guard), ``forge-release`` (pre-tag CHANGELOG gate),
-``forge-upgrade`` (``**Action:**`` marker extraction), and
+a ``CHANGELOG.md``. Consumed by ``forge-release`` (pre-tag CHANGELOG
+gate), ``forge-upgrade`` (``**Action:**`` marker extraction), and
 ``forge-precommit``'s ``changelog_updated`` step (the
 :func:`wants_no_version` opt-out) — and public API for consumer repos
 composing their own release flow. Mostly pure string parsing; the

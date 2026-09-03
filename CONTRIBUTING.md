@@ -6,16 +6,11 @@ modifying forge itself.
 
 ## Branching
 
-Forge ships on a **dual-track** release model. Both branches publish
-stable semver; the difference is cadence.
+Forge ships **single-track**: every PR targets `main`, and every merge
+carrying changelog fragments is tagged automatically on `main`
+(tag-per-merge — see `docs/release-process.md`).
 
-- `main` — stable, **minor-only releases** (`vX.Y.0`). Slow channel.
-  Updated by squash-merging `dev → main` for a minor release, or by
-  direct hotfix PR for a critical bug on a tagged minor.
-- `dev` — stable, **every patch** (`vX.Y.Z` where `Z >= 1`). Fast
-  channel. Default target for feature/fix PRs.
-
-Working branches (off `dev` unless this is a hotfix off `main`):
+Working branches (off `main`):
 
 - `feat/*` — feature branches, merged via PR.
 - `fix/*` — fix branches.
@@ -112,39 +107,22 @@ the git tag, `forge-precommit` runs `step_plugin_version`: it asserts
 git tag. The guard skips on the release commit itself (HEAD == tag's
 commit) and when `.claude-plugin/plugin.json` is absent.
 
-**Convention:** every PR bumps `plugin.json["version"]` to the version
-about to be tagged. Patches on `dev` bump the patch level
-(`1.3.1` → `1.3.2`); minor promotions on `main` bump the minor
-(`1.3.x` → `1.4.0`).
+**Convention (fragments mode):** a PR never bumps `plugin.json` — it
+adds a `changelog.d/<slug>.<type>.md` fragment carrying a `bump:` level;
+the tag-release workflow computes and cuts the tag on merge, and
+`forge-changelog release` later syncs the manifest at an assembly PR.
 
-### Release flow (dual-track)
+### Release flow (single-track)
 
-Patches (every fix/feature on `dev`):
-
-1. Feature/fix PR targets `dev`. First commit bumps `plugin.json`
-   to next patch level. CI green → user merges.
-2. `forge-next-prep --tag` (run from any branch) tags `vX.Y.Z` at
-   the merge commit on dev and pushes the tag.
-
-Minor promotion (`dev → main` release):
-
-1. Branch `release/vX.Y.0` off `dev`. Bump `plugin.json` to the new
-   minor (e.g. `1.3.0`).
-2. PR base = `main`, head = `release/vX.Y.0`. Body summarises the
-   patches included since the last minor.
-3. User merges; `forge-next-prep --tag --target base` tags
-   `vX.Y.0` on main + pushes.
-4. Forward-port: tiny PR on a branch off `dev` bumping
-   `plugin.json` to the next patch line (`X.Y.1`) so `dev` stays
-   ahead of `vX.Y.0`.
-
-Hotfixes (critical bug on a tagged minor):
-
-1. Branch off `main` directly. Bump `plugin.json` minor-patch
-   (`1.3.0` → `1.3.1`). PR base = `main`.
-2. User merges; tag `vX.Y.Z` on main.
-3. Forward-port main → dev (same shape as the minor-promotion
-   forward-port).
+1. Feature/fix PR targets `main` with a changelog fragment
+   (`changelog.d/<slug>.<type>.md`, first line `bump: patch|minor|major`).
+   CI green → user merges.
+2. The `tag-release` workflow tags the merge automatically
+   (`forge-changelog auto-tag`): last tag + strongest new fragment
+   level. `forge-next-prep --tag` is the manual fallback.
+3. Periodically a release/assembly PR runs `forge-changelog release` to
+   assemble `CHANGELOG.md` from the accumulated fragments and sync
+   `.claude-plugin/plugin.json`.
 
 For breaking changes, document the migration in the PR description
 and the GitHub release notes before tagging.

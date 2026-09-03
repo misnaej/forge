@@ -82,7 +82,7 @@ def test_lookup_returns_value_and_unset() -> None:
     data = {"tool": {"forge": {"base_branch": "trunk"}}}
     assert forge_config._lookup(data, ("tool", "forge", "base_branch")) == "trunk"
     assert (
-        forge_config._lookup(data, ("tool", "forge", "dev_branch"))
+        forge_config._lookup(data, ("tool", "forge", "nonexistent"))
         is forge_config._UNSET
     )
 
@@ -98,13 +98,11 @@ def test_report_shows_defaults_when_unset() -> None:
 
 def test_report_shows_configured_values() -> None:
     """Set keys render their actual value, not the default."""
-    data = {"tool": {"forge": {"base_branch": "main", "dev_branch": "dev"}}}
+    data = {"tool": {"forge": {"base_branch": "trunk"}}}
     lines = forge_config.build_report(data)
     # Set keys render their value (not a <default> placeholder).
     base_line = next(line for line in lines if "base_branch" in line)
-    dev_line = next(line for line in lines if "dev_branch" in line)
-    assert base_line.endswith("'main'")
-    assert dev_line.endswith("'dev'")
+    assert base_line.endswith("'trunk'")
 
 
 def test_report_lists_layout_dirs() -> None:
@@ -161,9 +159,7 @@ def test_main_prints_report_and_exits_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """`forge-config` reads pyproject.toml and exits 0 (read-only advisory)."""
-    (tmp_path / "pyproject.toml").write_text(
-        '[tool.forge]\nbase_branch = "main"\ndev_branch = "dev"\n'
-    )
+    (tmp_path / "pyproject.toml").write_text('[tool.forge]\nbase_branch = "main"\n')
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["forge-config", "--list"])
     assert forge_config.main() == 0

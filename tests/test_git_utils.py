@@ -548,46 +548,6 @@ def test_latest_v_tag_none_when_no_tags(
 
 
 # ---------------------------------------------------------------------------
-# minor_tags (moved from test_verify_main_tags.py)
-# ---------------------------------------------------------------------------
-
-
-def test_minor_tags_returns_only_patch_zero_tags_sorted(tmp_path: Path) -> None:
-    """Only vX.Y.0 tags are returned, sorted ascending by semver."""
-    subprocess.run(
-        ["git", "init", "-q", "-b", "main"], cwd=tmp_path, env=_GIT_ENV, check=True
-    )
-    subprocess.run(
-        ["git", "commit", "-q", "--allow-empty", "-m", "init"],
-        cwd=tmp_path,
-        env=_GIT_ENV,
-        check=True,
-    )
-    for tag in ("v1.0.0", "v1.0.1", "v2.0.0", "v2.1.0", "v1.1.0"):
-        subprocess.run(["git", "tag", tag], cwd=tmp_path, env=_GIT_ENV, check=True)
-    assert git_utils.minor_tags(tmp_path) == [
-        "v1.0.0",
-        "v1.1.0",
-        "v2.0.0",
-        "v2.1.0",
-    ]
-
-
-def test_minor_tags_returns_empty_when_no_v_tags(tmp_path: Path) -> None:
-    """Repo with no ``v*`` tags at all returns an empty list."""
-    subprocess.run(
-        ["git", "init", "-q", "-b", "main"], cwd=tmp_path, env=_GIT_ENV, check=True
-    )
-    subprocess.run(
-        ["git", "commit", "-q", "--allow-empty", "-m", "init"],
-        cwd=tmp_path,
-        env=_GIT_ENV,
-        check=True,
-    )
-    assert git_utils.minor_tags(tmp_path) == []
-
-
-# ---------------------------------------------------------------------------
 # fetch_tags_best_effort (moved from test_precommit.py)
 # ---------------------------------------------------------------------------
 

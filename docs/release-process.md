@@ -38,25 +38,35 @@ conflict-free `changelog.d/` fragment, and the release PR — prepared by
 |---|---|
 | `==` tag, every pending fragment valid (zero pending included) | healthy — pass |
 | `>` tag | release window (the release PR) — pass |
-| `<` tag | blocks, every mode |
+| `<` tag | fragments mode: healthy while every pending fragment is valid (the manifest lags auto-cut tags until the next assembly PR); shared-heading mode: blocks |
 | `==` tag, any invalid pending fragment | blocks loudly (bump no longer derivable) |
 
 ## 2. Tag-on-merge
 
-A merge to `main` is a release exactly when `plugin.json` is ahead of
-the latest tag: the squash commit is tagged with the version
-`plugin.json` declares. In fragment mode that is the release PR alone —
-ordinary merges leave the manifest parked at the tag, so the tag job
-no-ops and releases become deliberate.
+Every fragment-carrying merge to `main` is a release: the `tag-main`
+job runs `forge-changelog auto-tag`, which reads the last tag, takes
+the strongest semver level among the fragments **new since that tag**
+(tag-tree membership marks a fragment as consumed), bumps, and pushes
+the annotated tag. No commit to `main` is involved — tag refs sit
+outside the branch rulesets. Fragment files persist until an assembly
+PR (`forge-changelog release`) collates the changelog and syncs the
+manifest; between assemblies the manifest lags the tag by design.
 
 - **Primary path**: the `tag-main` job in
   [`.github/workflows/tag-release.yml`](../.github/workflows/tag-release.yml)
   — after CI succeeds on a push to `main`, it checks out the exact
-  CI-validated commit and runs `forge-next-prep --tag`.
-- **Manual fallback**: `forge-next-prep --tag` (run by `/next`) tags and
-  pushes locally when the workflow has not done it.
-- Both paths are **idempotent**: a tag is cut only when `plugin.json` is
-  strictly ahead of the latest `v*` tag; otherwise the step is a no-op.
+  CI-validated commit and runs `forge-changelog auto-tag`, then
+  `forge-next-prep --tag` (which covers assembly-PR merges, where the
+  manifest is ahead and no new fragments exist).
+- **Opt-in / warn floor**: `[tool.forge.release].auto = "merge"` enables
+  auto-tagging; without it the job still emits a loud pending-fragments
+  warning — a fragments-mode repo can never accumulate unreleased
+  merges silently.
+- **Manual fallback**: `forge-changelog auto-tag` locally, or
+  `forge-next-prep --tag` after an assembly.
+- All paths are **idempotent and race-tolerant**: an existing or
+  concurrently created tag defers with an "another runner won" no-op;
+  nothing double-tags.
 
 ## 3. Changelog fragments
 
@@ -105,8 +115,9 @@ change that violates an invariant must turn its test red.
 | The fragment gate rejects a concrete version number in a fragment's filename or body | `changelog_fragments.validate_fragment` | `tests/test_changelog_fragments.py::test_validate_fragment_version_shaped_filename` / `::test_validate_fragment_version_shaped_body` |
 | An invalid fragment fails the gate (exit 2) | `changelog_fragments.main` | `tests/test_changelog_fragments.py::test_main_check_exit_two_on_invalid_fragment` |
 | `assemble --delete` writes the curated entry into `CHANGELOG.md` and stages the fragment deletions | `changelog_fragments.main` | `tests/test_changelog_fragments.py::test_main_assemble_with_delete_stages_changelog_and_fragment_deletion` |
-| Fragment mode: `plugin.json == latest tag` passes with valid pending fragments (zero included); an invalid fragment blocks; `< tag` blocks in every mode; shared-heading equality still fails | `verify_plugin_version._not_ahead_verdict` | `tests/test_verify_plugin_version.py::test_fragments_mode_manifest_at_tag_with_valid_pending_passes` / `::test_fragments_mode_manifest_at_tag_with_zero_pending_passes` / `::test_fragments_mode_invalid_fragment_fails_listing_error` / `::test_fragments_mode_manifest_below_tag_still_fails` / `::test_headings_mode_manifest_at_tag_still_fails` |
+| Fragment mode: `plugin.json <= latest tag` passes with valid pending fragments (zero included); an invalid fragment blocks even below the tag; shared-heading equality still fails | `verify_plugin_version._not_ahead_verdict` | `tests/test_verify_plugin_version.py::test_fragments_mode_manifest_at_tag_with_valid_pending_passes` / `::test_fragments_mode_manifest_at_tag_with_zero_pending_passes` / `::test_fragments_mode_invalid_fragment_fails_listing_error` / `::test_fragments_mode_manifest_below_tag_with_valid_fragments_passes` / `::test_fragments_mode_manifest_below_tag_invalid_fragment_fails` / `::test_headings_mode_manifest_at_tag_still_fails` |
 | The release version is `latest tag + max(pending fragment level)` — computed, never carried per-PR | `changelog_fragments.next_version_from_fragments` | `tests/test_changelog_fragments.py::test_next_version_from_fragments_uses_max_level` |
+| A branch adds at most ONE fragment (one unique `changelog.d/` file per PR; extra bullets share it) | `changelog_fragments.branch_added_fragments` via the `changelog_version` fragment gate | `tests/test_precommit.py::test_fragment_gate_blocks_second_branch_added_fragment` |
 | `forge-changelog release` assembles under the computed version, rewrites + stages the manifest (single writer), and never commits | `changelog_fragments._cmd_release` | `tests/test_changelog_fragments.py::test_main_release_with_manifest_stages_everything_commits_nothing` |
 | The release-commit skip tolerates a `CHANGELOG.md`/`changelog.d/`-only divergence from the tag — a release commit may assemble the changelog — yet still fails when any other file diverges | `git_utils.release_tree_fingerprint` via `verify_plugin_version._is_release_commit` | `tests/test_verify_plugin_version.py::test_skips_when_release_branch_only_adds_changelog` / `::test_fails_when_release_branch_changes_non_changelog_file`; `tests/test_git_utils.py::test_release_fingerprint_equal_when_only_changelog_differs` / `::test_release_fingerprint_differs_when_other_file_changes` |
 
@@ -115,23 +126,14 @@ you find an invariant with no test, that gap is a bug to close.
 
 ### Retired invariants (dual-track)
 
-The dual-track invariants — promotion status and staged catch-up, minor
-tag relocation (`forge-check-main-tags`), changelog-history preservation
-across promotion merges, and the newest-minor hold — are retired. Their
-machinery self-skips on a single-track repo (`dev_branch ==
-base_branch`) and is scheduled for deletion along with its tests (see
-below). The release fingerprint itself
+The dual-track model — a `dev` integration branch promoted into `main`
+per minor — is retired and its machinery deleted: promotion status and
+staged catch-up, minor tag relocation (`forge-check-main-tags`),
+changelog-history preservation across promotion merges
+(`verify-forge-changelog-history`), the newest-minor hold, the
+`/promote` skill, and the era-gap pre-commit suppression are gone, with
+their tests. The release fingerprint
 (`git_utils.release_tree_fingerprint`) is **not** retired: the
 rolling-next guard's release-commit skip still depends on its
 changelog-tolerant matching (table above) — only the tag aligner's use
-of it retires.
-
-## Deprecated: dual-track
-
-Forge previously shipped on two branches — `dev` (every patch) and `main`
-(minors only, via a staged `dev → main` promotion). That model is
-retired: the `dev` branch is frozen, and every release now ships on
-`main`. The promotion machinery (`/promote`, `forge-check-main-tags`,
-`forge-next-prep --promotion-status`, `verify-forge-changelog-history`)
-self-skips because `dev_branch == base_branch`; its deletion is
-scheduled (#441 Phase C).
+of it retired.

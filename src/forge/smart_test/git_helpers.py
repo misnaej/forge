@@ -41,11 +41,11 @@ def resolve_base_ref(repo_root: Path, override: str | None = None) -> str:
     """Resolve the ref to diff ``HEAD`` against for change detection.
 
     A feature branch's change set is its delta from where it diverged —
-    the integration branch — so ``dev_branch`` is tried before
-    ``base_branch``, each resolved origin-first (then local fallback) by
-    the canonical :func:`forge.git_utils.resolve_base_branch_ref`. A
-    plain ``HEAD`` is the last resort (yields only working-tree edits
-    when nothing else resolves, e.g. a fresh clone with no remote).
+    the configured ``base_branch``, resolved origin-first (then local
+    fallback) by the canonical
+    :func:`forge.git_utils.resolve_base_branch_ref`. A plain ``HEAD`` is
+    the last resort (yields only working-tree edits when nothing else
+    resolves, e.g. a fresh clone with no remote).
 
     Args:
         repo_root: Git repo root.
@@ -62,10 +62,9 @@ def resolve_base_ref(repo_root: Path, override: str | None = None) -> str:
     if override and not override.startswith("-") and _ref_exists(repo_root, override):
         return override
     cfg = load_config(repo_root)
-    for branch in (cfg.dev_branch, cfg.base_branch):
-        ref = resolve_base_branch_ref(repo_root, branch)
-        if ref is not None:
-            return ref
+    ref = resolve_base_branch_ref(repo_root, cfg.base_branch)
+    if ref is not None:
+        return ref
     return "HEAD"
 
 

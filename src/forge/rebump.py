@@ -21,7 +21,7 @@ Two entry states, detected automatically:
 2. **Clean tree** (post-tag rebump, no merge in progress): another PR's
    merge consumed the branch's slot without a textual conflict. Intent
    class comes from the same fork-point comparison, read at
-   ``merge-base(HEAD, origin/<dev_branch>)`` against the working-tree
+   ``merge-base(HEAD, origin/<base_branch>)`` against the working-tree
    manifest. Conflict markers on disk without ``MERGE_HEAD`` mean a
    half-resolved state this tool refuses to guess about.
 
@@ -177,10 +177,10 @@ def _guard_entry_state(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) ->
             stray conflict markers (clean tree).
     """
     branch = run_git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo_root, check=False)
-    if branch in (cfg.dev_branch, cfg.base_branch):
+    if branch == cfg.base_branch:
         msg = (
             f"on '{branch}' — rebump is a feature-branch recovery tool; "
-            "the integration branches own their manifest via the merge flow."
+            "the base branch owns its manifest via the merge flow."
         )
         raise _RefusalError(msg)
     if mid_merge:
@@ -256,7 +256,7 @@ def _classify_intent(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) -> s
     if mid_merge:
         old, new = _mid_merge_versions(repo_root)
     else:
-        fork = merge_base_with_head(repo_root, cfg.dev_branch)
+        fork = merge_base_with_head(repo_root, cfg.base_branch)
         old = read_plugin_version_at_ref(repo_root, fork) if fork else None
         new = read_local_plugin_version(repo_root)
     if new is None:

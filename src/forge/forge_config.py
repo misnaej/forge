@@ -63,14 +63,7 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ConfigKey(
         ("tool", "forge", "base_branch"),
         "main",
-        "Slow-channel / release branch (protected; promotion target).",
-    ),
-    ConfigKey(
-        ("tool", "forge", "dev_branch"),
-        "main",
-        "Fast-channel integration branch (protected). Defaults to "
-        "base_branch (single-track); set to e.g. 'dev' to opt into "
-        "dual-track.",
+        "Protected base branch every PR targets and every release tags.",
     ),
     ConfigKey(
         ("tool", "forge", "source_dirs"),
@@ -214,19 +207,19 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "stays a WARN regardless).",
     ),
     ConfigKey(
-        ("tool", "forge", "promotion", "hold_newest_minor"),
-        default=False,
-        description="Withhold the newest dev minor from promotion until "
-        "its successor tags: forge-next-prep --promotion-status lists it "
-        "as held and forge-check-main-tags refuses to relocate it, so "
-        "@dev version derivation stays clean (forge-repo mechanism; "
-        "default off — consumers unaffected).",
-    ),
-    ConfigKey(
         ("tool", "forge", "cve_usage", "paths"),
         "source_dirs + test_dirs",
         "Per-tool override of the CVE-usage scan roots; otherwise inherits "
         "the repo-wide [tool.forge].source_dirs + test_dirs.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "release", "auto"),
+        default="",
+        description='Fragments-mode release cadence: "merge" lets the '
+        "tag-release workflow auto-tag every fragment-carrying merge "
+        "(forge-changelog auto-tag: last tag + strongest new fragment "
+        "level). Any other value downgrades the job to a loud "
+        "pending-fragments warning — never silent.",
     ),
     ConfigKey(
         ("tool", "forge", "changelog", "blocking"),

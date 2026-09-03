@@ -224,14 +224,15 @@ options:
 ## forge-changelog
 
 ```text
-usage: forge-changelog [-h] {check,next-version,release,assemble,restrand} ...
+usage: forge-changelog [-h]
+                       {check,next-version,release,assemble,auto-tag,restrand} ...
 
 Changelog fragments: validate pending entries, assemble them into CHANGELOG.md
 at release (single writer). Shared-heading repos: `restrand` repairs stranded
 entries mechanically.
 
 positional arguments:
-  {check,next-version,release,assemble,restrand}
+  {check,next-version,release,assemble,auto-tag,restrand}
     check               validate pending changelog.d/ fragments
     next-version        print the computed next release version (latest v* tag
                         + max pending bump level)
@@ -239,26 +240,13 @@ positional arguments:
                         write plugin.json to it (when present), stage
                         everything — never commits
     assemble            collate fragments into CHANGELOG.md under a version
+    auto-tag            tag HEAD from fragments merged since the last tag
+                        (tag-per-merge CI seam; pushes the tag only)
     restrand            move entries stranded under released headings to the
                         next slot (shared-heading mode; stages, never commits)
 
 options:
   -h, --help            show this help message and exit
-```
-
-## forge-check-main-tags
-
-```text
-usage: forge-check-main-tags [-h] [--fix] [--dry-run]
-
-Verify (default) or repair (--fix) that every minor release tag vX.Y.0 sits on
-the base branch's squash commit, matched by release fingerprint (tree content
-minus CHANGELOG.md). Self-skips single-branch repos.
-
-options:
-  -h, --help  show this help message and exit
-  --fix       Force-move every misplaced minor tag onto its base commit.
-  --dry-run   Print the moves --fix would make; mutate nothing.
 ```
 
 ## forge-config
@@ -418,7 +406,6 @@ options:
 
 ```text
 usage: forge-next-prep [-h] [--tag] [--no-prune-branches] [--no-sync]
-                       [--promotion-status] [--target {dev,base}]
 
 Prepare main for the next task: fetch + pull --ff-only, optionally tag the
 rolling-next release, prune stale local branches. Used by the /next skill.
@@ -435,13 +422,6 @@ options:
                        validated SHA — syncing to the branch tip would re-
                        introduce the race the pinned checkout exists to
                        prevent.
-  --promotion-status   Read-only: fetch tags, then print the base/dev plugin
-                       versions and the ordered list of v* releases pending
-                       promotion, and exit. No checkout, pull, tag, or prune.
-                       Used by the /promote skill.
-  --target {dev,base}  Branch to refresh. Resolved through [tool.forge] in
-                       pyproject.toml; falls back to 'main' if the config is
-                       absent. Most repos can leave this at the default.
 ```
 
 ## forge-post-checkout
@@ -808,20 +788,6 @@ options:
   -h, --help   show this help message and exit
   --diff BASE  Report graph-relevant mentions changed vs BASE (Layer-2
                helper).
-```
-
-## verify-forge-changelog-history
-
-```text
-usage: verify-forge-changelog-history [-h]
-
-Fail when the working tree's CHANGELOG.md drops a `## vX.Y.0` heading present
-on origin/<base> — the dropped-curated-entry guard for dev→main promotions.
-Self-skips unless origin/<base> is an ancestor of HEAD (a promotion / main-
-merge context).
-
-options:
-  -h, --help  show this help message and exit
 ```
 
 ## verify-forge-cli-wiring

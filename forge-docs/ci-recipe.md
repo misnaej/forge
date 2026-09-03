@@ -156,9 +156,8 @@ that pre-merge, run the step as its own **required status check**:
   check identifies the PR branch via `GITHUB_HEAD_REF` on the detached
   merge-ref checkout; a `push`-triggered run still validates heading
   structure but has no PR branch to diff against.
-- Repos where the step self-skips (plugin-manifest and dual-track
-  repos) satisfy the required check via the skip — safe to require
-  everywhere.
+- Repos where the step self-skips (plugin-manifest repos) satisfy the
+  required check via the skip — safe to require everywhere.
 - The job is read-only and **inherits the workflow-level
   `permissions: contents: read`** added in the §2 snippet — no
   per-job permissions block needed.
@@ -382,9 +381,7 @@ Same idea, tagging with the rolling-next version from
 `.claude-plugin/plugin.json`. **The reference implementation is forge's
 own `.github/workflows/tag-release.yml`** — a workflow separate from
 the read-only CI one, gated via `workflow_run` (single-track: one
-tag-on-merge job). A dual-track repo adds a second, equally-gated job
-on pushes to its base branch that relocates promoted minor tags
-(`forge-check-main-tags --fix`).
+tag-on-merge job).
 
 One `workflow_run` gotcha: GitHub evaluates the trigger from the
 workflow definition on the repo's **default branch** — a

@@ -21,8 +21,7 @@ enforces, in order — all failures reported at once, exit `1`:
 
 1. **Clean working tree.**
 2. **On `base_branch`** (`[tool.forge].base_branch`, default `main`).
-3. **Single-track release model** — refuses on a dual-track repo
-   (`dev_branch != base_branch`) and on a manifest-versioned repo
+3. **Single-track release model** — refuses on a manifest-versioned repo
    (`.claude-plugin/plugin.json` present → use `forge-next-prep --tag`).
 4. **CHANGELOG gate** — when `CHANGELOG.md` exists, it must already
    carry a `## vX.Y.Z` heading for the tag being cut. A repo with no
@@ -238,18 +237,20 @@ fragments)`, so no PR ever carries a version number.
   --from-changelog` on pushes to the base branch picks the release up
   on merge with **no further change** — do not build a separate
   fragments-aware tagger.
-- **Release cadence changes — deliberately.** A push-triggered tagger
-  tags every merge today; in fragments mode ordinary merges leave
-  fragments pending and produce no new heading, so the tagger no-ops
-  and tags appear only when a release PR merges. Releases become
-  deliberate instead of a side effect of merging. If you mitigated the
-  pre-fragments gap by guarding your tagger to **fail while fragments
-  are pending**, remove that guard when adopting this — post-adoption
-  it fires on every ordinary merge.
-- Between releases a plugin manifest **parks at the latest tag**: the
-  `plugin_version` guard accepts equality while every pending fragment
-  is valid, keeps the strictly-ahead pass for the release PR, and still
-  blocks a manifest below the tag.
+- **Tag-per-merge is automatic** with `[tool.forge.release].auto =
+  "merge"`: the tag job runs `forge-changelog auto-tag` on every push
+  to the base branch — last tag + strongest level among the fragments
+  merged since it → annotated tag, no base-branch commit. Without the
+  opt-in the job emits a loud pending-fragments warning instead (it is
+  never silent). Changelog assembly and manifest sync happen at the
+  next `forge-changelog release` PR, which may collate several tags.
+  If you mitigated the pre-fragments gap by guarding your tagger to
+  **fail while fragments are pending**, remove that guard when adopting
+  fragments — released fragments legitimately persist until assembly.
+- Between assemblies a plugin manifest **parks at or lags the latest
+  tag** (auto-cut tags advance past it): the `plugin_version` guard
+  accepts `manifest <= tag` while every pending fragment is valid, and
+  keeps the strictly-ahead pass for the assembly PR.
 
 No-version opt-outs (`NO_VERSION=1`, branch token, commit marker) apply
 unchanged.

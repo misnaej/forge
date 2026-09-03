@@ -26,7 +26,13 @@ import pytest
 from forge import config, git_utils, precommit
 from forge.pip_audit_json import AuditRun
 from forge.smart_test import lifecycle as _lifecycle
-from tests.conftest import GIT_ENV, _detach_head, init_git_repo, init_single_track_repo
+from tests.conftest import (
+    GIT_ENV,
+    _detach_head,
+    commit_all,
+    init_git_repo,
+    init_single_track_repo,
+)
 
 
 if TYPE_CHECKING:
@@ -396,222 +402,6 @@ def test_step_plugin_version_marks_skipped_from_cli_output(
         lambda *_a, **_kw: (True, "(no git tags yet — skipped)\n"),
     )
     result = precommit.step_plugin_version(tmp_path)
-    assert result.passed
-    assert result.skipped
-
-
-def test_step_changelog_history_shells_out_to_verify_cli(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """step_changelog_history always shells out; the CLI owns the skip decision."""
-    monkeypatch.setattr(
-        shutil,
-        "which",
-        lambda _name: "/usr/bin/verify-forge-changelog-history",
-    )
-    calls: list[list[str]] = []
-
-    def _fake_run(cmd: list[str], **_kwargs: object) -> tuple[bool, str]:
-        calls.append(cmd)
-        return True, "ok"
-
-    monkeypatch.setattr(precommit, "_run", _fake_run)
-    result = precommit.step_changelog_history(tmp_path)
-    assert result.passed
-    assert calls
-    assert calls[0] == ["verify-forge-changelog-history"]
-
-
-def test_step_changelog_history_marks_skipped_from_cli_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """When the CLI reports it skipped, the StepResult mirrors that."""
-    monkeypatch.setattr(
-        shutil,
-        "which",
-        lambda _name: "/usr/bin/verify-forge-changelog-history",
-    )
-    monkeypatch.setattr(
-        precommit,
-        "_run",
-        lambda *_a, **_kw: (
-            True,
-            "(origin/main is not an ancestor of HEAD — skipped)\n",
-        ),
-    )
-    result = precommit.step_changelog_history(tmp_path)
-    assert result.passed
-    assert result.skipped
-
-
-def test_step_changelog_history_hard_fails_when_cli_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A missing verify-forge-changelog-history is a loud SystemExit (FOUNDATION §2)."""
-    monkeypatch.setattr(shutil, "which", lambda _name: None)
-    with pytest.raises(SystemExit):
-        precommit.step_changelog_history(tmp_path)
-
-
-def _setup_release_guard(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    plugin_version: str | None,
-    latest_tag: str | None,
-    dual_track: bool = True,
-) -> None:
-    """Stage a repo for step_release_tag_guard: dual-track + plugin.json + tag.
-
-    Args:
-        tmp_path: Repo root.
-        monkeypatch: pytest fixture.
-        plugin_version: Version to write into ``.claude-plugin/plugin.json``;
-            ``None`` writes no manifest.
-        latest_tag: Tag ``latest_v_tag`` is stubbed to return (e.g.
-            ``"v1.24.1"``); ``None`` stubs no tags.
-        dual_track: When ``True`` (default), writes ``dev_branch = "dev"`` so
-            the guard treats the repo as dual-track; ``False`` leaves it
-            single-track.
-    """
-    body = '[tool.forge]\ndev_branch = "dev"\n' if dual_track else "[tool.forge]\n"
-    (tmp_path / "pyproject.toml").write_text(body, encoding="utf-8")
-    if plugin_version is not None:
-        manifest = tmp_path / ".claude-plugin" / "plugin.json"
-        manifest.parent.mkdir(parents=True)
-        manifest.write_text(f'{{"version": "{plugin_version}"}}', encoding="utf-8")
-    monkeypatch.setattr(precommit, "latest_v_tag", lambda _root: latest_tag)
-
-
-def test_release_guard_passes_when_one_minor_ahead(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """plugin.json one minor ahead of the latest tag is the normal case."""
-    _setup_release_guard(
-        tmp_path, monkeypatch, plugin_version="1.25.0", latest_tag="v1.24.1"
-    )
-    result = precommit.step_release_tag_guard(tmp_path)
-    assert result.passed
-    assert not result.skipped
-
-
-def test_release_guard_passes_when_one_patch_ahead(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A single patch bump ahead of the latest tag is allowed."""
-    _setup_release_guard(
-        tmp_path, monkeypatch, plugin_version="1.24.2", latest_tag="v1.24.1"
-    )
-    assert precommit.step_release_tag_guard(tmp_path).passed
-
-
-def test_release_guard_blocks_on_skipped_release(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A two-minor gap (an intermediate release never tagged) is blocked (#66)."""
-    _setup_release_guard(
-        tmp_path, monkeypatch, plugin_version="1.26.0", latest_tag="v1.24.1"
-    )
-    result = precommit.step_release_tag_guard(tmp_path)
-    assert not result.passed
-    assert not result.skipped
-    assert "forge-next-prep --tag" in result.output
-
-
-def test_release_guard_failure_names_both_cures(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The two-minor-gap failure names both the dev-tag cure and the re-slot cure.
-
-    See #405.
-    """
-    _setup_release_guard(
-        tmp_path, monkeypatch, plugin_version="1.26.0", latest_tag="v1.24.1"
-    )
-    result = precommit.step_release_tag_guard(tmp_path)
-    assert "forge-next-prep --tag" in result.output
-    assert "re-slot" in result.output
-
-
-def test_release_guard_failure_names_dev_branch_cause(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Both causes — untagged dev release and a feature branch's stale slot.
-
-    See #405.
-    """
-    _setup_release_guard(
-        tmp_path, monkeypatch, plugin_version="1.26.0", latest_tag="v1.24.1"
-    )
-    result = precommit.step_release_tag_guard(tmp_path)
-    assert "dev" in result.output
-    assert "feature branch" in result.output
-
-
-def test_release_guard_failure_has_agents_directive(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The failure explicitly forbids an agent from self-clearing via a release action.
-
-    See #405.
-    """
-    _setup_release_guard(
-        tmp_path, monkeypatch, plugin_version="1.26.0", latest_tag="v1.24.1"
-    )
-    result = precommit.step_release_tag_guard(tmp_path)
-    assert "AGENTS:" in result.output
-    assert "report only" in result.output
-    assert "never run" in result.output
-
-
-def test_release_guard_skips_single_track(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A single-track repo never triggers the dev-tagging cadence guard."""
-    _setup_release_guard(
-        tmp_path,
-        monkeypatch,
-        plugin_version="1.26.0",
-        latest_tag="v1.24.1",
-        dual_track=False,
-    )
-    result = precommit.step_release_tag_guard(tmp_path)
-    assert result.passed
-    assert result.skipped
-
-
-def test_release_guard_skips_when_not_ahead(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """plugin.json equal to the latest tag (reproduced release) → skip."""
-    _setup_release_guard(
-        tmp_path, monkeypatch, plugin_version="2.0.0", latest_tag="v2.0.0"
-    )
-    result = precommit.step_release_tag_guard(tmp_path)
-    assert result.passed
-    assert result.skipped
-
-
-def test_release_guard_skips_without_plugin_manifest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """No .claude-plugin/plugin.json → nothing to guard, skip."""
-    _setup_release_guard(
-        tmp_path, monkeypatch, plugin_version=None, latest_tag="v1.24.1"
-    )
-    result = precommit.step_release_tag_guard(tmp_path)
-    assert result.passed
-    assert result.skipped
-
-
-def test_release_guard_skips_on_non_semver_version(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An unparseable plugin.json version degrades to skip, never raises."""
-    _setup_release_guard(
-        tmp_path, monkeypatch, plugin_version="rolling", latest_tag="v1.24.1"
-    )
-    result = precommit.step_release_tag_guard(tmp_path)
     assert result.passed
     assert result.skipped
 
@@ -4321,14 +4111,6 @@ def test_step_changelog_version_skips_manifest_repo(tmp_path: Path) -> None:
     assert result.skipped
 
 
-def test_step_changelog_version_skips_dual_track(tmp_path: Path) -> None:
-    """Dual-track repo (dev_branch != base_branch) → skip."""
-    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
-    (tmp_path / "pyproject.toml").write_text('[tool.forge]\ndev_branch = "dev"\n')
-    result = precommit.step_changelog_version(tmp_path)
-    assert result.skipped
-
-
 def test_step_changelog_version_fails_on_invalid_heading(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5489,9 +5271,8 @@ def test_step_changelog_version_no_tag_visible_warns_structural_only(
 # ---------------------------------------------------------------------------
 #
 # Shared fixture recipe: CHANGELOG.md present (so the steps don't self-skip),
-# no `.claude-plugin/plugin.json` (not manifest-versioned), no `dev_branch`
-# (not dual-track), `pyproject.toml` opting into
-# `[tool.forge.changelog] mode = "fragments"`.
+# no `.claude-plugin/plugin.json` (not manifest-versioned), `pyproject.toml`
+# opting into `[tool.forge.changelog] mode = "fragments"`.
 
 
 def _write_fragments_pyproject(tmp_path: Path) -> None:
@@ -5552,6 +5333,64 @@ def test_step_changelog_version_fragments_mode_no_pending_passes(
     result = precommit.step_changelog_version(tmp_path)
     assert result.passed
     assert "Fragment mode" in result.output
+
+
+def _init_fragments_mode_repo(base: Path) -> Path:
+    """Build a single-track fragments-mode repo, checked out on ``feat/x``.
+
+    Real-git counterpart to the synthetic fixtures above: a
+    ``base_branch = "main"`` + fragments-mode ``pyproject.toml`` and a
+    ``CHANGELOG.md`` are committed and pushed to ``origin/main`` before
+    branching, so ``branch_added_fragments`` has a real fork point to
+    diff against. Callers add their own fragment(s) on ``feat/x``.
+
+    Args:
+        base: Base directory for the test repo.
+
+    Returns:
+        Path to the work repository, checked out on ``feat/x``.
+    """
+    work, _bare = init_single_track_repo(base)
+    (work / "pyproject.toml").write_text(
+        '[tool.forge]\nbase_branch = "main"\n\n'
+        '[tool.forge.changelog]\nmode = "fragments"\n'
+    )
+    (work / "CHANGELOG.md").write_text("# Changelog\n")
+    commit_all(work, "chore: fragments mode setup")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=work, env=GIT_ENV, check=True
+    )
+    return work
+
+
+def test_fragment_gate_blocks_second_branch_added_fragment(tmp_path: Path) -> None:
+    """Two fragments added on one branch trip the one-fragment-per-PR gate.
+
+    Cited by ``docs/release-process.md``'s invariant table as the
+    enforcing test for "a branch adds at most ONE fragment" — do not
+    rename without updating that reference.
+    """
+    work = _init_fragments_mode_repo(tmp_path)
+    (work / "changelog.d").mkdir()
+    (work / "changelog.d" / "a.added.md").write_text("bump: minor\n- a\n")
+    (work / "changelog.d" / "b.added.md").write_text("bump: patch\n- b\n")
+    commit_all(work, "feat: two fragments")
+    result = precommit.step_changelog_version(work)
+    assert not result.passed
+    assert "one fragment per PR" in result.output
+
+
+def test_fragment_gate_passes_single_branch_added_fragment(tmp_path: Path) -> None:
+    """A single fragment added on the branch passes the fragment gate."""
+    work = _init_fragments_mode_repo(tmp_path)
+    (work / "changelog.d").mkdir()
+    (work / "changelog.d" / "a.added.md").write_text("bump: minor\n- a\n")
+    commit_all(work, "feat: one fragment")
+    result = precommit.step_changelog_version(work)
+    assert result.passed
 
 
 def test_step_changelog_updated_fragments_mode_trigger_without_fragment_fails(
@@ -5674,236 +5513,14 @@ def test_step_changelog_updated_fragments_mode_validates_even_without_triggers(
 
 
 # ---------------------------------------------------------------------------
-# _release_merge_context + run_all era-gap promotion suppression
+# run_all step invocation
 # ---------------------------------------------------------------------------
-
-
-def _stage_release_promotion_merge(
-    repo: Path, tag: str, *, extra_change: str | None = None
-) -> Path:
-    """Build a repo mid-merge on ``release/<tag>``, staged tree reproducing *tag*.
-
-    Mirrors the ``/promote`` flow (docs/release-process.md §5): a trunk
-    branch carries the real content and is tagged; a ``release/<tag>``
-    branch forked from the earlier, empty ``main`` merges the tag in via
-    ``git merge --no-ff --no-commit`` — a clean, conflict-free merge since
-    ``main`` never touched the tagged paths — leaving ``MERGE_HEAD``
-    present and the staged index (``git write-tree``) byte-identical to
-    the tagged tree, the state :func:`forge.precommit._release_merge_context`
-    must recognize.
-
-    Args:
-        repo: Directory to initialize the repo in.
-        tag: Release tag to create and merge (e.g. ``"v1.0.0"``); also
-            names the ``release/<tag>`` branch.
-        extra_change: When given, appends and re-stages an edit to this
-            path (``"CHANGELOG.md"`` or ``"a.py"``) on top of the merge —
-            simulates content drift beyond the tagged tree.
-
-    Returns:
-        The repo path (for call-site chaining).
-    """
-    init_git_repo(repo)
-    subprocess.run(
-        ["git", "checkout", "-q", "-b", "dev"], cwd=repo, env=GIT_ENV, check=True
-    )
-    (repo / "a.py").write_text("x = 1\n")
-    (repo / "CHANGELOG.md").write_text(f"## {tag}\n")
-    subprocess.run(["git", "add", "-A"], cwd=repo, env=GIT_ENV, check=True)
-    subprocess.run(
-        ["git", "commit", "-q", "-m", "trunk commits"],
-        cwd=repo,
-        env=GIT_ENV,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "tag", "-a", tag, "-m", tag], cwd=repo, env=GIT_ENV, check=True
-    )
-    subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, env=GIT_ENV, check=True)
-    subprocess.run(
-        ["git", "checkout", "-q", "-b", f"release/{tag}"],
-        cwd=repo,
-        env=GIT_ENV,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "merge", "--no-ff", "--no-commit", tag],
-        cwd=repo,
-        env=GIT_ENV,
-        check=True,
-    )
-    if extra_change is not None:
-        target = repo / extra_change
-        target.write_text(target.read_text() + "extra change\n")
-        subprocess.run(["git", "add", extra_change], cwd=repo, env=GIT_ENV, check=True)
-    return repo
-
-
-def _stage_release_promotion_conflict(repo: Path, tag: str) -> Path:
-    """Build a repo mid-merge on ``release/<tag>`` with an unresolved conflict.
-
-    Both ``main`` (before ``release/<tag>`` forks from it) and the tagged
-    trunk commit add ``a.py`` with different content, so merging the tag
-    into the release branch produces a genuine "both added" conflict and
-    leaves the index unresolved — the one state
-    :func:`_stage_release_promotion_merge` cannot produce, since its merge
-    is always conflict-free.
-
-    Args:
-        repo: Directory to initialize the repo in.
-        tag: Release tag to create and merge (e.g. ``"v1.0.0"``); also
-            names the ``release/<tag>`` branch.
-
-    Returns:
-        The repo path.
-    """
-    init_git_repo(repo)
-    subprocess.run(
-        ["git", "checkout", "-q", "-b", "dev"], cwd=repo, env=GIT_ENV, check=True
-    )
-    (repo / "a.py").write_text("dev version\n")
-    subprocess.run(["git", "add", "a.py"], cwd=repo, env=GIT_ENV, check=True)
-    subprocess.run(
-        ["git", "commit", "-q", "-m", "trunk commits"],
-        cwd=repo,
-        env=GIT_ENV,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "tag", "-a", tag, "-m", tag], cwd=repo, env=GIT_ENV, check=True
-    )
-    subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, env=GIT_ENV, check=True)
-    (repo / "a.py").write_text("main version\n")
-    subprocess.run(["git", "add", "a.py"], cwd=repo, env=GIT_ENV, check=True)
-    subprocess.run(
-        ["git", "commit", "-q", "-m", "main edit"], cwd=repo, env=GIT_ENV, check=True
-    )
-    subprocess.run(
-        ["git", "checkout", "-q", "-b", f"release/{tag}"],
-        cwd=repo,
-        env=GIT_ENV,
-        check=True,
-    )
-    result = subprocess.run(
-        ["git", "merge", "--no-ff", "--no-commit", tag],
-        cwd=repo,
-        env=GIT_ENV,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode != 0
-    return repo
-
-
-def test_release_merge_context_returns_tag_when_all_conditions_hold(
-    tmp_path: Path,
-) -> None:
-    """All three conditions hold → the merge context resolves to the promoted tag."""
-    repo = _stage_release_promotion_merge(tmp_path, "v1.0.0")
-    assert precommit._release_merge_context(repo) == "v1.0.0"
-
-
-def test_release_merge_context_none_when_no_merge_in_progress(tmp_path: Path) -> None:
-    """On the release branch with a matching tree but no ``MERGE_HEAD`` → ``None``."""
-    repo = _stage_release_promotion_merge(tmp_path, "v1.0.0")
-    subprocess.run(
-        ["git", "commit", "-q", "--no-edit"], cwd=repo, env=GIT_ENV, check=True
-    )
-    assert precommit._release_merge_context(repo) is None
-
-
-def test_release_merge_context_none_when_branch_name_not_release_pattern(
-    tmp_path: Path,
-) -> None:
-    """Mid-merge on a branch not matching ``release/vX.Y.Z`` → ``None``.
-
-    SETUP: reuses :func:`_stage_release_promotion_merge`'s mid-merge
-    state, then renames the current branch away from the release pattern —
-    ``git branch -m`` only rewrites the branch ref, so ``MERGE_HEAD`` (a
-    separate file) survives the rename untouched.
-    """
-    repo = _stage_release_promotion_merge(tmp_path, "v1.0.0")
-    subprocess.run(
-        ["git", "branch", "-m", "release/v1.0.0", "promote-v1.0.0"],
-        cwd=repo,
-        env=GIT_ENV,
-        check=True,
-    )
-    assert precommit.merge_in_progress(repo) is True
-    assert precommit._release_merge_context(repo) is None
-
-
-def test_release_merge_context_none_when_staged_tree_diverges_beyond_changelog(
-    tmp_path: Path,
-) -> None:
-    """Extra staged edit beyond CHANGELOG.md breaks the fingerprint match."""
-    repo = _stage_release_promotion_merge(tmp_path, "v1.0.0", extra_change="a.py")
-    assert precommit._release_merge_context(repo) is None
-
-
-def test_release_merge_context_still_matches_when_only_changelog_diverges(
-    tmp_path: Path,
-) -> None:
-    """A staged ``CHANGELOG.md``-only edit is tolerated — the tag still matches.
-
-    ``CHANGELOG.md`` is excluded from
-    :func:`forge.git_utils.release_tree_fingerprint` by design (the
-    curated-CHANGELOG divergence every real promotion carries).
-    """
-    repo = _stage_release_promotion_merge(
-        tmp_path, "v1.0.0", extra_change="CHANGELOG.md"
-    )
-    assert precommit._release_merge_context(repo) == "v1.0.0"
-
-
-def test_release_merge_context_none_when_write_tree_is_none(tmp_path: Path) -> None:
-    """Unresolved merge conflict during release merge fails write_tree."""
-    repo = _stage_release_promotion_conflict(tmp_path, "v1.0.0")
-    assert precommit._release_merge_context(repo) is None
-
-
-def test_release_merge_context_none_when_tag_does_not_exist(tmp_path: Path) -> None:
-    """A ``release/vX.Y.Z``-named branch mid-merge, but the tag was never created.
-
-    ``release_tree_fingerprint(repo, tag)`` resolves nothing for a
-    nonexistent tag, so the fingerprint lookup itself fails closed to
-    ``None`` regardless of the merge's actual state.
-    """
-    init_git_repo(tmp_path)
-    subprocess.run(
-        ["git", "checkout", "-q", "-b", "other"], cwd=tmp_path, env=GIT_ENV, check=True
-    )
-    (tmp_path / "other.txt").write_text("other\n")
-    subprocess.run(["git", "add", "other.txt"], cwd=tmp_path, env=GIT_ENV, check=True)
-    subprocess.run(
-        ["git", "commit", "-q", "-m", "other work"],
-        cwd=tmp_path,
-        env=GIT_ENV,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "checkout", "-q", "main"], cwd=tmp_path, env=GIT_ENV, check=True
-    )
-    subprocess.run(
-        ["git", "checkout", "-q", "-b", "release/v9.9.9"],
-        cwd=tmp_path,
-        env=GIT_ENV,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "merge", "--no-ff", "--no-commit", "other"],
-        cwd=tmp_path,
-        env=GIT_ENV,
-        check=True,
-    )
-    assert precommit._release_merge_context(tmp_path) is None
 
 
 def _fake_step(name: str, called: list[str]) -> Callable[[Path], precommit.StepResult]:
     """Return a step fn that records its invocation and returns a canned pass.
 
-    Fake (not ``Mock``) closure over *called* — the run_all suppression
+    Fake (not ``Mock``) closure over *called* — the run_all invocation
     tests only need to observe whether the step ran, not stub a complex
     interface.
 
@@ -5923,82 +5540,12 @@ def _fake_step(name: str, called: list[str]) -> Callable[[Path], precommit.StepR
     return _step
 
 
-def test_run_all_suppresses_tree_content_steps_during_release_lock(
+def test_run_all_invokes_selected_step(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A ``tree_content`` step is skipped without running during a promotion merge.
-
-    SCENARIO: the merge commit of a ``release/vX.Y.Z`` promotion branch
-    runs pre-commit with its staged tree release-locked to the tag.
-    MOCK SETUP: ``step_ruff`` (``tree_content=True``) and
-    ``step_plugin_version`` (``tree_content=False``) are replaced by Fake
-    closures recording their calls, on a repo mid a promotion merge whose
-    staged tree reproduces ``v1.0.0``.
-    EXPECTED BEHAVIOR: the ruff fake is never called and its result is a
-    synthesized skip naming the release-locked tag; the plugin_version
-    fake runs normally and its result is unmodified.
-    """
-    repo = _stage_release_promotion_merge(tmp_path, "v1.0.0")
-    called: list[str] = []
-    monkeypatch.setattr(precommit, "step_ruff", _fake_step("ruff", called))
-    monkeypatch.setattr(
-        precommit, "step_plugin_version", _fake_step("plugin_version", called)
-    )
-    results = precommit.run_all(
-        repo_root=repo, only=["ruff", "plugin_version"], print_progress=False
-    )
-    assert "ruff" not in called
-    assert "plugin_version" in called
-    by_name = {r.name: r for r in results}
-    ruff_result = by_name["ruff"]
-    assert ruff_result.skipped is True
-    assert ruff_result.passed is True
-    assert "release-locked tree, content check skipped" in ruff_result.output
-    assert "v1.0.0" in ruff_result.output
-    assert by_name["plugin_version"].output == "ran"
-
-
-def test_run_all_no_suppression_when_tree_diverges_beyond_changelog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A staged edit beyond ``CHANGELOG.md`` must not suppress content gates.
-
-    SAFETY-INVARIANT TEST (docs/release-process.md §4): during a promotion
-    merge, an auto-fixer poisoning the release fingerprint must not slip past
-    unchecked.
-    """
-    repo = _stage_release_promotion_merge(tmp_path, "v1.0.0", extra_change="a.py")
-    called: list[str] = []
-    monkeypatch.setattr(precommit, "step_ruff", _fake_step("ruff", called))
-    precommit.run_all(repo_root=repo, only=["ruff"], print_progress=False)
-    assert "ruff" in called
-
-
-def test_run_all_still_suppresses_when_only_changelog_diverges(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A ``CHANGELOG.md``-only staged edit still engages suppression."""
-    repo = _stage_release_promotion_merge(
-        tmp_path, "v1.0.0", extra_change="CHANGELOG.md"
-    )
-    called: list[str] = []
-    monkeypatch.setattr(precommit, "step_ruff", _fake_step("ruff", called))
-    results = precommit.run_all(repo_root=repo, only=["ruff"], print_progress=False)
-    assert "ruff" not in called
-    assert results[0].skipped is True
-
-
-def test_run_all_no_suppression_outside_a_promotion_merge(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A normal repo with no merge in progress never engages suppression."""
+    """``run_all`` invokes a step selected via ``only`` unconditionally."""
     init_git_repo(tmp_path)
     called: list[str] = []
     monkeypatch.setattr(precommit, "step_ruff", _fake_step("ruff", called))
     precommit.run_all(repo_root=tmp_path, only=["ruff"], print_progress=False)
     assert "ruff" in called
-
-
-def test_step_registry_tree_content_is_bool_for_every_entry() -> None:
-    """Every ``StepDef.tree_content`` is an explicit bool — no default drift."""
-    assert all(isinstance(d.tree_content, bool) for d in precommit._STEP_REGISTRY)
