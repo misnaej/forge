@@ -381,7 +381,10 @@ def branch_added_fragments(root: Path) -> list[str]:
     2. it is absent from the base branch's tip tree — tree membership
        in the base means the fragment belongs to another (already
        landed) PR, the same membership idea the auto-tagger uses with
-       tag trees.
+       tag trees. (Assumes a path collision denotes the same logical
+       fragment: a same-named-but-different fragment independently
+       landed on base excludes the branch's own — distinctive slugs
+       are the namespace.)
 
     Condition 2 is what keeps the count correct mid-merge: a conflicted
     base merge runs pre-commit while ``HEAD`` is still the pre-merge
@@ -398,11 +401,10 @@ def branch_added_fragments(root: Path) -> list[str]:
         the count check degrades open rather than failing on repos
         where the fork point is unknowable.
     """
-    cfg_base = load_config(root).base_branch
-    base_ref = resolve_base_branch_ref(root, cfg_base)
+    base_ref = resolve_base_branch_ref(root, load_config(root).base_branch)
     if base_ref is None:
         return []
-    fork = merge_base_with_head(root, cfg_base)
+    fork = run_git("merge-base", base_ref, "HEAD", cwd=root, check=False)
     if not fork:
         return []
     raw = run_git(
@@ -415,18 +417,19 @@ def branch_added_fragments(root: Path) -> list[str]:
         cwd=root,
         check=False,
     )
-    in_base = set(
-        run_git(
-            "ls-tree",
-            "-r",
-            "--name-only",
-            base_ref,
-            "--",
-            str(FRAGMENTS_DIR),
-            cwd=root,
-            check=False,
-        ).splitlines()
+    # ls-tree failure must degrade OPEN (skip the count), not to an
+    # empty membership set — an empty set would silently reproduce the
+    # very over-count this exclusion exists to prevent.
+    ls_tree = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", base_ref, "--", str(FRAGMENTS_DIR)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=root,
     )
+    if ls_tree.returncode != 0:
+        return []
+    in_base = set(ls_tree.stdout.splitlines())
     return sorted(
         line
         for line in raw.splitlines()
