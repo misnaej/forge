@@ -29,7 +29,6 @@ Invocation surfaces: manual run, a scheduled CI workflow
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import subprocess
 import sys
@@ -41,6 +40,7 @@ from forge.config import load_config
 from forge.git_utils import (
     configure_cli_logging,
     create_commit,
+    find_open_pr_by_head_prefix,
     repo_root,
     require_cli,
     run_git,
@@ -100,34 +100,19 @@ def _working_tree_dirty(root: Path) -> bool:
     return bool(run_git("status", "--porcelain", cwd=root).strip())
 
 
-def _open_resync_pr_url() -> str | None:
+def _open_resync_pr_url(root: Path) -> str | None:
     """Return the URL of an already-open resync PR, or ``None``.
 
-    The dedup guard: resync branches share the ``chore/forge-resync-``
-    prefix, so one open PR with that head means a resync is already in
-    review and a second run must not open a duplicate.
+    Thin prefix binding over the shared automation dedup guard
+    (:func:`forge.git_utils.find_open_pr_by_head_prefix`).
+
+    Args:
+        root: Repo root passed to ``gh`` as cwd.
 
     Returns:
-        The open resync PR's URL, or ``None`` when none exists (or the
-        listing fails — creation then proceeds and ``gh`` surfaces any
-        real conflict).
+        The open resync PR's URL, or ``None`` when none exists.
     """
-    proc = subprocess.run(
-        ["gh", "pr", "list", "--state", "open", "--json", "headRefName,url"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return None
-    try:
-        prs = json.loads(proc.stdout or "[]")
-    except json.JSONDecodeError:
-        return None
-    for pr in prs:
-        if str(pr.get("headRefName", "")).startswith(_BRANCH_PREFIX):
-            return str(pr.get("url", ""))
-    return None
+    return find_open_pr_by_head_prefix(root, _BRANCH_PREFIX)
 
 
 def _run_bootstrap() -> int:
@@ -295,7 +280,7 @@ def main() -> int:
         )
         return 1
 
-    existing = _open_resync_pr_url()
+    existing = _open_resync_pr_url(root)
     if existing:
         logger.info("✓ resync PR already open — nothing to do: %s", existing)
         return 0

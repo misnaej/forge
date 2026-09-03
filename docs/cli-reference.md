@@ -225,14 +225,14 @@ options:
 
 ```text
 usage: forge-changelog [-h]
-                       {check,next-version,release,assemble,auto-tag,restrand} ...
+                       {check,next-version,release,assemble,auto-tag,release-pr,restrand} ...
 
 Changelog fragments: validate pending entries, assemble them into CHANGELOG.md
 at release (single writer). Shared-heading repos: `restrand` repairs stranded
 entries mechanically.
 
 positional arguments:
-  {check,next-version,release,assemble,auto-tag,restrand}
+  {check,next-version,release,assemble,auto-tag,release-pr,restrand}
     check               validate pending changelog.d/ fragments
     next-version        print the computed next release version (latest v* tag
                         + max pending bump level)
@@ -242,6 +242,9 @@ positional arguments:
     assemble            collate fragments into CHANGELOG.md under a version
     auto-tag            tag HEAD from fragments merged since the last tag
                         (tag-per-merge CI seam; pushes the tag only)
+    release-pr          branch, stage, commit and open the assembly PR for the
+                        pending fragments (scheduled CI seam; merge stays
+                        human)
     restrand            move entries stranded under released headings to the
                         next slot (shared-heading mode; stages, never commits)
 

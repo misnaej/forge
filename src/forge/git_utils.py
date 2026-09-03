@@ -583,6 +583,42 @@ def create_annotated_tag(
     run_git(*_fallback_identity_args(repo_root), *args, cwd=repo_root)
 
 
+def find_open_pr_by_head_prefix(repo_root: Path, prefix: str) -> str | None:
+    """Return the URL of an open PR whose head branch starts with *prefix*.
+
+    The shared automation dedup guard (``forge-resync``,
+    ``forge-changelog release-pr``): automation branches carry a fixed
+    prefix, so one open PR with that head means the automation's PR is
+    already in review and a second run must not open a duplicate.
+
+    Args:
+        repo_root: Working directory for the ``gh`` invocation.
+        prefix: Head-branch prefix identifying the automation's PRs.
+
+    Returns:
+        The open PR's URL, or ``None`` when none exists (or the listing
+        fails — creation then proceeds and ``gh`` surfaces any real
+        conflict).
+    """
+    proc = subprocess.run(
+        ["gh", "pr", "list", "--state", "open", "--json", "headRefName,url"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=repo_root,
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        prs = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError:
+        return None
+    for pr in prs:
+        if str(pr.get("headRefName", "")).startswith(prefix):
+            return str(pr.get("url", ""))
+    return None
+
+
 def create_commit(repo_root: Path, message: str) -> None:
     """Commit the staged index, surviving identity-less runners.
 
