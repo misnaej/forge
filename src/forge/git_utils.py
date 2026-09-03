@@ -214,7 +214,7 @@ def fetch_tags_best_effort(repo_root: Path, *, timeout: int = 10) -> list[str]:
     The single source of truth for the bounded tag refresh every
     tag-relative check depends on: the ``changelog_version`` pre-commit
     step, ``forge-release``, ``forge-next-prep``, and
-    ``forge-check-main-tags`` all read the local tag set, which a CI
+    ``forge-changelog auto-tag`` all read the local tag set, which a CI
     ``pull_request`` checkout may start without. The fetch is bounded and
     stdin-less so a stalled remote or credential prompt degrades to the
     local (possibly stale) tag state with a visible note instead of
@@ -466,7 +466,7 @@ def run_git(
     """Run ``git`` with *args* in *cwd* and return stripped stdout.
 
     The explicit-``cwd`` git runner shared by the release CLIs
-    (``forge-next-prep``, ``forge-check-main-tags``). Distinct from
+    (``forge-next-prep``, ``forge-changelog``). Distinct from
     :func:`_run_git`, which always targets the cached process-wide
     :func:`repo_root` and swallows errors — release tooling operates on
     a caller-supplied root and needs ``check=True`` to surface push /
@@ -563,7 +563,7 @@ def create_annotated_tag(
 
     The one tag-creation seam shared by every forge CLI that cuts an
     annotated tag (``forge-release``, ``forge-next-prep --tag``,
-    ``forge-check-main-tags --fix``). Injects a fallback tagger identity
+    ``forge-changelog auto-tag``). Injects a fallback tagger identity
     only when git has none (see :func:`_fallback_identity_args`) — an
     annotated tag requires one, and a fresh CI runner configures none.
 
@@ -732,10 +732,9 @@ def resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None:
     when the remote ref is absent (offline clone, no remote). A local
     base branch is a convenience cache that silently rots when the
     developer doesn't pull; diffing against it makes already-merged
-    commits look branch-added. Not a replacement for the origin-*only*
-    probes in the promotion checks (``verify_changelog_history``,
-    ``verify_main_tags``, ``release``) — those must see published state
-    and deliberately have no local fallback.
+    commits look branch-added. Not a replacement for ``release``'s
+    origin-*only* probes — those must see published state and
+    deliberately have no local fallback.
 
     A *base_branch* starting with ``-`` is rejected outright: git would
     parse it as a flag, not a ref (option injection via a crafted
@@ -791,9 +790,8 @@ def get_tree_sha(repo_root: Path, ref: str) -> str | None:
     release tag and the squash commit that reproduces it on another
     branch: a promotion squashes dev's history into a new commit whose
     *tree* equals the tagged dev commit's tree even though the commit
-    SHA, parents, and message differ. Shared by the rolling-next guard
-    (:func:`forge.verify_plugin_version._is_release_commit`) and the
-    main-tag aligner (``forge-check-main-tags``).
+    SHA, parents, and message differ. Consumed by the rolling-next guard
+    (:func:`forge.verify_plugin_version._is_release_commit`).
 
     Args:
         repo_root: Working directory for the git invocation.
@@ -870,12 +868,12 @@ def release_tree_fingerprint(repo_root: Path, ref: str) -> str | None:
     forge's ``@main`` CHANGELOG is curated and condensed per promotion —
     authored in the ``release/vX.Y.Z`` branch, where fragments-mode
     assembly also deletes the pending fragments — so a release branch's
-    tree never byte-matches the tagged ``dev`` release's tree, yet it is
-    the *same release*. The rolling-next guard
-    (:func:`forge.verify_plugin_version._is_release_commit`) and the
-    main-tag aligner (``forge-check-main-tags``) compare on this
-    fingerprint so curated-changelog divergence is tolerated while any
-    other file difference still counts (the match stays release-exact).
+    tree never byte-matches the tagged release's tree, yet it is the
+    *same release*. The rolling-next guard
+    (:func:`forge.verify_plugin_version._is_release_commit`) compares on
+    this fingerprint so curated-changelog divergence is tolerated while
+    any other file difference still counts (the match stays
+    release-exact).
 
     The value is the SHA-256 of ``git ls-tree -r <ref>`` (mode, type, blob
     SHA, path per file) with the ignored entries removed. Excluding

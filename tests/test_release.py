@@ -8,8 +8,8 @@
 # and ``_changelog_gate_error`` need no git repo at all (they read config /
 # the working tree), so those tests operate on a bare ``tmp_path``.
 # ``main()`` tests monkeypatch ``release.load_config`` to supply a
-# ``ForgeConfig`` without a real ``pyproject.toml``, mirroring the Group F
-# pattern in ``test_verify_main_tags.py``; ``sys.argv`` is patched so argparse
+# ``ForgeConfig`` without a real ``pyproject.toml``; ``sys.argv`` is
+# patched so argparse
 # does not see pytest's own arguments. Monkeypatch targets always use the
 # consuming namespace (``release.*``), never ``forge.config`` /
 # ``forge.git_utils`` directly.
