@@ -381,6 +381,31 @@ def test_install_deps_blocks_wrapper_run_with_non_adjacent_install(
 
 @pytest.mark.parametrize(
     "command",
+    [
+        "pipenv run --foo pip install x",
+        "poetry run python -m pip install x",
+        "uv run python -m pip install x",
+    ],
+)
+def test_install_deps_blocks_wrapper_run_for_every_declared_manager(
+    command: str,
+) -> None:
+    """The `<mgr> run pip install` wrapper rule covers all five managers.
+
+    conda and pixi are exercised elsewhere; this pins the remaining three
+    names in the wrapper rule's `(conda|pipenv|uv|poetry|pixi)`
+    alternation — pipenv, poetry, uv — so the hook's header claim of
+    covering all five managers has a case for each.
+
+    Args:
+        command: A `<manager> run … pip install …` wrapper form for a
+            manager other than conda or pixi.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
     ["uv tool install ripgrep", "uv python install 3.13", "uv pip install x"],
 )
 def test_install_deps_blocks_uv_install_forms(command: str) -> None:
@@ -418,12 +443,10 @@ def test_install_deps_blocks_pixi_lock_after_unrelated_leading_command() -> None
 def test_install_deps_allows_bare_pixi_and_version_help_forms(command: str) -> None:
     """A bare `pixi`, `--version`, and `help` are exempt, not blocked.
 
-    Two different mechanisms cover the three forms: `pixi` alone and
-    `pixi --version` carry no verb at all — the flag filter strips
-    dash-prefixed tokens, so verb extraction yields an empty string,
-    matched by the `""` case arm. `pixi help` extracts a real verb,
-    `help`, which survives that filter and is instead exempted by name
-    in the same case statement's `help` arm.
+    Two different case arms cover the three forms: a bare `pixi` extracts
+    an empty verb, matched by the `""` arm; `--version` and `help` are
+    each extracted as the literal verb token and exempted by name in the
+    same case statement, alongside `-V`/`--help`/`-h`.
 
     Args:
         command: A pixi invocation with no verb, or a version/help form.
@@ -442,16 +465,30 @@ def test_install_deps_advises_locked_on_pixi_shell_too() -> None:
     assert "--locked" in proc.stdout
 
 
-def test_install_deps_blocks_flag_value_masking_the_run_verb() -> None:
-    """A flag that takes a value can land its value in the verb slot.
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pixi --manifest-path x run pytest",
+        "pixi --manifest-path run lock",
+        "pixi --manifest-path list add numpy",
+    ],
+)
+def test_install_deps_blocks_flag_value_masking_the_run_verb(command: str) -> None:
+    """A flag's value can never masquerade as the verb.
 
-    `pixi --manifest-path x run pytest` reads `x` — the manifest path's
-    value — as the verb, since verb extraction takes the first non-flag
-    token after `pixi`. That is conservative by design: an unrecognised
-    verb blocks rather than risk a flag's value masking the real one, and
-    the `!` escape covers the false positive.
+    Verb extraction is the first token after `pixi`, flags included, so a
+    flag like `--manifest-path` occupies the verb slot itself and fails
+    the exact-match allowlist — whatever follows it (a value that reads
+    like an allowed verb, or the real verb the flag was meant to precede)
+    is never reached or inspected. All three commands block on the same
+    extraction step, regardless of what trails the flag.
+
+    Args:
+        command: A pixi invocation where a flag precedes the verb, with
+            an allowed verb's name appearing as the flag's value or later
+            in the command.
     """
-    assert _run_hook(_INSTALL_DEPS, "pixi --manifest-path x run pytest") == 2
+    assert _run_hook(_INSTALL_DEPS, command) == 2
 
 
 def test_install_deps_allows_pixi_mentioned_inside_echo() -> None:
@@ -468,8 +505,9 @@ def test_install_deps_blocks_pixi_lock_on_newline_separated_command() -> None:
     """A newline between commands splits segments too, not only `;`/`&`/`|`.
 
     The per-segment read loop consumes a real newline as its own line
-    delimiter, independently of the `tr` translation that turns
-    `;`/`&`/`|`/`(`/`)` into newlines — this exercises that path directly.
+    delimiter, independently of the `tr` translation that turns the
+    punctuation boundaries into newlines — this exercises that path
+    directly.
     """
     assert _run_hook(_INSTALL_DEPS, "pixi list\npixi lock") == 2
 
@@ -485,24 +523,22 @@ def test_install_deps_allows_pixi_list_inside_parenthesised_subshell() -> None:
 
 
 @pytest.mark.parametrize(
-    ("command", "expected_code"),
-    [("pixi -q list", 0), ("pixi -q lock", 2)],
+    "command",
+    ["pixi -q list", "pixi -q lock"],
 )
-def test_install_deps_pixi_quiet_flag_does_not_mask_the_verb(
-    command: str, expected_code: int
-) -> None:
-    """A leading flag like `-q` is skipped, not read as the verb.
+def test_install_deps_pixi_leading_flag_blocks_fail_closed(command: str) -> None:
+    """A leading flag before the verb blocks — extraction never skips it.
 
-    Verb extraction takes the first non-flag token after `pixi`, so
-    `pixi -q list` still reads as `list` (allowed) and `pixi -q lock`
-    still reads as `lock` (blocked) — the flag itself never becomes the
-    verb.
+    Verb extraction is the first token after `pixi`, flags included, so
+    `-q` itself occupies the verb slot and fails the exact-match
+    allowlist: both `pixi -q list` and `pixi -q lock` block. Only an
+    immediate allowed verb passes; the cost is one `!` for a
+    flag-prefixed command that is actually read-only.
 
     Args:
-        command: A pixi invocation with a leading short flag before the verb.
-        expected_code: The hook's expected exit code for that command.
+        command: A pixi invocation with a leading flag before the verb.
     """
-    assert _run_hook(_INSTALL_DEPS, command) == expected_code
+    assert _run_hook(_INSTALL_DEPS, command) == 2
 
 
 @pytest.mark.parametrize(
@@ -562,6 +598,34 @@ def test_install_deps_advises_locked_on_pixi_run_inside_subshell() -> None:
     proc = _run_hook_proc(_INSTALL_DEPS, "(pixi run pytest)")
     assert proc.returncode == 0
     assert "--locked" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "{ pip install requests; }",
+        "! pip install x",
+        "if true; then pip install x; fi",
+        "while false; do pip install x; done",
+        "case v in x) pip install y;; esac",
+        "f(){ pip install x; }; f",
+        "{ pixi lock; }",
+    ],
+)
+def test_install_deps_blocks_compound_command_boundaries(command: str) -> None:
+    """A compound-command construct is a boundary, not a hiding place.
+
+    Braces, a leading `!`, and the `then`/`else`/`elif`/`do` keyword
+    family all mark a command boundary alongside the punctuation set, so
+    the guard reaches and judges the command sitting inside `{ }`, an
+    `if`/`while`/`case` construct, a function body, or a `!`-negated
+    pipeline, rather than treating the construct itself as opaque.
+
+    Args:
+        command: A compound-command construct wrapping a blocked install
+            or pixi mutation.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
 
 
 _ATTRIBUTION = "block_claude_attribution.sh"
