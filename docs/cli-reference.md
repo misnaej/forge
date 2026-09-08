@@ -234,8 +234,10 @@ entries mechanically.
 positional arguments:
   {check,next-version,release,assemble,auto-tag,release-pr,restrand}
     check               validate pending changelog.d/ fragments
-    next-version        print the computed next release version (latest v* tag
-                        + max pending bump level)
+    next-version        print the computed next release version — latest v*
+                        tag + max level over the UNRELEASED fragments;
+                        fragments already in a tag's tree assemble under that
+                        tag and never bump again
     release             assemble CHANGELOG.md under the computed next version,
                         write plugin.json to it (when present), stage
                         everything — never commits

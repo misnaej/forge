@@ -36,11 +36,12 @@ Usage:
   ``release``: branch ``chore/assemble-vX.Y.Z``, stage, commit, push,
   and open the assembly PR with in-body gate evidence; idempotent and
   race-tolerant; merging stays human.
-- ``forge-changelog release`` — compute the next version from the
-  latest tag + pending fragments, assemble ``CHANGELOG.md`` under it,
-  write ``.claude-plugin/plugin.json`` to it (when a manifest exists —
-  the manifest's single writer), and stage everything (never commits).
-  Merge the resulting PR; tag-on-merge cuts the tag.
+- ``forge-changelog release`` — plan the assembly (tag-aware), assemble
+  ``CHANGELOG.md`` with a heading per already-tagged group plus any
+  minted heading, write ``.claude-plugin/plugin.json`` to the plan's
+  version (when a manifest exists — the manifest's single writer), and
+  stage everything (never commits). Merge the resulting PR; tag-on-merge
+  cuts the tag when the plan minted one.
 - ``forge-changelog next-version`` — read-only print of the computed
   next version and its bump level.
 - ``forge-changelog assemble --version vX.Y.Z`` — collate every pending
@@ -1445,8 +1446,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("check", help="validate pending changelog.d/ fragments")
     sub.add_parser(
         "next-version",
-        help="print the computed next release version "
-        "(latest v* tag + max pending bump level)",
+        help="print the computed next release version — latest v* tag + "
+        "max level over the UNRELEASED fragments; fragments already in a "
+        "tag's tree assemble under that tag and never bump again",
     )
     rel = sub.add_parser(
         "release",
