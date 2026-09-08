@@ -71,11 +71,12 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
 
    ```bash
    forge-pr-squash-comment --pr <PR#> \
-       --title "<type>(<scope>)?: <subject>" \
        --bullet "<key change 1>" --bullet "<key change 2>" --bullet "<key change 3>"
    ```
 
    3–5 `--bullet`s; validation failure exits non-zero naming the broken rule — fix until it passes.
+
+3. **The PR title is the squash title** (FOUNDATION §6) — the comment carries no title line. When the PR title is not conventional-commit form, fix it with `gh pr edit <PR#> --title "<type>(<scope>)?: <subject>"` before posting.
 
 ## Task: Author Wrap-up (pre-publication)
 
@@ -120,8 +121,7 @@ git rev-list --left-right --count origin/<base>...HEAD   # left = behind
    git log $base..HEAD --oneline
    ```
    Warn when an addressed issue lacks a bare `Closes`-family keyword in the description or a commit reference.
-5. **Post the squash-merge message as a separate PR comment** (task above) — MANDATORY in every wrap-up.
-6. **Post the wrap-up comment** via `gh pr comment` with exactly these sections, each compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract) — clean checker = its one PASS line; findings get what/where/disposition prose:
+5. **Post the wrap-up comment** via `gh pr comment` with exactly these sections, each compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract) — clean checker = its one PASS line; findings get what/where/disposition prose:
    ```markdown
    ## Design Check | ## Security Review | ## Documentation Check
    <PASS line, or findings + dispositions>
@@ -136,6 +136,7 @@ git rev-list --left-right --count origin/<base>...HEAD   # left = behind
    ## Recommendation
    <Ready for merge | Needs work | Security concerns>
    ```
+6. **Post the squash-merge message as a separate PR comment, LAST** (task above) — MANDATORY in every wrap-up. It goes after the wrap-up because the person merging copies it out of the bottom of the conversation (FOUNDATION §6); anything posted later is followed by a `forge-pr-squash-comment --pr <PR#>` re-post, which the `keep_squash_comment_last` hook fires on its own.
 
 ## Task: Issue Management
 

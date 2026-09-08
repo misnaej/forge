@@ -45,5 +45,6 @@ names = [
     "check_commit_format",
     "check_foundation_sync",
     "git_anchor",
+    "keep_squash_comment_last",
     "warn_pr_checks",
 ]

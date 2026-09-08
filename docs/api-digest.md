@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_67 modules, 845 symbols._
+_67 modules, 849 symbols._
 
 ## `forge`
 
@@ -769,20 +769,24 @@ _67 modules, 845 symbols._
 
 ## `forge.pr_squash_comment`
 
-> _forge-pr-squash-comment — validate, wrap, and post the squash-merge message._
+> _forge-pr-squash-comment — post the squash-merge body and keep it last._
 
 - `_cites_repo_file(token: str) -> bool` _(internal)_ — Return whether *token* is shaped like a repo path forge mandates.
 - `class ValidationError` — Raised when the input fails a FOUNDATION §6 squash-merge rule.
-- `_validate_title(title: str) -> None` _(internal)_ — Reject titles outside the conventional-commit format.
 - `_validate_bullets(bullets: list[str]) -> None` _(internal)_ — Enforce bullet count + non-empty content.
-- `_validate_word_count(title: str, bullets: list[str]) -> None` _(internal)_ — Enforce the ≤ ``MAX_WORDS`` cap on title + bullets combined.
-- `_validate_no_ai_attribution(title: str, bullets: list[str]) -> None` _(internal)_ — Reject Claude / AI attribution per FOUNDATION §2.
-- `build_body(title: str, bullets: list[str]) -> str` — Build the GitHub comment body around a validated message.
-- `validate(title: str, bullets: list[str]) -> None` — Run every FOUNDATION §6 check in order.
+- `_validate_word_count(bullets: list[str]) -> None` _(internal)_ — Enforce the ≤ ``MAX_WORDS`` cap on the body.
+- `_validate_no_ai_attribution(bullets: list[str]) -> None` _(internal)_ — Reject Claude / AI attribution per FOUNDATION §2.
+- `build_body(bullets: list[str]) -> str` — Build the GitHub comment body around a validated message.
+- `validate(bullets: list[str]) -> None` — Run every FOUNDATION §6 check in order.
+- `_parse_paged_json(raw: str) -> list[Any]` _(internal)_ — Flatten ``gh api --paginate --jq '[...]'`` output into one list.
+- `_list_squash_comments(pr_number: int) -> list[dict[str, object]] | None` _(internal)_ — Return this CLI's own comments on *pr_number*, oldest first.
+- `_latest_activity_at(pr_number: int) -> str | None` _(internal)_ — Return the newest timestamp across every comment surface of a PR.
 - `_post_new_comment(pr_number: int, body: str) -> int` _(internal)_ — Post *body* as a new comment on PR ``pr_number``.
-- `_patch_existing_comment(comment_id: int, body: str) -> int` _(internal)_ — Rewrite an existing PR comment via the REST API.
-- `_current_repo() -> str | None` _(internal)_ — Return ``<owner>/<repo>`` for the current working directory.
-- `main() -> int` — Validate the message, build the body, and post (or print) it.
+- `_delete_comment(comment_id: int) -> bool` _(internal)_ — Delete one issue comment by id.
+- `_prune(superseded: list[dict[str, object]] | None) -> None` _(internal)_ — Delete the squash comments a fresh post has replaced.
+- `post_squash_comment(pr_number: int, body: str) -> int` — Post *body*, then delete the squash comments it supersedes.
+- `ensure_last(pr_number: int) -> int` — Re-post the existing squash comment so it is the newest again.
+- `main() -> int` — Validate the body, post it (or print it), and keep it last.
 
 ## `forge.precommit`
 
