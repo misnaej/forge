@@ -1,9 +1,11 @@
-r"""forge-pr-squash-comment — post the squash-merge body and keep it last.
+r"""forge-pr-squash-comment — post the squash-merge message and keep it last.
 
-GitHub prefills the squash dialog's *title* field from the PR title and
-never reads PR comments, so this CLI posts the **body half only**: the
-3-5 validated bullets, fenced for a one-gesture copy into the dialog's
-body field. The PR title is the squash title.
+The message reaches GitHub's squash dialog by hand, so the comment
+carries its two halves in two separate fences: the title in one, the
+3-5 bullet body in the other, each a one-gesture copy into the matching
+field. GitHub prefills the title field from the PR title, so a posting
+run also **forces the PR title to match** the title it posts — prefill
+and message never drift apart.
 
 Every posting run leaves exactly one squash comment, and leaves it as
 the PR's newest comment — the human merging scrolls to the bottom, not
@@ -12,12 +14,14 @@ through the review history.
 Usage:
 
     forge-pr-squash-comment --pr 61 \\
+        --title "feat(#60): pr-manager delta-mode + verified-at" \\
         --bullet "pr_delta.py centralizes thresholds and regex" \\
         --bullet "5 reporter agents stamp verified-at SHA" \\
         --bullet "audit enforces the contract by name allowlist"
-        # posts a fresh comment, then deletes the older squash comments
+        # syncs the PR title, posts a fresh comment, then deletes the
+        # older squash comments
 
-    forge-pr-squash-comment --dry-run --bullet ... --bullet ... --bullet ...
+    forge-pr-squash-comment --dry-run --title ... --bullet ...
         # prints the wrapped body to stdout, no gh call
 
     forge-pr-squash-comment --pr 61
@@ -28,16 +32,25 @@ Usage:
 
 Rules (FOUNDATION §6 "Squash-merge messages"):
 
+- title matches conventional-commit ``<type>(...)?: <subject>``
 - 3-5 ``--bullet`` entries
-- total whitespace-split word count ≤ 50
+- total whitespace-split word count (title + bullets) ≤ 50
 - no Claude / AI attribution patterns
 
 Output: the body posted to GitHub is the literal text below (the inner
-fence is a real ``` block, not escapes):
+fences are real ``` blocks, not escapes):
 
     <!-- forge:squash-merge-message -->
-    **Squash-merge body** (copy verbatim into the squash dialog's body
-    field — the title field prefills from the PR title):
+    **Squash-merge message** — copy each fence into the matching field
+    of the squash dialog. The PR title is already synced to the title.
+
+    **Title**
+
+    ```
+    <title>
+    ```
+
+    **Body**
 
     ```
     - <bullet 1>
@@ -51,6 +64,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import subprocess
 import sys
 from typing import Any, Final
@@ -62,10 +76,8 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
-# Canonical home for the conventional-commit type list: nothing in this
-# module validates a title any more (the PR title is the squash title),
-# but `forge-gen-commit-types` renders the shell hook's regex from this
-# tuple and FOUNDATION §6 names it by path.
+# Canonical source: `forge-gen-commit-types` renders the shell hook's
+# regex from this tuple and FOUNDATION §6 names it by path.
 CONVENTIONAL_COMMIT_TYPES: Final[tuple[str, ...]] = (
     "feat",
     "fix",
@@ -78,6 +90,14 @@ CONVENTIONAL_COMMIT_TYPES: Final[tuple[str, ...]] = (
     "build",
     "style",
     "revert",
+)
+
+# Conventional commit: `<type>(<scope>)?: <subject>` — scope optional,
+# allows multiple `#N` refs separated by commas inside parens.
+TITLE_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?P<type>" + "|".join(CONVENTIONAL_COMMIT_TYPES) + r")"
+    r"(?:\((?P<scope>[^)]+)\))?"
+    r": (?P<subject>.+)$",
 )
 
 MIN_BULLETS: Final[int] = 3
@@ -150,6 +170,31 @@ class ValidationError(ValueError):
     """Raised when the input fails a FOUNDATION §6 squash-merge rule."""
 
 
+def _validate_title(title: str) -> None:
+    """Reject titles outside the conventional-commit format.
+
+    Args:
+        title: Raw title string.
+
+    Raises:
+        ValidationError: When the title is empty, longer than one line,
+            or does not match :data:`TITLE_RE`.
+    """
+    if not title.strip():
+        msg = "title is empty"
+        raise ValidationError(msg)
+    if "\n" in title:
+        msg = "title must be a single line"
+        raise ValidationError(msg)
+    if not TITLE_RE.match(title):
+        msg = (
+            f"title {title!r} is not conventional-commit format. "
+            f"Expected '<type>(<scope>)?: <subject>' where type is one of: "
+            f"{', '.join(CONVENTIONAL_COMMIT_TYPES)}"
+        )
+        raise ValidationError(msg)
+
+
 def _validate_bullets(bullets: list[str]) -> None:
     """Enforce bullet count + non-empty content.
 
@@ -170,23 +215,26 @@ def _validate_bullets(bullets: list[str]) -> None:
             raise ValidationError(msg)
 
 
-def _validate_word_count(bullets: list[str]) -> None:
-    """Enforce the ≤ ``MAX_WORDS`` cap on the body.
+def _validate_word_count(title: str, bullets: list[str]) -> None:
+    """Enforce the ≤ ``MAX_WORDS`` cap on title + bullets combined.
 
     Args:
+        title: Squash title.
         bullets: Bullet strings.
 
     Raises:
         ValidationError: When the total whitespace-split word count
             exceeds :data:`MAX_WORDS`.
     """
-    total = sum(len(b.split()) for b in bullets)
+    total = len(title.split()) + sum(len(b.split()) for b in bullets)
     if total > MAX_WORDS:
-        msg = f"squash-merge body is {total} words; FOUNDATION §6 caps at {MAX_WORDS}"
+        msg = (
+            f"squash-merge message is {total} words; FOUNDATION §6 caps at {MAX_WORDS}"
+        )
         raise ValidationError(msg)
 
 
-def _validate_no_ai_attribution(bullets: list[str]) -> None:
+def _validate_no_ai_attribution(title: str, bullets: list[str]) -> None:
     """Reject Claude / AI attribution per FOUNDATION §2.
 
     Two layers: attribution *phrases* anywhere in the text, then a
@@ -196,6 +244,7 @@ def _validate_no_ai_attribution(bullets: list[str]) -> None:
     "thanks Claude" credit still fails.
 
     Args:
+        title: Squash title.
         bullets: Bullet strings.
 
     Raises:
@@ -203,7 +252,7 @@ def _validate_no_ai_attribution(bullets: list[str]) -> None:
             :data:`AI_ATTRIBUTION_PATTERNS`, or a vendor token outside
             a repo-file-shaped context (case-insensitive).
     """
-    blob = "\n".join(bullets).lower()
+    blob = "\n".join([title, *bullets]).lower()
     for pat in AI_ATTRIBUTION_PATTERNS:
         if pat in blob:
             msg = (
@@ -239,17 +288,18 @@ def _validate_no_ai_attribution(bullets: list[str]) -> None:
                 raise ValidationError(msg)
 
 
-def build_body(bullets: list[str]) -> str:
+def build_body(title: str, bullets: list[str]) -> str:
     """Build the GitHub comment body around a validated message.
 
-    Wraps the bullets in a literal triple-backtick fence behind the
-    :data:`SQUASH_MARKER` and the "copy verbatim" cue. No title line:
-    GitHub fills the squash dialog's title field from the PR title, so
-    a title inside the fence would have to be deleted after pasting.
-    Caller is responsible for having passed validated inputs (or
-    running :func:`validate` first).
+    Two fences behind the :data:`SQUASH_MARKER`, one per field of
+    GitHub's squash dialog: the title, then the body. Separate fences
+    because each is copied on its own — a single block holding both
+    would have to be split by hand after pasting. Caller is responsible
+    for having passed validated inputs (or running :func:`validate`
+    first).
 
     Args:
+        title: Squash title (single line, conventional-commit form).
         bullets: 3-5 bullet strings.
 
     Returns:
@@ -259,18 +309,21 @@ def build_body(bullets: list[str]) -> str:
     fence = "```"
     return (
         f"{SQUASH_MARKER}\n"
-        "**Squash-merge body** (copy verbatim into the squash dialog's "
-        "body field — the title field prefills from the PR title):\n\n"
-        f"{fence}\n"
-        f"{bullet_lines}\n"
-        f"{fence}\n"
+        "**Squash-merge message** — copy each fence verbatim into the "
+        "matching field of the squash dialog. The PR title is synced to "
+        "the title below, so GitHub's prefill already matches.\n\n"
+        "**Title**\n\n"
+        f"{fence}\n{title}\n{fence}\n\n"
+        "**Body**\n\n"
+        f"{fence}\n{bullet_lines}\n{fence}\n"
     )
 
 
-def validate(bullets: list[str]) -> None:
+def validate(title: str, bullets: list[str]) -> None:
     """Run every FOUNDATION §6 check in order.
 
     Args:
+        title: Squash title.
         bullets: Bullet strings.
 
     Raises:
@@ -278,9 +331,10 @@ def validate(bullets: list[str]) -> None:
             message names the rule and (when applicable) the observed
             vs. allowed values.
     """
+    _validate_title(title)
     _validate_bullets(bullets)
-    _validate_word_count(bullets)
-    _validate_no_ai_attribution(bullets)
+    _validate_word_count(title, bullets)
+    _validate_no_ai_attribution(title, bullets)
 
 
 def _parse_paged_json(raw: str) -> list[Any]:
@@ -390,6 +444,48 @@ def _post_new_comment(pr_number: int, body: str) -> int:
         check=False,
     )
     return proc.returncode
+
+
+def sync_pr_title(pr_number: int, title: str) -> bool:
+    """Force the PR title to match the squash title.
+
+    GitHub prefills the squash dialog's title field from the PR title,
+    so the two must never disagree: an edited squash title that left
+    the PR title behind would put a stale line in the permanent `main`
+    commit. Reading first keeps the PR timeline free of no-op title
+    events; an unreadable title still takes the write, because a
+    redundant edit is cheaper than a silent mismatch.
+
+    Args:
+        pr_number: GitHub PR number.
+        title: The validated squash title.
+
+    Returns:
+        ``True`` when the PR title already matched or was updated;
+        ``False`` when the edit was rejected — the caller reports that,
+        since the human then has to fix the title field by hand.
+    """
+    current = gh_api(f"repos/{{owner}}/{{repo}}/pulls/{pr_number}", "--jq", ".title")
+    if current == title:
+        return True
+    proc = subprocess.run(
+        ["gh", "pr", "edit", str(pr_number), "--title", title],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        logger.error(
+            "could not sync PR #%d title to %r (exit %d): %s",
+            pr_number,
+            title,
+            proc.returncode,
+            proc.stderr.strip(),
+        )
+        return False
+    if current is not None:
+        logger.info("PR #%d title updated to match the squash title", pr_number)
+    return True
 
 
 def _delete_comment(comment_id: int) -> bool:
@@ -525,15 +621,23 @@ def main() -> int:
         "--pr",
         type=int,
         help=(
-            "PR number to comment on. With --bullet: posts the body and "
-            "prunes older squash comments. Without: re-posts the existing "
-            "one so it is the newest comment again."
+            "PR number to comment on. With --bullet: syncs the PR title, "
+            "posts the message and prunes older squash comments. Without: "
+            "re-posts the existing one so it is the newest comment again."
         ),
     )
     target.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the wrapped body to stdout; do not call gh.",
+    )
+    parser.add_argument(
+        "--title",
+        default="",
+        help=(
+            "Squash title (conventional-commit format). Required with "
+            "--bullet; the PR title is forced to match it."
+        ),
     )
     parser.add_argument(
         "--bullet",
@@ -550,18 +654,24 @@ def main() -> int:
         return ensure_last(args.pr)
 
     try:
-        validate(args.bullet)
+        validate(args.title, args.bullet)
     except ValidationError as exc:
         sys.stderr.write(f"forge-pr-squash-comment: {exc}\n")
         return 1
 
-    body = build_body(args.bullet)
+    body = build_body(args.title, args.bullet)
 
     if args.dry_run:
         sys.stdout.write(body)
         return 0
 
-    return post_squash_comment(args.pr, body)
+    title_synced = sync_pr_title(args.pr, args.title)
+    rc = post_squash_comment(args.pr, body)
+    if rc != 0:
+        return rc
+    # The comment is live either way; a failed title sync is still a
+    # non-zero run, because the prefill no longer matches what it says.
+    return 0 if title_synced else 1
 
 
 if __name__ == "__main__":

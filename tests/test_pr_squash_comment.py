@@ -19,6 +19,7 @@ from forge import pr_squash_comment as mod
 from tests.conftest import FakeProc
 
 
+VALID_TITLE = "feat(#42): example squash title"
 VALID_BULLETS = [
     "bullet alpha description",
     "bullet beta description",
@@ -48,6 +49,53 @@ def _page(*comments: dict[str, object]) -> str:
         A single JSON array line, as gh emits per page.
     """
     return json.dumps(list(comments))
+
+
+# ---------------------------------------------------------------------------
+# Title validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "feat: simple subject",
+        "fix(#1): scoped with one ref",
+        "fix(#1, #2): scoped with two refs",
+        "refactor(audit): named scope",
+        "docs: lowercase subject is fine",
+        "chore(#99): bump",
+    ],
+)
+def test_validate_title_accepts_conventional_forms(title: str) -> None:
+    """Conventional-commit titles in known shapes pass.
+
+    Args:
+        title: A conventional-commit format title string.
+    """
+    mod._validate_title(title)  # no raise
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "",
+        "  ",
+        "no type prefix here",
+        "FEAT: uppercase type",
+        "feat add subject without colon",
+        "wip: not a conventional type",
+        "feat: line one\nfeat: line two",
+    ],
+)
+def test_validate_title_rejects_bad_forms(title: str) -> None:
+    """Empty, multi-line, or non-conventional titles raise.
+
+    Args:
+        title: A malformed title string (empty, multi-line, or non-conventional).
+    """
+    with pytest.raises(mod.ValidationError):
+        mod._validate_title(title)
 
 
 # ---------------------------------------------------------------------------
@@ -88,24 +136,18 @@ def test_validate_bullets_rejects_whitespace_only_entry() -> None:
 
 
 def test_validate_word_count_accepts_at_cap() -> None:
-    """Exactly MAX_WORDS across the bullets passes (cap is inclusive)."""
-    bullets = [
-        " ".join(["word"] * 20),
-        " ".join(["word"] * 20),
-        " ".join(["word"] * 10),
-    ]
-    mod._validate_word_count(bullets)
+    """Exactly MAX_WORDS across title + bullets passes (cap is inclusive)."""
+    title = "feat: title with five words"  # 5 words
+    bullets = [" ".join(["word"] * 15)] * 3  # 45 words
+    mod._validate_word_count(title, bullets)
 
 
 def test_validate_word_count_rejects_above_cap() -> None:
     """MAX_WORDS + 1 words raises, naming the observed count."""
-    bullets = [
-        " ".join(["word"] * 20),
-        " ".join(["word"] * 20),
-        " ".join(["word"] * 11),
-    ]
+    title = "feat: title with five words here"  # 6 words
+    bullets = [" ".join(["word"] * 15)] * 3  # 45 words
     with pytest.raises(mod.ValidationError, match=r"51 words"):
-        mod._validate_word_count(bullets)
+        mod._validate_word_count(title, bullets)
 
 
 # ---------------------------------------------------------------------------
@@ -126,18 +168,18 @@ def test_validate_word_count_rejects_above_cap() -> None:
     ],
 )
 def test_validate_no_ai_attribution_rejects_known_patterns(blob: str) -> None:
-    """Any AI-attribution phrase in the bullets raises via the phrase layer.
+    """Any AI-attribution phrase in title or bullets raises via the phrase layer.
 
     Args:
         blob: A string containing a known AI-attribution phrase.
     """
     with pytest.raises(mod.ValidationError, match="pattern detected"):
-        mod._validate_no_ai_attribution([*VALID_BULLETS, blob])
+        mod._validate_no_ai_attribution(VALID_TITLE, [*VALID_BULLETS, blob])
 
 
 def test_validate_no_ai_attribution_accepts_clean_message() -> None:
     """A message free of attribution patterns passes."""
-    mod._validate_no_ai_attribution(VALID_BULLETS)
+    mod._validate_no_ai_attribution(VALID_TITLE, VALID_BULLETS)
 
 
 @pytest.mark.parametrize(
@@ -157,7 +199,7 @@ def test_validate_no_ai_attribution_accepts_path_shaped_mentions(blob: str) -> N
     Args:
         blob: A string containing a path- or filename-shaped vendor mention.
     """
-    mod._validate_no_ai_attribution([*VALID_BULLETS, blob])
+    mod._validate_no_ai_attribution(VALID_TITLE, [*VALID_BULLETS, blob])
 
 
 @pytest.mark.parametrize(
@@ -185,7 +227,7 @@ def test_validate_no_ai_attribution_rejects_bare_vendor_mentions(blob: str) -> N
         blob: A string containing a bare AI-vendor mention.
     """
     with pytest.raises(mod.ValidationError, match=r"\(in '"):
-        mod._validate_no_ai_attribution([*VALID_BULLETS, blob])
+        mod._validate_no_ai_attribution(VALID_TITLE, [*VALID_BULLETS, blob])
 
 
 # ---------------------------------------------------------------------------
@@ -194,44 +236,44 @@ def test_validate_no_ai_attribution_rejects_bare_vendor_mentions(blob: str) -> N
 
 
 def test_build_body_wraps_in_literal_triple_backtick_fence() -> None:
-    """The body contains a real ``` fence — not escaped backticks."""
-    body = mod.build_body(VALID_BULLETS)
+    """The body contains real ``` fences — not escaped backticks."""
+    body = mod.build_body(VALID_TITLE, VALID_BULLETS)
     assert "```" in body
     assert r"\`\`\`" not in body
 
 
 def test_build_body_includes_every_bullet() -> None:
     """Each bullet appears in the rendered body."""
-    body = mod.build_body(VALID_BULLETS)
+    body = mod.build_body(VALID_TITLE, VALID_BULLETS)
     for b in VALID_BULLETS:
         assert f"- {b}" in body
 
 
-def test_build_body_fenced_block_holds_bullets_only() -> None:
-    """The fenced region is exactly the bullet lines — no title line.
+def test_build_body_puts_title_and_body_in_separate_fences() -> None:
+    """Two fences, one per field of the squash dialog — never one merged block.
 
-    The title field of GitHub's squash dialog prefills from the PR
-    title; a title inside the fence would have to be deleted by hand
-    after pasting.
+    Each half is copied on its own, so a single fence holding both
+    would have to be split by hand after pasting.
     """
-    body = mod.build_body(VALID_BULLETS)
-    fenced = body.split("```")[1].strip().splitlines()
-    assert fenced == [f"- {b}" for b in VALID_BULLETS]
+    body = mod.build_body(VALID_TITLE, VALID_BULLETS)
+    title_fence, body_fence = body.split("```")[1], body.split("```")[3]
+    assert title_fence.strip().splitlines() == [VALID_TITLE]
+    assert body_fence.strip().splitlines() == [f"- {b}" for b in VALID_BULLETS]
 
 
 def test_build_body_carries_marker_for_later_runs() -> None:
     """The marker is present so a later run can find and supersede it."""
-    assert mod.SQUASH_MARKER in mod.build_body(VALID_BULLETS)
+    assert mod.SQUASH_MARKER in mod.build_body(VALID_TITLE, VALID_BULLETS)
 
 
 def test_build_body_has_copy_verbatim_cue() -> None:
-    """The 'copy verbatim' header is included so the user can act on it."""
-    assert "copy verbatim" in mod.build_body(VALID_BULLETS).lower()
+    """The copy-verbatim header is included so the user can act on it."""
+    assert "verbatim" in mod.build_body(VALID_TITLE, VALID_BULLETS).lower()
 
 
-def test_build_body_fence_appears_exactly_twice() -> None:
-    """One opening fence, one closing fence — no extras (no inner fence)."""
-    assert mod.build_body(VALID_BULLETS).count("```") == 2
+def test_build_body_has_exactly_two_fenced_blocks() -> None:
+    """Four fence markers: title block open/close, body block open/close."""
+    assert mod.build_body(VALID_TITLE, VALID_BULLETS).count("```") == 4
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +327,34 @@ def test_list_squash_comments_reports_read_failure(
 # ---------------------------------------------------------------------------
 
 
+def _fake_api_with_title(pr_title: str) -> object:
+    """Build a ``gh_api`` fake serving a PR title and one squash comment.
+
+    Args:
+        pr_title: What the PR endpoint should report as the current title.
+
+    Returns:
+        A callable dispatching on the endpoint path.
+    """
+
+    def _call(path: str, *_args: str, **_kw: object) -> str | None:
+        """Serve the PR title read or the comment listing.
+
+        Args:
+            path: The gh api endpoint path.
+            *_args: Trailing gh api arguments (unused).
+            **_kw: Additional keyword arguments (unused).
+
+        Returns:
+            The canned response for the endpoint under test.
+        """
+        if path.endswith("/pulls/61"):
+            return pr_title
+        return _page(OLD_SQUASH_COMMENT)
+
+    return _call
+
+
 @pytest.fixture
 def _cli_argv(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Stub ``sys.argv`` for ``main()`` invocations.
@@ -304,11 +374,17 @@ def test_main_dry_run_prints_body_and_returns_zero(
 ) -> None:
     """``--dry-run`` writes the wrapped body to stdout, exit 0."""
     sys.argv.extend(
-        ["--dry-run", *(item for b in VALID_BULLETS for item in ("--bullet", b))]
+        [
+            "--dry-run",
+            "--title",
+            VALID_TITLE,
+            *(item for b in VALID_BULLETS for item in ("--bullet", b)),
+        ]
     )
     assert mod.main() == 0
     captured = capsys.readouterr()
-    assert "```" in captured.out
+    assert captured.out.count("```") == 4
+    assert VALID_TITLE in captured.out
     assert f"- {VALID_BULLETS[0]}" in captured.out
 
 
@@ -316,8 +392,23 @@ def test_main_dry_run_prints_body_and_returns_zero(
 def test_main_validation_failure_returns_one(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Too few bullets fails validation; main returns 1, stderr names the rule."""
-    sys.argv.extend(["--dry-run", "--bullet", "only one"])
+    """A non-conventional title fails validation; exit 1, stderr names the rule."""
+    sys.argv.extend(
+        [
+            "--dry-run",
+            "--title",
+            "not conventional",
+            *(item for b in VALID_BULLETS for item in ("--bullet", b)),
+        ]
+    )
+    assert mod.main() == 1
+    assert "conventional-commit" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_rejects_too_few_bullets(capsys: pytest.CaptureFixture[str]) -> None:
+    """The 3-5 bullet rule is enforced before anything reaches gh."""
+    sys.argv.extend(["--dry-run", "--title", VALID_TITLE, "--bullet", "only one"])
     assert mod.main() == 1
     assert "requires 3-5" in capsys.readouterr().err
 
@@ -349,10 +440,16 @@ def test_main_pr_mode_posts_then_deletes_superseded(
         calls.append(cmd)
         return FakeProc()
 
-    monkeypatch.setattr(mod, "gh_api", lambda *_a, **_kw: _page(OLD_SQUASH_COMMENT))
+    monkeypatch.setattr(mod, "gh_api", _fake_api_with_title(VALID_TITLE))
     monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fake_run)
     sys.argv.extend(
-        ["--pr", "61", *(item for b in VALID_BULLETS for item in ("--bullet", b))]
+        [
+            "--pr",
+            "61",
+            "--title",
+            VALID_TITLE,
+            *(item for b in VALID_BULLETS for item in ("--bullet", b)),
+        ]
     )
     assert mod.main() == 0
     assert calls[0][:4] == ["gh", "pr", "comment", "61"]
@@ -386,12 +483,135 @@ def test_main_pr_mode_survives_cleanup_failure(
             return FakeProc(returncode=1, stderr="403")
         return FakeProc()
 
-    monkeypatch.setattr(mod, "gh_api", lambda *_a, **_kw: _page(OLD_SQUASH_COMMENT))
+    monkeypatch.setattr(mod, "gh_api", _fake_api_with_title(VALID_TITLE))
     monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fake_run)
     sys.argv.extend(
-        ["--pr", "61", *(item for b in VALID_BULLETS for item in ("--bullet", b))]
+        [
+            "--pr",
+            "61",
+            "--title",
+            VALID_TITLE,
+            *(item for b in VALID_BULLETS for item in ("--bullet", b)),
+        ]
     )
     assert mod.main() == 0
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_pr_mode_forces_a_stale_pr_title_to_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCENARIO: the PR title no longer matches the squash title.
+
+    MOCK SETUP: the PR reports an older title; subprocess captures the calls.
+    EXPECTED BEHAVIOR: `gh pr edit --title` runs BEFORE the comment is
+    posted — GitHub prefills the squash dialog from the PR title, so a
+    stale one would put the wrong line in the permanent `main` commit.
+    """
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kw: object) -> FakeProc:
+        """Capture cmd; return a zero-exit stub.
+
+        Args:
+            cmd: Command list to capture.
+            **_kw: Additional keyword arguments (unused).
+
+        Returns:
+            A FakeProc with returncode 0.
+        """
+        calls.append(cmd)
+        return FakeProc()
+
+    monkeypatch.setattr(mod, "gh_api", _fake_api_with_title("feat: an older title"))
+    monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fake_run)
+    sys.argv.extend(
+        [
+            "--pr",
+            "61",
+            "--title",
+            VALID_TITLE,
+            *(item for b in VALID_BULLETS for item in ("--bullet", b)),
+        ]
+    )
+    assert mod.main() == 0
+    assert calls[0] == ["gh", "pr", "edit", "61", "--title", VALID_TITLE]
+    assert calls[1][:4] == ["gh", "pr", "comment", "61"]
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_pr_mode_skips_the_edit_when_the_title_already_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An already-matching PR title takes no edit — no no-op timeline event."""
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kw: object) -> FakeProc:
+        """Capture cmd; return a zero-exit stub.
+
+        Args:
+            cmd: Command list to capture.
+            **_kw: Additional keyword arguments (unused).
+
+        Returns:
+            A FakeProc with returncode 0.
+        """
+        calls.append(cmd)
+        return FakeProc()
+
+    monkeypatch.setattr(mod, "gh_api", _fake_api_with_title(VALID_TITLE))
+    monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fake_run)
+    sys.argv.extend(
+        [
+            "--pr",
+            "61",
+            "--title",
+            VALID_TITLE,
+            *(item for b in VALID_BULLETS for item in ("--bullet", b)),
+        ]
+    )
+    assert mod.main() == 0
+    assert not any(cmd[:3] == ["gh", "pr", "edit"] for cmd in calls)
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_pr_mode_reports_a_rejected_title_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCENARIO: `gh pr edit` is rejected (no write access to the title).
+
+    MOCK SETUP: the edit exits 1, the comment post exits 0.
+    EXPECTED BEHAVIOR: the comment is still posted — it carries the
+    title fence, so the human can fix the field by hand — but the run
+    exits non-zero, because the prefill no longer matches the message.
+    """
+
+    def _fake_run(cmd: list[str], **_kw: object) -> FakeProc:
+        """Reject the title edit, accept everything else.
+
+        Args:
+            cmd: Command list under inspection.
+            **_kw: Additional keyword arguments (unused).
+
+        Returns:
+            A FakeProc whose returncode depends on the command.
+        """
+        if cmd[:3] == ["gh", "pr", "edit"]:
+            return FakeProc(returncode=1, stderr="403")
+        return FakeProc()
+
+    monkeypatch.setattr(mod, "gh_api", _fake_api_with_title("feat: an older title"))
+    monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fake_run)
+    sys.argv.extend(
+        [
+            "--pr",
+            "61",
+            "--title",
+            VALID_TITLE,
+            *(item for b in VALID_BULLETS for item in ("--bullet", b)),
+        ]
+    )
+    assert mod.main() == 1
 
 
 @pytest.mark.usefixtures("_cli_argv")

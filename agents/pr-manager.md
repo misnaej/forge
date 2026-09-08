@@ -71,12 +71,13 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
 
    ```bash
    forge-pr-squash-comment --pr <PR#> \
+       --title "<type>(<scope>)?: <subject>" \
        --bullet "<key change 1>" --bullet "<key change 2>" --bullet "<key change 3>"
    ```
 
    3–5 `--bullet`s; validation failure exits non-zero naming the broken rule — fix until it passes.
 
-3. **The PR title is the squash title** (FOUNDATION §6) — the comment carries no title line. When the PR title is not conventional-commit form, fix it with `gh pr edit <PR#> --title "<type>(<scope>)?: <subject>"` before posting.
+3. **Never `gh pr edit --title` by hand here** — the CLI forces the PR title to match the `--title` it posts (FOUNDATION §6), so the squash title is authored in one place. A non-zero exit naming a rejected title sync means the prefill is stale: report it, do not paper over it.
 
 ## Task: Author Wrap-up (pre-publication)
 

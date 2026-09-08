@@ -480,17 +480,20 @@ options:
 ## forge-pr-squash-comment
 
 ```text
-usage: forge-pr-squash-comment [-h] (--pr PR | --dry-run) [--bullet TEXT]
+usage: forge-pr-squash-comment [-h] (--pr PR | --dry-run) [--title TITLE]
+                               [--bullet TEXT]
 
 Post the squash-merge body as the PR's newest comment. The title is the PR
 title — GitHub prefills it. Rules per FOUNDATION §6.
 
 options:
   -h, --help     show this help message and exit
-  --pr PR        PR number to comment on. With --bullet: posts the body and
-                 prunes older squash comments. Without: re-posts the existing
-                 one so it is the newest comment again.
+  --pr PR        PR number to comment on. With --bullet: syncs the PR title,
+                 posts the message and prunes older squash comments. Without:
+                 re-posts the existing one so it is the newest comment again.
   --dry-run      Print the wrapped body to stdout; do not call gh.
+  --title TITLE  Squash title (conventional-commit format). Required with
+                 --bullet; the PR title is forced to match it.
   --bullet TEXT  Bullet line. Repeat 3-5 times.
 ```
 

@@ -452,20 +452,20 @@ advisories with the suggested pin; they never edit pins.
 
 ### Squash-merge messages (mandatory at PR finalization)
 
-`forge:pr-manager` enforces: max 50 words; 3–5 bullets; bullets only; no
-Claude/AI attribution. Posted via **`forge-pr-squash-comment`** (validates
-every rule, fences the body for verbatim copy; `--dry-run` previews) —
+`forge:pr-manager` enforces: max 50 words; 3–5 bullets; conventional-commit
+title; title + bullets only; no Claude/AI attribution. Posted via
+**`forge-pr-squash-comment`** (validates every rule; `--dry-run` previews) —
 never hand-constructed. The squash message is the permanent `main`
 commit; if it can't be summarized in 50 words, the PR is too big.
 
-**The comment carries the body half only.** GitHub fills the squash
-dialog's title field from the PR title and never reads comments, so
-**the PR title is the squash title** — write it in conventional-commit
-form (§6 "Commit messages") and a title inside the fence would only be
-something to delete after pasting. Prerequisite, once per repo:
-`squash_merge_commit_title = PR_TITLE` (needs admin) — the
-`COMMIT_OR_PR_TITLE` default prefills a *single-commit* PR from that
-commit's subject instead.
+**Two fences, one per field of the squash dialog** — the title in one
+fenced block, the body in another, so each half is a single copy with
+nothing to edit afterwards. GitHub prefills the title field from the PR
+title, so a posting run **forces the PR title to match the title it
+posts**: one writer for both, and they cannot drift. Prerequisite, once
+per repo: `squash_merge_commit_title = PR_TITLE` (needs admin) — under the
+`COMMIT_OR_PR_TITLE` default a *single-commit* PR prefills from that
+commit's subject, which no title sync controls.
 
 **The squash comment is always the PR's newest comment**, so the person
 merging finds it at the bottom rather than in the review history. A bare
