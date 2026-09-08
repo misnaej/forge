@@ -43,11 +43,13 @@ its own JSON object::
         "reason": "...",
     }
 
-``fresh`` is ``true`` when the last ``verified-at:`` SHA across the PR's
-comments (posting order) prefixes ``head_oid``, ``false`` when it does
-not, and ``null`` when the question cannot be answered — ``gh`` failed or
-no wrap-up carries a ``verified-at:`` line. ``null`` is a *skip this
-poll*, never an alert: the mode degrades exactly as the delta path does.
+``fresh`` is ``true`` when the newest comment's *header* ``verified-at:``
+SHA (first match per comment — a wrap-up quotes older reporter stamps
+below its own header; newest comment in posting order wins) prefixes
+``head_oid``, ``false`` when it does not, and ``null`` when the question
+cannot be answered — ``gh`` failed or no wrap-up carries a ``verified-at:``
+line. ``null`` is a *skip this poll*, never an alert: the mode degrades
+exactly as the delta path does.
 
 ``light-regen`` is *eligibility only*: the skill still earns the escape by
 running the provenance gates (``precommit_scope`` lists them); any gate
@@ -255,26 +257,53 @@ def _gh_pr_view(
     return proc.stdout
 
 
+def _newest_header_sha(comments: list[dict[str, object]]) -> str | None:
+    """Return the header ``verified-at:`` SHA of the newest comment carrying one.
+
+    Two rules, both from the reporter-header contract: within one comment
+    only the *first* ``verified-at:`` counts — a wrap-up embeds the
+    reporter sub-reports it summarises, each stamped at its own (older)
+    SHA, and reading the last match in the text would mistake a quoted
+    stamp for the header; across comments the newest in posting order
+    wins.
+
+    Args:
+        comments: ``gh pr view --json comments`` entries, posting order.
+
+    Returns:
+        The winning short SHA, or ``None`` when no comment carries one.
+    """
+    latest: str | None = None
+    for comment in comments:
+        shas = extract_verified_shas(str(comment.get("body", "")))
+        if shas:
+            latest = shas[0]
+    return latest
+
+
 def _latest_verified_sha(pr_number: int) -> str | None:
     """Return the newest ``verified-at:`` SHA among the PR's comments.
 
     The delta path's baseline: prior wrap-up / reporter comments carry the
-    reporter-header contract's ``verified-at:`` line. ``gh`` failures
-    return ``None`` — the caller degrades to full mode rather than
-    crashing.
+    reporter-header contract's ``verified-at:`` line. ``gh`` failures and
+    unparseable output return ``None`` — the caller degrades to full mode
+    rather than crashing.
 
     Args:
         pr_number: The existing PR to read comments from.
 
     Returns:
-        The last SHA extracted across comment bodies in posting order, or
+        The newest comment's header SHA per :func:`_newest_header_sha`, or
         ``None`` when unavailable.
     """
-    out = _gh_pr_view(pr_number, "comments", jq=".comments[].body")
+    out = _gh_pr_view(pr_number, "comments")
     if out is None:
         return None
-    shas = extract_verified_shas(out)
-    return shas[-1] if shas else None
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return None
+    return _newest_header_sha(data.get("comments", []))
 
 
 def wrapup_freshness(pr_number: int) -> WrapupFreshness:
@@ -311,15 +340,13 @@ def wrapup_freshness(pr_number: int) -> WrapupFreshness:
         return WrapupFreshness(
             fresh=None, reason="gh pr view returned no headRefOid; skip"
         )
-    bodies = "\n".join(str(c.get("body", "")) for c in data.get("comments", []))
-    shas = extract_verified_shas(bodies)
-    if not shas:
+    latest = _newest_header_sha(data.get("comments", []))
+    if latest is None:
         return WrapupFreshness(
             fresh=None,
             head_oid=head,
             reason="no verified-at: comment on the PR; skip",
         )
-    latest = shas[-1]
     if head.startswith(latest):
         return WrapupFreshness(
             fresh=True,

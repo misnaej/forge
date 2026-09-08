@@ -384,7 +384,9 @@ def test_classify_delta_outranks_light_code_for_verified_pr(
     _commit_files(repo, {"tests/fixture.py": "x = 2\n"}, "verified commit")
     verified_sha = _git_short_sha(repo)
     _commit_files(repo, {"tests/fixture.py": "x = 3\n"}, "small follow-up")
-    stdout = f"verified-at: {verified_sha} wrap-up\n"
+    stdout = json.dumps(
+        {"comments": [{"body": f"verified-at: {verified_sha} wrap-up\n"}]}
+    )
     monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
 
     plan = pr_plan.classify(repo, "main", 7)
@@ -449,21 +451,73 @@ def test_classify_delta_unresolvable_sha_falls_back_to_full(
 def test_latest_verified_sha_returns_last_sha_across_multiple_comments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Among several ``verified-at:`` lines, the last one posted wins.
+    """Among several ``verified-at:`` comments, the newest posted one wins.
 
     MOCK SETUP: ``pr_plan.subprocess.run`` is replaced with
-    ``make_fake_run`` returning ``gh``-shaped ``stdout`` carrying two
-    ``verified-at:`` lines — simulating multiple reporter wrap-up comments
-    on the same PR, newest last.
+    ``make_fake_run`` returning ``gh``-shaped JSON carrying two separate
+    ``comments`` entries, each with its own header ``verified-at:`` line
+    — simulating multiple reporter wrap-up comments on the same PR,
+    newest last.
     """
-    stdout = (
-        "verified-at: aaaa111 first wrap-up\n"
-        "some other comment body\n"
-        "verified-at: bbbb222 second wrap-up\n"
+    stdout = json.dumps(
+        {
+            "comments": [
+                {"body": "verified-at: aaaa111 first wrap-up\n"},
+                {"body": "some other comment body\n"},
+                {"body": "verified-at: bbbb222 second wrap-up\n"},
+            ]
+        }
     )
     monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
 
     assert pr_plan._latest_verified_sha(42) == "bbbb222"
+
+
+def test_latest_verified_sha_header_wins_over_embedded_older_stamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a comment's FIRST ``verified-at:`` counts — quoted sub-reports don't.
+
+    Regression for the PR #462 bug: a wrap-up comment's header names its
+    own SHA but embeds the reporter sub-reports it summarizes, each
+    stamped at its own (older) SHA. The delta baseline must resolve to
+    the header SHA, not the last match in the joined text.
+
+    MOCK SETUP: ``pr_plan.subprocess.run`` is replaced with
+    ``make_fake_run`` returning a single ``gh``-shaped comment whose body
+    carries the header stamp followed by two older embedded stamps.
+    """
+    stdout = json.dumps(
+        {
+            "comments": [
+                {
+                    "body": (
+                        "verified-at: 0a028ea wrap-up\n"
+                        "...\n"
+                        "verified-at: fb18a67 design report\n"
+                        "verified-at: fb18a67 security report"
+                    )
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    assert pr_plan._latest_verified_sha(42) == "0a028ea"
+
+
+def test_latest_verified_sha_returns_none_on_invalid_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unparseable `gh pr view` stdout degrades to None, not a raise.
+
+    MOCK SETUP: ``pr_plan.subprocess.run`` is replaced with ``make_fake_run``
+    returning non-JSON ``stdout``, simulating a corrupted or truncated
+    ``gh`` response.
+    """
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout="not json"))
+
+    assert pr_plan._latest_verified_sha(42) is None
 
 
 # --- _latest_verified_sha(): gh failure modes ----------------------------
@@ -701,6 +755,40 @@ def test_wrapup_freshness_last_comment_wins_over_earlier_fresh_comment(
 
     assert result.latest_verified_at == "bbbb222"
     assert result.fresh is False
+
+
+def test_wrapup_freshness_header_wins_over_embedded_older_stamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a comment's FIRST ``verified-at:`` counts — quoted sub-reports don't.
+
+    Regression for the PR #462 bug: the wrap-up comment's header names
+    its own SHA (``0a028ea``) but embeds the reporter sub-reports it
+    summarizes, each stamped at its own older SHA (``fb18a67``). Reading
+    the last match in the joined comment text picked the embedded stamp
+    and produced a false stale alert; the header rule fixes it.
+    """
+    stdout = json.dumps(
+        {
+            "headRefOid": "0a028ea6272000000000000000000000000000",
+            "comments": [
+                {
+                    "body": (
+                        "verified-at: 0a028ea wrap-up\n"
+                        "...\n"
+                        "verified-at: fb18a67 design report\n"
+                        "verified-at: fb18a67 security report"
+                    )
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.fresh is True
+    assert result.latest_verified_at == "0a028ea"
 
 
 # --- wrapup_freshness(): degrade paths ------------------------------------
