@@ -38,8 +38,9 @@ pr=$(gh pr view --json number --jq '.number' 2>/dev/null || echo "?")
 2. **Necessity gate first** (§8 "Test lifecycle"): reject planned
    cases that duplicate existing coverage (cite the covering test —
    `code_health/audit_dup.log` is admissible evidence) or that mirror
-   the implementation line-by-line; classify each surviving case
-   behavior vs development.
+   the implementation line-by-line; for each surviving case state what
+   it uniquely detects against what it costs every run (§18 "Cost
+   goals"); classify each as behavior vs development.
 3. Emit a recommendation: mirrored test-file path
    (`src/foo/bar.py` → `tests/foo/test_bar.py`), suggested cases (at least a
    happy-path + an edge/error case per public function) each tagged

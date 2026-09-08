@@ -183,6 +183,15 @@ violating `composes_all_of` (placement being decided wrong *now*);
 LOW = pre-existing baseline; REVIEW = visible exemption. Mechanics:
 [`docs/audit-pack.md`](../docs/audit-pack.md).
 
+### Cost lens (judgment check, no CLI)
+
+FOUNDATION §18's goals are reviewed here, never gated. A diff that adds
+or edits tests: does it rebuild per test what could be built once, does
+a parametrized variant multiply a real cost, do its mocks cover the
+executed path? A diff touching a known hot path: ask for the
+same-machine before/after number — the number, not `forge:perf-optimizer`'s
+full protocol, which stays opt-in.
+
 ### Wrapper justification (judgment check, no CLI)
 
 When a diff adds predominantly construct-and-delegate code, ask
