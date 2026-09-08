@@ -424,7 +424,7 @@ advisories with the suggested pin; they never edit pins.
 - **The flow does not end at posting — monitor the PR.** This bullet is the
   canonical description of the post-wrap-up monitor; skills point here and
   state only their call-site delta. By default, after the wrap-up is posted,
-  delegate one background monitor per open PR watching four signals:
+  delegate one background monitor per open PR watching five signals:
   - **New review comments** → surface them.
   - **Merged / closed** → on merge: the local cleanup (sync the base
     branch, prune the merged local branch — the `/next` cleanup phase)
@@ -435,6 +435,20 @@ advisories with the suggested pin; they never edit pins.
     what it observes).
   - **A CI run concluding in failure** → surface it and investigate
     (§1); never auto-push fixes.
+  - **Wrap-up staleness** — `forge-pr-plan --freshness --pr <N>` reports
+    `fresh: false` (the newest comment's *header* `verified-at:` — a
+    wrap-up quotes older reporter stamps below its own — no longer
+    prefixes the PR head) → alert **once per new head**, naming both
+    SHAs; the
+    refresh is a re-run of `/pr <N>` (delta mode) by whoever picks the
+    work up, whose comment's newer `verified-at:` clears the signal by
+    itself. `fresh: null` (no `gh`, no wrap-up yet) → skip that poll,
+    never alert. **The monitor never posts the refresh** — same
+    read-only contract as the conflict signal. The same verdict has a
+    second, at-the-cause surface: the `warn_stale_wrapup` Claude Code
+    hook runs it after every `git push` from an agent session, so the
+    session that outdated the wrap-up hears it immediately; the monitor
+    covers pushes made elsewhere. Both are read-only.
 
   Resolving a conflict — by whoever picks the work up, never the
   monitor — is a plain base merge: `git merge origin/<base>` (§2 —

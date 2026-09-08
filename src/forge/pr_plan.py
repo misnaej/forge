@@ -30,6 +30,27 @@ classification trail.
 ``classified_at`` is HEAD at classification time; ``pr-manager`` warns when
 posting at a different HEAD.
 
+A second, read-only mode — ``--freshness --pr N`` — answers the
+post-publication question the classifier's ``verified-at:`` baseline makes
+answerable: does the PR's newest posted wrap-up still describe its current
+head? It is the FOUNDATION §6 monitor's wrap-up-staleness signal and emits
+its own JSON object::
+
+    {
+        "fresh": true | false | null,
+        "head_oid": "<full sha or empty>",
+        "latest_verified_at": "<short sha or null>",
+        "reason": "...",
+    }
+
+``fresh`` is ``true`` when the newest comment's *header* ``verified-at:``
+SHA (first match per comment — a wrap-up quotes older reporter stamps
+below its own header; newest comment in posting order wins) prefixes
+``head_oid``, ``false`` when it does not, and ``null`` when the question
+cannot be answered — ``gh`` failed or no wrap-up carries a ``verified-at:``
+line. ``null`` is a *skip this poll*, never an alert: the mode degrades
+exactly as the delta path does.
+
 ``light-regen`` is *eligibility only*: the skill still earns the escape by
 running the provenance gates (``precommit_scope`` lists them); any gate
 failure falls back to the full round. ``light-code`` (small, no added
@@ -43,9 +64,11 @@ crashes: no ``--pr``, a missing/unauthenticated ``gh``, or no
 to ``full``.
 
 Exit codes:
-    0  plan emitted
+    0  plan (or freshness verdict) emitted
     1  not inside a git repository (``repo_root``'s own ``SystemExit``)
-    2  the base ref is invalid (dash-prefixed) or unresolvable by git
+    2  usage error — the base ref is invalid (dash-prefixed) or unresolvable
+       by git, ``--base`` missing outside ``--freshness``, or ``--freshness``
+       without ``--pr``
 """
 
 from __future__ import annotations
@@ -117,6 +140,28 @@ class PrPlan:
     classified_at: str = ""
 
 
+@dataclass(frozen=True)
+class WrapupFreshness:
+    """Whether a PR's newest posted wrap-up still describes its head.
+
+    Attributes:
+        fresh: ``True`` when the latest ``verified-at:`` SHA prefixes the
+            PR head, ``False`` when it does not, ``None`` when the
+            question cannot be answered (``gh`` failure, no wrap-up) —
+            a skip, never an alert.
+        head_oid: The PR's current head commit, empty when unknown.
+        latest_verified_at: The last ``verified-at:`` SHA across the PR's
+            comments in posting order, ``None`` when no comment carries
+            one.
+        reason: Human-readable one-line explanation of the verdict.
+    """
+
+    fresh: bool | None
+    head_oid: str = ""
+    latest_verified_at: str | None = None
+    reason: str = ""
+
+
 def _changed_paths(root: Path, diff_range: str) -> list[str]:
     """Return the repo-relative paths changed across *diff_range*.
 
@@ -184,42 +229,140 @@ def _line_count(root: Path, diff_range: str) -> int:
     return total
 
 
+def _gh_pr_view(
+    pr_number: int, json_fields: str, *, jq: str | None = None
+) -> str | None:
+    """Run ``gh pr view N --json <fields>`` and return its stdout, or ``None``.
+
+    The one ``gh`` seam this module owns. Every failure — missing binary,
+    no auth, unknown PR — collapses to ``None`` after a warning so callers
+    degrade (full mode, ``fresh: null``) instead of crashing.
+
+    Args:
+        pr_number: The existing PR to read.
+        json_fields: Comma-separated ``--json`` field list.
+        jq: Optional ``--jq`` filter applied by ``gh``.
+
+    Returns:
+        Raw stdout on success, ``None`` on any ``gh`` failure.
+    """
+    cmd = ["gh", "pr", "view", str(pr_number), "--json", json_fields]
+    if jq is not None:
+        cmd += ["--jq", jq]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        logger.warning("pr-plan: could not read PR #%s (%s)", pr_number, exc)
+        return None
+    return proc.stdout
+
+
+def _newest_header_sha(comments: list[dict[str, object]]) -> str | None:
+    """Return the header ``verified-at:`` SHA of the newest comment carrying one.
+
+    Two rules, both from the reporter-header contract: within one comment
+    only the *first* ``verified-at:`` counts — a wrap-up embeds the
+    reporter sub-reports it summarises, each stamped at its own (older)
+    SHA, and reading the last match in the text would mistake a quoted
+    stamp for the header; across comments the newest in posting order
+    wins.
+
+    Args:
+        comments: ``gh pr view --json comments`` entries, posting order.
+
+    Returns:
+        The winning short SHA, or ``None`` when no comment carries one.
+    """
+    latest: str | None = None
+    for comment in comments:
+        shas = extract_verified_shas(str(comment.get("body", "")))
+        if shas:
+            latest = shas[0]
+    return latest
+
+
 def _latest_verified_sha(pr_number: int) -> str | None:
     """Return the newest ``verified-at:`` SHA among the PR's comments.
 
     The delta path's baseline: prior wrap-up / reporter comments carry the
-    reporter-header contract's ``verified-at:`` line. ``gh`` failures
-    (missing binary, no auth, unknown PR) return ``None`` — the caller
-    degrades to full mode rather than crashing.
+    reporter-header contract's ``verified-at:`` line. ``gh`` failures and
+    unparseable output return ``None`` — the caller degrades to full mode
+    rather than crashing.
 
     Args:
         pr_number: The existing PR to read comments from.
 
     Returns:
-        The last SHA extracted across comment bodies in posting order, or
+        The newest comment's header SHA per :func:`_newest_header_sha`, or
         ``None`` when unavailable.
     """
-    try:
-        proc = subprocess.run(
-            [
-                "gh",
-                "pr",
-                "view",
-                str(pr_number),
-                "--json",
-                "comments",
-                "--jq",
-                ".comments[].body",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-        logger.warning("pr-plan: could not read PR #%s comments (%s)", pr_number, exc)
+    out = _gh_pr_view(pr_number, "comments")
+    if out is None:
         return None
-    shas = extract_verified_shas(proc.stdout)
-    return shas[-1] if shas else None
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return None
+    return _newest_header_sha(data.get("comments", []))
+
+
+def wrapup_freshness(pr_number: int) -> WrapupFreshness:
+    """Compare the PR's newest ``verified-at:`` SHA against its current head.
+
+    One ``gh pr view`` call reads head and comments together so the two
+    cannot drift between reads. Prefix matching mirrors the
+    ``verified-at:`` contract (short SHAs). The verdict is read-only by
+    design: the §6 monitor surfaces a ``False``, and only a fresh ``/pr``
+    run (delta mode) clears it by posting a newer ``verified-at:``. The
+    comment bodies are untrusted — anyone can comment on a public PR —
+    so the verdict is advisory only and never authorizes anything.
+
+    Args:
+        pr_number: The existing PR to check.
+
+    Returns:
+        The verdict; ``fresh`` is ``None`` (skip, never alert) when ``gh``
+        failed, returned unparseable JSON or no head, or no comment
+        carries a ``verified-at:`` line — an unknown head can never be
+        reported stale, since a false alert costs a needless refresh.
+    """
+    out = _gh_pr_view(pr_number, "headRefOid,comments")
+    if out is None:
+        return WrapupFreshness(fresh=None, reason="gh pr view failed; skip")
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return WrapupFreshness(
+            fresh=None, reason="gh pr view returned invalid JSON; skip"
+        )
+    head = str(data.get("headRefOid", ""))
+    if not head:
+        return WrapupFreshness(
+            fresh=None, reason="gh pr view returned no headRefOid; skip"
+        )
+    latest = _newest_header_sha(data.get("comments", []))
+    if latest is None:
+        return WrapupFreshness(
+            fresh=None,
+            head_oid=head,
+            reason="no verified-at: comment on the PR; skip",
+        )
+    if head.startswith(latest):
+        return WrapupFreshness(
+            fresh=True,
+            head_oid=head,
+            latest_verified_at=latest,
+            reason=f"latest verified-at {latest} prefixes head {head}",
+        )
+    return WrapupFreshness(
+        fresh=False,
+        head_oid=head,
+        latest_verified_at=latest,
+        reason=(
+            f"wrap-up verified at {latest} but PR head is {head}; "
+            "re-run /pr <N> to post a refreshed wrap-up"
+        ),
+    )
 
 
 def _try_delta(
@@ -359,23 +502,23 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the finalization-path classifier and emit its JSON plan.
+    """Run the finalization-path classifier (or the freshness check) and emit JSON.
 
     Args:
         argv: Optional argument vector (defaults to ``sys.argv``).
 
     Returns:
-        Process exit code: ``0`` with the plan on stdout; ``2`` on an
-        invalid or unresolvable base ref (``1`` if run outside a git
-        repository — raised by ``repo_root`` before this returns).
+        Process exit code: ``0`` with the plan or freshness verdict on
+        stdout; ``2`` on a usage error — invalid or unresolvable base ref,
+        or a missing required flag (``1`` if run outside a git repository
+        — raised by ``repo_root`` before this returns).
     """
     parser = argparse.ArgumentParser(prog="forge-pr-plan")
     parser.add_argument(
         "--base",
-        required=True,
         metavar="REF",
-        help="Base ref the PR targets (e.g. origin/dev); the classified "
-        "diff is BASE...HEAD.",
+        help="Base ref the PR targets (e.g. origin/main); the classified "
+        "diff is BASE...HEAD. Required unless --freshness.",
     )
     parser.add_argument(
         "--pr",
@@ -384,7 +527,22 @@ def main(argv: list[str] | None = None) -> int:
         help="Existing PR number — enables the delta path (reads the PR's "
         "verified-at: comments via gh). Omit when no PR exists yet.",
     )
+    parser.add_argument(
+        "--freshness",
+        action="store_true",
+        help="Read-only mode: report whether PR --pr's newest posted "
+        "wrap-up (verified-at:) still names its current head; emits "
+        "{fresh, head_oid, latest_verified_at, reason}. Needs --pr; "
+        "ignores --base.",
+    )
     args = parser.parse_args(argv)
+    if args.freshness:
+        if args.pr is None:
+            parser.error("--freshness requires --pr N")
+        emit(json.dumps(asdict(wrapup_freshness(args.pr)), indent=2))
+        return 0
+    if args.base is None:
+        parser.error("--base is required unless --freshness")
     # A ref never starts with a dash; a dash-prefixed value would reach git
     # as an option. Reject it before any subprocess sees it.
     if args.base.startswith("-"):

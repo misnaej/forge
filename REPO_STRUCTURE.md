@@ -37,7 +37,7 @@ Code.
    - pr_squash_comment.py: `forge-pr-squash-comment` — validates + posts the squash-merge message (title and body in separate fences), forces the PR title to match, and keeps that comment the PR's newest; canonical `CONVENTIONAL_COMMIT_TYPES` source
    - changelog_fragments.py: `forge-changelog` — changelog fragments (changelog.d/): per-PR `<slug>.<type>.md` files with level-only `bump:` front-matter, validated by the fragment gate and assembled into CHANGELOG.md once at release (single writer; zero merge conflicts by construction); `next-version` prints the computed next release (latest tag + max pending level) and `release` assembles under it, writes plugin.json (when present), and stages everything (never commits); `restrand` subcommand mechanically repairs stranded entries in shared-heading repos (no manifest needed; stages, never commits); `auto-tag` cuts and pushes the tag-per-merge release tag in CI (fragments not in latest tag's tree -> max level -> next tag)
    - pr_delta.py: the finalization-path classification primitives — every threshold, glob, and predicate (delta, docs-only, regen-only, light-code) consumed by `forge-pr-plan`, the pr-manager agent, and the wrap-up publish hook
-   - pr_plan.py: `forge-pr-plan` — deterministic finalization-path classifier for the `/pr` skill; composes the pr_delta primitives over the real diff and emits the JSON plan (mode/reporters/precommit_scope/reasons)
+   - pr_plan.py: `forge-pr-plan` — deterministic finalization-path classifier for the `/pr` skill; composes the pr_delta primitives over the real diff and emits the JSON plan (mode/reporters/precommit_scope/reasons); `--freshness --pr N` is the read-only wrap-up-staleness verdict the FOUNDATION §6 monitor polls (and forge-emergency's repayment check reuses)
    - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; `--baseline`/`--update-baseline` compare against the committed `.forge-test-durations.json` (WARN-shaped, never gates); wired via the `/perf` skill
    - telemetry.py: `forge-telemetry` — process-tree RSS + host CPU sampler around a wrapped command; per-run log/plot artifacts, append-only `telemetry_history.log`, `--history` trend reader
    - forge_config.py: `forge-config` — lists every `[tool.forge.*]` key forge reads (value/default + description), names native sections like `[tool.interrogate]`, and advises on recommended-but-unset config; read-only, surfaced by `install-forge-bootstrap`
@@ -175,6 +175,8 @@ enforcement:
 - block_unverified_pr_create.sh: block `gh pr create` (draft or not) until the authored wrap-up names HEAD; only a self-verifying release/vX.Y.Z promotion branch exempts itself (FOUNDATION §6)
 - block_raw_ruff.sh: hard-block raw `ruff check` / `ruff format` from agents (no bypass — agents use forge-precommit)
 - keep_squash_comment_last.sh: PostToolUse — after any command that comments on a PR, re-post the squash-merge comment so it stays the newest one (silent no-op when it already is, or when the PR has none yet)
+- warn_stale_wrapup.sh: PostToolUse — after a `git push` on a branch with an open PR, print a reminder when `forge-pr-plan --freshness` says the posted wrap-up no longer names the head (silent when fresh, unknowable, or a refresh is already authored for HEAD)
+- wrapup_anchor.sh: sourced library, not a hook — the one `wrapup_names_head` predicate shared by `block_unverified_pr_create` and `warn_stale_wrapup`
 
 ## Plugin Manifest (`.claude-plugin/`)
 

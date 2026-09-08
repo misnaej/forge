@@ -104,7 +104,7 @@ Let forge write the per-repo enablement for you:
 
 ```bash
 install-forge-claude-settings        # writes/merges .claude/settings.json
-# install-forge-claude-settings --ref dev   # pin the plugin to a channel
+# install-forge-claude-settings --ref v1.2.0   # pin the plugin to a tag
 ```
 
 It's idempotent and **merge-preserving** (your other `.claude/settings.json`

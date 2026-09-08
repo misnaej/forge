@@ -7,7 +7,7 @@
       "source": {
         "source": "github",
         "repo": "misnaej/forge",
-        "ref": "dev"
+        "ref": "main"
       }
     }
   },

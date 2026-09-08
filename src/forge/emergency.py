@@ -49,7 +49,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from forge.git_utils import configure_cli_logging, emit, repo_root
-from forge.pr_delta import extract_verified_shas
+from forge.pr_plan import wrapup_freshness
 
 
 configure_cli_logging()
@@ -385,7 +385,8 @@ def _repayment_evidence(state: EmergencyState) -> tuple[int | None, bool]:
     field (``record-pr``) — free-text ledger comments are never trusted
     (anyone can comment on a public issue). Repaid means the PR's newest
     posted ``verified-at:`` SHA prefixes its current head — real
-    verification landed after delivery.
+    verification landed after delivery — the same freshness verdict the
+    §6 monitor polls, so the two never disagree on what "verified" means.
 
     Args:
         state: The sentinel state.
@@ -397,24 +398,7 @@ def _repayment_evidence(state: EmergencyState) -> tuple[int | None, bool]:
     """
     if state.pr_number is None:
         return None, False
-    pr = _gh(
-        "pr",
-        "view",
-        str(state.pr_number),
-        "--json",
-        "headRefOid,comments",
-    )
-    if pr.returncode != 0:
-        return state.pr_number, False
-    try:
-        data = json.loads(pr.stdout)
-    except json.JSONDecodeError:
-        return state.pr_number, False
-    shas = extract_verified_shas(
-        "\n".join(c.get("body", "") for c in data.get("comments", []))
-    )
-    head = data.get("headRefOid", "")
-    return state.pr_number, bool(shas and head.startswith(shas[-1]))
+    return state.pr_number, wrapup_freshness(state.pr_number).fresh is True
 
 
 def _cmd_end(root: Path) -> int:

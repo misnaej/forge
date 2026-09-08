@@ -2850,7 +2850,8 @@ def _record(env: dict[str, str]) -> str:
     """Return what the stubbed CLI was called with.
 
     Args:
-        env: The environment returned by :func:`_stub_squash_cli`.
+        env: An environment built by one of the `_stub_*_cli(s)` helpers,
+            carrying a `RECORD` path the stub appends its argv to.
 
     Returns:
         Recorded argv lines, or ``""`` when the stub never ran.
@@ -2947,3 +2948,235 @@ def test_keep_squash_last_registered_as_a_post_tool_hook() -> None:
     assert [group["matcher"] for group in post] == ["Bash"]
     commands = [hook["command"] for group in post for hook in group["hooks"]]
     assert any(_KEEP_SQUASH_LAST in cmd for cmd in commands)
+
+
+# --- warn_stale_wrapup.sh: post-push staleness reminder --------------------
+
+_WARN_STALE_WRAPUP = "warn_stale_wrapup.sh"
+
+
+def _stub_wrapup_freshness_clis(
+    tmp_path: Path,
+    *,
+    pr: str | None,
+    fresh: str | None,
+    verified_at: str = "0000000",
+    head_oid: str = "0123456789abcdef0123456789abcdef01234567",
+) -> dict[str, str]:
+    """Build `gh` and `forge-pr-plan` stubs on one PATH-prepended dir.
+
+    Args:
+        tmp_path: Directory to build the stubs and RECORD file under.
+        pr: The PR number the `gh pr view --json number --jq .number`
+            stub prints, or `None` to simulate no open PR — the stub then
+            exits 1 printing nothing, as `gh` does off a branch with no PR.
+        fresh: The `fresh` field value the `forge-pr-plan --freshness`
+            stub's JSON reports (`"true"` / `"false"`), or `None` to omit
+            the key entirely — the hook must read a missing key as
+            "cannot tell", never as staleness.
+        verified_at: The `latest_verified_at` field value in the stub's JSON.
+        head_oid: The `head_oid` field value in the stub's JSON.
+
+    Returns:
+        An environment whose `PATH` finds both stubs first; `RECORD`
+        points at the `forge-pr-plan` invocation log (read via `_record`).
+    """
+    stub_dir = tmp_path / "stub_bin"
+    stub_dir.mkdir()
+
+    gh_stub = stub_dir / "gh"
+    if pr is None:
+        gh_stub.write_text("#!/usr/bin/env bash\nexit 1\n")
+    else:
+        gh_stub.write_text(f"#!/usr/bin/env bash\necho '{pr}'\n")
+    gh_stub.chmod(0o755)
+
+    fresh_field = "" if fresh is None else f'"fresh": {fresh}, '
+    payload = (
+        f'{{{fresh_field}"latest_verified_at": "{verified_at}", '
+        f'"head_oid": "{head_oid}"}}'
+    )
+    plan_stub = stub_dir / "forge-pr-plan"
+    plan_stub.write_text(
+        f'#!/usr/bin/env bash\necho "$@" >> "$RECORD"\necho \'{payload}\'\n'
+    )
+    plan_stub.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{stub_dir}{os.pathsep}{env['PATH']}"
+    env["RECORD"] = str(tmp_path / "argv.log")
+    return env
+
+
+def test_warn_stale_wrapup_ignores_non_push_command(tmp_path: Path) -> None:
+    """SCENARIO: an ordinary Bash call with no `git push` in it.
+
+    MOCK SETUP: both CLIs stubbed and ready to answer.
+    EXPECTED BEHAVIOR: the hook exits before probing either CLI — this
+    hook fires on every Bash call, so the non-match path must cost nothing.
+    """
+    env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
+    proc = _run_hook_proc(_WARN_STALE_WRAPUP, "ls -la", cwd=tmp_path, env=env)
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+    assert _record(env) == ""
+
+
+def test_warn_stale_wrapup_prints_reminder_when_stale(tmp_path: Path) -> None:
+    """SCENARIO: a push lands after the posted wrap-up's verified HEAD moved.
+
+    MOCK SETUP: `gh pr view` reports PR #42 open; `forge-pr-plan
+    --freshness` reports `fresh: false` with a verified timestamp and a
+    newer head oid.
+    EXPECTED BEHAVIOR: the reminder names the PR, the verified timestamp,
+    the new head's short sha, and the `/pr` refresh command.
+    """
+    env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
+    proc = _run_hook_proc(
+        _WARN_STALE_WRAPUP, "git push origin my-branch", cwd=tmp_path, env=env
+    )
+    assert proc.returncode == 0
+    assert "PR #42" in proc.stdout
+    assert "0000000" in proc.stdout
+    assert "0123456" in proc.stdout
+    assert "/pr 42" in proc.stdout
+
+
+def test_warn_stale_wrapup_silent_when_fresh(tmp_path: Path) -> None:
+    """A `fresh: true` verdict means the posted wrap-up still describes HEAD."""
+    env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="true")
+    proc = _run_hook_proc(
+        _WARN_STALE_WRAPUP, "git push origin my-branch", cwd=tmp_path, env=env
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+
+
+def test_warn_stale_wrapup_silent_when_freshness_unknown(tmp_path: Path) -> None:
+    """SCENARIO: the classifier cannot tell (no wrap-up posted yet, gh flaked).
+
+    MOCK SETUP: the freshness JSON omits the `fresh` key entirely — the
+    hook must read a missing key as "cannot tell", not as staleness.
+    EXPECTED BEHAVIOR: no reminder — only an explicit `false` alerts.
+    """
+    env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh=None)
+    proc = _run_hook_proc(
+        _WARN_STALE_WRAPUP, "git push origin my-branch", cwd=tmp_path, env=env
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+
+
+def test_warn_stale_wrapup_silent_when_no_open_pr(tmp_path: Path) -> None:
+    """SCENARIO: the branch has no open PR yet — nothing to reference.
+
+    MOCK SETUP: the `gh pr view` stub exits 1 printing nothing, as `gh`
+    does off a branch with no PR.
+    EXPECTED BEHAVIOR: the hook exits before ever calling `forge-pr-plan`.
+    """
+    env = _stub_wrapup_freshness_clis(tmp_path, pr=None, fresh="false")
+    proc = _run_hook_proc(
+        _WARN_STALE_WRAPUP, "git push origin my-branch", cwd=tmp_path, env=env
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+    assert _record(env) == ""
+
+
+def test_warn_stale_wrapup_silent_when_forge_pr_plan_missing(tmp_path: Path) -> None:
+    """SCENARIO: `forge-pr-plan` is unreachable (older forge, broken install).
+
+    MOCK SETUP: PATH is stripped of every directory that resolves a real
+    `forge-pr-plan` binary — same technique as
+    `test_unverified_pr_create_light_mode_missing_cli_blocks` — with a
+    `gh` stub reporting an open PR prepended ahead of it.
+    EXPECTED BEHAVIOR: the hook's `command -v forge-pr-plan` guard exits
+    before ever calling `gh` — no reminder is printed.
+    """
+    stub_dir = tmp_path / "stub_bin"
+    stub_dir.mkdir()
+    gh_stub = stub_dir / "gh"
+    gh_stub.write_text("#!/usr/bin/env bash\necho '42'\n")
+    gh_stub.chmod(0o755)
+    stripped_path = os.pathsep.join(
+        d
+        for d in os.environ.get("PATH", "").split(os.pathsep)
+        if not (Path(d) / "forge-pr-plan").is_file()
+    )
+    env = {**os.environ, "PATH": f"{stub_dir}{os.pathsep}{stripped_path}"}
+    proc = _run_hook_proc(
+        _WARN_STALE_WRAPUP, "git push origin my-branch", cwd=tmp_path, env=env
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+
+
+def test_warn_stale_wrapup_suppressed_when_wrapup_names_head(
+    git_repo_with_commit: tuple[Path, str],
+    tmp_path: Path,
+) -> None:
+    """SCENARIO: `/pr` just pushed a refresh's fix commits ahead of posting.
+
+    MOCK SETUP: `code_health/pr_wrapup.md` already names the current HEAD
+    sha, even though the stubbed classifier would otherwise report stale.
+    EXPECTED BEHAVIOR: the wrap-up-names-HEAD short-circuit fires before
+    `forge-pr-plan` is ever consulted.
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup(repo, sha)
+    env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
+    proc = _run_hook_proc(
+        _WARN_STALE_WRAPUP, "git push origin my-branch", cwd=repo, env=env
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+    assert _record(env) == ""
+
+
+def test_warn_stale_wrapup_fires_in_compound_command(tmp_path: Path) -> None:
+    """SCENARIO: the push is chained after another command in one Bash call.
+
+    MOCK SETUP: same stale verdict as the plain-push case.
+    EXPECTED BEHAVIOR: GIT_ANCHOR matches `git push` after the `&&`
+    separator — the reminder still prints.
+    """
+    env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
+    proc = _run_hook_proc(
+        _WARN_STALE_WRAPUP,
+        "pytest -q && git push origin my-branch",
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode == 0
+    assert "PR #42" in proc.stdout
+
+
+def test_warn_stale_wrapup_ignores_quoted_mention(tmp_path: Path) -> None:
+    """A `git push` mention inside a quoted string body must not anchor.
+
+    MOCK SETUP: both CLIs stubbed and ready to answer; GIT_ANCHOR requires
+    `git` immediately after a shell separator, which text inside a quoted
+    argument never provides.
+    EXPECTED BEHAVIOR: the hook exits before probing either CLI.
+    """
+    env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
+    proc = _run_hook_proc(
+        _WARN_STALE_WRAPUP,
+        'echo "please run git push later"',
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+    assert _record(env) == ""
+
+
+def test_warn_stale_wrapup_registered_as_a_post_tool_hook() -> None:
+    """plugin.json wires the hook on PostToolUse(Bash), not as a blocker."""
+    manifest = json.loads(
+        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
+    )
+    post = manifest["hooks"]["PostToolUse"]
+    assert [group["matcher"] for group in post] == ["Bash"]
+    commands = [hook["command"] for group in post for hook in group["hooks"]]
+    assert any(_WARN_STALE_WRAPUP in cmd for cmd in commands)
