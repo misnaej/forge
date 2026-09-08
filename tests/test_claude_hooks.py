@@ -3120,7 +3120,7 @@ def test_raw_wrapup_post_allows_an_empty_command() -> None:
 
 
 def test_raw_wrapup_post_registered_in_plugin_json() -> None:
-    """Verify hook is wired into plugin.json's Bash PreToolUse group."""
+    """plugin.json wires the hook on PreToolUse(Bash), not as a passive check."""
     manifest = json.loads(
         (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
     )
