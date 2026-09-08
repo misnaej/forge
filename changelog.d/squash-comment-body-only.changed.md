@@ -1,5 +1,0 @@
-bump: major
-- **BREAKING: the squash-merge comment carries two fences** — the title in one, the 3-5 bullet body in the other, so each half is one copy into the matching field of GitHub's squash dialog with nothing to edit afterwards.
-- **A posting run now forces the PR title to match the `--title` it posts.** GitHub prefills the dialog's title field from the PR title, so the two can no longer drift; a rejected title edit still posts the comment but exits non-zero. Repos should set `squash_merge_commit_title = PR_TITLE`, or a single-commit PR prefills that commit's subject instead.
-- **BREAKING: `--patch` removed.** Rewriting the comment in place left it buried; a posting run now posts a fresh comment and deletes the ones it supersedes.
-- **The squash comment is kept as the PR's newest comment.** `forge-pr-squash-comment --pr <N>` with no bullets re-posts it at the bottom (quiet no-op when it is already newest), and the new `keep_squash_comment_last` Claude Code hook runs that automatically after any command that comments on a PR — review-thread replies included.
