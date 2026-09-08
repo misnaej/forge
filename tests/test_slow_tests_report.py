@@ -12,6 +12,7 @@ import pytest
 from forge import slow_tests_report
 from forge.slow_tests_report import (
     Duration,
+    _source_roots,
     durations_truncated,
     format_baseline_delta,
     format_coverage_ranking,
@@ -836,12 +837,20 @@ def test_format_coverage_ranking_no_timing_data_when_seen_but_no_durations() -> 
             False,
         ),
         ("==== slowest durations ====", False),
+        (
+            (
+                f"==== slowest {'9' * 5000} durations ====\n"
+                "1.00s call tests/test_a.py::test_one"
+            ),
+            False,
+        ),
     ],
     ids=[
         "hidden-trailer",
         "numbered-section-filled-to-limit",
         "numbered-section-under-limit",
         "bare-header-no-trailer",
+        "digit-run-too-long-to-be-a-real-header",
     ],
 )
 def test_durations_truncated(text: str, *, expected: bool) -> None:
@@ -850,7 +859,10 @@ def test_durations_truncated(text: str, *, expected: bool) -> None:
     A "durations hidden" trailer, or a numbered section that printed a
     full N entry rows, are both proof pytest may have cut more. A
     numbered section under its own limit, or the unnumbered
-    ``--durations=0`` header with no trailer, prove nothing was cut.
+    ``--durations=0`` header with no trailer, prove nothing was cut. A
+    digit run longer than any real ``--durations=N`` is not a header at
+    all — the function degrades to ``False`` rather than raising on a
+    junk line.
 
     Args:
         text: The raw pytest durations section text to check.
@@ -938,3 +950,29 @@ def test_main_coverage_json_missing_export_degrades_gracefully(
     written = out.read_text(encoding="utf-8")
     assert "no usable coverage export" in written
     assert "ranking skipped" in written
+
+
+# ---------------------------------------------------------------------------
+# _source_roots
+# ---------------------------------------------------------------------------
+
+
+def _exit_as_if_no_git_repo() -> None:
+    """Fake ``repo_root()``'s behavior outside a git repo."""
+    raise SystemExit(1)
+
+
+def test_source_roots_degrades_to_empty_list_when_repo_root_exits(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A ``repo_root()`` that exits (no git repo) degrades to ``[]``, not a crash.
+
+    ``repo_root()`` calls ``sys.exit(1)`` outside a git repo; this
+    reporter's always-exit-0 contract must hold on the ``--coverage-json``
+    path too, so the ``SystemExit`` is caught and reported as a warning
+    rather than propagated.
+    """
+    monkeypatch.setattr("forge.slow_tests_report.repo_root", _exit_as_if_no_git_repo)
+    with caplog.at_level(logging.WARNING):
+        assert _source_roots() == []
+    assert "not a git repo" in caplog.text

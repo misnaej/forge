@@ -94,7 +94,11 @@ _CONTEXT_PHASE_SEP = "|"
 # exactly N rows — more may have been cut). A numbered header alone
 # proves nothing: `--durations=25` prints that header for a 3-test run.
 _HIDDEN_RE = re.compile(r"durations?\s*<\s*[\d.]+s\s+hidden", re.IGNORECASE)
-_LIMIT_HEADER_RE = re.compile(r"slowest\s+(\d+)\s+durations", re.IGNORECASE)
+# The digit run is bounded, not open: `int()` raises above CPython's
+# 4300-digit conversion limit, and this parses a caller-supplied log, so
+# an unbounded `\d+` turns a junk header into a crash. Six digits is far
+# past any real `--durations=N`; a longer run simply is not a header.
+_LIMIT_HEADER_RE = re.compile(r"slowest\s+(\d{1,6})\s+durations", re.IGNORECASE)
 
 # A durations section header, e.g. "==== slowest 25 durations ====" or,
 # under --durations=0, "==== slowest durations ====".
