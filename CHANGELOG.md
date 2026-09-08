@@ -20,6 +20,61 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v5.2.0 — 2026-09-08
+
+### Features
+- **`block_install_deps` now covers pixi** — `pixi add` / `remove` / `update` / `upgrade` / `global install` and the `pixi run pip install` wrapper are blocked, and `pixi` is a name the `[tool.forge.hooks] block_install_deps` list understands (a consumer repo could only narrow that list, never extend it).
+- **pixi is scoped to its writes, not to the word "install".** `pixi run`, `pixi shell` and `pixi install` materialise a gitignored `.pixi/` from the committed lock — deterministic, per-checkout, no shared environment to damage — so they stay allowed and an agent can still run the test suite. A bare `pixi run` re-solves and rewrites the lock when the manifest moved, so the hook allows it with a one-line note recommending `--locked`; `pixi list` / `info` / `tree` join the read-only fast-path.
+
+### Changes
+- **Assembly under existing tags** — `forge-changelog release` / `release-pr` / `next-version` are tag-aware: a pending fragment already inside a `v*` tag's tree assembles under that tag's heading (dated when the tag was cut) and never bumps again; only unreleased fragments mint a version, and an all-released backlog mints nothing while syncing `plugin.json` to the latest tag. `git_utils` gains `v_tags` and `tag_commit_date`. The scheduled assembly workflow now prints `release-pr`'s error instead of exiting 2 silently.
+
+## v5.1.0 — 2026-09-08
+
+### Features
+- **Stale wrap-ups are now noticed after posting** — `forge-pr-plan --freshness --pr N` reports whether a PR's newest posted `verified-at:` still names its head (`fresh: true|false|null`, `null` = skip), and the FOUNDATION §6 background PR monitor watches it as a fifth signal, alerting once per new head and never posting the refresh itself; `forge-emergency`'s repayment check reuses the same verdict.
+- **A push that outdates the wrap-up is told so on the spot** — the new `warn_stale_wrapup` Claude Code hook runs the same freshness verdict after every agent `git push` and prints the refresh instruction; the create-time gate and this hook share one `wrapup_anchor.sh` predicate.
+
+## v5.0.0 — 2026-09-08
+
+### Changes
+- **BREAKING: the squash-merge comment carries two fences** — the title in one, the 3-5 bullet body in the other, so each half is one copy into the matching field of GitHub's squash dialog with nothing to edit afterwards.
+- **A posting run now forces the PR title to match the `--title` it posts.** GitHub prefills the dialog's title field from the PR title, so the two can no longer drift; a rejected title edit still posts the comment but exits non-zero. Repos should set `squash_merge_commit_title = PR_TITLE`, or a single-commit PR prefills that commit's subject instead.
+- **BREAKING: `--patch` removed.** Rewriting the comment in place left it buried; a posting run now posts a fresh comment and deletes the ones it supersedes.
+- **The squash comment is kept as the PR's newest comment.** `forge-pr-squash-comment --pr <N>` with no bullets re-posts it at the bottom (quiet no-op when it is already newest), and the new `keep_squash_comment_last` Claude Code hook runs that automatically after any command that comments on a PR — review-thread replies included.
+
+## v4.1.1 — 2026-09-03
+
+### Fixes
+- **One-fragment-per-PR gate no longer blocks conflicted base merges** — a fragment now counts as branch-added only when it is both added since the fork point and absent from the base branch's tip tree, so the fragments a base merge brings in (pre-commit fires while `HEAD` is still the pre-merge commit) are never mistaken for the PR's own.
+
+## v4.1.0 — 2026-09-03
+
+### Features
+- **Scheduled assembly PRs** — `forge-changelog release-pr` automates the fragments-mode assembly PR end to end (guard → branch `chore/assemble-vX.Y.Z` → assemble + manifest sync → commit → push → PR with in-body versioning-gate evidence), and the new `assemble-release` workflow runs it weekly (plus manual dispatch). Idempotent and race-tolerant: an open assembly PR or nothing pending is a quiet no-op. Merging the PR stays a human decision.
+
+## v4.0.0 — 2026-09-03
+
+### Changes
+- **Tag-per-merge auto-tagging** — `forge-changelog auto-tag` (wired into the tag-release workflow) reads the last tag, takes the strongest semver level among the fragments merged since it (tag-tree membership marks consumption), bumps, and pushes the annotated tag — no commit to the base branch, no silent path: with `[tool.forge.release].auto = "merge"` every fragment-carrying merge is tagged the moment its CI passes; otherwise the job emits a loud pending-fragments warning. The fragment gate now also enforces one `changelog.d/` file per PR (extra bullets share it; strongest bump level wins). The version guard now accepts a manifest at or behind the latest tag in fragments mode (the manifest syncs at assembly PRs).
+- **Dual-track machinery deleted** — forge is single-track only. Removed: `forge-check-main-tags` and `verify-forge-changelog-history` CLIs, the `/promote` skill, `forge-next-prep --promotion-status` / `--target` and the pending-promotion advisory, the `release_tag_guard` and `changelog_history` pre-commit steps, the era-gap (release-locked tree) pre-commit suppression, `[tool.forge].dev_branch` and `[tool.forge.promotion].hold_newest_minor` config keys, and the wrap-up hook's `release/vX.Y.Z` promotion self-exemption. The Claude hooks now protect `base_branch` only (default `main`). Consumers that set `dev_branch` must drop the key; everything else is unaffected.
+
+## v3.42.0 — 2026-09-03
+
+### Features
+- **`forge-emergency` — one-shot deferred-verification bypass with a public ledger.** `start --reason` files a tier-1 ledger issue, then arms exactly ONE `wrapup-mode: emergency` publication (the wrap-up gate consumes the sentinel; TTL backstops an unused arm). Pre-commit and every safety hook stay fully enforced — only the reporter/wrap-up ceremony defers. Repayment after delivery: the PR's retroactive verification closes the ledger (`end`).
+
+## v3.41.0 — 2026-09-03
+
+### Features
+- **Fragment-driven versioning — the assembler owns the release version.** In fragments mode, PRs stop bumping `plugin.json`: the manifest parks at the latest tag between releases (the rolling-next guard now accepts equality when every pending fragment is valid), and the bump intent lives only in each PR's conflict-free `changelog.d/` fragment. Two new `forge-changelog` subcommands close the loop: `next-version` prints the computed next release (latest tag + strongest pending bump level), and `release` assembles the changelog under that version, writes the manifest to it (single writer; skipped in manifest-less tag-versioned repos), and stages everything for an ordinary release PR — tag-on-merge cuts the tag. `forge-next-prep` surfaces a pending-fragment advisory so accumulating fragments prompt a release.
+- **Action:** tag-versioned repos: your existing `forge-release --from-changelog` tagger needs no change — `release` writes the real heading it reads. But release cadence shifts from tag-per-merge to tag-per-release-PR, and any guard that fails your tagger while fragments are pending must be removed (it would fire on every ordinary merge).
+
+## v3.40.1 — 2026-09-02
+
+### Changes
+- **forge is single-track now** — the dual-track dev/main model is retired: every PR targets `main`, every merge tags, and the `@dev` channel is deprecated (pin `@main`, or a tag for stability). Promotion machinery self-skips (`dev_branch == base_branch`) and will be deleted in a follow-up major. Patch, not major: no shipped capability changes — the `/next` skill's promotion phase was forge's own dogfood instruction (consumers substitute their own release step, and the underlying CLI advisory still fires for dual-track consumers).
+
 ## v3.40.0 — 2026-09-02
 
 ### Features
