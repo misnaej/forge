@@ -217,17 +217,25 @@ Consequences, by design:
 - The trade-off: the changelog is no longer release-ready at all times —
   which is exactly why the mode is opt-in.
 
-**Releasing in fragments mode** — the version is assembler-owned: the
-next release is always `latest v* tag + max(bump level over pending
-fragments)`, so no PR ever carries a version number.
+**Releasing in fragments mode** — the version is assembler-owned and
+tag-aware: a pending fragment already inside a `v*` tag's tree was
+released by that tag (tag-per-merge) and assembles under that tag's
+heading, dated when the tag was cut; only fragments no tag holds mint a
+new version, `latest v* tag + max(bump level over the unreleased
+fragments)`. No PR ever carries a version number. When every pending
+fragment is already tagged, nothing is minted — the assembly backfills
+the per-tag headings and syncs the manifest to the latest tag.
 
 - `forge-changelog next-version` prints the computed next version and
-  its level (`v1.3.0 (minor)`); exit 2 when there is no tag, nothing
-  pending, or an invalid fragment.
-- `forge-changelog release` computes the version, assembles
-  `CHANGELOG.md` under it, and stages the result (fragment deletions
-  included). Plugin repos: it also rewrites `.claude-plugin/plugin.json`
-  to the computed version and stages it — the manifest's single writer.
+  its level (`v1.3.0 (minor)`, with ` + N fragment(s) already under M
+  tag(s)` when a backfill rides along, or `v1.2.0 (already tagged — …;
+  nothing to mint)`); exit 2 when there is no tag, nothing pending, or
+  an invalid fragment.
+- `forge-changelog release` computes the plan, assembles `CHANGELOG.md`
+  (one heading per already-cut tag, then the minted heading on top), and
+  stages the result (fragment deletions included). Plugin repos: it also
+  rewrites `.claude-plugin/plugin.json` to the plan's version and stages
+  it — the manifest's single writer.
   Tag-versioned (manifest-less) repos: no manifest write; use the
   printed version for the tag (`git tag vX.Y.Z && git push origin
   vX.Y.Z`, or `forge-release`). It never commits — branch, run it,
