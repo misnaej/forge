@@ -185,11 +185,12 @@ LOW = pre-existing baseline; REVIEW = visible exemption. Mechanics:
 
 ### Cost lens (judgment check, no CLI)
 
-FOUNDATION §18's goals are reviewed here, never gated. A diff that adds
-or edits tests: does it rebuild per test what could be built once, does
-a parametrized variant multiply a real cost, do its mocks cover the
-executed path? A diff touching a known hot path: ask for the
-same-machine before/after number — the number, not `forge:perf-optimizer`'s
+Review FOUNDATION §18's goals. A diff that adds or edits tests: does it
+rebuild per test what could be built once, does a parametrized variant
+multiply a real cost, is the executed path so mocked that the runtime
+buys nothing unique? A diff touching a path already known hot — from a
+profile or a prior `forge:perf-optimizer` report the author cites — ask
+for the same-machine before/after number. The number, not that agent's
 full protocol, which stays opt-in.
 
 ### Wrapper justification (judgment check, no CLI)
@@ -292,8 +293,8 @@ Full Review) above.
 - Be constructive — suggest fixes, not just complaints
 - Prioritize — distinguish CRITICAL / HIGH / MEDIUM / LOW
 - If a recipe surfaced zero findings, state that explicitly in the report
-- Never silently drop the claim-verification stage or the
-  wrapper-justification check
+- Never silently drop the claim-verification stage, the
+  wrapper-justification check, or the cost lens
 - **Verify before calling a name "stale" / "old" / "leftover"**: `grep`
   first — a name resolving to a real, distinct symbol is current even
   when a similar name also exists; flagging a live symbol is a false

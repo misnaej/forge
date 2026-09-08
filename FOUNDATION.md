@@ -962,9 +962,11 @@ correctness extensions are specified in **[`forge-docs/smart-test.md`](forge-doc
 
 ## 18. Cost Goals — Test Economy & Library Performance
 
-Correctness, safety and design carry standing goals above; runtime cost
-carries none, so it surfaces only once someone notices a slow run. Two
-goals, held the same way as the rest.
+Cost already has machinery above — §8 retires development tests, §17
+selects by depth, and `forge-slow-tests-report` warns on duration
+regressions without gating. What it has never had is a *goal* those
+mechanisms serve, so cost surfaces only once someone notices a slow
+run. Two, held the same way as the rest.
 
 **Test economy.** A test's runtime is justified by what only it detects.
 When a test is slow, the question is what unique behaviour would go
