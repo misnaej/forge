@@ -95,6 +95,11 @@
           },
           {
             "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_raw_wrapup_post.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_fixer_recon.sh",
             "timeout": 5
           }

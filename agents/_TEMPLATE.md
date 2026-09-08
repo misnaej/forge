@@ -139,7 +139,9 @@ what was examined or a per-recipe breakdown of zero findings. Prose is
 reserved for findings: what, where, and (in wrap-ups) the disposition —
 fixed in `<sha>` / deferred to `#N` / accepted with reason. A wrap-up
 quotes the reporters' PASS lines; verbosity scales with findings, never
-with the number of checks run.
+with the number of checks run. `forge-pr-wrapup validate` is the
+enforcer: it refuses a wrap-up that narrates a clean check, carries more
+than one summary line, or exceeds its findings-scaled word budget.
 
 ## Pre-write agent header contract
 

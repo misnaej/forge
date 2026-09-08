@@ -10,13 +10,12 @@
 
 from __future__ import annotations
 
-import json
 import sys
 
 import pytest
 
 from forge import pr_squash_comment as mod
-from tests.conftest import FakeProc
+from tests.conftest import FakeProc, page_json
 
 
 VALID_TITLE = "feat(#42): example squash title"
@@ -31,24 +30,6 @@ OLD_SQUASH_COMMENT = {
     "body": f"{mod.SQUASH_MARKER}\nold body",
     "created_at": "2026-01-01T00:00:00Z",
 }
-
-UNRELATED_COMMENT = {
-    "id": 777,
-    "body": "a human wrote this",
-    "created_at": "2026-01-02T00:00:00Z",
-}
-
-
-def _page(*comments: dict[str, object]) -> str:
-    """Render one ``gh api --paginate --jq '[...]'`` output page.
-
-    Args:
-        *comments: Comment mappings the fake endpoint should return.
-
-    Returns:
-        A single JSON array line, as gh emits per page.
-    """
-    return json.dumps(list(comments))
 
 
 # ---------------------------------------------------------------------------
@@ -155,79 +136,16 @@ def test_validate_word_count_rejects_above_cap() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "blob",
-    [
-        "Generated with Claude",
-        "Co-authored-by: Claude <noreply@anthropic.com>",
-        "🤖",
-        "AI-generated info",
-        "Assisted by AI on this PR",
-        "Paired with Claude Code today",
-        "This commit was authored by Claude",
-    ],
-)
-def test_validate_no_ai_attribution_rejects_known_patterns(blob: str) -> None:
-    """Any AI-attribution phrase in title or bullets raises via the phrase layer.
-
-    Args:
-        blob: A string containing a known AI-attribution phrase.
-    """
-    with pytest.raises(mod.ValidationError, match="pattern detected"):
-        mod._validate_no_ai_attribution(VALID_TITLE, [*VALID_BULLETS, blob])
-
-
 def test_validate_no_ai_attribution_accepts_clean_message() -> None:
-    """A message free of attribution patterns passes."""
+    """A message free of attribution patterns passes.
+
+    Thin delegation test: the phrase layer, the path-shaped exemption,
+    and the bare-vendor-token backstop are ``gh_comments.validate_no_ai_attribution``'s
+    own contract, covered in ``tests/test_gh_comments.py``. This only pins
+    that ``_validate_no_ai_attribution`` joins title + bullets and forwards
+    to the shared gate.
+    """
     mod._validate_no_ai_attribution(VALID_TITLE, VALID_BULLETS)
-
-
-@pytest.mark.parametrize(
-    "blob",
-    [
-        "See CLAUDE.md for the exact policy",
-        "Path is .claude/settings.json",
-        "Regenerate `CLAUDE.md`.",
-        "Wrappers live under .claude",
-        "Hooks live in claude-hooks/block_claude_attribution.sh",
-        "Config lives in anthropic.yml",
-    ],
-)
-def test_validate_no_ai_attribution_accepts_path_shaped_mentions(blob: str) -> None:
-    """A path- or filename-shaped mention of a vendor term does not raise.
-
-    Args:
-        blob: A string containing a path- or filename-shaped vendor mention.
-    """
-    mod._validate_no_ai_attribution(VALID_TITLE, [*VALID_BULLETS, blob])
-
-
-@pytest.mark.parametrize(
-    "blob",
-    [
-        "Thanks Claude.",
-        "(Claude)",
-        "Built with Anthropic",
-        "Thanks Anthropic!",
-        "See generated-with/claude for context",
-        "Made-by.claude helped here",
-        "credit/anthropic.ai assisted",
-        "Refactored via Claude.ai suggestions",
-        "Built with Anthropic.Claude",
-        "This was co.authored.by.Claude",
-    ],
-)
-def test_validate_no_ai_attribution_rejects_bare_vendor_mentions(blob: str) -> None:
-    """A bare (non-path-shaped) vendor mention raises via the token backstop.
-
-    None of these match an :data:`AI_ATTRIBUTION_PATTERNS` phrase — the
-    backstop's ``(in '<token>')`` message detail distinguishes the layer.
-
-    Args:
-        blob: A string containing a bare AI-vendor mention.
-    """
-    with pytest.raises(mod.ValidationError, match=r"\(in '"):
-        mod._validate_no_ai_attribution(VALID_TITLE, [*VALID_BULLETS, blob])
 
 
 # ---------------------------------------------------------------------------
@@ -281,45 +199,34 @@ def test_build_body_has_exactly_two_fenced_blocks() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_list_squash_comments_keeps_only_marked_comments(
+def test_list_squash_comments_delegates_to_shared_marker_listing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SCENARIO: a PR carries one forge squash comment among human ones.
+    """``_list_squash_comments`` is a thin wrapper over the shared marker listing.
 
-    MOCK SETUP: ``gh_api`` returns a single page holding both.
-    EXPECTED BEHAVIOR: only the marker-carrying comment comes back.
+    Paging, filtering, and the "listing failed" contract live in and are
+    covered by ``forge.gh_comments.list_marker_comments`` (see
+    ``tests/test_gh_comments.py``); this only pins the delegation — the
+    right PR number and :data:`mod.SQUASH_MARKER` reach the shared call.
     """
-    monkeypatch.setattr(
-        mod, "gh_api", lambda *_a, **_kw: _page(OLD_SQUASH_COMMENT, UNRELATED_COMMENT)
-    )
-    found = mod._list_squash_comments(61)
-    assert found is not None
-    assert [c["id"] for c in found] == [555]
+    calls: list[tuple[int, str]] = []
 
+    def _fake_list(pr_number: int, marker: str) -> list[dict[str, object]]:
+        """Record the delegation call and return a canned result.
 
-def test_list_squash_comments_spans_pages(monkeypatch: pytest.MonkeyPatch) -> None:
-    """SCENARIO: ``--paginate`` emits one JSON array per page.
+        Args:
+            pr_number: PR number passed through by the caller.
+            marker: Marker string passed through by the caller.
 
-    MOCK SETUP: ``gh_api`` returns two array lines, one marked comment each.
-    EXPECTED BEHAVIOR: both pages are flattened into one ordered list.
-    """
-    second = {**OLD_SQUASH_COMMENT, "id": 556, "created_at": "2026-01-03T00:00:00Z"}
-    monkeypatch.setattr(
-        mod,
-        "gh_api",
-        lambda *_a, **_kw: f"{_page(OLD_SQUASH_COMMENT)}\n{_page(second)}",
-    )
-    found = mod._list_squash_comments(61)
-    assert found is not None
-    assert [c["id"] for c in found] == [555, 556]
+        Returns:
+            A single canned comment mapping.
+        """
+        calls.append((pr_number, marker))
+        return [OLD_SQUASH_COMMENT]
 
-
-def test_list_squash_comments_reports_read_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A failed listing returns None — distinct from 'no squash comment'."""
-    monkeypatch.setattr(mod, "gh_api", lambda *_a, **_kw: None)
-    assert mod._list_squash_comments(61) is None
+    monkeypatch.setattr(mod, "list_marker_comments", _fake_list)
+    assert mod._list_squash_comments(61) == [OLD_SQUASH_COMMENT]
+    assert calls == [(61, mod.SQUASH_MARKER)]
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +257,7 @@ def _fake_api_with_title(pr_title: str) -> object:
         """
         if path.endswith("/pulls/61"):
             return pr_title
-        return _page(OLD_SQUASH_COMMENT)
+        return page_json(OLD_SQUASH_COMMENT)
 
     return _call
 
@@ -441,6 +348,11 @@ def test_main_pr_mode_posts_then_deletes_superseded(
         return FakeProc()
 
     monkeypatch.setattr(mod, "gh_api", _fake_api_with_title(VALID_TITLE))
+    # `sync_pr_title`'s PR-title read still runs through pr_squash_comment's
+    # own `gh_api` binding, but the comment listing runs through
+    # `gh_comments.list_marker_comments`, which reads `gh_comments`'s own
+    # `gh_api` binding — a separate name, patched separately.
+    monkeypatch.setattr("forge.gh_comments.gh_api", _fake_api_with_title(VALID_TITLE))
     monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fake_run)
     sys.argv.extend(
         [
@@ -484,6 +396,9 @@ def test_main_pr_mode_survives_cleanup_failure(
         return FakeProc()
 
     monkeypatch.setattr(mod, "gh_api", _fake_api_with_title(VALID_TITLE))
+    monkeypatch.setattr(
+        "forge.gh_comments.gh_api", lambda *_a, **_kw: page_json(OLD_SQUASH_COMMENT)
+    )
     monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fake_run)
     sys.argv.extend(
         [
@@ -524,6 +439,11 @@ def test_main_pr_mode_forces_a_stale_pr_title_to_match(
         return FakeProc()
 
     monkeypatch.setattr(mod, "gh_api", _fake_api_with_title("feat: an older title"))
+    # See the same comment in test_main_pr_mode_posts_then_deletes_superseded:
+    # the comment listing reads `gh_comments`'s own `gh_api` binding.
+    monkeypatch.setattr(
+        "forge.gh_comments.gh_api", _fake_api_with_title("feat: an older title")
+    )
     monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fake_run)
     sys.argv.extend(
         [
@@ -643,13 +563,13 @@ def test_main_ensure_last_reposts_when_buried(
         jq = args[-1] if args else ""
         if "issues/61/comments" in path:
             return (
-                _page(OLD_SQUASH_COMMENT)
+                page_json(OLD_SQUASH_COMMENT)
                 if "body" in jq
-                else _page("2026-01-01T00:00:00Z")
+                else page_json("2026-01-01T00:00:00Z")
             )
         if "pulls/61/comments" in path:
-            return _page("2026-02-01T00:00:00Z")
-        return _page()
+            return page_json("2026-02-01T00:00:00Z")
+        return page_json()
 
     def _fake_run(cmd: list[str], **_kw: object) -> FakeProc:
         """Capture cmd; return a zero-exit stub.
@@ -665,6 +585,9 @@ def test_main_ensure_last_reposts_when_buried(
         return FakeProc()
 
     monkeypatch.setattr(mod, "gh_api", _fake_api)
+    # `ensure_last`'s comment listing reads `gh_comments`'s own `gh_api`
+    # binding (see the same comment above on the posting test).
+    monkeypatch.setattr("forge.gh_comments.gh_api", _fake_api)
     monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fake_run)
     sys.argv.extend(["--pr", "61"])
     assert mod.main() == 0
@@ -698,11 +621,11 @@ def test_main_ensure_last_is_quiet_noop_when_already_newest(
         jq = args[-1] if args else ""
         if "issues/61/comments" in path:
             return (
-                _page(OLD_SQUASH_COMMENT)
+                page_json(OLD_SQUASH_COMMENT)
                 if "body" in jq
-                else _page("2026-01-01T00:00:00Z")
+                else page_json("2026-01-01T00:00:00Z")
             )
-        return _page()
+        return page_json()
 
     def _fail(*_a: object, **_kw: object) -> FakeProc:
         """Fail the test if any gh write is attempted.
@@ -721,6 +644,7 @@ def test_main_ensure_last_is_quiet_noop_when_already_newest(
         raise AssertionError(msg)
 
     monkeypatch.setattr(mod, "gh_api", _fake_api)
+    monkeypatch.setattr("forge.gh_comments.gh_api", _fake_api)
     monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fail)
     sys.argv.extend(["--pr", "61"])
     assert mod.main() == 0
@@ -731,6 +655,7 @@ def test_main_ensure_last_errors_without_an_existing_comment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A PR with no forge squash comment cannot be re-ordered — exit 1."""
-    monkeypatch.setattr(mod, "gh_api", lambda *_a, **_kw: _page())
+    monkeypatch.setattr(mod, "gh_api", lambda *_a, **_kw: page_json())
+    monkeypatch.setattr("forge.gh_comments.gh_api", lambda *_a, **_kw: page_json())
     sys.argv.extend(["--pr", "61"])
     assert mod.main() == 1

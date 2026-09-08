@@ -3060,6 +3060,75 @@ def test_keep_squash_last_registered_as_a_post_tool_hook() -> None:
     assert any(_KEEP_SQUASH_LAST in cmd for cmd in commands)
 
 
+# --- block_raw_wrapup_post.sh: the wrap-up is posted only via the CLI ------
+
+_RAW_WRAPUP_POST = "block_raw_wrapup_post.sh"
+
+
+def test_raw_wrapup_post_blocks_a_raw_gh_pr_comment() -> None:
+    """A raw `gh pr comment --body-file` call bypasses the wrap-up gate."""
+    assert (
+        _run_hook(
+            _RAW_WRAPUP_POST, "gh pr comment 5 --body-file code_health/pr_wrapup.md"
+        )
+        == 2
+    )
+
+
+def test_raw_wrapup_post_blocks_a_raw_gh_api_patch() -> None:
+    """The same body posted by hand through `gh api -X PATCH` is blocked too."""
+    assert (
+        _run_hook(
+            _RAW_WRAPUP_POST,
+            "gh api -X PATCH repos/o/r/issues/comments/1 "
+            "-f body=@code_health/pr_wrapup.md",
+        )
+        == 2
+    )
+
+
+def test_raw_wrapup_post_blocks_when_chained_after_another_command() -> None:
+    """The gate applies wherever the raw post appears in a compound command."""
+    assert (
+        _run_hook(
+            _RAW_WRAPUP_POST,
+            "git status && gh pr comment 5 --body-file code_health/pr_wrapup.md",
+        )
+        == 2
+    )
+
+
+def test_raw_wrapup_post_allows_a_raw_post_of_an_unrelated_file() -> None:
+    """A raw `gh pr comment` of a non-wrap-up file is not blocked."""
+    assert _run_hook(_RAW_WRAPUP_POST, "gh pr comment 5 --body-file other.md") == 0
+
+
+def test_raw_wrapup_post_allows_the_cli_itself() -> None:
+    """`forge-pr-wrapup post` is the sanctioned path and is never blocked."""
+    assert (
+        _run_hook(
+            _RAW_WRAPUP_POST,
+            "forge-pr-wrapup post --pr 5 --body-file code_health/pr_wrapup.md",
+        )
+        == 0
+    )
+
+
+def test_raw_wrapup_post_allows_an_empty_command() -> None:
+    """No command in the payload is a no-op, not a block."""
+    assert _run_hook(_RAW_WRAPUP_POST, "") == 0
+
+
+def test_raw_wrapup_post_registered_in_plugin_json() -> None:
+    """Verify hook is wired into plugin.json's Bash PreToolUse group."""
+    manifest = json.loads(
+        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
+    )
+    pre_tool_use = manifest["hooks"]["PreToolUse"]
+    commands = [hook["command"] for group in pre_tool_use for hook in group["hooks"]]
+    assert any(_RAW_WRAPUP_POST in cmd for cmd in commands)
+
+
 # --- warn_stale_wrapup.sh: post-push staleness reminder --------------------
 
 _WARN_STALE_WRAPUP = "warn_stale_wrapup.sh"
