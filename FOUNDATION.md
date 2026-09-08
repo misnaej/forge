@@ -16,7 +16,7 @@ Design Principles · 8 Documentation Standards · 9 Logging Pattern · 10
 Continuation Protocol · 11 Agent Boundary Protocol · 12 Single Source of Truth ·
 13 `code_health/` Convention · 14 Issue Tracking & Triage · 15 Runtime Context
 Awareness · 16 Extending shipped agents/skills/CLIs · 17 Smart-test depth
-model · 18 Cost goals.
+model · 18 Cost Goals.
 
 ---
 

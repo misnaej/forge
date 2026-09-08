@@ -241,6 +241,11 @@ verified-at: <sha>   (PR #<num>, branch <branch>)
  layer, and the fix-the-interface alternative per FOUNDATION §7 —
  or "None — no wrapper-shaped diffs">
 
+### Cost lens
+<per FOUNDATION §18: test-cost findings on a diff that adds or edits
+ tests, the before/after number asked for on a hot-path diff, or
+ "None — no cost-relevant diff">
+
 ### Repo-specific rules
 <findings against extras passed by the wrapper, if any>
 
