@@ -20,7 +20,7 @@ plugin channel tracks the pip channel) → ``main``.
 Usage:
 
 - ``install-forge-claude-settings`` — write / update the block
-- ``install-forge-claude-settings --ref dev`` — pin the marketplace to ``@dev``
+- ``install-forge-claude-settings --ref v1.2.0`` — pin the marketplace to a tag
 - ``install-forge-claude-settings --check`` — verify without writing (CI / drift)
 """
 

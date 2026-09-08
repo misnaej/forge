@@ -2850,7 +2850,8 @@ def _record(env: dict[str, str]) -> str:
     """Return what the stubbed CLI was called with.
 
     Args:
-        env: The environment returned by :func:`_stub_squash_cli`.
+        env: An environment built by one of the `_stub_*_cli(s)` helpers,
+            carrying a `RECORD` path the stub appends its argv to.
 
     Returns:
         Recorded argv lines, or ``""`` when the stub never ran.
