@@ -85,12 +85,16 @@ def load_export(coverage_json: Path) -> dict[str, object] | None:
     """
     if not coverage_json.is_file():
         logger.warning(
-            "coverage: %s not found — skipping coverage validation.", coverage_json
+            "coverage: %s not found — skipping the coverage-backed step.",
+            coverage_json,
         )
         return None
     try:
         data = json.loads(coverage_json.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
+        # RecursionError is a RuntimeError, not a ValueError: deeply
+        # nested JSON blows the parser's stack without being "invalid",
+        # and both callers promise to degrade rather than raise.
         logger.warning("coverage: could not parse %s: %s", coverage_json, exc)
         return None
     return data if isinstance(data, dict) else None

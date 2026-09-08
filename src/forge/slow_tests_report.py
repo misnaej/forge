@@ -88,12 +88,13 @@ WORTH_FLOOR_SECONDS = 0.01
 # own --durations output uses. Both sides of the join must therefore be
 # normalized through `nodeid_base` or the join silently finds nothing.
 _CONTEXT_PHASE_SEP = "|"
-# pytest caps its durations section unless run with `--durations=0`:
-# a numbered header, or the "N durations < X s hidden" trailer.
-_TRUNCATION_RE = re.compile(
-    r"slowest\s+\d+\s+durations|durations?\s*<\s*[\d.]+s\s+hidden",
-    re.IGNORECASE,
-)
+# pytest hides entries two ways, and only these two prove it happened:
+# a "N durations < Xs hidden" trailer (the --durations-min floor), or a
+# numbered section that filled its own limit (`--durations=N` printing
+# exactly N rows — more may have been cut). A numbered header alone
+# proves nothing: `--durations=25` prints that header for a 3-test run.
+_HIDDEN_RE = re.compile(r"durations?\s*<\s*[\d.]+s\s+hidden", re.IGNORECASE)
+_LIMIT_HEADER_RE = re.compile(r"slowest\s+(\d+)\s+durations", re.IGNORECASE)
 
 # A durations section header, e.g. "==== slowest 25 durations ====" or,
 # under --durations=0, "==== slowest durations ====".
@@ -380,9 +381,16 @@ def unique_statements(
         in_scope = _in_source_roots(str(fname), source_roots)
         contexts = info.get("contexts")
         for ctx_list in (contexts if isinstance(contexts, dict) else {}).values():
+            if not isinstance(ctx_list, list):
+                continue
             # A line records one context per phase, so the same test can
             # appear twice; collapse to identities before asking "one?".
-            owners = {nodeid_base(ctx) for ctx in ctx_list if ctx}
+            # Non-string entries are skipped rather than coerced: this
+            # reporter's always-exit-0 contract outranks salvaging a
+            # malformed export, and CI runs it under `if: always()`.
+            owners = {
+                nodeid_base(ctx) for ctx in ctx_list if isinstance(ctx, str) and ctx
+            }
             seen |= owners
             if in_scope and len(owners) == 1:
                 owner = next(iter(owners))
@@ -390,8 +398,18 @@ def unique_statements(
     return unique, seen
 
 
-def _worth_row(base: str, seconds: float, unique: int | None) -> tuple[float, str]:
+def _worth_row(
+    base: str, seconds: float, unique: int | None
+) -> tuple[tuple[int, float], str]:
     """Render one ranking row and the key it sorts on.
+
+    The key is ``(tier, value)`` because the three row kinds answer
+    different questions and must not compete on one number: a ranked
+    ratio is a verdict, "too fast to rank" is a verdict whose ratio
+    would be noise, and "no coverage data" is not a verdict at all.
+    Tiering keeps every real ratio ahead of both degrade kinds, orders
+    the too-fast rows by the unique count they do know, and leaves the
+    data gaps last — deterministically, rather than by dict order.
 
     Args:
         base: The test function's node id.
@@ -400,22 +418,22 @@ def _worth_row(base: str, seconds: float, unique: int | None) -> tuple[float, st
             export knows nothing about it.
 
     Returns:
-        ``(sort key, rendered row)`` — lowest worth first, and rows with
-        no coverage data sort last (they are a data gap, not a verdict).
+        ``((tier, value), rendered row)`` — lowest worth first within
+        each tier.
     """
     if unique is None:
         return (
-            float("inf"),
+            (2, 0.0),
             f"  {seconds:8.2f}s  {'—':>9}  (no coverage data)  {base}",
         )
     if seconds < WORTH_FLOOR_SECONDS:
         return (
-            float("inf"),
+            (1, float(unique)),
             f"  {seconds:8.2f}s  {unique:6d} uniq  (too fast to rank)  {base}",
         )
     per_second = unique / seconds
     return (
-        per_second,
+        (0, per_second),
         f"  {seconds:8.2f}s  {unique:6d} uniq  {per_second:8.2f} uniq/s  {base}",
     )
 
@@ -443,8 +461,9 @@ def format_coverage_ranking(
             every summed duration a lower bound.
 
     Returns:
-        A multi-line block, or a one-line skip notice when the export
-        carries no per-test contexts to rank by.
+        A multi-line ranked block; a one-line skip notice when the
+        export carries no per-test contexts to rank by; or a one-line
+        no-data notice when the log yielded no durations to rank.
     """
     unique, seen = unique_statements(data, source_roots)
     if not seen:
@@ -468,24 +487,65 @@ def format_coverage_ranking(
     ]
     if truncated:
         header.append(
-            "  NOTE: pytest capped the durations section, so these seconds are "
-            "lower bounds — rerun with --durations=0 for an honest ranking."
+            "  NOTE: pytest hid some durations entries, so these seconds are "
+            "lower bounds — rerun with `--durations=0 --durations-min=0` for "
+            "an honest ranking (--durations=0 alone leaves the floor in place)."
         )
     return "\n".join([*header, *ranked])
 
 
 def durations_truncated(text: str) -> bool:
-    """Return whether pytest capped the durations section in *text*.
+    """Return whether pytest actually hid durations entries in *text*.
+
+    Evidence, not inference: either pytest said it hid entries below the
+    ``--durations-min`` floor, or a ``--durations=N`` section printed a
+    full N rows and so may have cut more. The header's mere presence is
+    not evidence — it is printed for any ``--durations=N`` run, however
+    few tests exist, and claiming truncation from it alone would put a
+    false caveat on nearly every report.
 
     Args:
         text: The raw pytest log.
 
     Returns:
-        ``True`` when a numbered section header or a "durations hidden"
-        trailer shows the list is partial — which makes any per-test
-        sum a lower bound rather than the real cost.
+        ``True`` when entries were hidden, which makes any per-test sum
+        a lower bound rather than the real cost.
     """
-    return bool(_TRUNCATION_RE.search(text))
+    if _HIDDEN_RE.search(text):
+        return True
+    limit: int | None = None
+    shown = 0
+    for line in text.splitlines():
+        if header := _LIMIT_HEADER_RE.search(line):
+            if limit is not None and shown >= limit:
+                return True
+            limit, shown = int(header.group(1)), 0
+        elif limit is None:
+            continue
+        elif _ENTRY_RE.match(line):
+            shown += 1
+        elif _SEPARATOR_RE.match(line):
+            if shown >= limit:
+                return True
+            limit, shown = None, 0
+    return limit is not None and shown >= limit
+
+
+def _source_roots() -> list[str]:
+    """Return the roots to scope counted statements to.
+
+    Returns:
+        The configured source roots, or ``[]`` when the repo root
+        cannot be resolved — :func:`forge.git_utils.repo_root` exits on
+        a non-repo directory, and this reporter promises to exit ``0``
+        even there. An empty list counts every instrumented file, which
+        over-counts rather than silently reporting nothing.
+    """
+    try:
+        return resolve_tool_roots(repo_root(), "slow_tests_report")
+    except SystemExit:
+        logger.warning("not a git repo — counting statements in every file.")
+        return []
 
 
 def _read_source(log: str) -> str:
@@ -596,7 +656,7 @@ def main() -> int:
             else format_coverage_ranking(
                 durations,
                 data,
-                resolve_tool_roots(repo_root(), "slow_tests_report"),
+                _source_roots(),
                 top=args.top,
                 truncated=durations_truncated(source),
             )

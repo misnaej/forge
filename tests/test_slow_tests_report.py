@@ -628,14 +628,50 @@ def test_unique_statements_empty_roots_counts_everything() -> None:
     assert unique["tests/test_m.py::test_only_in_tests_file"] == 1
 
 
+def test_unique_statements_non_list_context_value_degrades_instead_of_raising() -> None:
+    """A ``contexts`` value that is not a list is skipped, not iterated.
+
+    This reporter runs under CI's ``if: always()``, so a malformed export
+    must degrade to an empty verdict rather than raise past a caller that
+    promises never to fail the run.
+    """
+    export_with_int_where_context_list_expected = {
+        "files": {"src/a.py": {"contexts": {"1": 5}}}
+    }
+    assert unique_statements(export_with_int_where_context_list_expected, ["src"]) == (
+        {},
+        set(),
+    )
+
+
+def test_unique_statements_non_string_context_entry_filtered_not_whole_line() -> None:
+    """A non-string context entry is dropped; a valid entry beside it still counts.
+
+    ``nodeid_base`` expects a string to split on. One junk entry (e.g. an
+    int a malformed export produced) must not take the rest of the same
+    line's real attribution down with it.
+    """
+    export_with_junk_entry_beside_real_context = {
+        "files": {"src/a.py": {"contexts": {"1": [123, "t.py::test_x|run"]}}}
+    }
+    unique, seen = unique_statements(
+        export_with_junk_entry_beside_real_context, ["src"]
+    )
+    assert unique["t.py::test_x"] == 1
+    assert "t.py::test_x" in seen
+
+
 # ---------------------------------------------------------------------------
 # format_coverage_ranking
 # ---------------------------------------------------------------------------
 
 # seen = {test_zero, test_dummy_other, test_high_ratio, test_low_ratio,
-# test_instant}; unique = {test_high_ratio: 3, test_low_ratio: 1,
-# test_instant: 1} — test_zero and test_dummy_other share line "1" so
-# neither is unique, giving test_zero a real (not data-gap) 0-uniq row.
+# test_instant, test_quick}; unique = {test_high_ratio: 3, test_low_ratio: 1,
+# test_instant: 1, test_quick: 2} — test_zero and test_dummy_other share
+# line "1" so neither is unique, giving test_zero a real (not data-gap)
+# 0-uniq row. test_instant and test_quick both fall below the too-fast
+# floor but carry different unique counts, so the too-fast tier has an
+# order of its own to pin.
 COVERAGE_RANKING_EXPORT: dict[str, object] = {
     "files": {
         "src/pkg/m.py": {
@@ -649,6 +685,8 @@ COVERAGE_RANKING_EXPORT: dict[str, object] = {
                 "4": ["tests/test_m.py::test_high_ratio|run"],
                 "5": ["tests/test_m.py::test_low_ratio|run"],
                 "6": ["tests/test_m.py::test_instant|run"],
+                "7": ["tests/test_m.py::test_quick|run"],
+                "8": ["tests/test_m.py::test_quick|run"],
             }
         }
     }
@@ -659,14 +697,19 @@ RANKING_DURATIONS = [
     Duration(1.0, "call", "tests/test_m.py::test_high_ratio"),  # 3 uniq / 1.0s -> 3.0
     Duration(4.0, "call", "tests/test_m.py::test_low_ratio"),  # 1 uniq / 4.0s -> 0.25
     Duration(1.0, "call", "tests/test_m.py::test_absent"),  # not in the export at all
-    Duration(0.0, "call", "tests/test_m.py::test_instant"),  # exactly 0.0s, below floor
+    Duration(0.0, "call", "tests/test_m.py::test_instant"),  # 1 uniq, below floor
+    Duration(0.0, "call", "tests/test_m.py::test_quick"),  # 2 uniq, below floor
 ]
 
 
-def test_format_coverage_ranking_orders_zero_first_then_ratio_then_no_data_last() -> (
-    None
-):
-    """Rows sort by ascending uniq/s; zero-ratio first, no-data/too-fast rows last."""
+def test_format_coverage_ranking_tiers_ratio_then_too_fast_then_no_data() -> None:
+    """Rows sort by tier, not by a single competing number.
+
+    A real ratio outranks every "too fast to rank" row, which in turn
+    outranks a "no coverage data" row — and within the too-fast tier,
+    rows order by their own ascending unique count rather than falling
+    back to dict-insertion order.
+    """
     report = format_coverage_ranking(
         RANKING_DURATIONS, COVERAGE_RANKING_EXPORT, ["src"], top=10, truncated=False
     )
@@ -677,31 +720,38 @@ def test_format_coverage_ranking_orders_zero_first_then_ratio_then_no_data_last(
             "test_zero",
             "test_low_ratio",
             "test_high_ratio",
-            "test_absent",
             "test_instant",
+            "test_quick",
+            "test_absent",
         )
     }
+    # (a) every real-ratio row precedes both degrade tiers.
     assert idx["test_zero"] < idx["test_low_ratio"] < idx["test_high_ratio"]
-    # The two no-signal rows sort equal (inf) and both land after every
-    # ranked row — their order relative to EACH OTHER is not a contract.
-    assert idx["test_absent"] > idx["test_high_ratio"]
-    assert idx["test_instant"] > idx["test_high_ratio"]
+    assert idx["test_high_ratio"] < idx["test_instant"]
+    assert idx["test_high_ratio"] < idx["test_quick"]
+    # (b) too-fast rows are ordered by their own ascending unique count.
+    assert idx["test_instant"] < idx["test_quick"]
+    # (c) the no-coverage-data row is last, after both too-fast rows.
+    assert idx["test_absent"] > idx["test_instant"]
+    assert idx["test_absent"] > idx["test_quick"]
     assert "0 uniq" in rows[idx["test_zero"]]
-    assert "(no coverage data)" in rows[idx["test_absent"]]
     assert "(too fast to rank)" in rows[idx["test_instant"]]
+    assert "(too fast to rank)" in rows[idx["test_quick"]]
+    assert "(no coverage data)" in rows[idx["test_absent"]]
 
 
 def test_format_coverage_ranking_respects_top_and_reports_of_total() -> None:
-    """``top=2`` keeps only the two lowest-worth rows and reports "2 of 5"."""
+    """``top=2`` keeps only the two lowest-worth rows and reports "2 of 6"."""
     report = format_coverage_ranking(
         RANKING_DURATIONS, COVERAGE_RANKING_EXPORT, ["src"], top=2, truncated=False
     )
-    assert "top 2 of 5" in report
+    assert "top 2 of 6" in report
     assert "test_zero" in report
     assert "test_low_ratio" in report
     assert "test_high_ratio" not in report
     assert "test_absent" not in report
     assert "test_instant" not in report
+    assert "test_quick" not in report
 
 
 def test_format_coverage_ranking_truncated_note_present_when_true() -> None:
@@ -761,8 +811,6 @@ def test_format_coverage_ranking_no_timing_data_when_seen_but_no_durations() -> 
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("==== slowest 25 durations ====", True),
-        ("==== slowest durations ====", False),
         (
             (
                 "==== slowest durations ====\n"
@@ -770,11 +818,39 @@ def test_format_coverage_ranking_no_timing_data_when_seen_but_no_durations() -> 
             ),
             True,
         ),
+        (
+            (
+                "==== slowest 2 durations ====\n"
+                "1.00s call tests/test_a.py::test_one\n"
+                "0.50s call tests/test_a.py::test_two\n"
+                "==== 2 passed in 1.50s ===="
+            ),
+            True,
+        ),
+        (
+            (
+                "==== slowest 2 durations ====\n"
+                "1.00s call tests/test_a.py::test_one\n"
+                "==== 1 passed in 1.00s ===="
+            ),
+            False,
+        ),
+        ("==== slowest durations ====", False),
     ],
-    ids=["numbered-header", "bare-header-untruncated", "bare-header-with-trailer"],
+    ids=[
+        "hidden-trailer",
+        "numbered-section-filled-to-limit",
+        "numbered-section-under-limit",
+        "bare-header-no-trailer",
+    ],
 )
 def test_durations_truncated(text: str, *, expected: bool) -> None:
-    """A numbered header or a "durations hidden" trailer marks the list partial.
+    """Truncation is claimed only on evidence, never on a header's mere presence.
+
+    A "durations hidden" trailer, or a numbered section that printed a
+    full N entry rows, are both proof pytest may have cut more. A
+    numbered section under its own limit, or the unnumbered
+    ``--durations=0`` header with no trailer, prove nothing was cut.
 
     Args:
         text: The raw pytest durations section text to check.

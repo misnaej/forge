@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING
 
 from forge.smart_test.coverage import _context_to_test, _from_json, load_export
@@ -17,6 +18,8 @@ from forge.smart_test.coverage import tests_covering as _tests_covering
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -152,3 +155,21 @@ def test_load_export_non_dict_json_returns_none(tmp_path: Path) -> None:
     cov = tmp_path / "list.json"
     cov.write_text(json.dumps([1, 2]), encoding="utf-8")
     assert load_export(cov) is None
+
+
+def test_load_export_deeply_nested_json_degrades_instead_of_raising(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """JSON nested past the interpreter's recursion limit degrades to ``None``.
+
+    ``json.loads`` blows its recursion limit on deep nesting and raises
+    ``RecursionError`` — a ``RuntimeError``, not an ``OSError`` or
+    ``ValueError``, so it needs its own ``except`` arm. Both of this
+    function's callers promise to warn and continue rather than raise on
+    any malformed export, and CI runs the reporter under ``if: always()``.
+    """
+    deep = tmp_path / "deep.json"
+    deep.write_text("[" * 100_000 + "]" * 100_000, encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        assert load_export(deep) is None
+    assert any("could not parse" in record.getMessage() for record in caplog.records)

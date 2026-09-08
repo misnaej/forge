@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_67 modules, 872 symbols._
+_67 modules, 873 symbols._
 
 ## `forge`
 
@@ -941,9 +941,10 @@ _67 modules, 872 symbols._
 - `seconds_by_base(durations: list[Duration]) -> dict[str, float]` — Sum every phase and every parametrized variant per test function.
 - `_in_source_roots(filename: str, source_roots: list[str]) -> bool` _(internal)_ — Return whether a coverage file entry lies under a source root.
 - `unique_statements(data: dict[str, object], source_roots: list[str]) -> tuple[dict[str, int], set[str]]` — Count statements covered by exactly one test function.
-- `_worth_row(base: str, seconds: float, unique: int | None) -> tuple[float, str]` _(internal)_ — Render one ranking row and the key it sorts on.
+- `_worth_row(base: str, seconds: float, unique: int | None) -> tuple[tuple[int, float], str]` _(internal)_ — Render one ranking row and the key it sorts on.
 - `format_coverage_ranking(durations: list[Duration], data: dict[str, object], source_roots: list[str], *, top: int, truncated: bool) -> str` — Rank test functions by unique covered statements per second.
-- `durations_truncated(text: str) -> bool` — Return whether pytest capped the durations section in *text*.
+- `durations_truncated(text: str) -> bool` — Return whether pytest actually hid durations entries in *text*.
+- `_source_roots() -> list[str]` _(internal)_ — Return the roots to scope counted statements to.
 - `_read_source(log: str) -> str` _(internal)_ — Read the pytest log from a file path or stdin.
 - `main() -> int` — Entry point for ``forge-slow-tests-report``.
 
