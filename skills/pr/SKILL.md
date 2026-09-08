@@ -363,8 +363,13 @@ The `pr-manager` agent enforces (verify before approving its output):
 - **Maximum 50 words.** If over, rewrite tighter.
 - **3–5 bullet points.** Not 6, not 2.
 - **Conventional commit format** for the title line: `<type>: <brief description>`
-- **No prose paragraphs.** Title + bullets only.
+- **No prose paragraphs.** Title + bullets only, in two separate fences —
+  one per field of the squash dialog. Posting forces the **PR title** to
+  match the title, so GitHub's prefill cannot go stale.
 - **No Claude/AI attribution.**
+- **Posted last, and kept last** (FOUNDATION §6) — the
+  `keep_squash_comment_last` hook re-posts it after anything that
+  comments on the PR later.
 
 The squash-merge message becomes the permanent commit message on `main`.
 

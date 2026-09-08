@@ -141,6 +141,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/keep_squash_comment_last.sh",
+            "timeout": 20
+          }
+        ]
+      }
     ]
   }
 }

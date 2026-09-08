@@ -77,6 +77,8 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
 
    3–5 `--bullet`s; validation failure exits non-zero naming the broken rule — fix until it passes.
 
+3. **Never set the PR title by hand here** — the CLI forces the PR title to match the `--title` it posts (FOUNDATION §6), so the squash title is authored in one place. A non-zero exit naming a rejected title sync means the prefill is stale: report it, do not paper over it.
+
 ## Task: Author Wrap-up (pre-publication)
 
 Execute `/pr` Step 3.92's authoring contract — composition inputs and the `block_unverified_pr_create` gate live there; the artifact is `code_health/pr_wrapup.md`. Enforced here: sections per Verification step 6, compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract); CI Status = "pending — PR not yet published"; first line `verified-at: <HEAD sha>`; file-adding diff (`--diff-filter=A`) → REFUSE without the `prior-art-searched:` block from the caller's `forge:prior-art` report. Post nothing — posting is the later posting task.
@@ -120,8 +122,7 @@ git rev-list --left-right --count origin/<base>...HEAD   # left = behind
    git log $base..HEAD --oneline
    ```
    Warn when an addressed issue lacks a bare `Closes`-family keyword in the description or a commit reference.
-5. **Post the squash-merge message as a separate PR comment** (task above) — MANDATORY in every wrap-up.
-6. **Post the wrap-up comment** via `gh pr comment` with exactly these sections, each compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract) — clean checker = its one PASS line; findings get what/where/disposition prose:
+5. **Post the wrap-up comment** via `gh pr comment` with exactly these sections, each compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract) — clean checker = its one PASS line; findings get what/where/disposition prose:
    ```markdown
    ## Design Check | ## Security Review | ## Documentation Check
    <PASS line, or findings + dispositions>
@@ -136,6 +137,7 @@ git rev-list --left-right --count origin/<base>...HEAD   # left = behind
    ## Recommendation
    <Ready for merge | Needs work | Security concerns>
    ```
+6. **Post the squash-merge message as a separate PR comment, LAST** (task above) — MANDATORY in every wrap-up. It goes after the wrap-up because the person merging copies it out of the bottom of the conversation (FOUNDATION §6); anything posted later is followed by a `forge-pr-squash-comment --pr <PR#>` re-post, which the `keep_squash_comment_last` hook fires on its own.
 
 ## Task: Issue Management
 

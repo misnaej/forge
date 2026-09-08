@@ -2816,3 +2816,134 @@ def test_commit_format_allows_grep_for_wip_env_marker_literal() -> None:
         _run_hook(_COMMIT_FORMAT, "grep -n FORGE_WIP_SYNC=1 src/forge/precommit.py")
         == 0
     )
+
+
+# --- keep_squash_comment_last.sh: the squash comment stays newest ----------
+
+_KEEP_SQUASH_LAST = "keep_squash_comment_last.sh"
+
+
+def _stub_squash_cli(tmp_path: Path, body: str) -> dict[str, str]:
+    """Shadow ``forge-pr-squash-comment`` with a recording stub.
+
+    Args:
+        tmp_path: Directory to hold the stub and its argv record.
+        body: Shell body for the stub after it records its argv.
+
+    Returns:
+        An environment whose ``PATH`` finds the stub first; the real
+        ``jq`` and ``gh`` stay reachable behind it.
+    """
+    stub = tmp_path / "forge-pr-squash-comment"
+    stub.write_text(
+        '#!/usr/bin/env bash\necho "$@" >> "$RECORD"\n' + body,
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
+    env["RECORD"] = str(tmp_path / "argv.log")
+    return env
+
+
+def _record(env: dict[str, str]) -> str:
+    """Return what the stubbed CLI was called with.
+
+    Args:
+        env: The environment returned by :func:`_stub_squash_cli`.
+
+    Returns:
+        Recorded argv lines, or ``""`` when the stub never ran.
+    """
+    log = Path(env["RECORD"])
+    return log.read_text(encoding="utf-8") if log.exists() else ""
+
+
+def test_keep_squash_last_ignores_unrelated_commands(tmp_path: Path) -> None:
+    """SCENARIO: an ordinary Bash call that touches no PR comment.
+
+    MOCK SETUP: recording stub on PATH; the hook runs against `ls -la`.
+    EXPECTED BEHAVIOR: the CLI is never invoked — this hook fires on
+    every Bash call, so the non-match path must cost nothing.
+    """
+    env = _stub_squash_cli(tmp_path, "exit 0")
+    assert _run_hook(_KEEP_SQUASH_LAST, "ls -la", env=env) == 0
+    assert _record(env) == ""
+
+
+def test_keep_squash_last_runs_after_a_conversation_comment(tmp_path: Path) -> None:
+    """SCENARIO: an agent posts a wrap-up comment, burying the squash body.
+
+    MOCK SETUP: recording stub reports a successful re-post.
+    EXPECTED BEHAVIOR: the CLI runs for the PR named on the command line.
+    """
+    env = _stub_squash_cli(tmp_path, "exit 0")
+    proc = _run_hook_proc(
+        _KEEP_SQUASH_LAST, 'gh pr comment 61 --body "wrap-up"', env=env
+    )
+    assert proc.returncode == 0
+    assert "--pr 61" in _record(env)
+    assert "PR #61" in proc.stdout
+
+
+def test_keep_squash_last_runs_after_a_review_thread_reply(tmp_path: Path) -> None:
+    """SCENARIO: `/pr-comments` replies on a review thread.
+
+    MOCK SETUP: recording stub; the command is the REST replies endpoint,
+    whose comments never appear in the conversation listing.
+    EXPECTED BEHAVIOR: the PR number is read out of the endpoint path.
+    """
+    env = _stub_squash_cli(tmp_path, "exit 0")
+    command = (
+        "gh api repos/o/r/pulls/77/comments/123/replies --method POST -f body=done"
+    )
+    assert _run_hook(_KEEP_SQUASH_LAST, command, env=env) == 0
+    assert "--pr 77" in _record(env)
+
+
+def test_keep_squash_last_does_not_recurse_on_its_own_cli(tmp_path: Path) -> None:
+    """The squash CLI's own post already lands last; re-entering costs a round trip."""
+    env = _stub_squash_cli(tmp_path, "exit 0")
+    assert (
+        _run_hook(
+            _KEEP_SQUASH_LAST,
+            "forge-pr-squash-comment --pr 61 --bullet a --bullet b --bullet c",
+            env=env,
+        )
+        == 0
+    )
+    assert _record(env) == ""
+
+
+def test_keep_squash_last_is_silent_on_a_no_op(tmp_path: Path) -> None:
+    """A comment that is already newest produces no agent-visible output."""
+    env = _stub_squash_cli(tmp_path, 'echo "squash comment is already the newest"')
+    proc = _run_hook_proc(_KEEP_SQUASH_LAST, "gh pr comment 61 --body x", env=env)
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+
+
+def test_keep_squash_last_stays_silent_when_no_squash_comment_exists(
+    tmp_path: Path,
+) -> None:
+    """SCENARIO: replies land on a PR whose squash message is not authored yet.
+
+    MOCK SETUP: the stub exits 1, as the CLI does with nothing to move.
+    EXPECTED BEHAVIOR: exit 0 and no output — the mid-review state is
+    normal, and a post-tool hook must never fail a working command.
+    """
+    env = _stub_squash_cli(tmp_path, "exit 1")
+    proc = _run_hook_proc(_KEEP_SQUASH_LAST, "gh pr comment 61 --body x", env=env)
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+
+
+def test_keep_squash_last_registered_as_a_post_tool_hook() -> None:
+    """plugin.json wires the hook on PostToolUse(Bash), not as a blocker."""
+    manifest = json.loads(
+        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
+    )
+    post = manifest["hooks"]["PostToolUse"]
+    assert [group["matcher"] for group in post] == ["Bash"]
+    commands = [hook["command"] for group in post for hook in group["hooks"]]
+    assert any(_KEEP_SQUASH_LAST in cmd for cmd in commands)

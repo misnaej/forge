@@ -68,6 +68,13 @@ gh api repos/<owner>/<repo>/pulls/<PR#>/comments \
     --jq '.[] | {id, path, line, body: (.body | .[0:80])}'
 ```
 
+### The squash-merge comment stays last
+
+Replies bury the PR's squash-merge comment. Nothing to do by hand: the
+`keep_squash_comment_last` hook re-posts it at the bottom after each
+reply (FOUNDATION §6). Run `forge-pr-squash-comment --pr <PR#>` yourself
+only when the hook is unavailable — e.g. forge's plugin is not loaded.
+
 ### Verification
 
 Before declaring the review done, verify every comment ID has a reply:

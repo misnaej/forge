@@ -1,8 +1,15 @@
-r"""forge-pr-squash-comment — validate, wrap, and post the squash-merge message.
+r"""forge-pr-squash-comment — post the squash-merge message and keep it last.
 
-Accepts structured ``--title`` / ``--bullet`` arguments, validates them
-against FOUNDATION §6 squash-merge rules, wraps the result in a literal
-triple-backtick fence, and posts it as a PR comment via ``gh``.
+The message reaches GitHub's squash dialog by hand, so the comment
+carries its two halves in two separate fences: the title in one, the
+3-5 bullet body in the other, each a one-gesture copy into the matching
+field. GitHub prefills the title field from the PR title, so a posting
+run also **forces the PR title to match** the title it posts — prefill
+and message never drift apart.
+
+Every posting run leaves exactly one squash comment, and leaves it as
+the PR's newest comment — the human merging scrolls to the bottom, not
+through the review history.
 
 Usage:
 
@@ -10,14 +17,18 @@ Usage:
         --title "feat(#60): pr-manager delta-mode + verified-at" \\
         --bullet "pr_delta.py centralizes thresholds and regex" \\
         --bullet "5 reporter agents stamp verified-at SHA" \\
-        --bullet "pr-manager short-circuits small follow-ups" \\
         --bullet "audit enforces the contract by name allowlist"
+        # syncs the PR title, posts a fresh comment, then deletes the
+        # older squash comments
 
-    forge-pr-squash-comment --pr 61 --dry-run --title ... --bullet ...
+    forge-pr-squash-comment --dry-run --title ... --bullet ...
         # prints the wrapped body to stdout, no gh call
 
-    forge-pr-squash-comment --patch 4575789522 --title ... --bullet ...
-        # rewrites an existing comment via the GitHub REST API
+    forge-pr-squash-comment --pr 61
+        # no bullets: re-posts the existing squash comment verbatim at
+        # the bottom after later PR activity, quiet no-op when it is
+        # already newest. Runs automatically from the
+        # `keep_squash_comment_last` Claude Code hook
 
 Rules (FOUNDATION §6 "Squash-merge messages"):
 
@@ -27,13 +38,21 @@ Rules (FOUNDATION §6 "Squash-merge messages"):
 - no Claude / AI attribution patterns
 
 Output: the body posted to GitHub is the literal text below (the inner
-fence is a real ``` block, not escapes):
+fences are real ``` blocks, not escapes):
 
-    **Squash-merge message** (copy verbatim):
+    <!-- forge:squash-merge-message -->
+    **Squash-merge message** — copy each fence into the matching field
+    of the squash dialog. The PR title is already synced to the title.
+
+    **Title**
 
     ```
     <title>
+    ```
 
+    **Body**
+
+    ```
     - <bullet 1>
     - <bullet 2>
     - <bullet 3>
@@ -48,15 +67,17 @@ import logging
 import re
 import subprocess
 import sys
-from typing import Final
+from typing import Any, Final
 
-from forge.git_utils import configure_cli_logging
+from forge.git_utils import configure_cli_logging, gh_api
 
 
 configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
+# Canonical source: `forge-gen-commit-types` renders the shell hook's
+# regex from this tuple and FOUNDATION §6 names it by path.
 CONVENTIONAL_COMMIT_TYPES: Final[tuple[str, ...]] = (
     "feat",
     "fix",
@@ -82,6 +103,15 @@ TITLE_RE: Final[re.Pattern[str]] = re.compile(
 MIN_BULLETS: Final[int] = 3
 MAX_BULLETS: Final[int] = 5
 MAX_WORDS: Final[int] = 50
+
+# Invisible in rendered markdown, greppable in the raw body: how a later
+# run recognizes the squash comments it must supersede. Same convention
+# as `forge:c4:*` / `forge:badges:*` managed blocks.
+SQUASH_MARKER: Final[str] = "<!-- forge:squash-merge-message -->"
+
+# Comment listing walks every page of a long-lived PR; the 10s default
+# in `gh_api` is sized for git hooks, not for `--paginate`.
+_GH_LIST_TIMEOUT: Final[int] = 30
 
 # Phrases that signal AI attribution. Case-insensitive substring match.
 # Phrases, not bare vendor tokens: FOUNDATION §2 forbids *credit lines*,
@@ -261,9 +291,12 @@ def _validate_no_ai_attribution(title: str, bullets: list[str]) -> None:
 def build_body(title: str, bullets: list[str]) -> str:
     """Build the GitHub comment body around a validated message.
 
-    Wraps the title + bullets in a literal triple-backtick fence and
-    prepends the "copy verbatim" cue. Caller is responsible for having
-    passed validated inputs (or running :func:`validate` first).
+    Two fences behind the :data:`SQUASH_MARKER`, one per field of
+    GitHub's squash dialog: the title, then the body. Separate fences
+    because each is copied on its own — a single block holding both
+    would have to be split by hand after pasting. Caller is responsible
+    for having passed validated inputs (or running :func:`validate`
+    first).
 
     Args:
         title: Squash title (single line, conventional-commit form).
@@ -275,11 +308,14 @@ def build_body(title: str, bullets: list[str]) -> str:
     bullet_lines = "\n".join(f"- {b}" for b in bullets)
     fence = "```"
     return (
-        "**Squash-merge message** (copy verbatim):\n\n"
-        f"{fence}\n"
-        f"{title}\n\n"
-        f"{bullet_lines}\n"
-        f"{fence}\n"
+        f"{SQUASH_MARKER}\n"
+        "**Squash-merge message** — copy each fence verbatim into the "
+        "matching field of the squash dialog. The PR title is synced to "
+        "the title below, so GitHub's prefill already matches.\n\n"
+        "**Title**\n\n"
+        f"{fence}\n{title}\n{fence}\n\n"
+        "**Body**\n\n"
+        f"{fence}\n{bullet_lines}\n{fence}\n"
     )
 
 
@@ -301,6 +337,96 @@ def validate(title: str, bullets: list[str]) -> None:
     _validate_no_ai_attribution(title, bullets)
 
 
+def _parse_paged_json(raw: str) -> list[Any]:
+    """Flatten ``gh api --paginate --jq '[...]'`` output into one list.
+
+    Args:
+        raw: Stdout from the paginated call — one JSON array per page,
+            newline-separated.
+
+    Returns:
+        Every page's entries in page order — the element type follows
+        the caller's ``--jq`` projection (mappings or bare timestamps);
+        unparseable lines are skipped with a warning rather than
+        aborting the run.
+    """
+    items: list[Any] = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            page = json.loads(line)
+        except json.JSONDecodeError:
+            logger.warning("skipping unparseable gh api page: %.60s", line)
+            continue
+        items.extend(page)
+    return items
+
+
+def _list_squash_comments(pr_number: int) -> list[dict[str, object]] | None:
+    """Return this CLI's own comments on *pr_number*, oldest first.
+
+    Args:
+        pr_number: GitHub PR number.
+
+    Returns:
+        One ``{"id", "body", "created_at"}`` mapping per
+        :data:`SQUASH_MARKER`-carrying comment, or ``None`` when the
+        listing call itself failed — a distinction the caller needs:
+        "no squash comment" and "could not look" demand different
+        behaviour.
+    """
+    raw = gh_api(
+        f"repos/{{owner}}/{{repo}}/issues/{pr_number}/comments",
+        "--paginate",
+        "--jq",
+        "[.[] | {id, body, created_at}]",
+        timeout=_GH_LIST_TIMEOUT,
+    )
+    if raw is None:
+        return None
+    return [
+        c for c in _parse_paged_json(raw) if SQUASH_MARKER in str(c.get("body", ""))
+    ]
+
+
+def _latest_activity_at(pr_number: int) -> str | None:
+    """Return the newest timestamp across every comment surface of a PR.
+
+    Conversation comments, review-thread replies, and review
+    submissions each live behind a different endpoint; a squash comment
+    buried by a `/pr-comments` reply is invisible to the conversation
+    listing alone.
+
+    Args:
+        pr_number: GitHub PR number.
+
+    Returns:
+        The newest ISO-8601 UTC timestamp seen (GitHub normalizes to
+        ``Z``, so lexicographic order is chronological order), or
+        ``None`` when nothing could be read — the caller then re-posts
+        rather than assuming the comment is still last.
+    """
+    endpoints = (
+        (f"repos/{{owner}}/{{repo}}/issues/{pr_number}/comments", "created_at"),
+        (f"repos/{{owner}}/{{repo}}/pulls/{pr_number}/comments", "created_at"),
+        (f"repos/{{owner}}/{{repo}}/pulls/{pr_number}/reviews", "submitted_at"),
+    )
+    stamps: list[str] = []
+    for path, field in endpoints:
+        raw = gh_api(
+            path,
+            "--paginate",
+            "--jq",
+            f"[.[] | .{field}]",
+            timeout=_GH_LIST_TIMEOUT,
+        )
+        if raw is None:
+            return None
+        stamps.extend(str(s) for s in _parse_paged_json(raw) if s)
+    return max(stamps) if stamps else None
+
+
 def _post_new_comment(pr_number: int, body: str) -> int:
     """Post *body* as a new comment on PR ``pr_number``.
 
@@ -320,38 +446,37 @@ def _post_new_comment(pr_number: int, body: str) -> int:
     return proc.returncode
 
 
-_REPO_SLUG_RE: Final[re.Pattern[str]] = re.compile(r"^[\w.-]+/[\w.-]+$")
+def sync_pr_title(pr_number: int, title: str) -> bool:
+    """Force the PR title to match the squash title.
 
-
-def _patch_existing_comment(comment_id: int, body: str) -> int:
-    """Rewrite an existing PR comment via the REST API.
+    GitHub prefills the squash dialog's title field from the PR title,
+    so the two must never disagree: an edited squash title that left
+    the PR title behind would put a stale line in the permanent `main`
+    commit. Reading first keeps the PR timeline free of no-op title
+    events; an unreadable title still takes the write, because a
+    redundant edit is cheaper than a silent mismatch.
 
     Args:
-        comment_id: GitHub issue/PR comment id (numeric).
-        body: Replacement body.
+        pr_number: GitHub PR number.
+        title: The validated squash title.
 
     Returns:
-        Exit code from ``gh api``. Non-zero ``gh`` output is captured
-        and logged rather than echoed to the terminal so a failed call
-        does not splatter the user-supplied body into the surrounding
-        log.
+        ``True`` when the PR title already matched or was updated;
+        ``False`` when the edit was rejected — the caller reports that,
+        since the human then has to fix the title field by hand.
     """
-    repo = _current_repo()
-    if repo is None:
-        logger.error("could not detect current GitHub repo; aborting --patch")
-        return 1
-    if not _REPO_SLUG_RE.match(repo):
-        logger.error("gh returned suspect repo slug %r; aborting --patch", repo)
-        return 1
+    current = gh_api(f"repos/{{owner}}/{{repo}}/pulls/{pr_number}", "--jq", ".title")
+    if current == title:
+        return True
     proc = subprocess.run(
         [
             "gh",
             "api",
             "-X",
             "PATCH",
-            f"repos/{repo}/issues/comments/{comment_id}",
+            f"repos/{{owner}}/{{repo}}/pulls/{pr_number}",
             "-f",
-            f"body={body}",
+            f"title={title}",
         ],
         capture_output=True,
         text=True,
@@ -359,34 +484,133 @@ def _patch_existing_comment(comment_id: int, body: str) -> int:
     )
     if proc.returncode != 0:
         logger.error(
-            "gh api PATCH failed (exit %d): %s", proc.returncode, proc.stderr.strip()
+            "could not sync PR #%d title to %r (exit %d): %s",
+            pr_number,
+            title,
+            proc.returncode,
+            proc.stderr.strip(),
         )
-    return proc.returncode
+        return False
+    if current is not None:
+        logger.info("PR #%d title updated to match the squash title", pr_number)
+    return True
 
 
-def _current_repo() -> str | None:
-    """Return ``<owner>/<repo>`` for the current working directory.
+def _delete_comment(comment_id: int) -> bool:
+    """Delete one issue comment by id.
+
+    Args:
+        comment_id: GitHub issue/PR comment id (numeric).
 
     Returns:
-        Slug from ``gh repo view --json nameWithOwner``, or ``None``
-        when ``gh`` is missing or no remote is configured.
+        ``True`` when the API accepted the delete. A dedicated
+        subprocess call rather than :func:`gh_api`, whose "empty stdout
+        is a failure" contract cannot see the difference between a
+        successful ``204 No Content`` and a rejected call.
     """
     proc = subprocess.run(
-        ["gh", "repo", "view", "--json", "nameWithOwner"],
+        [
+            "gh",
+            "api",
+            "-X",
+            "DELETE",
+            f"repos/{{owner}}/{{repo}}/issues/comments/{comment_id}",
+        ],
         capture_output=True,
         text=True,
         check=False,
     )
     if proc.returncode != 0:
-        return None
-    try:
-        return json.loads(proc.stdout)["nameWithOwner"]
-    except (json.JSONDecodeError, KeyError):
-        return None
+        logger.warning(
+            "could not delete superseded squash comment %d (exit %d): %s",
+            comment_id,
+            proc.returncode,
+            proc.stderr.strip(),
+        )
+        return False
+    return True
+
+
+def _prune(superseded: list[dict[str, object]] | None) -> None:
+    """Delete the squash comments a fresh post has replaced.
+
+    Runs after the new comment is live, so a failure here leaves a
+    duplicate rather than a PR with no squash message — and never
+    changes the exit code.
+
+    Args:
+        superseded: Comments captured *before* posting, or ``None``
+            when the listing failed.
+    """
+    if superseded is None:
+        logger.warning(
+            "could not list existing comments; older squash comments may remain"
+        )
+        return
+    for comment in superseded:
+        _delete_comment(int(str(comment["id"])))
+
+
+def post_squash_comment(pr_number: int, body: str) -> int:
+    """Post *body*, then delete the squash comments it supersedes.
+
+    Args:
+        pr_number: GitHub PR number.
+        body: Pre-built comment body.
+
+    Returns:
+        ``0`` on a successful post. Cleanup is best-effort: the caller
+        gets the post's exit code, and pruning failures only warn.
+    """
+    superseded = _list_squash_comments(pr_number)
+    rc = _post_new_comment(pr_number, body)
+    if rc != 0:
+        return rc
+    _prune(superseded)
+    return 0
+
+
+def ensure_last(pr_number: int) -> int:
+    """Re-post the existing squash comment so it is the newest again.
+
+    What ``--pr`` does when no bullets are given, and what the
+    ``keep_squash_comment_last`` hook runs after any command that
+    comments on a PR: a quiet no-op while the squash comment is still
+    the newest activity, a verbatim re-post (old one deleted) once
+    anything — including a review-thread reply — has landed under it.
+
+    Args:
+        pr_number: GitHub PR number.
+
+    Returns:
+        ``0`` when the comment is last (already, or after re-posting);
+        ``1`` when the PR could not be read or carries no squash
+        comment to move.
+    """
+    existing = _list_squash_comments(pr_number)
+    if existing is None:
+        logger.error("could not read PR #%d comments; --ensure-last aborted", pr_number)
+        return 1
+    if not existing:
+        logger.error(
+            "PR #%d has no forge squash comment to move; post one with --bullet first",
+            pr_number,
+        )
+        return 1
+    newest_squash = str(existing[-1].get("created_at", ""))
+    latest = _latest_activity_at(pr_number)
+    if len(existing) == 1 and latest is not None and newest_squash >= latest:
+        logger.info("squash comment is already the newest comment on PR #%d", pr_number)
+        return 0
+    rc = _post_new_comment(pr_number, str(existing[-1]["body"]))
+    if rc != 0:
+        return rc
+    _prune(existing)
+    return 0
 
 
 def main() -> int:
-    """Validate the message, build the body, and post (or print) it.
+    """Validate the body, post it (or print it), and keep it last.
 
     Returns:
         ``0`` on success. ``1`` on validation failure (with the
@@ -395,22 +619,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         prog="forge-pr-squash-comment",
         description=(
-            "Validate, fence-wrap, and post a squash-merge message as a "
-            "PR comment. Replaces hand-built heredoc templates in "
-            "pr-manager. Rules per FOUNDATION §6."
+            "Post the squash-merge body as the PR's newest comment. "
+            "The title is the PR title — GitHub prefills it. "
+            "Rules per FOUNDATION §6."
         ),
     )
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument(
         "--pr",
         type=int,
-        help="PR number to comment on (creates a new comment).",
-    )
-    target.add_argument(
-        "--patch",
-        type=int,
-        metavar="COMMENT_ID",
-        help="Rewrite an existing comment instead of posting a new one.",
+        help=(
+            "PR number to comment on. With --bullet: syncs the PR title, "
+            "posts the message and prunes older squash comments. Without: "
+            "re-posts the existing one so it is the newest comment again."
+        ),
     )
     target.add_argument(
         "--dry-run",
@@ -419,8 +641,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--title",
-        required=True,
-        help="Squash title (conventional-commit format).",
+        default="",
+        help=(
+            "Squash title (conventional-commit format). Required with "
+            "--bullet; the PR title is forced to match it."
+        ),
     )
     parser.add_argument(
         "--bullet",
@@ -430,6 +655,11 @@ def main() -> int:
         help="Bullet line. Repeat 3-5 times.",
     )
     args = parser.parse_args()
+
+    # Keeping the comment last is the default, not a mode: a bare
+    # `--pr N` is the "PR moved on, move the comment" call.
+    if args.pr is not None and not args.bullet:
+        return ensure_last(args.pr)
 
     try:
         validate(args.title, args.bullet)
@@ -443,9 +673,13 @@ def main() -> int:
         sys.stdout.write(body)
         return 0
 
-    if args.patch is not None:
-        return _patch_existing_comment(args.patch, body)
-    return _post_new_comment(args.pr, body)
+    title_synced = sync_pr_title(args.pr, args.title)
+    rc = post_squash_comment(args.pr, body)
+    if rc != 0:
+        return rc
+    # The comment is live either way; a failed title sync is still a
+    # non-zero run, because the prefill no longer matches what it says.
+    return 0 if title_synced else 1
 
 
 if __name__ == "__main__":
