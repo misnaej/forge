@@ -413,7 +413,8 @@ def _worth_row(
     would be noise, and "no coverage data" is not a verdict at all.
     Tiering keeps every real ratio ahead of both degrade kinds, orders
     the too-fast rows by the unique count they do know, and leaves the
-    data gaps last — deterministically, rather than by dict order.
+    data gaps last. Ties inside a tier keep their input order — the sort
+    is stable — which for the data gaps means all of them.
 
     Args:
         base: The test function's node id.
@@ -491,9 +492,10 @@ def format_coverage_ranking(
     ]
     if truncated:
         header.append(
-            "  NOTE: pytest hid some durations entries, so these seconds are "
-            "lower bounds — rerun with `--durations=0 --durations-min=0` for "
-            "an honest ranking (--durations=0 alone leaves the floor in place)."
+            "  NOTE: pytest may have hidden durations entries, so treat these "
+            "seconds as lower bounds — rerun with `--durations=0 "
+            "--durations-min=0` for a complete ranking (--durations=0 alone "
+            "leaves the floor in place)."
         )
     return "\n".join([*header, *ranked])
 
@@ -502,11 +504,12 @@ def durations_truncated(text: str) -> bool:
     """Return whether pytest actually hid durations entries in *text*.
 
     Evidence, not inference: either pytest said it hid entries below the
-    ``--durations-min`` floor, or a ``--durations=N`` section printed a
-    full N rows and so may have cut more. The header's mere presence is
-    not evidence — it is printed for any ``--durations=N`` run, however
-    few tests exist, and claiming truncation from it alone would put a
-    false caveat on nearly every report.
+    ``--durations-min`` floor — proof — or a ``--durations=N`` section
+    printed a full N rows, which means entries *may* have been cut. The
+    header's mere presence is not evidence: it is printed for any
+    ``--durations=N`` run however few tests exist, and claiming
+    truncation from it alone put a false caveat on nearly every report.
+    Callers phrase the second case as possibility, not fact.
 
     Args:
         text: The raw pytest log.

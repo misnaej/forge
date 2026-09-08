@@ -844,6 +844,23 @@ def test_format_coverage_ranking_no_timing_data_when_seen_but_no_durations() -> 
             ),
             False,
         ),
+        (
+            (
+                "==== slowest 2 durations ====\n"
+                "1.00s call tests/test_a.py::test_one\n"
+                "0.50s call tests/test_a.py::test_two"
+            ),
+            True,
+        ),
+        (
+            (
+                "==== slowest 1 durations ====\n"
+                "1.00s call tests/test_a.py::test_one\n"
+                "==== slowest 5 durations ====\n"
+                "0.50s call tests/test_a.py::test_two"
+            ),
+            True,
+        ),
     ],
     ids=[
         "hidden-trailer",
@@ -851,6 +868,8 @@ def test_format_coverage_ranking_no_timing_data_when_seen_but_no_durations() -> 
         "numbered-section-under-limit",
         "bare-header-no-trailer",
         "digit-run-too-long-to-be-a-real-header",
+        "end-of-text-filled-section-no-separator",
+        "back-to-back-headers-no-separator-between",
     ],
 )
 def test_durations_truncated(text: str, *, expected: bool) -> None:
@@ -862,7 +881,9 @@ def test_durations_truncated(text: str, *, expected: bool) -> None:
     ``--durations=0`` header with no trailer, prove nothing was cut. A
     digit run longer than any real ``--durations=N`` is not a header at
     all — the function degrades to ``False`` rather than raising on a
-    junk line.
+    junk line. A filled section is judged at whatever boundary closes
+    it — a separator, the next ``slowest N durations`` header, or the
+    end of the log — never only at a separator.
 
     Args:
         text: The raw pytest durations section text to check.
