@@ -436,8 +436,10 @@ advisories with the suggested pin; they never edit pins.
   - **A CI run concluding in failure** → surface it and investigate
     (§1); never auto-push fixes.
   - **Wrap-up staleness** — `forge-pr-plan --freshness --pr <N>` reports
-    `fresh: false` (the newest posted `verified-at:` no longer prefixes
-    the PR head) → alert **once per new head**, naming both SHAs; the
+    `fresh: false` (the newest comment's *header* `verified-at:` — a
+    wrap-up quotes older reporter stamps below its own — no longer
+    prefixes the PR head) → alert **once per new head**, naming both
+    SHAs; the
     refresh is a re-run of `/pr <N>` (delta mode) by whoever picks the
     work up, whose comment's newer `verified-at:` clears the signal by
     itself. `fresh: null` (no `gh`, no wrap-up yet) → skip that poll,
