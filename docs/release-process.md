@@ -79,14 +79,22 @@ Forge runs `[tool.forge.changelog].mode = "fragments"`:
 - **`CHANGELOG.md` is output, never input.** The assembler collates the
   pending fragments into one curated entry and stages their deletion;
   nothing reads `CHANGELOG.md` as a version or bump signal.
-- **The version is assembler-owned too.** The next release is always
-  `latest v* tag + max(bump level over pending fragments)`:
+- **The version is assembler-owned too, and tag-aware.** A pending
+  fragment already inside a `v*` tag's tree was released by that tag
+  (tag-per-merge counted it) and assembles under that tag's heading,
+  dated when the tag was cut. Only fragments no tag holds mint a new
+  version: `latest v* tag + max(bump level over the unreleased
+  fragments)`. When every pending fragment is tagged, nothing is minted
+  — the assembly backfills the per-tag headings and syncs `plugin.json`
+  to the latest tag (the guard's healthy at-tag, zero-pending state):
   - `forge-changelog next-version` — read-only print of the computed
-    next version and its level.
-  - `forge-changelog release` — computes the version, assembles
-    `CHANGELOG.md` under it, writes `plugin.json` to it (the manifest's
-    single writer; skipped in manifest-less tag-versioned repos), and
-    stages everything. It never commits: branch → run it → ordinary PR
+    next version and its level, or `vX.Y.Z (already tagged — N
+    fragment(s) across M tag(s); nothing to mint)`.
+  - `forge-changelog release` — computes the plan, assembles
+    `CHANGELOG.md` (one heading per already-cut tag, then the minted
+    heading on top), writes `plugin.json` to the plan's version (the
+    manifest's single writer; skipped in manifest-less tag-versioned
+    repos), and stages everything. It never commits: branch → run it → ordinary PR
     → merge → tag-on-merge cuts the tag. Racing release PRs collapse
     into an ordinary PR conflict; the loser recovers by taking the
     BASE side of `CHANGELOG.md` and `plugin.json`, restoring its
@@ -121,7 +129,8 @@ change that violates an invariant must turn its test red.
 | An invalid fragment fails the gate (exit 2) | `changelog_fragments.main` | `tests/test_changelog_fragments.py::test_main_check_exit_two_on_invalid_fragment` |
 | `assemble --delete` writes the curated entry into `CHANGELOG.md` and stages the fragment deletions | `changelog_fragments.main` | `tests/test_changelog_fragments.py::test_main_assemble_with_delete_stages_changelog_and_fragment_deletion` |
 | Fragment mode: `plugin.json <= latest tag` passes with valid pending fragments (zero included); an invalid fragment blocks even below the tag; shared-heading equality still fails | `verify_plugin_version._not_ahead_verdict` | `tests/test_verify_plugin_version.py::test_fragments_mode_manifest_at_tag_with_valid_pending_passes` / `::test_fragments_mode_manifest_at_tag_with_zero_pending_passes` / `::test_fragments_mode_invalid_fragment_fails_listing_error` / `::test_fragments_mode_manifest_below_tag_with_valid_fragments_passes` / `::test_fragments_mode_manifest_below_tag_invalid_fragment_fails` / `::test_headings_mode_manifest_at_tag_still_fails` |
-| The release version is `latest tag + max(pending fragment level)` — computed, never carried per-PR | `changelog_fragments.next_version_from_fragments` | `tests/test_changelog_fragments.py::test_next_version_from_fragments_uses_max_level` |
+| The release version is `latest tag + max(level over UNRELEASED fragments)` — computed, never carried per-PR; fragments already in a tag's tree never bump again | `changelog_fragments.plan_assembly` | `tests/test_changelog_fragments.py::test_plan_assembly_uses_max_level_of_untagged` / `::test_plan_assembly_all_tagged_mints_nothing` |
+| Pending fragments partition by the earliest tag whose tree holds them; each group assembles under that tag's heading (dated from the tag), the minted heading lands on top | `changelog_fragments._partition_by_release_tag` via `_render_assembly` | `tests/test_changelog_fragments.py::test_plan_assembly_partitions_by_earliest_tag` / `::test_main_release_backfills_tag_headings_and_syncs_manifest` |
 | A branch adds at most ONE fragment (one unique `changelog.d/` file per PR; extra bullets share it) — counted as added-since-fork AND absent from the base tip's tree, so a conflicted base merge never counts base-side fragments | `changelog_fragments.branch_added_fragments` via the `changelog_version` fragment gate | `tests/test_precommit.py::test_fragment_gate_blocks_second_branch_added_fragment` / `tests/test_changelog_fragments.py::test_branch_added_fragments_excludes_base_fragments_mid_merge` |
 | `release-pr` opens exactly one assembly PR: an already-open one (found up front or via a lost push/create race) defers with exit 0; nothing pending is a quiet 0; guard failures exit 2 | `changelog_fragments._cmd_release_pr` | `tests/test_changelog_fragments.py::test_main_release_pr_defers_to_open_assembly_pr` / `::test_main_release_pr_nothing_pending_is_quiet_noop` |
 | `forge-changelog release` assembles under the computed version, rewrites + stages the manifest (single writer), and never commits | `changelog_fragments._cmd_release` | `tests/test_changelog_fragments.py::test_main_release_with_manifest_stages_everything_commits_nothing` |

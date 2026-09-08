@@ -1,0 +1,2 @@
+bump: minor
+- **Assembly under existing tags** — `forge-changelog release` / `release-pr` / `next-version` are tag-aware: a pending fragment already inside a `v*` tag's tree assembles under that tag's heading (dated when the tag was cut) and never bumps again; only unreleased fragments mint a version, and an all-released backlog mints nothing while syncing `plugin.json` to the latest tag. `git_utils` gains `v_tags` and `tag_commit_date`. The scheduled assembly workflow now prints `release-pr`'s error instead of exiting 2 silently.
