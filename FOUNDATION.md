@@ -138,7 +138,13 @@ gate.
 
 - **NEVER install dependencies** (`pip install`, `conda install`). Tell the user
   the exact command instead — installing deps can break configured environments
-  and introduce untested combinations.
+  and introduce untested combinations. What the rule protects is the
+  *environment* and the *pins*: materialising a per-checkout, disposable
+  environment from a committed lock (`pixi run` / `pixi install`) is not an
+  install and stays allowed, while anything that edits a manifest or re-resolves
+  a lock (`pixi add` / `update`, `poetry add`, `uv add`, …) is the agent
+  deciding a dependency, and is blocked. `block_install_deps` enforces both
+  halves.
 - **NEVER use `--no-verify`** to bypass pre-commit hooks. Fix violations instead.
 - **NEVER force push** without explicit user approval. Check upstream divergence
   first: `git fetch origin && git log origin/<branch>`. The `block_force_push`

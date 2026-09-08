@@ -208,6 +208,116 @@ def test_install_deps_allows_conda_run_readonly() -> None:
     assert _run_hook(_INSTALL_DEPS, "conda run conda info") == 0
 
 
+def _project_env(tmp_path: Path, block_install_deps: str) -> dict[str, str]:
+    """Point the hook at a pyproject carrying a `block_install_deps` value.
+
+    Args:
+        tmp_path: Directory to hold the synthesized pyproject.toml.
+        block_install_deps: The TOML value to write for the key.
+
+    Returns:
+        An environment with `CLAUDE_PROJECT_DIR` set to that directory.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        f"[tool.forge.hooks]\nblock_install_deps = {block_install_deps}\n",
+        encoding="utf-8",
+    )
+    env = dict(os.environ)
+    env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+    return env
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pixi add numpy",
+        "pixi remove numpy",
+        "pixi update",
+        "pixi upgrade",
+        "pixi global install ripgrep",
+    ],
+)
+def test_install_deps_blocks_pixi_manifest_and_lock_mutations(command: str) -> None:
+    """Pixi verbs that rewrite the manifest or the lock are blocked (#466).
+
+    Args:
+        command: A pixi invocation that mutates pixi.toml / pixi.lock.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
+
+
+def test_install_deps_blocks_pixi_run_pip_install() -> None:
+    """`pixi run pip install` is the wrapper form, blocked like the others."""
+    assert _run_hook(_INSTALL_DEPS, "pixi run pip install numpy") == 2
+
+
+def test_install_deps_blocks_pixi_add_after_a_read_only_verb() -> None:
+    """A read-only pixi verb cannot shadow a mutation later in the command.
+
+    The read-only fast-path matches anywhere in the command string, so
+    `pixi add` is checked before it — otherwise `pixi list && pixi add`
+    would exit 0 on the strength of the `list`.
+    """
+    assert _run_hook(_INSTALL_DEPS, "pixi list && pixi add numpy") == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["pixi install", "pixi run --locked pytest", "pixi list", "pixi info"],
+)
+def test_install_deps_allows_pixi_materialisation_from_the_lock(command: str) -> None:
+    """Materialising `.pixi/` from the committed lock is not an install (#466).
+
+    It is deterministic, per-checkout and disposable — there is no shared
+    environment for an agent to damage, which is what FOUNDATION §2 guards.
+
+    Args:
+        command: A pixi invocation that only reads or materialises.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 0
+
+
+def test_install_deps_advises_locked_on_a_bare_pixi_run() -> None:
+    """SCENARIO: an agent runs the test suite through pixi without `--locked`.
+
+    MOCK SETUP: none — the hook is a black box over its stdin payload.
+    EXPECTED BEHAVIOR: allowed, but with a note, because a bare run
+    re-solves and rewrites the lock when the manifest moved — the one
+    mutation the allow-list cannot rule out statically.
+    """
+    proc = _run_hook_proc(_INSTALL_DEPS, "pixi run pytest -q")
+    assert proc.returncode == 0
+    assert "--locked" in proc.stdout
+
+
+def test_install_deps_stays_quiet_when_pixi_run_is_locked() -> None:
+    """`--locked` silences the advisory — the flag it asked for is present."""
+    proc = _run_hook_proc(_INSTALL_DEPS, "pixi run --locked pytest -q")
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+
+
+def test_install_deps_pixi_honours_a_narrowed_manager_list(tmp_path: Path) -> None:
+    """`block_install_deps = ["pixi"]` blocks pixi and nothing else.
+
+    The issue's point: a consumer can only *narrow* the manager list, so
+    `pixi` has to be a name the shipped hook understands.
+    """
+    env = _project_env(tmp_path, '["pixi"]')
+    assert _run_hook(_INSTALL_DEPS, "pixi add numpy", env=env) == 2
+    assert _run_hook(_INSTALL_DEPS, "poetry add numpy", env=env) == 0
+
+
+def test_install_deps_pixi_unblocked_when_excluded_from_the_list(
+    tmp_path: Path,
+) -> None:
+    """A list without `pixi` leaves every pixi verb — and its advisory — alone."""
+    env = _project_env(tmp_path, '["pip", "conda"]')
+    proc = _run_hook_proc(_INSTALL_DEPS, "pixi add numpy", env=env)
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+
+
 _ATTRIBUTION = "block_claude_attribution.sh"
 
 
