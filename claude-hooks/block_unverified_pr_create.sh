@@ -51,7 +51,9 @@ if [ -z "$HEAD_SHA" ]; then
     exit 0  # not a git repo — nothing to verify against
 fi
 
-if ! head -5 "$WRAPUP" | grep -qE "verified-at:.*(${HEAD_SHA}|${HEAD_SHA:0:7})"; then
+# shellcheck source=wrapup_anchor.sh
+source "$(dirname "$0")/wrapup_anchor.sh"
+if ! wrapup_names_head "$WRAPUP" "$HEAD_SHA"; then
     echo "BLOCKED: $WRAPUP does not name current HEAD (${HEAD_SHA:0:7}) in a verified-at: line — the wrap-up was authored for a different tree. Re-run /pr Step 3.92." >&2
     exit 2
 fi

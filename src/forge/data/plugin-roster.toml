@@ -47,4 +47,6 @@ names = [
     "git_anchor",
     "keep_squash_comment_last",
     "warn_pr_checks",
+    "warn_stale_wrapup",
+    "wrapup_anchor",
 ]

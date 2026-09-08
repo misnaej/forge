@@ -444,7 +444,11 @@ advisories with the suggested pin; they never edit pins.
     work up, whose comment's newer `verified-at:` clears the signal by
     itself. `fresh: null` (no `gh`, no wrap-up yet) → skip that poll,
     never alert. **The monitor never posts the refresh** — same
-    read-only contract as the conflict signal.
+    read-only contract as the conflict signal. The same verdict has a
+    second, at-the-cause surface: the `warn_stale_wrapup` Claude Code
+    hook runs it after every `git push` from an agent session, so the
+    session that outdated the wrap-up hears it immediately; the monitor
+    covers pushes made elsewhere. Both are read-only.
 
   Resolving a conflict — by whoever picks the work up, never the
   monitor — is a plain base merge: `git merge origin/<base>` (§2 —

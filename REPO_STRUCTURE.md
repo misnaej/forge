@@ -175,6 +175,8 @@ enforcement:
 - block_unverified_pr_create.sh: block `gh pr create` (draft or not) until the authored wrap-up names HEAD; only a self-verifying release/vX.Y.Z promotion branch exempts itself (FOUNDATION §6)
 - block_raw_ruff.sh: hard-block raw `ruff check` / `ruff format` from agents (no bypass — agents use forge-precommit)
 - keep_squash_comment_last.sh: PostToolUse — after any command that comments on a PR, re-post the squash-merge comment so it stays the newest one (silent no-op when it already is, or when the PR has none yet)
+- warn_stale_wrapup.sh: PostToolUse — after a `git push` on a branch with an open PR, print a reminder when `forge-pr-plan --freshness` says the posted wrap-up no longer names the head (silent when fresh, unknowable, or a refresh is already authored for HEAD)
+- wrapup_anchor.sh: sourced library, not a hook — the one `wrapup_names_head` predicate shared by `block_unverified_pr_create` and `warn_stale_wrapup`
 
 ## Plugin Manifest (`.claude-plugin/`)
 
