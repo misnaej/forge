@@ -467,14 +467,18 @@ options:
 ## forge-pr-plan
 
 ```text
-usage: forge-pr-plan [-h] --base REF [--pr N]
+usage: forge-pr-plan [-h] [--base REF] [--pr N] [--freshness]
 
 options:
-  -h, --help  show this help message and exit
-  --base REF  Base ref the PR targets (e.g. origin/dev); the classified diff
-              is BASE...HEAD.
-  --pr N      Existing PR number — enables the delta path (reads the PR's
-              verified-at: comments via gh). Omit when no PR exists yet.
+  -h, --help   show this help message and exit
+  --base REF   Base ref the PR targets (e.g. origin/main); the classified diff
+               is BASE...HEAD. Required unless --freshness.
+  --pr N       Existing PR number — enables the delta path (reads the PR's
+               verified-at: comments via gh). Omit when no PR exists yet.
+  --freshness  Read-only mode: report whether PR --pr's newest posted wrap-up
+               (verified-at:) still names its current head; emits {fresh,
+               head_oid, latest_verified_at, reason}. Needs --pr; ignores
+               --base.
 ```
 
 ## forge-pr-squash-comment

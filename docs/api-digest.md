@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_67 modules, 845 symbols._
+_67 modules, 848 symbols._
 
 ## `forge`
 
@@ -759,13 +759,16 @@ _67 modules, 845 symbols._
 > _forge-pr-plan — deterministic finalization-path decision for the ``/pr`` skill._
 
 - `class PrPlan` — The finalization plan for one classification run.
+- `class WrapupFreshness` — Whether a PR's newest posted wrap-up still describes its head.
 - `_changed_paths(root: Path, diff_range: str) -> list[str]` _(internal)_ — Return the repo-relative paths changed across *diff_range*.
 - `_added_paths(root: Path, diff_range: str) -> list[str]` _(internal)_ — Return the new paths across *diff_range* (``--diff-filter=ACR``).
 - `_line_count(root: Path, diff_range: str) -> int` _(internal)_ — Return insertions + deletions across *diff_range*.
+- `_gh_pr_view(pr_number: int, json_fields: str, *, jq: str | None = None) -> str | None` _(internal)_ — Run ``gh pr view N --json <fields>`` and return its stdout, or ``None``.
 - `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.
+- `wrapup_freshness(pr_number: int) -> WrapupFreshness` — Compare the PR's newest ``verified-at:`` SHA against its current head.
 - `_try_delta(root: Path, pr_number: int | None, reasons: list[str]) -> bool` _(internal)_ — Evaluate delta-mode eligibility, appending the trail to *reasons*.
 - `classify(root: Path, base: str, pr_number: int | None) -> PrPlan` — Classify the current branch's finalization path.
-- `main(argv: list[str] | None = None) -> int` — Run the finalization-path classifier and emit its JSON plan.
+- `main(argv: list[str] | None = None) -> int` — Run the finalization-path classifier (or the freshness check) and emit JSON.
 
 ## `forge.pr_squash_comment`
 

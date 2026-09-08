@@ -1,0 +1,2 @@
+bump: minor
+- **Stale wrap-ups are now noticed after posting** — `forge-pr-plan --freshness --pr N` reports whether a PR's newest posted `verified-at:` still names its head (`fresh: true|false|null`, `null` = skip), and the FOUNDATION §6 background PR monitor watches it as a fifth signal, alerting once per new head and never posting the refresh itself; `forge-emergency`'s repayment check reuses the same verdict.

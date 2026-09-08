@@ -5,8 +5,10 @@
 # thresholds and glob decisions live in `forge.pr_delta` and are already
 # unit-tested in `test_pr_delta.py`, so here the concern is `pr_plan`'s
 # composition (diff extraction, mode precedence, `classified_at` stamping).
-# Only the delta path's `gh` seam (`_latest_verified_sha`) and `main()`'s
-# `repo_root` seam are monkeypatched, since those touch real subprocesses.
+# Only the delta path's `gh` seam (`_latest_verified_sha`), the
+# `wrapup_freshness()` / `--freshness` `gh` seam (`_gh_pr_view`), and
+# `main()`'s `repo_root` seam are monkeypatched, since those touch real
+# subprocesses.
 """
 
 from __future__ import annotations
@@ -15,15 +17,15 @@ import json
 import subprocess
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge import pr_plan
 from forge.pr_delta import PROVENANCE_GATE_STEPS
-from tests.conftest import GIT_ENV, init_git_repo, make_fake_run
+from tests.conftest import GIT_ENV, CapturedCalls, init_git_repo, make_fake_run
 
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 # --- repo-building helpers ---------------------------------------------
@@ -626,3 +628,263 @@ def test_classify_classified_at_changes_across_new_commit(tmp_path: Path) -> Non
     assert plan1.classified_at != plan2.classified_at
     assert plan1.classified_at == _git_short_sha(repo, "HEAD~1")
     assert plan2.classified_at == _git_short_sha(repo)
+
+
+# --- wrapup_freshness(): happy paths --------------------------------------
+
+
+def test_wrapup_freshness_returns_fresh_when_verified_sha_prefixes_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The latest `verified-at:` SHA prefixing the PR head reports `fresh=True`."""
+    stdout = json.dumps(
+        {
+            "headRefOid": "deadbeefcafefeed0000000000000000000000",
+            "comments": [{"body": "verified-at: deadbee wrap-up"}],
+        }
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.fresh is True
+    assert result.head_oid == "deadbeefcafefeed0000000000000000000000"
+    assert result.latest_verified_at == "deadbee"
+
+
+def test_wrapup_freshness_returns_stale_when_verified_sha_does_not_prefix_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `verified-at:` SHA that does not prefix the head reports `fresh=False`.
+
+    The reason names both SHAs so a reader can see the mismatch at a
+    glance, and points at ``/pr`` as the remedy.
+    """
+    stdout = json.dumps(
+        {
+            "headRefOid": "1234567890abcdef0000000000000000000000",
+            "comments": [{"body": "verified-at: fffffff wrap-up"}],
+        }
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.fresh is False
+    assert "fffffff" in result.reason
+    assert "1234567890abcdef0000000000000000000000" in result.reason
+    assert "re-run /pr" in result.reason
+
+
+def test_wrapup_freshness_last_comment_wins_over_earlier_fresh_comment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Among several `verified-at:` comments, the LAST posted one is authoritative.
+
+    SCENARIO: the first comment's SHA matches the head (would read fresh
+    on its own), but a second, later comment posts a different SHA that
+    does not match — posting order must win over comment order in the
+    list, mirroring ``_latest_verified_sha``'s own "last wins" contract.
+    """
+    stdout = json.dumps(
+        {
+            "headRefOid": "aaaa1110000000000000000000000000000000",
+            "comments": [
+                {"body": "verified-at: aaaa111 first wrap-up"},
+                {"body": "verified-at: bbbb222 second wrap-up"},
+            ],
+        }
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.latest_verified_at == "bbbb222"
+    assert result.fresh is False
+
+
+# --- wrapup_freshness(): degrade paths ------------------------------------
+
+
+def test_wrapup_freshness_returns_none_on_called_process_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing `gh pr view` (non-zero exit) degrades to `fresh=None`, not a raise.
+
+    MOCK SETUP: ``pr_plan.subprocess.run`` is replaced with a stub that
+    raises ``subprocess.CalledProcessError``, simulating an
+    unauthenticated or unknown-PR ``gh`` invocation.
+    """
+
+    def _raise(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.CalledProcessError(1, ["gh"])
+
+    monkeypatch.setattr(pr_plan.subprocess, "run", _raise)
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.fresh is None
+    assert result.latest_verified_at is None
+    assert result.head_oid == ""
+
+
+def test_wrapup_freshness_returns_none_when_gh_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing `gh` binary (`FileNotFoundError`) also degrades to `fresh=None`.
+
+    MOCK SETUP: ``pr_plan.subprocess.run`` raises ``FileNotFoundError``,
+    simulating ``gh`` not being installed on PATH.
+    """
+
+    def _raise(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        msg = "gh not found"
+        raise FileNotFoundError(msg)
+
+    monkeypatch.setattr(pr_plan.subprocess, "run", _raise)
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.fresh is None
+
+
+def test_wrapup_freshness_returns_none_on_invalid_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unparseable `gh pr view` stdout degrades to `fresh=None`, reason names why.
+
+    MOCK SETUP: ``pr_plan.subprocess.run`` is replaced with ``make_fake_run``
+    returning non-JSON ``stdout``, simulating a corrupted or truncated
+    ``gh`` response.
+    """
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout="not json"))
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.fresh is None
+    assert "JSON" in result.reason
+
+
+def test_wrapup_freshness_returns_none_when_head_oid_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing/empty `headRefOid` degrades to `fresh=None` even with a real comment.
+
+    MOCK SETUP: ``pr_plan.subprocess.run`` is replaced with ``make_fake_run``
+    returning ``gh``-shaped JSON with no ``headRefOid`` key — simulating an
+    unexpected ``gh`` response shape.
+    EXPECTED BEHAVIOR: an unknown head can never be reported stale (a false
+    alert costs a needless refresh), so the SHA comparison never runs even
+    though a ``verified-at:`` comment is present.
+    """
+    stdout = json.dumps({"comments": [{"body": "verified-at: cafebab wrap-up"}]})
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.fresh is None
+    assert result.latest_verified_at is None
+    assert "headRefOid" in result.reason
+
+
+def test_wrapup_freshness_returns_none_when_no_verified_at_comment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing `verified-at:` comment: `fresh=None`, `head_oid` set.
+
+    MOCK SETUP: ``pr_plan.subprocess.run`` is replaced with ``make_fake_run``
+    returning a ``gh``-shaped payload with a real head and no comments,
+    simulating a PR that has never received a wrap-up.
+    """
+    stdout = json.dumps(
+        {"headRefOid": "abcdef0000000000000000000000000000000000", "comments": []}
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.fresh is None
+    assert result.head_oid == "abcdef0000000000000000000000000000000000"
+
+
+# --- main(): --freshness usage errors -------------------------------------
+
+
+def test_main_freshness_without_pr_exits_two() -> None:
+    """`--freshness` without `--pr` is a usage error (argparse `parser.error`)."""
+    with pytest.raises(SystemExit) as exc_info:
+        pr_plan.main(["--freshness"])
+
+    assert exc_info.value.code == 2
+
+
+def test_main_without_base_or_freshness_exits_two() -> None:
+    """Neither `--base` nor `--freshness` given is a usage error."""
+    with pytest.raises(SystemExit) as exc_info:
+        pr_plan.main([])
+
+    assert exc_info.value.code == 2
+
+
+# --- main(): --freshness happy path ----------------------------------------
+
+
+def test_main_freshness_happy_path_emits_verdict_json(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`main(["--freshness", "--pr", "7"])` emits the freshness verdict as JSON.
+
+    MOCK SETUP: ``pr_plan.subprocess.run`` is replaced with ``make_fake_run``
+    returning a ``gh``-shaped ``headRefOid``/``comments`` payload, recording
+    the argv via ``CapturedCalls`` — this path never calls ``repo_root()``
+    (only the classify path does), so no repo fixture is needed at all.
+    """
+    stdout = json.dumps(
+        {
+            "headRefOid": "cafebabe1234567890000000000000000000000",
+            "comments": [{"body": "verified-at: cafebab wrap-up"}],
+        }
+    )
+    captured = CapturedCalls()
+    monkeypatch.setattr(
+        pr_plan.subprocess, "run", make_fake_run(stdout=stdout, captured=captured)
+    )
+
+    rc = pr_plan.main(["--freshness", "--pr", "7"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload) == {"fresh", "head_oid", "latest_verified_at", "reason"}
+    assert payload["fresh"] is True
+    assert payload["head_oid"] == "cafebabe1234567890000000000000000000000"
+    assert payload["latest_verified_at"] == "cafebab"
+    assert captured.calls == [
+        ["gh", "pr", "view", "7", "--json", "headRefOid,comments"]
+    ]
+
+
+def test_main_freshness_ignores_base(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--freshness` never validates or touches `--base`, even a dash-prefixed one.
+
+    A dash-prefixed ``--base`` is rejected on the classify path (would
+    reach git as an option); the freshness path takes a wholly different
+    branch in ``main()`` and must not run that check at all — pins the
+    help text's own "ignores --base" claim.
+    """
+    stdout = json.dumps(
+        {
+            "headRefOid": "cafebabe1234567890000000000000000000000",
+            "comments": [{"body": "verified-at: cafebab wrap-up"}],
+        }
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    rc = pr_plan.main(["--freshness", "--pr", "7", "--base=-bogus"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["fresh"] is True

@@ -16,6 +16,12 @@
 # ``monkeypatch.setenv`` — the human-authorization marker `start` refuses
 # without. No test freezes time: TTL/expiry assertions compare a freshly
 # computed ``datetime.now(UTC)`` delta with a generous tolerance instead.
+# Repayment's PR-freshness check no longer goes through ``_gh`` at all —
+# ``_repayment_evidence`` (and therefore ``_cmd_end``) calls
+# ``forge.pr_plan.wrapup_freshness`` directly, so those cases monkeypatch
+# ``emergency.wrapup_freshness`` (the consuming namespace, per FOUNDATION
+# §5) with a small plain stub returning a canned ``WrapupFreshness``
+# literal instead of faking a ``gh pr view`` round-trip.
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import emergency
+from forge.pr_plan import WrapupFreshness
 from tests.conftest import GIT_ENV, FakeProc, init_git_repo
 
 
@@ -73,6 +80,29 @@ def _fake_gh(
         return queue.pop(0) if queue else FakeProc()
 
     return _fake, calls
+
+
+def _stub_wrapup_freshness(
+    result: WrapupFreshness,
+) -> tuple[Callable[[int], WrapupFreshness], list[int]]:
+    """Return a ``wrapup_freshness``-shaped stub that records the PR numbers it saw.
+
+    Args:
+        result: The canned verdict to return on every invocation.
+
+    Returns:
+        A ``(stub, calls)`` pair: ``stub`` is the monkeypatch replacement
+        for ``emergency.wrapup_freshness``; ``calls`` accumulates each
+        ``pr_number`` argument in call order, for assertion (an empty
+        list after the run pins "never called").
+    """
+    calls: list[int] = []
+
+    def _stub(pr_number: int) -> WrapupFreshness:
+        calls.append(pr_number)
+        return result
+
+    return _stub, calls
 
 
 # --- read_state --------------------------------------------------------
@@ -653,43 +683,37 @@ def test_repayment_evidence_returns_none_false_when_no_pr_recorded(
 ) -> None:
     """No `pr_number` recorded in the sentinel degrades to `(None, False)`.
 
-    No comment parsing left to fall back to — `record-pr` is the only way
-    a PR number ever reaches the sentinel — so absence means no `gh` call
-    at all.
+    `record-pr` is the only way a PR number ever reaches the sentinel —
+    absence means the freshness check never even runs.
     """
     state = emergency.EmergencyState(ledger_issue=5, reason="x", expires_at=_iso_in(1))
-    fake, calls = _fake_gh([])
-    monkeypatch.setattr(emergency, "_gh", fake)
+    stub, calls = _stub_wrapup_freshness(WrapupFreshness(fresh=True))
+    monkeypatch.setattr(emergency, "wrapup_freshness", stub)
 
     assert emergency._repayment_evidence(state) == (None, False)
     assert calls == []
 
 
-def test_repayment_evidence_keeps_pr_number_on_pr_view_failure(
+def test_repayment_evidence_keeps_pr_number_on_degraded_freshness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A failing `gh pr view` keeps the recorded PR number as `(pr, False)`."""
+    """A degraded (`fresh=None`) freshness verdict keeps the PR number, unrepaid.
+
+    Covers every ``wrapup_freshness`` degrade path collapsing to the same
+    ``None`` verdict (failed ``gh pr view``, invalid JSON, no
+    ``verified-at:`` comment) — `_repayment_evidence` treats them
+    identically, so one case pins the mapping rather than one per cause.
+    """
     state = emergency.EmergencyState(
         ledger_issue=5, reason="x", expires_at=_iso_in(1), pr_number=42
     )
-    fake, calls = _fake_gh([FakeProc(returncode=1)])
-    monkeypatch.setattr(emergency, "_gh", fake)
-
-    assert emergency._repayment_evidence(state) == (42, False)
-    assert calls[0][:3] == ("pr", "view", "42")
-
-
-def test_repayment_evidence_keeps_pr_number_on_invalid_pr_json(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Unparseable `gh pr view` JSON keeps the PR number, still unrepaid."""
-    state = emergency.EmergencyState(
-        ledger_issue=5, reason="x", expires_at=_iso_in(1), pr_number=42
+    stub, calls = _stub_wrapup_freshness(
+        WrapupFreshness(fresh=None, reason="gh pr view failed; skip")
     )
-    fake, _calls = _fake_gh([FakeProc(stdout="not json")])
-    monkeypatch.setattr(emergency, "_gh", fake)
+    monkeypatch.setattr(emergency, "wrapup_freshness", stub)
 
     assert emergency._repayment_evidence(state) == (42, False)
+    assert calls == [42]
 
 
 def test_repayment_evidence_returns_true_when_head_prefixed_by_verified_sha(
@@ -699,17 +723,15 @@ def test_repayment_evidence_returns_true_when_head_prefixed_by_verified_sha(
     state = emergency.EmergencyState(
         ledger_issue=5, reason="x", expires_at=_iso_in(1), pr_number=99
     )
-    pr_stdout = json.dumps(
-        {
-            "headRefOid": "deadbeefcafe",
-            "comments": [{"body": "verified-at: deadbee wrap-up"}],
-        }
+    stub, calls = _stub_wrapup_freshness(
+        WrapupFreshness(
+            fresh=True, head_oid="deadbeefcafe", latest_verified_at="deadbee"
+        )
     )
-    fake, calls = _fake_gh([FakeProc(stdout=pr_stdout)])
-    monkeypatch.setattr(emergency, "_gh", fake)
+    monkeypatch.setattr(emergency, "wrapup_freshness", stub)
 
     assert emergency._repayment_evidence(state) == (99, True)
-    assert calls[0][:3] == ("pr", "view", "99")
+    assert calls == [99]
 
 
 def test_repayment_evidence_returns_false_when_no_verified_at_match(
@@ -719,16 +741,13 @@ def test_repayment_evidence_returns_false_when_no_verified_at_match(
     state = emergency.EmergencyState(
         ledger_issue=5, reason="x", expires_at=_iso_in(1), pr_number=7
     )
-    pr_stdout = json.dumps(
-        {
-            "headRefOid": "1234567890",
-            "comments": [{"body": "verified-at: ffffff wrap-up"}],
-        }
+    stub, calls = _stub_wrapup_freshness(
+        WrapupFreshness(fresh=False, head_oid="1234567890", latest_verified_at="ffffff")
     )
-    fake, _calls = _fake_gh([FakeProc(stdout=pr_stdout)])
-    monkeypatch.setattr(emergency, "_gh", fake)
+    monkeypatch.setattr(emergency, "wrapup_freshness", stub)
 
     assert emergency._repayment_evidence(state) == (7, False)
+    assert calls == [7]
 
 
 # --- _cmd_end ------------------------------------------------------------
@@ -797,15 +816,16 @@ def test_cmd_end_reports_debt_and_keeps_sentinel_when_pr_unverified(
         ledger_issue=5, reason="x", expires_at=_iso_in(1), spent=True, pr_number=9
     )
     emergency.write_state(tmp_path, state)
-    pr_stdout = json.dumps({"headRefOid": "abcdef1234", "comments": []})
-    fake, calls = _fake_gh([FakeProc(stdout=pr_stdout)])
+    stub, _freshness_calls = _stub_wrapup_freshness(WrapupFreshness(fresh=False))
+    monkeypatch.setattr(emergency, "wrapup_freshness", stub)
+    fake, calls = _fake_gh([])
     monkeypatch.setattr(emergency, "_gh", fake)
 
     rc = emergency._cmd_end(tmp_path)
 
     assert rc == 1
     assert emergency.read_state(tmp_path) == state
-    assert len(calls) == 1  # no comment/close attempted on outstanding debt
+    assert calls == []  # no comment/close attempted on outstanding debt
 
 
 def test_cmd_end_closes_ledger_and_removes_sentinel_when_repaid(
@@ -817,13 +837,9 @@ def test_cmd_end_closes_ledger_and_removes_sentinel_when_repaid(
     )
     emergency.write_state(tmp_path, state)
     (tmp_path / emergency._CONSUME_LOCK).write_text("")
-    pr_stdout = json.dumps(
-        {
-            "headRefOid": "deadbeefcafe",
-            "comments": [{"body": "verified-at: deadbee wrap-up"}],
-        }
-    )
-    fake, calls = _fake_gh([FakeProc(stdout=pr_stdout), FakeProc(), FakeProc()])
+    stub, _freshness_calls = _stub_wrapup_freshness(WrapupFreshness(fresh=True))
+    monkeypatch.setattr(emergency, "wrapup_freshness", stub)
+    fake, calls = _fake_gh([FakeProc(), FakeProc()])
     monkeypatch.setattr(emergency, "_gh", fake)
 
     rc = emergency._cmd_end(tmp_path)
@@ -831,8 +847,8 @@ def test_cmd_end_closes_ledger_and_removes_sentinel_when_repaid(
     assert rc == 0
     assert not (tmp_path / emergency.SENTINEL_RELPATH).exists()
     assert not (tmp_path / emergency._CONSUME_LOCK).exists()
-    assert calls[1][:2] == ("issue", "comment")
-    assert calls[2][:2] == ("issue", "close")
+    assert calls[0][:2] == ("issue", "comment")
+    assert calls[1][:2] == ("issue", "close")
 
 
 def test_cmd_end_close_failure_warns_but_still_unlinks(
@@ -850,15 +866,9 @@ def test_cmd_end_close_failure_warns_but_still_unlinks(
         ledger_issue=5, reason="x", expires_at=_iso_in(1), spent=True, pr_number=9
     )
     emergency.write_state(tmp_path, state)
-    pr_stdout = json.dumps(
-        {
-            "headRefOid": "deadbeefcafe",
-            "comments": [{"body": "verified-at: deadbee wrap-up"}],
-        }
-    )
-    fake, _calls = _fake_gh(
-        [FakeProc(stdout=pr_stdout), FakeProc(), FakeProc(returncode=1)]
-    )
+    stub, _freshness_calls = _stub_wrapup_freshness(WrapupFreshness(fresh=True))
+    monkeypatch.setattr(emergency, "wrapup_freshness", stub)
+    fake, _calls = _fake_gh([FakeProc(), FakeProc(returncode=1)])
     monkeypatch.setattr(emergency, "_gh", fake)
 
     rc = emergency._cmd_end(tmp_path)
