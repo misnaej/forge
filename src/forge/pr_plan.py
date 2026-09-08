@@ -284,7 +284,9 @@ def wrapup_freshness(pr_number: int) -> WrapupFreshness:
     cannot drift between reads. Prefix matching mirrors the
     ``verified-at:`` contract (short SHAs). The verdict is read-only by
     design: the §6 monitor surfaces a ``False``, and only a fresh ``/pr``
-    run (delta mode) clears it by posting a newer ``verified-at:``.
+    run (delta mode) clears it by posting a newer ``verified-at:``. The
+    comment bodies are untrusted — anyone can comment on a public PR —
+    so the verdict is advisory only and never authorizes anything.
 
     Args:
         pr_number: The existing PR to check.
