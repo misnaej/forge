@@ -61,7 +61,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.FORGE_ASSEMBLY_PAT || github.token }}
         run: |
-          out=$(forge-changelog release-pr 2>&1); rc=$?
+          # `bash -e` would abort at a failing substitution before the echo,
+          # swallowing the guard message that explains the exit code.
+          rc=0; out=$(forge-changelog release-pr 2>&1) || rc=$?
           echo "$out"
           echo "$out" >> "$GITHUB_STEP_SUMMARY"
           exit $rc

@@ -18,10 +18,14 @@ Direction of truth is one-way: fragments → assembler → CHANGELOG +
 version. In fragment mode nothing may read ``CHANGELOG.md`` as a
 version or bump signal — the changelog is an OUTPUT of release, written
 by :func:`assemble_changelog`'s single writer. The version itself is
-assembler-owned too: the next release is always ``latest v* tag +
-max(bump level over pending fragments)``
-(:func:`next_version_from_fragments`), computed at release, never
-carried per-PR.
+assembler-owned too, and tag-aware: pending fragments already inside
+a ``v*`` tag's tree were released by that tag (tag-per-merge) and
+assemble under its heading; only fragments no tag holds mint a new
+version — ``latest v* tag + max(bump level over the unreleased
+fragments)`` (:func:`plan_assembly`), computed at release, never
+carried per-PR. When every pending fragment is tagged, nothing is
+minted: the assembly backfills the per-tag headings and syncs the
+manifest to the latest tag.
 
 Usage:
 
@@ -32,11 +36,12 @@ Usage:
   ``release``: branch ``chore/assemble-vX.Y.Z``, stage, commit, push,
   and open the assembly PR with in-body gate evidence; idempotent and
   race-tolerant; merging stays human.
-- ``forge-changelog release`` — compute the next version from the
-  latest tag + pending fragments, assemble ``CHANGELOG.md`` under it,
-  write ``.claude-plugin/plugin.json`` to it (when a manifest exists —
-  the manifest's single writer), and stage everything (never commits).
-  Merge the resulting PR; tag-on-merge cuts the tag.
+- ``forge-changelog release`` — plan the assembly (tag-aware), assemble
+  ``CHANGELOG.md`` with a heading per already-tagged group plus any
+  minted heading, write ``.claude-plugin/plugin.json`` to the plan's
+  version (when a manifest exists — the manifest's single writer), and
+  stage everything (never commits). Merge the resulting PR; tag-on-merge
+  cuts the tag when the plan minted one.
 - ``forge-changelog next-version`` — read-only print of the computed
   next version and its bump level.
 - ``forge-changelog assemble --version vX.Y.Z`` — collate every pending
@@ -79,6 +84,8 @@ from forge.git_utils import (
     resolve_base_branch_ref,
     run_gate_evidence,
     run_git,
+    tag_commit_date,
+    v_tags,
 )
 
 
@@ -142,6 +149,33 @@ class Fragment:
     type: str
     level: str
     body: str
+
+
+@dataclass(frozen=True)
+class AssemblyPlan:
+    """What one assembly run writes: per-tag backfill plus an optional mint.
+
+    Attributes:
+        tagged: ``(tag, fragments)`` groups in ascending tag order — each
+            fragment already sits in that tag's tree, so the tag released
+            it and the assembly writes the heading it was owed.
+        untagged: Fragments no tag holds — the unreleased set.
+        version: Bare release version: the latest tag bumped by
+            ``untagged``'s strongest level, or the latest tag itself when
+            ``untagged`` is empty (the manifest syncs, nothing is minted).
+        level: The bump level behind a minted version; ``None`` when
+            nothing is minted.
+    """
+
+    tagged: list[tuple[str, list[Fragment]]]
+    untagged: list[Fragment]
+    version: str
+    level: str | None
+
+    @property
+    def fragments(self) -> list[Fragment]:
+        """Every fragment the assembly consumes, tagged groups first."""
+        return [f for _tag, group in self.tagged for f in group] + self.untagged
 
 
 def _parse_and_validate_filename(name: str) -> tuple[str, str, list[str]]:
@@ -437,21 +471,91 @@ def branch_added_fragments(root: Path) -> list[str]:
     )
 
 
-def next_version_from_fragments(root: Path, latest_tag: str) -> tuple[str, str] | None:
-    """Compute the next release version from pending fragments.
+def _fragments_in_tag_tree(root: Path, tag: str) -> set[str]:
+    """Return the repo-relative fragment paths present in *tag*'s tree.
 
-    The assembler-owned version computation: the next release is always
-    *latest_tag* bumped by the strongest level declared across pending
-    fragments, so version numbers exist nowhere but the release commit
-    — no per-PR slot to collide on.
+    Args:
+        root: Repository root directory.
+        tag: An existing tag name.
+
+    Returns:
+        Paths under ``changelog.d/`` as ``git ls-tree`` prints them;
+        empty when the tag has none (or cannot be read).
+    """
+    out = run_git(
+        "ls-tree",
+        "-r",
+        "--name-only",
+        tag,
+        "--",
+        str(FRAGMENTS_DIR),
+        cwd=root,
+        check=False,
+    )
+    return {line for line in out.splitlines() if line}
+
+
+def _partition_by_release_tag(
+    root: Path, fragments: list[Fragment]
+) -> tuple[list[tuple[str, list[Fragment]]], list[Fragment]]:
+    """Group *fragments* by the earliest tag whose tree holds each one.
+
+    Walks the tags newest-first, one ``ls-tree`` each, and stops at the
+    first tag holding none of the pending fragments: a fragment only
+    ever enters a tree and stays until an assembly deletes it, so every
+    older tag holds none either. The last tag seen holding a fragment
+    is therefore its earliest — the release that shipped it.
+
+    Args:
+        root: Repository root directory.
+        fragments: Validated pending fragments.
+
+    Returns:
+        ``(tagged, untagged)`` — ``tagged`` as ``(tag, fragments)`` in
+        ascending tag order, each group filename-sorted; ``untagged``
+        the fragments no tag holds, filename-sorted.
+    """
+    by_path = {str(f.path.relative_to(root)): f for f in fragments}
+    owner: dict[str, str] = {}
+    tags_seen: list[str] = []
+    for tag in v_tags(root):
+        members = _fragments_in_tag_tree(root, tag) & by_path.keys()
+        if not members:
+            break
+        tags_seen.append(tag)
+        for rel in members:
+            owner[rel] = tag
+    tagged = [
+        (
+            tag,
+            sorted(
+                (by_path[r] for r, t in owner.items() if t == tag), key=lambda f: f.path
+            ),
+        )
+        for tag in reversed(tags_seen)
+        if any(t == tag for t in owner.values())
+    ]
+    untagged = sorted(
+        (f for rel, f in by_path.items() if rel not in owner), key=lambda f: f.path
+    )
+    return tagged, untagged
+
+
+def plan_assembly(root: Path, latest_tag: str) -> AssemblyPlan | None:
+    """Plan the assembly: tag-aware version and per-tag fragment groups.
+
+    The assembler-owned version computation. Fragments already released
+    by a tag (tag-per-merge) never bump again — they were counted when
+    that tag was cut — so the minted version, if any, comes from the
+    unreleased fragments alone, and an all-released backlog mints
+    nothing.
 
     Args:
         root: Repository root directory.
         latest_tag: Latest ``v*`` release tag (the bump baseline).
 
     Returns:
-        ``(bare_version, level)`` — e.g. ``("1.3.0", "minor")`` — or
-        ``None`` when no fragments are pending.
+        The plan, or ``None`` when no fragments are pending.
 
     Raises:
         ValueError: When any pending fragment is invalid; the message
@@ -463,8 +567,14 @@ def next_version_from_fragments(root: Path, latest_tag: str) -> tuple[str, str] 
         raise ValueError(msg)
     if not fragments:
         return None
-    level = max_level(fragments)
-    return next_version(latest_tag, level).removeprefix("v"), level
+    tagged, untagged = _partition_by_release_tag(root, fragments)
+    if untagged:
+        level = max_level(untagged)
+        version = next_version(latest_tag, level).removeprefix("v")
+    else:
+        level = None
+        version = latest_tag.removeprefix("v")
+    return AssemblyPlan(tagged=tagged, untagged=untagged, version=version, level=level)
 
 
 def _cmd_check(root: Path) -> int:
@@ -509,24 +619,84 @@ def _assemble_and_stage(
     Returns:
         ``0`` on success; ``2`` on assembly failure.
     """
-    changelog = root / "CHANGELOG.md"
-    text = changelog.read_text(encoding="utf-8") if changelog.is_file() else ""
     try:
-        updated = assemble_changelog(text, fragments, version, date=date)
+        updated = assemble_changelog(
+            _read_changelog(root), fragments, version, date=date
+        )
     except ValueError as exc:
         emit(f"changelog.d: {exc}")
         return 2
-    changelog.write_text(updated, encoding="utf-8")
     emit(
         f"Assembled {len(fragments)} fragment(s) into CHANGELOG.md "
         f"under {version} (max level: {max_level(fragments)})."
     )
+    _write_assembly(root, updated, fragments, delete=delete)
+    return 0
+
+
+def _read_changelog(root: Path) -> str:
+    """Return ``CHANGELOG.md``'s text, or ``""`` when the file does not exist.
+
+    Args:
+        root: Repository root directory.
+
+    Returns:
+        The contents of ``CHANGELOG.md``, or an empty string if the file does
+        not exist.
+    """
+    changelog = root / "CHANGELOG.md"
+    return changelog.read_text(encoding="utf-8") if changelog.is_file() else ""
+
+
+def _write_assembly(
+    root: Path, text: str, fragments: list[Fragment], *, delete: bool
+) -> None:
+    """Write the assembled changelog and, when asked, stage it with the deletions.
+
+    Args:
+        root: Repository root directory.
+        text: The full assembled ``CHANGELOG.md`` contents.
+        fragments: The consumed fragments (deleted when *delete*).
+        delete: Stage ``CHANGELOG.md`` and ``git rm`` the fragments (never commits).
+    """
+    (root / "CHANGELOG.md").write_text(text, encoding="utf-8")
     if delete:
         run_git("add", "CHANGELOG.md", cwd=root)
         for fragment in fragments:
             run_git("rm", "-q", str(fragment.path.relative_to(root)), cwd=root)
         emit("Staged CHANGELOG.md and fragment deletions — commit is yours.")
-    return 0
+
+
+def _render_assembly(root: Path, text: str, plan: AssemblyPlan, date: str) -> str:
+    """Insert every heading the plan owes into *text*, newest ending on top.
+
+    Tagged groups go in ascending order, each dated when its tag was
+    cut; the minted heading (if any) goes last, so it lands above them.
+
+    Args:
+        root: Repository root directory.
+        text: Current ``CHANGELOG.md`` contents.
+        plan: The assembly plan.
+        date: Optional date override for the minted heading only.
+
+    Returns:
+        The updated changelog text.
+
+    Raises:
+        ValueError: From :func:`assemble_changelog` (a heading already
+            exists, or a group is empty).
+    """
+    for tag, group in plan.tagged:
+        text = assemble_changelog(text, group, tag, date=tag_commit_date(root, tag))
+        emit(f"Assembled {len(group)} fragment(s) under existing tag {tag}.")
+    if plan.untagged:
+        version = f"v{plan.version}"
+        text = assemble_changelog(text, plan.untagged, version, date=date)
+        emit(
+            f"Assembled {len(plan.untagged)} unreleased fragment(s) under "
+            f"{version} (level: {plan.level})."
+        )
+    return text
 
 
 def _cmd_assemble(root: Path, version: str, date: str, *, delete: bool) -> int:
@@ -553,31 +723,56 @@ def _cmd_assemble(root: Path, version: str, date: str, *, delete: bool) -> int:
 
 
 def _cmd_next_version(root: Path) -> int:
-    """Print the computed next release version: latest tag + max pending level.
+    """Print the computed next release version, tag-aware.
 
     Args:
         root: Repository root directory.
 
     Returns:
-        ``0`` with ``vX.Y.Z (level)`` printed; ``2`` when there is no
-        ``v*`` tag, no pending fragment, or an invalid fragment (the
-        message says which).
+        ``0`` with ``vX.Y.Z (level)`` printed — or, when every pending
+        fragment is already released by a tag, ``vX.Y.Z (already tagged
+        — N fragment(s) across M tag(s); nothing to mint)``; ``2`` when
+        there is no ``v*`` tag, no pending fragment, or an invalid
+        fragment (the message says which).
     """
-    rc, computed = _computed_next_version(root, "next-version", none_pending_rc=2)
-    if computed is None:
+    rc, plan = _computed_next_version(root, "next-version", none_pending_rc=2)
+    if plan is None:
         return rc if rc is not None else 2
-    bare_version, level = computed
-    emit(f"v{bare_version} ({level})")
+    emit(_describe_plan(plan))
     return 0
+
+
+def _describe_plan(plan: AssemblyPlan) -> str:
+    """Return the one-line ``next-version`` verdict for the assembly plan.
+
+    Args:
+        plan: The assembly plan to describe.
+
+    Returns:
+        A one-line summary of the plan's version and scope.
+    """
+    n_tagged = sum(len(group) for _tag, group in plan.tagged)
+    if plan.level is None:
+        return (
+            f"v{plan.version} (already tagged — {n_tagged} fragment(s) across "
+            f"{len(plan.tagged)} tag(s); nothing to mint)"
+        )
+    suffix = (
+        f" + {n_tagged} fragment(s) already under {len(plan.tagged)} tag(s)"
+        if n_tagged
+        else ""
+    )
+    return f"v{plan.version} ({plan.level}){suffix}"
 
 
 def _cmd_release(root: Path, date: str) -> int:
     """Prepare the release commit: assemble + manifest write, all staged.
 
-    Computes the version once (:func:`next_version_from_fragments`),
-    assembles ``CHANGELOG.md`` under it with fragment deletions staged,
+    Computes the plan once (:func:`plan_assembly`), assembles
+    ``CHANGELOG.md`` — one heading per already-cut tag, plus the minted
+    heading for unreleased fragments — with fragment deletions staged,
     and — when the repo ships a plugin manifest — writes
-    ``.claude-plugin/plugin.json`` to the computed version and stages
+    ``.claude-plugin/plugin.json`` to the plan's version and stages
     it. Never commits: the caller branches, commits, and opens the
     release PR; tag-on-merge cuts the tag. Manifest-less (tag-versioned)
     repos skip the manifest write and use the printed version for their
@@ -592,32 +787,36 @@ def _cmd_release(root: Path, date: str) -> int:
         fragment, an invalid fragment, or the assembly/manifest write
         fails.
     """
-    rc, computed = _computed_next_version(root, "release", none_pending_rc=2)
-    if computed is None:
+    rc, plan = _computed_next_version(root, "release", none_pending_rc=2)
+    if plan is None:
         return rc if rc is not None else 2
-    bare_version, _level = computed
-    outcome = _stage_release(root, date, bare_version)
+    outcome = _stage_release(root, date, plan)
     if outcome != 0:
         return outcome
-    emit(
-        f"Release v{bare_version} prepared — commit, PR, merge; "
-        "tag-on-merge cuts the tag."
-    )
+    if plan.level is None:
+        emit(
+            f"Assembly under existing tags prepared (manifest synced to "
+            f"v{plan.version}) — commit, PR, merge; nothing to tag."
+        )
+    else:
+        emit(
+            f"Release v{plan.version} prepared — commit, PR, merge; "
+            "tag-on-merge cuts the tag."
+        )
     return 0
 
 
-def _stage_release(root: Path, date: str, bare_version: str) -> int:
-    """Assemble + manifest-write the release for *bare_version*, all staged.
+def _stage_release(root: Path, date: str, plan: AssemblyPlan) -> int:
+    """Assemble + manifest-write the release per *plan*, all staged.
 
     The shared body of ``release`` and ``release-pr``: the caller has
-    already computed (and thereby validated) the version via
-    :func:`next_version_from_fragments`; this stages the outcome and
-    never commits.
+    already computed (and thereby validated) the plan via
+    :func:`plan_assembly`; this stages the outcome and never commits.
 
     Args:
         root: Repository root directory.
-        date: Optional heading date override.
-        bare_version: The computed release version (no ``v`` prefix).
+        date: Optional heading date override (minted heading only).
+        plan: The assembly plan.
 
     Returns:
         ``0`` on success; ``2`` when the manifest render or assembly
@@ -633,24 +832,21 @@ def _stage_release(root: Path, date: str, bare_version: str) -> int:
     if manifest.is_file():
         try:
             manifest_text = render_plugin_version(
-                manifest.read_text(encoding="utf-8"), bare_version
+                manifest.read_text(encoding="utf-8"), plan.version
             )
         except ValueError as exc:
             emit(f"release: {exc}")
             return 2
-    # next_version_from_fragments already proved every fragment valid,
-    # so this re-collection cannot surface errors — it only recovers the
-    # Fragment list the tuple result does not carry.
-    fragments, _errors = _collect_valid_fragments(root)
-    outcome = _assemble_and_stage(
-        root, fragments, f"v{bare_version}", date, delete=True
-    )
-    if outcome != 0:
-        return outcome
+    try:
+        updated = _render_assembly(root, _read_changelog(root), plan, date)
+    except ValueError as exc:
+        emit(f"changelog.d: {exc}")
+        return 2
+    _write_assembly(root, updated, plan.fragments, delete=True)
     if manifest_text is not None:
         manifest.write_text(manifest_text, encoding="utf-8")
         run_git("add", ".claude-plugin/plugin.json", cwd=root)
-        emit(f"Staged .claude-plugin/plugin.json at {bare_version}.")
+        emit(f"Staged .claude-plugin/plugin.json at {plan.version}.")
     return 0
 
 
@@ -672,18 +868,7 @@ def fragments_new_since_tag(root: Path, tag: str | None) -> list[Path]:
     pending = discover_fragments(root)
     if tag is None:
         return pending
-    in_tag = set(
-        run_git(
-            "ls-tree",
-            "-r",
-            "--name-only",
-            tag,
-            "--",
-            str(FRAGMENTS_DIR),
-            cwd=root,
-            check=False,
-        ).splitlines()
-    )
+    in_tag = _fragments_in_tag_tree(root, tag)
     return [p for p in pending if str(p.relative_to(root)) not in in_tag]
 
 
@@ -845,7 +1030,7 @@ ASSEMBLY_BRANCH_PREFIX = "chore/assemble-"
 # not a cron log nobody reads — carries what the merger must know.
 _ASSEMBLY_PR_BODY = """\
 Scheduled changelog assembly ({version}): collates the pending
-`changelog.d/` fragments into `CHANGELOG.md` under **{version}** and
+`changelog.d/` fragments into `CHANGELOG.md` {headings} and
 syncs `.claude-plugin/plugin.json` (when present).
 
 **Merging this PR is the release act for the changelog**: the fragments
@@ -869,21 +1054,37 @@ _TAGGING_MANIFEST_LESS = (
     "(auto-tag cannot cover it; the fragments are deleted by this very "
     "assembly)."
 )
+# Every fragment already shipped under its own tag: the assembly only
+# backfills headings (and syncs the manifest) — there is nothing to tag.
+_TAGGING_ALL_RELEASED = (
+    "Nothing to tag: every fragment already shipped under its own tag — "
+    "this assembly backfills their headings and syncs the manifest to "
+    "{version}."
+)
 
 
-def _assembly_pr_body(root: Path, version: str) -> str:
+def _assembly_pr_body(root: Path, plan: AssemblyPlan) -> str:
     """Render the assembly PR body with the repo-correct tagging sentence.
 
     Args:
         root: Repository root directory.
-        version: Release version tag name (``vX.Y.Z``).
+        plan: The assembly plan.
 
     Returns:
         The formatted PR body.
     """
-    manifest = (root / ".claude-plugin" / "plugin.json").is_file()
-    tagging = _TAGGING_WITH_MANIFEST if manifest else _TAGGING_MANIFEST_LESS
-    return _ASSEMBLY_PR_BODY.format(version=version, tagging=tagging)
+    version = f"v{plan.version}"
+    tags = ", ".join(tag for tag, _group in plan.tagged)
+    if plan.level is None:
+        headings = f"under their release tags ({tags})"
+        tagging = _TAGGING_ALL_RELEASED.format(version=version)
+    else:
+        headings = f"under **{version}**"
+        if tags:
+            headings += f" (plus backfilled headings for {tags})"
+        manifest = (root / ".claude-plugin" / "plugin.json").is_file()
+        tagging = _TAGGING_WITH_MANIFEST if manifest else _TAGGING_MANIFEST_LESS
+    return _ASSEMBLY_PR_BODY.format(version=version, headings=headings, tagging=tagging)
 
 
 def _gate_evidence(root: Path) -> tuple[bool, str]:
@@ -919,7 +1120,7 @@ def _gate_evidence(root: Path) -> tuple[bool, str]:
 
 def _computed_next_version(
     root: Path, cmd: str, *, none_pending_rc: int
-) -> tuple[int | None, tuple[str, str] | None]:
+) -> tuple[int | None, AssemblyPlan | None]:
     """Run the shared version-computation guard for a subcommand.
 
     The identical guard trio of ``release``, ``release-pr``, and
@@ -934,22 +1135,22 @@ def _computed_next_version(
             explicit ``release`` / ``next-version`` invocations).
 
     Returns:
-        ``(exit_code, None)`` when the guard decides, or
-        ``(None, (bare_version, level))`` to proceed.
+        ``(exit_code, None)`` when the guard decides, or ``(None, plan)``
+        to proceed.
     """
     latest = latest_v_tag(root)
     if latest is None:
         emit(f"{cmd}: no v* tag — no release baseline to bump from.")
         return 2, None
     try:
-        computed = next_version_from_fragments(root, latest)
+        plan = plan_assembly(root, latest)
     except ValueError as exc:
         emit(f"{cmd}: {exc}")
         return 2, None
-    if computed is None:
+    if plan is None:
         emit(f"{cmd}: no pending fragments — nothing to release.")
         return none_pending_rc, None
-    return None, computed
+    return None, plan
 
 
 def _gh_preflight() -> int | None:
@@ -1000,43 +1201,37 @@ def _cmd_release_pr(root: Path, date: str, *, draft: bool) -> int:
     preflight = _gh_preflight()
     if preflight is not None:
         return preflight
-    rc, computed = _computed_next_version(root, "release-pr", none_pending_rc=0)
-    if computed is None:
+    rc, plan = _computed_next_version(root, "release-pr", none_pending_rc=0)
+    if plan is None:
         return rc if rc is not None else 2
     existing = find_open_pr_by_head_prefix(root, ASSEMBLY_BRANCH_PREFIX)
     if existing:
         emit(f"release-pr: assembly PR already open — {existing}")
         return 0
-    bare_version, _level = computed
-    version = f"v{bare_version}"
-    return _publish_assembly_pr(root, version, bare_version, date=date, draft=draft)
+    return _publish_assembly_pr(root, plan, date=date, draft=draft)
 
 
-def _stage_and_commit_assembly(
-    root: Path, date: str, bare_version: str, version: str
-) -> int:
+def _stage_and_commit_assembly(root: Path, date: str, plan: AssemblyPlan) -> int:
     """Stage and commit the assembly changelog and manifest.
 
     Args:
         root: Repository root directory.
         date: Optional heading date override.
-        bare_version: The computed release version (no ``v`` prefix).
-        version: Release version tag name (``vX.Y.Z``) for the commit message.
+        plan: The assembly plan (its version names the commit).
 
     Returns:
         ``0`` on success; ``2`` on staging failure.
     """
-    outcome = _stage_release(root, date, bare_version)
+    outcome = _stage_release(root, date, plan)
     if outcome != 0:
         return outcome
-    create_commit(root, f"chore(release): assemble {version}")
+    create_commit(root, f"chore(release): assemble v{plan.version}")
     return 0
 
 
 def _publish_assembly_pr(
     root: Path,
-    version: str,
-    bare_version: str,
+    plan: AssemblyPlan,
     *,
     date: str = "",
     draft: bool = False,
@@ -1045,8 +1240,7 @@ def _publish_assembly_pr(
 
     Args:
         root: Repository root directory.
-        version: Release version tag name (``vX.Y.Z``) for the branch and titles.
-        bare_version: The computed release version (no ``v`` prefix).
+        plan: The assembly plan (its version names the branch and titles).
         date: Optional heading date override (defaults to today).
         draft: Open the PR as a draft.
 
@@ -1056,28 +1250,29 @@ def _publish_assembly_pr(
         explains.
     """
     base_branch = load_config(root).base_branch
+    version = f"v{plan.version}"
     branch = f"{ASSEMBLY_BRANCH_PREFIX}{version}"
     start_branch = run_git("branch", "--show-current", cwd=root, check=False)
     run_git("switch", "-c", branch, cwd=root)
     try:
-        outcome = _stage_and_commit_assembly(root, date, bare_version, version)
+        outcome = _stage_and_commit_assembly(root, date, plan)
         if outcome != 0:
             return outcome
-        return _push_and_open_pr(root, branch, version, base_branch, draft=draft)
+        return _push_and_open_pr(root, branch, plan, base_branch, draft=draft)
     finally:
         if start_branch:
             run_git("switch", start_branch, cwd=root, check=False)
 
 
 def _push_and_open_pr(
-    root: Path, branch: str, version: str, base_branch: str, *, draft: bool
+    root: Path, branch: str, plan: AssemblyPlan, base_branch: str, *, draft: bool
 ) -> int:
     """Push the assembly branch and open its PR, deferring to race winners.
 
     Args:
         root: Repository root directory.
         branch: The assembly branch (already committed, checked out).
-        version: Release version tag name (``vX.Y.Z``) for titles.
+        plan: The assembly plan (its version names the title; its groups the body).
         base_branch: PR base — the repo's ``[tool.forge].base_branch``.
         draft: Open the PR as a draft.
 
@@ -1111,9 +1306,9 @@ def _push_and_open_pr(
             "--head",
             branch,
             "--title",
-            f"chore(release): assemble {version}",
+            f"chore(release): assemble v{plan.version}",
             "--body",
-            _assembly_pr_body(root, version) + "\n" + evidence,
+            _assembly_pr_body(root, plan) + "\n" + evidence,
         ],
         capture_output=True,
         text=True,
@@ -1251,8 +1446,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("check", help="validate pending changelog.d/ fragments")
     sub.add_parser(
         "next-version",
-        help="print the computed next release version "
-        "(latest v* tag + max pending bump level)",
+        help="print the computed next release version — latest v* tag + "
+        "max level over the UNRELEASED fragments; fragments already in a "
+        "tag's tree assemble under that tag and never bump again",
     )
     rel = sub.add_parser(
         "release",

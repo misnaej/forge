@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -545,6 +546,44 @@ def test_latest_v_tag_none_when_no_tags(
     """No ``v*`` tags → ``None``."""
     monkeypatch.setattr(git_utils.subprocess, "run", make_fake_run(stdout=""))
     assert git_utils.latest_v_tag(tmp_path) is None
+
+
+def test_v_tags_returns_all_sorted_descending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every ``--sort=-v:refname`` line comes back, highest first."""
+    monkeypatch.setattr(
+        git_utils.subprocess,
+        "run",
+        make_fake_run(stdout="v1.21.0\nv1.20.2\nv1.20.0\n"),
+    )
+    assert git_utils.v_tags(tmp_path) == ["v1.21.0", "v1.20.2", "v1.20.0"]
+
+
+def test_v_tags_empty_when_no_tags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No ``v*`` tags → an empty list, never ``None``."""
+    monkeypatch.setattr(git_utils.subprocess, "run", make_fake_run(stdout=""))
+    assert git_utils.v_tags(tmp_path) == []
+
+
+def test_tag_commit_date_returns_committer_date(tmp_path: Path) -> None:
+    """A real tag resolves to its commit's ``YYYY-MM-DD`` committer date."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "seed.txt").write_text("seed\n")
+    commit_all(tmp_path, "seed")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=_GIT_ENV, check=True)
+
+    date = git_utils.tag_commit_date(tmp_path, "v1.0.0")
+
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", date)
+
+
+def test_tag_commit_date_empty_for_unknown_tag(tmp_path: Path) -> None:
+    """An unresolvable tag degrades to an empty string, never a raised error."""
+    _init_git_repo(tmp_path)
+    assert git_utils.tag_commit_date(tmp_path, "v9.9.9") == ""
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ import pytest
 
 from forge import changelog_fragments, git_utils
 from forge.changelog_fragments import (
+    AssemblyPlan,
     Fragment,
     assemble_changelog,
     branch_added_fragments,
@@ -23,7 +24,7 @@ from forge.changelog_fragments import (
     discover_fragments,
     main,
     max_level,
-    next_version_from_fragments,
+    plan_assembly,
     validate_fragment,
 )
 from tests.conftest import (
@@ -424,7 +425,7 @@ def test_check_pending_aggregates_errors_across_fragments(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
-# next_version_from_fragments
+# plan_assembly
 # ---------------------------------------------------------------------------
 
 
@@ -436,29 +437,35 @@ def test_check_pending_aggregates_errors_across_fragments(tmp_path: Path) -> Non
         (["patch"], ("1.2.4", "patch")),
     ],
 )
-def test_next_version_from_fragments_uses_max_level(
+def test_plan_assembly_uses_max_level_of_untagged(
     tmp_path: Path, levels: list[str], expected: tuple[str, str]
 ) -> None:
-    """The strongest pending level drives the bump above the latest tag.
+    """The strongest untagged level drives the bump above the latest tag.
+
+    Outside a git repo ``v_tags`` yields ``[]``, so every fragment is
+    untagged — this pins the plain (no-tag-partitioning) case.
 
     Args:
         levels: Bump levels declared across the pending fragments.
-        expected: Expected ``(bare_version, level)`` above ``v1.2.3``.
+        expected: Expected ``(version, level)`` above ``v1.2.3``.
     """
     directory = tmp_path / "changelog.d"
     for i, level in enumerate(levels):
         _write_fragment(directory, f"f{i}.added.md", f"bump: {level}\n- x\n")
-    assert next_version_from_fragments(tmp_path, "v1.2.3") == expected
+    plan = plan_assembly(tmp_path, "v1.2.3")
+    assert plan is not None
+    assert (plan.version, plan.level) == expected
+    assert plan.tagged == []
 
 
-def test_next_version_from_fragments_none_when_nothing_pending(
+def test_plan_assembly_none_when_nothing_pending(
     tmp_path: Path,
 ) -> None:
-    """No pending fragments → None, never a zero-fragment version."""
-    assert next_version_from_fragments(tmp_path, "v1.2.3") is None
+    """No pending fragments → None, never a zero-fragment plan."""
+    assert plan_assembly(tmp_path, "v1.2.3") is None
 
 
-def test_next_version_from_fragments_raises_listing_every_error(
+def test_plan_assembly_raises_listing_every_error(
     tmp_path: Path,
 ) -> None:
     """Any invalid pending fragment raises, with every error in the message."""
@@ -467,8 +474,61 @@ def test_next_version_from_fragments_raises_listing_every_error(
     _write_fragment(directory, "bad-type.bogus.md", "bump: minor\n- x\n")
     _write_fragment(directory, "bad-level.added.md", "bump: superduper\n- x\n")
     with pytest.raises(ValueError, match="unknown type 'bogus'") as excinfo:
-        next_version_from_fragments(tmp_path, "v1.2.3")
+        plan_assembly(tmp_path, "v1.2.3")
     assert "unknown level 'superduper'" in str(excinfo.value)
+
+
+def test_plan_assembly_all_tagged_mints_nothing(tmp_path: Path) -> None:
+    """Every pending fragment already under a tag → nothing minted.
+
+    SCENARIO: a single fragment committed and tagged ``v1.0.0``, with
+    no fragment left outside that tag's tree.
+    EXPECTED BEHAVIOR: the plan mints no version (``level is None``),
+    reports the tag's own version, and groups the fragment under it.
+    """
+    init_git_repo(tmp_path)
+    _write_fragment(tmp_path / "changelog.d", "a.added.md", "bump: minor\n- a\n")
+    commit_all(tmp_path, "seed")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=GIT_ENV, check=True)
+
+    plan = plan_assembly(tmp_path, "v1.0.0")
+
+    assert plan is not None
+    assert plan.level is None
+    assert plan.version == "1.0.0"
+    assert plan.untagged == []
+    assert len(plan.tagged) == 1
+    tag, group = plan.tagged[0]
+    assert tag == "v1.0.0"
+    assert [f.slug for f in group] == ["a"]
+
+
+def test_plan_assembly_partitions_by_earliest_tag(tmp_path: Path) -> None:
+    """Each fragment groups under the earliest tag whose tree holds it.
+
+    SCENARIO: fragment A ships under ``v1.0.0``, fragment B under the
+    later ``v1.1.0``, and fragment C is pending, uncommitted.
+    EXPECTED BEHAVIOR: ``tagged`` lists both groups in ascending tag
+    order; C drives a minted patch bump above ``v1.1.0``.
+    """
+    init_git_repo(tmp_path)
+    _write_fragment(tmp_path / "changelog.d", "a.added.md", "bump: minor\n- a\n")
+    commit_all(tmp_path, "fragment a")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=GIT_ENV, check=True)
+    _write_fragment(tmp_path / "changelog.d", "b.added.md", "bump: minor\n- b\n")
+    commit_all(tmp_path, "fragment b")
+    subprocess.run(["git", "tag", "v1.1.0"], cwd=tmp_path, env=GIT_ENV, check=True)
+    _write_fragment(tmp_path / "changelog.d", "c.fixed.md", "bump: patch\n- c\n")
+
+    plan = plan_assembly(tmp_path, "v1.1.0")
+
+    assert plan is not None
+    assert [tag for tag, _group in plan.tagged] == ["v1.0.0", "v1.1.0"]
+    assert [f.slug for f in plan.tagged[0][1]] == ["a"]
+    assert [f.slug for f in plan.tagged[1][1]] == ["b"]
+    assert [f.slug for f in plan.untagged] == ["c"]
+    assert plan.level == "patch"
+    assert plan.version == "1.1.1"
 
 
 # ---------------------------------------------------------------------------
@@ -600,6 +660,52 @@ def _init_tagged_repo(repo: Path, tag: str = "v1.0.0") -> None:
     subprocess.run(["git", "tag", tag], cwd=repo, env=GIT_ENV, check=True)
 
 
+def _init_all_tagged_repo(repo: Path) -> None:
+    """Init a plugin repo where the only pending fragment already ships under a tag.
+
+    The fragment is tagged ``v1.0.0``. Manifest parked at ``1.0.0``, fragment A
+    (minor) committed together with the tag — the tag-aware "nothing to mint"
+    fixture shared by the `release` and `next-version` CLI tests.
+
+    Args:
+        repo: Directory to initialize.
+    """
+    init_git_repo(repo)
+    (repo / ".claude-plugin").mkdir()
+    (repo / ".claude-plugin" / "plugin.json").write_text(
+        '{\n  "name": "x",\n  "version": "1.0.0"\n}\n'
+    )
+    (repo / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragment(repo / "changelog.d", "a.added.md", "bump: minor\n- a thing\n")
+    commit_all(repo, "seed")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=repo, env=GIT_ENV, check=True)
+
+
+def _init_mixed_repo(repo: Path) -> None:
+    """Init a plugin repo with fragments under tags and still pending fragments.
+
+    Fragment A is tagged ``v1.0.0``, fragment B still pending. Manifest parked
+    at ``1.0.0``; B (minor) is committed in a later, untagged commit, so it
+    drives a mint above the backfilled ``v1.0.0`` heading — the tag-aware
+    "mixed" fixture shared by the
+    `release` and `next-version` CLI tests.
+
+    Args:
+        repo: Directory to initialize.
+    """
+    init_git_repo(repo)
+    (repo / ".claude-plugin").mkdir()
+    (repo / ".claude-plugin" / "plugin.json").write_text(
+        '{\n  "name": "x",\n  "version": "1.0.0"\n}\n'
+    )
+    (repo / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragment(repo / "changelog.d", "a.added.md", "bump: minor\n- a thing\n")
+    commit_all(repo, "seed")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=repo, env=GIT_ENV, check=True)
+    _write_fragment(repo / "changelog.d", "b.added.md", "bump: minor\n- b thing\n")
+    commit_all(repo, "fragment b")
+
+
 def test_main_next_version_prints_computed_version_and_level(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -652,6 +758,36 @@ def test_main_next_version_exit_two_on_invalid_fragment(
     assert "unknown type 'bogus'" in capsys.readouterr().out
 
 
+def test_main_next_version_reports_already_tagged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Every pending fragment already tagged → the verdict says nothing to mint."""
+    _init_all_tagged_repo(tmp_path)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    assert main(["next-version"]) == 0
+    assert (
+        capsys.readouterr().out.strip()
+        == "v1.0.0 (already tagged — 1 fragment(s) across 1 tag(s); nothing to mint)"
+    )
+
+
+def test_main_next_version_reports_backfill_alongside_mint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A minted level alongside an already-tagged fragment names both."""
+    _init_mixed_repo(tmp_path)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    assert main(["next-version"]) == 0
+    assert (
+        capsys.readouterr().out.strip()
+        == "v1.1.0 (minor) + 1 fragment(s) already under 1 tag(s)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # main() — release
 # ---------------------------------------------------------------------------
@@ -677,11 +813,12 @@ def test_main_release_with_manifest_stages_everything_commits_nothing(
     (tmp_path / ".claude-plugin" / "plugin.json").write_text(
         '{\n  "name": "x",\n  "version": "1.0.0"\n}\n'
     )
+    commit_all(tmp_path, "seed")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=GIT_ENV, check=True)
     (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
     _write_fragment(tmp_path / "changelog.d", "a.added.md", "bump: minor\n- new\n")
     _write_fragment(tmp_path / "changelog.d", "b.fixed.md", "bump: patch\n- fix\n")
-    commit_all(tmp_path, "seed")
-    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=GIT_ENV, check=True)
+    commit_all(tmp_path, "fragments")
     head_before = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=tmp_path,
@@ -732,11 +869,10 @@ def test_main_release_without_manifest_prints_version_for_tag_flow(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A manifest-less (tag-versioned) repo assembles and prints the version."""
-    init_git_repo(tmp_path)
+    _init_tagged_repo(tmp_path)
     (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
     _write_fragment(tmp_path / "changelog.d", "a.added.md", "bump: patch\n- x\n")
-    commit_all(tmp_path, "seed")
-    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=GIT_ENV, check=True)
+    commit_all(tmp_path, "fragments")
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
 
     assert main(["release"]) == 0
@@ -799,6 +935,85 @@ def test_main_release_exit_two_without_fragments(
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
     assert main(["release"]) == 2
     assert "no pending fragments" in capsys.readouterr().out
+
+
+def test_main_release_backfills_tag_headings_and_syncs_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`release` with every fragment already tagged only backfills + syncs.
+
+    SCENARIO: a plugin repo where fragment A already sits inside tag
+    ``v1.0.0``'s tree (tag-per-merge shipped it already) and no
+    fragment sits outside any tag.
+    EXPECTED BEHAVIOR: CHANGELOG.md gains the ``## v1.0.0`` heading
+    dated by the tag's own commit (never today's date), the fragment
+    is deleted and its deletion staged, the manifest stays at
+    ``1.0.0`` and is staged, and the CLI reports the backfill-only
+    outcome — nothing to tag.
+    """
+    _init_all_tagged_repo(tmp_path)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    expected_date = git_utils.tag_commit_date(tmp_path, "v1.0.0")
+
+    assert main(["release"]) == 0
+
+    changelog_text = (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert f"## v1.0.0 — {expected_date}" in changelog_text
+    assert "- a thing" in changelog_text
+    manifest_text = (tmp_path / ".claude-plugin" / "plugin.json").read_text(
+        encoding="utf-8"
+    )
+    assert manifest_text == '{\n  "name": "x",\n  "version": "1.0.0"\n}\n'
+    status = subprocess.run(
+        ["git", "diff", "--cached", "--name-status"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "D\tchangelog.d/a.added.md" in status
+    out = capsys.readouterr().out
+    # The manifest is already at 1.0.0 (parked, unchanged), so `git add`
+    # produces no diff to show in `--cached --name-status` — the
+    # staging call itself is only observable via its own emit line.
+    assert "Staged .claude-plugin/plugin.json at 1.0.0." in out
+    assert "Assembly under existing tags prepared" in out
+    assert "nothing to tag" in out
+
+
+def test_main_release_mixed_tagged_and_minted_orders_newest_on_top(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`release` with a tagged group plus an untagged fragment mints on top.
+
+    SCENARIO: fragment A already shipped under tag ``v1.0.0``; fragment
+    B is still pending in a later, untagged commit, driving a minor
+    mint.
+    EXPECTED BEHAVIOR: CHANGELOG.md carries the minted ``## v1.1.0``
+    heading above the backfilled ``## v1.0.0`` heading (dated by the
+    tag's own commit), the manifest reads ``1.1.0``, and the CLI
+    reports the minted release.
+    """
+    _init_mixed_repo(tmp_path)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+    expected_date = git_utils.tag_commit_date(tmp_path, "v1.0.0")
+
+    assert main(["release"]) == 0
+
+    changelog_text = (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
+    v11_pos = changelog_text.index("## v1.1.0")
+    v10_pos = changelog_text.index(f"## v1.0.0 — {expected_date}")
+    assert v11_pos < v10_pos
+    manifest_text = (tmp_path / ".claude-plugin" / "plugin.json").read_text(
+        encoding="utf-8"
+    )
+    assert manifest_text == '{\n  "name": "x",\n  "version": "1.1.0"\n}\n'
+    assert "Release v1.1.0 prepared" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -1310,7 +1525,11 @@ def test_assembly_pr_body_manifest_less_names_post_merge_tagging(
     (`forge-next-prep --tag`) when there is no manifest for
     `plugin_version` to race ahead of.
     """
-    body = changelog_fragments._assembly_pr_body(tmp_path, "v1.1.0")
+    plan = AssemblyPlan(
+        tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
+    )
+
+    body = changelog_fragments._assembly_pr_body(tmp_path, plan)
 
     assert "forge-release --from-changelog" in body
     assert "forge-next-prep --tag" not in body
@@ -1323,11 +1542,46 @@ def test_assembly_pr_body_with_manifest_says_workflow_tags_merge(
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()
     (plugin_dir / "plugin.json").write_text('{"name": "forge"}\n')
+    plan = AssemblyPlan(
+        tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
+    )
 
-    body = changelog_fragments._assembly_pr_body(tmp_path, "v1.1.0")
+    body = changelog_fragments._assembly_pr_body(tmp_path, plan)
 
     assert "forge-next-prep --tag" in body
     assert "forge-release --from-changelog" not in body
+
+
+def test_assembly_pr_body_all_tagged_says_nothing_to_tag(tmp_path: Path) -> None:
+    """An all-tagged plan says the assembly only backfills — nothing to tag."""
+    plan = AssemblyPlan(
+        tagged=[("v1.0.0", [_make_fragment(slug="a")])],
+        untagged=[],
+        version="1.0.0",
+        level=None,
+    )
+
+    body = changelog_fragments._assembly_pr_body(tmp_path, plan)
+
+    assert "under their release tags (v1.0.0)" in body
+    assert "Nothing to tag" in body
+    assert "forge-next-prep --tag" not in body
+    assert "forge-release --from-changelog" not in body
+
+
+def test_assembly_pr_body_mixed_mentions_backfilled_tags(tmp_path: Path) -> None:
+    """A mixed plan names the minted version and lists the backfilled tags."""
+    plan = AssemblyPlan(
+        tagged=[("v1.0.0", [_make_fragment(slug="a")])],
+        untagged=[_make_fragment(slug="b")],
+        version="1.1.0",
+        level="minor",
+    )
+
+    body = changelog_fragments._assembly_pr_body(tmp_path, plan)
+
+    assert "under **v1.1.0**" in body
+    assert "plus backfilled headings for v1.0.0" in body
 
 
 # ---------------------------------------------------------------------------
@@ -1540,12 +1794,13 @@ def test_main_release_pr_happy_path_opens_pr_with_assembled_commit(
         check=True,
     )
     (repo / "pyproject.toml").write_text('[tool.forge.changelog]\nmode = "fragments"\n')
+    commit_all(repo, "seed")
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=repo, env=GIT_ENV, check=True)
     (repo / "CHANGELOG.md").write_text("# Changelog\n")
     _write_fragment(
         repo / "changelog.d", "note.added.md", "bump: minor\n- new feature\n"
     )
-    commit_all(repo, "seed")
-    subprocess.run(["git", "tag", "v1.0.0"], cwd=repo, env=GIT_ENV, check=True)
+    commit_all(repo, "fragments")
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
     monkeypatch.setattr(changelog_fragments, "require_cli", lambda *_a, **_kw: None)
     monkeypatch.setattr(
@@ -1739,8 +1994,11 @@ def test_push_and_open_pr_push_race_defers_to_open_pr(
         changelog_fragments, "find_open_pr_by_head_prefix", lambda *_a, **_kw: url
     )
 
+    plan = AssemblyPlan(
+        tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
+    )
     rc = changelog_fragments._push_and_open_pr(
-        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", "main", draft=False
+        tmp_path, "chore/assemble-v1.1.0", plan, "main", draft=False
     )
 
     assert rc == 0
@@ -1763,8 +2021,11 @@ def test_push_and_open_pr_push_failure_without_race_exits_two(
         changelog_fragments, "find_open_pr_by_head_prefix", lambda *_a, **_kw: None
     )
 
+    plan = AssemblyPlan(
+        tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
+    )
     rc = changelog_fragments._push_and_open_pr(
-        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", "main", draft=False
+        tmp_path, "chore/assemble-v1.1.0", plan, "main", draft=False
     )
 
     assert rc == 2
@@ -1790,8 +2051,11 @@ def test_push_and_open_pr_create_race_defers_to_open_pr(
         changelog_fragments, "find_open_pr_by_head_prefix", lambda *_a, **_kw: url
     )
 
+    plan = AssemblyPlan(
+        tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
+    )
     rc = changelog_fragments._push_and_open_pr(
-        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", "main", draft=False
+        tmp_path, "chore/assemble-v1.1.0", plan, "main", draft=False
     )
 
     assert rc == 0
@@ -1816,8 +2080,11 @@ def test_push_and_open_pr_create_failure_without_race_exits_two(
         changelog_fragments, "find_open_pr_by_head_prefix", lambda *_a, **_kw: None
     )
 
+    plan = AssemblyPlan(
+        tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
+    )
     rc = changelog_fragments._push_and_open_pr(
-        tmp_path, "chore/assemble-v1.1.0", "v1.1.0", "main", draft=False
+        tmp_path, "chore/assemble-v1.1.0", plan, "main", draft=False
     )
 
     assert rc == 2
@@ -1844,11 +2111,12 @@ def test_publish_assembly_pr_mid_step_exception_still_restores_branch(
 
     _init_tagged_repo(tmp_path)
     monkeypatch.setattr(changelog_fragments, "_stage_release", _raise_boom)
+    plan = AssemblyPlan(
+        tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
+    )
 
     with pytest.raises(BoomError):
-        changelog_fragments._publish_assembly_pr(
-            tmp_path, "v1.1.0", "1.1.0", date="", draft=False
-        )
+        changelog_fragments._publish_assembly_pr(tmp_path, plan, date="", draft=False)
 
     current_branch = subprocess.run(
         ["git", "branch", "--show-current"],

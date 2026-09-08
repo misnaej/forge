@@ -195,6 +195,23 @@ def latest_v_tag(root: Path) -> str | None:
     Returns:
         Tag name like ``"v1.2.9"``, or ``None`` when no ``v*`` tags exist.
     """
+    tags = v_tags(root)
+    return tags[0] if tags else None
+
+
+def v_tags(root: Path) -> list[str]:
+    """Return every ``v*`` git tag, highest semver first.
+
+    The listing behind :func:`latest_v_tag`, exposed for callers that
+    walk releases (the tag-aware changelog assembler partitions pending
+    fragments by the earliest tag whose tree holds them).
+
+    Args:
+        root: Repo root (cwd for the git invocation).
+
+    Returns:
+        Tag names sorted by ``--sort=-v:refname``; empty when none exist.
+    """
     proc = subprocess.run(
         ["git", "tag", "--list", "v*", "--sort=-v:refname"],
         cwd=root,
@@ -202,10 +219,30 @@ def latest_v_tag(root: Path) -> str | None:
         text=True,
         check=False,
     )
-    out = proc.stdout.strip()
-    if not out:
-        return None
-    return out.splitlines()[0]
+    return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
+def tag_commit_date(root: Path, tag: str) -> str:
+    """Return the ``YYYY-MM-DD`` committer date of the commit *tag* points at.
+
+    A changelog heading assembled under an already-cut tag carries the
+    date that release actually shipped, not the day the assembly ran.
+
+    Args:
+        root: Repo root (cwd for the git invocation).
+        tag: An existing tag name.
+
+    Returns:
+        The date string; empty when git cannot resolve the tag.
+    """
+    proc = subprocess.run(
+        ["git", "log", "-1", "--format=%cs", tag, "--"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.stdout.strip()
 
 
 def fetch_tags_best_effort(repo_root: Path, *, timeout: int = 10) -> list[str]:
