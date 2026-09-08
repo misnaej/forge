@@ -234,8 +234,10 @@ entries mechanically.
 positional arguments:
   {check,next-version,release,assemble,auto-tag,release-pr,restrand}
     check               validate pending changelog.d/ fragments
-    next-version        print the computed next release version (latest v* tag
-                        + max pending bump level)
+    next-version        print the computed next release version — latest v*
+                        tag + max level over the UNRELEASED fragments;
+                        fragments already in a tag's tree assemble under that
+                        tag and never bump again
     release             assemble CHANGELOG.md under the computed next version,
                         write plugin.json to it (when present), stage
                         everything — never commits
@@ -467,33 +469,38 @@ options:
 ## forge-pr-plan
 
 ```text
-usage: forge-pr-plan [-h] --base REF [--pr N]
+usage: forge-pr-plan [-h] [--base REF] [--pr N] [--freshness]
 
 options:
-  -h, --help  show this help message and exit
-  --base REF  Base ref the PR targets (e.g. origin/dev); the classified diff
-              is BASE...HEAD.
-  --pr N      Existing PR number — enables the delta path (reads the PR's
-              verified-at: comments via gh). Omit when no PR exists yet.
+  -h, --help   show this help message and exit
+  --base REF   Base ref the PR targets (e.g. origin/main); the classified diff
+               is BASE...HEAD. Required unless --freshness.
+  --pr N       Existing PR number — enables the delta path (reads the PR's
+               verified-at: comments via gh). Omit when no PR exists yet.
+  --freshness  Read-only mode: report whether PR --pr's newest posted wrap-up
+               (verified-at:) still names its current head; emits {fresh,
+               head_oid, latest_verified_at, reason}. Needs --pr; ignores
+               --base.
 ```
 
 ## forge-pr-squash-comment
 
 ```text
-usage: forge-pr-squash-comment [-h] (--pr PR | --patch COMMENT_ID | --dry-run)
-                               --title TITLE [--bullet TEXT]
+usage: forge-pr-squash-comment [-h] (--pr PR | --dry-run) [--title TITLE]
+                               [--bullet TEXT]
 
-Validate, fence-wrap, and post a squash-merge message as a PR comment.
-Replaces hand-built heredoc templates in pr-manager. Rules per FOUNDATION §6.
+Post the squash-merge body as the PR's newest comment. The title is the PR
+title — GitHub prefills it. Rules per FOUNDATION §6.
 
 options:
-  -h, --help          show this help message and exit
-  --pr PR             PR number to comment on (creates a new comment).
-  --patch COMMENT_ID  Rewrite an existing comment instead of posting a new
-                      one.
-  --dry-run           Print the wrapped body to stdout; do not call gh.
-  --title TITLE       Squash title (conventional-commit format).
-  --bullet TEXT       Bullet line. Repeat 3-5 times.
+  -h, --help     show this help message and exit
+  --pr PR        PR number to comment on. With --bullet: syncs the PR title,
+                 posts the message and prunes older squash comments. Without:
+                 re-posts the existing one so it is the newest comment again.
+  --dry-run      Print the wrapped body to stdout; do not call gh.
+  --title TITLE  Squash title (conventional-commit format). Required with
+                 --bullet; the PR title is forced to match it.
+  --bullet TEXT  Bullet line. Repeat 3-5 times.
 ```
 
 ## forge-precommit
@@ -574,6 +581,7 @@ options:
 usage: forge-slow-tests-report [-h] [--log LOG] [--top TOP] [--out OUT]
                                [--baseline [BASELINE]]
                                [--update-baseline [UPDATE_BASELINE]]
+                               [--coverage-json PATH]
 
 Parse pytest --durations sections from a log (or stdin) and print the slowest
 tests, merged across all batches.
@@ -593,6 +601,9 @@ options:
                         Rewrite the baseline from this run's durations — run
                         deliberately, in a dedicated chore(perf) PR (default
                         path: .forge-test-durations.json).
+  --coverage-json PATH  Rank tests by unique covered statements per second,
+                        from a `coverage json --show-contexts` export (record
+                        it with pytest --cov-context=test).
 ```
 
 ## forge-smart-test
