@@ -1,7 +1,7 @@
 # Forge
 
 <!-- forge:badges:start -->
-[![CI](https://github.com/misnaej/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/misnaej/forge/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/) [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff) ![License](https://img.shields.io/badge/License-MIT-green) ![forge](https://img.shields.io/badge/forge-enabled-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-555?logo=claude) ![Docstring coverage](.badges/docstring-coverage.svg)
+[![CI](https://github.com/misnaej/forge/actions/workflows/assemble-release.yml/badge.svg)](https://github.com/misnaej/forge/actions/workflows/assemble-release.yml) [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/) [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff) ![License](https://img.shields.io/badge/License-MIT-green) ![forge](https://img.shields.io/badge/forge-enabled-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-555?logo=claude) ![Docstring coverage](.badges/docstring-coverage.svg)
 <!-- forge:badges:end -->
 
 AI agents write more code, faster — but without guardrails, quality
@@ -146,6 +146,7 @@ graph LR
     audit_suite -->|"imports"| config_shared
     config_shared -->|"imports"| installers
     config_shared -->|"imports"| release_tooling
+    config_shared -->|"imports"| smart_test
     doc_generators -->|"imports"| audit_suite
     doc_generators -->|"imports"| config_shared
     doc_generators -->|"imports"| release_tooling

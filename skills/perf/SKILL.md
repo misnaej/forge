@@ -29,7 +29,20 @@ Read every perf surface that exists, then summarize:
    ```
    Parses `code_health/pytest.log` (produced by `forge-smart-test` or a
    tee'd `pytest` run — run one first if the log is missing) and
-   compares against the committed `.forge-test-durations.json`.
+   compares against the committed `.forge-test-durations.json`. A repo
+   without that file gets one "no usable baseline" line, not a
+   comparison — having no baseline is a supported configuration, so do
+   not read its absence as a finding or propose adopting one unasked.
+1b. **Worth ranking** (only when a `coverage json --show-contexts`
+   export exists — `pytest --cov-context=test` records the contexts):
+   ```bash
+   forge-slow-tests-report --coverage-json coverage.json
+   ```
+   Ranks test functions by unique covered statements per second,
+   lowest first. Read it as: a slow test with unique coverage is kept
+   and its **inputs** shrunk; a slow test whose coverage is entirely
+   duplicated is a deletion candidate. Never propose deleting
+   assertions to make a row look better.
 2. **Telemetry trend**:
    ```bash
    forge-telemetry --history

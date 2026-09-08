@@ -69,6 +69,33 @@ def _from_json(data: dict[str, object], changed: set[str]) -> set[str]:
     return tests
 
 
+def load_export(coverage_json: Path) -> dict[str, object] | None:
+    """Load a ``coverage json --show-contexts`` export, or ``None``.
+
+    The shared read-and-degrade plumbing for every consumer of the
+    artifact: a missing or unparseable export warns and yields ``None``
+    rather than raising, so neither test selection nor the slow-test
+    reporter can be hard-failed by a stale or absent coverage run.
+
+    Args:
+        coverage_json: Path to the coverage JSON export.
+
+    Returns:
+        The parsed document, or ``None`` when it is absent or malformed.
+    """
+    if not coverage_json.is_file():
+        logger.warning(
+            "coverage: %s not found — skipping coverage validation.", coverage_json
+        )
+        return None
+    try:
+        data = json.loads(coverage_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning("coverage: could not parse %s: %s", coverage_json, exc)
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def tests_covering(coverage_json: Path, changed_files: Iterable[str]) -> set[str]:
     """Return repo-relative test files whose coverage touches a changed file.
 
@@ -84,14 +111,7 @@ def tests_covering(coverage_json: Path, changed_files: Iterable[str]) -> set[str
     Returns:
         Repo-relative test files to union into the static selection.
     """
-    if not coverage_json.is_file():
-        logger.warning(
-            "coverage: %s not found — skipping coverage validation.", coverage_json
-        )
-        return set()
-    try:
-        data = json.loads(coverage_json.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        logger.warning("coverage: could not parse %s: %s", coverage_json, exc)
+    data = load_export(coverage_json)
+    if data is None:
         return set()
     return _from_json(data, set(changed_files))

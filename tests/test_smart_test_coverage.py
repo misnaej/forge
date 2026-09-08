@@ -2,15 +2,16 @@
 
 # MOCKING STRATEGY: ``_context_to_test`` and ``_from_json`` are pure-logic
 # functions tested directly with in-memory dicts — no file I/O, no mocking.
-# ``tests_covering`` is tested against real JSON files (written to ``tmp_path``)
-# for the happy-path, missing-file, and malformed-file edge cases.
+# ``load_export`` and ``tests_covering`` are tested against real JSON files
+# (written to ``tmp_path``) for the happy-path, missing-file, malformed-file,
+# and non-dict-shaped edge cases.
 
 from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING
 
-from forge.smart_test.coverage import _context_to_test, _from_json
+from forge.smart_test.coverage import _context_to_test, _from_json, load_export
 from forge.smart_test.coverage import tests_covering as _tests_covering
 
 
@@ -138,3 +139,16 @@ def test_tests_covering_malformed_json_returns_empty(tmp_path: Path) -> None:
     bad.write_text("not valid json{{{", encoding="utf-8")
     result = _tests_covering(bad, {"src/foo.py"})
     assert result == set()
+
+
+def test_load_export_non_dict_json_returns_none(tmp_path: Path) -> None:
+    """Valid JSON that parses to a list, not an object, is rejected as ``None``.
+
+    A ``coverage json`` export is always an object; a list-shaped file is
+    the wrong artifact entirely (not a coverage export at all), and the
+    ``isinstance`` guard must reject it the same as a malformed one — no
+    existing ``tests_covering`` case exercised this shape.
+    """
+    cov = tmp_path / "list.json"
+    cov.write_text(json.dumps([1, 2]), encoding="utf-8")
+    assert load_export(cov) is None

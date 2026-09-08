@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_67 modules, 855 symbols._
+_67 modules, 863 symbols._
 
 ## `forge`
 
@@ -925,8 +925,15 @@ _67 modules, 855 symbols._
 - `format_report(durations: list[Duration], top: int) -> str` — Render a ranked durations table as plain text.
 - `_baseline_key(duration: Duration) -> str` _(internal)_ — Return *duration*'s flat JSON key (``nodeid::phase``).
 - `save_baseline(durations: list[Duration], path: Path) -> None` — Write *durations* as the committed baseline JSON at *path*.
-- `load_baseline(path: Path) -> dict[str, float]` — Load the baseline mapping from *path*.
+- `load_baseline(path: Path) -> dict[str, float] | None` — Load the baseline mapping from *path*.
 - `format_baseline_delta(durations: list[Duration], baseline: dict[str, float]) -> str` — Render the regression block comparing *durations* to *baseline*.
+- `nodeid_base(nodeid: str) -> str` — Collapse a node id to the test function that owns it.
+- `seconds_by_base(durations: list[Duration]) -> dict[str, float]` — Sum every phase and every parametrized variant per test function.
+- `_in_source_roots(filename: str, source_roots: list[str]) -> bool` _(internal)_ — Return whether a coverage file entry lies under a source root.
+- `unique_statements(data: dict[str, object], source_roots: list[str]) -> tuple[dict[str, int], set[str]]` — Count statements covered by exactly one test function.
+- `_worth_row(base: str, seconds: float, unique: int | None) -> tuple[float, str]` _(internal)_ — Render one ranking row and the key it sorts on.
+- `format_coverage_ranking(durations: list[Duration], data: dict[str, object], source_roots: list[str], *, top: int, truncated: bool) -> str` — Rank test functions by unique covered statements per second.
+- `durations_truncated(text: str) -> bool` — Return whether pytest capped the durations section in *text*.
 - `_read_source(log: str) -> str` _(internal)_ — Read the pytest log from a file path or stdin.
 - `main() -> int` — Entry point for ``forge-slow-tests-report``.
 
@@ -955,6 +962,7 @@ _67 modules, 855 symbols._
 
 - `_context_to_test(context: str) -> str | None` _(internal)_ — Reduce a coverage context to a repo-relative test file path.
 - `_from_json(data: dict[str, object], changed: set[str]) -> set[str]` _(internal)_ — Map a parsed coverage-JSON document to covering test files.
+- `load_export(coverage_json: Path) -> dict[str, object] | None` — Load a ``coverage json --show-contexts`` export, or ``None``.
 - `tests_covering(coverage_json: Path, changed_files: Iterable[str]) -> set[str]` — Return repo-relative test files whose coverage touches a changed file.
 
 ## `forge.smart_test.dependencies`
