@@ -469,7 +469,15 @@ def sync_pr_title(pr_number: int, title: str) -> bool:
     if current == title:
         return True
     proc = subprocess.run(
-        ["gh", "pr", "edit", str(pr_number), "--title", title],
+        [
+            "gh",
+            "api",
+            "-X",
+            "PATCH",
+            f"repos/{{owner}}/{{repo}}/pulls/{pr_number}",
+            "-f",
+            f"title={title}",
+        ],
         capture_output=True,
         text=True,
         check=False,

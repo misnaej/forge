@@ -504,7 +504,7 @@ def test_main_pr_mode_forces_a_stale_pr_title_to_match(
     """SCENARIO: the PR title no longer matches the squash title.
 
     MOCK SETUP: the PR reports an older title; subprocess captures the calls.
-    EXPECTED BEHAVIOR: `gh pr edit --title` runs BEFORE the comment is
+    EXPECTED BEHAVIOR: the title PATCH runs BEFORE the comment is
     posted — GitHub prefills the squash dialog from the PR title, so a
     stale one would put the wrong line in the permanent `main` commit.
     """
@@ -535,7 +535,9 @@ def test_main_pr_mode_forces_a_stale_pr_title_to_match(
         ]
     )
     assert mod.main() == 0
-    assert calls[0] == ["gh", "pr", "edit", "61", "--title", VALID_TITLE]
+    assert calls[0][:4] == ["gh", "api", "-X", "PATCH"]
+    assert calls[0][4].endswith("/pulls/61")
+    assert calls[0][-1] == f"title={VALID_TITLE}"
     assert calls[1][:4] == ["gh", "pr", "comment", "61"]
 
 
@@ -571,16 +573,16 @@ def test_main_pr_mode_skips_the_edit_when_the_title_already_matches(
         ]
     )
     assert mod.main() == 0
-    assert not any(cmd[:3] == ["gh", "pr", "edit"] for cmd in calls)
+    assert not any(cmd[:4] == ["gh", "api", "-X", "PATCH"] for cmd in calls)
 
 
 @pytest.mark.usefixtures("_cli_argv")
 def test_main_pr_mode_reports_a_rejected_title_sync(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SCENARIO: `gh pr edit` is rejected (no write access to the title).
+    """SCENARIO: the title PATCH is rejected (no write access to the title).
 
-    MOCK SETUP: the edit exits 1, the comment post exits 0.
+    MOCK SETUP: the PATCH exits 1, the comment post exits 0.
     EXPECTED BEHAVIOR: the comment is still posted — it carries the
     title fence, so the human can fix the field by hand — but the run
     exits non-zero, because the prefill no longer matches the message.
@@ -596,7 +598,7 @@ def test_main_pr_mode_reports_a_rejected_title_sync(
         Returns:
             A FakeProc whose returncode depends on the command.
         """
-        if cmd[:3] == ["gh", "pr", "edit"]:
+        if cmd[:4] == ["gh", "api", "-X", "PATCH"]:
             return FakeProc(returncode=1, stderr="403")
         return FakeProc()
 

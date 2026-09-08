@@ -77,7 +77,7 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
 
    3–5 `--bullet`s; validation failure exits non-zero naming the broken rule — fix until it passes.
 
-3. **Never `gh pr edit --title` by hand here** — the CLI forces the PR title to match the `--title` it posts (FOUNDATION §6), so the squash title is authored in one place. A non-zero exit naming a rejected title sync means the prefill is stale: report it, do not paper over it.
+3. **Never set the PR title by hand here** — the CLI forces the PR title to match the `--title` it posts (FOUNDATION §6), so the squash title is authored in one place. A non-zero exit naming a rejected title sync means the prefill is stale: report it, do not paper over it.
 
 ## Task: Author Wrap-up (pre-publication)
 
