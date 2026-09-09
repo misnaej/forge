@@ -62,46 +62,42 @@ _block() {
     exit 2
 }
 
-# A full `forge-precommit` run: the bare CLI, not a `--only <step>`
-# refresh. Leading VAR=val / wrapper tokens are stripped the same way
-# _segment_ok does, so `FORGE_X=1 forge-precommit` counts too.
-_is_full_precommit() {
-    seg="$1"
-    seg="${seg#"${seg%%[![:space:]]*}"}"
-    while :; do
-        tok="${seg%%[[:space:]]*}"
+# Trim leading whitespace, then strip VAR=val assignments and
+# command/env/exec/builtin/sudo/flag wrappers (the same prefix set the
+# sibling hooks anchor past), leaving the real command in STRIPPED.
+# Returns non-zero when nothing remains — each caller decides what an
+# empty segment means.
+_strip_wrapper_prefix() {
+    STRIPPED="${1#"${1%%[![:space:]]*}"}"
+    while [ -n "$STRIPPED" ]; do
+        tok="${STRIPPED%%[[:space:]]*}"
         case "$tok" in
             *=*|command|env|exec|builtin|sudo|-*)
-                rest="${seg#"$tok"}"
-                seg="${rest#"${rest%%[![:space:]]*}"}"
-                [ -z "$seg" ] && return 1
+                rest="${STRIPPED#"$tok"}"
+                STRIPPED="${rest#"${rest%%[![:space:]]*}"}"
                 ;;
             *) break ;;
         esac
     done
-    [ "${seg%%[[:space:]]*}" = "forge-precommit" ] || return 1
-    case "$seg" in *--only*) return 1 ;; esac
+    [ -n "$STRIPPED" ]
+}
+
+# A full `forge-precommit` run: the bare CLI, not a `--only <step>`
+# refresh. Wrapper prefixes are stripped first, so `FORGE_X=1
+# forge-precommit` counts too.
+_is_full_precommit() {
+    _strip_wrapper_prefix "$1" || return 1
+    [ "${STRIPPED%%[[:space:]]*}" = "forge-precommit" ] || return 1
+    # `--only` as its own word (or `--only=<steps>`), never a substring of
+    # some future flag or step name.
+    case " $STRIPPED " in *" --only "*|*" --only="*) return 1 ;; esac
     return 0
 }
 
 _segment_ok() {
-    seg="$1"
-    # Trim leading whitespace.
-    seg="${seg#"${seg%%[![:space:]]*}"}"
-    [ -z "$seg" ] && return 0
-    # Strip leading VAR=val assignments and command/env/exec/builtin/
-    # sudo/flag wrappers (same prefix set the sibling hooks anchor past).
-    while :; do
-        tok="${seg%%[[:space:]]*}"
-        case "$tok" in
-            *=*|command|env|exec|builtin|sudo|-*)
-                rest="${seg#"$tok"}"
-                seg="${rest#"${rest%%[![:space:]]*}"}"
-                [ -z "$seg" ] && return 0
-                ;;
-            *) break ;;
-        esac
-    done
+    # An empty segment (a bare separator) is nothing to police.
+    _strip_wrapper_prefix "$1" || return 0
+    seg="$STRIPPED"
     tok="${seg%%[[:space:]]*}"
     case "$tok" in
         cd|forge-precommit|fix-forge-ruff|verify-forge-docstrings|verify-forge-repo-structure|verify-forge-test-naming|verify-forge-manifest|verify-forge-plugin-version)
@@ -150,14 +146,21 @@ if [ -r "$LEDGER" ]; then
     # Self-generated line shape (fixed keys, this script is the only
     # writer of this event), so a fixed-string grep is exact and cheaper
     # than a second jq process.
-    COUNT=$(grep -F '"event":"precommit_full_run"' "$LEDGER" 2>/dev/null \
-        | grep -cF "\"agent_id\":\"$AGENT_ID\"" || true)
+    NEEDLE=$(jq -rn --arg a "$AGENT_ID" '"\"agent_id\":" + ($a | tojson)' 2>/dev/null) || NEEDLE=""
+    [ -n "$NEEDLE" ] && COUNT=$(grep -F '"event":"precommit_full_run"' "$LEDGER" 2>/dev/null \
+        | grep -cF "$NEEDLE" || true)
 fi
 if [ "${COUNT:-0}" -ge 3 ]; then
     echo "BLOCKED: STUCK — this precommit-fixer run already used its three full forge-precommit runs (agents/precommit-fixer.md hard cap). Do not run it again: emit the STUCK block naming the step still failing, what you tried, and hand back to the main agent. A single step CLI or forge-precommit --only <step> may refresh one log." >&2
     exit 2
 fi
 mkdir -p "$ROOT/code_health" 2>/dev/null || exit 0
-printf '{"ts":"%s","event":"precommit_full_run","session_id":"%s","agent_id":"%s","agent_type":"%s"}\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SESSION_ID" "$AGENT_ID" "$AGENT_TYPE" >> "$LEDGER" 2>/dev/null || true
+# Encoded by jq, like log_agent_timing.sh writing the same ledger: a
+# hand-built line would let an id carrying a quote close the field early
+# and forge (or evade) the count the grep above performs.
+LINE=$(jq -cn --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg s "$SESSION_ID" \
+    --arg a "$AGENT_ID" --arg t "$AGENT_TYPE" \
+    '{ts: $ts, event: "precommit_full_run", session_id: $s, agent_id: $a, agent_type: $t}' \
+    2>/dev/null) || exit 0
+printf '%s\n' "$LINE" >> "$LEDGER" 2>/dev/null || true
 exit 0

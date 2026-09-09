@@ -1647,7 +1647,7 @@ def test_amend_allows_message_mentioning_amend(tmp_path: Path) -> None:
 def test_amend_allows_plain_commit(tmp_path: Path) -> None:
     """A plain `git commit` with no `--amend` flag is allowed."""
     work, _bare = init_single_track_repo(tmp_path)
-    assert _run_hook(_AMEND, 'git commit -m "fix"', cwd=work) == 0
+    assert _run_hook(_AMEND, 'git commit -m "fix"', options=HookOptions(cwd=work)) == 0
 
 
 def test_amend_allows_commit_tree_and_commit_graph(tmp_path: Path) -> None:
@@ -1833,7 +1833,7 @@ def test_amend_blocks_double_dollar_before_quote(tmp_path: Path) -> None:
     """
     work, _bare = init_single_track_repo(tmp_path)
     cmd = "git commit -m $$'x\\' --amend puppy"
-    assert _run_hook(_AMEND, cmd, cwd=work) == 2
+    assert _run_hook(_AMEND, cmd, options=HookOptions(cwd=work)) == 2
 
 
 def test_amend_has_no_agent_bypass(tmp_path: Path) -> None:
@@ -1847,8 +1847,7 @@ def test_amend_has_no_agent_bypass(tmp_path: Path) -> None:
         _run_hook(
             _AMEND,
             'git commit --amend -m "fix"',
-            cwd=work,
-            agent_type="forge:git-commit-push",
+            options=HookOptions(cwd=work, agent_type="forge:git-commit-push"),
         )
         == 2
     )
@@ -1863,7 +1862,9 @@ def test_amend_allows_non_git_repo_cwd(tmp_path: Path) -> None:
     """
     plain_dir = tmp_path / "not-a-repo"
     plain_dir.mkdir()
-    proc = _run_hook_proc(_AMEND, 'git commit --amend -m "fix"', cwd=plain_dir)
+    proc = _run_hook_proc(
+        _AMEND, 'git commit --amend -m "fix"', options=HookOptions(cwd=plain_dir)
+    )
     assert proc.returncode == 0
     assert proc.stderr == ""
 
@@ -2079,7 +2080,9 @@ def test_unverified_pr_create_blocks_missing_wrapup(
 ) -> None:
     """`gh pr create` with no authored `code_health/pr_wrapup.md` is blocked (§6)."""
     repo, _sha = git_repo_with_commit
-    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE, "gh pr create --title x", options=HookOptions(cwd=repo)
+    )
     assert proc.returncode == 2
     assert "authored wrap-up" in proc.stderr
 
@@ -2090,7 +2093,14 @@ def test_unverified_pr_create_allows_full_sha_match(
     """A wrap-up whose `verified-at:` line names the full current HEAD sha passes."""
     repo, sha = git_repo_with_commit
     _write_wrapup(repo, sha)
-    assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo) == 0
+    assert (
+        _run_hook(
+            _UNVERIFIED_PR_CREATE,
+            "gh pr create --title x",
+            options=HookOptions(cwd=repo),
+        )
+        == 0
+    )
 
 
 def test_unverified_pr_create_allows_short_sha_match(
@@ -2099,7 +2109,14 @@ def test_unverified_pr_create_allows_short_sha_match(
     """The hook also accepts the 7-char short-sha form in `verified-at:`."""
     repo, sha = git_repo_with_commit
     _write_wrapup(repo, sha[:7])
-    assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo) == 0
+    assert (
+        _run_hook(
+            _UNVERIFIED_PR_CREATE,
+            "gh pr create --title x",
+            options=HookOptions(cwd=repo),
+        )
+        == 0
+    )
 
 
 def test_unverified_pr_create_blocks_stale_sha(
@@ -2108,7 +2125,9 @@ def test_unverified_pr_create_blocks_stale_sha(
     """A wrap-up naming a different commit than current HEAD is blocked."""
     repo, _sha = git_repo_with_commit
     _write_wrapup(repo, "0" * 40)
-    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE, "gh pr create --title x", options=HookOptions(cwd=repo)
+    )
     assert proc.returncode == 2
     assert "does not name current HEAD" in proc.stderr
 
@@ -2124,7 +2143,9 @@ def test_unverified_pr_create_blocks_after_separator(
     repo, _sha = git_repo_with_commit
     assert (
         _run_hook(
-            _UNVERIFIED_PR_CREATE, "git status && gh pr create --title x", cwd=repo
+            _UNVERIFIED_PR_CREATE,
+            "git status && gh pr create --title x",
+            options=HookOptions(cwd=repo),
         )
         == 2
     )
@@ -2153,7 +2174,7 @@ def test_unverified_pr_create_allows_skip_gate_env_prefix(
         _run_hook(
             _UNVERIFIED_PR_CREATE,
             "FORGE_SKIP_WRAPUP_GATE=1 gh pr create --title x",
-            cwd=repo,
+            options=HookOptions(cwd=repo),
         )
         == 0
     )
@@ -2173,8 +2194,9 @@ def test_unverified_pr_create_allows_skip_gate_standalone_env_var(
         _run_hook(
             _UNVERIFIED_PR_CREATE,
             "gh pr create --title x",
-            cwd=repo,
-            env={**os.environ, "FORGE_SKIP_WRAPUP_GATE": "1"},
+            options=HookOptions(
+                cwd=repo, env={**os.environ, "FORGE_SKIP_WRAPUP_GATE": "1"}
+            ),
         )
         == 0
     )
@@ -2191,7 +2213,14 @@ def test_unverified_pr_create_allows_non_git_cwd_with_wrapup(tmp_path: Path) -> 
     """
     (tmp_path / "code_health").mkdir()
     (tmp_path / "code_health" / "pr_wrapup.md").write_text("verified-at: deadbeef\n")
-    assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=tmp_path) == 0
+    assert (
+        _run_hook(
+            _UNVERIFIED_PR_CREATE,
+            "gh pr create --title x",
+            options=HookOptions(cwd=tmp_path),
+        )
+        == 0
+    )
 
 
 def test_unverified_pr_create_blocks_token_mention_in_argument(
@@ -2209,7 +2238,7 @@ def test_unverified_pr_create_blocks_token_mention_in_argument(
         _run_hook(
             _UNVERIFIED_PR_CREATE,
             'gh pr create --title "docs mention FORGE_SKIP_WRAPUP_GATE=1"',
-            cwd=repo,
+            options=HookOptions(cwd=repo),
         )
         == 2
     )
@@ -2232,7 +2261,9 @@ def test_unverified_pr_create_blocks_release_branch_without_wrapup(
         env=GIT_ENV,
         check=True,
     )
-    proc = _run_hook_proc(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo)
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE, "gh pr create --title x", options=HookOptions(cwd=repo)
+    )
     assert proc.returncode == 2
     assert "authored wrap-up" in proc.stderr
 
@@ -2350,7 +2381,9 @@ def test_unverified_pr_create_light_classifier_error_blocks(
     _write_forge_base_branch_config(repo)
     env = _stub_forge_pr_plan_failing(tmp_path)
     proc = _run_hook_proc(
-        _UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo, env=env
+        _UNVERIFIED_PR_CREATE,
+        "gh pr create --title x",
+        options=HookOptions(cwd=repo, env=env),
     )
     assert proc.returncode == 2
     assert "unclassifiable" in proc.stderr
@@ -2376,8 +2409,7 @@ def test_unverified_pr_create_light_mode_stub_light_code_allows(
         _run_hook(
             _UNVERIFIED_PR_CREATE,
             "gh pr create --title x --base main",
-            cwd=repo,
-            env=env,
+            options=HookOptions(cwd=repo, env=env),
         )
         == 0
     )
@@ -2400,8 +2432,7 @@ def test_unverified_pr_create_light_mode_stub_full_blocks(
     proc = _run_hook_proc(
         _UNVERIFIED_PR_CREATE,
         "gh pr create --title x --base main",
-        cwd=repo,
-        env=env,
+        options=HookOptions(cwd=repo, env=env),
     )
     assert proc.returncode == 2
     assert "not earned" in proc.stderr
@@ -2431,8 +2462,7 @@ def test_unverified_pr_create_light_mode_missing_cli_blocks(
     proc = _run_hook_proc(
         _UNVERIFIED_PR_CREATE,
         "gh pr create --title x --base main",
-        cwd=repo,
-        env={**os.environ, "PATH": stripped_path},
+        options=HookOptions(cwd=repo, env={**os.environ, "PATH": stripped_path}),
     )
     assert proc.returncode == 2
     assert "not on PATH" in proc.stderr
@@ -2451,7 +2481,9 @@ def test_unverified_pr_create_light_mode_unresolvable_base_blocks(
     repo, sha = git_repo_with_commit
     _write_wrapup_light(repo, sha)
     proc = _run_hook_proc(
-        _UNVERIFIED_PR_CREATE, "gh pr create --title x --base main", cwd=repo
+        _UNVERIFIED_PR_CREATE,
+        "gh pr create --title x --base main",
+        options=HookOptions(cwd=repo),
     )
     assert proc.returncode == 2
     assert "no [tool.forge] base_branch config" in proc.stderr
@@ -2468,7 +2500,14 @@ def test_unverified_pr_create_full_mode_line_skips_light_recheck(
     """
     repo, sha = git_repo_with_commit
     _write_wrapup_light(repo, sha, mode_line="wrapup-mode: full")
-    assert _run_hook(_UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo) == 0
+    assert (
+        _run_hook(
+            _UNVERIFIED_PR_CREATE,
+            "gh pr create --title x",
+            options=HookOptions(cwd=repo),
+        )
+        == 0
+    )
 
 
 def test_unverified_pr_create_light_mode_line_past_head5_still_rechecks(
@@ -2500,8 +2539,7 @@ def test_unverified_pr_create_light_mode_line_past_head5_still_rechecks(
     proc = _run_hook_proc(
         _UNVERIFIED_PR_CREATE,
         "gh pr create --title x",
-        cwd=repo,
-        env={**os.environ, "PATH": stripped_path},
+        options=HookOptions(cwd=repo, env={**os.environ, "PATH": stripped_path}),
     )
     assert proc.returncode == 2
     assert "not on PATH" in proc.stderr
@@ -2575,8 +2613,7 @@ def test_unverified_pr_create_emergency_missing_cli_blocks(
     proc = _run_hook_proc(
         _UNVERIFIED_PR_CREATE,
         "gh pr create --title x",
-        cwd=repo,
-        env={**os.environ, "PATH": stripped_path},
+        options=HookOptions(cwd=repo, env={**os.environ, "PATH": stripped_path}),
     )
     assert proc.returncode == 2
     assert "not on PATH" in proc.stderr
@@ -2597,7 +2634,9 @@ def test_unverified_pr_create_emergency_consume_success_allows(
     _write_wrapup_emergency(repo, sha)
     env = _stub_forge_emergency(tmp_path, 0)
     proc = _run_hook_proc(
-        _UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo, env=env
+        _UNVERIFIED_PR_CREATE,
+        "gh pr create --title x",
+        options=HookOptions(cwd=repo, env=env),
     )
     assert proc.returncode == 0
     assert "EMERGENCY bypass consumed" in proc.stderr
@@ -2622,7 +2661,9 @@ def test_unverified_pr_create_emergency_mode_line_past_head5_still_detected(
     _write_wrapup_light(repo, sha, mode_line="wrapup-mode: emergency", padding=10)
     env = _stub_forge_emergency(tmp_path, 0)
     proc = _run_hook_proc(
-        _UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo, env=env
+        _UNVERIFIED_PR_CREATE,
+        "gh pr create --title x",
+        options=HookOptions(cwd=repo, env=env),
     )
     assert proc.returncode == 0
     assert "EMERGENCY bypass consumed" in proc.stderr
@@ -2641,7 +2682,9 @@ def test_unverified_pr_create_emergency_consume_failure_blocks(
     _write_wrapup_emergency(repo, sha)
     env = _stub_forge_emergency(tmp_path, 1)
     proc = _run_hook_proc(
-        _UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo, env=env
+        _UNVERIFIED_PR_CREATE,
+        "gh pr create --title x",
+        options=HookOptions(cwd=repo, env=env),
     )
     assert proc.returncode == 2
     assert "no armed bypass" in proc.stderr
@@ -2663,7 +2706,9 @@ def test_unverified_pr_create_emergency_head_mismatch_blocks_before_emergency_br
     _write_wrapup_emergency(repo, "0" * 40)
     env = _stub_forge_emergency(tmp_path, 0)
     proc = _run_hook_proc(
-        _UNVERIFIED_PR_CREATE, "gh pr create --title x", cwd=repo, env=env
+        _UNVERIFIED_PR_CREATE,
+        "gh pr create --title x",
+        options=HookOptions(cwd=repo, env=env),
     )
     assert proc.returncode == 2
     assert "does not name current HEAD" in proc.stderr
@@ -2703,8 +2748,7 @@ def test_unverified_pr_create_emergency_addition_leaves_light_mode_unaffected(
         _run_hook(
             _UNVERIFIED_PR_CREATE,
             "gh pr create --title x --base main",
-            cwd=repo,
-            env=env,
+            options=HookOptions(cwd=repo, env=env),
         )
         == 0
     )
@@ -2731,8 +2775,7 @@ def test_unverified_pr_create_full_mode_skips_emergency_branch(
         _run_hook(
             _UNVERIFIED_PR_CREATE,
             "gh pr create --title x",
-            cwd=repo,
-            env={**os.environ, "PATH": stripped_path},
+            options=HookOptions(cwd=repo, env={**os.environ, "PATH": stripped_path}),
         )
         == 0
     )
@@ -2768,7 +2811,12 @@ _FIXER_RECON = "block_fixer_recon.sh"
 def test_fixer_recon_blocks_git_status() -> None:
     """`git status` is reconnaissance, outside the precommit-fixer's allowlist."""
     assert (
-        _run_hook(_FIXER_RECON, "git status", agent_type="forge:precommit-fixer") == 2
+        _run_hook(
+            _FIXER_RECON,
+            "git status",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
+        )
+        == 2
     )
 
 
@@ -2778,7 +2826,7 @@ def test_fixer_recon_blocks_find_and_checksum_pipe() -> None:
         _run_hook(
             _FIXER_RECON,
             "find . -name '*.py' | xargs md5sum",
-            agent_type="forge:precommit-fixer",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 2
     )
@@ -2786,13 +2834,24 @@ def test_fixer_recon_blocks_find_and_checksum_pipe() -> None:
 
 def test_fixer_recon_blocks_bare_pytest() -> None:
     """A bare `pytest` (no node-id selector) is blocked — too broad to be targeted."""
-    assert _run_hook(_FIXER_RECON, "pytest", agent_type="forge:precommit-fixer") == 2
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "pytest",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
+        )
+        == 2
+    )
 
 
 def test_fixer_recon_blocks_pytest_directory() -> None:
     """`pytest tests/` (directory, no `::` selector) is blocked."""
     assert (
-        _run_hook(_FIXER_RECON, "pytest tests/", agent_type="forge:precommit-fixer")
+        _run_hook(
+            _FIXER_RECON,
+            "pytest tests/",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
+        )
         == 2
     )
 
@@ -2803,7 +2862,7 @@ def test_fixer_recon_blocks_pipe_into_non_allowlisted() -> None:
         _run_hook(
             _FIXER_RECON,
             "forge-precommit | tee out.log",
-            agent_type="forge:precommit-fixer",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 2
     )
@@ -2815,7 +2874,7 @@ def test_fixer_recon_blocks_chained_recon() -> None:
         _run_hook(
             _FIXER_RECON,
             "forge-precommit && git diff",
-            agent_type="forge:precommit-fixer",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 2
     )
@@ -2830,7 +2889,7 @@ def test_fixer_recon_blocks_next_prep_tag() -> None:
         _run_hook(
             _FIXER_RECON,
             "forge-next-prep --tag",
-            agent_type="forge:precommit-fixer",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 2
     )
@@ -2845,7 +2904,7 @@ def test_fixer_recon_blocks_git_tag() -> None:
         _run_hook(
             _FIXER_RECON,
             "git tag v9.9.9",
-            agent_type="forge:precommit-fixer",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 2
     )
@@ -2860,7 +2919,7 @@ def test_fixer_recon_blocks_git_push_tag() -> None:
         _run_hook(
             _FIXER_RECON,
             "git push origin v9.9.9",
-            agent_type="forge:precommit-fixer",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 2
     )
@@ -2878,8 +2937,7 @@ def test_fixer_recon_allows_forge_precommit(tmp_path: Path) -> None:
         _run_hook(
             _FIXER_RECON,
             "forge-precommit",
-            agent_type="forge:precommit-fixer",
-            cwd=tmp_path,
+            options=HookOptions(agent_type="forge:precommit-fixer", cwd=tmp_path),
         )
         == 0
     )
@@ -2891,7 +2949,7 @@ def test_fixer_recon_allows_forge_precommit_with_flags() -> None:
         _run_hook(
             _FIXER_RECON,
             "forge-precommit --only ruff,typecheck",
-            agent_type="forge:precommit-fixer",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 0
     )
@@ -2908,8 +2966,7 @@ def test_fixer_recon_allows_env_prefix(tmp_path: Path) -> None:
         _run_hook(
             _FIXER_RECON,
             "CI=1 forge-precommit",
-            agent_type="forge:precommit-fixer",
-            cwd=tmp_path,
+            options=HookOptions(agent_type="forge:precommit-fixer", cwd=tmp_path),
         )
         == 0
     )
@@ -2921,7 +2978,7 @@ def test_fixer_recon_allows_cd_and_chain() -> None:
         _run_hook(
             _FIXER_RECON,
             "cd /tmp && forge-precommit",
-            agent_type="forge:precommit-fixer",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 0
     )
@@ -2931,7 +2988,9 @@ def test_fixer_recon_allows_step_cli() -> None:
     """A standalone step CLI (`verify-forge-docstrings`) is allowed."""
     assert (
         _run_hook(
-            _FIXER_RECON, "verify-forge-docstrings", agent_type="forge:precommit-fixer"
+            _FIXER_RECON,
+            "verify-forge-docstrings",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 0
     )
@@ -2943,7 +3002,7 @@ def test_fixer_recon_allows_targeted_pytest_single_nodeid() -> None:
         _run_hook(
             _FIXER_RECON,
             "pytest tests/foo.py::test_bar",
-            agent_type="forge:precommit-fixer",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 0
     )
@@ -2955,7 +3014,7 @@ def test_fixer_recon_allows_targeted_pytest_multiple_nodeids() -> None:
         _run_hook(
             _FIXER_RECON,
             "pytest tests/foo.py::test_bar tests/foo.py::test_baz",
-            agent_type="forge:precommit-fixer",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 0
     )
@@ -2967,7 +3026,7 @@ def test_fixer_recon_allows_python_m_pytest_nodeid() -> None:
         _run_hook(
             _FIXER_RECON,
             "python -m pytest tests/foo.py::test_bar",
-            agent_type="forge:precommit-fixer",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 0
     )
@@ -2979,7 +3038,7 @@ def test_fixer_recon_blocks_backtick_substitution() -> None:
         _run_hook(
             _FIXER_RECON,
             "forge-precommit `git status`",
-            agent_type="forge:precommit-fixer",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 2
     )
@@ -2991,7 +3050,7 @@ def test_fixer_recon_blocks_backtick_glued_to_flag() -> None:
         _run_hook(
             _FIXER_RECON,
             "forge-precommit --only=`git branch --show-current`",
-            agent_type="forge:precommit-fixer",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
         )
         == 2
     )
@@ -3000,7 +3059,12 @@ def test_fixer_recon_blocks_backtick_glued_to_flag() -> None:
 def test_fixer_recon_ignores_other_agent() -> None:
     """The hook only restricts precommit-fixer — another agent's `git status` passes."""
     assert (
-        _run_hook(_FIXER_RECON, "git status", agent_type="forge:git-commit-push") == 0
+        _run_hook(
+            _FIXER_RECON,
+            "git status",
+            options=HookOptions(agent_type="forge:git-commit-push"),
+        )
+        == 0
     )
 
 
@@ -3035,7 +3099,14 @@ def test_fixer_recon_git_push_tag_fail_open_without_agent_type() -> None:
 
 def test_fixer_recon_matches_unprefixed_agent_form() -> None:
     """The unprefixed `precommit-fixer` agent-type form is scoped too."""
-    assert _run_hook(_FIXER_RECON, "git status", agent_type="precommit-fixer") == 2
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "git status",
+            options=HookOptions(agent_type="precommit-fixer"),
+        )
+        == 2
+    )
 
 
 # --- block_fixer_recon.sh: the three-full-run cap -----------------------
@@ -3086,11 +3157,13 @@ def test_fixer_recon_allows_three_full_precommit_runs_then_blocks_fourth(
     proc = _run_hook_proc(
         _FIXER_RECON,
         "forge-precommit",
-        agent_type="forge:precommit-fixer",
-        agent_id="agent-a",
-        session_id="sess-1",
-        cwd=repo_two,
-        env=env_two,
+        options=HookOptions(
+            agent_type="forge:precommit-fixer",
+            agent_id="agent-a",
+            session_id="sess-1",
+            cwd=repo_two,
+            env=env_two,
+        ),
     )
     assert proc.returncode == 0
     ledger_two = (repo_two / "code_health" / "agent_timing.jsonl").read_text()
@@ -3108,11 +3181,13 @@ def test_fixer_recon_allows_three_full_precommit_runs_then_blocks_fourth(
     proc = _run_hook_proc(
         _FIXER_RECON,
         "forge-precommit",
-        agent_type="forge:precommit-fixer",
-        agent_id="agent-a",
-        session_id="sess-1",
-        cwd=repo_three,
-        env=env_three,
+        options=HookOptions(
+            agent_type="forge:precommit-fixer",
+            agent_id="agent-a",
+            session_id="sess-1",
+            cwd=repo_three,
+            env=env_three,
+        ),
     )
     assert proc.returncode == 2
     assert "STUCK" in proc.stderr
@@ -3126,11 +3201,13 @@ def test_fixer_recon_only_flag_never_counts_toward_cap(tmp_path: Path) -> None:
     proc = _run_hook_proc(
         _FIXER_RECON,
         "forge-precommit --only ruff",
-        agent_type="forge:precommit-fixer",
-        agent_id="agent-a",
-        session_id="sess-1",
-        cwd=tmp_path,
-        env=env,
+        options=HookOptions(
+            agent_type="forge:precommit-fixer",
+            agent_id="agent-a",
+            session_id="sess-1",
+            cwd=tmp_path,
+            env=env,
+        ),
     )
     assert proc.returncode == 0
     ledger = (tmp_path / "code_health" / "agent_timing.jsonl").read_text()
@@ -3144,11 +3221,13 @@ def test_fixer_recon_env_prefixed_full_run_counts(tmp_path: Path) -> None:
     proc = _run_hook_proc(
         _FIXER_RECON,
         "FORGE_X=1 forge-precommit",
-        agent_type="forge:precommit-fixer",
-        agent_id="agent-a",
-        session_id="sess-1",
-        cwd=tmp_path,
-        env=env,
+        options=HookOptions(
+            agent_type="forge:precommit-fixer",
+            agent_id="agent-a",
+            session_id="sess-1",
+            cwd=tmp_path,
+            env=env,
+        ),
     )
     assert proc.returncode == 0
     ledger = (tmp_path / "code_health" / "agent_timing.jsonl").read_text()
@@ -3163,11 +3242,13 @@ def test_fixer_recon_cap_is_scoped_per_agent_id(tmp_path: Path) -> None:
     proc = _run_hook_proc(
         _FIXER_RECON,
         "forge-precommit",
-        agent_type="forge:precommit-fixer",
-        agent_id="agent-a",
-        session_id="sess-1",
-        cwd=tmp_path,
-        env=env,
+        options=HookOptions(
+            agent_type="forge:precommit-fixer",
+            agent_id="agent-a",
+            session_id="sess-1",
+            cwd=tmp_path,
+            env=env,
+        ),
     )
     assert proc.returncode == 0
 
@@ -3179,9 +3260,7 @@ def test_fixer_recon_no_agent_id_allowed_and_writes_nothing(tmp_path: Path) -> N
     proc = _run_hook_proc(
         _FIXER_RECON,
         "forge-precommit",
-        agent_type="forge:precommit-fixer",
-        cwd=tmp_path,
-        env=env,
+        options=HookOptions(agent_type="forge:precommit-fixer", cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
     assert not (tmp_path / "code_health" / "agent_timing.jsonl").exists()
@@ -3205,11 +3284,13 @@ def test_fixer_recon_tolerates_garbled_ledger_line(tmp_path: Path) -> None:
     proc = _run_hook_proc(
         _FIXER_RECON,
         "forge-precommit",
-        agent_type="forge:precommit-fixer",
-        agent_id="agent-a",
-        session_id="sess-1",
-        cwd=tmp_path,
-        env=env,
+        options=HookOptions(
+            agent_type="forge:precommit-fixer",
+            agent_id="agent-a",
+            session_id="sess-1",
+            cwd=tmp_path,
+            env=env,
+        ),
     )
     assert proc.returncode == 0
 
@@ -3218,11 +3299,13 @@ def test_fixer_recon_tolerates_garbled_ledger_line(tmp_path: Path) -> None:
     proc = _run_hook_proc(
         _FIXER_RECON,
         "forge-precommit",
-        agent_type="forge:precommit-fixer",
-        agent_id="agent-a",
-        session_id="sess-1",
-        cwd=tmp_path,
-        env=env,
+        options=HookOptions(
+            agent_type="forge:precommit-fixer",
+            agent_id="agent-a",
+            session_id="sess-1",
+            cwd=tmp_path,
+            env=env,
+        ),
     )
     assert proc.returncode == 2
 
@@ -3556,7 +3639,7 @@ def test_keep_squash_last_ignores_unrelated_commands(tmp_path: Path) -> None:
     every Bash call, so the non-match path must cost nothing.
     """
     env = _stub_squash_cli(tmp_path, "exit 0")
-    assert _run_hook(_KEEP_SQUASH_LAST, "ls -la", env=env) == 0
+    assert _run_hook(_KEEP_SQUASH_LAST, "ls -la", options=HookOptions(env=env)) == 0
     assert _record(env) == ""
 
 
@@ -3568,7 +3651,9 @@ def test_keep_squash_last_runs_after_a_conversation_comment(tmp_path: Path) -> N
     """
     env = _stub_squash_cli(tmp_path, "exit 0")
     proc = _run_hook_proc(
-        _KEEP_SQUASH_LAST, 'gh pr comment 61 --body "wrap-up"', env=env
+        _KEEP_SQUASH_LAST,
+        'gh pr comment 61 --body "wrap-up"',
+        options=HookOptions(env=env),
     )
     assert proc.returncode == 0
     assert "--pr 61" in _record(env)
@@ -3586,7 +3671,7 @@ def test_keep_squash_last_runs_after_a_review_thread_reply(tmp_path: Path) -> No
     command = (
         "gh api repos/o/r/pulls/77/comments/123/replies --method POST -f body=done"
     )
-    assert _run_hook(_KEEP_SQUASH_LAST, command, env=env) == 0
+    assert _run_hook(_KEEP_SQUASH_LAST, command, options=HookOptions(env=env)) == 0
     assert "--pr 77" in _record(env)
 
 
@@ -3597,7 +3682,7 @@ def test_keep_squash_last_does_not_recurse_on_its_own_cli(tmp_path: Path) -> Non
         _run_hook(
             _KEEP_SQUASH_LAST,
             "forge-pr-squash-comment --pr 61 --bullet a --bullet b --bullet c",
-            env=env,
+            options=HookOptions(env=env),
         )
         == 0
     )
@@ -3618,7 +3703,7 @@ def test_keep_squash_last_runs_despite_trailing_cli_name_mention(
         _run_hook(
             _KEEP_SQUASH_LAST,
             'gh pr comment 61 --body "see forge-pr-squash-comment"',
-            env=env,
+            options=HookOptions(env=env),
         )
         == 0
     )
@@ -3628,7 +3713,9 @@ def test_keep_squash_last_runs_despite_trailing_cli_name_mention(
 def test_keep_squash_last_is_silent_on_a_no_op(tmp_path: Path) -> None:
     """A comment that is already newest produces no agent-visible output."""
     env = _stub_squash_cli(tmp_path, 'echo "squash comment is already the newest"')
-    proc = _run_hook_proc(_KEEP_SQUASH_LAST, "gh pr comment 61 --body x", env=env)
+    proc = _run_hook_proc(
+        _KEEP_SQUASH_LAST, "gh pr comment 61 --body x", options=HookOptions(env=env)
+    )
     assert proc.returncode == 0
     assert proc.stdout.strip() == ""
 
@@ -3643,7 +3730,9 @@ def test_keep_squash_last_stays_silent_when_no_squash_comment_exists(
     normal, and a post-tool hook must never fail a working command.
     """
     env = _stub_squash_cli(tmp_path, "exit 1")
-    proc = _run_hook_proc(_KEEP_SQUASH_LAST, "gh pr comment 61 --body x", env=env)
+    proc = _run_hook_proc(
+        _KEEP_SQUASH_LAST, "gh pr comment 61 --body x", options=HookOptions(env=env)
+    )
     assert proc.returncode == 0
     assert proc.stdout.strip() == ""
 
@@ -3849,7 +3938,9 @@ def test_warn_stale_wrapup_ignores_non_push_command(tmp_path: Path) -> None:
     hook fires on every Bash call, so the non-match path must cost nothing.
     """
     env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
-    proc = _run_hook_proc(_WARN_STALE_WRAPUP, "ls -la", cwd=tmp_path, env=env)
+    proc = _run_hook_proc(
+        _WARN_STALE_WRAPUP, "ls -la", options=HookOptions(cwd=tmp_path, env=env)
+    )
     assert proc.returncode == 0
     assert proc.stdout == ""
     assert _record(env) == ""
@@ -3866,7 +3957,9 @@ def test_warn_stale_wrapup_prints_reminder_when_stale(tmp_path: Path) -> None:
     """
     env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
     proc = _run_hook_proc(
-        _WARN_STALE_WRAPUP, "git push origin my-branch", cwd=tmp_path, env=env
+        _WARN_STALE_WRAPUP,
+        "git push origin my-branch",
+        options=HookOptions(cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
     assert "PR #42" in proc.stdout
@@ -3879,7 +3972,9 @@ def test_warn_stale_wrapup_silent_when_fresh(tmp_path: Path) -> None:
     """A `fresh: true` verdict means the posted wrap-up still describes HEAD."""
     env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="true")
     proc = _run_hook_proc(
-        _WARN_STALE_WRAPUP, "git push origin my-branch", cwd=tmp_path, env=env
+        _WARN_STALE_WRAPUP,
+        "git push origin my-branch",
+        options=HookOptions(cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
     assert proc.stdout == ""
@@ -3894,7 +3989,9 @@ def test_warn_stale_wrapup_silent_when_freshness_unknown(tmp_path: Path) -> None
     """
     env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh=None)
     proc = _run_hook_proc(
-        _WARN_STALE_WRAPUP, "git push origin my-branch", cwd=tmp_path, env=env
+        _WARN_STALE_WRAPUP,
+        "git push origin my-branch",
+        options=HookOptions(cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
     assert proc.stdout == ""
@@ -3909,7 +4006,9 @@ def test_warn_stale_wrapup_silent_when_no_open_pr(tmp_path: Path) -> None:
     """
     env = _stub_wrapup_freshness_clis(tmp_path, pr=None, fresh="false")
     proc = _run_hook_proc(
-        _WARN_STALE_WRAPUP, "git push origin my-branch", cwd=tmp_path, env=env
+        _WARN_STALE_WRAPUP,
+        "git push origin my-branch",
+        options=HookOptions(cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
     assert proc.stdout == ""
@@ -3938,7 +4037,9 @@ def test_warn_stale_wrapup_silent_when_forge_pr_plan_missing(tmp_path: Path) -> 
     )
     env = {**os.environ, "PATH": f"{stub_dir}{os.pathsep}{stripped_path}"}
     proc = _run_hook_proc(
-        _WARN_STALE_WRAPUP, "git push origin my-branch", cwd=tmp_path, env=env
+        _WARN_STALE_WRAPUP,
+        "git push origin my-branch",
+        options=HookOptions(cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
     assert proc.stdout == ""
@@ -3959,7 +4060,9 @@ def test_warn_stale_wrapup_suppressed_when_wrapup_names_head(
     _write_wrapup(repo, sha)
     env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
     proc = _run_hook_proc(
-        _WARN_STALE_WRAPUP, "git push origin my-branch", cwd=repo, env=env
+        _WARN_STALE_WRAPUP,
+        "git push origin my-branch",
+        options=HookOptions(cwd=repo, env=env),
     )
     assert proc.returncode == 0
     assert proc.stdout == ""
@@ -3977,8 +4080,7 @@ def test_warn_stale_wrapup_fires_in_compound_command(tmp_path: Path) -> None:
     proc = _run_hook_proc(
         _WARN_STALE_WRAPUP,
         "pytest -q && git push origin my-branch",
-        cwd=tmp_path,
-        env=env,
+        options=HookOptions(cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
     assert "PR #42" in proc.stdout
@@ -3996,8 +4098,7 @@ def test_warn_stale_wrapup_ignores_quoted_mention(tmp_path: Path) -> None:
     proc = _run_hook_proc(
         _WARN_STALE_WRAPUP,
         'echo "please run git push later"',
-        cwd=tmp_path,
-        env=env,
+        options=HookOptions(cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
     assert proc.stdout == ""
@@ -4057,7 +4158,9 @@ def test_warn_generated_conflicts_prints_instruction_when_resolvable(
     """
     env = _stub_forge_resync(tmp_path, 0)
     proc = _run_hook_proc(
-        _WARN_GENERATED_CONFLICTS, "git merge other", cwd=tmp_path, env=env
+        _WARN_GENERATED_CONFLICTS,
+        "git merge other",
+        options=HookOptions(cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
     assert "forge-resync --resolve-conflicts" in proc.stdout
@@ -4073,7 +4176,9 @@ def test_warn_generated_conflicts_silent_when_not_resolvable(tmp_path: Path) -> 
     """
     env = _stub_forge_resync(tmp_path, 2)
     proc = _run_hook_proc(
-        _WARN_GENERATED_CONFLICTS, "git merge other", cwd=tmp_path, env=env
+        _WARN_GENERATED_CONFLICTS,
+        "git merge other",
+        options=HookOptions(cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
     assert proc.stdout == ""
@@ -4089,7 +4194,9 @@ def test_warn_generated_conflicts_ignores_non_merge_command(tmp_path: Path) -> N
     """
     env = _stub_forge_resync(tmp_path, 0)
     proc = _run_hook_proc(
-        _WARN_GENERATED_CONFLICTS, "git status", cwd=tmp_path, env=env
+        _WARN_GENERATED_CONFLICTS,
+        "git status",
+        options=HookOptions(cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
     assert proc.stdout == ""
@@ -4114,7 +4221,9 @@ def test_warn_generated_conflicts_silent_when_forge_resync_missing(
     )
     env = {**os.environ, "PATH": stripped_path}
     proc = _run_hook_proc(
-        _WARN_GENERATED_CONFLICTS, "git merge other", cwd=tmp_path, env=env
+        _WARN_GENERATED_CONFLICTS,
+        "git merge other",
+        options=HookOptions(cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
     assert proc.stdout == ""
