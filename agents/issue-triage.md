@@ -42,7 +42,10 @@ gh api "search/issues?q=repo:{owner}/{repo}+is:issue+is:open&per_page=1" --jq .t
 
 Fewer rows returned than that total → **do not publish**. Name the pull
 that came up short, by how much, and stop. A visibly refused
-regeneration is recoverable; a silently halved one is not.
+regeneration is recoverable; a silently halved one is not. A total above
+`--limit` means raise the limit (or page through) and re-pull — the guard
+exists to stop a silent partial, never to make a large backlog
+unpublishable.
 
 ### `bootstrap`
 

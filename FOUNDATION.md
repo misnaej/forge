@@ -443,8 +443,13 @@ advisories with the suggested pin; they never edit pins.
   the caller supplied, named with the SHA it was gathered at, is
   authoritative — re-running it is the commonest way an agent starts
   something long it did not need. And a job an agent does start carries
-  a bound it chose; exceeding it is a **finding**, reported with what
-  ran, how long, and what remains, never silence and never a wait.
+  a bound it chose — declared before it starts and sized in good faith
+  for the work, never picked small enough to be already exceeded.
+  Exceeding it is a **finding**, reported with what ran, how long, and
+  what remains, never silence and never a wait. A bound bounds
+  *waiting*, not obligation: it never licenses stopping short of work
+  another rule requires be finished — §4's "fix ALL violations" and §1's
+  "every failure requires investigation" outrank it.
 - Why: a wrap-up posted at one SHA and read at another describes a tree that
   no longer exists — the `verified-at:` header (reporter contract,
   `agents/_TEMPLATE.md`) makes that drift detectable.

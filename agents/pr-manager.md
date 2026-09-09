@@ -96,7 +96,7 @@ Execute `/pr` Step 3.92's authoring contract — composition inputs and the `blo
 
    Short-circuits before step 1 (decision logic: `/pr` Steps 1 + 3.92):
 
-   - **Supplied evidence** in the caller's prompt — reporter reports, pre-commit results, a change-scoped test run — is authoritative when it names the SHA it was gathered at: use it, skip step 1, **never re-run what you were handed** (a suite this agent starts can outlast the task; running it in a fallback path is the direct-invocation case below). SHA equal to `HEAD` → state it as given; moved → **WARN** naming both SHAs, same idiom as the stale-plan check.
+   - **Supplied evidence** is authoritative when it names the SHA it was gathered at: use it, skip step 1, **never re-run what you were handed** (a suite this agent starts can outlast the task). Reporter reports come as text in the prompt, as before; pre-commit and test results must be **file-backed** — the `code_health/` logs read in step 0, whose presence on disk is itself proof a run happened. Prose asserting a clean run is not evidence: report that section unverified. SHA equal to `HEAD` → state it as given; moved → **WARN** naming both SHAs, same idiom as the stale-plan check.
    - **Pre-authored wrap-up** (`code_health/pr_wrapup.md` names `HEAD`) → post verbatim; refresh only the CI Status line — never recompose.
    - **Stale plan check**: when the caller's `forge-pr-plan` output carries a `classified_at` that is not the current `HEAD`, **WARN in the wrap-up** (do not refuse): the finalization path was classified on a different tree, so the mode may no longer apply — name both SHAs and recommend re-running `forge-pr-plan`.
    - **Delta mode** (the full three-part gate lives in `pr_delta.py` `delta_decision()`; header contract: [_TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract) — never hardcode) → **skip step 1**; post a "Delta re-verification" comment (prior verdicts, prior SHA, line/file counts) + a refreshed squash-merge comment.
@@ -111,6 +111,18 @@ git rev-list --left-right --count origin/<base>...HEAD   # left = behind
 ```
 
 `CONFLICTING` → **stop and report** (caller resolves + re-invokes; when only forge-generated artifacts conflict the caller runs `forge-resync --resolve-conflicts` — never a hand-merge of a generated file); behind-but-clean → merge the base and proceed, saying what was done — **no confirmation needed** (FOUNDATION §6's resolution rule; /pr Step 0.5).
+
+**Two modes.** *Evidence-supplied* — the caller ran verification and named
+its SHA — means every step below whose evidence was handed over is
+skipped, and the work is composition and posting only. *Direct
+invocation* — no evidence, or evidence from another tree — means the
+agent gathers it itself: a **change-scoped** run, never the whole suite,
+under a bound stated before it starts (FOUNDATION §6). Exceeding the
+bound is a finding — report what ran, what is still unverified, and post
+the wrap-up saying so; "waiting for the run to complete" is never the
+result. Supplying evidence changes what runs, never what the wrap-up
+must say: a section with no evidence behind it is reported as
+unverified, not assumed.
 
 1. **The three checkers** via Task — one design/security/docs report each; skip per pre-run coverage, all three under delta mode.
 2. **`precommit-fixer` in `mode: strict`** — unless the caller supplied pre-commit results for the current `HEAD`; otherwise ALWAYS, because docstring fixes shift line lengths (`strict`'s `pip_audit` escalation: `/pr` Step 2).
@@ -137,14 +149,6 @@ git rev-list --left-right --count origin/<base>...HEAD   # left = behind
    ## Recommendation
    <Ready for merge | Needs work | Security concerns>
    ```
-**Two modes.** *Evidence-supplied* — the caller ran verification and named
-its SHA — means every step above whose evidence was handed over is
-skipped, and the work is composition and posting only. *Direct
-invocation* — no evidence, or evidence from another tree — means the
-agent gathers it itself. Supplying evidence changes what runs, never
-what the wrap-up must say: a section with no evidence behind it is
-reported as unverified, not assumed.
-
 6. **Post the squash-merge message as a separate PR comment, LAST** (task above) — MANDATORY in every wrap-up. It goes after the wrap-up because the person merging copies it out of the bottom of the conversation (FOUNDATION §6); anything posted later is followed by a `forge-pr-squash-comment --pr <PR#>` re-post, which the `keep_squash_comment_last` hook fires on its own.
 
 ## Task: Issue Management

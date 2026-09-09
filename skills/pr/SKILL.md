@@ -352,8 +352,8 @@ Verification is done, fixes are committed, and the wrap-up is authored
     every result gathered above is passed to it with the SHA it was
     gathered at, and re-running them is what stalls finalization (pass
     the Step 1 reports verbatim only if 3.92
-    was somehow skipped — see [agents/pr-manager.md "Pre-run
-    reports"](../../agents/pr-manager.md)).
+    was somehow skipped — see [agents/pr-manager.md "Supplied
+    evidence"](../../agents/pr-manager.md)).
 
     ```
     Agent(subagent_type="forge:pr-manager", prompt="Post the finalization
