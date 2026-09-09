@@ -1,0 +1,2 @@
+bump: patch
+- **The hook test file runs again on main.** Two pull requests were green apart and broken together: one replaced the hook-test helpers' keyword arguments with an options object and converted every call site it could see, the other added tests written against the old signature. Git merged both without a conflict, and fourteen tests raised `TypeError` on main. The six stranded call sites are converted.
