@@ -24,6 +24,13 @@ adoption-required changes; ``forge-upgrade --check`` lists those.
 
 Invocation surfaces: manual run, a scheduled CI workflow
 (``forge-docs/ci-recipe.md``), and ``/next`` offering it on detected drift.
+
+``--resolve-conflicts`` is a second, unrelated mode: mid-merge, when
+every conflicted path is a forge-generated artifact, it regenerates
+each from the merged tree, verifies with the generator's ``--check``,
+and stages it (the merge commit stays the caller's); it refuses,
+touching nothing, if any other path also conflicts. ``--dry-run``
+reports the verdict only. See :func:`_resolve_conflicts`.
 """
 
 from __future__ import annotations
