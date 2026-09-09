@@ -1773,6 +1773,75 @@ def test_merge_in_progress_false_when_not_a_git_repo(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# unmerged_paths
+# ---------------------------------------------------------------------------
+
+
+def test_unmerged_paths_empty_on_clean_repo(tmp_path: Path) -> None:
+    """A freshly initialized repo with no merge underway reports no conflicts."""
+    _init_git_repo(tmp_path)
+    assert git_utils.unmerged_paths(tmp_path) == []
+
+
+def test_unmerged_paths_lists_conflicted_files_mid_merge(tmp_path: Path) -> None:
+    """Mid-merge, a genuinely conflicted ("both modified") path is listed.
+
+    Same diverged-branches shape as ``merge_in_progress`` above, except
+    both branches edit the SAME file (``shared.txt``) so the merge
+    actually conflicts rather than auto-merging cleanly —
+    ``forge-rebump`` and ``forge-resync --resolve-conflicts`` both read
+    this list to agree on what "conflicted" means.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "shared.txt").write_text("base\n")
+    subprocess.run(["git", "add", "shared.txt"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add shared"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "other"], cwd=tmp_path, env=_GIT_ENV, check=True
+    )
+    (tmp_path / "shared.txt").write_text("other\n")
+    subprocess.run(["git", "add", "shared.txt"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "other work"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=tmp_path, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    (tmp_path / "shared.txt").write_text("feat\n")
+    subprocess.run(["git", "add", "shared.txt"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "feat work"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+
+    subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "other"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=False,
+    )
+
+    assert git_utils.unmerged_paths(tmp_path) == ["shared.txt"]
+
+
+# ---------------------------------------------------------------------------
 # get_tree_sha
 # ---------------------------------------------------------------------------
 

@@ -464,7 +464,13 @@ advisories with the suggested pin; they never edit pins.
   CI correctness depends on. The care belongs in resolving the conflict
   — read what each side intended, keep both, and ask only when one
   side's purpose cannot be determined — a question about the code, not
-  about permission.
+  about permission. One class needs no care at all: a forge-generated
+  artifact (api-digest, cli-reference, FOUNDATION, the C4 model) is a
+  pure function of the merged tree, so its correct content is
+  `regenerate()`, never a textual merge — `forge-resync
+  --resolve-conflicts` does exactly that and refuses when anything else
+  conflicts; the `warn_generated_conflicts` hook names it right after
+  the merge.
 
   The main session stays free for the next task. Skip only on explicit
   user request or when `forge.run_context.is_non_interactive()` — except
