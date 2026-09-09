@@ -15,7 +15,8 @@ this document at the top, then add repo-specific rules below.
 Design Principles · 8 Documentation Standards · 9 Logging Pattern · 10
 Continuation Protocol · 11 Agent Boundary Protocol · 12 Single Source of Truth ·
 13 `code_health/` Convention · 14 Issue Tracking & Triage · 15 Runtime Context
-Awareness · 16 Extending shipped agents/skills/CLIs · 17 Smart-test depth model.
+Awareness · 16 Extending shipped agents/skills/CLIs · 17 Smart-test depth
+model · 18 Cost Goals.
 
 ---
 
@@ -537,6 +538,9 @@ indirection for hypothetical needs.
 handling for scenarios that can't happen. Trust internal code and framework
 guarantees; validate only at system boundaries (user input, external APIs).
 
+**Cost** is a design property too — the library-performance goal, and why
+it is measured as a ratio rather than in seconds, live in §18.
+
 ---
 
 ## 8. Documentation Standards
@@ -618,9 +622,10 @@ tests carry a lifecycle. Two classes, marked at authoring time:
 
 **The necessity gate comes first**: `forge:test-advisor` (advise mode)
 rejects planned tests that duplicate existing coverage or mirror the
-implementation, and `forge:test-writer` states each test's class and a
-one-line justification before writing — not writing an unnecessary test
-beats retiring it later.
+implementation, and asks what each surviving test uniquely detects
+against what it will cost every run (§18); `forge:test-writer` states
+each test's class and a one-line justification before writing — not
+writing an unnecessary test beats retiring it later.
 
 **Lifecycle rule (skip, never delete)**: a development file untouched
 for 30 days (`[tool.forge.smart_test].lifecycle_skip_days`) leaves
@@ -957,6 +962,46 @@ maintenance burden on every foundation upgrade.
 set affects and runs them in escalating depth tiers (`0`/`1`/`2`/`full`).
 The depth model, the guarantees consumers can rely on, and the opt-in
 correctness extensions are specified in **[`forge-docs/smart-test.md`](forge-docs/smart-test.md)** — the single source of truth; this section is a pointer only.
+
+---
+
+## 18. Cost Goals — Test Economy & Library Performance
+
+Cost already has machinery above — §8 retires development tests, §17
+selects by depth, and `forge-slow-tests-report` warns on duration
+regressions without gating. What it has never had is a *goal* those
+mechanisms serve, so cost surfaces only once someone notices a slow
+run. Two, held the same way as the rest.
+
+**Test economy.** A test's runtime is justified by what only it detects.
+When a test is slow, the question is what unique behaviour would go
+unchecked if it were shrunk or moved — **shrink inputs, never
+assertions**.
+
+**Library performance.** Hot paths are known, not guessed: profile
+before optimising, and show a same-machine before/after. The work is
+continuous and small rather than an occasional campaign.
+
+**Measured as ratios, not seconds.** Wall-clock durations are not
+comparable across machines or across load — they locate where time
+goes, while deciding whether a change helped takes a controlled
+same-machine comparison. Test economy reads as **unique covered
+statements per second** per test function: statements no other test
+covers, over its wall time, computable from a `coverage json
+--show-contexts` export. Parametrized variants collapse to their base
+function first, or sibling variants cover each other's lines and every
+one of them scores zero. Library performance reads as the same-machine
+before/after ratio `forge:perf-optimizer` already reports. Neither
+metric carries a threshold to tune.
+
+**Enforcement is a review lens, never a gate** — no build fails on a
+duration. `forge:design-checker` asks the cost question of a diff that
+adds or edits tests, or that touches a known hot path;
+`forge:test-advisor`'s necessity gate (§8) carries the cost half of its
+question.
+
+**Anti-goal.** Neither goal is served by deleting assertions, weakening
+a check, or parallelising to hide cost.
 
 ---
 
