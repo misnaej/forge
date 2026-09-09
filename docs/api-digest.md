@@ -567,7 +567,7 @@ _70 modules, 904 symbols._
 - `forge_install_command(extra: str | None = None) -> str` — Format the consumer-valid install command for forge-scripts.
 - `missing_dependency_hint(package: str, *, extra: str | None = None) -> str` — Format a user-facing hint for a missing dependency.
 - `_abort_missing_cli(name: str, *, caller: str | None, line: str, where: str) -> None` _(internal)_ — Write the shared missing-CLI diagnostic and exit 2 (config error).
-- `console_script_modules(distribution: str = FORGE_DIST_NAME) -> dict[str, str]` — Map an installed distribution's console-script names to their modules.
+- `console_script_modules(distribution: str = FORGE_DIST_NAME) -> dict[str, str] | None` — Map an installed distribution's console-script names to their modules.
 - `forge_cli_argv(name: str, *, caller: str | None = None) -> list[str]` — Return argv that runs forge CLI *name* from the running installation.
 - `require_cli(name: str, *, caller: str | None = None, extra: str | None = None, hint: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.

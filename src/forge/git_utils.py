@@ -342,24 +342,29 @@ def _abort_missing_cli(name: str, *, caller: str | None, line: str, where: str) 
     raise SystemExit(2)
 
 
-def console_script_modules(distribution: str = FORGE_DIST_NAME) -> dict[str, str]:
+def console_script_modules(
+    distribution: str = FORGE_DIST_NAME,
+) -> dict[str, str] | None:
     """Map an installed distribution's console-script names to their modules.
 
     The single entry-point walk every forge tool shares: the CLI
     reference generator, the interpreter-pinned launcher below, and the
-    environment-skew probes all read the same metadata.
+    environment-skew probes (via ``config.installed_console_scripts``)
+    all read the same metadata.
 
     Args:
         distribution: Installed distribution name.
 
     Returns:
         ``{script name: importable module}`` for every ``console_scripts``
-        entry point; empty when the distribution is not installed.
+        entry point (empty when it declares none), or ``None`` when the
+        distribution is not installed at all — callers comparing a
+        declared surface against the install need that distinction.
     """
     try:
         dist = metadata.distribution(distribution)
     except metadata.PackageNotFoundError:
-        return {}
+        return None
     return {
         ep.name: ep.value.split(":", 1)[0]
         for ep in dist.entry_points
@@ -389,7 +394,7 @@ def forge_cli_argv(name: str, *, caller: str | None = None) -> list[str]:
         SystemExit: If the running ``forge-scripts`` does not declare
             *name*. Exit code is 2 (config error).
     """
-    module = console_script_modules().get(name)
+    module = (console_script_modules() or {}).get(name)
     if module is None:
         install_hint = (
             f"Run `{forge_install_command(None)}` "

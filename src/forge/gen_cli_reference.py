@@ -88,12 +88,12 @@ def discover_clis(distribution: str = DISTRIBUTION) -> list[CliEntry]:
             Defaults to :data:`DISTRIBUTION`.
 
     Returns:
-        CLI entries sorted by console-script name.
-
+        CLI entries sorted by console-script name; empty when the
+        distribution is not installed.
     """
     entries = [
         CliEntry(name=name, module=module)
-        for name, module in console_script_modules(distribution).items()
+        for name, module in (console_script_modules(distribution) or {}).items()
     ]
     return sorted(entries, key=lambda entry: entry.name)
 

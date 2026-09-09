@@ -2475,9 +2475,9 @@ def test_missing_dependency_hint_custom_extra_substitutes_bracket() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_console_script_modules_uninstalled_distribution_returns_empty() -> None:
+def test_console_script_modules_uninstalled_distribution_returns_none() -> None:
     """A distribution name that is not installed maps to no entry points."""
-    assert git_utils.console_script_modules("not-a-real-distribution") == {}
+    assert git_utils.console_script_modules("not-a-real-distribution") is None
 
 
 def test_forge_cli_argv_ignores_path_even_when_shutil_which_resolves_a_decoy(

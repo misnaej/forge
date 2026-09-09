@@ -66,10 +66,13 @@ class FakeEP(NamedTuple):
     Attributes:
         name: Entry-point name (e.g. ``"mycli"``).
         group: Entry-point group (e.g. ``"console_scripts"``).
+        value: Entry-point target (``"module:attr"``); the shared
+            entry-point walk reads the module half.
     """
 
     name: str
     group: str
+    value: str = "pkg.cli:main"
 
 
 class FakeDist:
