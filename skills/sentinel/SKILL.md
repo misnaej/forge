@@ -87,8 +87,16 @@ touching code:
   `.plan/CONTINUATION.md` records a comment URL for this issue,
   confirm it matches the selected comment
 - `Requires:` prerequisites all closed
+- **not already in execution**: an existing `[sentinel] taken up` comment
+  with no later `[sentinel] PR #N opened` (and no merged PR) means another
+  session holds it — skip, never double-pick
 - no new colliding open issue or open PR
 - the plan still matches reality — spot-check the files it names
+
+Re-check passed → **announce the pickup on the issue before touching
+code**: `[sentinel] taken up — branch <name>, <date>`. The rule is for
+everyone: humans see who holds the issue, and the `plan-readiness`
+screen treats it as in execution.
 
 Any failure → skip the issue, leave an `[issue-triage]` comment
 explaining what changed (never remove the label silently), and report
@@ -99,7 +107,8 @@ it for re-planning via `/plan-issue`.
 Branch off the freshly-synced base, then follow the standard workflow
 orders — FOUNDATION §3 "Commit" and "PR finalization" — via `/pr`,
 end to end: verification reporters, fixes, wrap-up + squash-merge
-message. **Stop at the wrap-up.** Merging is the user's decision.
+message, then `[sentinel] PR #N opened` on the issue. **Stop at the
+wrap-up.** Merging is the user's decision.
 
 ## Blocked on a question mid-execution
 
