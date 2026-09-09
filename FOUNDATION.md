@@ -877,6 +877,13 @@ bare prefix marks short **audit lines**; a comment opening
 `[issue-triage] plan-validated:` is the **execution payload** `/sentinel`
 runs — posted only by `issue-triage` on delegation from `/plan-issue`,
 alongside the `plan-ready` label. The issue body is never edited.
+`/sentinel` leaves its own trail with the `[sentinel]` prefix — `taken
+up — branch <name>, <date>` at pickup, `PR #N opened` at the wrap-up —
+so who holds an issue is visible to everyone, and a pickup without a
+later PR marks the issue as in execution for the `plan-readiness` screen
+and for any second sentinel. Like the execution payload, the marker is
+trusted only from a write-access author — a stranger's comment can never
+veto a pickup.
 
 ---
 

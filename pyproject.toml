@@ -203,6 +203,11 @@ precommit_depth = "2"
 # Self-skips in CI / non-interactive and when FORGE_NO_AUTO_REBUILD is set.
 rebuild_command = "./dev/setup.sh"
 
+[tool.forge.plugin_sync]
+# forge ships the plugin it runs: a stale cache means this session's agents
+# and hooks are older than the tree. Consumers default to advisory.
+blocking = true
+
 [tool.forge.typecheck]
 # Forge runs pyrefly as a BLOCKING gate: type errors are forge's own code,
 # not third-party noise, so a refused commit means a real defect to fix.

@@ -146,6 +146,8 @@ and stop (caller may explicitly force).
 
 ### `plan-readiness`
 
+An issue carrying a `[sentinel] taken up` comment from a **write-access author** (`gh api repos/{owner}/{repo}/collaborators/<login>/permission`; anyone else's is ignored) with no later `[sentinel] PR #N opened` (and no merged PR) is **in execution** — never a needs-plan candidate, never re-picked (FOUNDATION §14 "Decision trail").
+
 ```bash
 gh issue list --state open --limit 200 --json number,title,labels,body,updatedAt
 gh pr list --state open --json number,title,body,headRefName
