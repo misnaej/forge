@@ -503,6 +503,12 @@ options:
   --bullet TEXT  Bullet line. Repeat 3-5 times.
 ```
 
+## forge-pr-wrapup
+
+```text
+(--help unavailable for forge-pr-wrapup)
+```
+
 ## forge-precommit
 
 ```text
@@ -566,13 +572,20 @@ options:
 ## forge-resync
 
 ```text
-usage: forge-resync [-h]
+usage: forge-resync [-h] [--resolve-conflicts] [--dry-run]
 
 Regenerate forge-managed artifacts and open a dedup-guarded resync PR when
 they drifted.
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help           show this help message and exit
+  --resolve-conflicts  Mid-merge: when every conflicted path is a forge-
+                       generated artifact, regenerate each from the merged
+                       tree, verify with its --check, and stage it (the merge
+                       commit stays yours). Refuses, touching nothing, if any
+                       other path conflicts.
+  --dry-run            With --resolve-conflicts: report the verdict only (exit
+                       0 = resolvable).
 ```
 
 ## forge-slow-tests-report

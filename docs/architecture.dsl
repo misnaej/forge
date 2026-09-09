@@ -39,6 +39,7 @@ workspace "Forge" "Python CI/CD & code-quality foundation: deterministic CLIs + 
         installers -> release_tooling "imports"
         pre_commit_dispatcher -> config_shared "imports"
         pre_commit_dispatcher -> installers "imports"
+        pre_commit_dispatcher -> release_tooling "imports"
         release_tooling -> config_shared "imports"
         release_tooling -> installers "imports"
         smart_test -> config_shared "imports"

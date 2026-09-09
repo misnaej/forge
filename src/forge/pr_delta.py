@@ -89,6 +89,20 @@ MANAGED_REGEN_PATHS: Final[tuple[str, ...]] = (
 )
 
 
+# The generator that owns each forge-generated artifact — the command
+# whose output IS the file. A merge conflict there is never a
+# disagreement to reconcile by hand: the correct post-merge content is
+# `regenerate()` from the merged source tree, and every entry verifies
+# itself with `--check`. The C4 model is opt-in (`[tool.forge.c4]`), so
+# callers filter through :func:`regen_commands`.
+REGEN_COMMANDS: Final[dict[str, tuple[str, ...]]] = {
+    "FOUNDATION.md": ("install-forge-claude-md",),
+    "docs/cli-reference.md": ("forge-gen-cli-reference",),
+    "docs/api-digest.md": ("forge-gen-api-digest",),
+    "docs/architecture.dsl": ("forge-gen-c4",),
+}
+
+
 # The pre-commit steps that byte-verify MANAGED_REGEN_PATHS against the
 # installed package. Executable callers (`forge-resync`'s PR-body
 # evidence) build their `forge-precommit --only` argv from this tuple;
@@ -384,3 +398,18 @@ def delta_decision(
             "no high-blast-radius paths"
         ),
     )
+
+
+def regen_commands(repo_root: Path) -> dict[str, tuple[str, ...]]:
+    """Return :data:`REGEN_COMMANDS` filtered to the artifacts this repo generates.
+
+    Args:
+        repo_root: Repository root (config lookup for the opt-in C4 row).
+
+    Returns:
+        Path → generator argv for every generator that applies here.
+    """
+    commands = dict(REGEN_COMMANDS)
+    if not config.read_tool_forge_section(repo_root, "c4"):
+        commands.pop("docs/architecture.dsl")
+    return commands

@@ -11,12 +11,14 @@ from forge.pr_delta import (
     LIGHT_WRAPUP_LINE_THRESHOLD,
     MANAGED_REGEN_PATHS,
     PROVENANCE_GATE_STEPS,
+    REGEN_COMMANDS,
     VERIFIED_AT_RE,
     configured_docs_only_globs,
     delta_decision,
     docs_only_diff,
     extract_verified_shas,
     light_wrapup_decision,
+    regen_commands,
     regen_only_diff,
     touches_high_blast_radius,
     touches_source_paths,
@@ -255,6 +257,40 @@ def test_regen_only_diff_case_varied_path_not_eligible() -> None:
     """
     assert not regen_only_diff(["FOUNDATION.MD"])
     assert not regen_only_diff(["Docs/Cli-Reference.md"])
+
+
+def test_regen_commands_pins_literal_contents() -> None:
+    """The generator argv per artifact is pinned.
+
+    `forge-resync --resolve-conflicts` and every `forge-precommit`
+    `*_check` step key off this dict verbatim — a silent rename or
+    reorder here would desync them without either failing loudly.
+    """
+    assert REGEN_COMMANDS == {
+        "FOUNDATION.md": ("install-forge-claude-md",),
+        "docs/cli-reference.md": ("forge-gen-cli-reference",),
+        "docs/api-digest.md": ("forge-gen-api-digest",),
+        "docs/architecture.dsl": ("forge-gen-c4",),
+    }
+
+
+def test_regen_commands_drops_c4_row_when_not_configured(tmp_path: Path) -> None:
+    """No `[tool.forge.c4]` section → the opt-in C4 row is filtered out.
+
+    The C4 model is opt-in; a repo that never configured it must not be
+    told to regenerate `docs/architecture.dsl` on merge conflict.
+    """
+    (tmp_path / "pyproject.toml").write_text("[tool.forge]\n")
+    commands = regen_commands(tmp_path)
+    assert "docs/architecture.dsl" not in commands
+    assert commands["FOUNDATION.md"] == ("install-forge-claude-md",)
+
+
+def test_regen_commands_keeps_c4_row_when_configured(tmp_path: Path) -> None:
+    """An opted-in `[tool.forge.c4]` section keeps the architecture.dsl row."""
+    (tmp_path / "pyproject.toml").write_text('[tool.forge.c4]\nconfig = "c4.toml"\n')
+    commands = regen_commands(tmp_path)
+    assert commands["docs/architecture.dsl"] == ("forge-gen-c4",)
 
 
 def test_touches_source_paths_matches_src_prefix() -> None:
