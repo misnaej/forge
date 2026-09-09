@@ -34,11 +34,15 @@ import logging
 import os
 import subprocess
 import sys
-from importlib import metadata
 from typing import NamedTuple
 
 from forge.gen_common import check_doc_drift
-from forge.git_utils import configure_cli_logging, repo_root
+from forge.git_utils import (
+    FORGE_DIST_NAME,
+    configure_cli_logging,
+    console_script_modules,
+    repo_root,
+)
 
 
 configure_cli_logging()
@@ -46,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 
 # Distribution that owns forge's console scripts.
-DISTRIBUTION = "forge-scripts"
+DISTRIBUTION = FORGE_DIST_NAME
 # Path of the generated reference doc, relative to the repo root.
 DOC_RELPATH = "docs/cli-reference.md"
 # Pinned terminal width for ``--help`` capture. argparse's HelpFormatter
@@ -84,17 +88,12 @@ def discover_clis(distribution: str = DISTRIBUTION) -> list[CliEntry]:
             Defaults to :data:`DISTRIBUTION`.
 
     Returns:
-        CLI entries sorted by console-script name.
-
-    Raises:
-        importlib.metadata.PackageNotFoundError: If the distribution is
-            not installed.
+        CLI entries sorted by console-script name; empty when the
+        distribution is not installed.
     """
-    dist = metadata.distribution(distribution)
     entries = [
-        CliEntry(name=ep.name, module=ep.value.split(":", 1)[0])
-        for ep in dist.entry_points
-        if ep.group == "console_scripts"
+        CliEntry(name=name, module=module)
+        for name, module in (console_script_modules(distribution) or {}).items()
     ]
     return sorted(entries, key=lambda entry: entry.name)
 

@@ -17,6 +17,7 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import lru_cache
+from importlib import metadata
 from pathlib import Path
 
 
@@ -324,6 +325,90 @@ def missing_dependency_hint(package: str, *, extra: str | None = None) -> str:
     return f"`{package}` is not installed; run `{forge_install_command(extra)}`."
 
 
+FORGE_DIST_NAME = "forge-scripts"
+
+
+def _abort_missing_cli(name: str, *, caller: str | None, line: str, where: str) -> None:
+    """Write the shared missing-CLI diagnostic and exit 2 (config error).
+
+    Args:
+        name: The CLI name that is missing.
+        caller: Caller reporting the failure, for the diagnostic prefix.
+        line: Install hint or recovery instruction for the user.
+        where: Clause describing the missing condition (e.g., "is not declared...").
+    """
+    prefix = caller or "forge"
+    sys.stderr.write(f"{prefix}: required CLI '{name}' {where}.\n  {line}\n")
+    raise SystemExit(2)
+
+
+def console_script_modules(
+    distribution: str = FORGE_DIST_NAME,
+) -> dict[str, str] | None:
+    """Map an installed distribution's console-script names to their modules.
+
+    The single entry-point walk every forge tool shares: the CLI
+    reference generator, the interpreter-pinned launcher below, and the
+    environment-skew probes (via ``config.installed_console_scripts``)
+    all read the same metadata.
+
+    Args:
+        distribution: Installed distribution name.
+
+    Returns:
+        ``{script name: importable module}`` for every ``console_scripts``
+        entry point (empty when it declares none), or ``None`` when the
+        distribution is not installed at all — callers comparing a
+        declared surface against the install need that distinction.
+    """
+    try:
+        dist = metadata.distribution(distribution)
+    except metadata.PackageNotFoundError:
+        return None
+    return {
+        ep.name: ep.value.split(":", 1)[0]
+        for ep in dist.entry_points
+        if ep.group == "console_scripts"
+    }
+
+
+def forge_cli_argv(name: str, *, caller: str | None = None) -> list[str]:
+    """Return argv that runs forge CLI *name* from the running installation.
+
+    A console script launched by bare name resolves through ``PATH``,
+    which on a machine with several forge checkouts can be another
+    checkout's older copy — a generator then rewrites a doc from stale
+    knowledge while the step reports success. Launching
+    ``sys.executable -m <module>`` from the running distribution's own
+    entry points cannot pick up another install. There is deliberately no
+    ``PATH`` fallback (FOUNDATION §2: foundation CLIs fail loudly).
+
+    Args:
+        name: Console-script name declared by ``forge-scripts``.
+        caller: CLI reporting the failure, for the diagnostic prefix.
+
+    Returns:
+        ``[sys.executable, "-m", <module>]``.
+
+    Raises:
+        SystemExit: If the running ``forge-scripts`` does not declare
+            *name*. Exit code is 2 (config error).
+    """
+    module = (console_script_modules() or {}).get(name)
+    if module is None:
+        install_hint = (
+            f"Run `{forge_install_command(None)}` "
+            "(or your repo's equivalent) and retry."
+        )
+        _abort_missing_cli(
+            name,
+            caller=caller,
+            where="is not declared by the running forge-scripts install",
+            line=install_hint,
+        )
+    return [sys.executable, "-m", str(module)]
+
+
 def require_cli(
     name: str,
     *,
@@ -358,14 +443,10 @@ def require_cli(
     """
     if shutil.which(name) is not None:
         return
-    prefix = caller or "forge"
     line = hint or (
         f"Run `{forge_install_command(extra)}` (or your repo's equivalent) and retry."
     )
-    sys.stderr.write(
-        f"{prefix}: required CLI '{name}' not on PATH.\n  {line}\n",
-    )
-    raise SystemExit(2)
+    _abort_missing_cli(name, caller=caller, line=line, where="not on PATH")
 
 
 def write_step_log(repo_root: Path, name: str, output: str) -> Path:
