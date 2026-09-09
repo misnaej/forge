@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 947 symbols._
+_72 modules, 949 symbols._
 
 ## `forge`
 
@@ -27,6 +27,7 @@ _72 modules, 947 symbols._
   - `wall_s(self) -> float` — Seconds from first to last known record, or ``0`` when unbounded.
   - `active_s(self) -> float` — Wall time with every gap longer than :data:`IDLE_GAP_S` clipped.
   - `loop_suspect(self) -> bool` — True when one identical tool call recurs past the threshold.
+  - `precommit_runs(self) -> int` — Full ``forge-precommit`` runs: the ledger's count, or the transcript's.
   - `cap_breach(self) -> bool` — True for a precommit-fixer run past its full-run cap.
 - `class TypeRow` — Per-agent-type aggregate for the report table.
 - `class ToolRow` — Per-tool aggregate from ``PostToolUse`` durations.
@@ -637,6 +638,8 @@ _72 modules, 947 symbols._
 - `has_conflict_markers(text: str) -> bool` — Return whether *text* contains unresolved git conflict markers.
 - `file_has_conflict_markers(path: Path) -> bool` — Return whether the file at *path* holds unresolved conflict markers.
 - `resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref diff-scoped checks should compare against, origin-first.
+- `_open_pr_base_branch(root: Path) -> str | None` _(internal)_ — Return the base branch of the open PR for the checked-out branch, if any.
+- `resolve_pr_base_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref this branch's PR actually lands on, falling back to the base.
 - `merge_base_with_head(root: Path | None, base_branch: str) -> str` — Return the merge-base SHA of ``HEAD`` and the resolved base ref.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 - `write_tree(repo_root: Path) -> str | None` — Return the tree SHA of the current **index** via ``git write-tree``.

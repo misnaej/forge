@@ -13,9 +13,11 @@ Two inputs, one primary and one best-effort:
 
 - ``code_health/agent_timing.jsonl`` — the ledger the
   ``log_agent_timing`` Claude Code hook appends on every
-  ``SubagentStart`` / ``SubagentStop`` / ``PostToolUse`` event. Hook
-  payloads are documented and stable; this is the source of truth for
-  run boundaries, agent types, and tool durations.
+  ``SubagentStart`` / ``SubagentStop`` / ``PostToolUse`` event, plus one
+  ``precommit_full_run`` line per full ``forge-precommit`` the
+  ``block_fixer_recon`` hook lets the fixer run (its three-run cap).
+  Hook payloads are documented and stable; this is the source of truth
+  for run boundaries, agent types, tool durations, and fixer run counts.
 - Claude Code subagent transcripts (``…/subagents/agent-<id>.jsonl``),
   located through the ledger's ``transcript_path`` fields or scanned
   from a ``--transcripts`` directory for history that predates the
@@ -111,6 +113,7 @@ class AgentRun:
     slowest_tool: str = ""
     slowest_tool_ms: int = 0
     ledger_active_s: float = 0.0
+    ledger_precommit_runs: int = 0
     stats: TranscriptStats | None = None
     last_event: datetime | None = field(default=None, repr=False)
 
@@ -138,12 +141,24 @@ class AgentRun:
         return self.stats is not None and self.stats.max_repeat >= LOOP_REPEAT_THRESHOLD
 
     @property
+    def precommit_runs(self) -> int:
+        """Full ``forge-precommit`` runs: the ledger's count, or the transcript's.
+
+        The ``precommit_full_run`` ledger events (written by the
+        ``block_fixer_recon`` hook as it enforces the cap) are the primary
+        source; the transcript regex covers history recorded before that
+        hook existed. The larger count wins so neither source can hide a
+        breach the other saw.
+        """
+        from_transcript = self.stats.precommit_runs if self.stats is not None else 0
+        return max(self.ledger_precommit_runs, from_transcript)
+
+    @property
     def cap_breach(self) -> bool:
         """True for a precommit-fixer run past its full-run cap."""
         return (
             self.agent_type == PRECOMMIT_FIXER_AGENT
-            and self.stats is not None
-            and self.stats.precommit_runs > PRECOMMIT_RUN_CAP
+            and self.precommit_runs > PRECOMMIT_RUN_CAP
         )
 
 
@@ -286,6 +301,11 @@ def _apply_event(runs: dict[str, AgentRun], event: dict[str, Any]) -> None:
             run.transcript_path = path
     elif kind == "PostToolUse":
         _apply_tool_event(run, event)
+    elif kind == "precommit_full_run":
+        # Written by block_fixer_recon.sh as it allows a full run; the
+        # SubagentStart that carries agent_type always precedes it, so
+        # the run's type is already known here.
+        run.ledger_precommit_runs += 1
 
 
 def _apply_tool_event(run: AgentRun, event: dict[str, Any]) -> None:
@@ -829,14 +849,14 @@ def _render_suspects(runs: list[AgentRun]) -> list[str]:
         f"  {stats.max_repeat:>2}x {stats.repeated_call}  [{_run_label(run)}]"
         for run, stats in loops
     ]
-    breaches = [(r, r.stats) for r in runs if r.cap_breach and r.stats is not None]
+    breaches = [r for r in runs if r.cap_breach]
     lines.append(
         f"{PRECOMMIT_FIXER_AGENT} runs past the {PRECOMMIT_RUN_CAP}-run cap: "
         f"{len(breaches)}"
     )
     lines += [
-        f"  {stats.precommit_runs} full forge-precommit runs  [{_run_label(run)}]"
-        for run, stats in breaches
+        f"  {run.precommit_runs} full forge-precommit runs  [{_run_label(run)}]"
+        for run in breaches
     ]
     return lines
 

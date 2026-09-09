@@ -1409,6 +1409,116 @@ def test_resolve_base_branch_ref_honors_non_main_base_branch(tmp_path: Path) -> 
 
 
 # ---------------------------------------------------------------------------
+# resolve_pr_base_ref / _open_pr_base_branch
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_pr_base_ref_prefers_github_base_ref_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`GITHUB_BASE_REF` short-circuits before any `gh api` call.
+
+    SCENARIO: a GitHub Actions `pull_request` run, where the base is
+    already known from the event payload.
+    MOCK SETUP: `gh_api` is a recording fake that fails the test if
+    invoked — `resolve_pr_base_ref` must resolve from the env var alone.
+    EXPECTED BEHAVIOR: `origin/release` (confirmed via `ref_exists`)
+    wins over the configured `base_branch`.
+    """
+    monkeypatch.setenv("GITHUB_BASE_REF", "release")
+
+    def _fail_if_called(*_a: str, **_kw: object) -> str | None:
+        pytest.fail("gh_api must not be called when GITHUB_BASE_REF is set")
+
+    monkeypatch.setattr(git_utils, "gh_api", _fail_if_called)
+    monkeypatch.setattr(
+        git_utils, "ref_exists", lambda _root, ref: ref == "origin/release"
+    )
+    assert git_utils.resolve_pr_base_ref(tmp_path, "main") == "origin/release"
+
+
+def test_resolve_pr_base_ref_falls_back_to_gh_pr_base_when_no_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No `GITHUB_BASE_REF` → falls back to the open PR's `base.ref` via `gh api`.
+
+    SCENARIO: a workstation on a branch with an open PR against a
+    non-default base (a stacked PR).
+    MOCK SETUP: `_run_git` reports the checked-out branch name;
+    `gh_api` returns the PR's `base.ref` only for the matching
+    `head.ref` query, `None` otherwise.
+    EXPECTED BEHAVIOR: the branch's resolved PR base ref wins, not the
+    configured `base_branch`.
+    """
+    monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+    monkeypatch.setattr(git_utils, "_run_git", lambda *_a, **_kw: "feat/child")
+
+    def _fake_gh_api(*args: str, **_kw: object) -> str | None:
+        if 'head.ref == "feat/child"' in args[-1]:
+            return "feat/parent"
+        return None
+
+    monkeypatch.setattr(git_utils, "gh_api", _fake_gh_api)
+    monkeypatch.setattr(
+        git_utils, "ref_exists", lambda _root, ref: ref == "origin/feat/parent"
+    )
+    assert git_utils.resolve_pr_base_ref(tmp_path, "main") == "origin/feat/parent"
+
+
+def test_resolve_pr_base_ref_falls_back_to_configured_base_when_no_pr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No env var and no open PR → falls back to `resolve_base_branch_ref`.
+
+    MOCK SETUP: `_run_git` reports a branch; `gh_api` returns `None`
+    (`gh`'s own empty-result shape for no matching open PR); the plain
+    `resolve_base_branch_ref` fallback is a recording fake.
+    EXPECTED BEHAVIOR: the configured base branch's resolved ref is
+    used unchanged — every offline or PR-less workstation keeps today's
+    behaviour.
+    """
+    monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+    monkeypatch.setattr(git_utils, "_run_git", lambda *_a, **_kw: "feat/x")
+    monkeypatch.setattr(git_utils, "gh_api", lambda *_a, **_kw: None)
+    calls: list[str] = []
+
+    def _fake_resolve_base(_root: Path, base_branch: str) -> str | None:
+        calls.append(base_branch)
+        return "origin/main"
+
+    monkeypatch.setattr(git_utils, "resolve_base_branch_ref", _fake_resolve_base)
+    assert git_utils.resolve_pr_base_ref(tmp_path, "main") == "origin/main"
+    assert calls == ["main"]
+
+
+@pytest.mark.parametrize("branch", ["HEAD", 'feat/"quoted"'])
+def test_open_pr_base_branch_skips_detached_head_and_quote_bearing_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, branch: str
+) -> None:
+    """A detached `HEAD` or a quote-bearing branch name skip the `gh api` call.
+
+    Args:
+        branch: A branch name to test — either `"HEAD"` (detached checkout)
+            or a name with quotes.
+
+    SCENARIO: `_run_git` reports either `HEAD` (detached checkout) or a
+    branch name containing a `"` — neither is safe to interpolate into
+    the `gh api --jq` string.
+    MOCK SETUP: `gh_api` is a recording fake that fails the test if
+    invoked.
+    EXPECTED BEHAVIOR: `_open_pr_base_branch` returns `None` without
+    ever calling `gh_api`.
+    """
+    monkeypatch.setattr(git_utils, "_run_git", lambda *_a, **_kw: branch)
+
+    def _fail_if_called(*_a: str, **_kw: object) -> str | None:
+        pytest.fail("gh_api must not be called for an unsafe branch name")
+
+    monkeypatch.setattr(git_utils, "gh_api", _fail_if_called)
+    assert git_utils._open_pr_base_branch(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
 # added_or_moved_files
 # ---------------------------------------------------------------------------
 

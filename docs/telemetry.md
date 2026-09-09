@@ -167,8 +167,12 @@ measures the agents. The `log_agent_timing` Claude Code hook (shipped
 with the plugin, registered on `SubagentStart`, `SubagentStop`, and
 every `PostToolUse`) appends one JSON line per event to
 `code_health/agent_timing.jsonl` — agent id and type on the subagent
-events, tool name and `duration_ms` on the tool events. Hook payloads
-are documented by Claude Code, so the ledger is the stable source;
+events, tool name and `duration_ms` on the tool events. A second writer,
+the `block_fixer_recon` hook, appends one `precommit_full_run` line per
+full `forge-precommit` it lets `forge:precommit-fixer` run — the
+three-run cap made mechanical, and the profiler's primary source for
+cap breaches. Hook payloads are documented by Claude Code, so the ledger
+is the stable source;
 `FORGE_NO_AGENT_TIMING=1` switches the hook off. The hook fires on every
 tool call, so its cost is measured, not assumed: one `jq` pass plus one
 append, about 10 ms per event on a workstation when Claude Code supplies

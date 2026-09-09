@@ -5672,7 +5672,24 @@ def test_fragment_gate_blocks_second_branch_added_fragment(tmp_path: Path) -> No
     commit_all(work, "feat: two fragments")
     result = precommit.step_changelog_version(work)
     assert not result.passed
-    assert "one fragment per PR" in result.output
+    assert "a PR carries ONE fragment" in result.output
+
+
+def test_fragment_gate_message_names_stacked_pr_remedy(tmp_path: Path) -> None:
+    """The two-fragments message points at the stacked-PR remedy, not a merge.
+
+    Guards the #473 wording fix: a naive "merge the bullets" remedy once
+    led the fixer to propose deleting a parent PR's own fragment on a
+    stacked branch. The message must name that scenario explicitly.
+    """
+    work = _init_fragments_mode_repo(tmp_path)
+    (work / "changelog.d").mkdir()
+    (work / "changelog.d" / "a.added.md").write_text("bump: minor\n- a\n")
+    (work / "changelog.d" / "b.added.md").write_text("bump: patch\n- b\n")
+    commit_all(work, "feat: two fragments")
+    result = precommit.step_changelog_version(work)
+    assert not result.passed
+    assert "stacked" in result.output
 
 
 def test_fragment_gate_passes_single_branch_added_fragment(tmp_path: Path) -> None:
