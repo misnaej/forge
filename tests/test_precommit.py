@@ -18,6 +18,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import patch
 
@@ -3009,8 +3010,10 @@ def _write_data_js(
 
 # ---------------------------------------------------------------------------
 # Group 2: step_regen_docs
-# MOCKING STRATEGY: shutil.which → controls require_cli (FOUNDATION §2 loud
-# fail vs. pass); precommit._run → controls generator success/failure without
+# MOCKING STRATEGY: precommit.forge_cli_argv → controls the FOUNDATION §2 loud
+# fail on a CLI the running forge does not declare (the real helper resolves
+# against the installed forge-scripts otherwise); precommit._run → controls
+# generator success/failure without
 # invoking real CLIs; precommit.stage_modified_paths → controls restaged-files
 # list without touching a real git index. No real generators or git ops fire.
 # ---------------------------------------------------------------------------
@@ -3097,19 +3100,20 @@ def test_step_regen_docs_runs_both_generators_when_both_docs_exist(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Both generated docs present → both CLI names appear in captured _run calls.
+    """Both generated docs present → both generator modules launched via -m.
 
     SCENARIO: docs/api-digest.md and docs/cli-reference.md both exist.
-    MOCK SETUP: shutil.which → valid path; precommit._run captures each argv
-        and returns (True, ""); stage_modified_paths → [].
-    EXPECTED BEHAVIOR: "forge-gen-api-digest" and "forge-gen-cli-reference"
-        both appear as the first token of a captured _run invocation.
+    MOCK SETUP: precommit._run captures each argv and returns (True, "");
+        stage_modified_paths → [].
+    EXPECTED BEHAVIOR: captured _run argvs start with
+        ``[sys.executable, "-m", "forge.gen_api_digest"]`` and
+        ``[sys.executable, "-m", "forge.gen_cli_reference"]`` — the running
+        install's own entry points, never a bare PATH name.
     """
     docs_dir = tmp_path / "docs"
     docs_dir.mkdir()
     (docs_dir / "api-digest.md").write_text("old\n")
     (docs_dir / "cli-reference.md").write_text("old\n")
-    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
     run_cmds: list[list[str]] = []
 
     def _capture_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
@@ -3119,9 +3123,8 @@ def test_step_regen_docs_runs_both_generators_when_both_docs_exist(
     monkeypatch.setattr(precommit, "_run", _capture_run)
     monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
     precommit.step_regen_docs(tmp_path)
-    invoked_clis = [cmd[0] for cmd in run_cmds]
-    assert "forge-gen-api-digest" in invoked_clis
-    assert "forge-gen-cli-reference" in invoked_clis
+    assert [sys.executable, "-m", "forge.gen_api_digest"] in run_cmds
+    assert [sys.executable, "-m", "forge.gen_cli_reference"] in run_cmds
 
 
 def test_step_regen_docs_cli_missing_exits(
@@ -3131,7 +3134,11 @@ def test_step_regen_docs_cli_missing_exits(
     """A missing forge-gen-* CLI raises SystemExit(2) (FOUNDATION §2 loud-fail)."""
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "api-digest.md").write_text("old\n")
-    monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    def _raise_missing(_name: str, **_kw: object) -> list[str]:
+        raise SystemExit(2)
+
+    monkeypatch.setattr(precommit, "forge_cli_argv", _raise_missing)
     with pytest.raises(SystemExit) as exc_info:
         precommit.step_regen_docs(tmp_path)
     assert exc_info.value.code == 2

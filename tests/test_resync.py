@@ -23,7 +23,8 @@
 #     the pre-bootstrap and post-bootstrap dirty checks to disagree.
 #   - `_regenerate` unit tests fake `resync.subprocess.run` directly (per-call
 #     argv inspection distinguishes the plain generator call from its
-#     `--check` re-run) with `resync.require_cli` a no-op.
+#     `--check` re-run); the generator argv comes from the real
+#     `forge_cli_argv` against the installed forge-scripts.
 #   - `_resolve_conflicts` tests build REAL git merge-conflict states (no
 #     mocked git plumbing — mirrors `tests/test_rebump.py`'s local repo
 #     helpers) and patch only `resync._regenerate` with a recording stub, so
@@ -33,6 +34,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -407,14 +409,15 @@ def test_regenerate_success_runs_generator_then_check(
 
     SCENARIO: the generator exits 0, and re-running it with --check
         afterward also exits 0 (its output matches the regenerated file).
-    MOCK SETUP: `require_cli` no-op; `subprocess.run` replaced with a
-        recorder appending every argv and returning `FakeProc(0)`.
+    MOCK SETUP: `subprocess.run` replaced with a recorder appending every
+        argv and returning `FakeProc(0)`.
     EXPECTED BEHAVIOR: both the plain generator argv and the `--check`
-        argv run, in that order; the function returns True and logs an
-        info line naming the regenerated path.
+        argv run, in that order, launched via the running install's own
+        module (``sys.executable -m ...``, never a bare PATH name — see
+        `forge_cli_argv`); the function returns True and logs an info
+        line naming the regenerated path.
     """
     calls: list[list[str]] = []
-    monkeypatch.setattr(resync, "require_cli", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         resync.subprocess,
         "run",
@@ -428,8 +431,8 @@ def test_regenerate_success_runs_generator_then_check(
 
     assert result is True
     assert calls == [
-        ["install-forge-claude-md"],
-        ["install-forge-claude-md", "--check"],
+        [sys.executable, "-m", "forge.install_claudemd"],
+        [sys.executable, "-m", "forge.install_claudemd", "--check"],
     ]
     assert any("regenerated FOUNDATION.md" in r.getMessage() for r in caplog.records)
 
@@ -442,14 +445,13 @@ def test_regenerate_generator_failure_skips_check(
     """A failing generator returns False without ever running --check.
 
     SCENARIO: the generator itself exits non-zero.
-    MOCK SETUP: `require_cli` no-op; `subprocess.run` replaced with a
-        recorder returning `FakeProc(1, stderr="boom")` unconditionally.
+    MOCK SETUP: `subprocess.run` replaced with a recorder returning
+        `FakeProc(1, stderr="boom")` unconditionally.
     EXPECTED BEHAVIOR: only the plain generator argv runs — `--check` is
         never invoked; the function returns False and logs an error
         naming the exit code.
     """
     calls: list[list[str]] = []
-    monkeypatch.setattr(resync, "require_cli", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         resync.subprocess,
         "run",
@@ -462,7 +464,7 @@ def test_regenerate_generator_failure_skips_check(
         )
 
     assert result is False
-    assert calls == [["install-forge-claude-md"]]
+    assert calls == [[sys.executable, "-m", "forge.install_claudemd"]]
     assert any("failed" in r.getMessage() for r in caplog.records)
 
 

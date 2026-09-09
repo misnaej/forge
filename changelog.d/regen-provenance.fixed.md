@@ -1,0 +1,2 @@
+bump: patch
+- **Generated docs are rebuilt by the forge you are committing with.** `regen_docs` and `forge-resync --resolve-conflicts` used to start `forge-gen-cli-reference` / `forge-gen-api-digest` by name, so on a machine with several forge checkouts another checkout's older generator could rewrite the doc while the step reported PASS. Both now launch the generator from the running installation (`python -m <module>`, via the new `forge_cli_argv` helper), and a name the running forge does not declare fails loudly instead of falling back to PATH.
