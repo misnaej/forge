@@ -21,13 +21,13 @@ mirror it there.
 from __future__ import annotations
 
 import fnmatch
-import importlib.metadata
 import logging
 import tomllib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from forge.git_utils import (
+    console_script_modules,
     get_modified_files,
     get_tracked_files,
     get_untracked_files,
@@ -660,8 +660,5 @@ def installed_console_scripts(name: str) -> set[str] | None:
         The set of installed console-script names, or ``None`` when the
         distribution is not installed at all (nothing to compare against).
     """
-    try:
-        dist = importlib.metadata.distribution(name)
-    except importlib.metadata.PackageNotFoundError:
-        return None
-    return {ep.name for ep in dist.entry_points if ep.group == "console_scripts"}
+    modules = console_script_modules(name)
+    return None if modules is None else set(modules)

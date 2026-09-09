@@ -48,6 +48,7 @@ from forge.git_utils import (
     configure_cli_logging,
     create_commit,
     find_open_pr_by_head_prefix,
+    forge_cli_argv,
     merge_in_progress,
     repo_root,
     require_cli,
@@ -249,8 +250,12 @@ def _regenerate(root: Path, path: str, argv: tuple[str, ...]) -> bool:
     Returns:
         ``True`` when the generator ran and its ``--check`` agrees.
     """
-    require_cli(argv[0], caller="forge-resync --resolve-conflicts")
-    gen = subprocess.run([*argv], cwd=root, capture_output=True, text=True, check=False)
+    # From the running install, never by PATH name (see forge_cli_argv).
+    launch = [
+        *forge_cli_argv(argv[0], caller="forge-resync --resolve-conflicts"),
+        *argv[1:],
+    ]
+    gen = subprocess.run(launch, cwd=root, capture_output=True, text=True, check=False)
     if gen.returncode != 0:
         logger.error(
             "forge-resync: %s failed (exit %d):\n%s",
@@ -260,7 +265,7 @@ def _regenerate(root: Path, path: str, argv: tuple[str, ...]) -> bool:
         )
         return False
     check = subprocess.run(
-        [*argv, "--check"], cwd=root, capture_output=True, text=True, check=False
+        [*launch, "--check"], cwd=root, capture_output=True, text=True, check=False
     )
     if check.returncode != 0:
         logger.error(

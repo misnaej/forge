@@ -78,6 +78,14 @@ process** and must uphold those invariants itself:
   check, return a skipped `StepResult` without demanding the binary be
   installed.
 - **`run_context` still applies** (FOUNDATION §15) — no inline CI checks.
+- **Launch forge's own CLIs from the running install, never by PATH name.**
+  A step that spawns another forge CLI (the doc generators) builds its
+  argv with `forge.git_utils.forge_cli_argv`, which resolves the name
+  through the running distribution's entry points to
+  `sys.executable -m <module>`. A bare name resolves through `PATH`, and
+  on a machine with several forge checkouts that can be another
+  checkout's older copy. `require_cli` stays for external tools (`gh`,
+  `ruff`) that forge does not ship.
 
 ### Diff-scope selection is centralized
 

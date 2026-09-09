@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -2577,6 +2578,48 @@ def test_missing_dependency_hint_custom_extra_substitutes_bracket() -> None:
     assert "`jsonschema`" in hint
     assert 'forge-scripts[docs]"' in hint
     assert '-e ".[' not in hint
+
+
+# ---------------------------------------------------------------------------
+# console_script_modules / forge_cli_argv
+# ---------------------------------------------------------------------------
+
+
+def test_console_script_modules_uninstalled_distribution_returns_none() -> None:
+    """A distribution name that is not installed maps to no entry points."""
+    assert git_utils.console_script_modules("not-a-real-distribution") is None
+
+
+def test_forge_cli_argv_ignores_path_even_when_shutil_which_resolves_a_decoy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PATH hit for the CLI name never substitutes for the installed module.
+
+    SCENARIO: another forge checkout's copy of the CLI sits earlier on PATH.
+    MOCK SETUP: `shutil.which` is monkeypatched to resolve every name to a
+        decoy path.
+    EXPECTED BEHAVIOR: `forge_cli_argv` still returns
+        `[sys.executable, "-m", <module>]` sourced from the running
+        install's own entry points, never the PATH-resolved script.
+    """
+    monkeypatch.setattr(git_utils.shutil, "which", lambda _name: "/decoy/bin")
+    assert git_utils.forge_cli_argv("forge-gen-cli-reference") == [
+        sys.executable,
+        "-m",
+        "forge.gen_cli_reference",
+    ]
+
+
+def test_forge_cli_argv_unknown_name_exits_2_with_install_hint(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A CLI name the running install does not declare exits 2 with a hint."""
+    with pytest.raises(SystemExit) as exc_info:
+        git_utils.forge_cli_argv("forge-not-a-real-cli", caller="forge-precommit")
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "forge-precommit: required CLI 'forge-not-a-real-cli'" in err
+    assert "pip install forge-scripts" in err
 
 
 # ---------------------------------------------------------------------------

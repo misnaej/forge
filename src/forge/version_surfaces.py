@@ -18,10 +18,11 @@ from importlib import metadata
 from pathlib import Path
 from typing import Final
 
+from forge.git_utils import FORGE_DIST_NAME
 from forge.install_githooks import SIDECAR_NAME as HOOK_VERSION_SIDECAR
 
 
-DIST_NAME: Final[str] = "forge-scripts"
+DIST_NAME: Final[str] = FORGE_DIST_NAME
 
 # Remediation per surface — the single command that re-converges that one
 # onto the current line. Doctor prints it as advice; precommit prints it

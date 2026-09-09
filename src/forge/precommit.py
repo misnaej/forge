@@ -90,6 +90,7 @@ from forge.git_utils import (
     VALID_SCOPES,
     emit,
     fetch_tags_best_effort,
+    forge_cli_argv,
     is_ancestor,
     latest_v_tag,
     merge_base_with_head,
@@ -1761,9 +1762,8 @@ def step_doc_consistency(repo_root: Path) -> StepResult:
 # gate of its own; api-digest.md has an opt-in one (step_api_digest_check,
 # off by default), so it stays here too — the non-blocking auto-write is the
 # always-on baseline, the gate the strict superset a repo can enable.
-_REGEN_DOCS: tuple[tuple[str, str], ...] = (
-    ("forge-gen-api-digest", _API_DIGEST_DOC),
-    ("forge-gen-cli-reference", "docs/cli-reference.md"),
+_REGEN_DOCS: tuple[tuple[str, str], ...] = tuple(
+    (REGEN_COMMANDS[rel][0], rel) for rel in (_API_DIGEST_DOC, _CLI_REFERENCE_DOC)
 )
 
 
@@ -1793,7 +1793,8 @@ def step_regen_docs(repo_root: Path) -> StepResult:
         — the regenerated doc silently omits them; renders WARN).
 
     Raises:
-        SystemExit: If a needed ``forge-gen-*`` CLI is not on PATH.
+        SystemExit: If the running forge does not declare a needed
+            ``forge-gen-*`` CLI.
     """
     targets = [(cli, rel) for cli, rel in _REGEN_DOCS if (repo_root / rel).exists()]
     if not targets:
@@ -1838,9 +1839,12 @@ def step_regen_docs(repo_root: Path) -> StepResult:
                 f"from: {', '.join(stale)}. Re-run ./dev/setup.sh (or your "
                 "editable install refresh) and re-commit to include them."
             )
+    # Launched from the running install, never by PATH name: on a machine
+    # with several forge checkouts the bare name can resolve to another
+    # checkout's older generator, which rewrites the doc from stale
+    # knowledge while this step reports success.
     for cli, _rel in targets:
-        require_cli(cli, caller="forge-precommit")
-        ok, output = _run([cli], cwd=repo_root)
+        ok, output = _run(forge_cli_argv(cli, caller="forge-precommit"), cwd=repo_root)
         passed = passed and ok
         sections.append(f"$ {cli}\n{output.strip() or '(no output)'}")
     restaged = stage_modified_paths(repo_root, [rel for _, rel in targets])

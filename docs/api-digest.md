@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 946 symbols._
+_72 modules, 949 symbols._
 
 ## `forge`
 
@@ -616,6 +616,9 @@ _72 modules, 946 symbols._
 - `fetch_tags_best_effort(repo_root: Path, *, timeout: int = 10) -> list[str]` — Refresh local tags from ``origin``, reporting degradations as notes.
 - `forge_install_command(extra: str | None = None) -> str` — Format the consumer-valid install command for forge-scripts.
 - `missing_dependency_hint(package: str, *, extra: str | None = None) -> str` — Format a user-facing hint for a missing dependency.
+- `_abort_missing_cli(name: str, *, caller: str | None, line: str, where: str) -> None` _(internal)_ — Write the shared missing-CLI diagnostic and exit 2 (config error).
+- `console_script_modules(distribution: str = FORGE_DIST_NAME) -> dict[str, str] | None` — Map an installed distribution's console-script names to their modules.
+- `forge_cli_argv(name: str, *, caller: str | None = None) -> list[str]` — Return argv that runs forge CLI *name* from the running installation.
 - `require_cli(name: str, *, caller: str | None = None, extra: str | None = None, hint: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
 - `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.

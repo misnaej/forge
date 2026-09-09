@@ -34,7 +34,7 @@ from pathlib import Path
 
 from forge import config
 from forge.config import installed_console_scripts
-from forge.git_utils import emit, parse_semver
+from forge.git_utils import FORGE_DIST_NAME, emit, parse_semver
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
@@ -78,7 +78,7 @@ class CheckResult:
 
 EXPECTED_PLUGIN_DIRS = ("agents", "skills", "claude-hooks")
 
-DIST_NAME = "forge-scripts"
+DIST_NAME = FORGE_DIST_NAME
 
 
 def _expected_clis() -> list[str]:
