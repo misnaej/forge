@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_68 modules, 882 symbols._
+_70 modules, 898 symbols._
 
 ## `forge`
 
@@ -537,6 +537,19 @@ _68 modules, 882 symbols._
 
 - `check_doc_drift(root: Path, doc_relpath: str, generated: str, regen_cmd: str) -> int` — Compare freshly generated content against a committed doc.
 
+## `forge.gh_comments`
+
+> _Shared GitHub comment plumbing for forge's PR-comment CLIs._
+
+- `class ValidationError` — Raised when PR-comment content fails a FOUNDATION rule.
+- `_cites_repo_file(token: str) -> bool` _(internal)_ — Return whether *token* is shaped like a repo path forge mandates.
+- `validate_no_ai_attribution(text: str) -> None` — Reject Claude / AI attribution per FOUNDATION §2.
+- `parse_paged_json(raw: str) -> list[Any]` — Flatten ``gh api --paginate --jq '[...]'`` output into one list.
+- `list_marker_comments(pr_number: int, marker: str) -> list[dict[str, object]] | None` — Return the comments on *pr_number* carrying *marker*, oldest first.
+- `post_new_comment(pr_number: int, body: str) -> int` — Post *body* as a new comment on PR ``pr_number``.
+- `delete_comment(comment_id: int) -> bool` — Delete one issue comment by id.
+- `patch_comment(comment_id: int, body: str) -> bool` — Replace one issue comment's body in place.
+
 ## `forge.git_utils`
 
 > _Shared git utilities for verification scripts._
@@ -780,24 +793,37 @@ _68 modules, 882 symbols._
 
 > _forge-pr-squash-comment — post the squash-merge message and keep it last._
 
-- `_cites_repo_file(token: str) -> bool` _(internal)_ — Return whether *token* is shaped like a repo path forge mandates.
-- `class ValidationError` — Raised when the input fails a FOUNDATION §6 squash-merge rule.
 - `_validate_title(title: str) -> None` _(internal)_ — Reject titles outside the conventional-commit format.
 - `_validate_bullets(bullets: list[str]) -> None` _(internal)_ — Enforce bullet count + non-empty content.
 - `_validate_word_count(title: str, bullets: list[str]) -> None` _(internal)_ — Enforce the ≤ ``MAX_WORDS`` cap on title + bullets combined.
-- `_validate_no_ai_attribution(title: str, bullets: list[str]) -> None` _(internal)_ — Reject Claude / AI attribution per FOUNDATION §2.
+- `_validate_no_ai_attribution(title: str, bullets: list[str]) -> None` _(internal)_ — Reject Claude / AI attribution per FOUNDATION §2 (shared gate).
 - `build_body(title: str, bullets: list[str]) -> str` — Build the GitHub comment body around a validated message.
 - `validate(title: str, bullets: list[str]) -> None` — Run every FOUNDATION §6 check in order.
-- `_parse_paged_json(raw: str) -> list[Any]` _(internal)_ — Flatten ``gh api --paginate --jq '[...]'`` output into one list.
 - `_list_squash_comments(pr_number: int) -> list[dict[str, object]] | None` _(internal)_ — Return this CLI's own comments on *pr_number*, oldest first.
 - `_latest_activity_at(pr_number: int) -> str | None` _(internal)_ — Return the newest timestamp across every comment surface of a PR.
-- `_post_new_comment(pr_number: int, body: str) -> int` _(internal)_ — Post *body* as a new comment on PR ``pr_number``.
 - `sync_pr_title(pr_number: int, title: str) -> bool` — Force the PR title to match the squash title.
-- `_delete_comment(comment_id: int) -> bool` _(internal)_ — Delete one issue comment by id.
 - `_prune(superseded: list[dict[str, object]] | None) -> None` _(internal)_ — Delete the squash comments a fresh post has replaced.
 - `post_squash_comment(pr_number: int, body: str) -> int` — Post *body*, then delete the squash comments it supersedes.
 - `ensure_last(pr_number: int) -> int` — Re-post the existing squash comment so it is the newest again.
 - `main() -> int` — Validate the body, post it (or print it), and keep it last.
+
+## `forge.pr_wrapup`
+
+> _forge-pr-wrapup — validate and post the PR wrap-up comment, retiring older ones._
+
+- `_strip_fences(lines: list[str]) -> list[str]` _(internal)_ — Return *lines* without fenced code blocks (fence lines included).
+- `_split(text: str) -> tuple[list[str], list[tuple[str, list[str]]]]` _(internal)_ — Split the body into its head and its ``## `` sections, in order.
+- `_prior_art_block(head: list[str]) -> set[int]` _(internal)_ — Return the indexes of the ``prior-art-searched:`` block within *head*.
+- `_check_head(head: list[str]) -> list[str]` _(internal)_ — Validate the header contract and the single summary line.
+- `_is_clean(body: list[str]) -> bool` _(internal)_ — Return whether a section reports a clean check (its first line says so).
+- `_check_sections(sections: list[tuple[str, list[str]]]) -> list[str]` _(internal)_ — Validate presence and one-line shape of the required sections.
+- `_count_words(head: list[str], sections: list[tuple[str, list[str]]]) -> int` _(internal)_ — Count the words the budget applies to (prose, not headers or evidence).
+- `_check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> list[str]` _(internal)_ — Enforce the word budget, scaled by the number of findings sections.
+- `_check_attribution(text: str) -> list[str]` _(internal)_ — Wrap the shared FOUNDATION §2 attribution gate as a violation list.
+- `validate_wrapup(text: str) -> list[str]` — Return every rule the wrap-up *text* breaks (empty means valid).
+- `_collapse(existing: list[dict[str, object]], new_sha: str) -> int` _(internal)_ — Fold every earlier wrap-up into a ``<details>`` block, once.
+- `post_wrapup(pr_number: int, body: str) -> int` — Post *body* as the PR's wrap-up, retiring the ones it supersedes.
+- `main(argv: list[str] | None = None) -> int` — Run ``validate`` or ``post``.
 
 ## `forge.precommit`
 

@@ -503,6 +503,22 @@ options:
   --bullet TEXT  Bullet line. Repeat 3-5 times.
 ```
 
+## forge-pr-wrapup
+
+```text
+usage: forge-pr-wrapup [-h] {validate,post} ...
+
+Validate and post the PR wrap-up comment (FOUNDATION §6).
+
+positional arguments:
+  {validate,post}
+    validate       check a wrap-up body; exit 2 listing violations
+    post           validate, post, collapse superseded wrap-ups
+
+options:
+  -h, --help       show this help message and exit
+```
+
 ## forge-precommit
 
 ```text
