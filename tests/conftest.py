@@ -17,6 +17,8 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import pytest
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -40,6 +42,26 @@ GIT_ENV: dict[str, str] = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_SYSTEM": os.devnull,
 }
+
+
+@pytest.fixture(autouse=True)
+def _git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give every test a git identity in its own environment.
+
+    ``GIT_ENV`` covers the git commands the tests run themselves, but a
+    test that calls forge code which shells out to git — tagging a
+    release, say — inherits the process environment instead. A
+    workstation has a global identity there and a CI runner does not, so
+    the call fails only on the runner. These variables are a fallback:
+    where a real identity is configured, git prefers it.
+    """
+    for key, value in (
+        ("GIT_AUTHOR_NAME", "t"),
+        ("GIT_AUTHOR_EMAIL", "t@t"),
+        ("GIT_COMMITTER_NAME", "t"),
+        ("GIT_COMMITTER_EMAIL", "t@t"),
+    ):
+        monkeypatch.setenv(key, value)
 
 
 def init_git_repo(repo: Path) -> None:
