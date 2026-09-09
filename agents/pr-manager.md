@@ -122,7 +122,7 @@ git rev-list --left-right --count origin/<base>...HEAD   # left = behind
    git log $base..HEAD --oneline
    ```
    Warn when an addressed issue lacks a bare `Closes`-family keyword in the description or a commit reference.
-5. **Post the wrap-up comment** via `gh pr comment` with exactly these sections, each compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract) — clean checker = its one PASS line; findings get what/where/disposition prose:
+5. **Post the wrap-up comment** via `forge-pr-wrapup post --pr <PR#> --body-file code_health/pr_wrapup.md` — never a raw `gh pr comment` (the `block_raw_wrapup_post` hook refuses it). The CLI validates report-by-exception mechanically (one line per clean section, one summary line, 120 words + 40 per findings section), collapses every earlier wrap-up into a `<details>` block, and re-posts the squash comment so it stays newest. Exactly these sections, each compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract) — clean checker = its one PASS line; findings get what/where/disposition prose:
    ```markdown
    ## Design Check | ## Security Review | ## Documentation Check
    <PASS line, or findings + dispositions>

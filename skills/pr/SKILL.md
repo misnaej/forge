@@ -358,7 +358,8 @@ Verification is done, fixes are committed, and the wrap-up is authored
     code_health/pr_wrapup.md (authored pre-publication at this HEAD);
     refresh its CI Status line to the status as of posting — never wait
     for CI; when CI has not completed, say so plainly (FOUNDATION §6).
-    Post it, then post the squash-merge message via
+    Post it via forge-pr-wrapup post (the validator refuses narration;
+    superseded wrap-ups collapse), then post the squash-merge message via
     forge-pr-squash-comment, check issue-closing wiring, and append the
     CONTINUATION record.")
     ```

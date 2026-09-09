@@ -1,0 +1,2 @@
+bump: minor
+- **`forge-pr-wrapup` — the wrap-up comment is validated and posted mechanically.** `validate` refuses a wrap-up that narrates a clean check (a clean section is one line), carries more than one summary line, or exceeds 120 words plus 40 per findings section; `post` stamps the new wrap-up, collapses every earlier one into a `<details>` block (history kept, one live attestation visible), and keeps the squash comment newest. A new `block_raw_wrapup_post` hook refuses raw `gh` posts of `code_health/pr_wrapup.md`. Shared comment plumbing moved to `forge.gh_comments`.
