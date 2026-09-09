@@ -23,7 +23,7 @@ the policy this template implements.
 | `name` | yes | Routing key. Lowercase-hyphen. Matches filename minus `.md`. |
 | `description` | yes | One sentence. **Routing trigger** ("Use proactively when X" / "Use immediately after Y") — not a role label ("Agent for X"). |
 | `tools` | yes | Least-privilege list. See "Tool sets per role" below. |
-| `model` | yes | `haiku` / `sonnet` / `opus` / `inherit`. See "Model per role". |
+| `model` | yes | `haiku` / `sonnet` / `opus` / `inherit`, or `fable` (user-approved only). See "Model per role". |
 
 ## Required body sections
 
@@ -84,6 +84,7 @@ return to the caller, which owns remediation and posting.
 | Code / doc review (analysis) | `sonnet` |
 | Multi-step reasoning + hallucination risk | `opus` |
 | Delegated workhorse, match parent context | `inherit` |
+| Above `opus` (user-approved only) | `fable` |
 
 Tier on **frequency × judgment-load**, not judgment alone. `haiku`
 pays off only where an agent is **both** high-frequency **and**
@@ -95,6 +96,12 @@ agent whose value is the quality of what it writes (`docs-types-checker`
 writes docstrings that ship) stays `sonnet`+ regardless of frequency — a
 shallow-but-passing artifact is worse than none. Downgrade only when the
 cost win is real *and* quality is untouched.
+
+`fable` is the exception to tiering by workload: it is never chosen
+here. The ceiling is `opus` until the user says otherwise, per
+[FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules), which owns the
+rule — an agent raises the tier as a possibility and waits, and a
+shipped `model:` field never carries it without that explicit yes.
 
 ## Reporter-agent header contract
 
@@ -200,7 +207,7 @@ description: <one-sentence routing trigger>
 tools:
   - <tool>
   - <tool>
-model: <haiku | sonnet | opus | inherit>
+model: <haiku | sonnet | opus | inherit | fable (user-approved only)>
 ---
 
 # <Agent Display Name>

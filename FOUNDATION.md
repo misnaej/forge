@@ -146,6 +146,17 @@ gate.
   a lock (`pixi add` / `update`, `poetry add`, `uv add`, …) is the agent
   deciding a dependency, and is blocked. `block_install_deps` enforces both
   halves.
+- **NEVER select a model tier above `opus`** on your own judgment. `fable`
+  sits above `opus` in capability and cost, and either an agent's own
+  frontmatter or a spawned subagent's `model` param can name it silently —
+  spending on a choice the user never made. Raise it as a **possibility**:
+  say in one line what the step would gain, then wait for an explicit yes.
+  Approval covers the work it was granted for, not every later step, and
+  never becomes an agent's shipped default. Absent it the ceiling is
+  `opus` — and a step that seems to want more is first a prompt to
+  sharpen, since a bigger model rarely rescues an unclear task. The
+  per-role tiering that sits under this ceiling lives in
+  [`agents/_TEMPLATE.md`](../agents/_TEMPLATE.md) "Model per role".
 - **NEVER use `--no-verify`** to bypass pre-commit hooks. Fix violations instead.
 - **NEVER force push** without explicit user approval. Check upstream divergence
   first: `git fetch origin && git log origin/<branch>`. The `block_force_push`
