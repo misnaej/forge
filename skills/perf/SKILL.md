@@ -1,6 +1,6 @@
 ---
 name: perf
-description: Read forge's performance data (test-duration baseline, telemetry history, timing logs), summarize trends and regressions, file findings as issues, or re-check open performance issues against current data. Use when the user asks about performance, slow tests, or perf regressions.
+description: Read forge's performance data (test-duration baseline, telemetry history, timing logs, agent timing), summarize trends and regressions, file findings as issues, or re-check open performance issues against current data. Use when the user asks about performance, slow tests, or perf regressions.
 user-invocable: true
 ---
 
@@ -49,11 +49,27 @@ Read every perf surface that exists, then summarize:
    ```
 4. **Per-step pre-commit timing**: read `code_health/precommit_timing.log`
    (skip silently when absent).
-5. Summarize: regressed / new-slow tests, wall + peak-RSS trends per
-   label, the slowest pre-commit steps. For any hotspot worth deeper
-   work, delegate the investigation to `forge:perf-optimizer` — it
-   benchmarks, tries strategies, and reports a speedup matrix; the main
-   agent applies edits only after reviewing that report.
+5. **Agent timing**:
+   ```bash
+   forge-agent-profile
+   ```
+   Reads the ledger the `log_agent_timing` hook appends
+   (`code_health/agent_timing.jsonl`) plus the subagent transcripts it
+   names: per-agent-type wall and active time, the slowest runs, the
+   costliest tools, **loop suspects** (one identical tool call repeated
+   inside a single prompt) and **`forge:precommit-fixer` runs past its
+   three-run cap**. `--agent-type <name>` narrows to one agent,
+   `--transcripts <dir>` backfills history from before the hook. An
+   empty ledger prints one line, not a finding.
+6. Summarize: regressed / new-slow tests, wall + peak-RSS trends per
+   label, the slowest pre-commit steps, the agent types and runs that
+   dominate wall time, and every loop suspect or cap breach by name.
+   For any hotspot worth deeper work, delegate the investigation to
+   `forge:perf-optimizer` — it benchmarks, tries strategies, and reports
+   a speedup matrix; the main agent applies edits only after reviewing
+   that report. A loop suspect or cap breach is a **process** defect,
+   not a code hotspot: it names a shipped agent, so `/report-to-forge`
+   is the path when the agent is forge's.
 
 **Baseline refresh is deliberate, never automatic**: when a slowdown is
 confirmed intentional, a human asks for `forge-slow-tests-report
@@ -66,7 +82,8 @@ chance to catch a shrinking key set.
 
 ## Mode: report
 
-Run **analyze**, then file the findings as one GitHub issue:
+Run **analyze**, then file the findings as one GitHub issue — a loop
+suspect or a cap breach is always a finding worth filing:
 
 ```bash
 # Write the body to a file first — NEVER inline untrusted or composed

@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from forge.git_utils import run_git
+from forge.ledger import append_ledger_line
 
 
 @dataclass(frozen=True)
@@ -250,15 +251,16 @@ def append_history(repo_root: Path, metrics: RunMetrics) -> None:
         repo_root: Git repo root.
         metrics: Per-run metrics to append.
     """
-    path = repo_root / HISTORY_RELPATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ts = _dt.datetime.now(tz=_dt.UTC).replace(microsecond=0).isoformat()
     frac = (metrics.dev_files / metrics.total_files) if metrics.total_files else 0.0
-    line = (
-        f"ts={ts} label={metrics.label} wall_s={metrics.wall_s:.1f} "
-        f"files={metrics.total_files} dev_files={metrics.dev_files} "
-        f"dev_fraction={frac:.3f} lifecycle_skipped={metrics.lifecycle_skipped} "
-        f"differential_mismatches={metrics.differential_mismatches}\n"
+    append_ledger_line(
+        repo_root / HISTORY_RELPATH,
+        {
+            "label": metrics.label,
+            "wall_s": f"{metrics.wall_s:.1f}",
+            "files": metrics.total_files,
+            "dev_files": metrics.dev_files,
+            "dev_fraction": f"{frac:.3f}",
+            "lifecycle_skipped": metrics.lifecycle_skipped,
+            "differential_mismatches": metrics.differential_mismatches,
+        },
     )
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(line)
