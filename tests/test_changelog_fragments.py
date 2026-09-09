@@ -1229,7 +1229,9 @@ def _init_autotag_repo(repo: Path, origin: Path, *, auto: str | None = "merge") 
         auto: ``[tool.forge.release].auto`` value; ``None`` omits the table.
     """
     subprocess.run(
-        ["git", "init", "-q", "--bare", str(origin)], env=GIT_ENV, check=True
+        ["git", "init", "-q", "--bare", "-b", "main", str(origin)],
+        env=GIT_ENV,
+        check=True,
     )
     init_git_repo(repo)
     subprocess.run(
@@ -1784,7 +1786,9 @@ def test_main_release_pr_happy_path_opens_pr_with_assembled_commit(
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(
-        ["git", "init", "-q", "--bare", str(origin)], env=GIT_ENV, check=True
+        ["git", "init", "-q", "--bare", "-b", "main", str(origin)],
+        env=GIT_ENV,
+        check=True,
     )
     init_git_repo(repo)
     subprocess.run(

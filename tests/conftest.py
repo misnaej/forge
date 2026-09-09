@@ -32,6 +32,13 @@ GIT_ENV: dict[str, str] = {
     "GIT_COMMITTER_NAME": "t",
     "GIT_COMMITTER_EMAIL": "t@t",
     "PATH": os.environ.get("PATH", ""),
+    # Read no configuration from the machine. A developer's global config
+    # commonly sets init.defaultBranch=main and an identity; a CI runner
+    # has neither, which is how these suites passed locally and failed on
+    # the runner. Every branch name and identity the tests rely on is set
+    # explicitly below.
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_SYSTEM": os.devnull,
 }
 
 
@@ -94,7 +101,12 @@ def init_single_track_repo(base: Path) -> tuple[Path, Path]:
     work.mkdir()
     bare.mkdir()
     init_git_repo(work)
-    subprocess.run(["git", "init", "--bare", "-q"], cwd=bare, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "init", "--bare", "-q", "-b", "main"],
+        cwd=bare,
+        env=GIT_ENV,
+        check=True,
+    )
     subprocess.run(
         ["git", "remote", "add", "origin", str(bare)],
         cwd=work,
