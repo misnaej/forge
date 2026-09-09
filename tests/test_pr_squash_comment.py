@@ -1,6 +1,10 @@
 """Unit tests for forge.pr_squash_comment — validators, body builder, CLI.
 
-# MOCKING STRATEGY: two seams, never the network. ``gh_api`` is patched
+# MOCKING STRATEGY: three seams, never the network. ``own_login`` is
+# patched so the author check that ``list_marker_comments`` performs does
+# not consume a listing fake's response (it is ``lru_cache``d, so an
+# unpatched call also makes a test's outcome depend on what ran before
+# it — the autouse fixture below clears it). ``gh_api`` is patched
 # in the module namespace to serve canned GitHub listings (the reads);
 # ``subprocess.run`` is patched to capture argv for the writes (``gh pr
 # comment``, ``gh api -X DELETE``). Listing fakes dispatch on the
@@ -14,6 +18,7 @@ import sys
 
 import pytest
 
+from forge import git_utils
 from forge import pr_squash_comment as mod
 from tests.conftest import FakeProc, page_json
 
@@ -29,12 +34,27 @@ OLD_SQUASH_COMMENT = {
     "id": 555,
     "body": f"{mod.SQUASH_MARKER}\nold body",
     "created_at": "2026-01-01T00:00:00Z",
+    # Ours: the listing filters marker comments by author, so a canned
+    # comment without one is a stranger's and is left alone.
+    "author": "octocat",
 }
 
 
 # ---------------------------------------------------------------------------
 # Title validation
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _own_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the gh identity and clear its process cache between tests.
+
+    `list_marker_comments` asks who we are before it lists, and the
+    answer is cached for the process — so without this a test's result
+    depends on whether an earlier test warmed the cache.
+    """
+    git_utils.own_login.cache_clear()
+    monkeypatch.setattr("forge.gh_comments.own_login", lambda: "octocat")
 
 
 @pytest.mark.parametrize(

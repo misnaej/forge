@@ -6,7 +6,7 @@ import logging
 import subprocess
 from typing import TYPE_CHECKING, NamedTuple
 
-from forge import config
+from forge import config, git_utils
 from forge.config import (
     DEFAULT_BASE_BRANCH,
     ForgeConfig,
@@ -932,7 +932,7 @@ def test_installed_console_scripts_filters_to_console_scripts_group(
     EXPECTED BEHAVIOR: the result contains only "mycli".
     """
     eps = [FakeEP("mycli", "console_scripts"), FakeEP("mygui", "gui_scripts")]
-    monkeypatch.setattr(
-        config.importlib.metadata, "distribution", lambda _n: FakeDist(eps)
-    )
+    # The walk itself lives in git_utils.console_script_modules now, which
+    # config delegates to, so the seam is there rather than in config.
+    monkeypatch.setattr(git_utils.metadata, "distribution", lambda _n: FakeDist(eps))
     assert installed_console_scripts("mypkg") == {"mycli"}
