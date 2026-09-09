@@ -46,6 +46,13 @@ def init_git_repo(repo: Path) -> None:
     """
     for cmd in (
         ["git", "init", "-q", "-b", "main"],
+        # Write the identity into the repo, not just this call's env: the
+        # suites run plenty of later `git` calls without `env=GIT_ENV`,
+        # and those inherit whatever the machine has. A workstation has a
+        # global identity and a CI runner does not, which is how these
+        # tests passed locally and failed on the runner.
+        ["git", "config", "user.name", "t"],
+        ["git", "config", "user.email", "t@t"],
         ["git", "commit", "-q", "--allow-empty", "-m", "initial"],
     ):
         subprocess.run(cmd, cwd=repo, env=GIT_ENV, check=True)
