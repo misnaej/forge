@@ -1395,7 +1395,12 @@ def test_resolve_base_branch_ref_honors_non_main_base_branch(tmp_path: Path) -> 
         ["git", "commit", "-q", "--allow-empty", "-m", "initial"],
     ):
         subprocess.run(cmd, cwd=work, env=_GIT_ENV, check=True)
-    subprocess.run(["git", "init", "--bare", "-q"], cwd=bare, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "init", "--bare", "-q", "-b", "main"],
+        cwd=bare,
+        env=_GIT_ENV,
+        check=True,
+    )
     subprocess.run(
         ["git", "remote", "add", "origin", str(bare)],
         cwd=work,
