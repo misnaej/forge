@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_67 modules, 870 symbols._
+_68 modules, 880 symbols._
 
 ## `forge`
 
@@ -813,9 +813,10 @@ _67 modules, 870 symbols._
 - `step_auto_rebuild(repo_root: Path) -> StepResult` — Reinstall a stale editable install before ``env_sync`` blocks the commit.
 - `_check_clone_identity(repo_root: Path) -> StepResult | None` _(internal)_ — Block when the editable install on ``PATH`` was built from another clone.
 - `_check_hook_sidecar(repo_root: Path) -> StepResult | None` _(internal)_ — Block when the git hooks were last written by an older forge than the install.
+- `_env_sync_precheck(repo_root: Path) -> StepResult | None` _(internal)_ — Return the result that ends ``env_sync`` early, or ``None`` to continue.
 - `step_env_sync(repo_root: Path) -> StepResult` — Fail fast when the local install is stale vs the repo's declared CLIs.
 - `step_plugin_sync(repo_root: Path) -> StepResult` — Block when the cached Claude Code plugin is older than the repo's manifest.
-- `_read_manifest_version(manifest: Path) -> str | None` _(internal)_ — Return the ``version`` field of a plugin manifest, or ``None`` when unreadable.
+- `_read_manifest_version(manifest: Path) -> str | None` _(internal)_ — Return a plugin manifest's ``version`` field, or ``None`` when unreadable.
 - `step_ruff(repo_root: Path) -> StepResult` — Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
 - `step_docstrings(repo_root: Path) -> StepResult` — Run ``verify-forge-docstrings`` over the resolved scope.
 - `step_docstring_coverage(repo_root: Path) -> StepResult` — Run ``verify-forge-docstring-coverage`` — full-codebase % reporter.
@@ -1221,3 +1222,17 @@ _67 modules, 870 symbols._
 - `_log_warnings(warnings: list[Issue]) -> None` _(internal)_ — Print warnings grouped by file.
 - `_report(files_scanned: int, all_issues: list[Issue], files_with_issues: list[str]) -> None` _(internal)_ — Print the verification summary.
 - `main() -> int` — Main entry point for test naming verification.
+
+## `forge.version_surfaces`
+
+> _The three surfaces a forge install presents, read once for every checker._
+
+- `read_json(path: Path) -> tuple[dict, str | None]` — Read a JSON file. Returns (data, error_message_or_None).
+- `version_key(name: str) -> tuple[int, ...]` — Return a sortable key for a version-shaped directory name.
+- `find_plugin_cache(plugin_name: str) -> Path | None` — Locate a Claude Code plugin cache directory by name.
+- `find_install_dir(plugin_root: Path) -> Path | None` — Walk the Claude Code cache layout to find the active plugin install.
+- `pip_version() -> str | None` — Version of the installed ``forge-scripts`` package, or None if absent.
+- `hook_sidecar_version(repo_root: Path) -> str | None` — Forge version recorded in the git-hook sidecar, or None when absent.
+- `plugin_cache_version(plugin_root: Path | None) -> str | None` — Version of the cached Claude Code plugin install, or None when absent.
+- `editable_install_origin() -> Path | None` — Return the checkout an editable ``forge-scripts`` install points at.
+- `_direct_url() -> dict[str, object] | None` _(internal)_ — Return the distribution's parsed ``direct_url.json``, or ``None``.

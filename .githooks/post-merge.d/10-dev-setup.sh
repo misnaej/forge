@@ -18,11 +18,15 @@ set -uo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 [ -x "$REPO_ROOT/dev/setup.sh" ] || exit 0
 
-# forge.run_context owns "non-interactive"; when forge itself is not
-# importable, fall back to a tty probe rather than re-deriving CI markers.
-if python3 -c 'import sys; from forge.run_context import is_non_interactive; sys.exit(0 if is_non_interactive() else 1)' 2>/dev/null; then
+# forge.run_context owns "non-interactive" (FOUNDATION §15). The probe
+# answers 0 (non-interactive → skip) or 3 (interactive → run); any other
+# code means forge itself is not importable, and then a tty probe decides
+# rather than a second copy of the CI markers.
+python3 -c 'import sys; from forge.run_context import is_non_interactive; sys.exit(0 if is_non_interactive() else 3)' 2>/dev/null
+probe=$?
+if [ "$probe" -eq 0 ]; then
     exit 0
-elif [ "$?" -ne 1 ] && [ ! -t 1 ]; then
+elif [ "$probe" -ne 3 ] && [ ! -t 1 ]; then
     exit 0
 fi
 

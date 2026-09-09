@@ -2661,15 +2661,301 @@ def test_step_env_sync_missing_script_beats_pin_drift(
 
 
 def test_step_auto_rebuild_precedes_env_sync_in_registry(tmp_path: Path) -> None:
-    """auto_rebuild is first and env_sync is second in the default resolved sequence.
+    """auto_rebuild, env_sync, plugin_sync run first in that order by default.
 
     auto_rebuild heals a stale editable install before env_sync can block on
-    it — the ordering is the design contract, not an implementation detail.
+    it, and plugin_sync (a sibling install-surface gate) follows immediately
+    after — the ordering is the design contract, not an implementation detail.
     """
     resolved = precommit._resolve_steps(tmp_path)
     names = [d.name for d in resolved]
     assert names[0] == "auto_rebuild"
     assert names[1] == "env_sync"
+    assert names[2] == "plugin_sync"
+
+
+# ---------------------------------------------------------------------------
+# _check_clone_identity — env_sync's parallel-clone guard
+# ---------------------------------------------------------------------------
+
+
+def test_check_clone_identity_none_for_consumer_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repo whose [project.name] isn't forge-scripts has nothing to compare.
+
+    MOCK SETUP: _declared_scripts→("mypkg", ...); editable_install_origin
+    stubbed to raise, proving it's never reached once the name check fails.
+    """
+    monkeypatch.setattr(precommit, "_declared_scripts", lambda _root: ("mypkg", {"x"}))
+
+    def _fail() -> None:
+        msg = "editable_install_origin should not be called"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(precommit, "editable_install_origin", _fail)
+    assert precommit._check_clone_identity(tmp_path) is None
+
+
+def test_check_clone_identity_none_when_no_declared_scripts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No usable [project.scripts] table → nothing to compare."""
+    monkeypatch.setattr(precommit, "_declared_scripts", lambda _root: None)
+    assert precommit._check_clone_identity(tmp_path) is None
+
+
+def test_check_clone_identity_none_when_origin_is_this_clone(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The editable install's origin matching repo_root is not a mismatch."""
+    monkeypatch.setattr(
+        precommit, "_declared_scripts", lambda _root: (precommit.DIST_NAME, {"x"})
+    )
+    monkeypatch.setattr(precommit, "editable_install_origin", tmp_path.resolve)
+    assert precommit._check_clone_identity(tmp_path) is None
+
+
+def test_check_clone_identity_none_when_origin_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-editable (or uninstalled) forge-scripts has no origin to compare."""
+    monkeypatch.setattr(
+        precommit, "_declared_scripts", lambda _root: (precommit.DIST_NAME, {"x"})
+    )
+    monkeypatch.setattr(precommit, "editable_install_origin", lambda: None)
+    assert precommit._check_clone_identity(tmp_path) is None
+
+
+def test_check_clone_identity_blocks_on_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A different clone's origin produces a blocking result naming both paths."""
+    other_clone = tmp_path.parent / "dev-1"
+    monkeypatch.setattr(
+        precommit, "_declared_scripts", lambda _root: (precommit.DIST_NAME, {"x"})
+    )
+    monkeypatch.setattr(precommit, "editable_install_origin", lambda: other_clone)
+    result = precommit._check_clone_identity(tmp_path)
+    assert result is not None
+    assert not result.passed
+    assert str(other_clone) in result.output
+    assert str(tmp_path.resolve()) in result.output
+
+
+# ---------------------------------------------------------------------------
+# _check_hook_sidecar — env_sync's stale-hooks guard
+# ---------------------------------------------------------------------------
+
+
+def test_check_hook_sidecar_none_when_sidecar_absent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No sidecar → nothing to compare, and pip_version is never consulted.
+
+    MOCK SETUP: hook_sidecar_version→None; pip_version stubbed to raise,
+    proving the short-circuit happens before any pip lookup.
+    """
+    monkeypatch.setattr(precommit, "hook_sidecar_version", lambda _root: None)
+
+    def _fail() -> str:
+        msg = "pip_version should not be called"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(precommit, "pip_version", _fail)
+    assert precommit._check_hook_sidecar(tmp_path) is None
+
+
+def test_check_hook_sidecar_none_when_pip_version_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recorded sidecar with no installed pip version has nothing to compare."""
+    monkeypatch.setattr(precommit, "hook_sidecar_version", lambda _root: "2.8.0")
+    monkeypatch.setattr(precommit, "pip_version", lambda: None)
+    assert precommit._check_hook_sidecar(tmp_path) is None
+
+
+def test_check_hook_sidecar_none_when_current(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sidecar at or ahead of the installed pip version is not stale."""
+    monkeypatch.setattr(precommit, "hook_sidecar_version", lambda _root: "2.9.0")
+    monkeypatch.setattr(precommit, "pip_version", lambda: "2.9.0")
+    assert precommit._check_hook_sidecar(tmp_path) is None
+
+
+def test_check_hook_sidecar_blocks_when_behind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sidecar behind the installed pip version blocks, naming both + remediation."""
+    monkeypatch.setattr(precommit, "hook_sidecar_version", lambda _root: "2.8.0")
+    monkeypatch.setattr(precommit, "pip_version", lambda: "2.9.0")
+    result = precommit._check_hook_sidecar(tmp_path)
+    assert result is not None
+    assert not result.passed
+    assert "2.8.0" in result.output
+    assert "2.9.0" in result.output
+    assert precommit.SKEW_REMEDIATION["git hooks"] in result.output
+
+
+# ---------------------------------------------------------------------------
+# step_env_sync — precheck wiring
+# ---------------------------------------------------------------------------
+
+
+def test_step_env_sync_returns_precheck_block_without_reading_declared_scripts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blocking precheck result short-circuits before the entry-point lookup.
+
+    SCENARIO: _check_clone_identity finds a mismatch.
+    MOCK SETUP: is_non_interactive→False; _check_clone_identity stubbed to
+    return a sentinel StepResult; _declared_scripts spied to fail the test
+    if invoked — the normal entry-point/pin logic must never run once the
+    precheck already decided the outcome.
+    EXPECTED BEHAVIOR: step_env_sync returns exactly the sentinel result.
+    """
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    sentinel = precommit.StepResult(name="env_sync", passed=False, output="⛔ sentinel")
+    monkeypatch.setattr(precommit, "_check_clone_identity", lambda _root: sentinel)
+
+    def _fail(_root: Path) -> None:
+        msg = "_declared_scripts should not be called"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(precommit, "_declared_scripts", _fail)
+    result = precommit.step_env_sync(tmp_path)
+    assert result is sentinel
+
+
+# ---------------------------------------------------------------------------
+# step_plugin_sync
+# ---------------------------------------------------------------------------
+
+
+def _write_plugin_manifest(
+    repo_root: Path,
+    version: str,
+    *,
+    name: str = "forge",
+) -> None:
+    """Write a ``.claude-plugin/plugin.json`` manifest for step_plugin_sync tests.
+
+    Args:
+        repo_root: Directory to place ``.claude-plugin/`` under.
+        version: Value for the manifest's ``version`` field.
+        name: Value for the manifest's ``name`` field.
+    """
+    manifest_dir = repo_root / ".claude-plugin"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / "plugin.json").write_text(
+        json.dumps({"name": name, "version": version}), encoding="utf-8"
+    )
+
+
+def test_step_plugin_sync_skips_when_no_manifest(tmp_path: Path) -> None:
+    """A repo that ships no plugin has nothing for plugin_sync to check."""
+    result = precommit.step_plugin_sync(tmp_path)
+    assert result.passed
+    assert result.skipped
+    assert "no plugin shipped" in result.output
+
+
+def test_step_plugin_sync_skips_non_interactive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CI / non-interactive contexts self-skip (FOUNDATION §15)."""
+    _write_plugin_manifest(tmp_path, "2.9.0")
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
+    result = precommit.step_plugin_sync(tmp_path)
+    assert result.passed
+    assert result.skipped
+    assert "non-interactive" in result.output
+
+
+def test_step_plugin_sync_skips_when_not_cached(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No cached install of the plugin → skip mentioning it isn't installed."""
+    _write_plugin_manifest(tmp_path, "2.9.0")
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "find_plugin_cache", lambda _name: None)
+    monkeypatch.setattr(precommit, "plugin_cache_version", lambda _root: None)
+    result = precommit.step_plugin_sync(tmp_path)
+    assert result.passed
+    assert result.skipped
+    assert "not installed" in result.output
+
+
+def test_step_plugin_sync_passes_when_cache_matches_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cache version equal to the manifest's is current — no failure."""
+    _write_plugin_manifest(tmp_path, "2.9.0")
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "find_plugin_cache", lambda _name: tmp_path)
+    monkeypatch.setattr(precommit, "plugin_cache_version", lambda _root: "2.9.0")
+    result = precommit.step_plugin_sync(tmp_path)
+    assert result.passed
+    assert not result.skipped
+    assert "current" in result.output
+
+
+def test_step_plugin_sync_passes_when_cache_ahead_of_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cache version ahead of the manifest is also current — no failure."""
+    _write_plugin_manifest(tmp_path, "2.9.0")
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "find_plugin_cache", lambda _name: tmp_path)
+    monkeypatch.setattr(precommit, "plugin_cache_version", lambda _root: "2.10.0")
+    result = precommit.step_plugin_sync(tmp_path)
+    assert result.passed
+
+
+def test_step_plugin_sync_warns_when_behind_and_unconfigured(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Lagging cache with no [tool.forge.plugin_sync] config is WARN, not block."""
+    _write_plugin_manifest(tmp_path, "2.9.0")
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "find_plugin_cache", lambda _name: tmp_path)
+    monkeypatch.setattr(precommit, "plugin_cache_version", lambda _root: "2.8.0")
+    result = precommit.step_plugin_sync(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+    assert "⚠️" in result.output
+
+
+def test_step_plugin_sync_blocks_when_behind_and_configured_blocking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """[tool.forge.plugin_sync].blocking = true escalates a lagging cache to a block."""
+    _write_plugin_manifest(tmp_path, "2.9.0")
+    _write_pyproject(tmp_path, "[tool.forge.plugin_sync]\nblocking = true\n")
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "find_plugin_cache", lambda _name: tmp_path)
+    monkeypatch.setattr(precommit, "plugin_cache_version", lambda _root: "2.8.0")
+    result = precommit.step_plugin_sync(tmp_path)
+    assert not result.passed
+    assert not result.non_blocking
+    assert "⛔" in result.output
 
 
 # ---------------------------------------------------------------------------

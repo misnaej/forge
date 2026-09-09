@@ -503,12 +503,6 @@ options:
   --bullet TEXT  Bullet line. Repeat 3-5 times.
 ```
 
-## forge-pr-wrapup
-
-```text
-(--help unavailable for forge-pr-wrapup)
-```
-
 ## forge-precommit
 
 ```text
