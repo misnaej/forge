@@ -218,6 +218,7 @@ graph LR
   cli_forge_continuation_append[("forge-continuation-append<br/>CLI")]
   cli_forge_pr_plan[("forge-pr-plan<br/>CLI")]
   cli_forge_pr_squash_comment[("forge-pr-squash-comment<br/>CLI")]
+  cli_forge_pr_wrapup[("forge-pr-wrapup<br/>CLI")]
   cli_forge_rebump[("forge-rebump<br/>CLI")]
   cli_forge_emergency[("forge-emergency<br/>CLI")]
   cli_forge_changelog[("forge-changelog<br/>CLI")]
@@ -248,6 +249,7 @@ graph LR
   sk_pr -->|post-pr triage via| issue_triage
   sk_pr_comments -->|invokes| pr_manager
   pr_manager -->|invokes| cli_forge_pr_squash_comment
+  pr_manager -->|invokes, posts + collapses the wrap-up| cli_forge_pr_wrapup
   pr_manager -->|invokes| cli_forge_continuation_append
   pr_manager -.->|guarded by| hk_block_pr_merge
   pr_manager -.->|guarded by| hk_block_unverified_pr_create
@@ -266,6 +268,7 @@ graph LR
   class cli_forge_continuation_append cli
   class cli_forge_pr_plan cli
   class cli_forge_pr_squash_comment cli
+  class cli_forge_pr_wrapup cli
   class cli_forge_rebump cli
   class cli_forge_emergency cli
   class cli_forge_changelog cli

@@ -2,13 +2,16 @@
 
 Lives at ``tests/conftest.py`` so pytest auto-discovers it. Exposes the
 real-git helpers ``GIT_ENV``, ``init_git_repo`` and ``init_single_track_repo``
-(ephemeral repos for the git-touching suites), plus the subprocess fakes
+(ephemeral repos for the git-touching suites), the subprocess fakes
 ``FakeProc``, ``CapturedCalls`` and the ``make_fake_run`` factory — used by
-tests that monkeypatch ``subprocess.run`` in any of the forge CLIs.
+tests that monkeypatch ``subprocess.run`` in any of the forge CLIs — and
+``page_json``, one ``gh api --paginate`` page renderer shared by every
+suite that fakes ``gh_comments.gh_api``.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from dataclasses import dataclass, field
@@ -165,6 +168,22 @@ class CapturedCalls:
     calls: list[list[str]] = field(default_factory=list)
     telemetry_flags: list[bool] = field(default_factory=list)
     labels: list[str] = field(default_factory=list)
+
+
+def page_json(*items: object) -> str:
+    """Render one ``gh api --paginate --jq '[...]'`` output page.
+
+    Shared by every suite that fakes ``gh_comments.gh_api`` (comment
+    listings for the squash-comment and wrap-up CLIs) — a page is a
+    single JSON array line, as ``gh`` emits per page.
+
+    Args:
+        *items: Mappings or bare values the fake endpoint should return.
+
+    Returns:
+        A single JSON array line.
+    """
+    return json.dumps(list(items))
 
 
 def make_fake_run(

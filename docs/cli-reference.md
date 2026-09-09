@@ -506,7 +506,17 @@ options:
 ## forge-pr-wrapup
 
 ```text
-(--help unavailable for forge-pr-wrapup)
+usage: forge-pr-wrapup [-h] {validate,post} ...
+
+Validate and post the PR wrap-up comment (FOUNDATION §6).
+
+positional arguments:
+  {validate,post}
+    validate       check a wrap-up body; exit 2 listing violations
+    post           validate, post, collapse superseded wrap-ups
+
+options:
+  -h, --help       show this help message and exit
 ```
 
 ## forge-precommit
