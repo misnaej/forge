@@ -881,7 +881,9 @@ alongside the `plan-ready` label. The issue body is never edited.
 up — branch <name>, <date>` at pickup, `PR #N opened` at the wrap-up —
 so who holds an issue is visible to everyone, and a pickup without a
 later PR marks the issue as in execution for the `plan-readiness` screen
-and for any second sentinel.
+and for any second sentinel. Like the execution payload, the marker is
+trusted only from a write-access author — a stranger's comment can never
+veto a pickup.
 
 ---
 

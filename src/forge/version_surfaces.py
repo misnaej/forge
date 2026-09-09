@@ -73,7 +73,7 @@ def version_key(name: str) -> tuple[int, ...]:
 
 
 def find_plugin_cache(plugin_name: str) -> Path | None:
-    """Locate a Claude Code plugin cache directory by name.
+    r"""Locate a Claude Code plugin cache directory by name.
 
     Only checks the canonical ``~/.claude/plugins/cache/<plugin>`` path
     that Claude Code populates on ``/plugin install``. The marketplace
@@ -86,8 +86,19 @@ def find_plugin_cache(plugin_name: str) -> Path | None:
         plugin_name: Plugin identifier (e.g. ``"forge"``).
 
     Returns:
-        Absolute path to the plugin cache if found, otherwise ``None``.
+        Absolute path to the plugin cache if found, otherwise ``None`` —
+        also for a path-shaped name (``/``, ``\\``, ``..``), which is
+        never a plugin identifier.
     """
+    # The name comes from a repo's own manifest; a path-shaped value must
+    # not walk the lookup out of the cache directory.
+    if (
+        not plugin_name
+        or "/" in plugin_name
+        or "\\" in plugin_name
+        or ".." in plugin_name
+    ):
+        return None
     cache = Path.home() / ".claude" / "plugins" / "cache" / plugin_name
     return cache if cache.is_dir() else None
 

@@ -115,6 +115,7 @@ from forge.version_surfaces import (
     hook_sidecar_version,
     pip_version,
     plugin_cache_version,
+    read_json,
 )
 
 
@@ -543,6 +544,12 @@ def step_env_sync(repo_root: Path) -> StepResult:
     surfaces that **first**, with one in-process ``importlib.metadata``
     lookup (no subprocess, no network — sub-millisecond):
 
+    - **Clone identity (blocking):** the editable install on ``PATH`` must
+      be built from this clone, not a parallel one (see
+      :func:`_check_clone_identity`).
+    - **Hook sidecar freshness (blocking):** the git hooks' recorded forge
+      version must not lag the installed package (see
+      :func:`_check_hook_sidecar`).
     - **Entry-point freshness (blocking):** every declared
       ``[project.scripts]`` name must be an installed console script. A
       missing one means the install is stale; the message names the exact
@@ -676,11 +683,9 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
             output="(CI / non-interactive — skipped)",
             skipped=True,
         )
-    try:
-        wanted = str(json.loads(manifest.read_text(encoding="utf-8")).get("name", ""))
-    except (OSError, json.JSONDecodeError):
-        wanted = ""
-    plugin_name = wanted or repo_root.name
+    data, _err = read_json(manifest)
+    plugin_name = str(data.get("name") or repo_root.name)
+    manifest_version = str(data["version"]) if data.get("version") else None
     cached = plugin_cache_version(find_plugin_cache(plugin_name))
     if cached is None:
         return StepResult(
@@ -689,7 +694,6 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
             output=f"({plugin_name} plugin not installed in Claude Code — skipped)",
             skipped=True,
         )
-    manifest_version = _read_manifest_version(manifest)
     cached_t, manifest_t = parse_semver(cached), parse_semver(manifest_version or "")
     if cached_t is None or manifest_t is None or cached_t >= manifest_t:
         return StepResult(
@@ -708,23 +712,6 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
         ),
         non_blocking=not blocking,
     )
-
-
-def _read_manifest_version(manifest: Path) -> str | None:
-    """Return a plugin manifest's ``version`` field, or ``None`` when unreadable.
-
-    Args:
-        manifest: Path to ``.claude-plugin/plugin.json``.
-
-    Returns:
-        The version string, or ``None`` on a missing/invalid file or field.
-    """
-    try:
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    version = data.get("version") if isinstance(data, dict) else None
-    return str(version) if version else None
 
 
 def step_ruff(repo_root: Path) -> StepResult:

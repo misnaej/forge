@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_68 modules, 883 symbols._
+_68 modules, 882 symbols._
 
 ## `forge`
 
@@ -818,7 +818,6 @@ _68 modules, 883 symbols._
 - `_env_sync_precheck(repo_root: Path) -> StepResult | None` _(internal)_ — Return the result that ends ``env_sync`` early, or ``None`` to continue.
 - `step_env_sync(repo_root: Path) -> StepResult` — Fail fast when the local install is stale vs the repo's declared CLIs.
 - `step_plugin_sync(repo_root: Path) -> StepResult` — Block when the cached Claude Code plugin is older than the repo's manifest.
-- `_read_manifest_version(manifest: Path) -> str | None` _(internal)_ — Return a plugin manifest's ``version`` field, or ``None`` when unreadable.
 - `step_ruff(repo_root: Path) -> StepResult` — Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
 - `step_docstrings(repo_root: Path) -> StepResult` — Run ``verify-forge-docstrings`` over the resolved scope.
 - `step_docstring_coverage(repo_root: Path) -> StepResult` — Run ``verify-forge-docstring-coverage`` — full-codebase % reporter.

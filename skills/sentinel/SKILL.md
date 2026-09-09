@@ -88,8 +88,10 @@ touching code:
   confirm it matches the selected comment
 - `Requires:` prerequisites all closed
 - **not already in execution**: an existing `[sentinel] taken up` comment
-  with no later `[sentinel] PR #N opened` (and no merged PR) means another
-  session holds it — skip, never double-pick
+  **from a write-access author** (the same `collaborators/<login>/permission`
+  check as the spec — a stranger's comment is ignored, never a veto) with no
+  later `[sentinel] PR #N opened` (and no merged PR) means another session
+  holds it — skip, never double-pick
 - no new colliding open issue or open PR
 - the plan still matches reality — spot-check the files it names
 
