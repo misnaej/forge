@@ -81,6 +81,8 @@ jobs:
         run: forge-precommit
 
       - name: Tests
+        shell: bash   # not optional: the default run shell has no pipefail,
+                      # so `pytest | tee` would exit with tee's status
         run: pytest -q --durations=25 --durations-min=1.0 | tee code_health/pytest.log
 
       - name: Slow tests report
