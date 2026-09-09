@@ -126,6 +126,7 @@ graph LR
   sk_perf(["/perf<br/>skill"])
   cli_forge_slow_tests_report[("forge-slow-tests-report<br/>CLI")]
   cli_forge_telemetry[("forge-telemetry<br/>CLI")]
+  cli_forge_agent_profile[("forge-agent-profile<br/>CLI")]
   sk_test(["/test<br/>skill"])
   test_advisor["⚖️ test-advisor<br/>AI agent"]
   test_writer["test-writer<br/>AI agent"]
@@ -135,6 +136,7 @@ graph LR
   main_agent -->|runs| sk_perf
   sk_perf -->|invokes| cli_forge_slow_tests_report
   sk_perf -->|invokes| cli_forge_telemetry
+  sk_perf -->|invokes| cli_forge_agent_profile
   sk_perf -.->|delegates deep dives| perf_optimizer
   main_agent -->|runs| sk_test
   main_agent -. §3 pre-write review .-> design_checker
@@ -188,6 +190,7 @@ graph LR
   class sk_perf skill
   class cli_forge_slow_tests_report cli
   class cli_forge_telemetry cli
+  class cli_forge_agent_profile cli
   class sk_test skill
   class test_advisor agent
   class test_advisor reporter
@@ -414,15 +417,19 @@ graph LR
   sk_memory_audit(["/memory-audit<br/>skill"])
   main_agent -->|runs| sk_memory_audit
   sk_report_to_forge(["/report-to-forge<br/>skill"])
+  cli_forge_agent_profile[("forge-agent-profile<br/>CLI")]
   main_agent -->|runs| sk_report_to_forge
+  sk_report_to_forge -->|invokes| cli_forge_agent_profile
   class human person
   class main_agent orchestrator
   class sk_memory_audit skill
   class sk_report_to_forge skill
+  class cli_forge_agent_profile cli
 ```
 
 `/report-to-forge` turns an observed defect in a shipped forge process
 into a filed upstream issue: versions captured via `forge-doctor`,
 evidence preserved verbatim, consumer specifics redacted with explicit
 user confirmation before `gh issue create` targets the canonical
-upstream. User-invoked only — no proactive detection.
+upstream. User-invoked only — no proactive detection. For an agent or skill defect it also
+quotes the `forge-agent-profile` summary for that agent as timing evidence.

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_70 modules, 898 symbols._
+_72 modules, 938 symbols._
 
 ## `forge`
 
@@ -17,6 +17,54 @@ _70 modules, 898 symbols._
 
 - `run_foundation_drift_check(hook_name: str) -> int` — Run ``install-forge-claude-md --check --quiet``.
 - `run_hook_extensions(hook_name: str) -> None` — Run consumer extension scripts under ``.githooks/<hook_name>.d/``.
+
+## `forge.agent_profile`
+
+> _forge-agent-profile — where the agents' time goes._
+
+- `class TranscriptStats` — What a subagent transcript adds to a run's ledger record.
+- `class AgentRun` — One agent invocation, assembled from the ledger and its transcript.
+  - `wall_s(self) -> float` — Seconds from first to last known record, or ``0`` when unbounded.
+  - `active_s(self) -> float` — Wall time with every gap longer than :data:`IDLE_GAP_S` clipped.
+  - `loop_suspect(self) -> bool` — True when one identical tool call recurs past the threshold.
+  - `cap_breach(self) -> bool` — True for a precommit-fixer run past its full-run cap.
+- `class TypeRow` — Per-agent-type aggregate for the report table.
+- `class ToolRow` — Per-tool aggregate from ``PostToolUse`` durations.
+- `_iter_jsonl(path: Path) -> Iterator[dict[str, Any]]` _(internal)_ — Yield the JSON objects in *path*, skipping lines that are not one.
+- `_parse_ts(value: object) -> datetime | None` _(internal)_ — Parse an ISO-8601 timestamp (``Z`` suffix accepted); ``None`` if not one.
+- `_event_ts(event: dict[str, Any]) -> datetime | None` _(internal)_ — A ledger event's timestamp, preferring the millisecond field.
+- `_clipped_gap(previous: datetime | None, current: datetime) -> float` _(internal)_ — Seconds between two records, clipped at :data:`IDLE_GAP_S`.
+- `_run_key(event: dict[str, Any]) -> tuple[str, str]` _(internal)_ — ``(agent_id, agent_type)`` for an event; main-session tools get a pseudo id.
+- `_apply_event(runs: dict[str, AgentRun], event: dict[str, Any]) -> None` _(internal)_ — Fold one ledger event into *runs*.
+- `_apply_tool_event(run: AgentRun, event: dict[str, Any]) -> None` _(internal)_ — Accumulate one ``PostToolUse`` event's duration into *run*.
+- `runs_from_ledger(events: Iterable[dict[str, Any]]) -> dict[str, AgentRun]` — Pair ledger events into runs keyed by agent id.
+- `tool_rows(events: Iterable[dict[str, Any]]) -> list[ToolRow]` — Aggregate ``PostToolUse`` durations per tool name, costliest first.
+- `_content_blocks(record: dict[str, Any]) -> list[dict[str, Any]]` _(internal)_ — The content blocks of a transcript record's message, if it has any.
+- `_is_resume(record: dict[str, Any]) -> bool` _(internal)_ — True for a user record carrying a new prompt rather than tool results.
+- `_call_signature(block: dict[str, Any]) -> str` _(internal)_ — Identity of a tool call: its name plus its canonicalised input.
+- `_describe_call(block: dict[str, Any]) -> str` _(internal)_ — Human label for a tool call, trimmed for a report line.
+- `parse_transcript(path: Path) -> TranscriptStats | None` — Extract timing and loop signals from one subagent transcript.
+- `_output_tokens(record: dict[str, Any]) -> int` _(internal)_ — Output tokens reported on an assistant record, ``0`` when absent.
+- `_is_full_precommit_run(block: dict[str, Any]) -> int` _(internal)_ — ``1`` when a ``Bash`` tool call runs ``forge-precommit`` without ``--only``.
+- `_agent_types_from_sessions(root: Path) -> dict[str, tuple[str, str | None]]` _(internal)_ — Map subagent ids to ``(agent_type, description)`` from main-session transcripts.
+- `runs_from_transcripts(root: Path) -> dict[str, AgentRun]` — Build runs from every subagent transcript under *root*.
+- `collect_runs(ledger_path: Path, transcripts_root: Path | None) -> list[AgentRun]` — Assemble every known run: ledger first, transcripts as enrichment or backfill.
+- `_start_of(run: AgentRun) -> datetime` _(internal)_ — A run's best-known start, for ordering (unknown sorts first).
+- `filter_runs(runs: list[AgentRun], *, agent_type: str | None = None, since: datetime | None = None, last: int | None = None) -> list[AgentRun]` — Narrow *runs* by type, start time, and recency.
+- `type_rows(runs: Iterable[AgentRun]) -> list[TypeRow]` — Aggregate wall time per agent type, costliest total first.
+- `_fmt_s(seconds: float) -> str` _(internal)_ — Compact duration: ``42s``, ``3m10s``, ``2h05m``.
+- `_run_label(run: AgentRun) -> str` _(internal)_ — One report line's identity for a run: type + description or id.
+- `render_report(runs: list[AgentRun], tools: list[ToolRow], *, top: int) -> str` — Render the human report.
+- `_render_type_table(runs: list[AgentRun]) -> list[str]` _(internal)_ — Per-type table plus the wall/active totals line.
+- `_render_slowest(runs: list[AgentRun], top: int) -> list[str]` _(internal)_ — The *top* slowest runs by wall time.
+- `_render_tools(tools: list[ToolRow]) -> list[str]` _(internal)_ — Per-tool cost table (ledger ``PostToolUse`` durations only).
+- `_render_suspects(runs: list[AgentRun]) -> list[str]` _(internal)_ — Loop suspects and precommit-fixer cap breaches.
+- `_run_json(run: AgentRun) -> dict[str, Any]` _(internal)_ — JSON-safe view of a run (datetimes as ISO strings, properties included).
+- `render_json(runs: list[AgentRun], tools: list[ToolRow]) -> str` — Machine-readable report: runs, per-type rows, per-tool rows.
+- `append_history(root: Path, runs: list[AgentRun], label: str) -> None` — Append one summary line for this report to the profile ledger.
+- `_render_history(root: Path) -> int` _(internal)_ — Print the append-only profile ledger as a trend table.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
+- `main() -> int` — Entry point for ``forge-agent-profile``.
 
 ## `forge.audit`
 
@@ -721,6 +769,13 @@ _70 modules, 898 symbols._
 - `_get_readme_path(root: Path) -> tuple[Path | None, int]` _(internal)_ — Load and validate the README path from config.
 - `main() -> int` — CLI entry point.
 
+## `forge.ledger`
+
+> _Append-only ``key=value`` ledgers under ``code_health/``._
+
+- `append_ledger_line(path: Path, fields: Mapping[str, object], *, tail: tuple[str, str] | None = None) -> None` — Append one timestamped ``key=value`` line to *path*.
+- `parse_ledger(text: str, *, tail_key: str | None = None) -> list[dict[str, str]]` — Parse ledger lines into field mappings, skipping damaged ones.
+
 ## `forge.next_prep`
 
 > _forge-next-prep — prepare main for the next task (fetch, pull, tag, prune)._
@@ -1070,7 +1125,6 @@ _70 modules, 898 symbols._
 - `class _RunHistory` _(internal)_ — Information to append to the telemetry history log.
 - `_summarize(samples: list[Sample]) -> _Summary | None` _(internal)_ — Return the run's aggregate summary, or ``None`` for empty samples.
 - `_append_history(root: Path, history: _RunHistory, label: str) -> None` _(internal)_ — Append one summary line for this run to ``telemetry_history.log``.
-- `_parse_history(text: str) -> list[dict[str, str]]` _(internal)_ — Parse ``telemetry_history.log`` lines into field mappings.
 - `_render_history(root: Path) -> int` _(internal)_ — Print the run-history trend table for ``forge-telemetry --history``.
 - `_render_plot(root: Path, samples: list[Sample], label: str = '') -> None` _(internal)_ — Write ``code_health/telemetry[_<label>].png``, or log why it was skipped.
 - `run_command(cmd: Sequence[str], root: Path, *, capture: bool = False, cwd: Path | None = None, label: str = '') -> tuple[int, str]` — Run *cmd* under resource sampling and write the telemetry artifacts.

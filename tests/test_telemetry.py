@@ -358,58 +358,10 @@ def test_append_history_second_call_appends_without_disturbing_first(
 
 
 # ---------------------------------------------------------------------------
-# _parse_history
-# ---------------------------------------------------------------------------
-
-_HISTORY_LINE_WITH_SPACES_IN_CMD = (
-    "ts=2024-01-01T00:00:00+00:00  label=r1  exit=0  wall=1.5s  "
-    "peak_rss=10.0MB  cmd=pytest -q tests/test_a.py\n"
-)
-_HISTORY_LINE_NO_EQUALS = "not a valid ledger line at all\n"
-_HISTORY_LINE_NO_CMD_SEPARATOR = (
-    "ts=2024-01-01T00:00:00+00:00  label=-  exit=0  wall=1.0s  peak_rss=n/a\n"
-)
-
-
-def test_parse_history_full_line_keeps_spaces_in_cmd() -> None:
-    """The ``cmd=`` field keeps embedded spaces — it is always the last field."""
-    rows = telemetry._parse_history(_HISTORY_LINE_WITH_SPACES_IN_CMD)
-    assert rows == [
-        {
-            "ts": "2024-01-01T00:00:00+00:00",
-            "label": "r1",
-            "exit": "0",
-            "wall": "1.5s",
-            "peak_rss": "10.0MB",
-            "cmd": "pytest -q tests/test_a.py",
-        }
-    ]
-
-
-def test_parse_history_no_equals_line_skipped_adjacent_valid_line_parsed() -> None:
-    """A line with no ``=`` at all is skipped; a valid neighbor still parses."""
-    text = _HISTORY_LINE_NO_EQUALS + _HISTORY_LINE_WITH_SPACES_IN_CMD
-    rows = telemetry._parse_history(text)
-    assert len(rows) == 1
-    assert rows[0]["cmd"] == "pytest -q tests/test_a.py"
-
-
-def test_parse_history_empty_text_returns_empty_list() -> None:
-    """Empty ledger text parses to an empty list, not an error."""
-    assert telemetry._parse_history("") == []
-
-
-def test_parse_history_row_without_cmd_separator_has_no_cmd_key() -> None:
-    """A row with no ``  cmd=`` separator is still built, minus the ``cmd`` key."""
-    rows = telemetry._parse_history(_HISTORY_LINE_NO_CMD_SEPARATOR)
-    assert len(rows) == 1
-    assert "cmd" not in rows[0]
-    assert rows[0]["peak_rss"] == "n/a"
-
-
-# ---------------------------------------------------------------------------
 # _render_history
 # ---------------------------------------------------------------------------
+
+_HISTORY_LINE_NO_EQUALS = "not a valid ledger line at all\n"
 
 
 def test_render_history_missing_file_returns_0_and_logs_hint(

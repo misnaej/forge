@@ -3365,8 +3365,9 @@ def test_keep_squash_last_registered_as_a_post_tool_hook() -> None:
         (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
     )
     post = manifest["hooks"]["PostToolUse"]
-    assert [group["matcher"] for group in post] == ["Bash"]
-    commands = [hook["command"] for group in post for hook in group["hooks"]]
+    bash_groups = [group for group in post if group.get("matcher") == "Bash"]
+    assert len(bash_groups) == 1
+    commands = [hook["command"] for hook in bash_groups[0]["hooks"]]
     assert any(_KEEP_SQUASH_LAST in cmd for cmd in commands)
 
 
@@ -3666,8 +3667,9 @@ def test_warn_stale_wrapup_registered_as_a_post_tool_hook() -> None:
         (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
     )
     post = manifest["hooks"]["PostToolUse"]
-    assert [group["matcher"] for group in post] == ["Bash"]
-    commands = [hook["command"] for group in post for hook in group["hooks"]]
+    bash_groups = [group for group in post if group.get("matcher") == "Bash"]
+    assert len(bash_groups) == 1
+    commands = [hook["command"] for hook in bash_groups[0]["hooks"]]
     assert any(_WARN_STALE_WRAPUP in cmd for cmd in commands)
 
 
@@ -3781,6 +3783,206 @@ def test_warn_generated_conflicts_registered_as_a_post_tool_hook() -> None:
         (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
     )
     post = manifest["hooks"]["PostToolUse"]
-    assert [group["matcher"] for group in post] == ["Bash"]
-    commands = [hook["command"] for group in post for hook in group["hooks"]]
+    bash_groups = [group for group in post if group.get("matcher") == "Bash"]
+    assert len(bash_groups) == 1
+    commands = [hook["command"] for hook in bash_groups[0]["hooks"]]
     assert any(_WARN_GENERATED_CONFLICTS in cmd for cmd in commands)
+
+
+# --- log_agent_timing.sh: SubagentStart/Stop/PostToolUse ledger append -----
+
+_LOG_AGENT_TIMING = "log_agent_timing.sh"
+
+
+def _run_agent_timing_hook(
+    payload: dict[str, object], *, cwd: Path, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run ``log_agent_timing.sh`` with a full hook-event payload.
+
+    Unlike `_run_hook_proc` (which wraps a Bash `tool_input.command`), this
+    hook consumes whole `SubagentStart` / `SubagentStop` / `PostToolUse`
+    event payloads and resolves the git root from a top-level `cwd` field
+    — so *payload* is passed through mostly as-is, with `cwd` injected.
+
+    Args:
+        payload: The hook event fields (`hook_event_name`, `session_id`,
+            `agent_id`, `agent_type`, `transcript_path`, `tool_name`,
+            `tool_use_id`, `duration_ms`).
+        cwd: Directory the hook resolves via `git -C <cwd> rev-parse
+            --show-toplevel` — injected into the payload's `cwd` field and
+            used as the subprocess's working directory.
+        env: Optional environment for the hook process; `None` inherits
+            the caller's environment.
+
+    Returns:
+        The completed subprocess (exit code + captured stdout/stderr).
+    """
+    full_payload = {**payload, "cwd": str(cwd)}
+    return subprocess.run(
+        ["bash", str(_HOOKS_DIR / _LOG_AGENT_TIMING)],
+        input=json.dumps(full_payload),
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=cwd,
+        env=env,
+    )
+
+
+def test_log_agent_timing_subagent_stop_appends_expected_line_shape(
+    tmp_path: Path,
+) -> None:
+    """A SubagentStop event appends one JSON line naming every hook field."""
+    init_git_repo(tmp_path)
+    payload = {
+        "hook_event_name": "SubagentStop",
+        "session_id": "s1",
+        "agent_id": "a1",
+        "agent_type": "forge:design-checker",
+        "transcript_path": "/path/to/transcript.jsonl",
+        "tool_name": None,
+        "tool_use_id": None,
+        "duration_ms": None,
+    }
+    proc = _run_agent_timing_hook(payload, cwd=tmp_path)
+    assert proc.returncode == 0
+    line = (
+        (tmp_path / "code_health" / "agent_timing.jsonl")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
+    event = json.loads(line)
+    assert event["event"] == "SubagentStop"
+    assert event["session_id"] == "s1"
+    assert event["agent_id"] == "a1"
+    assert event["agent_type"] == "forge:design-checker"
+    assert event["transcript_path"] == "/path/to/transcript.jsonl"
+    assert event["tool_name"] is None
+    assert event["duration_ms"] is None
+    assert "ts" in event
+    assert "ts_ms" in event
+
+
+def test_log_agent_timing_post_tool_use_keeps_duration_ms(tmp_path: Path) -> None:
+    """PostToolUse ``duration_ms`` written as JSON number, not string."""
+    init_git_repo(tmp_path)
+    payload = {
+        "hook_event_name": "PostToolUse",
+        "session_id": "s1",
+        "agent_id": "a1",
+        "agent_type": "forge:design-checker",
+        "transcript_path": None,
+        "tool_name": "Bash",
+        "tool_use_id": "t1",
+        "duration_ms": 1234,
+    }
+    proc = _run_agent_timing_hook(payload, cwd=tmp_path)
+    assert proc.returncode == 0
+    line = (
+        (tmp_path / "code_health" / "agent_timing.jsonl")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
+    event = json.loads(line)
+    assert event["duration_ms"] == 1234
+    assert isinstance(event["duration_ms"], int)
+
+
+def test_log_agent_timing_exit_0_and_no_stdout_always(tmp_path: Path) -> None:
+    """The hook never prints and never fails the tool call it observed."""
+    init_git_repo(tmp_path)
+    payload = {
+        "hook_event_name": "SubagentStart",
+        "session_id": "s1",
+        "agent_id": "a1",
+        "agent_type": "forge:design-checker",
+        "transcript_path": None,
+        "tool_name": None,
+        "tool_use_id": None,
+        "duration_ms": None,
+    }
+    proc = _run_agent_timing_hook(payload, cwd=tmp_path)
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+    assert proc.stderr == ""
+
+
+def test_log_agent_timing_forge_no_agent_timing_env_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    """``FORGE_NO_AGENT_TIMING=1`` switches the hook off — no ledger, no dir."""
+    init_git_repo(tmp_path)
+    env = {**os.environ, "FORGE_NO_AGENT_TIMING": "1"}
+    payload = {
+        "hook_event_name": "SubagentStop",
+        "session_id": "s1",
+        "agent_id": "a1",
+        "agent_type": "forge:design-checker",
+        "transcript_path": None,
+        "tool_name": None,
+        "tool_use_id": None,
+        "duration_ms": None,
+    }
+    proc = _run_agent_timing_hook(payload, cwd=tmp_path, env=env)
+    assert proc.returncode == 0
+    assert not (tmp_path / "code_health").exists()
+
+
+def test_log_agent_timing_non_git_cwd_writes_nothing(tmp_path: Path) -> None:
+    """Outside a git repo, hook exits quietly."""
+    payload = {
+        "hook_event_name": "SubagentStop",
+        "session_id": "s1",
+        "agent_id": "a1",
+        "agent_type": "forge:design-checker",
+        "transcript_path": None,
+        "tool_name": None,
+        "tool_use_id": None,
+        "duration_ms": None,
+    }
+    proc = _run_agent_timing_hook(payload, cwd=tmp_path)
+    assert proc.returncode == 0
+    assert not (tmp_path / "code_health").exists()
+
+
+def test_log_agent_timing_malformed_stdin_writes_nothing(tmp_path: Path) -> None:
+    """SCENARIO: stdin is not valid JSON at all (a truncated or corrupted event).
+
+    MOCK SETUP: none — the hook is invoked directly with a raw non-JSON
+    string, bypassing `_run_agent_timing_hook`'s payload shaping.
+    EXPECTED BEHAVIOR: the `jq -c` compaction fails, the hook exits 0 via
+    its `|| exit 0` guard, and no ledger line is ever written.
+    """
+    init_git_repo(tmp_path)
+    proc = subprocess.run(
+        ["bash", str(_HOOKS_DIR / _LOG_AGENT_TIMING)],
+        input="not json at all",
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+    )
+    assert proc.returncode == 0
+    assert not (tmp_path / "code_health" / "agent_timing.jsonl").exists()
+
+
+def test_log_agent_timing_hook_wired_for_all_events() -> None:
+    """Hook wired on SubagentStart, Stop, and unfiltered PostToolUse.
+
+    Intentionally unfiltered to detect loops across all tools.
+    """
+    manifest = json.loads(
+        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
+    )
+    hooks = manifest["hooks"]
+    for event_name in ("SubagentStart", "SubagentStop"):
+        commands = [
+            hook["command"] for group in hooks[event_name] for hook in group["hooks"]
+        ]
+        assert any(_LOG_AGENT_TIMING in cmd for cmd in commands)
+
+    post = hooks["PostToolUse"]
+    unmatched = [group for group in post if "matcher" not in group]
+    assert len(unmatched) == 1
+    commands = [hook["command"] for hook in unmatched[0]["hooks"]]
+    assert any(_LOG_AGENT_TIMING in cmd for cmd in commands)

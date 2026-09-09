@@ -44,7 +44,6 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from forge.config import read_tool_forge_section
@@ -54,6 +53,7 @@ from forge.git_utils import (
     repo_root,
     write_step_log,
 )
+from forge.ledger import append_ledger_line, parse_ledger
 
 
 if TYPE_CHECKING:
@@ -285,7 +285,7 @@ def _append_history(root: Path, history: _RunHistory, label: str) -> None:
 
     The per-run log is overwritten by design (step-log convention); this
     sidecar accumulates one ``key=value`` line per run so "what does this
-    suite cost, over time" stays answerable (#376). Lives next to the other
+    suite cost, over time" stays answerable. Lives next to the other
     artifacts in ``code_health/`` (gitignored — history is per-workspace).
 
     Args:
@@ -296,46 +296,16 @@ def _append_history(root: Path, history: _RunHistory, label: str) -> None:
     peak = (
         f"{history.summary.peak_rss_mb:.1f}MB" if history.summary is not None else "n/a"
     )
-    line = (
-        f"ts={datetime.now(UTC).isoformat(timespec='seconds')}  "
-        f"label={label or '-'}  exit={history.exit_code}  wall={history.elapsed:.1f}s  "
-        f"peak_rss={peak}  cmd={' '.join(history.cmd)}\n"
+    append_ledger_line(
+        root / "code_health" / "telemetry_history.log",
+        {
+            "label": label or "-",
+            "exit": history.exit_code,
+            "wall": f"{history.elapsed:.1f}s",
+            "peak_rss": peak,
+        },
+        tail=("cmd", " ".join(history.cmd)),
     )
-    out = root / "code_health" / "telemetry_history.log"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("a", encoding="utf-8") as fh:
-        fh.write(line)
-
-
-def _parse_history(text: str) -> list[dict[str, str]]:
-    """Parse ``telemetry_history.log`` lines into field mappings.
-
-    Tolerant by design: a line that doesn't split into ``key=value``
-    fields (hand-edited, truncated) is skipped rather than failing the
-    whole read — the ledger is append-only and long-lived.
-
-    Args:
-        text: The raw ledger contents.
-
-    Returns:
-        One dict per parsable line, in file (chronological) order. The
-        ``cmd=`` field keeps embedded spaces (it is always last).
-    """
-    rows: list[dict[str, str]] = []
-    for line in text.splitlines():
-        if "=" not in line:
-            continue
-        row: dict[str, str] = {}
-        head, sep, cmd = line.partition("  cmd=")
-        for field in head.split():
-            key, eq, value = field.partition("=")
-            if eq:
-                row[key] = value
-        if sep:
-            row["cmd"] = cmd
-        if row:
-            rows.append(row)
-    return rows
 
 
 def _render_history(root: Path) -> int:
@@ -355,7 +325,7 @@ def _render_history(root: Path) -> int:
     if not path.is_file():
         logger.info("No telemetry history at %s — run forge-telemetry first.", path)
         return 0
-    rows = _parse_history(path.read_text(encoding="utf-8"))
+    rows = parse_ledger(path.read_text(encoding="utf-8"), tail_key="cmd")
     if not rows:
         logger.info("Telemetry history at %s holds no parsable runs.", path)
         return 0

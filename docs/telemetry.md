@@ -159,3 +159,48 @@ raw `key=value` lines. It reads a text file only: no wrapped command,
 no `psutil` required. Mean CPU is not part of the ledger format and is
 therefore absent from the table. The `/perf` skill runs this reader
 (plus `forge-slow-tests-report --baseline`) as its analyze mode.
+
+## Agent timing — where the agents' time goes
+
+Resource telemetry measures a wrapped command; `forge-agent-profile`
+measures the agents. The `log_agent_timing` Claude Code hook (shipped
+with the plugin, registered on `SubagentStart`, `SubagentStop`, and
+every `PostToolUse`) appends one JSON line per event to
+`code_health/agent_timing.jsonl` — agent id and type on the subagent
+events, tool name and `duration_ms` on the tool events. Hook payloads
+are documented by Claude Code, so the ledger is the stable source;
+`FORGE_NO_AGENT_TIMING=1` switches the hook off.
+
+```bash
+forge-agent-profile                                   # this workspace's ledger
+forge-agent-profile --agent-type forge:precommit-fixer --last 20
+forge-agent-profile --transcripts ~/.claude/projects/<encoded-cwd>   # history before the hook
+forge-agent-profile --json                            # runs + per-type + per-tool rows
+```
+
+The report answers four questions:
+
+| Question | Where it shows |
+|---|---|
+| Which agent types dominate wall time? | Per-type table — runs, mean, p50, max, wall, active |
+| Was the time work or waiting? | `active` clips every gap over 300 s (a sleeping PR monitor, a closed laptop, an agent resumed hours later); wall keeps it |
+| Which runs and which tools were slowest? | Slowest-runs list (turns, tool calls, slowest tool) and the per-tool table from `PostToolUse` durations |
+| Is anything stuck? | **Loop suspects** — one identical tool call (name + input) repeated four or more times inside a single prompt — and **`forge:precommit-fixer` runs past its three-run cap** |
+
+Turn counts, repeated-call detection and precommit-run counts come from
+the subagent transcripts the ledger names (`…/subagents/agent-<id>.jsonl`).
+Claude Code documents that format as internal and subject to change, so
+it is read tolerantly — an unrecognised line is skipped, never an error
+— and only ever enriches a run; `--transcripts <dir>` scans a project
+directory for runs that predate the hook. Repetition is counted per
+prompt: an agent resumed with a follow-up message legitimately re-runs
+`git status`, so a new user prompt resets the counters.
+
+Each report appends one `key=value` line (runs, types, wall, active,
+loop suspects, cap breaches) to `code_health/agent_profile_history.log`;
+`--history` renders it and `--no-history` skips the append. `/perf
+analyze` runs the reporter as its fifth surface, and `/report-to-forge`
+quotes its summary as evidence when a shipped agent misbehaves — the
+summary only, since the raw ledger carries absolute paths and the
+transcripts carry every tool input.
+
