@@ -43,7 +43,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     # Fail CLOSED: a missing/unreadable lib (corrupted plugin cache)
     # must block, not silently disarm the whole guard family — only
     # exit 2 is a block signal in the PreToolUse contract.
-    echo "BLOCKED: git-guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    echo "BLOCKED: guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
     exit 2
 fi
 source "$ANCHOR_LIB"

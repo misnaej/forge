@@ -204,6 +204,50 @@ def test_protected_branches_blocks_bypass_forms(command: str) -> None:
     assert _run_hook(_PROTECTED, command, agent_type="forge:git-commit-push") == 2
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push origin main && git push origin safe-branch",
+        "git push origin safe-branch && git push origin main",
+        "git push origin safe-branch; git push origin HEAD:main",
+    ],
+)
+def test_protected_branches_blocks_protected_push_earlier_in_a_chain(
+    command: str,
+) -> None:
+    """A protected push anywhere in a chain blocks, not only the last one.
+
+    The destination guard used to strip the command through its LAST
+    `git push` match, so a chain judged only the final invocation's
+    destination — a protected push earlier in the chain slipped through
+    unnoticed. Each match now stops at the next separator, so every
+    invocation is judged independently: first-then-safe, safe-then-first,
+    and a `;`-separated chain whose second push uses the `HEAD:main`
+    refspec form all still block.
+
+    Args:
+        command: A two-push chain with the protected destination in a
+            different position (or refspec form) each time.
+    """
+    assert _run_hook(_PROTECTED, command, agent_type="forge:git-commit-push") == 2
+
+
+def test_protected_branches_allows_a_chain_with_no_protected_destination() -> None:
+    """A chain of two pushes, neither targeting a protected branch, is allowed.
+
+    Companion to the blocking cases above — confirms the per-invocation
+    loop doesn't over-block a chain that never touches `main`.
+    """
+    assert (
+        _run_hook(
+            _PROTECTED,
+            "git push origin safe-branch && git push origin other-branch",
+            agent_type="forge:git-commit-push",
+        )
+        == 0
+    )
+
+
 _INSTALL_DEPS = "block_install_deps.sh"
 
 
@@ -792,6 +836,29 @@ def test_no_verify_dash_n_on_push_not_blocked() -> None:
     assert _run_hook(_NO_VERIFY, "git push -n origin main") == 0
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git commit -n; echo done",
+        "git commit -n && echo done",
+    ],
+)
+def test_no_verify_short_flag_blocks_when_a_separator_follows(command: str) -> None:
+    """A bare `-n` followed by a shell separator still blocks.
+
+    The short-flag-cluster boundary previously accepted only whitespace
+    or end-of-string after the flag, so `-n` immediately ahead of a `;`
+    or `&&` (no trailing space) fell outside the match. The boundary now
+    also accepts a separator character directly.
+
+    Args:
+        command: A `git commit -n` invocation chained to a harmless
+            follow-on command via `;` or `&&`, with no space before the
+            separator.
+    """
+    assert _run_hook(_NO_VERIFY, command) == 2
+
+
 _PR_MERGE = "block_pr_merge.sh"
 
 
@@ -825,6 +892,41 @@ def test_gh_anchor_leading_space_blocks_and_echo_mention_allowed() -> None:
     """
     assert _run_hook(_PR_MERGE, " gh pr merge 5 --squash") == 2
     assert _run_hook(_PR_MERGE, "echo gh pr merge 5 --squash") == 0
+
+
+def test_gh_guards_block_a_repo_override_before_the_subcommand(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """`gh --repo o/r <verb>` / `gh -R o/r <verb>` still anchor past the override.
+
+    Both forms place a token — the `-R`/`--repo` global plus its value —
+    between `gh` and the subcommand; `GH_ANCHOR` now tolerates gh's
+    global options the same way `GIT_ANCHOR` tolerates git's, so the
+    subcommand match still fires. Exercised on `block_pr_merge.sh` (a
+    `pr merge` command) and `block_unverified_pr_create.sh` (a `pr create`
+    command, using the same `git_repo_with_commit` fixture the neighbouring
+    missing-wrap-up tests use — no wrap-up is authored here, so the block
+    is the outer anchor reaching the missing-wrap-up check).
+    """
+    repo, _sha = git_repo_with_commit
+    assert _run_hook(_PR_MERGE, "gh --repo owner/name pr merge 5 --squash") == 2
+    assert _run_hook(_PR_MERGE, "gh -R owner/name pr merge 5 --squash") == 2
+    assert (
+        _run_hook(
+            "block_unverified_pr_create.sh",
+            "gh --repo owner/name pr create --title x",
+            cwd=repo,
+        )
+        == 2
+    )
+    assert (
+        _run_hook(
+            "block_unverified_pr_create.sh",
+            "gh -R owner/name pr create --title x",
+            cwd=repo,
+        )
+        == 2
+    )
 
 
 _REBASE = "block_git_rebase.sh"

@@ -82,37 +82,38 @@ PY
 # even forge:git-commit-push — may push directly to a protected branch
 # (FOUNDATION §2). (#74)
 if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}push\b"; then
-    # Strip through the verb with the SAME anchor the gate used: a
-    # literal `^…git push` sed left the whole command in place for
-    # every prefixed form (a subshell, an env assignment, a chain), and
-    # the destination guard then read tokens that were never refspecs.
-    push_args=$(echo "$COMMAND" | sed -E "s/^.*${GIT_ANCHOR}push//")
-    remote_seen=0
-    for tok in $push_args; do
-        # Skip option flags (e.g. -u, --force, --force-with-lease=...).
-        case "$tok" in -*) continue ;; esac
-        # The first bare token is the remote; the rest are refspecs.
-        if [ "$remote_seen" -eq 0 ]; then
-            remote_seen=1
-            continue
-        fi
-        # Destination = text after the last ':' (src:dst), or the whole
-        # token (push <branch>). Strip a leading '+' (force) and a
-        # fully-qualified 'refs/heads/' prefix so the bare branch name
-        # compares against the protected list.
-        # A trailing shell character belongs to the syntax, not the ref:
-        # a subshell-wrapped push ends its last token with `)`. git
-        # rejects these characters in a ref name, so trimming them
-        # cannot mask a real branch.
-        tok=${tok%%[\)\;\&\|]*}
-        dst=${tok##*:}
-        dst=${dst#+}
-        dst=${dst#refs/heads/}
-        if echo "$protected" | grep -qFx "$dst"; then
-            echo "BLOCKED: push targets protected branch '$dst' (per [tool.forge] in pyproject.toml). Open a PR; never push directly to a protected branch. If truly intentional, the user runs it: ! $COMMAND" >&2
-            exit 2
-        fi
-    done
+    # EVERY invocation in the command, not just one: a literal
+    # `^…git push` sed left prefixed forms unstripped, and stripping
+    # through the last match instead judged only the final destination —
+    # a chain could carry a protected push in front of a harmless one.
+    # Each match stops at the next separator, so tokens never leak
+    # between invocations, and a subshell's `)` is never part of a ref.
+    invocations=$(echo "$COMMAND" | grep -oE "${GIT_ANCHOR}push\b[^;&|)]*" || true)
+    while IFS= read -r invocation; do
+        [ -n "$invocation" ] || continue
+        push_args=$(printf '%s' "$invocation" | sed -E "s/^${GIT_ANCHOR}push//")
+        remote_seen=0
+        for tok in $push_args; do
+            # Skip option flags (e.g. -u, --force, --force-with-lease=...).
+            case "$tok" in -*) continue ;; esac
+            # The first bare token is the remote; the rest are refspecs.
+            if [ "$remote_seen" -eq 0 ]; then
+                remote_seen=1
+                continue
+            fi
+            # Destination = text after the last ':' (src:dst), or the whole
+            # token (push <branch>). Strip a leading '+' (force) and a
+            # fully-qualified 'refs/heads/' prefix so the bare branch name
+            # compares against the protected list.
+            dst=${tok##*:}
+            dst=${dst#+}
+            dst=${dst#refs/heads/}
+            if echo "$protected" | grep -qFx "$dst"; then
+                echo "BLOCKED: push targets protected branch '$dst' (per [tool.forge] in pyproject.toml). Open a PR; never push directly to a protected branch. If truly intentional, the user runs it: ! $COMMAND" >&2
+                exit 2
+            fi
+        done
+    done <<< "$invocations"
 fi
 
 # (2) The canonical commit/push path bypasses the *current-branch* check

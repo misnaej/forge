@@ -21,9 +21,10 @@ fi
 # `-n` is `--no-verify` for a commit but `--dry-run` for a push, so
 # the short form counts only on the former. Residual shared with the
 # family: the flag is matched anywhere in the segment, so a quoted
-# body naming it reads as the flag.
+# body naming it reads as the flag — and a quoted body containing a
+# separator hides a flag that follows it.
 if echo "$COMMAND" | grep -qE -- '--no-verify' \
-    || echo "$COMMAND" | grep -qE "${GIT_ANCHOR}commit\b[^;&|]*[[:space:]]-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|$)"; then
+    || echo "$COMMAND" | grep -qE "${GIT_ANCHOR}commit\b[^;&|]*[[:space:]]-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|[;&|)]|$)"; then
     echo "BLOCKED: --no-verify is forbidden. Fix the violations instead of bypassing pre-commit hooks. If absolutely required, the user can run: ! $COMMAND" >&2
     exit 2
 fi

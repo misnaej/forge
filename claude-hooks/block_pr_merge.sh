@@ -25,8 +25,9 @@ if [ ! -r "$ANCHOR_LIB" ]; then
 fi
 source "$ANCHOR_LIB"
 
-# `gh pr merge` at start-of-string, or after a shell separator (`;`, `&&`,
-# `||`, `|`). A plain space ahead of `gh` is NOT a separator — that lets
+# `gh pr merge` at a real invocation position (see GH_ANCHOR in
+# git_anchor.sh for the exact shape). A plain space ahead of `gh` with
+# no separator or wrapper token is NOT an invocation — that lets
 # `echo gh pr merge` through, which is harmless (we want to block actual
 # merges, not text mentions of the command).
 if echo "$COMMAND" | grep -qE "${GH_ANCHOR}pr[[:space:]]+merge\b"; then
