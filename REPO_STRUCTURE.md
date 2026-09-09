@@ -22,7 +22,9 @@ Code.
   `claude-hooks/`)**: agents, slash-command skills, and safety hooks
   discovered by Claude Code after install.
 - **Git hooks (`.githooks/`)**: pre-commit and post-* hooks installed by
-  `install-forge-githooks`.
+  `install-forge-githooks`; `post-merge.d/` and `post-checkout.d/` hold
+  forge's own tracked extensions (`10-dev-setup.sh` re-runs `./dev/setup.sh`
+  so every clone runs the latest forge).
 - **Tests (`tests/`)**: pytest suite mirroring the package layout.
 
 ## Forge Package (`src/forge/`)
@@ -66,6 +68,7 @@ Code.
    - gen_common.py: shared drift-check helper for the `forge-gen-*`
      doc generators
    - doctor.py: `forge-doctor` — environment diagnostics
+   - version_surfaces.py: the three version surfaces of one forge install (pip package, git-hook sidecar, cached Claude Code plugin) plus the editable-install origin and the per-surface remediation strings — read once here for `forge-doctor`'s advisory and `forge-precommit`'s `env_sync` / `plugin_sync` gates
    - install_githooks.py: `install-forge-githooks` — git hook installer (managed marker carries `body-sha` only — never the forge version, so wrappers stay byte-stable across bumps; the version lives in the gitignored `.forge-hook-version` sidecar; modified wrappers survive refresh)
    - post_merge.py: `forge-post-merge` — managed post-merge git-hook entrypoint (foundation drift check + backgrounded self-refresh of hook wrappers)
    - post_checkout.py: `forge-post-checkout` — managed post-checkout git-hook entrypoint (branch-flag-guarded foundation drift check)

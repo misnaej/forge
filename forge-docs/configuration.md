@@ -429,6 +429,26 @@ export FORGE_NO_AUTO_REBUILD=1
 > argv via `shlex.split` (never `shell=True`) and never in CI, but treat it as
 > trusted-repo-only config.
 
+## `[tool.forge.plugin_sync]` — plugin-cache freshness gate (self-skipping)
+
+A repo that ships a Claude Code plugin (`.claude-plugin/plugin.json`) runs its
+agents and hooks from Claude Code's **cache**, not from the tree. After a plugin
+release merges, every session keeps the old cache until someone runs
+`/plugin update <plugin>@<marketplace>` and `/reload-plugins` — commands no git
+hook can run. The `plugin_sync` step compares the cached plugin's version with
+the manifest's and names those commands when the cache lags. It self-skips when
+the repo ships no plugin, when the plugin is not installed locally, and in
+non-interactive contexts (FOUNDATION §15).
+
+| Key | Default | Meaning | Set it when |
+|---|---|---|---|
+| `blocking` | `false` | A lagging cache fails the commit (`true`) or renders as a WARN (`false`). | Your sessions must run the plugin the tree declares. Forge sets `true` — it ships the plugin it runs. |
+
+`env_sync` (above) carries two sibling checks for the other install surfaces:
+the editable install on `PATH` must be **this** clone (parallel dev clones each
+own an env), and the git-hook sidecar must not lag the installed package (the
+post-merge self-refresh failed). Both block; both name the exact command.
+
 ## `[tool.forge.docstring_coverage]`
 
 Forge-specific keys for the docstring-coverage reporter. (The coverage *gate*

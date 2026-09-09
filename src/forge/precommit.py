@@ -107,6 +107,16 @@ from forge.install_claudemd import foundation_matches_installed
 from forge.pr_delta import REGEN_COMMANDS
 from forge.run_context import is_ci, is_non_interactive
 from forge.smart_test import lifecycle as _lifecycle
+from forge.version_surfaces import (
+    DIST_NAME,
+    SKEW_REMEDIATION,
+    editable_install_origin,
+    find_plugin_cache,
+    hook_sidecar_version,
+    pip_version,
+    plugin_cache_version,
+    read_json,
+)
 
 
 if TYPE_CHECKING:
@@ -424,6 +434,104 @@ def step_auto_rebuild(repo_root: Path) -> StepResult:
     )
 
 
+def _check_clone_identity(repo_root: Path) -> StepResult | None:
+    """Block when the editable install on ``PATH`` was built from another clone.
+
+    Parallel dev clones each own a conda env; an env built from ``dev-1``
+    but activated inside ``dev-0`` runs every gate — and every generator —
+    against the other checkout's code, silently. Applies only where the
+    repo *is* the distribution's source (``[project].name`` equals the
+    install's name) and the install is editable; consumer repos and
+    git/index installs have no clone to compare against and skip.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        A blocking ``StepResult`` on mismatch; ``None`` when the install is
+        this clone or not editable.
+    """
+    declared = _declared_scripts(repo_root)
+    if declared is None or declared[0] != DIST_NAME:
+        return None  # not forge-scripts' own source tree — nothing to compare
+    origin = editable_install_origin()
+    if origin is None or origin == repo_root.resolve():
+        return None
+    return StepResult(
+        name="env_sync",
+        passed=False,
+        output=(
+            f"⛔ The active forge-scripts install is editable from {origin}, not "
+            f"this clone ({repo_root.resolve()}). Every gate would run the other "
+            "checkout's code. Activate this clone's env or re-run `./dev/setup.sh` "
+            "here."
+        ),
+    )
+
+
+def _check_hook_sidecar(repo_root: Path) -> StepResult | None:
+    """Block when the git hooks were last written by an older forge than the install.
+
+    ``install-forge-githooks`` stamps ``.githooks/.forge-hook-version`` on
+    every write and the post-merge hook self-refreshes it; a sidecar behind
+    the installed package means that refresh failed and the hooks run
+    older logic than the CLIs.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        A blocking ``StepResult`` when the sidecar lags; ``None`` when it
+        matches, or when either surface is absent (nothing to compare).
+    """
+    recorded = hook_sidecar_version(repo_root)
+    if recorded is None:
+        return None  # hooks not forge-managed here — nothing to compare
+    have = pip_version()
+    if have is None:
+        return None
+    have_t, recorded_t = parse_semver(have), parse_semver(recorded)
+    if have_t is None or recorded_t is None or recorded_t >= have_t:
+        return None
+    return StepResult(
+        name="env_sync",
+        passed=False,
+        output=(
+            f"⛔ Git hooks were written by forge {recorded}; installed is {have}. "
+            f"The post-merge self-refresh did not land — run "
+            f"`{SKEW_REMEDIATION['git hooks']}`."
+        ),
+    )
+
+
+def _env_sync_precheck(repo_root: Path) -> StepResult | None:
+    """Return the result that ends ``env_sync`` early, or ``None`` to continue.
+
+    The non-interactive self-skip (FOUNDATION §15) first, then the two
+    blocking install-surface checks — each a complete ``StepResult`` so
+    the step body stays a linear sequence.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        A skip or block result, or ``None`` when the entry-point and pin
+        checks should run.
+    """
+    if is_non_interactive():
+        return StepResult(
+            name="env_sync",
+            passed=True,
+            output="(CI / non-interactive — skipped)",
+            skipped=True,
+        )
+    for check in (_check_clone_identity, _check_hook_sidecar):
+        blocked = check(repo_root)
+        if blocked is not None:
+            return blocked
+    return None
+
+
 def step_env_sync(repo_root: Path) -> StepResult:
     """Fail fast when the local install is stale vs the repo's declared CLIs.
 
@@ -436,6 +544,12 @@ def step_env_sync(repo_root: Path) -> StepResult:
     surfaces that **first**, with one in-process ``importlib.metadata``
     lookup (no subprocess, no network — sub-millisecond):
 
+    - **Clone identity (blocking):** the editable install on ``PATH`` must
+      be built from this clone, not a parallel one (see
+      :func:`_check_clone_identity`).
+    - **Hook sidecar freshness (blocking):** the git hooks' recorded forge
+      version must not lag the installed package (see
+      :func:`_check_hook_sidecar`).
     - **Entry-point freshness (blocking):** every declared
       ``[project.scripts]`` name must be an installed console script. A
       missing one means the install is stale; the message names the exact
@@ -463,13 +577,9 @@ def step_env_sync(repo_root: Path) -> StepResult:
         ``[tool.forge.env_sync].blocking``, default blocking); otherwise an
         install behind the forge-scripts ``==`` pin fails non-blocking (WARN).
     """
-    if is_non_interactive():
-        return StepResult(
-            name="env_sync",
-            passed=True,
-            output="(CI / non-interactive — skipped)",
-            skipped=True,
-        )
+    early = _env_sync_precheck(repo_root)
+    if early is not None:
+        return early
     pin_drift = _forge_scripts_pin_drift(repo_root)
     declared = _declared_scripts(repo_root)
 
@@ -535,6 +645,72 @@ def step_env_sync(repo_root: Path) -> StepResult:
         name="env_sync",
         passed=True,
         output=f"all {scripts_count} declared console script(s) installed.",
+    )
+
+
+def step_plugin_sync(repo_root: Path) -> StepResult:
+    """Block when the cached Claude Code plugin is older than the repo's manifest.
+
+    A repo that ships a plugin runs its agents and hooks from Claude Code's
+    cache, not from the tree — so after a plugin release merges, every
+    session keeps the old cache until someone runs the update. Nothing in
+    a git hook can do that (``/plugin update`` is a session command), so
+    the gate names it and, for forge itself, refuses to commit until it
+    happened (``[tool.forge.plugin_sync].blocking = true``); consumers get
+    an advisory unless they opt in. Self-skips when the repo ships no
+    plugin, when the plugin is not installed locally, and in
+    non-interactive contexts (FOUNDATION §15).
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` — skipped when nothing applies; failed (blocking or
+        WARN per config) when the cache lags ``.claude-plugin/plugin.json``.
+    """
+    manifest = repo_root / ".claude-plugin" / "plugin.json"
+    if not manifest.is_file():
+        return StepResult(
+            name="plugin_sync",
+            passed=True,
+            output="(no plugin shipped — skipped)",
+            skipped=True,
+        )
+    if is_non_interactive():
+        return StepResult(
+            name="plugin_sync",
+            passed=True,
+            output="(CI / non-interactive — skipped)",
+            skipped=True,
+        )
+    data, _err = read_json(manifest)
+    plugin_name = str(data.get("name") or repo_root.name)
+    manifest_version = str(data["version"]) if data.get("version") else None
+    cached = plugin_cache_version(find_plugin_cache(plugin_name))
+    if cached is None:
+        return StepResult(
+            name="plugin_sync",
+            passed=True,
+            output=f"({plugin_name} plugin not installed in Claude Code — skipped)",
+            skipped=True,
+        )
+    cached_t, manifest_t = parse_semver(cached), parse_semver(manifest_version or "")
+    if cached_t is None or manifest_t is None or cached_t >= manifest_t:
+        return StepResult(
+            name="plugin_sync",
+            passed=True,
+            output=f"plugin cache {cached} is current (manifest {manifest_version}).",
+        )
+    blocking = bool(_forge_step_config(repo_root, "plugin_sync").get("blocking", False))
+    return StepResult(
+        name="plugin_sync",
+        passed=False,
+        output=(
+            f"{'⛔' if blocking else '⚠️ '} Cached {plugin_name} plugin is {cached}; "
+            f"this repo's manifest says {manifest_version}. Your session runs "
+            f"stale agents and hooks — run `{SKEW_REMEDIATION['plugin cache']}`."
+        ),
+        non_blocking=not blocking,
     )
 
 
@@ -2386,6 +2562,7 @@ def _format_timing_log(results: list[StepResult]) -> str:
 _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("auto_rebuild", step_auto_rebuild),
     StepDef("env_sync", step_env_sync),
+    StepDef("plugin_sync", step_plugin_sync),
     StepDef("regen_docs", step_regen_docs),
     StepDef("ruff", step_ruff),
     StepDef("docstring_verification", step_docstrings),
