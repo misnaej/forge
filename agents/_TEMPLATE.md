@@ -97,16 +97,11 @@ writes docstrings that ship) stays `sonnet`+ regardless of frequency — a
 shallow-but-passing artifact is worse than none. Downgrade only when the
 cost win is real *and* quality is untouched.
 
-**Upgrading past `opus` is the user's call, never the agent's.** `fable`
-is available above `opus`, and both an agent definition and a spawned
-subagent can name it silently — which is exactly why it is gated: the
-tier carries a cost the user is paying and did not choose. Treat it as a
-**possibility to raise, not a decision to make**: say in one line what
-the step would gain from it, then wait. Approval covers the work it was
-given for, not every later step, and it never becomes the default for an
-agent's shipped `model:` field without the same explicit yes. Absent
-that, the ceiling is `opus` — a step that seems to want more is first a
-prompt to sharpen, since a bigger model rarely rescues an unclear task.
+`fable` is the exception to tiering by workload: it is never chosen
+here. The ceiling is `opus` until the user says otherwise, per
+[FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules), which owns the
+rule — an agent raises the tier as a possibility and waits, and a
+shipped `model:` field never carries it without that explicit yes.
 
 ## Reporter-agent header contract
 
