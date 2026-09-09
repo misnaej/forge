@@ -22,6 +22,35 @@ options:
                       files modified vs main). 'diff' ignores positional dirs.
 ```
 
+## forge-agent-profile
+
+```text
+usage: forge-agent-profile [-h] [--ledger LEDGER] [--transcripts TRANSCRIPTS]
+                           [--agent-type AGENT_TYPE] [--since SINCE]
+                           [--last LAST] [--top TOP] [--label LABEL] [--json]
+                           [--history] [--no-history]
+
+Report where agent and subagent time goes (read-only, always exits 0).
+
+options:
+  -h, --help            show this help message and exit
+  --ledger LEDGER       Hook ledger (default:
+                        <repo>/code_health/agent_timing.jsonl).
+  --transcripts TRANSCRIPTS
+                        Transcripts directory (~/.claude/projects/<encoded-
+                        cwd>) not named in ledger.
+  --agent-type AGENT_TYPE
+                        Only runs of this agent type (e.g. forge:precommit-
+                        fixer).
+  --since SINCE         Only runs starting at or after this ISO-8601 instant.
+  --last LAST           Only the N most recent runs.
+  --top TOP             Slowest runs to list (default 10).
+  --label LABEL         Label for the history line.
+  --json                Emit JSON instead of the text report.
+  --history             Render the append-only history ledger.
+  --no-history          Do not append to the history ledger.
+```
+
 ## forge-audit-agents
 
 ```text
