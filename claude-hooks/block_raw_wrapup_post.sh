@@ -15,9 +15,12 @@ COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
 # The CLI's own internal `gh pr comment` never appears here (it runs as
 # a subprocess, not as the Bash tool's command), but a wrapper line that
 # names the CLI must not trip the guard either.
-case "$COMMAND" in
-*forge-pr-wrapup*) exit 0 ;;
-esac
+# Anchored to the command position (start, or right after a `|`, `;`, `&`
+# or `(`): a mention inside an argument or a trailing comment
+# (`gh pr comment ... # via forge-pr-wrapup`) must not exempt the call.
+if printf '%s' "$COMMAND" | grep -qE '(^|[|;&(][[:space:]]*)forge-pr-wrapup([[:space:]]|$)'; then
+  exit 0
+fi
 
 if echo "$COMMAND" | grep -qE '(^|[[:space:]]*[|;&]+[[:space:]]*)gh[[:space:]]+(pr[[:space:]]+comment|api)\b' \
     && echo "$COMMAND" | grep -qE '(--body-file|-F|--field|-f|--raw-field)[[:space:]=]+(body=@)?[^[:space:]]*code_health/pr_wrapup\.md\b'; then

@@ -18,9 +18,12 @@ COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')
 
 # The squash CLI's own posts already land last; re-entering here would
 # make every post cost a second round-trip.
-case "$COMMAND" in
-*forge-pr-squash-comment*) exit 0 ;;
-esac
+# Anchored to the command position (start, or right after a `|`, `;`, `&`
+# or `(`): a mention inside an argument or a trailing comment
+# (`gh pr comment ... # via forge-pr-squash-comment`) must not exempt the call.
+if printf '%s' "$COMMAND" | grep -qE '(^|[|;&(][[:space:]]*)forge-pr-squash-comment([[:space:]]|$)'; then
+  exit 0
+fi
 
 # The three surfaces that bury a comment: conversation comments, review
 # submissions, and review-thread replies (REST `/pulls/<N>/comments`).

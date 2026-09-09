@@ -128,12 +128,14 @@ MARKED_COMMENT = {
     "id": 555,
     "body": f"{MARKER}\nold body",
     "created_at": "2026-01-01T00:00:00Z",
+    "author": "octocat",
 }
 
 UNRELATED_COMMENT = {
     "id": 777,
     "body": "a human wrote this",
     "created_at": "2026-01-02T00:00:00Z",
+    "author": "octocat",
 }
 
 
@@ -142,9 +144,11 @@ def test_list_marker_comments_keeps_only_marked_comments(
 ) -> None:
     """SCENARIO: a PR carries one marker-carrying comment among human ones.
 
-    MOCK SETUP: ``gh_api`` returns a single page holding both.
+    MOCK SETUP: ``gh_api`` returns a single page holding both; ``own_login``
+    reports the identity both fixture comments already carry.
     EXPECTED BEHAVIOR: only the marker-carrying comment comes back.
     """
+    monkeypatch.setattr(mod, "own_login", lambda: "octocat")
     monkeypatch.setattr(
         mod, "gh_api", lambda *_a, **_kw: page_json(MARKED_COMMENT, UNRELATED_COMMENT)
     )
@@ -156,9 +160,11 @@ def test_list_marker_comments_keeps_only_marked_comments(
 def test_list_marker_comments_spans_pages(monkeypatch: pytest.MonkeyPatch) -> None:
     """SCENARIO: ``--paginate`` emits one JSON array per page.
 
-    MOCK SETUP: ``gh_api`` returns two array lines, one marked comment each.
+    MOCK SETUP: ``gh_api`` returns two array lines, one marked comment each;
+    ``own_login`` reports the identity both pages' comments carry.
     EXPECTED BEHAVIOR: both pages are flattened into one ordered list.
     """
+    monkeypatch.setattr(mod, "own_login", lambda: "octocat")
     second = {**MARKED_COMMENT, "id": 556, "created_at": "2026-01-03T00:00:00Z"}
     monkeypatch.setattr(
         mod,
@@ -174,7 +180,48 @@ def test_list_marker_comments_reports_read_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed listing returns None — distinct from 'no marked comment'."""
+    monkeypatch.setattr(mod, "own_login", lambda: "octocat")
     monkeypatch.setattr(mod, "gh_api", lambda *_a, **_kw: None)
+    assert mod.list_marker_comments(61, MARKER) is None
+
+
+def test_list_marker_comments_skips_foreign_author_and_warns(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCENARIO: a stranger plants the marker on a public PR.
+
+    MOCK SETUP: ``own_login`` reports ``"octocat"``; the page holds a
+    marker-carrying comment authored by someone else.
+    EXPECTED BEHAVIOR: the foreign comment is excluded and a warning names
+    it — callers must never mutate a comment they didn't post.
+    """
+    monkeypatch.setattr(mod, "own_login", lambda: "octocat")
+    foreign = {**MARKED_COMMENT, "id": 999, "author": "impersonator"}
+    monkeypatch.setattr(mod, "gh_api", lambda *_a, **_kw: page_json(foreign))
+    with caplog.at_level(logging.WARNING):
+        found = mod.list_marker_comments(61, MARKER)
+    assert found == []
+    assert "999" in caplog.text
+    assert "impersonator" in caplog.text
+
+
+def test_list_marker_comments_returns_none_when_identity_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCENARIO: ``gh`` cannot report who it's authenticated as.
+
+    MOCK SETUP: ``own_login`` returns ``None``; ``gh_api`` is a recording
+    fake that fails the test if it's ever called.
+    EXPECTED BEHAVIOR: the listing call is skipped entirely and ``None``
+    comes back — "cannot verify" must short-circuit before any network call.
+    """
+    monkeypatch.setattr(mod, "own_login", lambda: None)
+
+    def _unexpected_gh_api(*_a: object, **_kw: object) -> str:
+        pytest.fail("gh_api must not be called when the identity is unknown")
+
+    monkeypatch.setattr(mod, "gh_api", _unexpected_gh_api)
     assert mod.list_marker_comments(61, MARKER) is None
 
 

@@ -3336,6 +3336,27 @@ def test_keep_squash_last_does_not_recurse_on_its_own_cli(tmp_path: Path) -> Non
     assert _record(env) == ""
 
 
+def test_keep_squash_last_runs_despite_trailing_cli_name_mention(
+    tmp_path: Path,
+) -> None:
+    """A CLI-name mention inside an argument does not exempt a raw post.
+
+    Only a command *starting with* (or chained to) the CLI name is its own
+    post; naming it inside a `--body` string is still a raw `gh pr comment`
+    that must re-enter the guard.
+    """
+    env = _stub_squash_cli(tmp_path, "exit 0")
+    assert (
+        _run_hook(
+            _KEEP_SQUASH_LAST,
+            'gh pr comment 61 --body "see forge-pr-squash-comment"',
+            env=env,
+        )
+        == 0
+    )
+    assert "--pr 61" in _record(env)
+
+
 def test_keep_squash_last_is_silent_on_a_no_op(tmp_path: Path) -> None:
     """A comment that is already newest produces no agent-visible output."""
     env = _stub_squash_cli(tmp_path, 'echo "squash comment is already the newest"')
@@ -3421,6 +3442,23 @@ def test_raw_wrapup_post_allows_the_cli_itself() -> None:
             "forge-pr-wrapup post --pr 5 --body-file code_health/pr_wrapup.md",
         )
         == 0
+    )
+
+
+def test_raw_wrapup_post_blocks_a_trailing_comment_mention() -> None:
+    """A trailing shell comment naming the CLI does not exempt a raw post.
+
+    Only a command *starting with* (or chained to) `forge-pr-wrapup` is its
+    own post; a `# via forge-pr-wrapup` trailer on a raw `gh pr comment`
+    must not exempt it from the gate.
+    """
+    assert (
+        _run_hook(
+            _RAW_WRAPUP_POST,
+            "gh pr comment 5 --body-file code_health/pr_wrapup.md  "
+            "# via forge-pr-wrapup",
+        )
+        == 2
     )
 
 

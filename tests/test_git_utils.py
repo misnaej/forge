@@ -42,6 +42,12 @@ def _clear_repo_root_cache() -> None:
     git_utils.repo_root.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _clear_own_login_cache() -> None:
+    """Reset the ``own_login`` LRU cache between tests."""
+    git_utils.own_login.cache_clear()
+
+
 # ---------------------------------------------------------------------------
 # _parse_files
 # ---------------------------------------------------------------------------
@@ -204,6 +210,27 @@ def test_repo_root_is_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     git_utils.repo_root()
     git_utils.repo_root()
     git_utils.repo_root()
+    assert calls["count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# own_login
+# ---------------------------------------------------------------------------
+
+
+def test_own_login_returns_none_on_gh_failure_and_caches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed ``gh_api`` lookup returns None and caches — only one call."""
+    calls = {"count": 0}
+
+    def _fake_gh_api(*_args: str, **_kwargs: object) -> str | None:
+        calls["count"] += 1
+        return None
+
+    monkeypatch.setattr(git_utils, "gh_api", _fake_gh_api)
+    assert git_utils.own_login() is None
+    assert git_utils.own_login() is None
     assert calls["count"] == 1
 
 
