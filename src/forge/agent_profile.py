@@ -841,6 +841,18 @@ def _render_suspects(runs: list[AgentRun]) -> list[str]:
     return lines
 
 
+def _iso(value: object) -> str | None:
+    """ISO-8601 text for a datetime, ``None`` for anything else.
+
+    Args:
+        value: Any object; checked if it is a datetime instance.
+
+    Returns:
+        ISO-8601 formatted string if value is a datetime, otherwise None.
+    """
+    return value.isoformat() if isinstance(value, datetime) else None
+
+
 def _run_json(run: AgentRun) -> dict[str, Any]:
     """JSON-safe view of a run (datetimes as ISO strings, properties included).
 
@@ -850,17 +862,16 @@ def _run_json(run: AgentRun) -> dict[str, Any]:
     Returns:
         The run's fields as a JSON-serializable dict.
     """
-    data = asdict(run)
-    data.pop("last_event", None)
-    for key in ("started", "ended"):
-        value = data.get(key)
-        data[key] = value.isoformat() if isinstance(value, datetime) else None
-    if data.get("stats"):
-        for key in ("started", "ended"):
-            value = data["stats"].get(key)
-            data["stats"][key] = (
-                value.isoformat() if isinstance(value, datetime) else None
-            )
+    data: dict[str, Any] = {
+        key: value for key, value in asdict(run).items() if key != "last_event"
+    }
+    data["started"] = _iso(run.started)
+    data["ended"] = _iso(run.ended)
+    if run.stats is not None:
+        stats: dict[str, Any] = dict(data["stats"])
+        stats["started"] = _iso(run.stats.started)
+        stats["ended"] = _iso(run.stats.ended)
+        data["stats"] = stats
     data.update(
         wall_s=round(run.wall_s, 1),
         active_s=round(run.active_s, 1),

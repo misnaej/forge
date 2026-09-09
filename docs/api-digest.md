@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 943 symbols._
+_72 modules, 944 symbols._
 
 ## `forge`
 
@@ -59,6 +59,7 @@ _72 modules, 943 symbols._
 - `_render_slowest(runs: list[AgentRun], top: int) -> list[str]` _(internal)_ — The *top* slowest runs by wall time.
 - `_render_tools(tools: list[ToolRow]) -> list[str]` _(internal)_ — Per-tool cost table (ledger ``PostToolUse`` durations only).
 - `_render_suspects(runs: list[AgentRun]) -> list[str]` _(internal)_ — Loop suspects and precommit-fixer cap breaches.
+- `_iso(value: object) -> str | None` _(internal)_ — ISO-8601 text for a datetime, ``None`` for anything else.
 - `_run_json(run: AgentRun) -> dict[str, Any]` _(internal)_ — JSON-safe view of a run (datetimes as ISO strings, properties included).
 - `render_json(runs: list[AgentRun], tools: list[ToolRow]) -> str` — Machine-readable report: runs, per-type rows, per-tool rows.
 - `append_history(root: Path, runs: list[AgentRun], label: str) -> None` — Append one summary line for this report to the profile ledger.
