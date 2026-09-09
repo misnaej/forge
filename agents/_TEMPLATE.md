@@ -23,7 +23,7 @@ the policy this template implements.
 | `name` | yes | Routing key. Lowercase-hyphen. Matches filename minus `.md`. |
 | `description` | yes | One sentence. **Routing trigger** ("Use proactively when X" / "Use immediately after Y") — not a role label ("Agent for X"). |
 | `tools` | yes | Least-privilege list. See "Tool sets per role" below. |
-| `model` | yes | `haiku` / `sonnet` / `opus` / `inherit`. See "Model per role". |
+| `model` | yes | `haiku` / `sonnet` / `opus` / `inherit`, or `fable` (user-approved only). See "Model per role". |
 
 ## Required body sections
 
@@ -84,6 +84,7 @@ return to the caller, which owns remediation and posting.
 | Code / doc review (analysis) | `sonnet` |
 | Multi-step reasoning + hallucination risk | `opus` |
 | Delegated workhorse, match parent context | `inherit` |
+| Above `opus` (user-approved only) | `fable` |
 
 Tier on **frequency × judgment-load**, not judgment alone. `haiku`
 pays off only where an agent is **both** high-frequency **and**
@@ -95,6 +96,17 @@ agent whose value is the quality of what it writes (`docs-types-checker`
 writes docstrings that ship) stays `sonnet`+ regardless of frequency — a
 shallow-but-passing artifact is worse than none. Downgrade only when the
 cost win is real *and* quality is untouched.
+
+**Upgrading past `opus` is the user's call, never the agent's.** `fable`
+is available above `opus`, and both an agent definition and a spawned
+subagent can name it silently — which is exactly why it is gated: the
+tier carries a cost the user is paying and did not choose. Treat it as a
+**possibility to raise, not a decision to make**: say in one line what
+the step would gain from it, then wait. Approval covers the work it was
+given for, not every later step, and it never becomes the default for an
+agent's shipped `model:` field without the same explicit yes. Absent
+that, the ceiling is `opus` — a step that seems to want more is first a
+prompt to sharpen, since a bigger model rarely rescues an unclear task.
 
 ## Reporter-agent header contract
 
@@ -200,7 +212,7 @@ description: <one-sentence routing trigger>
 tools:
   - <tool>
   - <tool>
-model: <haiku | sonnet | opus | inherit>
+model: <haiku | sonnet | opus | inherit | fable (user-approved only)>
 ---
 
 # <Agent Display Name>
