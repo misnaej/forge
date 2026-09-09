@@ -15,7 +15,7 @@ import logging
 import subprocess
 from typing import Any, Final
 
-from forge.git_utils import gh_api
+from forge.git_utils import gh_api, own_login
 
 
 logger = logging.getLogger(__name__)
@@ -161,7 +161,13 @@ def parse_paged_json(raw: str) -> list[Any]:
 
 
 def list_marker_comments(pr_number: int, marker: str) -> list[dict[str, object]] | None:
-    """Return the comments on *pr_number* carrying *marker*, oldest first.
+    """Return this identity's comments on *pr_number* carrying *marker*, oldest first.
+
+    Only comments authored by the login ``gh`` is signed in as
+    (:func:`forge.git_utils.own_login`) are returned: on a public repo
+    anyone can plant the marker, and the callers delete or rewrite what
+    this function hands them. A marker comment by someone else is logged
+    and skipped, never touched.
 
     Args:
         pr_number: GitHub PR number.
@@ -169,21 +175,38 @@ def list_marker_comments(pr_number: int, marker: str) -> list[dict[str, object]]
             own posts.
 
     Returns:
-        One ``{"id", "body", "created_at"}`` mapping per marker-carrying
-        comment, or ``None`` when the listing call itself failed — a
-        distinction callers need: "none posted yet" and "could not
-        look" demand different behaviour.
+        One ``{"id", "body", "created_at", "author"}`` mapping per own
+        marker-carrying comment, or ``None`` when the listing call failed
+        or the own identity is unknown — a distinction callers need:
+        "none posted yet" and "could not look" demand different behaviour.
     """
+    me = own_login()
+    if me is None:
+        logger.warning("cannot determine the gh login; marker comments left untouched")
+        return None
     raw = gh_api(
         f"repos/{{owner}}/{{repo}}/issues/{pr_number}/comments",
         "--paginate",
         "--jq",
-        "[.[] | {id, body, created_at}]",
+        "[.[] | {id, body, created_at, author: .user.login}]",
         timeout=GH_LIST_TIMEOUT,
     )
     if raw is None:
         return None
-    return [c for c in parse_paged_json(raw) if marker in str(c.get("body", ""))]
+    own: list[dict[str, object]] = []
+    for comment in parse_paged_json(raw):
+        if marker not in str(comment.get("body", "")):
+            continue
+        if comment.get("author") != me:
+            logger.warning(
+                "skipping marker comment %s by %s — not posted by %s",
+                comment.get("id"),
+                comment.get("author"),
+                me,
+            )
+            continue
+        own.append(comment)
+    return own
 
 
 def post_new_comment(pr_number: int, body: str) -> int:

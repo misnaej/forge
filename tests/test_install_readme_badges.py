@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from forge import install_readme_badges as rb
@@ -161,3 +162,133 @@ def test_inject_single_blank_when_h1_has_no_blank(tmp_path: Path) -> None:
     """Inserting after an H1 with no following blank line doesn't double-blank."""
     out = rb.inject("# Title\nbody\n", rb.render_block(["![x](y)"]))
     assert out == f"# Title\n\n{rb._START}\n![x](y)\n{rb._END}\n\nbody\n"
+
+
+def test_pick_ci_workflow_skips_alphabetically_first_non_ci_workflow(
+    tmp_path: Path,
+) -> None:
+    """A schedule-only workflow sorting before a PR-triggered one does not win.
+
+    ``assemble-release.yml`` sorts alphabetically before ``checks.yml`` and
+    only runs on a schedule; the alphabetically-first file must never be
+    used as a fallback (see ``_pick_ci_workflow`` docstring).
+    """
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "assemble-release.yml").write_text(
+        "on:\n  schedule:\n    - cron: '0 0 * * *'\n"
+    )
+    (wf / "checks.yml").write_text(
+        "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n"
+    )
+    assert rb._pick_ci_workflow(wf) == "checks.yml"
+
+
+def test_pick_ci_workflow_prefers_named_ci_yml_over_trigger_match(
+    tmp_path: Path,
+) -> None:
+    """``ci.yml`` wins even over an alphabetically-earlier trigger match."""
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "aaa-trigger.yml").write_text("on: pull_request\n")
+    (wf / "ci.yml").write_text("on: push\n")
+    assert rb._pick_ci_workflow(wf) == "ci.yml"
+
+
+def test_pick_ci_workflow_returns_none_when_no_candidate(tmp_path: Path) -> None:
+    """Only schedule-triggered workflows and no ``ci.yml`` → ``None``."""
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "nightly.yml").write_text("on:\n  schedule:\n    - cron: '0 0 * * *'\n")
+    assert rb._pick_ci_workflow(wf) is None
+
+
+def test_extract_ci_badge_returns_none_without_managed_block() -> None:
+    """No managed block in the README → ``None``, regardless of content."""
+    readme = "# Title\n\n[![CI](https://x)](https://y)\n"
+    assert rb._extract_ci_badge(readme) is None
+
+
+def test_extract_ci_badge_finds_ci_badge_among_other_badges() -> None:
+    """The CI badge is picked out from a block that also has other badges."""
+    ci_snippet = "[![CI](https://github.com/a/b/actions/workflows/ci.yml/badge.svg)](https://github.com/a/b/actions/workflows/ci.yml)"
+    block = (
+        f"{rb._START}\n"
+        f"![Python](https://img.shields.io/badge/python-3.11%2B-blue) "
+        f"{ci_snippet} "
+        f"![License](https://img.shields.io/badge/License-MIT-green)\n"
+        f"{rb._END}"
+    )
+    readme = f"# Title\n\n{block}\n"
+    assert rb._extract_ci_badge(readme) == ci_snippet
+
+
+def test_main_keeps_existing_ci_badge_when_no_workflow_identifiable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No identifiable CI workflow → the README's existing CI badge is kept.
+
+    Re-pointing the badge without an identifiable workflow would be a
+    guess, so `main` preserves whatever CI badge the README already
+    carries and logs a WARNING pointing at the `workflow` override.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nlicense = "MIT"\n[tool.forge.badges]\nenabled = true\n'
+    )
+    old_ci_badge = (
+        "[![CI](https://github.com/acme/widget/actions/workflows/old.yml/badge.svg)]"
+        "(https://github.com/acme/widget/actions/workflows/old.yml)"
+    )
+    readme_text = f"# Demo\n\n{rb._START}\n{old_ci_badge}\n{rb._END}\n\nIntro.\n"
+    (tmp_path / "README.md").write_text(readme_text)
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "nightly.yml").write_text("on:\n  schedule:\n    - cron: '0 0 * * *'\n")
+    monkeypatch.setattr(rb, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(rb, "_git_remote_slug", lambda _root: "acme/widget")
+    monkeypatch.setattr("sys.argv", ["install-forge-readme-badges"])
+    with caplog.at_level(logging.WARNING):
+        assert rb.main() == 0
+    text = (tmp_path / "README.md").read_text()
+    assert rb._extract_ci_badge(text) == old_ci_badge
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("No CI workflow identified" in r.message for r in warnings)
+
+
+def test_main_warns_about_missing_remote_not_workflow_when_no_slug(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No GitHub remote → the warning names the remote, not the workflow.
+
+    Behavior test: pins a misdiagnosis reproduced against the previous
+    tree — `main` used to blame "no CI workflow identified" and point at
+    the `[tool.forge.badges] workflow` override even when the real cause
+    was an unresolvable git remote, which that override cannot fix. The
+    existing CI badge is still kept either way.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nlicense = "MIT"\n[tool.forge.badges]\nenabled = true\n'
+    )
+    old_ci_badge = (
+        "[![CI](https://github.com/acme/widget/actions/workflows/old.yml/badge.svg)]"
+        "(https://github.com/acme/widget/actions/workflows/old.yml)"
+    )
+    readme_text = f"# Demo\n\n{rb._START}\n{old_ci_badge}\n{rb._END}\n\nIntro.\n"
+    (tmp_path / "README.md").write_text(readme_text)
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "nightly.yml").write_text("on:\n  schedule:\n    - cron: '0 0 * * *'\n")
+    monkeypatch.setattr(rb, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(rb, "_git_remote_slug", lambda _root: None)
+    monkeypatch.setattr("sys.argv", ["install-forge-readme-badges"])
+    with caplog.at_level(logging.WARNING):
+        assert rb.main() == 0
+    text = (tmp_path / "README.md").read_text()
+    assert rb._extract_ci_badge(text) == old_ci_badge
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("No GitHub remote" in r.message for r in warnings)
+    assert not any("[tool.forge.badges] workflow" in r.message for r in warnings)

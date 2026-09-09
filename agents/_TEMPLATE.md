@@ -61,6 +61,7 @@ In this order:
 | Role | Examples | Tools |
 |---|---|---|
 | **Reporter** | design-checker, security-checker, knowledge-search | `Read`, `Grep`, `Glob`, **read-only `Bash`** (+ `WebFetch` / `WebSearch` if grounding, + `Task` if delegating). Read-only `Bash` is whitelisted for: `git rev-parse` (SHA capture), `git diff` (PR diff read), `git branch` (current branch), `gh pr view --json` (PR-context capture), `forge-audit-*` runs (log refresh). No writes, no commits, no `gh pr comment`. |
+| **Advisor** | perf-optimizer (benchmarks a scratch copy, reports a patch) | Reporter tools + `Bash` that may write **outside the repo tree only** (`/tmp` copies, benchmarks, patches). No `Write`/`Edit`; the recommendation is applied by the main agent. Names live in `ADVISOR_AGENT_NAMES`; `forge-audit-agents` runs the same no-mutating-tools check as for reporters, without the `verified-at:` header contract. |
 | **Reporter-with-artifact** | docs-types-checker (fixes docstrings), weekly-summary (writes summary file) | Reporter tools + the *single* mutating tool the artifact requires (`Edit` for in-place doc fixes, `Write` for a dedicated file). The artifact MUST be the agent's only reason for mutation. |
 | **Actor / fixer** | precommit-fixer | `Bash`, `Read`, `Edit`, `Grep`, `Glob` |
 | **Orchestrator** | pr-manager, issue-triage | Same as actor + `Task` |

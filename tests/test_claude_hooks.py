@@ -3336,6 +3336,27 @@ def test_keep_squash_last_does_not_recurse_on_its_own_cli(tmp_path: Path) -> Non
     assert _record(env) == ""
 
 
+def test_keep_squash_last_runs_despite_trailing_cli_name_mention(
+    tmp_path: Path,
+) -> None:
+    """A CLI-name mention inside an argument does not exempt a raw post.
+
+    Only a command *starting with* (or chained to) the CLI name is its own
+    post; naming it inside a `--body` string is still a raw `gh pr comment`
+    that must re-enter the guard.
+    """
+    env = _stub_squash_cli(tmp_path, "exit 0")
+    assert (
+        _run_hook(
+            _KEEP_SQUASH_LAST,
+            'gh pr comment 61 --body "see forge-pr-squash-comment"',
+            env=env,
+        )
+        == 0
+    )
+    assert "--pr 61" in _record(env)
+
+
 def test_keep_squash_last_is_silent_on_a_no_op(tmp_path: Path) -> None:
     """A comment that is already newest produces no agent-visible output."""
     env = _stub_squash_cli(tmp_path, 'echo "squash comment is already the newest"')
@@ -3421,6 +3442,60 @@ def test_raw_wrapup_post_allows_the_cli_itself() -> None:
             "forge-pr-wrapup post --pr 5 --body-file code_health/pr_wrapup.md",
         )
         == 0
+    )
+
+
+def test_raw_wrapup_post_blocks_a_trailing_comment_mention() -> None:
+    """A trailing shell comment naming the CLI does not exempt a raw post.
+
+    Only a command *starting with* (or chained to) `forge-pr-wrapup` is its
+    own post; a `# via forge-pr-wrapup` trailer on a raw `gh pr comment`
+    must not exempt it from the gate.
+    """
+    assert (
+        _run_hook(
+            _RAW_WRAPUP_POST,
+            "gh pr comment 5 --body-file code_health/pr_wrapup.md  "
+            "# via forge-pr-wrapup",
+        )
+        == 2
+    )
+
+
+def test_raw_wrapup_post_blocks_a_multiline_command_led_by_the_cli() -> None:
+    """A CLI-led first line does not exempt a raw post on a later line.
+
+    Behavior test: pins a bypass reproduced against the previous tree —
+    the removed self-exemption regex matched line-by-line, so a
+    `forge-pr-wrapup` invocation on a command's first line exempted a raw
+    `gh pr comment` posting the wrap-up file on the next line.
+    """
+    assert (
+        _run_hook(
+            _RAW_WRAPUP_POST,
+            "forge-pr-wrapup --pr 123\n"
+            "gh pr comment 123 --body-file code_health/pr_wrapup.md",
+        )
+        == 2
+    )
+
+
+def test_raw_wrapup_post_blocks_a_raw_post_wrapping_the_cli_in_substitution() -> None:
+    """Naming the CLI inside a `$(...)` substitution does not exempt the post.
+
+    Behavior test: pins a bypass reproduced against the previous tree —
+    the removed self-exemption regex anchored on a literal `(`, so
+    wrapping the CLI in a command-substitution argument
+    (`--body "$(forge-pr-wrapup ...)"`) satisfied the anchor and exempted
+    the surrounding raw `gh pr comment`.
+    """
+    assert (
+        _run_hook(
+            _RAW_WRAPUP_POST,
+            "gh pr comment 123 --body-file code_health/pr_wrapup.md "
+            '--body "$(forge-pr-wrapup --pr 123 --dry-run)"',
+        )
+        == 2
     )
 
 

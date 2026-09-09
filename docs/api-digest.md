@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_70 modules, 898 symbols._
+_70 modules, 901 symbols._
 
 ## `forge`
 
@@ -545,7 +545,7 @@ _70 modules, 898 symbols._
 - `_cites_repo_file(token: str) -> bool` _(internal)_ — Return whether *token* is shaped like a repo path forge mandates.
 - `validate_no_ai_attribution(text: str) -> None` — Reject Claude / AI attribution per FOUNDATION §2.
 - `parse_paged_json(raw: str) -> list[Any]` — Flatten ``gh api --paginate --jq '[...]'`` output into one list.
-- `list_marker_comments(pr_number: int, marker: str) -> list[dict[str, object]] | None` — Return the comments on *pr_number* carrying *marker*, oldest first.
+- `list_marker_comments(pr_number: int, marker: str) -> list[dict[str, object]] | None` — Return this identity's comments on *pr_number* carrying *marker*, oldest first.
 - `post_new_comment(pr_number: int, body: str) -> int` — Post *body* as a new comment on PR ``pr_number``.
 - `delete_comment(comment_id: int) -> bool` — Delete one issue comment by id.
 - `patch_comment(comment_id: int, body: str) -> bool` — Replace one issue comment's body in place.
@@ -570,6 +570,7 @@ _70 modules, 898 symbols._
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
 - `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.
 - `gh_api(*args: str, timeout: int = 10) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
+- `own_login() -> str | None` — Return the GitHub login ``gh`` is authenticated as, once per process.
 - `_run_git(*args: str, cwd: Path | None = None) -> str` _(internal)_ — Run a git command and return stdout.
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `_fallback_identity_args(repo_root: Path) -> list[str]` _(internal)_ — Return ``-c`` identity flags when git has no usable committer identity.
@@ -708,6 +709,8 @@ _70 modules, 898 symbols._
 - `_shields_static(label: str, message: str, color: str) -> str` _(internal)_ — Build a static shields.io badge image URL.
 - `_md(alt: str, image: str, link: str | None = None) -> str` _(internal)_ — Render one markdown badge (optionally wrapped in a link).
 - `_git_remote_slug(root: Path) -> str | None` _(internal)_ — Return ``owner/repo`` from the ``origin`` remote, or ``None``.
+- `_pick_ci_workflow(wf_dir: Path) -> str | None` _(internal)_ — Choose the workflow file the CI badge should point at.
+- `_extract_ci_badge(readme: str) -> str | None` _(internal)_ — Return the CI badge currently inside the managed block, if any.
 - `_ci_badge(root: Path, slug: str | None, workflow: str | None) -> str | None` _(internal)_ — Build the GitHub Actions CI badge for the chosen workflow, if any.
 - `_python_badge(data: dict) -> str | None` _(internal)_ — Build the Python-version badge from ``requires-python``.
 - `_license_badge(data: dict) -> str | None` _(internal)_ — Build the License badge from ``[project].license``.

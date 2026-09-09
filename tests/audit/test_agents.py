@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -10,8 +11,6 @@ from forge.audit.common import Severity
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import pytest
 
 
@@ -501,6 +500,47 @@ def test_per_agent_findings_includes_section_order_finding() -> None:
         frozenset(audit_agents._REPORTER_WITH_ARTIFACT_NAMES),
     )
     assert any("out of template order" in f.message for f in findings)
+
+
+def test_per_agent_findings_flags_advisor_holding_mutating_tool() -> None:
+    """An advisor agent (perf-optimizer) holding Write gets the reporter-tools MEDIUM.
+
+    Regression on the REAL wiring: `_per_agent_findings` is called with only
+    the BASE reporter set — the advisor union happens inside it. Dropping
+    `| advisors` from `_per_agent_findings` makes this fail, which a
+    caller-supplied union could not detect.
+    """
+    fm = {
+        "description": "Use proactively when asked to optimize hot paths.",
+        "tools": ("Read", "Bash", "Write"),
+    }
+    doc = _agent_doc(frontmatter=fm, path="agents/perf-optimizer.md")
+    findings = audit_agents._per_agent_findings(
+        doc,
+        set(),
+        frozenset(audit_agents.REPORTER_AGENT_NAMES),
+        frozenset(audit_agents._REPORTER_WITH_ARTIFACT_NAMES),
+    )
+    tool_findings = [f for f in findings if "'Write'" in f.message]
+    assert tool_findings
+    assert {f.severity for f in tool_findings} == {Severity.MEDIUM}
+
+
+def test_shipped_perf_optimizer_agent_passes_advisor_checks() -> None:
+    """The real shipped `agents/perf-optimizer.md` carries no mutating tool.
+
+    Parses the actual file on disk (not a synthetic doc) so a future edit
+    that adds `Write`/`Edit` to its `tools:` list, or removes it from
+    `ADVISOR_AGENT_NAMES`, is caught end to end.
+    """
+    root = Path(__file__).parents[2]
+    doc = audit_agents._parse_agent(root / "agents" / "perf-optimizer.md", root)
+    reporters, artifact_reporters = audit_agents._effective_reporter_sets(root)
+    findings = audit_agents._per_agent_findings(
+        doc, set(), reporters, artifact_reporters
+    )
+    assert not any("mutating tool" in f.message for f in findings)
+    assert not any("verified-at:" in f.message for f in findings)
 
 
 # ---------------------------------------------------------------------------

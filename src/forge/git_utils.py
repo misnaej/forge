@@ -473,6 +473,22 @@ def gh_api(*args: str, timeout: int = 10) -> str | None:
     return out or None
 
 
+@lru_cache(maxsize=1)
+def own_login() -> str | None:
+    """Return the GitHub login ``gh`` is authenticated as, once per process.
+
+    The identity is what lets a CLI tell its *own* earlier comments from
+    ones a stranger planted with the same marker. A failed lookup caches
+    as ``None`` for the rest of the process — the same collapse-to-``None``
+    contract as :func:`gh_api`, and the safe direction: callers treat an
+    unknown identity as "cannot verify" and mutate nothing.
+
+    Returns:
+        The login, or ``None`` when ``gh`` cannot report it.
+    """
+    return gh_api("user", "--jq", ".login") or None
+
+
 def _run_git(*args: str, cwd: Path | None = None) -> str:
     """Run a git command and return stdout.
 
