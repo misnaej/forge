@@ -81,6 +81,18 @@ Stop immediately and report if any step fails.
 
 7. **Verify cross-references** after deletions — no remaining file should reference a deleted one.
 
+8. **Check what the last task's agents did**
+   ```bash
+   forge-agent-profile --last 20
+   ```
+   Reads the `log_agent_timing` ledger (`code_health/agent_timing.jsonl`).
+   Nothing to read — no ledger, or the CLI is absent — is a silent skip.
+   A **loop suspect** or a `precommit-fixer` **cap breach** is a process
+   defect the run just produced and nobody would otherwise see: name it,
+   and offer `/report-to-forge` before moving on. Wall time far above
+   active time is normal here (monitors, waits) and is not a finding on
+   its own. This is a read: it never blocks the phase.
+
 ## Phase 2.5: Resume a `Requires:`-linked sequence
 
 Work is often planned as an ordered chain via FOUNDATION §14's
