@@ -229,19 +229,19 @@ def _project_env(tmp_path: Path, block_install_deps: str) -> dict[str, str]:
 
 @pytest.mark.parametrize(
     "command",
-    [
-        "pixi add numpy",
-        "pixi remove numpy",
-        "pixi update",
-        "pixi upgrade",
-        "pixi global install ripgrep",
-    ],
+    ["pixi add numpy", "pixi global install ripgrep"],
 )
 def test_install_deps_blocks_pixi_manifest_and_lock_mutations(command: str) -> None:
-    """Pixi verbs that rewrite the manifest or the lock are blocked (#466).
+    """Pixi verbs absent from the allowlist block, whatever the verb is.
+
+    `pixi` is governed by an allowlist, not an enumerated denylist — `add`
+    blocks because it is not one of `run`/`shell`/`install`/`list`/`info`/
+    `tree`, not because it was singled out. `pixi global install` blocks
+    on its first token (`global`), showing the verb is read positionally
+    rather than by scanning the command for a known mutating word.
 
     Args:
-        command: A pixi invocation that mutates pixi.toml / pixi.lock.
+        command: A pixi invocation whose verb is absent from the allowlist.
     """
     assert _run_hook(_INSTALL_DEPS, command) == 2
 
@@ -252,18 +252,24 @@ def test_install_deps_blocks_pixi_run_pip_install() -> None:
 
 
 def test_install_deps_blocks_pixi_add_after_a_read_only_verb() -> None:
-    """A read-only pixi verb cannot shadow a mutation later in the command.
+    """An earlier allowed pixi verb does not mask a later blocked one.
 
-    The read-only fast-path matches anywhere in the command string, so
-    `pixi add` is checked before it — otherwise `pixi list && pixi add`
-    would exit 0 on the strength of the `list`.
+    The allowlist is evaluated per segment, split on shell separators —
+    `pixi list && pixi add numpy` must block on the `add` segment even
+    though the `list` segment right before it is allowed.
     """
     assert _run_hook(_INSTALL_DEPS, "pixi list && pixi add numpy") == 2
 
 
 @pytest.mark.parametrize(
     "command",
-    ["pixi install", "pixi run --locked pytest", "pixi list", "pixi info"],
+    [
+        "pixi install",
+        "pixi run --locked pytest",
+        "pixi list",
+        "pixi info",
+        "pixi tree",
+    ],
 )
 def test_install_deps_allows_pixi_materialisation_from_the_lock(command: str) -> None:
     """Materialising `.pixi/` from the committed lock is not an install (#466).
@@ -316,6 +322,310 @@ def test_install_deps_pixi_unblocked_when_excluded_from_the_list(
     proc = _run_hook_proc(_INSTALL_DEPS, "pixi add numpy", env=env)
     assert proc.returncode == 0
     assert proc.stdout.strip() == ""
+
+
+def test_install_deps_blocks_pixi_run_python_module_pip_install() -> None:
+    """`pixi run python -m pip install …` is the `python -m pip` wrapper form.
+
+    The wrapper rule recognizes `python -m pip install` between a
+    manager's `run` and the next shell separator, not only bare
+    `pip install`.
+    """
+    assert _run_hook(_INSTALL_DEPS, "pixi run python -m pip install x") == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["pixi lock", "pixi project channel add conda-forge", "pixi exec ruff"],
+)
+def test_install_deps_blocks_pixi_lock_project_and_exec_verbs(command: str) -> None:
+    """Verbs that write the lock, the manifest, or a temp env all block.
+
+    `lock` rewrites pixi.lock, `project channel add` rewrites pixi.toml,
+    and `exec` materialises a throwaway environment of arbitrary packages —
+    none of them are on the read-only allowlist.
+
+    Args:
+        command: A pixi invocation whose verb writes state outside the
+            committed lock.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "conda run python -m pip install x",
+        "conda run -n base pip install x",
+        "pixi run --locked pip install x",
+    ],
+)
+def test_install_deps_blocks_wrapper_run_with_non_adjacent_install(
+    command: str,
+) -> None:
+    """`run` and the install verb need not be adjacent to block.
+
+    Anything up to the next shell separator may sit between them, so
+    `conda run -n base pip install` and `pixi run --locked pip install`
+    both block. The last case is worth noting on its own: it is the exact
+    form this hook's own `--locked` advisory recommends running, and it
+    still blocks — `--locked` silences the lock-rewrite advisory, not the
+    install-verb wrapper rule.
+
+    Args:
+        command: A `<manager> run … pip install …` wrapper form with a
+            non-adjacent `run` and `pip install`.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pipenv run --foo pip install x",
+        "poetry run python -m pip install x",
+        "uv run python -m pip install x",
+    ],
+)
+def test_install_deps_blocks_wrapper_run_for_every_declared_manager(
+    command: str,
+) -> None:
+    """The `<mgr> run pip install` wrapper rule covers all five managers.
+
+    conda and pixi are exercised elsewhere; this pins the remaining three
+    names in the wrapper rule's `(conda|pipenv|uv|poetry|pixi)`
+    alternation — pipenv, poetry, uv — so the hook's header claim of
+    covering all five managers has a case for each.
+
+    Args:
+        command: A `<manager> run … pip install …` wrapper form for a
+            manager other than conda or pixi.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["uv tool install ripgrep", "uv python install 3.13", "uv pip install x"],
+)
+def test_install_deps_blocks_uv_install_forms(command: str) -> None:
+    """`uv (pip|tool|python) install` all block.
+
+    `uv pip install` is the pre-existing arm of the alternation; `tool`
+    and `python` cover uv's other install subcommands.
+
+    Args:
+        command: A `uv … install` invocation.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
+
+
+def test_install_deps_blocks_pixi_lock_despite_leading_pip_list() -> None:
+    """A leading read-only segment does not shadow a later pixi mutation.
+
+    `pip list` alone matches the shared read-only fast-path, which is
+    checked anywhere in the command rather than per segment. The pixi
+    verb loop runs before that fast-path, so this command must still
+    block on the `pixi lock` segment.
+    """
+    assert _run_hook(_INSTALL_DEPS, "pip list && pixi lock") == 2
+
+
+def test_install_deps_blocks_pixi_lock_after_unrelated_leading_command() -> None:
+    """A pixi mutation still blocks when it is not the first command."""
+    assert _run_hook(_INSTALL_DEPS, "cd /tmp && pixi lock") == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["pixi", "pixi --version", "pixi help"],
+)
+def test_install_deps_allows_bare_pixi_and_version_help_forms(command: str) -> None:
+    """A bare `pixi`, `--version`, and `help` are exempt, not blocked.
+
+    Two different case arms cover the three forms: a bare `pixi` extracts
+    an empty verb, matched by the `""` arm; `--version` and `help` are
+    each extracted as the literal verb token and exempted by name in the
+    same case statement, alongside `-V`/`--help`/`-h`.
+
+    Args:
+        command: A pixi invocation with no verb, or a version/help form.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 0
+
+
+def test_install_deps_advises_locked_on_pixi_shell_too() -> None:
+    """The `--locked` advisory fires for `pixi shell`, not only `pixi run`.
+
+    The advisory regex is `(run|shell)`, and this is the only test that
+    exercises the `shell` side of that alternation.
+    """
+    proc = _run_hook_proc(_INSTALL_DEPS, "pixi shell")
+    assert proc.returncode == 0
+    assert "--locked" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pixi --manifest-path x run pytest",
+        "pixi --manifest-path run lock",
+        "pixi --manifest-path list add numpy",
+    ],
+)
+def test_install_deps_blocks_flag_value_masking_the_run_verb(command: str) -> None:
+    """A flag's value can never masquerade as the verb.
+
+    Verb extraction is the first token after `pixi`, flags included, so a
+    flag like `--manifest-path` occupies the verb slot itself and fails
+    the exact-match allowlist — whatever follows it (a value that reads
+    like an allowed verb, or the real verb the flag was meant to precede)
+    is never reached or inspected. All three commands block on the same
+    extraction step, regardless of what trails the flag.
+
+    Args:
+        command: A pixi invocation where a flag precedes the verb, with
+            an allowed verb's name appearing as the flag's value or later
+            in the command.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
+
+
+def test_install_deps_allows_pixi_mentioned_inside_echo() -> None:
+    """Text naming `pixi` mid-string, not at a segment start, is not a command.
+
+    The per-segment scan anchors each check to `^[[:space:]]*pixi`, so
+    `echo pixi lock` — where `pixi lock` is text being echoed, not
+    invoked — is never read as a pixi command.
+    """
+    assert _run_hook(_INSTALL_DEPS, "echo pixi lock") == 0
+
+
+def test_install_deps_blocks_pixi_lock_on_newline_separated_command() -> None:
+    """A newline between commands splits segments too, not only `;`/`&`/`|`.
+
+    The per-segment read loop consumes a real newline as its own line
+    delimiter, independently of the `tr` translation that turns the
+    punctuation boundaries into newlines — this exercises that path
+    directly.
+    """
+    assert _run_hook(_INSTALL_DEPS, "pixi list\npixi lock") == 2
+
+
+def test_install_deps_allows_pixi_list_inside_parenthesised_subshell() -> None:
+    """A parenthesised subshell segment is split cleanly at its parens.
+
+    `(cd sub && pixi list)` must read the pixi segment's verb as `list`,
+    not `list)` — a trailing paren left attached to the verb token would
+    fail the exact-match allowlist check and block a read-only command.
+    """
+    assert _run_hook(_INSTALL_DEPS, "(cd sub && pixi list)") == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["pixi -q list", "pixi -q lock"],
+)
+def test_install_deps_pixi_leading_flag_blocks_fail_closed(command: str) -> None:
+    """A leading flag before the verb blocks — extraction never skips it.
+
+    Verb extraction is the first token after `pixi`, flags included, so
+    `-q` itself occupies the verb slot and fails the exact-match
+    allowlist: both `pixi -q list` and `pixi -q lock` block. Only an
+    immediate allowed verb passes; the cost is one `!` for a
+    flag-prefixed command that is actually read-only.
+
+    Args:
+        command: A pixi invocation with a leading flag before the verb.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "(pip install x)",
+        "(conda install numpy)",
+        "(uv add requests)",
+        "(poetry add x)",
+        "(pipenv install x)",
+        "(python -m pip install x)",
+    ],
+)
+def test_install_deps_blocks_subshell_wrapped_installs(command: str) -> None:
+    """A subshell is a command boundary, not a hiding place, for every manager.
+
+    Every install rule anchors its match to a command start or a shell
+    separator, and `(` is one of those separators: the guard judges what
+    the subshell contains, not merely that a subshell is present. This
+    holds regardless of which manager sits inside the parens.
+
+    Args:
+        command: A subshell-wrapped install invocation for one manager.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
+
+
+def test_install_deps_blocks_pixi_run_pip_install_inside_subshell() -> None:
+    """The `<mgr> run pip install` wrapper rule is reachable through a subshell.
+
+    `(pixi run pip install x)` reaches the wrapper rule specifically, not
+    the bare-pip rule: `pip` here is preceded by `run `, not a command
+    start or separator, so only the wrapper rule's own `(` anchor can
+    catch it.
+    """
+    assert _run_hook(_INSTALL_DEPS, "(pixi run pip install x)") == 2
+
+
+def test_install_deps_allows_subshell_around_an_innocent_command() -> None:
+    """`(` as a command separator is not a blanket block on parentheses.
+
+    `(pytest -q)` is a subshell whose contents match no install rule, so
+    it stays allowed — the separator only marks where a rule may begin
+    matching; the parenthesis itself is never a signal on its own.
+    """
+    assert _run_hook(_INSTALL_DEPS, "(pytest -q)") == 0
+
+
+def test_install_deps_advises_locked_on_pixi_run_inside_subshell() -> None:
+    """SCENARIO: an agent runs a bare `pixi run` wrapped in a subshell.
+
+    MOCK SETUP: none — the hook is a black box over its stdin payload.
+    EXPECTED BEHAVIOR: allowed, but with the `--locked` advisory, because
+    the advisory anchors to the same separator class as the block rules,
+    so a subshell does not silence it.
+    """
+    proc = _run_hook_proc(_INSTALL_DEPS, "(pixi run pytest)")
+    assert proc.returncode == 0
+    assert "--locked" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "{ pip install requests; }",
+        "! pip install x",
+        "if true; then pip install x; fi",
+        "while false; do pip install x; done",
+        "case v in x) pip install y;; esac",
+        "f(){ pip install x; }; f",
+        "{ pixi lock; }",
+    ],
+)
+def test_install_deps_blocks_compound_command_boundaries(command: str) -> None:
+    """A compound-command construct is a boundary, not a hiding place.
+
+    Braces, a leading `!`, and the `then`/`else`/`elif`/`do` keyword
+    family all mark a command boundary alongside the punctuation set, so
+    the guard reaches and judges the command sitting inside `{ }`, an
+    `if`/`while`/`case` construct, a function body, or a `!`-negated
+    pipeline, rather than treating the construct itself as opaque.
+
+    Args:
+        command: A compound-command construct wrapping a blocked install
+            or pixi mutation.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
 
 
 _ATTRIBUTION = "block_claude_attribution.sh"

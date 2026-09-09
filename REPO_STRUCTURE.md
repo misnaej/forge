@@ -159,7 +159,7 @@ enforcement:
 - block_force_push.sh: block force pushes
 - block_forge_docs_edits.sh: block agent edits inside the forge-managed forge-docs/ mirror
 - block_git_rebase.sh: block `git rebase` and `git pull --rebase` from agents (no bypass — sync via plain base merge)
-- block_install_deps.sh: block dependency installation (pip / conda / pipenv / poetry / uv / pixi; pixi scoped to manifest+lock writes — `pixi run`/`install` stay allowed)
+- block_install_deps.sh: block dependency installation (pip / conda / pipenv / poetry / uv / pixi; pixi governed by a verb allowlist that fails closed, the other five by denylists)
 - block_protected_branches.sh: block direct pushes to the protected base branch (`[tool.forge].base_branch`)
 - block_no_verify.sh: block `--no-verify`
 - block_pr_merge.sh: block autonomous PR merges
