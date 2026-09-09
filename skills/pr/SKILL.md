@@ -348,7 +348,10 @@ Verification is done, fixes are committed, and the wrap-up is authored
 
 16. Delegate posting. The wrap-up and squash message were **authored in
     Step 3.92** — `pr-manager` posts them; it does NOT re-run the
-    verification agents (pass the Step 1 reports verbatim only if 3.92
+    verification agents, the test suite, or the pre-commit battery —
+    every result gathered above is passed to it with the SHA it was
+    gathered at, and re-running them is what stalls finalization (pass
+    the Step 1 reports verbatim only if 3.92
     was somehow skipped — see [agents/pr-manager.md "Pre-run
     reports"](../../agents/pr-manager.md)).
 
