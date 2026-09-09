@@ -2260,3 +2260,59 @@ def test_branch_added_fragments_unresolvable_base_returns_empty(
     commit_all(tmp_path, "feat: fragment")
 
     assert branch_added_fragments(tmp_path) == []
+
+
+def test_branch_added_fragments_excludes_parent_prs_fragment_on_stacked_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stacked branch's ``branch_added_fragments`` excludes the parent's fragment.
+
+    SCENARIO: ``feat/child`` branches off ``feat/parent`` — itself an
+    unmerged PR, pushed to origin with its own fragment — rather than
+    off ``main``.
+    MOCK SETUP: ``changelog_fragments.resolve_pr_base_ref`` is
+    monkeypatched to return ``origin/feat/parent``, standing in for the
+    open PR's real base the ``gh api`` round-trip would report.
+    EXPECTED BEHAVIOR: only the child's own fragment counts as
+    branch-added; the parent's fragment, present at the child's fork
+    point, is excluded — a merge-base diff against the configured
+    ``main`` would wrongly count both.
+    """
+    work, _bare = init_single_track_repo(tmp_path)
+    (work / "pyproject.toml").write_text(
+        '[tool.forge]\nbase_branch = "main"\n\n'
+        '[tool.forge.changelog]\nmode = "fragments"\n'
+    )
+    commit_all(work, "chore: fragments mode setup")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/parent"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+    _write_fragment(work / "changelog.d", "parent.added.md", "bump: minor\n- parent\n")
+    commit_all(work, "feat: parent's own fragment")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "feat/parent"],
+        cwd=work,
+        env=GIT_ENV,
+        check=True,
+    )
+
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/child"], cwd=work, env=GIT_ENV, check=True
+    )
+    _write_fragment(work / "changelog.d", "child.added.md", "bump: patch\n- child\n")
+    commit_all(work, "feat: child's own fragment")
+
+    monkeypatch.setattr(
+        changelog_fragments,
+        "resolve_pr_base_ref",
+        lambda *_a, **_kw: "origin/feat/parent",
+    )
+
+    assert branch_added_fragments(work) == ["changelog.d/child.added.md"]

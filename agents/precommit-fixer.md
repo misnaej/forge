@@ -31,7 +31,10 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
   (targeted, as above) before reporting — a PASS claimed without the
   re-run is a false report.
 - **Allowed CLIs**: `forge-precommit` — the ONLY loop driver, **hard cap
-  THREE invocations per run** (refresh → re-verify → final) — and, at
+  THREE full invocations per run** (refresh → re-verify → final; the
+  `block_fixer_recon` hook refuses the fourth and records each in
+  `code_health/agent_timing.jsonl`, so the cap is machinery, not memory)
+  — and, at
   most once each, an individual step CLI (`fix-forge-ruff`,
   `verify-forge-docstrings`, `verify-forge-repo-structure`,
   `verify-forge-test-naming`, `verify-forge-manifest`,
@@ -88,6 +91,7 @@ the install hint. Never fall back to raw `ruff` / `python -m`.
 | `repo_structure_check.log` | **Edit** `REPO_STRUCTURE.md` to match the tree per the log diff. |
 | `manifest_json.log` | **Edit** `.claude-plugin/plugin.json` per the parse / schema error. |
 | `plugin_version.log` | **Edit** `plugin.json["version"]` per your repo's plugin-version policy (the consumer `CLAUDE.md` should document it). The log states the required version. |
+| `changelog_version.log` — "N fragments added since this branch's base" | **REPORT ONLY.** A `changelog.d/` file this change did not create is another PR's entry (a stacked branch carries its parent's). Never merge, rewrite, or delete it, nor ask the caller to; report the names and that the branch looks stacked. |
 | `pip_audit.log` | **REPORT ONLY — never Edit dependency pins.** A pin bump ships in a dedicated `chore(deps)` PR or with explicit user approval, never riding a feature PR (FOUNDATION §6). Report each advisory with the affected pin, the suggested version, and where the pin lives. Never run `pip install`. |
 | Anything that looks like a secret leak (gitleaks-style) | **STOP.** Escalate to the human. Never rewrite history. |
 
@@ -108,19 +112,14 @@ graph by hand.
 forge-precommit
 ```
 
-Confirms Phase 2 Edits cleared the residue (the ruff step re-runs format + fix, so Edit-introduced drift is picked up). If a blocking step still fails: ONE more Phase 2 pass on that step's log, then the FINAL `forge-precommit`. That is the whole loop — **three `forge-precommit` runs maximum, ever**. Hitting the cap with a step still failing, or seeing the same finding set twice in a row, means you are stuck: STOP immediately and emit the `STUCK` block below. More loops are noise, not progress.
+Confirms Phase 2 Edits cleared the residue (the ruff step re-runs format + fix, so Edit-introduced drift is picked up). If a blocking step still fails: ONE more Phase 2 pass on that step's log, then the FINAL `forge-precommit`. That is the whole loop — **three `forge-precommit` runs maximum, ever**; the `block_fixer_recon` hook refuses a fourth. Hitting the cap with a step still failing, or the **same finding set twice in a row** (the same failing steps after two consecutive full runs), means you are stuck: STOP and emit the `STUCK` block below. Report the tally (`n/3`) in every hand-back.
 
 **A formatter-reverted Edit is STUCK after ONE occurrence — not three.**
-When a re-run shows your Edit undone by the ruff-format phase (same
-finding, same location, your change gone), the finding is
-*formatter-stable*: ruff format has exactly one canonical layout for
-that code, your layout isn't it, and no re-arrangement you try will
-survive the next format pass. The classic case is a line only a
-**rename** can shorten (an overlong `def` name whose canonical one-line
-signature exceeds the length limit) — a semantic change outside your
-mechanical-fix mandate. Retrying layouts burns the whole run budget on
-an unwinnable fight; report the revert in the `STUCK` block and name
-the semantic fix the main agent should make.
+A re-run that shows your Edit undone by ruff format means the finding is
+*formatter-stable*: there is one canonical layout and no re-arrangement
+survives the next pass (classic case: a line only a **rename** can
+shorten — a semantic change outside your mandate). Report the revert in
+the `STUCK` block and name the semantic fix for the main agent.
 
 `pip_audit.log` residue: handled per the Modes table (never auto-bumped).
 
@@ -195,6 +194,8 @@ PRECOMMIT-FIXER COMPLETE (mode: normal|strict)
 
 Steps fixed:
   - <step>: <count> violations resolved (<dispatch path>)
+
+Full forge-precommit runs: <n>/3
 
 Dep advisories (report only — bumps need a dedicated chore(deps) PR):
   - <package>: <pinned> → suggested <patched> in <file> (<advisory id>)

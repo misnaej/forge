@@ -301,6 +301,32 @@ def test_runs_from_ledger_agent_type_arrives_only_on_later_event_still_recorded(
     assert run.agent_type == "forge:test-writer"
 
 
+def test_apply_event_precommit_full_run_increments_ledger_precommit_runs() -> None:
+    """Each ``precommit_full_run`` ledger line (block_fixer_recon.sh) adds one."""
+    events = [
+        _event(
+            event="SubagentStart",
+            ts_ms=BASE_MS,
+            agent_id="a3",
+            agent_type=PRECOMMIT_FIXER_AGENT,
+        ),
+        _event(
+            event="precommit_full_run",
+            ts_ms=BASE_MS + 1000,
+            agent_id="a3",
+            agent_type=PRECOMMIT_FIXER_AGENT,
+        ),
+        _event(
+            event="precommit_full_run",
+            ts_ms=BASE_MS + 2000,
+            agent_id="a3",
+            agent_type=PRECOMMIT_FIXER_AGENT,
+        ),
+    ]
+    run = runs_from_ledger(events)["a3"]
+    assert run.ledger_precommit_runs == 2
+
+
 # ---------------------------------------------------------------------------
 # runs_from_ledger — idle gap clipping
 # ---------------------------------------------------------------------------
@@ -817,6 +843,41 @@ def test_cap_breach_true_only_for_precommit_fixer_agent_type_past_cap() -> None:
     assert over_cap.cap_breach is True
     assert at_cap.cap_breach is False
     assert other_type_over_cap.cap_breach is False
+
+
+def test_precommit_runs_property_takes_max_of_ledger_and_transcript() -> None:
+    """``precommit_runs`` is the larger of the ledger count and the transcript's.
+
+    Neither source can hide a breach the other saw: the ledger is
+    primary (written by ``block_fixer_recon.sh`` as it enforces the
+    cap), the transcript regex covers history recorded before that
+    hook existed.
+    """
+    ledger_wins = AgentRun(
+        agent_id="1",
+        agent_type=PRECOMMIT_FIXER_AGENT,
+        ledger_precommit_runs=6,
+        stats=TranscriptStats(precommit_runs=2),
+    )
+    transcript_wins = AgentRun(
+        agent_id="2",
+        agent_type=PRECOMMIT_FIXER_AGENT,
+        ledger_precommit_runs=2,
+        stats=TranscriptStats(precommit_runs=5),
+    )
+    assert ledger_wins.precommit_runs == 6
+    assert transcript_wins.precommit_runs == 5
+
+
+def test_cap_breach_true_from_ledger_count_alone_no_transcript() -> None:
+    """A ledger-only run (no transcript at all) still breaches from its own count."""
+    run = AgentRun(
+        agent_id="1",
+        agent_type=PRECOMMIT_FIXER_AGENT,
+        ledger_precommit_runs=PRECOMMIT_RUN_CAP + 1,
+        stats=None,
+    )
+    assert run.cap_breach is True
 
 
 def test_loop_suspect_true_at_threshold_false_one_below() -> None:

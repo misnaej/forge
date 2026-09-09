@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SubagentStart / SubagentStop / PostToolUse: append one JSON line per
 # event to code_health/agent_timing.jsonl — the agent-timing ledger
-# `forge-agent-profile` reads.
+# `forge-agent-profile` reads. block_fixer_recon.sh appends to the same
+# ledger (one `precommit_full_run` line per allowed full run).
 #
 # Forge times pre-commit steps, tests, and wrapped subprocesses, but
 # nothing timed the agents themselves: how long forge:design-checker

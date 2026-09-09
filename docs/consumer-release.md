@@ -270,6 +270,8 @@ the per-tag headings and syncs the manifest to the latest tag.
 No-version opt-outs (`NO_VERSION=1`, branch token, commit marker) apply
 unchanged.
 
+**Stacked PRs.** A branch opened on top of another unmerged PR's branch carries the parent's fragment. The gate counts fragments since the fork with the PR's *real* base — `GITHUB_BASE_REF` in CI, the open PR's target via `gh` on a workstation, the configured base otherwise — so the parent's fragment is not yours and is never counted. Never merge or delete a fragment your change did not create; if the count still trips, retarget the PR or wait for the parent to merge.
+
 ## Choosing the bump
 
 The same decision axis governs both forge's own manifest-versioned

@@ -43,7 +43,9 @@ the draft:
 - the agent's hand-back text, exactly as returned
 - the failing `code_health/*.log` excerpt
 - the exact command that was blocked or misfired, and the hook message
-- for an agent or skill defect, its timing profile:
+- for an agent or skill defect, its timing profile — **always run this;
+  a report about an agent's behaviour without it is missing the one
+  piece of evidence that is measured rather than remembered**:
   ```bash
   forge-agent-profile --agent-type <forge:name> --last 10 --no-history
   ```

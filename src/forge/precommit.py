@@ -2042,11 +2042,16 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
         errors = check_pending_fragments(repo_root)
         added = branch_added_fragments(repo_root)
         if len(added) > 1:
+            # Never phrase the remedy as merging the fragments: on a
+            # stacked branch one of them is another PR's authored entry,
+            # and "merge them" once led the fixer to propose deleting it.
             errors.append(
-                f"{len(added)} fragments added on this branch "
-                f"({', '.join(added)}) — one fragment per PR: merge the "
-                "bullets into a single <slug>.<type>.md (strongest bump "
-                "level wins)."
+                f"{len(added)} fragments added since this branch's base "
+                f"({', '.join(added)}) — a PR carries ONE fragment. If this "
+                "PR is stacked on an unmerged PR, the parent's fragment is "
+                "not yours: leave it and retarget or wait for the parent to "
+                "merge. Otherwise move your own bullets into a single "
+                "<slug>.<type>.md (strongest bump level wins)."
             )
         return StepResult(
             name=name,

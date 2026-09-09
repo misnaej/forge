@@ -1002,6 +1002,72 @@ def resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None:
     return None
 
 
+def _open_pr_base_branch(root: Path) -> str | None:
+    """Return the base branch of the open PR for the checked-out branch, if any.
+
+    One best-effort ``gh api`` call under :func:`gh_api`'s short timeout —
+    this runs inside a pre-commit hook, so a missing ``gh``, no auth, no
+    network, or no PR all collapse to ``None`` rather than a stall.
+
+    Args:
+        root: Git repo root.
+
+    Returns:
+        The PR's ``base.ref``, or ``None`` when it cannot be determined.
+    """
+    branch = _run_git("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
+    # The branch name is interpolated into a jq string: names with quotes
+    # or backslashes are not real branches, and skipping them is the
+    # safe direction (fallback to the configured base).
+    if not branch or branch == "HEAD" or any(c in branch for c in '"\\'):
+        return None
+    return gh_api(
+        "repos/{owner}/{repo}/pulls?state=open&per_page=100",
+        "--jq",
+        f'first(.[] | select(.head.ref == "{branch}") | .base.ref) // empty',
+    )
+
+
+def resolve_pr_base_ref(root: Path | None, base_branch: str) -> str | None:
+    """Return the ref this branch's PR actually lands on, falling back to the base.
+
+    A stacked PR (opened against another unmerged PR's branch) diverges
+    from the *configured* base long before its own work starts, so
+    anything counted "since the fork with ``origin/<base_branch>``"
+    includes the parent PR's commits — its changelog fragment, for
+    instance. The PR's real base tells the two apart. Resolution order:
+    ``GITHUB_BASE_REF`` (set by GitHub Actions on ``pull_request`` runs),
+    then the open PR's ``base.ref`` via ``gh``, then
+    :func:`resolve_base_branch_ref` — the configured base, which keeps
+    every offline or PR-less workstation on today's behaviour.
+    Deliberately a sibling of :func:`resolve_base_branch_ref`, not a
+    change to it: the diff-scoped steps that call that function must not
+    pay a network round-trip per commit.
+
+    Args:
+        root: Git repo root; ``None`` uses the cached process-wide
+            :func:`repo_root`.
+        base_branch: Configured base-branch name (the last fallback).
+
+    Returns:
+        A resolvable ref (``origin/<name>`` preferred, local ``<name>``
+        otherwise), or ``None`` when nothing resolves.
+    """
+    if root is None:
+        root = repo_root()
+    candidates = [
+        os.environ.get("GITHUB_BASE_REF", ""),
+        _open_pr_base_branch(root) or "",
+    ]
+    for name in candidates:
+        if not name or name.startswith("-"):
+            continue
+        for ref in (f"origin/{name}", name):
+            if ref_exists(root, ref):
+                return ref
+    return resolve_base_branch_ref(root, base_branch)
+
+
 def merge_base_with_head(root: Path | None, base_branch: str) -> str:
     """Return the merge-base SHA of ``HEAD`` and the resolved base ref.
 

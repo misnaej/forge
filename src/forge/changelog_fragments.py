@@ -81,7 +81,7 @@ from forge.git_utils import (
     render_plugin_version,
     repo_root,
     require_cli,
-    resolve_base_branch_ref,
+    resolve_pr_base_ref,
     run_gate_evidence,
     run_git,
     tag_commit_date,
@@ -409,12 +409,15 @@ def branch_added_fragments(root: Path) -> list[str]:
     Enforcement seam for the one-fragment-per-PR convention. A fragment
     counts as the branch's own only when BOTH hold:
 
-    1. it is added relative to the merge-base with the configured base
-       branch (``--diff-filter=A`` against the working tree, so staged
-       additions count before they are committed), and
-    2. it is absent from the base branch's tip tree — tree membership
-       in the base means the fragment belongs to another (already
-       landed) PR, the same membership idea the auto-tagger uses with
+    1. it is added relative to the merge-base with the PR's base — the
+       branch the open PR actually targets when one exists (a stacked
+       PR's parent), else the configured base branch
+       (:func:`forge.git_utils.resolve_pr_base_ref`) — with
+       ``--diff-filter=A`` against the working tree, so staged additions
+       count before they are committed, and
+    2. it is absent from that base's tip tree — tree membership in the
+       base means the fragment belongs to another (already landed or
+       parent) PR, the same membership idea the auto-tagger uses with
        tag trees. (Assumes a path collision denotes the same logical
        fragment: a same-named-but-different fragment independently
        landed on base excludes the branch's own — distinctive slugs
@@ -435,7 +438,7 @@ def branch_added_fragments(root: Path) -> list[str]:
         the count check degrades open rather than failing on repos
         where the fork point is unknowable.
     """
-    base_ref = resolve_base_branch_ref(root, load_config(root).base_branch)
+    base_ref = resolve_pr_base_ref(root, load_config(root).base_branch)
     if base_ref is None:
         return []
     fork = run_git("merge-base", base_ref, "HEAD", cwd=root, check=False)
