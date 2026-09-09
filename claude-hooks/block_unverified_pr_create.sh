@@ -23,18 +23,29 @@
 set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+# Anchors + their rationale live in the shared lib (one home for the
+# whole git-/gh-guard family).
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+if [ ! -r "$ANCHOR_LIB" ]; then
+    # Fail CLOSED: a missing/unreadable lib (corrupted plugin cache) must
+    # block, not silently disarm the guard — only exit 2 blocks in the
+    # PreToolUse contract.
+    echo "BLOCKED: guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$ANCHOR_LIB"
 
 # `gh pr create` at start-of-string or after a shell separator — same
 # matching convention as block_pr_merge.sh (a plain space ahead of `gh`
 # is not a separator, letting text mentions through).
-if ! echo "$COMMAND" | grep -qE '(^|[[:space:]]*[|;&]+[[:space:]]*)gh +pr +create\b'; then
+if ! echo "$COMMAND" | grep -qE "${GH_ANCHOR}pr[[:space:]]+create\b"; then
     exit 0
 fi
 
 # The embedded skip form must sit at command position, directly prefixing
 # the create invocation — a free-text mention (e.g. in a --title/--body
 # that discusses this hook) must NOT trip the bypass.
-if echo "$COMMAND" | grep -qE '(^|[[:space:]]*[|;&]+[[:space:]]*)FORGE_SKIP_WRAPUP_GATE=1[[:space:]]+gh[[:space:]]+pr[[:space:]]+create\b' \
+if echo "$COMMAND" | grep -qE '(^|[;&|(])[[:space:]]*FORGE_SKIP_WRAPUP_GATE=1[[:space:]]+gh[[:space:]]+pr[[:space:]]+create\b' \
     || [ "${FORGE_SKIP_WRAPUP_GATE:-}" = "1" ]; then
     exit 0
 fi
