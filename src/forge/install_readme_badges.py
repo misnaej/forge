@@ -119,6 +119,58 @@ def _git_remote_slug(root: Path) -> str | None:
     return slug
 
 
+_PULL_REQUEST_TRIGGER_RE = re.compile(
+    r"^on:[^\n]*\bpull_request\b|^on:\s*\n(?:[ \t]+[^\n]*\n)*?[ \t]+pull_request\b",
+    re.MULTILINE,
+)
+
+
+def _pick_ci_workflow(wf_dir: Path) -> str | None:
+    """Choose the workflow file the CI badge should point at.
+
+    Preference order: a file named ``ci.yml`` / ``ci.yaml``; else the
+    first workflow (alphabetically) whose top-level ``on:`` block names
+    ``pull_request``; else ``None``. The alphabetically-first file is
+    never used as a fallback — a scheduled or release workflow sorting
+    before the CI one is exactly the wrong badge.
+
+    Args:
+        wf_dir: The ``.github/workflows`` directory.
+
+    Returns:
+        The chosen workflow filename, or ``None`` when no candidate is
+        identifiable.
+    """
+    for name in ("ci.yml", "ci.yaml"):
+        if (wf_dir / name).is_file():
+            return name
+    for path in sorted(wf_dir.glob("*.y*ml")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if _PULL_REQUEST_TRIGGER_RE.search(text):
+            return path.name
+    return None
+
+
+def _extract_ci_badge(readme: str) -> str | None:
+    """Return the CI badge currently inside the managed block, if any.
+
+    Args:
+        readme: Current README text.
+
+    Returns:
+        The ``[![CI](...)](...)`` markdown snippet, or ``None`` when the
+        managed block is absent or holds no CI badge.
+    """
+    block = re.search(re.escape(_START) + r"(.*?)" + re.escape(_END), readme, re.DOTALL)
+    if not block:
+        return None
+    found = re.search(r"\[!\[CI\]\([^)]*\)\]\([^)]*\)", block.group(1))
+    return found.group(0) if found else None
+
+
 def _ci_badge(root: Path, slug: str | None, workflow: str | None) -> str | None:
     """Build the GitHub Actions CI badge for the chosen workflow, if any.
 
@@ -126,12 +178,12 @@ def _ci_badge(root: Path, slug: str | None, workflow: str | None) -> str | None:
         root: Repo root.
         slug: ``owner/repo`` slug, or ``None``.
         workflow: The ``[tool.forge.badges] workflow`` override (a filename
-            under ``.github/workflows``), or ``None`` to use the first
-            workflow alphabetically.
+            under ``.github/workflows``), or ``None`` to pick one via
+            :func:`_pick_ci_workflow`.
 
     Returns:
-        The markdown badge, or ``None`` when there is no slug, no workflow
-        directory, or the named override does not exist.
+        The markdown badge, or ``None`` when there is no slug, no
+        identifiable workflow, or the named override does not exist.
     """
     if slug is None:
         return None
@@ -143,8 +195,7 @@ def _ci_badge(root: Path, slug: str | None, workflow: str | None) -> str | None:
         bare = "/" not in workflow and "\\" not in workflow
         wf = workflow if bare and (wf_dir / workflow).is_file() else None
     else:
-        found = sorted(wf_dir.glob("*.y*ml"))
-        wf = found[0].name if found else None
+        wf = _pick_ci_workflow(wf_dir) if wf_dir.is_dir() else None
     if wf is None:
         return None
     img = f"https://github.com/{slug}/actions/workflows/{wf}/badge.svg"
@@ -370,7 +421,19 @@ def main() -> int:
         return exit_code
 
     current = readme.read_text(encoding="utf-8")
-    updated = inject(current, render_block(build_badges(root)))
+    badges = build_badges(root)
+    if not any(b.startswith("[![CI]") for b in badges):
+        kept = _extract_ci_badge(current)
+        if kept:
+            # No workflow is identifiable as CI; re-pointing the badge would
+            # be a guess, so the one the README already carries stays.
+            logger.warning(
+                "No CI workflow identified (no ci.yml, none triggered on "
+                "pull_request) — keeping the existing CI badge; set "
+                "[tool.forge.badges] workflow to choose one."
+            )
+            badges.insert(0, kept)
+    updated = inject(current, render_block(badges))
 
     if args.check:
         if current == updated:

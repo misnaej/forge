@@ -104,6 +104,11 @@ _REPORTER_WITH_ARTIFACT_NAMES = (
 # agent header contract".
 PRIOR_ART_AGENT_NAMES = ("prior-art",)
 
+# Advisors: report-only agents whose output is a recommendation (benchmark
+# table, patch) rather than a diff review — subject to the no-`Write`/`Edit`
+# tool check like reporters, but with no `verified-at:` header contract.
+ADVISOR_AGENT_NAMES = ("perf-optimizer",)
+
 # Description shape heuristics. Role-label descriptions tend to start
 # with "Agent for" or "<Name> agent that"; everything else is treated
 # as trigger-shaped.
@@ -768,8 +773,11 @@ def _per_agent_findings(
     findings.extend(_check_frontmatter(agent))
     findings.extend(_check_description_shape(agent))
     prior_art = frozenset(PRIOR_ART_AGENT_NAMES)
+    advisors = frozenset(ADVISOR_AGENT_NAMES)
     findings.extend(
-        _check_reporter_tools(agent, reporters | prior_art, artifact_reporters)
+        _check_reporter_tools(
+            agent, reporters | prior_art | advisors, artifact_reporters
+        )
     )
     findings.extend(_check_reporter_verified_at(agent, reporters))
     findings.extend(

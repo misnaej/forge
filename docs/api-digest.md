@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_67 modules, 876 symbols._
+_67 modules, 878 symbols._
 
 ## `forge`
 
@@ -702,6 +702,8 @@ _67 modules, 876 symbols._
 - `_shields_static(label: str, message: str, color: str) -> str` _(internal)_ — Build a static shields.io badge image URL.
 - `_md(alt: str, image: str, link: str | None = None) -> str` _(internal)_ — Render one markdown badge (optionally wrapped in a link).
 - `_git_remote_slug(root: Path) -> str | None` _(internal)_ — Return ``owner/repo`` from the ``origin`` remote, or ``None``.
+- `_pick_ci_workflow(wf_dir: Path) -> str | None` _(internal)_ — Choose the workflow file the CI badge should point at.
+- `_extract_ci_badge(readme: str) -> str | None` _(internal)_ — Return the CI badge currently inside the managed block, if any.
 - `_ci_badge(root: Path, slug: str | None, workflow: str | None) -> str | None` _(internal)_ — Build the GitHub Actions CI badge for the chosen workflow, if any.
 - `_python_badge(data: dict) -> str | None` _(internal)_ — Build the Python-version badge from ``requires-python``.
 - `_license_badge(data: dict) -> str | None` _(internal)_ — Build the License badge from ``[project].license``.
