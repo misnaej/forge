@@ -3462,6 +3462,43 @@ def test_raw_wrapup_post_blocks_a_trailing_comment_mention() -> None:
     )
 
 
+def test_raw_wrapup_post_blocks_a_multiline_command_led_by_the_cli() -> None:
+    """A CLI-led first line does not exempt a raw post on a later line.
+
+    Behavior test: pins a bypass reproduced against the previous tree —
+    the removed self-exemption regex matched line-by-line, so a
+    `forge-pr-wrapup` invocation on a command's first line exempted a raw
+    `gh pr comment` posting the wrap-up file on the next line.
+    """
+    assert (
+        _run_hook(
+            _RAW_WRAPUP_POST,
+            "forge-pr-wrapup --pr 123\n"
+            "gh pr comment 123 --body-file code_health/pr_wrapup.md",
+        )
+        == 2
+    )
+
+
+def test_raw_wrapup_post_blocks_a_raw_post_wrapping_the_cli_in_substitution() -> None:
+    """Naming the CLI inside a `$(...)` substitution does not exempt the post.
+
+    Behavior test: pins a bypass reproduced against the previous tree —
+    the removed self-exemption regex anchored on a literal `(`, so
+    wrapping the CLI in a command-substitution argument
+    (`--body "$(forge-pr-wrapup ...)"`) satisfied the anchor and exempted
+    the surrounding raw `gh pr comment`.
+    """
+    assert (
+        _run_hook(
+            _RAW_WRAPUP_POST,
+            "gh pr comment 123 --body-file code_health/pr_wrapup.md "
+            '--body "$(forge-pr-wrapup --pr 123 --dry-run)"',
+        )
+        == 2
+    )
+
+
 def test_raw_wrapup_post_allows_an_empty_command() -> None:
     """No command in the payload is a no-op, not a block."""
     assert _run_hook(_RAW_WRAPUP_POST, "") == 0

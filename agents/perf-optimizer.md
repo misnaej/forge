@@ -39,7 +39,7 @@ Follow this 7-step sequence in order. Do not skip, reorder, or shortcut.
 - Read the target file(s) and identify the entry point being optimized
 - Identify the claim being tested (e.g., "dataset.map rewrites the whole dataset per column")
 - List external callers (grep for import sites) — the public API must survive
-- Bottleneck unclear → a quick `cProfile` pass first
+- Bottleneck unclear → `cProfile` first
 
 ### Step 2 — Design the benchmark
 
@@ -48,7 +48,7 @@ Follow this 7-step sequence in order. Do not skip, reorder, or shortcut.
 - Deterministic seeds, so variants are comparable
 - Benchmark must call the target's **public entry point**, not internal helpers
 - Emit a single scalar timing per run (median of N=3 minimum, N=5 preferred)
-- Save as `/tmp/perf_<target>.py` — never inside the repo. The scratch copy of the target module(s) lives beside it in `/tmp/perf_<target>_src/` (mirror the package path so imports resolve)
+- Save as `/tmp/perf_<target>.py` — never inside the repo. The scratch copy of the target module(s) lives in a fresh `mktemp -d /tmp/perf_<target>_src.XXXXXX` directory (mirror the package path); never reuse a pre-existing path
 
 ### Step 3 — Baseline
 
@@ -68,8 +68,8 @@ Before writing any code, document each candidate in the report with:
 ### Step 5 — Implement and measure each strategy
 
 For each strategy:
-- Re-copy the target module(s) into `/tmp/perf_<target>_src/` (fresh baseline copy) and apply the change **there** with Bash (`sed`, `patch`, heredoc) — the repo tree stays untouched
-- Run the benchmark with `PYTHONPATH=/tmp/perf_<target>_src` so the copy shadows the installed module; confirm with `python -c "import <module>; print(<module>.__file__)"`
+- Re-copy the target module(s) into the scratch directory (fresh baseline copy) and apply the change **there** with Bash (`sed`, `patch`, heredoc) — the repo tree stays untouched
+- Run the benchmark with `PYTHONPATH=<scratch dir>` so the copy shadows the installed module; confirm with `python -c "import <module>; print(<module>.__file__)"`
 - Record timings; verify output matches baseline (numerical equivalence within tolerance for floats, exact for shapes/dtypes)
 - Save the strategy as a patch: `diff -u <repo file> <copy> > /tmp/perf_<target>_<strategy>.patch`
 

@@ -427,11 +427,16 @@ def main() -> int:
         if kept:
             # No workflow is identifiable as CI; re-pointing the badge would
             # be a guess, so the one the README already carries stays.
-            logger.warning(
-                "No CI workflow identified (no ci.yml, none triggered on "
-                "pull_request) — keeping the existing CI badge; set "
-                "[tool.forge.badges] workflow to choose one."
-            )
+            if _git_remote_slug(root) is None:
+                logger.warning(
+                    "No GitHub remote detected — keeping the existing CI badge."
+                )
+            else:
+                logger.warning(
+                    "No CI workflow identified (no ci.yml, none triggered on "
+                    "pull_request) — keeping the existing CI badge; set "
+                    "[tool.forge.badges] workflow to choose one."
+                )
             badges.insert(0, kept)
     updated = inject(current, render_block(badges))
 

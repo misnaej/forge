@@ -16,14 +16,10 @@ INPUT=$(cat)
 COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')
 [ -n "$COMMAND" ] || exit 0
 
-# The squash CLI's own posts already land last; re-entering here would
-# make every post cost a second round-trip.
-# Anchored to the command position (start, or right after a `|`, `;`, `&`
-# or `(`): a mention inside an argument or a trailing comment
-# (`gh pr comment ... # via forge-pr-squash-comment`) must not exempt the call.
-if printf '%s' "$COMMAND" | grep -qE '(^|[|;&(][[:space:]]*)forge-pr-squash-comment([[:space:]]|$)'; then
-  exit 0
-fi
+# No self-exemption for forge-pr-squash-comment: the hook fires only on
+# `gh pr comment|review` text, which the CLI's own invocation never
+# contains. Exempting on a mention would let a chained or multi-line
+# command post a comment and skip the re-post.
 
 # The three surfaces that bury a comment: conversation comments, review
 # submissions, and review-thread replies (REST `/pulls/<N>/comments`).

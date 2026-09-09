@@ -255,3 +255,40 @@ def test_main_keeps_existing_ci_badge_when_no_workflow_identifiable(
     assert rb._extract_ci_badge(text) == old_ci_badge
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert any("No CI workflow identified" in r.message for r in warnings)
+
+
+def test_main_warns_about_missing_remote_not_workflow_when_no_slug(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No GitHub remote → the warning names the remote, not the workflow.
+
+    Behavior test: pins a misdiagnosis reproduced against the previous
+    tree — `main` used to blame "no CI workflow identified" and point at
+    the `[tool.forge.badges] workflow` override even when the real cause
+    was an unresolvable git remote, which that override cannot fix. The
+    existing CI badge is still kept either way.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nlicense = "MIT"\n[tool.forge.badges]\nenabled = true\n'
+    )
+    old_ci_badge = (
+        "[![CI](https://github.com/acme/widget/actions/workflows/old.yml/badge.svg)]"
+        "(https://github.com/acme/widget/actions/workflows/old.yml)"
+    )
+    readme_text = f"# Demo\n\n{rb._START}\n{old_ci_badge}\n{rb._END}\n\nIntro.\n"
+    (tmp_path / "README.md").write_text(readme_text)
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "nightly.yml").write_text("on:\n  schedule:\n    - cron: '0 0 * * *'\n")
+    monkeypatch.setattr(rb, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(rb, "_git_remote_slug", lambda _root: None)
+    monkeypatch.setattr("sys.argv", ["install-forge-readme-badges"])
+    with caplog.at_level(logging.WARNING):
+        assert rb.main() == 0
+    text = (tmp_path / "README.md").read_text()
+    assert rb._extract_ci_badge(text) == old_ci_badge
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("No GitHub remote" in r.message for r in warnings)
+    assert not any("[tool.forge.badges] workflow" in r.message for r in warnings)

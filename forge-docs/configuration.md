@@ -788,6 +788,7 @@ Wired into `install-forge-bootstrap`.
 |---|---|---|---|
 | `enabled` | `false` | Opt into writing the badge block. | You want forge to maintain a badge row in your README. |
 | `readme` | `"README.md"` | README file the block is written into. | Your readme has a different name/path. |
+| `workflow` | unset | Workflow file under `.github/workflows` the CI badge points at. Unset, forge picks `ci.yml`/`ci.yaml`, else the first workflow whose `on:` includes `pull_request`; with neither it keeps the README's existing CI badge and warns. | The CI workflow has another name and is not `pull_request`-triggered. |
 
 ## `[tool.interrogate]` — native section, read by forge
 
