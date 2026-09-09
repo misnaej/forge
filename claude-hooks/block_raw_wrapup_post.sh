@@ -12,12 +12,10 @@ INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
 [ -n "$COMMAND" ] || exit 0
 
-# The CLI's own internal `gh pr comment` never appears here (it runs as
-# a subprocess, not as the Bash tool's command), but a wrapper line that
-# names the CLI must not trip the guard either.
-case "$COMMAND" in
-*forge-pr-wrapup*) exit 0 ;;
-esac
+# No self-exemption for forge-pr-wrapup: its internal `gh pr comment` runs
+# as a subprocess, never as the Bash tool's command, and the block regex
+# needs a raw post the CLI's own invocation never contains. Exempting on a
+# mention would let a chained or multi-line command smuggle a raw post through.
 
 if echo "$COMMAND" | grep -qE '(^|[[:space:]]*[|;&]+[[:space:]]*)gh[[:space:]]+(pr[[:space:]]+comment|api)\b' \
     && echo "$COMMAND" | grep -qE '(--body-file|-F|--field|-f|--raw-field)[[:space:]=]+(body=@)?[^[:space:]]*code_health/pr_wrapup\.md\b'; then
