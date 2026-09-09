@@ -9,7 +9,18 @@
 set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
-if ! echo "$COMMAND" | grep -qE '^(git commit|gh (pr|issue|release) (create|edit|comment|review)|gh api )'; then
+# Anchors + their rationale live in the shared lib (one home for the
+# whole git-/gh-guard family).
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+if [ ! -r "$ANCHOR_LIB" ]; then
+    # Fail CLOSED: a missing/unreadable lib (corrupted plugin cache) must
+    # block, not silently disarm the guard — only exit 2 blocks in the
+    # PreToolUse contract.
+    echo "BLOCKED: guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$ANCHOR_LIB"
+if ! echo "$COMMAND" | grep -qE "(${GIT_ANCHOR}commit\b|${GH_ANCHOR}(pr|issue|release)[[:space:]]+(create|edit|comment|review)\b|${GH_ANCHOR}api\b)"; then
     exit 0
 fi
 # The `.{0,4}` after "generated with/by" tolerates a SHORT separator

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Shared git-invocation anchors for the git-guard hook family.
+# Shared command anchors for the git- and gh-guard hook family.
 #
 # NOT a hook — a sourced library (never registered in plugin.json).
 # Consumers: block_force_push.sh, block_git_rebase.sh, block_raw_git.sh,
-# block_git_destructive.sh, block_amend_pushed_commit.sh, via:
+# block_git_destructive.sh, block_amend_pushed_commit.sh,
+# block_protected_branches.sh, block_no_verify.sh,
+# block_claude_attribution.sh, block_pr_merge.sh,
+# block_unverified_pr_create.sh, via:
 #
 #     source "$(dirname "$0")/git_anchor.sh"
 #
@@ -27,3 +30,12 @@
 GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][a-zA-Z-]*(=[^[:space:]]*)?[[:space:]]+)*'
 # shellcheck disable=SC2034  # consumed by sourcing hooks
 SEG_ANCHOR='^[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][a-zA-Z-]*(=[^[:space:]]*)?[[:space:]]+)*'
+
+# GH_ANCHOR is the same shape for `gh`: a real invocation at line-start
+# (leading whitespace included — the hand-rolled `^gh` patterns this
+# replaced were bypassed by a single leading space) or after a shell
+# separator, tolerating the same VAR=val / wrapper-token prefix run.
+# gh takes no arg-bearing global options before its subcommand, so
+# nothing follows `gh` but whitespace.
+# shellcheck disable=SC2034  # consumed by sourcing hooks
+GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*gh[[:space:]]+'

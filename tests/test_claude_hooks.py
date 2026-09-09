@@ -175,6 +175,35 @@ def test_protected_allows_feature_push() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "   git push origin main",
+        "VAR=x git push origin main",
+        "cd /x && git push origin main",
+        "(git push origin main)",
+        "git --no-pager push origin main",
+    ],
+)
+def test_protected_branches_blocks_bypass_forms(command: str) -> None:
+    """The refspec-destination guard (#74) still fires under every bypass form.
+
+    Leading whitespace, an inline env-var prefix, a `cd &&` chain, a
+    subshell, and a `--no-pager` global option are the shared bypass
+    forms `GIT_ANCHOR` (`git_anchor.sh`) now tolerates for every hook that
+    sources it; the sanctioned `forge:git-commit-push` agent bypasses only
+    the *current-branch* check (guard 2), never the destination guard
+    (guard 1) — same no-bypass posture as
+    `test_protected_destination_guard_has_no_agent_bypass`, exercised
+    across each syntactic form.
+
+    Args:
+        command: A `git push origin main` invocation wrapped in one of the
+            five bypass forms.
+    """
+    assert _run_hook(_PROTECTED, command, agent_type="forge:git-commit-push") == 2
+
+
 _INSTALL_DEPS = "block_install_deps.sh"
 
 
@@ -697,6 +726,107 @@ def test_attribution_ignores_non_history_commands() -> None:
     assert _run_hook(_ATTRIBUTION, 'echo "generated with claude"') == 0
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        '   gh pr create --body "Co-Authored-By: Claude <noreply@anthropic.com>"',
+        'VAR=x gh pr create --body "Co-Authored-By: Claude <noreply@anthropic.com>"',
+        'cd /x && gh pr create --body "Co-Authored-By: Claude <noreply@anthropic.com>"',
+        '(gh pr create --body "Co-Authored-By: Claude <noreply@anthropic.com>")',
+    ],
+)
+def test_claude_attribution_blocks_gh_bypass_forms(command: str) -> None:
+    """The Co-Authored-By trailer still blocks under every `GH_ANCHOR` bypass form.
+
+    `gh` takes no arg-bearing global option before its subcommand (unlike
+    `git --no-pager`), so only the four shared prefix forms — leading
+    whitespace, an inline env-var prefix, a `cd &&` chain, and a subshell
+    — apply here.
+
+    Args:
+        command: A `gh pr create --body ...` invocation carrying a Claude
+            attribution trailer, wrapped in one of the four bypass forms.
+    """
+    assert _run_hook(_ATTRIBUTION, command) == 2
+
+
+_NO_VERIFY = "block_no_verify.sh"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        '   git commit -m "x" --no-verify',
+        'VAR=x git commit -m "x" --no-verify',
+        'cd /x && git commit -m "x" --no-verify',
+        '(git commit -m "x" --no-verify)',
+        'git --no-pager commit -m "x" --no-verify',
+    ],
+)
+def test_no_verify_blocks_bypass_forms(command: str) -> None:
+    """`--no-verify` on a commit still blocks under every `GIT_ANCHOR` bypass form.
+
+    Args:
+        command: A `git commit ... --no-verify` invocation wrapped in one
+            of the five bypass forms.
+    """
+    assert _run_hook(_NO_VERIFY, command) == 2
+
+
+def test_no_verify_short_n_flag_blocks_on_commit() -> None:
+    """A short-flag cluster containing `n` (`-nq`) on a commit is blocked.
+
+    `-n` is `--no-verify` for a commit, so a cluster carrying it anywhere
+    (not only as a bare `-n`) must trip the guard, mirroring the force-push
+    hook's `-f`-anywhere-in-cluster fix.
+    """
+    assert _run_hook(_NO_VERIFY, 'git commit -nq -m "x"') == 2
+
+
+def test_no_verify_dash_n_on_push_not_blocked() -> None:
+    """`-n` on a push is `--dry-run`, not `--no-verify`, and is allowed.
+
+    The short-flag-cluster branch is scoped to `commit`, not `push` — `-n`
+    means something else entirely on the other guarded verb.
+    """
+    assert _run_hook(_NO_VERIFY, "git push -n origin main") == 0
+
+
+_PR_MERGE = "block_pr_merge.sh"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "   gh pr merge 5 --squash",
+        "VAR=x gh pr merge 5 --squash",
+        "cd /x && gh pr merge 5 --squash",
+        "(gh pr merge 5 --squash)",
+    ],
+)
+def test_pr_merge_blocks_gh_bypass_forms(command: str) -> None:
+    """`gh pr merge` still blocks under every `GH_ANCHOR` bypass form.
+
+    Args:
+        command: A `gh pr merge ...` invocation wrapped in one of the four
+            bypass forms.
+    """
+    assert _run_hook(_PR_MERGE, command) == 2
+
+
+def test_gh_anchor_leading_space_blocks_and_echo_mention_allowed() -> None:
+    """A leading space blocks `GH_ANCHOR`; echo mention bypass still allowed.
+
+    The hand-rolled `^gh` patterns `GH_ANCHOR` replaced were bypassed by a
+    single leading space (not `^gh` exactly); `GH_ANCHOR`'s
+    `[[:space:]]*` after the start-of-string alternative closes that gap.
+    A bare space ahead of `gh` (no shell separator, as in `echo gh ...`)
+    is still a text mention, not an invocation, and stays allowed.
+    """
+    assert _run_hook(_PR_MERGE, " gh pr merge 5 --squash") == 2
+    assert _run_hook(_PR_MERGE, "echo gh pr merge 5 --squash") == 0
+
+
 _REBASE = "block_git_rebase.sh"
 
 
@@ -869,6 +999,11 @@ _GIT_GUARD_HOOKS = (
     "block_raw_git.sh",
     "block_git_destructive.sh",
     "block_amend_pushed_commit.sh",
+    "block_protected_branches.sh",
+    "block_no_verify.sh",
+    "block_claude_attribution.sh",
+    "block_pr_merge.sh",
+    "block_unverified_pr_create.sh",
 )
 
 
@@ -921,6 +1056,13 @@ _GIT_GUARD_BLOCKING_COMMANDS = {
     "block_raw_git.sh": "git commit -m x",
     "block_git_destructive.sh": "git reset --hard",
     "block_amend_pushed_commit.sh": "git commit --amend",
+    "block_protected_branches.sh": "git push origin main",
+    "block_no_verify.sh": "git commit --no-verify",
+    "block_claude_attribution.sh": (
+        'git commit -m "Co-Authored-By: Claude <noreply@anthropic.com>"'
+    ),
+    "block_pr_merge.sh": "gh pr merge 1 --squash",
+    "block_unverified_pr_create.sh": "gh pr create --title x",
 }
 
 
@@ -2068,6 +2210,35 @@ def test_unverified_pr_create_blocks_after_separator(
         )
         == 2
     )
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "   {cmd}",
+        "VAR=x {cmd}",
+        "cd /x && {cmd}",
+        "({cmd})",
+    ],
+)
+def test_unverified_pr_create_blocks_gh_bypass_forms(
+    template: str, git_repo_with_commit: tuple[Path, str]
+) -> None:
+    """`gh pr create` blocks (missing wrap-up) under every `GH_ANCHOR` form.
+
+    No wrap-up is authored in the fixture repo, so this documents the
+    outer `GH_ANCHOR` match reaching the missing-wrap-up check, not the
+    sha-comparison branch — same shape as
+    `test_unverified_pr_create_blocks_after_separator`, generalized
+    across the four prefix forms.
+
+    Args:
+        template: A `{cmd}` placeholder wrapped in one of the four bypass
+            forms, filled in with `gh pr create --title x`.
+    """
+    repo, _sha = git_repo_with_commit
+    command = template.format(cmd="gh pr create --title x")
+    assert _run_hook(_UNVERIFIED_PR_CREATE, command, cwd=repo) == 2
 
 
 def test_unverified_pr_create_allows_text_mention() -> None:

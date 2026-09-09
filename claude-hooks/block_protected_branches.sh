@@ -24,8 +24,19 @@
 set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+# Anchors + their rationale live in the shared lib (one home for the
+# whole git-/gh-guard family).
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+if [ ! -r "$ANCHOR_LIB" ]; then
+    # Fail CLOSED: a missing/unreadable lib (corrupted plugin cache) must
+    # block, not silently disarm the guard — only exit 2 blocks in the
+    # PreToolUse contract.
+    echo "BLOCKED: guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$ANCHOR_LIB"
 # Only inspect git commit / git push — checkout, status, log, etc. always allowed.
-if ! echo "$COMMAND" | grep -qE '^git (commit|push)'; then
+if ! echo "$COMMAND" | grep -qE "${GIT_ANCHOR}(commit|push)\b"; then
     exit 0
 fi
 REPO_ROOT=$(echo "$INPUT" | jq -r '.cwd // empty')
@@ -70,8 +81,12 @@ PY
 # `+main`. The current-branch check below never sees these. Nothing — not
 # even forge:git-commit-push — may push directly to a protected branch
 # (FOUNDATION §2). (#74)
-if echo "$COMMAND" | grep -qE '^git[[:space:]]+push'; then
-    push_args=$(echo "$COMMAND" | sed -E 's/^[[:space:]]*git[[:space:]]+push//')
+if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}push\b"; then
+    # Strip through the verb with the SAME anchor the gate used: a
+    # literal `^…git push` sed left the whole command in place for
+    # every prefixed form (a subshell, an env assignment, a chain), and
+    # the destination guard then read tokens that were never refspecs.
+    push_args=$(echo "$COMMAND" | sed -E "s/^.*${GIT_ANCHOR}push//")
     remote_seen=0
     for tok in $push_args; do
         # Skip option flags (e.g. -u, --force, --force-with-lease=...).
@@ -85,6 +100,11 @@ if echo "$COMMAND" | grep -qE '^git[[:space:]]+push'; then
         # token (push <branch>). Strip a leading '+' (force) and a
         # fully-qualified 'refs/heads/' prefix so the bare branch name
         # compares against the protected list.
+        # A trailing shell character belongs to the syntax, not the ref:
+        # a subshell-wrapped push ends its last token with `)`. git
+        # rejects these characters in a ref name, so trimming them
+        # cannot mask a real branch.
+        tok=${tok%%[\)\;\&\|]*}
         dst=${tok##*:}
         dst=${dst#+}
         dst=${dst#refs/heads/}
