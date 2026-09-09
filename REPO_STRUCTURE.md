@@ -77,7 +77,7 @@ Code.
    - install_labels.py: `install-forge-labels` — GitHub label installer
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
-   - resync.py: `forge-resync` — regenerate forge-managed artifacts and open a dedup-guarded resync PR (companion to `upgrade.py`'s pin-rewrite flow)
+   - resync.py: `forge-resync` — regenerate forge-managed artifacts and open a dedup-guarded resync PR (companion to `upgrade.py`'s pin-rewrite flow); `--resolve-conflicts [--dry-run]` resolves a merge whose only conflicts are forge-generated artifacts by regenerating each from the merged tree (`pr_delta.REGEN_COMMANDS`), verifying with its `--check`, and staging — refusing if any other path conflicts
    - git_utils.py: shared git helpers and CLI logging setup (public API for consumers: `latest_v_tag`, `parse_semver`, `next_version`, `run_git`, `configure_cli_logging`)
    - changelog.py: shared `## vX.Y.Z` CHANGELOG heading recognition (`release_headings`, `changelog_lacks_entry`) — single source for release and the changelog_updated step; public API for consumers
    - import_graph.py: `forge.import_graph` — shared AST import primitives (`extract_import_targets`, `resolve_module_name`, `closest_known`) used by `audit.deps` and `smart_test.dependencies`
@@ -179,6 +179,7 @@ enforcement:
 - block_raw_ruff.sh: hard-block raw `ruff check` / `ruff format` from agents (no bypass — agents use forge-precommit)
 - keep_squash_comment_last.sh: PostToolUse — after any command that comments on a PR, re-post the squash-merge comment so it stays the newest one (silent no-op when it already is, or when the PR has none yet)
 - warn_stale_wrapup.sh: PostToolUse — after a `git push` on a branch with an open PR, print a reminder when `forge-pr-plan --freshness` says the posted wrap-up no longer names the head (silent when fresh, unknowable, or a refresh is already authored for HEAD)
+- warn_generated_conflicts.sh: PostToolUse — after a `git merge` whose only conflicts are forge-generated artifacts (probe: `forge-resync --resolve-conflicts --dry-run`), print the instruction to run `forge-resync --resolve-conflicts`; silent otherwise, never regenerates or stages
 - wrapup_anchor.sh: sourced library, not a hook — the one `wrapup_names_head` predicate shared by `block_unverified_pr_create` and `warn_stale_wrapup`
 
 ## Plugin Manifest (`.claude-plugin/`)

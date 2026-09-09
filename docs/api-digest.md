@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_68 modules, 880 symbols._
+_68 modules, 883 symbols._
 
 ## `forge`
 
@@ -567,6 +567,7 @@ _68 modules, 880 symbols._
 - `resolve_current_branch(repo_root: Path) -> tuple[str, str] | None` — Return the current branch name and where it came from, or ``None``.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
 - `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
+- `unmerged_paths(repo_root: Path) -> list[str]` — Return the repo-relative paths currently in an unmerged index state.
 - `has_conflict_markers(text: str) -> bool` — Return whether *text* contains unresolved git conflict markers.
 - `file_has_conflict_markers(path: Path) -> bool` — Return whether the file at *path* holds unresolved conflict markers.
 - `resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref diff-scoped checks should compare against, origin-first.
@@ -756,6 +757,7 @@ _68 modules, 880 symbols._
 - `touches_source_paths(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`SOURCE_PATHS`.
 - `light_wrapup_decision(*, line_count: int, changed_paths: list[str], added_paths: list[str]) -> tuple[bool, str]` — Decide whether a diff qualifies for the light wrap-up path.
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
+- `regen_commands(repo_root: Path) -> dict[str, tuple[str, ...]]` — Return :data:`REGEN_COMMANDS` filtered to the artifacts this repo generates.
 
 ## `forge.pr_plan`
 
@@ -873,7 +875,6 @@ _68 modules, 880 symbols._
 - `class _RefusalError` _(internal)_ — Internal control flow: a state this tool must not resolve.
 - `class RebumpOutcome` — Result of one rebump run.
 - `_require_latest_tag(repo_root: Path) -> str` _(internal)_ — Return the latest ``v*`` tag, refusing when none exists.
-- `_unmerged_paths(repo_root: Path) -> list[str]` _(internal)_ — Return the repo-relative paths currently in an unmerged index state.
 - `_read_index_stage(repo_root: Path, stage: int, path: str) -> str | None` _(internal)_ — Return *path*'s contents at merge-index *stage*, or ``None``.
 - `_guard_entry_state(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) -> None` _(internal)_ — Refuse states the tool must not touch.
 - `_mid_merge_versions(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Return the ``(fork, ours)`` manifest versions during a merge.
@@ -911,6 +912,8 @@ _68 modules, 880 symbols._
 - `_run_bootstrap() -> int` _(internal)_ — Run ``install-forge-bootstrap`` in-process and return its exit code.
 - `_provenance_evidence(root: Path) -> tuple[bool, str]` _(internal)_ — Run the provenance gates and format PR-body evidence.
 - `_publish_resync(root: Path, version: str, base_branch: str) -> int` _(internal)_ — Branch, commit, push the regen diff and open the resync PR.
+- `_regenerate(root: Path, path: str, argv: tuple[str, ...]) -> bool` _(internal)_ — Regenerate one artifact from the merged tree and byte-verify it.
+- `_resolve_conflicts(root: Path, *, dry_run: bool) -> int` _(internal)_ — Resolve a merge whose only conflicts are forge-generated artifacts.
 - `main() -> int` — Run the resync loop; see the module docstring for the steps.
 
 ## `forge.run_context`

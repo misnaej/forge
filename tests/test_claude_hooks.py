@@ -3600,3 +3600,118 @@ def test_warn_stale_wrapup_registered_as_a_post_tool_hook() -> None:
     assert [group["matcher"] for group in post] == ["Bash"]
     commands = [hook["command"] for group in post for hook in group["hooks"]]
     assert any(_WARN_STALE_WRAPUP in cmd for cmd in commands)
+
+
+# --- warn_generated_conflicts.sh: post-merge generated-artifact instruction -
+
+_WARN_GENERATED_CONFLICTS = "warn_generated_conflicts.sh"
+
+
+def _stub_forge_resync(tmp_path: Path, exit_code: int) -> dict[str, str]:
+    """Build a `forge-resync` stub on one PATH-prepended dir.
+
+    Args:
+        tmp_path: Directory to build the stub and RECORD file under.
+        exit_code: The `--resolve-conflicts --dry-run` probe's exit code —
+            0 means "only generated artifacts conflict", non-zero means
+            "not mechanically resolvable" (git_utils's own contract).
+
+    Returns:
+        An environment whose `PATH` finds the stub first; `RECORD` points
+        at the invocation log (read via `_record`).
+    """
+    stub_dir = tmp_path / "stub_bin"
+    stub_dir.mkdir()
+    stub = stub_dir / "forge-resync"
+    stub.write_text(f'#!/usr/bin/env bash\necho "$@" >> "$RECORD"\nexit {exit_code}\n')
+    stub.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{stub_dir}{os.pathsep}{env['PATH']}"
+    env["RECORD"] = str(tmp_path / "argv.log")
+    return env
+
+
+def test_warn_generated_conflicts_prints_instruction_when_resolvable(
+    tmp_path: Path,
+) -> None:
+    """SCENARIO: a merge leaves only forge-generated artifacts conflicted.
+
+    MOCK SETUP: `forge-resync --resolve-conflicts --dry-run` stub exits 0.
+    EXPECTED BEHAVIOR: the hook prints the mechanical-fix instruction
+    naming `forge-resync --resolve-conflicts` and exits 0.
+    """
+    env = _stub_forge_resync(tmp_path, 0)
+    proc = _run_hook_proc(
+        _WARN_GENERATED_CONFLICTS, "git merge other", cwd=tmp_path, env=env
+    )
+    assert proc.returncode == 0
+    assert "forge-resync --resolve-conflicts" in proc.stdout
+    assert "--resolve-conflicts --dry-run" in _record(env)
+
+
+def test_warn_generated_conflicts_silent_when_not_resolvable(tmp_path: Path) -> None:
+    """SCENARIO: the merge's conflicts are not all forge-generated artifacts.
+
+    MOCK SETUP: the dry-run probe stub exits 2 (git_utils's refusal code).
+    EXPECTED BEHAVIOR: no instruction is printed — a merge with real
+    source conflicts gets no mechanical-fix suggestion.
+    """
+    env = _stub_forge_resync(tmp_path, 2)
+    proc = _run_hook_proc(
+        _WARN_GENERATED_CONFLICTS, "git merge other", cwd=tmp_path, env=env
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+
+
+def test_warn_generated_conflicts_ignores_non_merge_command(tmp_path: Path) -> None:
+    """SCENARIO: an ordinary Bash call with no `git merge` in it.
+
+    MOCK SETUP: the probe stub is ready to answer "resolvable".
+    EXPECTED BEHAVIOR: the hook exits before ever probing `forge-resync` —
+    this hook fires on every Bash call, so the non-match path must cost
+    nothing.
+    """
+    env = _stub_forge_resync(tmp_path, 0)
+    proc = _run_hook_proc(
+        _WARN_GENERATED_CONFLICTS, "git status", cwd=tmp_path, env=env
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+    assert _record(env) == ""
+
+
+def test_warn_generated_conflicts_silent_when_forge_resync_missing(
+    tmp_path: Path,
+) -> None:
+    """SCENARIO: `forge-resync` is unreachable (older forge, broken install).
+
+    MOCK SETUP: PATH is stripped of every directory that resolves a real
+    `forge-resync` binary — same technique as
+    `test_warn_stale_wrapup_silent_when_forge_pr_plan_missing`.
+    EXPECTED BEHAVIOR: the hook's `command -v forge-resync` guard exits
+    before ever probing — no instruction is printed.
+    """
+    stripped_path = os.pathsep.join(
+        d
+        for d in os.environ.get("PATH", "").split(os.pathsep)
+        if not (Path(d) / "forge-resync").is_file()
+    )
+    env = {**os.environ, "PATH": stripped_path}
+    proc = _run_hook_proc(
+        _WARN_GENERATED_CONFLICTS, "git merge other", cwd=tmp_path, env=env
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+
+
+def test_warn_generated_conflicts_registered_as_a_post_tool_hook() -> None:
+    """plugin.json wires the hook on PostToolUse(Bash), not as a blocker."""
+    manifest = json.loads(
+        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
+    )
+    post = manifest["hooks"]["PostToolUse"]
+    assert [group["matcher"] for group in post] == ["Bash"]
+    commands = [hook["command"] for group in post for hook in group["hooks"]]
+    assert any(_WARN_GENERATED_CONFLICTS in cmd for cmd in commands)

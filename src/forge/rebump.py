@@ -69,6 +69,7 @@ from forge.git_utils import (
     read_plugin_version_at_ref,
     render_plugin_version,
     run_git,
+    unmerged_paths,
 )
 
 
@@ -127,19 +128,6 @@ def _require_latest_tag(repo_root: Path) -> str:
     return latest
 
 
-def _unmerged_paths(repo_root: Path) -> list[str]:
-    """Return the repo-relative paths currently in an unmerged index state.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        Unmerged (conflicted) paths; empty when the index is clean.
-    """
-    raw = run_git("diff", "--name-only", "--diff-filter=U", cwd=repo_root, check=False)
-    return [line for line in raw.splitlines() if line.strip()]
-
-
 def _read_index_stage(repo_root: Path, stage: int, path: str) -> str | None:
     """Return *path*'s contents at merge-index *stage*, or ``None``.
 
@@ -184,7 +172,7 @@ def _guard_entry_state(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) ->
         )
         raise _RefusalError(msg)
     if mid_merge:
-        unmerged = _unmerged_paths(repo_root)
+        unmerged = unmerged_paths(repo_root)
         extras = [p for p in unmerged if p not in (PLUGIN_PATH, CHANGELOG_PATH)]
         if extras:
             msg = (
@@ -369,7 +357,7 @@ def _render_changelog(
             branch side has no release heading to restack.
     """
     fragments = is_fragments_mode(repo_root)
-    conflicted = mid_merge and CHANGELOG_PATH in _unmerged_paths(repo_root)
+    conflicted = mid_merge and CHANGELOG_PATH in unmerged_paths(repo_root)
     if fragments:
         if conflicted:
             msg = (
