@@ -436,6 +436,20 @@ advisories with the suggested pin; they never edit pins.
 - **The wrap-up never waits on CI.** Post as soon as the checks are done and
   state plainly when CI has not completed — an unqualified wrap-up reads as
   "all green", a false claim.
+- **An agent bounds every job it starts, and says so when the bound is
+  hit.** "Waiting for the run to complete" is not a result: a task
+  handed back that way has produced nothing and hidden that it produced
+  nothing, and the caller learns only by checking. Two halves. Evidence
+  the caller supplied, named with the SHA it was gathered at, is
+  authoritative — re-running it is the commonest way an agent starts
+  something long it did not need. And a job an agent does start carries
+  a bound it chose — declared before it starts and sized in good faith
+  for the work, never picked small enough to be already exceeded.
+  Exceeding it is a **finding**, reported with what ran, how long, and
+  what remains, never silence and never a wait. A bound bounds
+  *waiting*, not obligation: it never licenses stopping short of work
+  another rule requires be finished — §4's "fix ALL violations" and §1's
+  "every failure requires investigation" outrank it.
 - Why: a wrap-up posted at one SHA and read at another describes a tree that
   no longer exists — the `verified-at:` header (reporter contract,
   `agents/_TEMPLATE.md`) makes that drift detectable.
