@@ -431,5 +431,6 @@ graph LR
 into a filed upstream issue: versions captured via `forge-doctor`,
 evidence preserved verbatim, consumer specifics redacted with explicit
 user confirmation before `gh issue create` targets the canonical
-upstream. User-invoked only — no proactive detection. For an agent or skill defect it also
-quotes the `forge-agent-profile` summary for that agent as timing evidence.
+upstream. User-invoked only — no proactive detection. For an agent or
+skill defect it also quotes the `forge-agent-profile` summary for that
+agent as timing evidence.

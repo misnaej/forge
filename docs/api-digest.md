@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 941 symbols._
+_72 modules, 943 symbols._
 
 ## `forge`
 
@@ -777,6 +777,8 @@ _72 modules, 941 symbols._
 > _Append-only ``key=value`` ledgers under ``code_health/``._
 
 - `append_ledger_line(path: Path, fields: Mapping[str, object], *, tail: tuple[str, str] | None = None) -> None` — Append one timestamped ``key=value`` line to *path*.
+- `_plain(value: object) -> str` _(internal)_ — Render a field value as one whitespace-free token.
+- `_one_line(value: str) -> str` _(internal)_ — Fold line breaks in a tail value so the record stays one line.
 - `parse_ledger(text: str, *, tail_key: str | None = None) -> list[dict[str, str]]` — Parse ledger lines into field mappings, skipping damaged ones.
 
 ## `forge.next_prep`

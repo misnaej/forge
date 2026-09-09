@@ -3886,13 +3886,23 @@ def _run_agent_timing_hook(
         cwd: Directory the hook resolves via `git -C <cwd> rev-parse
             --show-toplevel` — injected into the payload's `cwd` field and
             used as the subprocess's working directory.
-        env: Optional environment for the hook process; `None` inherits
-            the caller's environment.
+        env: Optional environment for the hook process. `None` (the
+            default) inherits the caller's environment minus
+            `CLAUDE_PROJECT_DIR` — Claude Code sets that var for agent
+            sessions, and an unstripped inherited value would otherwise
+            make the hook resolve the real repo root instead of *cwd*.
+            Pass an explicit `env` to opt back into a `CLAUDE_PROJECT_DIR`
+            value under test.
 
     Returns:
         The completed subprocess (exit code + captured stdout/stderr).
     """
     full_payload = {**payload, "cwd": str(cwd)}
+    run_env = (
+        dict(env)
+        if env is not None
+        else {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+    )
     return subprocess.run(
         ["bash", str(_HOOKS_DIR / _LOG_AGENT_TIMING)],
         input=json.dumps(full_payload),
@@ -3900,7 +3910,7 @@ def _run_agent_timing_hook(
         text=True,
         check=False,
         cwd=cwd,
-        env=env,
+        env=run_env,
     )
 
 
@@ -4018,6 +4028,40 @@ def test_log_agent_timing_non_git_cwd_writes_nothing(tmp_path: Path) -> None:
     proc = _run_agent_timing_hook(payload, cwd=tmp_path)
     assert proc.returncode == 0
     assert not (tmp_path / "code_health").exists()
+
+
+def test_log_agent_timing_prefers_claude_project_dir_over_payload_cwd(
+    tmp_path: Path,
+) -> None:
+    """``CLAUDE_PROJECT_DIR`` wins root resolution over payload ``cwd``.
+
+    Even when the payload ``cwd`` isn't a git repo.
+    """
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    init_git_repo(proj)
+    non_git_cwd = tmp_path / "not_a_repo"
+    non_git_cwd.mkdir()
+    payload = {
+        "hook_event_name": "SubagentStop",
+        "session_id": "s1",
+        "agent_id": "a1",
+        "agent_type": "forge:design-checker",
+        "transcript_path": None,
+        "tool_name": None,
+        "tool_use_id": None,
+        "duration_ms": None,
+    }
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(proj)}
+    proc = _run_agent_timing_hook(payload, cwd=non_git_cwd, env=env)
+    assert proc.returncode == 0
+    line = (
+        (proj / "code_health" / "agent_timing.jsonl")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
+    event = json.loads(line)
+    assert event["event"] == "SubagentStop"
 
 
 def test_log_agent_timing_malformed_stdin_writes_nothing(tmp_path: Path) -> None:

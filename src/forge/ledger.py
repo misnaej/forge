@@ -39,18 +39,45 @@ def append_ledger_line(
     Args:
         path: Ledger file to append to.
         fields: Field values in the order they should appear after ``ts``.
-            Values are rendered with ``str()``; they must not contain
-            whitespace (use *tail* for the one field that may).
+            Values are rendered with ``str()``; any whitespace inside one
+            becomes ``_`` so the field stays a single token (use *tail*
+            for the one field that may contain spaces).
         tail: Optional ``(key, value)`` written last; its value may
-            contain spaces.
+            contain spaces, but line breaks are folded to spaces so one
+            append is always one line.
     """
     ts = datetime.now(UTC).isoformat(timespec="seconds")
-    parts = [f"ts={ts}", *(f"{key}={value}" for key, value in fields.items())]
+    parts = [f"ts={ts}", *(f"{key}={_plain(value)}" for key, value in fields.items())]
     if tail is not None:
-        parts.append(f"{tail[0]}={tail[1]}")
+        parts.append(f"{tail[0]}={_one_line(tail[1])}")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write("  ".join(parts) + "\n")
+
+
+def _plain(value: object) -> str:
+    """Render a field value as one whitespace-free token.
+
+    Args:
+        value: Object to render; converted to string first.
+
+    Returns:
+        Whitespace-free token with internal spaces replaced by underscores,
+        or "-" if the result would be empty.
+    """
+    return "_".join(str(value).split()) or "-"
+
+
+def _one_line(value: str) -> str:
+    """Fold line breaks in a tail value so the record stays one line.
+
+    Args:
+        value: String that may contain line breaks.
+
+    Returns:
+        Single-line string with line breaks replaced by spaces.
+    """
+    return " ".join(value.splitlines())
 
 
 def parse_ledger(text: str, *, tail_key: str | None = None) -> list[dict[str, str]]:

@@ -57,6 +57,19 @@ def test_append_ledger_line_tail_field_written_last_with_spaces_preserved(
     assert "  label=r1  cmd=" in line
 
 
+def test_append_ledger_line_folds_whitespace_in_fields_and_line_breaks_in_tail(
+    tmp_path: Path,
+) -> None:
+    """A plain field's whitespace folds to ``_``; the tail's newlines fold to spaces."""
+    path = tmp_path / "history.log"
+    append_ledger_line(path, {"label": "a b\nc"}, tail=("cmd", "x\ny"))
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    rows = parse_ledger(path.read_text(encoding="utf-8"), tail_key="cmd")
+    assert rows[0]["label"] == "a_b_c"
+    assert rows[0]["cmd"] == "x y"
+
+
 def test_append_ledger_line_second_call_appends_not_overwrites(tmp_path: Path) -> None:
     """A second call adds a second line; the first line is untouched."""
     path = tmp_path / "history.log"

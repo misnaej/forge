@@ -13,7 +13,10 @@
 # the CLI does the pairing and the statistics — this hook only records.
 #
 # Registered without a matcher on purpose: loop detection needs every
-# tool call, not just Bash. Cost is one jq call and one append per event.
+# tool call, not just Bash. Per event the cost is one jq process (it
+# extracts the cwd and builds the line in a single pass) and one append;
+# the repo root comes from CLAUDE_PROJECT_DIR, with `git rev-parse` as
+# the fallback fork when Claude Code did not set it.
 # `FORGE_NO_AGENT_TIMING=1` switches the hook off (no config surface —
 # same shape as FORGE_NO_AUTO_SETUP).
 #
@@ -25,10 +28,8 @@ set -uo pipefail
 command -v jq >/dev/null 2>&1 || exit 0
 
 INPUT=$(cat)
-CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
-ROOT=$(git -C "${CWD:-.}" rev-parse --show-toplevel 2>/dev/null) || exit 0
-
-LINE=$(printf '%s' "$INPUT" | jq -c '{
+# One jq pass: line 1 is the payload's cwd, line 2 the ledger record.
+OUT=$(printf '%s' "$INPUT" | jq -r '(.cwd // "."), ({
     ts: (now | todate),
     ts_ms: (now * 1000 | floor),
     event: .hook_event_name,
@@ -39,8 +40,13 @@ LINE=$(printf '%s' "$INPUT" | jq -c '{
     tool_name,
     tool_use_id,
     duration_ms
-}' 2>/dev/null) || exit 0
-[ -n "$LINE" ] || exit 0
+} | tojson)' 2>/dev/null) || exit 0
+CWD=${OUT%%$'\n'*}
+LINE=${OUT#*$'\n'}
+[ -n "$LINE" ] && [ "$LINE" != "$OUT" ] || exit 0
+
+ROOT=${CLAUDE_PROJECT_DIR:-}
+[ -n "$ROOT" ] && [ -e "$ROOT/.git" ] || ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null) || exit 0
 
 mkdir -p "$ROOT/code_health" 2>/dev/null || exit 0
 printf '%s\n' "$LINE" >> "$ROOT/code_health/agent_timing.jsonl" 2>/dev/null
