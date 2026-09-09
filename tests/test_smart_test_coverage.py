@@ -2,20 +2,24 @@
 
 # MOCKING STRATEGY: ``_context_to_test`` and ``_from_json`` are pure-logic
 # functions tested directly with in-memory dicts — no file I/O, no mocking.
-# ``tests_covering`` is tested against real JSON files (written to ``tmp_path``)
-# for the happy-path, missing-file, and malformed-file edge cases.
+# ``load_export`` and ``tests_covering`` are tested against real JSON files
+# (written to ``tmp_path``) for the happy-path, missing-file, malformed-file,
+# and non-dict-shaped edge cases.
 
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING
 
-from forge.smart_test.coverage import _context_to_test, _from_json
+from forge.smart_test.coverage import _context_to_test, _from_json, load_export
 from forge.smart_test.coverage import tests_covering as _tests_covering
 
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -138,3 +142,34 @@ def test_tests_covering_malformed_json_returns_empty(tmp_path: Path) -> None:
     bad.write_text("not valid json{{{", encoding="utf-8")
     result = _tests_covering(bad, {"src/foo.py"})
     assert result == set()
+
+
+def test_load_export_non_dict_json_returns_none(tmp_path: Path) -> None:
+    """Valid JSON that parses to a list, not an object, is rejected as ``None``.
+
+    A ``coverage json`` export is always an object; a list-shaped file is
+    the wrong artifact entirely (not a coverage export at all), and the
+    ``isinstance`` guard must reject it the same as a malformed one — no
+    existing ``tests_covering`` case exercised this shape.
+    """
+    cov = tmp_path / "list.json"
+    cov.write_text(json.dumps([1, 2]), encoding="utf-8")
+    assert load_export(cov) is None
+
+
+def test_load_export_deeply_nested_json_degrades_instead_of_raising(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """JSON nested past the interpreter's recursion limit degrades to ``None``.
+
+    ``json.loads`` blows its recursion limit on deep nesting and raises
+    ``RecursionError`` — a ``RuntimeError``, not an ``OSError`` or
+    ``ValueError``, so it needs its own ``except`` arm. Both of this
+    function's callers promise to warn and continue rather than raise on
+    any malformed export, and CI runs the reporter under ``if: always()``.
+    """
+    deep = tmp_path / "deep.json"
+    deep.write_text("[" * 100_000 + "]" * 100_000, encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        assert load_export(deep) is None
+    assert any("could not parse" in record.getMessage() for record in caplog.records)

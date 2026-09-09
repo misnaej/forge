@@ -581,6 +581,7 @@ options:
 usage: forge-slow-tests-report [-h] [--log LOG] [--top TOP] [--out OUT]
                                [--baseline [BASELINE]]
                                [--update-baseline [UPDATE_BASELINE]]
+                               [--coverage-json PATH]
 
 Parse pytest --durations sections from a log (or stdin) and print the slowest
 tests, merged across all batches.
@@ -600,6 +601,9 @@ options:
                         Rewrite the baseline from this run's durations — run
                         deliberately, in a dedicated chore(perf) PR (default
                         path: .forge-test-durations.json).
+  --coverage-json PATH  Rank tests by unique covered statements per second,
+                        from a `coverage json --show-contexts` export (record
+                        it with pytest --cov-context=test).
 ```
 
 ## forge-smart-test
