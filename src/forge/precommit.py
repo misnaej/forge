@@ -2022,16 +2022,6 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
         return StepResult(
             name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
         )
-    if (repo_root / ".claude-plugin" / "plugin.json").exists():
-        return StepResult(
-            name=name,
-            passed=True,
-            output=(
-                "Manifest-versioned repo — verify-forge-plugin-version owns "
-                "the declared-version invariant; skipped."
-            ),
-            skipped=True,
-        )
     if _forge_step_config(repo_root, "changelog").get("mode") == "fragments":
         # Fragment mode: CHANGELOG.md is an OUTPUT of release, never an
         # input — no declared-version/stranded checks apply. The step
@@ -2064,6 +2054,19 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
                 else "Fragment mode — invalid changelog.d/ fragment(s):\n"
                 + "\n".join(errors)
             ),
+        )
+    if (repo_root / ".claude-plugin" / "plugin.json").exists():
+        return StepResult(
+            name=name,
+            passed=True,
+            output=(
+                "Manifest-versioned repo — verify-forge-plugin-version owns "
+                "the declared-version invariant; skipped. (Fragments mode is "
+                "judged above: its per-branch checks are PR hygiene, "
+                "independent of the declared-version invariant, and a repo "
+                "with both a manifest and fragments needs them to run.)"
+            ),
+            skipped=True,
         )
     return None
 
@@ -2821,6 +2824,15 @@ def main() -> int:
             emit(f"{RED}Pre-commit checks failed:{NC}")
             for r in blocking_failures:
                 emit(f"  - {r.name}: see code_health/{r.name}.log")
+                # In CI that log is on a machine that no longer exists by
+                # the time anyone reads the run, so the failure names
+                # itself and never says what was wrong. Echo the step's
+                # own output — blocking failures only, to bound volume.
+                # `is_ci()`, never `is_non_interactive()`: the latter is
+                # true in any non-tty local shell and would dump logs
+                # into every commit.
+                if is_ci() and r.output.strip():
+                    emit(r.output.rstrip())
             if non_blocking_warnings:
                 emit(
                     f"{YELLOW}Plus {len(non_blocking_warnings)} non-blocking "
