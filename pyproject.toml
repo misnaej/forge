@@ -225,6 +225,10 @@ badge = true
 # into README.md (between the forge:badges markers). Refreshed by the
 # bootstrap `readme-badges` step.
 enabled = true
+# Pin the CI badge's workflow. Unset, the generator takes the first
+# workflow alphabetically — which `assemble-release.yml` now wins, so the
+# badge labelled CI would report the release-assembly run instead.
+workflow = "ci.yml"
 
 [tool.forge.c4]
 # Dogfood forge-gen-c4. The verbose C4 model (people, containers, components,

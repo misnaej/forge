@@ -183,6 +183,16 @@ violating `composes_all_of` (placement being decided wrong *now*);
 LOW = pre-existing baseline; REVIEW = visible exemption. Mechanics:
 [`docs/audit-pack.md`](../docs/audit-pack.md).
 
+### Cost lens (judgment check, no CLI)
+
+Review FOUNDATION §18's goals. A diff that adds or edits tests: does it
+rebuild per test what could be built once, does a parametrized variant
+multiply a real cost, is the executed path so mocked that the runtime
+buys nothing unique? A diff touching a path already known hot — from a
+profile or a prior `forge:perf-optimizer` report the author cites — ask
+for the same-machine before/after number. The number, not that agent's
+full protocol, which stays opt-in.
+
 ### Wrapper justification (judgment check, no CLI)
 
 When a diff adds predominantly construct-and-delegate code, ask
@@ -232,6 +242,11 @@ verified-at: <sha>   (PR #<num>, branch <branch>)
  layer, and the fix-the-interface alternative per FOUNDATION §7 —
  or "None — no wrapper-shaped diffs">
 
+### Cost lens
+<per FOUNDATION §18: test-cost findings on a diff that adds or edits
+ tests, the before/after number asked for on a hot-path diff, or
+ "None — no cost-relevant diff">
+
 ### Repo-specific rules
 <findings against extras passed by the wrapper, if any>
 
@@ -278,8 +293,8 @@ Full Review) above.
 - Be constructive — suggest fixes, not just complaints
 - Prioritize — distinguish CRITICAL / HIGH / MEDIUM / LOW
 - If a recipe surfaced zero findings, state that explicitly in the report
-- Never silently drop the claim-verification stage or the
-  wrapper-justification check
+- Never silently drop the claim-verification stage, the
+  wrapper-justification check, or the cost lens
 - **Verify before calling a name "stale" / "old" / "leftover"**: `grep`
   first — a name resolving to a real, distinct symbol is current even
   when a similar name also exists; flagging a live symbol is a false

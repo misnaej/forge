@@ -40,7 +40,7 @@ Code.
    - changelog_fragments.py: `forge-changelog` — changelog fragments (changelog.d/): per-PR `<slug>.<type>.md` files with level-only `bump:` front-matter, validated by the fragment gate and assembled into CHANGELOG.md once at release (single writer; zero merge conflicts by construction); `next-version` prints the computed next release, tag-aware (fragments already in a tag's tree assemble under that tag; only unreleased ones mint: latest tag + their max level) and `release` assembles per tag then under the minted version, writes plugin.json (when present), and stages everything (never commits); `restrand` subcommand mechanically repairs stranded entries in shared-heading repos (no manifest needed; stages, never commits); `auto-tag` cuts and pushes the tag-per-merge release tag in CI (fragments not in latest tag's tree -> max level -> next tag)
    - pr_delta.py: the finalization-path classification primitives — every threshold, glob, and predicate (delta, docs-only, regen-only, light-code) consumed by `forge-pr-plan`, the pr-manager agent, and the wrap-up publish hook
    - pr_plan.py: `forge-pr-plan` — deterministic finalization-path classifier for the `/pr` skill; composes the pr_delta primitives over the real diff and emits the JSON plan (mode/reporters/precommit_scope/reasons); `--freshness --pr N` is the read-only wrap-up-staleness verdict the FOUNDATION §6 monitor polls (and forge-emergency's repayment check reuses)
-   - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; `--baseline`/`--update-baseline` compare against the committed `.forge-test-durations.json` (WARN-shaped, never gates); wired via the `/perf` skill
+   - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; `--baseline`/`--update-baseline` compare against the committed `.forge-test-durations.json` (WARN-shaped, never gates; absent or malformed baseline = one skip line, not a wall of new-slow); `--coverage-json` ranks test functions by unique covered statements per second from a `coverage json --show-contexts` export; wired via the `/perf` skill
    - telemetry.py: `forge-telemetry` — process-tree RSS + host CPU sampler around a wrapped command; per-run log/plot artifacts, append-only `telemetry_history.log`, `--history` trend reader
    - forge_config.py: `forge-config` — lists every `[tool.forge.*]` key forge reads (value/default + description), names native sections like `[tool.interrogate]`, and advises on recommended-but-unset config; read-only, surfaced by `install-forge-bootstrap`
    - fix_ruff.py: `fix-forge-ruff` — runs `ruff format` + `ruff check --fix --unsafe-fixes`, re-stages modified tracked files, writes `code_health/ruff.log`
@@ -76,7 +76,7 @@ Code.
    - install_labels.py: `install-forge-labels` — GitHub label installer
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
-   - resync.py: `forge-resync` — regenerate forge-managed artifacts and open a dedup-guarded resync PR (companion to `upgrade.py`'s pin-rewrite flow)
+   - resync.py: `forge-resync` — regenerate forge-managed artifacts and open a dedup-guarded resync PR (companion to `upgrade.py`'s pin-rewrite flow); `--resolve-conflicts [--dry-run]` resolves a merge whose only conflicts are forge-generated artifacts by regenerating each from the merged tree (`pr_delta.REGEN_COMMANDS`), verifying with its `--check`, and staging — refusing if any other path conflicts
    - git_utils.py: shared git helpers and CLI logging setup (public API for consumers: `latest_v_tag`, `parse_semver`, `next_version`, `run_git`, `configure_cli_logging`)
    - changelog.py: shared `## vX.Y.Z` CHANGELOG heading recognition (`release_headings`, `changelog_lacks_entry`) — single source for release and the changelog_updated step; public API for consumers
    - import_graph.py: `forge.import_graph` — shared AST import primitives (`extract_import_targets`, `resolve_module_name`, `closest_known`) used by `audit.deps` and `smart_test.dependencies`
@@ -161,7 +161,7 @@ enforcement:
 - block_force_push.sh: block force pushes
 - block_forge_docs_edits.sh: block agent edits inside the forge-managed forge-docs/ mirror
 - block_git_rebase.sh: block `git rebase` and `git pull --rebase` from agents (no bypass — sync via plain base merge)
-- block_install_deps.sh: block dependency installation (pip / conda / pipenv / poetry / uv / pixi; pixi scoped to manifest+lock writes — `pixi run`/`install` stay allowed)
+- block_install_deps.sh: block dependency installation (pip / conda / pipenv / poetry / uv / pixi; pixi governed by a verb allowlist that fails closed, the other five by denylists)
 - block_protected_branches.sh: block direct pushes to the protected base branch (`[tool.forge].base_branch`)
 - block_no_verify.sh: block `--no-verify`
 - block_pr_merge.sh: block autonomous PR merges
@@ -179,6 +179,7 @@ enforcement:
 - block_raw_ruff.sh: hard-block raw `ruff check` / `ruff format` from agents (no bypass — agents use forge-precommit)
 - keep_squash_comment_last.sh: PostToolUse — after any command that comments on a PR, re-post the squash-merge comment so it stays the newest one (silent no-op when it already is, or when the PR has none yet)
 - warn_stale_wrapup.sh: PostToolUse — after a `git push` on a branch with an open PR, print a reminder when `forge-pr-plan --freshness` says the posted wrap-up no longer names the head (silent when fresh, unknowable, or a refresh is already authored for HEAD)
+- warn_generated_conflicts.sh: PostToolUse — after a `git merge` whose only conflicts are forge-generated artifacts (probe: `forge-resync --resolve-conflicts --dry-run`), print the instruction to run `forge-resync --resolve-conflicts`; silent otherwise, never regenerates or stages
 - wrapup_anchor.sh: sourced library, not a hook — the one `wrapup_names_head` predicate shared by `block_unverified_pr_create` and `warn_stale_wrapup`
 
 ## Plugin Manifest (`.claude-plugin/`)

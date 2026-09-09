@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_69 modules, 880 symbols._
+_69 modules, 892 symbols._
 
 ## `forge`
 
@@ -587,6 +587,7 @@ _69 modules, 880 symbols._
 - `resolve_current_branch(repo_root: Path) -> tuple[str, str] | None` — Return the current branch name and where it came from, or ``None``.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
 - `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
+- `unmerged_paths(repo_root: Path) -> list[str]` — Return the repo-relative paths currently in an unmerged index state.
 - `has_conflict_markers(text: str) -> bool` — Return whether *text* contains unresolved git conflict markers.
 - `file_has_conflict_markers(path: Path) -> bool` — Return whether the file at *path* holds unresolved conflict markers.
 - `resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref diff-scoped checks should compare against, origin-first.
@@ -776,6 +777,7 @@ _69 modules, 880 symbols._
 - `touches_source_paths(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`SOURCE_PATHS`.
 - `light_wrapup_decision(*, line_count: int, changed_paths: list[str], added_paths: list[str]) -> tuple[bool, str]` — Decide whether a diff qualifies for the light wrap-up path.
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
+- `regen_commands(repo_root: Path) -> dict[str, tuple[str, ...]]` — Return :data:`REGEN_COMMANDS` filtered to the artifacts this repo generates.
 
 ## `forge.pr_plan`
 
@@ -901,7 +903,6 @@ _69 modules, 880 symbols._
 - `class _RefusalError` _(internal)_ — Internal control flow: a state this tool must not resolve.
 - `class RebumpOutcome` — Result of one rebump run.
 - `_require_latest_tag(repo_root: Path) -> str` _(internal)_ — Return the latest ``v*`` tag, refusing when none exists.
-- `_unmerged_paths(repo_root: Path) -> list[str]` _(internal)_ — Return the repo-relative paths currently in an unmerged index state.
 - `_read_index_stage(repo_root: Path, stage: int, path: str) -> str | None` _(internal)_ — Return *path*'s contents at merge-index *stage*, or ``None``.
 - `_guard_entry_state(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) -> None` _(internal)_ — Refuse states the tool must not touch.
 - `_mid_merge_versions(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Return the ``(fork, ours)`` manifest versions during a merge.
@@ -939,6 +940,8 @@ _69 modules, 880 symbols._
 - `_run_bootstrap() -> int` _(internal)_ — Run ``install-forge-bootstrap`` in-process and return its exit code.
 - `_provenance_evidence(root: Path) -> tuple[bool, str]` _(internal)_ — Run the provenance gates and format PR-body evidence.
 - `_publish_resync(root: Path, version: str, base_branch: str) -> int` _(internal)_ — Branch, commit, push the regen diff and open the resync PR.
+- `_regenerate(root: Path, path: str, argv: tuple[str, ...]) -> bool` _(internal)_ — Regenerate one artifact from the merged tree and byte-verify it.
+- `_resolve_conflicts(root: Path, *, dry_run: bool) -> int` _(internal)_ — Resolve a merge whose only conflicts are forge-generated artifacts.
 - `main() -> int` — Run the resync loop; see the module docstring for the steps.
 
 ## `forge.run_context`
@@ -961,8 +964,16 @@ _69 modules, 880 symbols._
 - `format_report(durations: list[Duration], top: int) -> str` — Render a ranked durations table as plain text.
 - `_baseline_key(duration: Duration) -> str` _(internal)_ — Return *duration*'s flat JSON key (``nodeid::phase``).
 - `save_baseline(durations: list[Duration], path: Path) -> None` — Write *durations* as the committed baseline JSON at *path*.
-- `load_baseline(path: Path) -> dict[str, float]` — Load the baseline mapping from *path*.
+- `load_baseline(path: Path) -> dict[str, float] | None` — Load the baseline mapping from *path*.
 - `format_baseline_delta(durations: list[Duration], baseline: dict[str, float]) -> str` — Render the regression block comparing *durations* to *baseline*.
+- `nodeid_base(nodeid: str) -> str` — Collapse a node id to the test function that owns it.
+- `seconds_by_base(durations: list[Duration]) -> dict[str, float]` — Sum every phase and every parametrized variant per test function.
+- `_in_source_roots(filename: str, source_roots: list[str]) -> bool` _(internal)_ — Return whether a coverage file entry lies under a source root.
+- `unique_statements(data: dict[str, object], source_roots: list[str]) -> tuple[dict[str, int], set[str]]` — Count statements covered by exactly one test function.
+- `_worth_row(base: str, seconds: float, unique: int | None) -> tuple[tuple[int, float], str]` _(internal)_ — Render one ranking row and the key it sorts on.
+- `format_coverage_ranking(durations: list[Duration], data: dict[str, object], source_roots: list[str], *, top: int, truncated: bool) -> str` — Rank test functions by unique covered statements per second.
+- `durations_truncated(text: str) -> bool` — Return whether pytest actually hid durations entries in *text*.
+- `_source_roots() -> list[str]` _(internal)_ — Return the roots to scope counted statements to.
 - `_read_source(log: str) -> str` _(internal)_ — Read the pytest log from a file path or stdin.
 - `main() -> int` — Entry point for ``forge-slow-tests-report``.
 
@@ -991,6 +1002,7 @@ _69 modules, 880 symbols._
 
 - `_context_to_test(context: str) -> str | None` _(internal)_ — Reduce a coverage context to a repo-relative test file path.
 - `_from_json(data: dict[str, object], changed: set[str]) -> set[str]` _(internal)_ — Map a parsed coverage-JSON document to covering test files.
+- `load_export(coverage_json: Path) -> dict[str, object] | None` — Load a ``coverage json --show-contexts`` export, or ``None``.
 - `tests_covering(coverage_json: Path, changed_files: Iterable[str]) -> set[str]` — Return repo-relative test files whose coverage touches a changed file.
 
 ## `forge.smart_test.dependencies`

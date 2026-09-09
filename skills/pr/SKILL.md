@@ -70,7 +70,13 @@ silently merge.** Which variant depends on Step 0:
   mode**: rebump refuses here by design — a manifest conflict is a
   racing release PR; follow the refusal's recovery (base side of both
   files, restore consumed fragments from the merge base, re-run
-  `forge-changelog release`).
+  `forge-changelog release`). When the conflict is confined to
+  forge-generated artifacts (`docs/api-digest.md`,
+  `docs/cli-reference.md`, `FOUNDATION.md`, `docs/architecture.dsl`),
+  never hand-merge: run **`forge-resync --resolve-conflicts`** — it
+  regenerates each from the merged tree, verifies with the generator's
+  `--check`, and stages; you commit the merge. It refuses if any other
+  path conflicts.
 - **Behind but clean** (left count > 0, not conflicting) → merge the
   base in and proceed, saying what was done — **no confirmation
   needed** (FOUNDATION §6's resolution rule governs): it refreshes the

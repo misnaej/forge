@@ -21,6 +21,13 @@
 #     directly in its dedicated test section instead).
 #   - A stateful counter fake for `_working_tree_dirty` where a test needs
 #     the pre-bootstrap and post-bootstrap dirty checks to disagree.
+#   - `_regenerate` unit tests fake `resync.subprocess.run` directly (per-call
+#     argv inspection distinguishes the plain generator call from its
+#     `--check` re-run) with `resync.require_cli` a no-op.
+#   - `_resolve_conflicts` tests build REAL git merge-conflict states (no
+#     mocked git plumbing — mirrors `tests/test_rebump.py`'s local repo
+#     helpers) and patch only `resync._regenerate` with a recording stub, so
+#     the conflict-classification logic runs against a genuine unmerged index.
 
 from __future__ import annotations
 
@@ -32,11 +39,79 @@ import pytest
 
 from forge import git_utils, resync
 from forge.config import ForgeConfig
-from tests.conftest import FakeProc
+from tests.conftest import GIT_ENV, FakeProc, commit_all, init_git_repo
 
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Local repo-building helpers (mirrors tests/test_rebump.py ~100-160)
+# ---------------------------------------------------------------------------
+
+
+def _checkout_new_branch(repo: Path, name: str) -> None:
+    """Create and check out branch *name* from the current ``HEAD``.
+
+    Args:
+        repo: Repo root.
+        name: New branch name.
+    """
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", name], cwd=repo, env=GIT_ENV, check=True
+    )
+
+
+def _checkout(repo: Path, name: str) -> None:
+    """Check out existing branch *name*.
+
+    Args:
+        repo: Repo root.
+        name: Branch to switch to.
+    """
+    subprocess.run(["git", "checkout", "-q", name], cwd=repo, env=GIT_ENV, check=True)
+
+
+def _merge_no_commit(repo: Path, branch: str) -> int:
+    """Run ``git merge --no-ff --no-commit`` against *branch*, return its exit code.
+
+    Args:
+        repo: Repo root.
+        branch: Branch to merge into the current one.
+
+    Returns:
+        The merge subprocess's return code (0 clean, non-zero conflicted).
+    """
+    result = subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", branch],
+        cwd=repo,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode
+
+
+def _staged_paths(repo: Path) -> list[str]:
+    """Return the repo-relative paths currently staged relative to ``HEAD``.
+
+    Args:
+        repo: Repo root.
+
+    Returns:
+        Sorted staged (index vs HEAD) paths.
+    """
+    out = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=repo,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return sorted(line for line in out.splitlines() if line.strip())
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +391,114 @@ def test_provenance_evidence_truncates_oversized_output(
     assert "… (truncated)" in block
     assert oversized not in block
     assert "````" in block
+
+
+# ---------------------------------------------------------------------------
+# _regenerate
+# ---------------------------------------------------------------------------
+
+
+def test_regenerate_success_runs_generator_then_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A clean generator run followed by an agreeing --check returns True.
+
+    SCENARIO: the generator exits 0, and re-running it with --check
+        afterward also exits 0 (its output matches the regenerated file).
+    MOCK SETUP: `require_cli` no-op; `subprocess.run` replaced with a
+        recorder appending every argv and returning `FakeProc(0)`.
+    EXPECTED BEHAVIOR: both the plain generator argv and the `--check`
+        argv run, in that order; the function returns True and logs an
+        info line naming the regenerated path.
+    """
+    calls: list[list[str]] = []
+    monkeypatch.setattr(resync, "require_cli", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        resync.subprocess,
+        "run",
+        lambda cmd, **_kw: calls.append(cmd) or FakeProc(0),
+    )
+
+    with caplog.at_level("INFO"):
+        result = resync._regenerate(
+            tmp_path, "FOUNDATION.md", ("install-forge-claude-md",)
+        )
+
+    assert result is True
+    assert calls == [
+        ["install-forge-claude-md"],
+        ["install-forge-claude-md", "--check"],
+    ]
+    assert any("regenerated FOUNDATION.md" in r.getMessage() for r in caplog.records)
+
+
+def test_regenerate_generator_failure_skips_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failing generator returns False without ever running --check.
+
+    SCENARIO: the generator itself exits non-zero.
+    MOCK SETUP: `require_cli` no-op; `subprocess.run` replaced with a
+        recorder returning `FakeProc(1, stderr="boom")` unconditionally.
+    EXPECTED BEHAVIOR: only the plain generator argv runs — `--check` is
+        never invoked; the function returns False and logs an error
+        naming the exit code.
+    """
+    calls: list[list[str]] = []
+    monkeypatch.setattr(resync, "require_cli", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        resync.subprocess,
+        "run",
+        lambda cmd, **_kw: calls.append(cmd) or FakeProc(1, stderr="boom"),
+    )
+
+    with caplog.at_level("ERROR"):
+        result = resync._regenerate(
+            tmp_path, "FOUNDATION.md", ("install-forge-claude-md",)
+        )
+
+    assert result is False
+    assert calls == [["install-forge-claude-md"]]
+    assert any("failed" in r.getMessage() for r in caplog.records)
+
+
+def test_regenerate_check_disagreement_returns_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A generator that runs clean but whose --check disagrees still fails.
+
+    SCENARIO: the generator exits 0, but the immediate `--check` re-run
+        reports drift (non-zero) — the regenerated content did not stick,
+        or the generator is non-idempotent.
+    MOCK SETUP: `require_cli` no-op; `subprocess.run` replaced with a
+        fake distinguishing the two calls by whether `--check` is in argv:
+        `FakeProc(0)` for the plain call, `FakeProc(1, stdout="drift")`
+        for `--check`.
+    EXPECTED BEHAVIOR: both calls run; the function returns False and
+        logs an error naming the disagreement.
+    """
+
+    def _fake_run(cmd: list[str], **_kw: object) -> FakeProc:
+        if "--check" in cmd:
+            return FakeProc(1, stdout="drift")
+        return FakeProc(0)
+
+    monkeypatch.setattr(resync, "require_cli", lambda *_a, **_kw: None)
+    monkeypatch.setattr(resync.subprocess, "run", _fake_run)
+
+    with caplog.at_level("ERROR"):
+        result = resync._regenerate(
+            tmp_path, "FOUNDATION.md", ("install-forge-claude-md",)
+        )
+
+    assert result is False
+    assert any("disagrees" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -892,3 +1075,291 @@ def test_main_diff_after_bootstrap_publishes(
     rc = resync.main()
     assert rc == 0
     assert publish_args == [(tmp_path, "2.7.0", "main")]
+
+
+# ---------------------------------------------------------------------------
+# _resolve_conflicts
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_conflicts_no_merge_in_progress_returns_2(tmp_path: Path) -> None:
+    """A clean repo with no merge underway refuses — nothing to resolve."""
+    init_git_repo(tmp_path)
+    assert resync._resolve_conflicts(tmp_path, dry_run=False) == 2
+
+
+def test_resolve_conflicts_merge_clean_nothing_conflicted_returns_2(
+    tmp_path: Path,
+) -> None:
+    """A merge in progress that auto-merged cleanly (no conflicts) refuses.
+
+    `--no-ff --no-commit` against two branches touching distinct files
+    merges with rc 0 but still leaves `MERGE_HEAD` in place (the commit
+    step never ran) — `merge_in_progress` is True while `unmerged_paths`
+    is empty.
+    """
+    init_git_repo(tmp_path)
+    _checkout_new_branch(tmp_path, "other")
+    (tmp_path / "other.txt").write_text("other\n")
+    commit_all(tmp_path, "other work")
+    _checkout(tmp_path, "main")
+    _checkout_new_branch(tmp_path, "feat/x")
+    (tmp_path / "feat.txt").write_text("feat\n")
+    commit_all(tmp_path, "feat work")
+
+    assert _merge_no_commit(tmp_path, "other") == 0
+
+    assert resync._resolve_conflicts(tmp_path, dry_run=False) == 2
+
+
+def test_resolve_conflicts_foreign_path_only_refuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A single non-generated conflicted path refuses, naming it; the stub never runs.
+
+    SCENARIO: the only conflicted path is `foo.txt` — not a forge-generated
+        artifact.
+    MOCK SETUP: `resync._regenerate` replaced with a recording stub.
+    EXPECTED BEHAVIOR: returns 2; the stub is never called; an error
+        naming `foo.txt` is logged.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "foo.txt").write_text("base\n")
+    commit_all(tmp_path, "add foo")
+    _checkout_new_branch(tmp_path, "other")
+    (tmp_path / "foo.txt").write_text("other\n")
+    commit_all(tmp_path, "other edit")
+    _checkout(tmp_path, "main")
+    _checkout_new_branch(tmp_path, "feat/x")
+    (tmp_path / "foo.txt").write_text("feat\n")
+    commit_all(tmp_path, "feat edit")
+
+    assert _merge_no_commit(tmp_path, "other") != 0
+
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(resync, "_regenerate", lambda *a: calls.append(a) or True)
+
+    with caplog.at_level("ERROR"):
+        rc = resync._resolve_conflicts(tmp_path, dry_run=False)
+
+    assert rc == 2
+    assert calls == []
+    assert any("foo.txt" in r.getMessage() for r in caplog.records)
+
+
+def test_resolve_conflicts_mixed_generated_and_foreign_refuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A conflict set mixing a generated and a foreign path refuses entirely.
+
+    SCENARIO: `FOUNDATION.md` (generated) and `foo.txt` (foreign) both
+        conflict.
+    MOCK SETUP: `resync._regenerate` replaced with a recording stub.
+    EXPECTED BEHAVIOR: returns 2; the stub is never called — even the
+        generated path is left untouched, matching `forge-rebump`'s
+        all-or-nothing refusal contract.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "FOUNDATION.md").write_text("base found\n")
+    (tmp_path / "foo.txt").write_text("base foo\n")
+    commit_all(tmp_path, "add files")
+    _checkout_new_branch(tmp_path, "other")
+    (tmp_path / "FOUNDATION.md").write_text("other found\n")
+    (tmp_path / "foo.txt").write_text("other foo\n")
+    commit_all(tmp_path, "other edit")
+    _checkout(tmp_path, "main")
+    _checkout_new_branch(tmp_path, "feat/x")
+    (tmp_path / "FOUNDATION.md").write_text("feat found\n")
+    (tmp_path / "foo.txt").write_text("feat foo\n")
+    commit_all(tmp_path, "feat edit")
+
+    assert _merge_no_commit(tmp_path, "other") != 0
+
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(resync, "_regenerate", lambda *a: calls.append(a) or True)
+
+    rc = resync._resolve_conflicts(tmp_path, dry_run=False)
+
+    assert rc == 2
+    assert calls == []
+
+
+def test_resolve_conflicts_dry_run_only_generated_reports_without_acting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """dry_run reports the resolvable verdict without regenerating or staging.
+
+    SCENARIO: only `FOUNDATION.md` conflicts; `dry_run=True`.
+    MOCK SETUP: `resync._regenerate` replaced with a recording stub.
+    EXPECTED BEHAVIOR: returns 0; the stub is never called; the path is
+        left genuinely unresolved (`git add` never ran — a merge conflict
+        already makes ``git diff --cached`` list the path, so the real
+        assertion is that `unmerged_paths` still reports it); an info
+        line names `FOUNDATION.md`.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "FOUNDATION.md").write_text("base found\n")
+    commit_all(tmp_path, "add FOUNDATION.md")
+    _checkout_new_branch(tmp_path, "other")
+    (tmp_path / "FOUNDATION.md").write_text("other found\n")
+    commit_all(tmp_path, "other edit")
+    _checkout(tmp_path, "main")
+    _checkout_new_branch(tmp_path, "feat/x")
+    (tmp_path / "FOUNDATION.md").write_text("feat found\n")
+    commit_all(tmp_path, "feat edit")
+
+    assert _merge_no_commit(tmp_path, "other") != 0
+
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(resync, "_regenerate", lambda *a: calls.append(a) or True)
+
+    with caplog.at_level("INFO"):
+        rc = resync._resolve_conflicts(tmp_path, dry_run=True)
+
+    assert rc == 0
+    assert calls == []
+    assert git_utils.unmerged_paths(tmp_path) == ["FOUNDATION.md"]
+    assert any("FOUNDATION.md" in r.getMessage() for r in caplog.records)
+
+
+def test_resolve_conflicts_happy_path_regenerates_and_stages_each(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every conflicted generated path is regenerated with its own argv and staged.
+
+    SCENARIO: `FOUNDATION.md` and `docs/cli-reference.md` both conflict —
+        both are forge-generated.
+    MOCK SETUP: `resync._regenerate` replaced with a recording stub
+        returning True for every path.
+    EXPECTED BEHAVIOR: returns 0; the stub is called once per conflicted
+        path, each time with that path's own :func:`regen_commands` argv;
+        both paths end up staged.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "FOUNDATION.md").write_text("base found\n")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "cli-reference.md").write_text("base cli\n")
+    commit_all(tmp_path, "add generated files")
+    _checkout_new_branch(tmp_path, "other")
+    (tmp_path / "FOUNDATION.md").write_text("other found\n")
+    (tmp_path / "docs" / "cli-reference.md").write_text("other cli\n")
+    commit_all(tmp_path, "other edit")
+    _checkout(tmp_path, "main")
+    _checkout_new_branch(tmp_path, "feat/x")
+    (tmp_path / "FOUNDATION.md").write_text("feat found\n")
+    (tmp_path / "docs" / "cli-reference.md").write_text("feat cli\n")
+    commit_all(tmp_path, "feat edit")
+
+    assert _merge_no_commit(tmp_path, "other") != 0
+
+    calls: list[tuple[Path, str, tuple[str, ...]]] = []
+
+    def _fake_regenerate(root: Path, path: str, argv: tuple[str, ...]) -> bool:
+        calls.append((root, path, argv))
+        return True
+
+    monkeypatch.setattr(resync, "_regenerate", _fake_regenerate)
+
+    rc = resync._resolve_conflicts(tmp_path, dry_run=False)
+
+    assert rc == 0
+    expected = resync.regen_commands(tmp_path)
+    called_paths = {path for _root, path, _argv in calls}
+    assert called_paths == {"FOUNDATION.md", "docs/cli-reference.md"}
+    for root, path, argv in calls:
+        assert root == tmp_path
+        assert argv == expected[path]
+    assert _staged_paths(tmp_path) == ["FOUNDATION.md", "docs/cli-reference.md"]
+
+
+def test_resolve_conflicts_regenerate_failure_returns_2(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `_regenerate` failure on any conflicted path aborts with 2.
+
+    SCENARIO: `FOUNDATION.md` conflicts; the regenerate stub reports failure.
+    MOCK SETUP: `resync._regenerate` replaced with a stub returning False.
+    EXPECTED BEHAVIOR: `_resolve_conflicts` returns 2.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "FOUNDATION.md").write_text("base found\n")
+    commit_all(tmp_path, "add FOUNDATION.md")
+    _checkout_new_branch(tmp_path, "other")
+    (tmp_path / "FOUNDATION.md").write_text("other found\n")
+    commit_all(tmp_path, "other edit")
+    _checkout(tmp_path, "main")
+    _checkout_new_branch(tmp_path, "feat/x")
+    (tmp_path / "FOUNDATION.md").write_text("feat found\n")
+    commit_all(tmp_path, "feat edit")
+
+    assert _merge_no_commit(tmp_path, "other") != 0
+
+    monkeypatch.setattr(resync, "_regenerate", lambda *_a: False)
+
+    rc = resync._resolve_conflicts(tmp_path, dry_run=False)
+
+    assert rc == 2
+
+
+# ---------------------------------------------------------------------------
+# main() — --resolve-conflicts / --dry-run argv handling
+# ---------------------------------------------------------------------------
+
+
+def test_main_resolve_conflicts_dispatches_before_gh_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--resolve-conflicts` short-circuits before the gh/forge-precommit preflight.
+
+    SCENARIO: `--resolve-conflicts` passed on argv.
+    MOCK SETUP: `repo_root` → sandbox; `require_cli` replaced with a
+        recorder capturing every `name` it is called with;
+        `_resolve_conflicts` replaced with a recorder.
+    EXPECTED BEHAVIOR: `_resolve_conflicts` is called with
+        `(root, dry_run=False)` and its return value passes straight
+        through; `require_cli` is never called (not even for `"gh"`).
+    """
+    monkeypatch.setattr(resync, "repo_root", lambda: tmp_path)
+    required: list[str] = []
+    monkeypatch.setattr(
+        resync, "require_cli", lambda name, **_kw: required.append(name)
+    )
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        resync,
+        "_resolve_conflicts",
+        lambda root, *, dry_run: calls.append((root, dry_run)) or 0,
+    )
+    monkeypatch.setattr(resync.sys, "argv", ["forge-resync", "--resolve-conflicts"])
+
+    rc = resync.main()
+
+    assert rc == 0
+    assert calls == [(tmp_path, False)]
+    assert required == []
+
+
+def test_main_dry_run_without_resolve_conflicts_exits_via_parser_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare `--dry-run` is rejected by `parser.error`, not silently inert.
+
+    SCENARIO: `--dry-run` passed without `--resolve-conflicts`.
+    MOCK SETUP: none — argparse's own `parser.error` fires before any
+        resync logic runs.
+    EXPECTED BEHAVIOR: `SystemExit(2)` propagates out of `main()`.
+    """
+    monkeypatch.setattr(resync.sys, "argv", ["forge-resync", "--dry-run"])
+
+    with pytest.raises(SystemExit) as exc:
+        resync.main()
+
+    assert exc.value.code == 2

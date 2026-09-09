@@ -110,7 +110,7 @@ gh pr view <PR#> --json mergeable,baseRefName
 git rev-list --left-right --count origin/<base>...HEAD   # left = behind
 ```
 
-`CONFLICTING` → **stop and report** (caller resolves + re-invokes); behind-but-clean → merge the base and proceed, saying what was done — **no confirmation needed** (FOUNDATION §6's resolution rule; /pr Step 0.5).
+`CONFLICTING` → **stop and report** (caller resolves + re-invokes; when only forge-generated artifacts conflict the caller runs `forge-resync --resolve-conflicts` — never a hand-merge of a generated file); behind-but-clean → merge the base and proceed, saying what was done — **no confirmation needed** (FOUNDATION §6's resolution rule; /pr Step 0.5).
 
 1. **The three checkers** via Task — one design/security/docs report each; skip per pre-run coverage, all three under delta mode.
 2. **`precommit-fixer` in `mode: strict`** — ALWAYS: docstring fixes shift line lengths (`strict`'s `pip_audit` escalation: `/pr` Step 2).

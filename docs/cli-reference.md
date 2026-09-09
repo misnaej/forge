@@ -582,13 +582,20 @@ options:
 ## forge-resync
 
 ```text
-usage: forge-resync [-h]
+usage: forge-resync [-h] [--resolve-conflicts] [--dry-run]
 
 Regenerate forge-managed artifacts and open a dedup-guarded resync PR when
 they drifted.
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help           show this help message and exit
+  --resolve-conflicts  Mid-merge: when every conflicted path is a forge-
+                       generated artifact, regenerate each from the merged
+                       tree, verify with its --check, and stage it (the merge
+                       commit stays yours). Refuses, touching nothing, if any
+                       other path conflicts.
+  --dry-run            With --resolve-conflicts: report the verdict only (exit
+                       0 = resolvable).
 ```
 
 ## forge-slow-tests-report
@@ -597,6 +604,7 @@ options:
 usage: forge-slow-tests-report [-h] [--log LOG] [--top TOP] [--out OUT]
                                [--baseline [BASELINE]]
                                [--update-baseline [UPDATE_BASELINE]]
+                               [--coverage-json PATH]
 
 Parse pytest --durations sections from a log (or stdin) and print the slowest
 tests, merged across all batches.
@@ -616,6 +624,9 @@ options:
                         Rewrite the baseline from this run's durations — run
                         deliberately, in a dedicated chore(perf) PR (default
                         path: .forge-test-durations.json).
+  --coverage-json PATH  Rank tests by unique covered statements per second,
+                        from a `coverage json --show-contexts` export (record
+                        it with pytest --cov-context=test).
 ```
 
 ## forge-smart-test

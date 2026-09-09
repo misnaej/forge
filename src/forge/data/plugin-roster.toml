@@ -47,6 +47,7 @@ names = [
     "check_foundation_sync",
     "git_anchor",
     "keep_squash_comment_last",
+    "warn_generated_conflicts",
     "warn_pr_checks",
     "warn_stale_wrapup",
     "wrapup_anchor",

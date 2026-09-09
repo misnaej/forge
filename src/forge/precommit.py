@@ -104,6 +104,7 @@ from forge.git_utils import (
 )
 from forge.git_utils import repo_root as get_repo_root
 from forge.install_claudemd import foundation_matches_installed
+from forge.pr_delta import REGEN_COMMANDS
 from forge.run_context import is_ci, is_non_interactive
 from forge.smart_test import lifecycle as _lifecycle
 
@@ -771,7 +772,9 @@ def step_c4(repo_root: Path) -> StepResult:
             skipped=True,
         )
     require_cli("forge-gen-c4", caller="forge-precommit")
-    passed, output = _run(["forge-gen-c4", "--check"], cwd=repo_root)
+    passed, output = _run(
+        [*REGEN_COMMANDS["docs/architecture.dsl"], "--check"], cwd=repo_root
+    )
     return StepResult(name="c4", passed=passed, output=output)
 
 
@@ -855,7 +858,9 @@ def step_api_digest_check(repo_root: Path) -> StepResult:
             skipped=True,
         )
     require_cli("forge-gen-api-digest", caller="forge-precommit")
-    passed, output = _run(["forge-gen-api-digest", "--check"], cwd=repo_root)
+    passed, output = _run(
+        [*REGEN_COMMANDS["docs/api-digest.md"], "--check"], cwd=repo_root
+    )
     return StepResult(name="api_digest_check", passed=passed, output=output)
 
 
@@ -894,7 +899,9 @@ def step_cli_reference_check(repo_root: Path) -> StepResult:
             skipped=True,
         )
     require_cli("forge-gen-cli-reference", caller="forge-precommit")
-    passed, output = _run(["forge-gen-cli-reference", "--check"], cwd=repo_root)
+    passed, output = _run(
+        [*REGEN_COMMANDS["docs/cli-reference.md"], "--check"], cwd=repo_root
+    )
     return StepResult(name="cli_reference_check", passed=passed, output=output)
 
 

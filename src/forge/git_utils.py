@@ -809,6 +809,25 @@ def merge_in_progress(repo_root: Path) -> bool:
     return bool(git_path) and (repo_root / git_path).exists()
 
 
+def unmerged_paths(repo_root: Path) -> list[str]:
+    """Return the repo-relative paths currently in an unmerged index state.
+
+    The conflicted set of an in-progress merge — what ``git status`` lists
+    as "both modified". Shared by every tool that resolves a known class
+    of conflict mechanically (``forge-rebump`` for the version slot,
+    ``forge-resync --resolve-conflicts`` for generated artifacts) so they
+    agree on what "conflicted" means.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        Unmerged (conflicted) paths; empty when the index is clean.
+    """
+    raw = run_git("diff", "--name-only", "--diff-filter=U", cwd=repo_root, check=False)
+    return [line for line in raw.splitlines() if line.strip()]
+
+
 def has_conflict_markers(text: str) -> bool:
     """Return whether *text* contains unresolved git conflict markers.
 

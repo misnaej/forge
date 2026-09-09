@@ -160,6 +160,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/warn_stale_wrapup.sh",
             "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/warn_generated_conflicts.sh",
+            "timeout": 20
           }
         ]
       }
