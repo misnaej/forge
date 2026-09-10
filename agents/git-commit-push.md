@@ -1,6 +1,6 @@
 ---
 name: git-commit-push
-description: Stage, commit, and push code changes. Runs pre-commit hook first and fails if violations exist. Use AFTER forge:precommit-fixer has cleaned up the code.
+description: Stage, commit, and push code changes. Commits directly — the pre-commit hook fires on the commit itself, and a block is reported, never fixed or bypassed. Use AFTER forge:precommit-fixer has cleaned up the code.
 tools:
   - Bash
   - Read
