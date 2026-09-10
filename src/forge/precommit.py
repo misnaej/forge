@@ -1258,6 +1258,13 @@ def _reuse_reason_branch(repo_root: Path) -> str | None:
     "Once per branch" means the sidecar was written after this branch
     left its base. An unresolvable fork point scans.
 
+    The two timestamps come from different clocks — the sidecar's from
+    this filesystem, the fork's from whoever authored that commit — so a
+    local clock running ahead could date a scan after a fork it actually
+    preceded. ``_pip_audit_skip`` rejects a future-dated sidecar before
+    calling this, which bounds that window; a refactor that drops the
+    check there drops it here too.
+
     Args:
         repo_root: Git repo root.
 
@@ -1282,8 +1289,11 @@ def _pip_audit_skip(repo_root: Path) -> StepResult | None:
     The scan's inputs are the installed packages and a remote advisory
     database, neither of which changes because a commit happened — so
     running it on every commit spends network time on an answer that
-    cannot have moved. It runs once per branch by default, and always at
-    PR finalization, where `/pr` forces it.
+    cannot have moved. It runs once per branch by default; PR
+    finalization runs it forced. That last part is a convention the
+    `/pr` skill follows, not something this module enforces — a branch
+    that never reaches finalization is scanned once, which
+    ``docs/security.md`` states plainly.
 
     Every uncertain case scans: no stamp, an unreadable one, a
     future-dated one, an unknown cadence.
@@ -1315,7 +1325,8 @@ def _pip_audit_skip(repo_root: Path) -> StepResult | None:
         passed=True,
         output=(
             f"(last scan {age:.1f}h ago, {detail} — skipped; "
-            f"`/pr` forces a scan before anything publishes)"
+            f"PR finalization forces it, or run "
+            f"`forge-precommit --only pip_audit` to scan now)"
         ),
         skipped=True,
     )
@@ -1455,10 +1466,10 @@ def step_cve_usage(repo_root: Path) -> StepResult:
     advisory database are what it describes, and neither moves because a
     commit happened. If the sidecar is absent, the CLI falls
     back to running pip-audit itself, so the check still works standalone.
-    The sidecar is trusted as current; ``pip_audit`` rewrites it every run and
-    sits immediately before this step, so the only stale case is an explicit
-    ``--skip pip_audit`` leaving a prior run's file — then this step reuses
-    that older scan rather than re-running.
+    The sidecar is trusted as current regardless of age, for the same
+    reason: an explicit ``--skip pip_audit`` (never cadence, which is the
+    routine case above) is the only way it goes stale, and even then this
+    step reuses the prior scan rather than re-running one unnecessarily.
 
     Args:
         repo_root: Git repo root.
@@ -2943,11 +2954,19 @@ def _forced_steps(only: list[str]) -> Iterator[None]:
     """Force explicitly named steps to run, then restore the environment.
 
     A step function receives only ``repo_root``, so a cadence self-skip
-    cannot see ``--only`` on its own; the force travels as an env var,
-    the same channel ``FORGE_WIP_SYNC`` uses. It is restored afterwards
-    rather than left set, so the flag does not outlive the run it was
-    meant for — this process exits immediately, but nothing about the
-    contract should depend on that.
+    cannot see ``--only`` on its own; the force travels as an env var.
+    That is an in-process channel, not a process boundary like
+    ``FORGE_WIP_SYNC``'s — it is affordable for one flag on one step,
+    and a second cadence-forced step is the signal to thread a force set
+    through ``run_all`` instead of copying this. It is restored
+    afterwards rather than left set, so the flag does not outlive the
+    run it was meant for — this process exits immediately, but nothing
+    about the contract should depend on that.
+
+    Not thread-safe: ``os.environ`` is process-global, so two concurrent
+    in-process runs would clobber each other's value. Nothing calls
+    ``run_all`` that way today; a parallel runner would need a different
+    channel.
 
     Args:
         only: Step names the caller asked for.

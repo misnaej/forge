@@ -1269,7 +1269,8 @@ def test_pip_audit_skip_cadence_always_never_skips(tmp_path: Path) -> None:
             "24",
             1.0,
             "(last scan 1.0h ago, under the 24h cadence — skipped; "
-            "`/pr` forces a scan before anything publishes)",
+            "PR finalization forces it, or run "
+            "`forge-precommit --only pip_audit` to scan now)",
             id="fresh",
         ),
         pytest.param("24", 30.0, None, id="stale"),
@@ -1855,7 +1856,7 @@ def test_main_only_pip_audit_sets_force_env(
 ) -> None:
     """`--only pip_audit` forces a scan for the duration of that run.
 
-    SCENARIO: naming the step explicitly (as `/pr` does) means the cadence gate
+    SCENARIO: naming the step explicitly means the cadence gate
     must not silently reuse a stale scan — but a step function receives
     only `repo_root`, so main() communicates the override via env var
     rather than a parameter. The other `--only` tests above stub the

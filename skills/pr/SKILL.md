@@ -172,7 +172,7 @@ in the wrap-up rather than implying a second opinion was obtained).
 
 ## Step 2: Fix any issues
 
-4. **`precommit-fixer`** (mode: `strict`) — clear every pre-commit failure (lint, docstrings, naming, structure, dep advisories). At PR finalization, `strict` also escalates remaining `pip_audit` advisories — set `FORGE_PIP_AUDIT_FORCE=1` for that run, since the scan otherwise runs once per branch and strict mode needs a current answer to escalate.
+4. **`precommit-fixer`** (mode: `strict`) — clear every pre-commit failure (lint, docstrings, naming, structure, dep advisories). At PR finalization, `strict` also escalates remaining `pip_audit` advisories, forcing a fresh CVE scan as its Modes table specifies.
 5. If checkers report fixable issues, address and commit (use `/commit`).
 6. If a checker flags an issue that is genuinely out of scope for the current PR (dead code from a prior refactor, a separate architectural concern, …), **file a follow-up tracking issue** (`gh issue create --label tech-debt,refactor`) BEFORE finalization. Reference its number in the wrap-up so the deferral is auditable. Never let a verifier finding land on the floor.
 

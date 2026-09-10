@@ -222,6 +222,8 @@ the step (`forge-precommit --only pip_audit`) or setting
 | `max_age_hours` | `24` | Age at which a previous scan stops counting, under `cadence = "hours"`. | Your tolerance for an older answer differs. |
 | `blocking` | `false` | Fail the commit on a CVE finding (else non-blocking WARN). | A vulnerable dependency should refuse a commit. |
 
+The reuse stamp is the modification time of `code_health/pip_audit.json`. Do not cache that directory in CI: restoring a cache sets file times to the restore, which manufactures a fresh-looking scan that never ran.
+
 ## `[tool.forge.doctest]` — opt-in doctest step
 
 Runs `pytest --doctest-modules` so docstring `>>>` examples are executed,
