@@ -1216,8 +1216,10 @@ def test_non_blocking_warning_does_not_fail_main(
     MOCK SETUP: get_repo_root is pinned to tmp_path; step_docstrings,
     step_test_naming, step_repo_structure, and step_docstring_coverage
     are stubbed to pass/skip; step_pip_audit is replaced with a failing
-    non_blocking StepResult; sys.argv is patched to the bare
-    `forge-precommit` invocation.
+    non_blocking StepResult; is_ci is pinned to True (deterministic —
+    the echo-in-CI branch must not fire for a non-blocking warning
+    regardless of the ambient environment); sys.argv is patched to the
+    bare `forge-precommit` invocation.
     EXPECTED BEHAVIOR: main() returns 0; stdout prints WARN, the
     all-blocking-passed summary, and names pip_audit with its log path.
     """
@@ -1226,6 +1228,7 @@ def test_non_blocking_warning_does_not_fail_main(
     _stub_test_naming_passing(monkeypatch)
     _stub_repo_structure_passing(monkeypatch)
     _stub_docstring_coverage_skipped(monkeypatch)
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
 
     def _failing_non_blocking(_root: object) -> precommit.StepResult:
         return precommit.StepResult(
@@ -1246,6 +1249,45 @@ def test_non_blocking_warning_does_not_fail_main(
     assert "pip_audit: see code_health/pip_audit.log" in out
 
 
+def test_main_does_not_echo_non_blocking_output_in_ci(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A non-blocking step's output is never echoed, even in CI.
+
+    SCENARIO: the CI output-echo added for blocking failures must not
+    also fire for a non-blocking (advisory) warning — echoing is bounded
+    to blocking failures only.
+    MOCK SETUP: same harness as
+    ``test_non_blocking_warning_does_not_fail_main``, with is_ci pinned
+    to True.
+    EXPECTED BEHAVIOR: main() returns 0; the failing non-blocking step's
+    own output text is absent from stdout.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    _stub_docstrings_passing(monkeypatch)
+    _stub_test_naming_passing(monkeypatch)
+    _stub_repo_structure_passing(monkeypatch)
+    _stub_docstring_coverage_skipped(monkeypatch)
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+
+    def _failing_non_blocking(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(
+            name="pip_audit",
+            passed=False,
+            output="(simulated CVE finding)",
+            non_blocking=True,
+        )
+
+    monkeypatch.setattr(precommit, "step_pip_audit", _failing_non_blocking)
+    with patch.object(precommit.sys, "argv", ["forge-precommit"]):
+        rc = precommit.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "(simulated CVE finding)" not in out
+
+
 def test_main_lists_failed_steps_with_log_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1258,8 +1300,10 @@ def test_main_lists_failed_steps_with_log_paths(
     MOCK SETUP: get_repo_root is pinned to tmp_path; step_repo_structure,
     step_pip_audit, and step_docstring_coverage are stubbed to pass/skip;
     step_docstrings and step_test_naming are replaced with failing
-    StepResults; sys.argv is patched to the bare `forge-precommit`
-    invocation.
+    StepResults; is_ci is pinned to False (deterministic — this test
+    only checks the pointer lines, not the CI output echo, so it must
+    not depend on the ambient environment); sys.argv is patched to the
+    bare `forge-precommit` invocation.
     EXPECTED BEHAVIOR: main() returns 1; stdout prints the failure
     header and one "<step>: see code_health/<step>.log" line per
     failed step.
@@ -1268,6 +1312,7 @@ def test_main_lists_failed_steps_with_log_paths(
     _stub_repo_structure_passing(monkeypatch)
     _stub_pip_audit_skipped(monkeypatch)
     _stub_docstring_coverage_skipped(monkeypatch)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
 
     def _failing_docstrings(_root: object) -> precommit.StepResult:
         return precommit.StepResult(
@@ -1294,6 +1339,102 @@ def test_main_lists_failed_steps_with_log_paths(
     # Each failed step listed with its log path
     assert "docstring_verification: see code_health/docstring_verification.log" in out
     assert "test_naming_check: see code_health/test_naming_check.log" in out
+
+
+def test_main_echoes_blocking_step_output_in_ci(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """In CI, a blocking failure's own output is echoed under its log pointer.
+
+    SCENARIO: `code_health/<step>.log` lives on a CI runner that no
+    longer exists by the time anyone reads the run, so the failure must
+    name what was wrong inline rather than only pointing at a log.
+    MOCK SETUP: same harness as
+    ``test_main_lists_failed_steps_with_log_paths``, with is_ci pinned
+    to True instead of False.
+    EXPECTED BEHAVIOR: main() returns 1; the failing step's own output
+    text appears in stdout under its "see code_health/…" line.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    _stub_repo_structure_passing(monkeypatch)
+    _stub_pip_audit_skipped(monkeypatch)
+    _stub_docstring_coverage_skipped(monkeypatch)
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+
+    def _failing_docstrings(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(
+            name="docstring_verification",
+            passed=False,
+            output="(simulated docstring error)",
+        )
+
+    def _failing_test_naming(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(
+            name="test_naming_check",
+            passed=False,
+            output="(simulated naming violation)",
+        )
+
+    monkeypatch.setattr(precommit, "step_docstrings", _failing_docstrings)
+    monkeypatch.setattr(precommit, "step_test_naming", _failing_test_naming)
+    with patch.object(precommit.sys, "argv", ["forge-precommit"]):
+        rc = precommit.main()
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "docstring_verification: see code_health/docstring_verification.log" in out
+    assert "(simulated docstring error)" in out
+    assert "test_naming_check: see code_health/test_naming_check.log" in out
+    assert "(simulated naming violation)" in out
+
+
+def test_main_does_not_echo_blocking_step_output_locally(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Locally, a blocking failure's output is NOT echoed — only the pointer.
+
+    SCENARIO: the CI output echo must not fire outside CI, where the
+    log file is right there on disk and dumping output into every local
+    commit would be noise.
+    MOCK SETUP: same harness as
+    ``test_main_lists_failed_steps_with_log_paths``, with is_ci pinned
+    to False.
+    EXPECTED BEHAVIOR: main() returns 1; the pointer line is present but
+    the failing step's own output text is absent from stdout.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    _stub_repo_structure_passing(monkeypatch)
+    _stub_pip_audit_skipped(monkeypatch)
+    _stub_docstring_coverage_skipped(monkeypatch)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+
+    def _failing_docstrings(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(
+            name="docstring_verification",
+            passed=False,
+            output="(simulated docstring error)",
+        )
+
+    def _failing_test_naming(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(
+            name="test_naming_check",
+            passed=False,
+            output="(simulated naming violation)",
+        )
+
+    monkeypatch.setattr(precommit, "step_docstrings", _failing_docstrings)
+    monkeypatch.setattr(precommit, "step_test_naming", _failing_test_naming)
+    with patch.object(precommit.sys, "argv", ["forge-precommit"]):
+        rc = precommit.main()
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "docstring_verification: see code_health/docstring_verification.log" in out
+    assert "(simulated docstring error)" not in out
+    assert "test_naming_check: see code_health/test_naming_check.log" in out
+    assert "(simulated naming violation)" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -5613,6 +5754,30 @@ def test_step_changelog_version_fragments_mode_invalid_pending_fails(
     result = precommit.step_changelog_version(tmp_path)
     assert not result.passed
     assert not result.non_blocking
+    assert "unknown type 'bogus'" in result.output
+
+
+def test_step_changelog_version_manifest_and_fragments_invalid_fragment_fails(
+    tmp_path: Path,
+) -> None:
+    """A manifest repo in fragments mode still fails on an invalid fragment.
+
+    The fragments-mode gate must be judged BEFORE the
+    ``.claude-plugin/plugin.json`` short-circuit: a repo carrying both a
+    manifest and fragments needs the fragment gate's per-branch checks
+    (PR hygiene) to run regardless of who owns the declared-version
+    invariant. Before the fix, the manifest short-circuit fired first and
+    this repo passed+skipped with the "Manifest-versioned repo" message
+    instead of failing on the invalid fragment.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragments_pyproject(tmp_path)
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text("{}")
+    _write_pending_fragment(tmp_path, "a.bogus.md", "bump: minor\n- x\n")
+    result = precommit.step_changelog_version(tmp_path)
+    assert not result.passed
+    assert not result.skipped
     assert "unknown type 'bogus'" in result.output
 
 

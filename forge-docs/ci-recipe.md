@@ -75,6 +75,10 @@ jobs:
       - name: Install project + forge-scripts
         run: pip install -e ".[dev]"
 
+A failing step prints its own captured output under the `see code_health/<step>.log` line whenever `forge.run_context.is_ci()` is true — the log itself lives on a runner that is gone by the time anyone reads the run, so the pointer alone names the failure without saying what was wrong. Blocking failures only, to bound volume; locally nothing changes.
+
+That output goes to the job log, where it is as visible as the log is. It is capped, and it is what the checker printed — a linter's findings, a type error, a failing assertion — but if your logs are forwarded somewhere less private than the repository, weigh that before adopting the recipe.
+
       - name: Bootstrap forge artifacts (idempotent)
         run: install-forge-bootstrap
 

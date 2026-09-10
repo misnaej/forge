@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 949 symbols._
+_72 modules, 950 symbols._
 
 ## `forge`
 
@@ -958,6 +958,7 @@ _72 modules, 949 symbols._
 - `_resolve_steps(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepDef]` _(internal)_ — Resolve which steps to run, in registry order.
 - `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
 - `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
+- `_capped(output: str) -> str` _(internal)_ — Return *output* trimmed to the shared evidence cap.
 - `main() -> int` — CLI entry point.
 
 ## `forge.rebump`

@@ -85,6 +85,7 @@ from forge.changelog_fragments import FRAGMENTS_DIR, branch_added_fragments
 from forge.changelog_fragments import check_pending as check_pending_fragments
 from forge.config import installed_console_scripts, resolve_model_section
 from forge.git_utils import (
+    EVIDENCE_OUTPUT_CAP,
     SCOPE_ALL,
     SCOPE_DIFF,
     VALID_SCOPES,
@@ -2022,16 +2023,12 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
         return StepResult(
             name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
         )
-    if (repo_root / ".claude-plugin" / "plugin.json").exists():
-        return StepResult(
-            name=name,
-            passed=True,
-            output=(
-                "Manifest-versioned repo — verify-forge-plugin-version owns "
-                "the declared-version invariant; skipped."
-            ),
-            skipped=True,
-        )
+    # Judged BEFORE the manifest short-circuit below: the fragment checks
+    # are per-PR hygiene, independent of the declared-version invariant
+    # verify-forge-plugin-version owns, and a repo carrying both a
+    # manifest and fragments needs them to run. Reaching them used to be
+    # impossible there — the manifest returned first and the gate never
+    # ran at all.
     if _forge_step_config(repo_root, "changelog").get("mode") == "fragments":
         # Fragment mode: CHANGELOG.md is an OUTPUT of release, never an
         # input — no declared-version/stranded checks apply. The step
@@ -2064,6 +2061,16 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
                 else "Fragment mode — invalid changelog.d/ fragment(s):\n"
                 + "\n".join(errors)
             ),
+        )
+    if (repo_root / ".claude-plugin" / "plugin.json").exists():
+        return StepResult(
+            name=name,
+            passed=True,
+            output=(
+                "Manifest-versioned repo — verify-forge-plugin-version owns "
+                "the declared-version invariant; skipped."
+            ),
+            skipped=True,
         )
     return None
 
@@ -2747,6 +2754,25 @@ def _split_csv(values: Sequence[str]) -> list[str]:
     return out
 
 
+def _capped(output: str) -> str:
+    """Return *output* trimmed to the shared evidence cap.
+
+    A failing lint or type-check step can carry thousands of lines, and
+    this text goes to a CI log rather than a file, so it is bounded the
+    same way embedded evidence is elsewhere.
+
+    Args:
+        output: A step's captured combined stdout and stderr.
+
+    Returns:
+        The text, truncated with a marker when it exceeds the cap.
+    """
+    text = output.rstrip()
+    if len(text) <= EVIDENCE_OUTPUT_CAP:
+        return text
+    return f"{text[:EVIDENCE_OUTPUT_CAP]}\n… (truncated; full output in the log)"
+
+
 def main() -> int:
     """CLI entry point.
 
@@ -2821,6 +2847,15 @@ def main() -> int:
             emit(f"{RED}Pre-commit checks failed:{NC}")
             for r in blocking_failures:
                 emit(f"  - {r.name}: see code_health/{r.name}.log")
+                # In CI that log is on a machine that no longer exists by
+                # the time anyone reads the run, so the failure names
+                # itself and never says what was wrong. Echo the step's
+                # own output — blocking failures only, to bound volume.
+                # `is_ci()`, never `is_non_interactive()`: the latter is
+                # true in any non-tty local shell and would dump logs
+                # into every commit.
+                if is_ci() and r.output.strip():
+                    emit(_capped(r.output))
             if non_blocking_warnings:
                 emit(
                     f"{YELLOW}Plus {len(non_blocking_warnings)} non-blocking "
