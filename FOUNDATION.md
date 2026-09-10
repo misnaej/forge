@@ -158,6 +158,23 @@ gate.
   per-role tiering that sits under this ceiling lives in
   [`agents/_TEMPLATE.md`](../agents/_TEMPLATE.md) "Model per role".
 - **NEVER use `--no-verify`** to bypass pre-commit hooks. Fix violations instead.
+- **Bypassing a guard: only on the user's word, confirmed once, recorded.**
+  An agent never bypasses a guard on its own judgment, and never reaches a
+  blocked effect another way — writing the file a gate demanded, or
+  regenerating what a check refused, *is* bypassing it. When the user does
+  ask, confirm **once**, naming what protection is dropped and for what,
+  then act: the confirmation buys attribution — the cheapest proof a human
+  was present — not friction, since friction only teaches people to route
+  around controls (exactly how `--no-verify` becomes a habit). The
+  authorising act must be one an agent cannot perform: a human running
+  `! <command>`, or supplying `FORGE_EMERGENCY_ACK=1` to arm
+  `forge-emergency`'s ledgered one-shot. A bare environment variable an
+  agent could export for itself is a suggestion, not a gate. Record every
+  use — what was bypassed, why, and that a human authorised it — and treat
+  a recurring bypass as evidence the guard is wrong or too costly, never as
+  grounds to loosen the rule. The **no bypass** hooks below have no
+  agent-side escape at all: their `! …` form is the human acting, not a
+  bypass the agent was granted.
 - **NEVER force push** without explicit user approval. Check upstream divergence
   first: `git fetch origin && git log origin/<branch>`. The `block_force_push`
   hook enforces this across every force vector — `--force` / `--force-with-lease`,

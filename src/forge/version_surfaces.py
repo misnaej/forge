@@ -20,9 +20,18 @@ from typing import Final, NamedTuple
 
 from forge.git_utils import FORGE_DIST_NAME, parse_semver
 from forge.install_githooks import SIDECAR_NAME as HOOK_VERSION_SIDECAR
+from forge.upgrade import find_pin
 
 
 DIST_NAME: Final[str] = FORGE_DIST_NAME
+
+# Registry Claude Code keeps of every marketplace it has cloned, mapping a
+# marketplace name to its source repo and the local clone path. Reading it
+# is what lets a consumer — which ships no manifest of its own — say what
+# content it actually pinned.
+KNOWN_MARKETPLACES: Final[Path] = (
+    Path.home() / ".claude" / "plugins" / "known_marketplaces.json"
+)
 
 # Remediation per surface — the single command that re-converges that one
 # onto the current line. Doctor prints it as advice; precommit prints it
@@ -32,6 +41,18 @@ SKEW_REMEDIATION: Final[dict[str, str]] = {
     "git hooks": "install-forge-githooks",
     "plugin cache": "/plugin update forge@forge (then /reload-plugins)",
 }
+
+# The remediation for a cache slot holding stale *content*. It cannot be
+# ``/plugin update``: that command compares declared manifest versions, and
+# a frozen declared version is exactly the condition here — the update
+# reports "already current" while the slot keeps whatever it was first
+# filled with. Only discarding the slot (or moving the clone it is filled
+# from) converges.
+STALE_CACHE_REMEDIATION: Final[str] = (
+    "delete ~/.claude/plugins/cache/{plugin}/ and restart the session "
+    "(move the marketplace ref first if the clone is behind too) — "
+    "`/plugin update` compares declared versions and reports no change"
+)
 
 
 def read_json(path: Path) -> tuple[dict, str | None]:
@@ -179,6 +200,20 @@ def plugin_cache_version(plugin_root: Path | None) -> str | None:
     install_dir = find_install_dir(plugin_root)
     if install_dir is None:
         return None
+    return install_version(install_dir)
+
+
+def install_version(install_dir: Path) -> str:
+    """Version a plugin install directory reports.
+
+    Args:
+        install_dir: Directory carrying ``.claude-plugin/plugin.json``.
+
+    Returns:
+        The manifest's ``version`` field, falling back to the directory
+        name — Claude Code names each cache slot after the version it was
+        filled for, so the name answers even when the manifest does not.
+    """
     data, err = read_json(install_dir / ".claude-plugin" / "plugin.json")
     if err is None and data.get("version"):
         return str(data["version"])
@@ -232,22 +267,102 @@ def _direct_url() -> dict[str, object] | None:
     return data if isinstance(data, dict) else None
 
 
+def marketplace_clone(repo_slug: str) -> Path | None:
+    """Local clone Claude Code keeps for the marketplace serving *repo_slug*.
+
+    Claude Code records every marketplace it has fetched in
+    ``~/.claude/plugins/known_marketplaces.json``, keyed by marketplace
+    name, each entry carrying ``source.repo`` (``owner/repo``) and
+    ``installLocation`` (a real git checkout at the ref the consumer
+    registered). Matching on the source repo rather than the marketplace
+    name keeps the lookup tied to what the pin names.
+
+    Args:
+        repo_slug: ``owner/repo`` the consumer's pin points at.
+
+    Returns:
+        The clone directory, or ``None`` when the registry is absent,
+        unreadable, carries no entry for *repo_slug*, or names a path
+        that no longer exists. Every degradation is "unknown", never an
+        exception — this reader runs inside an advisory.
+    """
+    try:
+        data, err = read_json(KNOWN_MARKETPLACES)
+    except OSError:
+        return None
+    if err is not None or not isinstance(data, dict):
+        return None
+    for entry in data.values():
+        if not isinstance(entry, dict):
+            continue
+        source = entry.get("source")
+        if not isinstance(source, dict) or source.get("repo") != repo_slug:
+            continue
+        location = entry.get("installLocation")
+        if isinstance(location, str) and Path(location).is_dir():
+            return Path(location)
+    return None
+
+
+def _repo_slug(url: str) -> str | None:
+    """Return the ``owner/repo`` a git pin URL names.
+
+    Args:
+        url: The ``git+...`` URL portion of a pin (no ref).
+
+    Returns:
+        ``"owner/repo"``, or ``None`` when the URL carries no such pair.
+    """
+    cleaned = url.strip().removeprefix("git+").removesuffix(".git")
+    if "://" in cleaned:
+        cleaned = cleaned.split("://", 1)[1].partition("/")[2]
+    elif ":" in cleaned:  # scp-style git@host:owner/repo
+        cleaned = cleaned.rsplit(":", 1)[1]
+    owner, _, repo = cleaned.strip("/").rpartition("/")
+    if not owner or not repo:
+        return None
+    return f"{owner.rsplit('/', 1)[-1]}/{repo}"
+
+
+def _hook_names(plugin_dir: Path) -> frozenset[str]:
+    """Names of the Claude Code hooks a plugin directory ships.
+
+    Args:
+        plugin_dir: Root of a plugin tree (clone or cache install).
+
+    Returns:
+        The file names under ``claude-hooks/``, empty when the directory
+        is absent — the hook set is the comparison surface because a
+        missing hook is what a consumer actually feels.
+    """
+    hooks = plugin_dir / "claude-hooks"
+    if not hooks.is_dir():
+        return frozenset()
+    return frozenset(entry.name for entry in hooks.iterdir() if entry.is_file())
+
+
 class PluginCacheStatus(NamedTuple):
-    """What the Claude Code plugin cache says relative to a repo's manifest.
+    """What the Claude Code plugin cache says relative to what ships it.
 
     Attributes:
         state: ``"no-manifest"``, ``"uncached"``, ``"unparsed"``,
-            ``"current"`` or ``"behind"``.
+            ``"current"``, ``"behind"``, or ``"stale-content"`` — the
+            consumer verdict, where the slot's declared version is not
+            behind but its content is.
         plugin_name: Name the manifest declares, falling back to the repo
             directory's own name.
         cached: Version in the cache, when there is one.
-        declared: Version the manifest declares, when it declares one.
+        declared: Version the manifest declares — or, on the consumer
+            branch, the ref the repo pins.
+        missing_hooks: Hooks the pinned content ships that the cache slot
+            does not; populated only for ``"stale-content"``.
     """
 
     state: str
     plugin_name: str
     cached: str | None
     declared: str | None
+    missing_hooks: tuple[str, ...] = ()
 
 
 def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
@@ -263,15 +378,21 @@ def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
     numbers that are parked apart by design, which produced a warning no
     command could clear.
 
+    A repo that ships no manifest of its own is a *consumer*, and the
+    population that actually suffers a frozen cache. It gets the branch in
+    :func:`_consumer_cache_status`, which compares content rather than
+    version strings.
+
     Args:
         repo_root: Repo whose ``.claude-plugin/plugin.json`` ships the plugin.
 
     Returns:
-        A :class:`PluginCacheStatus`; only ``"behind"`` is a finding.
+        A :class:`PluginCacheStatus`; ``"behind"`` and ``"stale-content"``
+        are the findings.
     """
     manifest = repo_root / ".claude-plugin" / "plugin.json"
     if not manifest.is_file():
-        return PluginCacheStatus("no-manifest", repo_root.name, None, None)
+        return _consumer_cache_status(repo_root)
     data, _err = read_json(manifest)
     plugin_name = str(data.get("name") or repo_root.name)
     declared = str(data["version"]) if data.get("version") else None
@@ -284,3 +405,45 @@ def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
         return PluginCacheStatus("unparsed", plugin_name, cached, declared)
     state = "current" if cached_t >= declared_t else "behind"
     return PluginCacheStatus(state, plugin_name, cached, declared)
+
+
+def _consumer_cache_status(repo_root: Path) -> PluginCacheStatus:
+    """Compare a consumer's active cache slot against the ref it pinned.
+
+    A consumer ships no manifest, so there is no declared version to
+    compare — and under tag-per-merge with assemble-later release, the
+    declared version would not identify the content anyway: no tagged
+    tree's manifest equals its own tag, so materially different trees
+    share one cache slot. What the consumer *did* declare is the pin, and
+    the marketplace clone that pin resolves to is a real checkout of the
+    pinned content. Comparing its hook set against the cache slot's asks
+    the question the version string cannot answer, and names the concrete
+    harm: hooks that are not loaded.
+
+    Args:
+        repo_root: Consumer repo root — searched for a ``forge-scripts``
+            pin.
+
+    Returns:
+        ``"stale-content"`` when the slot is missing hooks the pinned
+        content ships, ``"current"`` when it is not, ``"uncached"`` when
+        nothing is installed, and ``"no-manifest"`` when the pin or the
+        clone cannot be resolved at all.
+    """
+    pin = find_pin(repo_root)
+    slug = _repo_slug(pin.url) if pin is not None else None
+    clone = marketplace_clone(slug) if slug is not None else None
+    source_dir = find_install_dir(clone) if clone is not None else None
+    if pin is None or source_dir is None:
+        return PluginCacheStatus("no-manifest", repo_root.name, None, None)
+    data, _err = read_json(source_dir / ".claude-plugin" / "plugin.json")
+    plugin_name = str(data.get("name") or repo_root.name)
+    cache_root = find_plugin_cache(plugin_name)
+    install_dir = find_install_dir(cache_root) if cache_root is not None else None
+    if install_dir is None:
+        return PluginCacheStatus("uncached", plugin_name, None, pin.ref)
+    cached = install_version(install_dir)
+    missing = tuple(sorted(_hook_names(source_dir) - _hook_names(install_dir)))
+    if not missing:
+        return PluginCacheStatus("current", plugin_name, cached, pin.ref)
+    return PluginCacheStatus("stale-content", plugin_name, cached, pin.ref, missing)

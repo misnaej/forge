@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 963 symbols._
+_72 modules, 970 symbols._
 
 ## `forge`
 
@@ -387,7 +387,8 @@ _72 modules, 963 symbols._
 - `_check_gh() -> list[CheckResult]` _(internal)_ — Check `gh` is installed and authenticated.
 - `_validate_plugin_name(name: str) -> str` _(internal)_ — Argparse ``type`` for ``--plugin-name`` — reject a cache-escaping value.
 - `_check_plugin_install(plugin_name: str) -> CheckResult` _(internal)_ — Verify Claude Code has installed the named plugin locally.
-- `_check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report a Claude Code plugin cache lagging this repo's own manifest.
+- `_check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report a Claude Code plugin cache lagging what should be loaded.
+- `_stale_cache_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
 - `_check_version_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
 - `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
 - `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
@@ -839,6 +840,7 @@ _72 modules, 963 symbols._
 - `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
 - `regen_only_diff(changed_paths: list[str]) -> bool` — Return whether every changed path is a forge-managed regen artifact.
 - `touches_source_paths(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`SOURCE_PATHS`.
+- `non_fragment_adds(added_paths: list[str]) -> list[str]` — Return the subset of *added_paths* that is not a changelog fragment.
 - `light_wrapup_decision(*, line_count: int, changed_paths: list[str], added_paths: list[str]) -> tuple[bool, str]` — Decide whether a diff qualifies for the light wrap-up path.
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
 - `regen_commands(repo_root: Path) -> dict[str, tuple[str, ...]]` — Return :data:`REGEN_COMMANDS` filtered to the artifacts this repo generates.
@@ -849,14 +851,14 @@ _72 modules, 963 symbols._
 
 - `class PrPlan` — The finalization plan for one classification run.
 - `class WrapupFreshness` — Whether a PR's newest posted wrap-up still describes its head.
-- `_changed_paths(root: Path, diff_range: str) -> list[str]` _(internal)_ — Return the repo-relative paths changed across *diff_range*.
+- `_changed_paths(root: Path, diff_range: str, pathspec: list[str] | None = None) -> list[str]` _(internal)_ — Return the repo-relative paths changed across *diff_range*.
 - `_added_paths(root: Path, diff_range: str) -> list[str]` _(internal)_ — Return the new paths across *diff_range* (``--diff-filter=ACR``).
-- `_line_count(root: Path, diff_range: str) -> int` _(internal)_ — Return insertions + deletions across *diff_range*.
+- `_line_count(root: Path, diff_range: str, pathspec: list[str] | None = None) -> int` _(internal)_ — Return insertions + deletions across *diff_range*.
 - `_gh_pr_view(pr_number: int, json_fields: str, *, jq: str | None = None) -> str | None` _(internal)_ — Run ``gh pr view N --json <fields>`` and return its stdout, or ``None``.
 - `_newest_header_sha(comments: list[dict[str, object]]) -> str | None` _(internal)_ — Return the header ``verified-at:`` SHA of the newest comment carrying one.
 - `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.
 - `wrapup_freshness(pr_number: int) -> WrapupFreshness` — Compare the PR's newest ``verified-at:`` SHA against its current head.
-- `_try_delta(root: Path, pr_number: int | None, reasons: list[str]) -> bool` _(internal)_ — Evaluate delta-mode eligibility, appending the trail to *reasons*.
+- `_try_delta(root: Path, pr_number: int | None, reasons: list[str], branch_paths: list[str]) -> bool` _(internal)_ — Evaluate delta-mode eligibility, appending the trail to *reasons*.
 - `classify(root: Path, base: str, pr_number: int | None) -> PrPlan` — Classify the current branch's finalization path.
 - `main(argv: list[str] | None = None) -> int` — Run the finalization-path classifier (or the freshness check) and emit JSON.
 
@@ -1340,7 +1342,12 @@ _72 modules, 963 symbols._
 - `pip_version() -> str | None` — Version of the installed ``forge-scripts`` package, or None if absent.
 - `hook_sidecar_version(repo_root: Path) -> str | None` — Forge version recorded in the git-hook sidecar, or None when absent.
 - `plugin_cache_version(plugin_root: Path | None) -> str | None` — Version of the cached Claude Code plugin install, or None when absent.
+- `install_version(install_dir: Path) -> str` — Version a plugin install directory reports.
 - `editable_install_origin() -> Path | None` — Return the checkout an editable ``forge-scripts`` install points at.
 - `_direct_url() -> dict[str, object] | None` _(internal)_ — Return the distribution's parsed ``direct_url.json``, or ``None``.
-- `class PluginCacheStatus` — What the Claude Code plugin cache says relative to a repo's manifest.
+- `marketplace_clone(repo_slug: str) -> Path | None` — Local clone Claude Code keeps for the marketplace serving *repo_slug*.
+- `_repo_slug(url: str) -> str | None` _(internal)_ — Return the ``owner/repo`` a git pin URL names.
+- `_hook_names(plugin_dir: Path) -> frozenset[str]` _(internal)_ — Names of the Claude Code hooks a plugin directory ships.
+- `class PluginCacheStatus` — What the Claude Code plugin cache says relative to what ships it.
 - `plugin_cache_status(repo_root: Path) -> PluginCacheStatus` — Compare the cached plugin against the manifest that ships it.
+- `_consumer_cache_status(repo_root: Path) -> PluginCacheStatus` _(internal)_ — Compare a consumer's active cache slot against the ref it pinned.

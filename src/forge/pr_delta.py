@@ -5,11 +5,11 @@ skip the full three-agent re-verification: **delta mode** (diff since
 the last verified SHA is small, out of high-blast-radius areas),
 the **docs-only light path** (whole diff doc-shaped), **regen-only
 eligibility** (managed artifacts, earned via provenance gates), and the
-**light-code path** (small, no added files, no source or blast-radius
-path — earned at publish time by the hook's classifier re-run). The
-thresholds, path globs, and the SHA-extraction helper live here so the
-agent prompt, future audit guards, and any consumer wrapper read them from
-one source of truth.
+**light-code path** (small, no added files bar changelog fragments,
+no source or blast-radius path — earned at publish time by the hook's
+classifier re-run). The thresholds, path globs, and the SHA-extraction
+helper live here so the agent prompt, future audit guards, and any
+consumer wrapper read them from one source of truth.
 
 The agent prompt references this module by path; the constants are not
 imported by the agent runtime (agents are markdown). Anything that
@@ -24,6 +24,7 @@ from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Final
 
 from forge import config
+from forge.changelog_fragments import FRAGMENTS_DIR
 
 
 if TYPE_CHECKING:
@@ -115,8 +116,9 @@ PROVENANCE_GATE_STEPS: Final[tuple[str, ...]] = (
 
 
 # Maximum line-count diff (insertions + deletions) below which a PR with
-# no added files, no source-under-src change, and no high-blast-radius
-# path qualifies for the LIGHT wrap-up (`wrapup-mode: light`): reporters
+# no added files bar changelog fragments (:func:`non_fragment_adds`), no
+# source-under-src change, and no high-blast-radius path qualifies for
+# the LIGHT wrap-up (`wrapup-mode: light`): reporters
 # skipped, short-form wrap-up, strict pre-commit still in full. The
 # escape is never agent discretion — `block_unverified_pr_create`
 # re-runs the classifier at publish time and blocks on disagreement.
@@ -128,6 +130,14 @@ LIGHT_WRAPUP_LINE_THRESHOLD: Final[int] = 50
 # however small. Deliberately narrower than HIGH_BLAST_RADIUS_PATHS
 # (adding src/ there would silently narrow the delta path too).
 SOURCE_PATHS: Final[tuple[str, ...]] = ("src/",)
+
+
+# The changelog-fragment directory as a path prefix, the one exemption to
+# the light wrap-up's added-file disqualifier. Derived from
+# `changelog_fragments.FRAGMENTS_DIR` rather than re-spelled, so the
+# classifier and the gate that mandates the file can never name different
+# directories.
+FRAGMENT_PATH_PREFIX: Final[str] = f"{FRAGMENTS_DIR.as_posix()}/"
 
 
 # Matches the reporter-agent header contract documented in
@@ -291,6 +301,31 @@ def touches_source_paths(changed_paths: list[str]) -> list[str]:
     ]
 
 
+def non_fragment_adds(added_paths: list[str]) -> list[str]:
+    """Return the subset of *added_paths* that is not a changelog fragment.
+
+    The light wrap-up's added-file disqualifier exists so the prior-art
+    gate sees every new source file and top-level symbol before it is
+    reviewed. A `changelog.d/` fragment answers no placement question —
+    its name, directory and lifetime are fixed by the fragment contract,
+    and the `changelog_updated` gate *mandates* exactly one on every PR
+    that changes anything else. Counting it would make the light path
+    unreachable by construction rather than merely rare, so it is the
+    one exemption; any other added path still disqualifies.
+
+    Casefolded prefix match, same rationale as
+    :func:`touches_high_blast_radius`.
+
+    Args:
+        added_paths: Paths from ``git diff --name-only --diff-filter=ACR``.
+
+    Returns:
+        Added paths outside the fragments directory, in input order.
+    """
+    prefix = FRAGMENT_PATH_PREFIX.casefold()
+    return [path for path in added_paths if not path.casefold().startswith(prefix)]
+
+
 def light_wrapup_decision(
     *,
     line_count: int,
@@ -300,9 +335,11 @@ def light_wrapup_decision(
     """Decide whether a diff qualifies for the light wrap-up path.
 
     Objective signals only — never agent judgment, checked in this
-    order: non-empty diff, no added files (the prior-art gate stays
-    independent and fires before any size check), line count under the
-    threshold, no high-blast-radius path, no source-package change.
+    order: non-empty diff, no added files bar changelog fragments (the
+    prior-art gate stays independent and fires before any size check;
+    see :func:`non_fragment_adds` for why fragments are exempt), line
+    count under the threshold, no high-blast-radius path, no
+    source-package change.
     Mirrors
     :func:`delta_decision`'s ``(verdict, reason)`` shape so callers and
     the publish-time hook re-check render the same trail.
@@ -318,11 +355,12 @@ def light_wrapup_decision(
     """
     if not changed_paths:
         return (False, "empty diff; nothing to classify")
-    if added_paths:
+    gating_adds = non_fragment_adds(added_paths)
+    if gating_adds:
         return (
             False,
             (
-                f"diff adds file(s): {', '.join(added_paths)}; the "
+                f"diff adds file(s): {', '.join(gating_adds)}; the "
                 "prior-art gate requires the full wrap-up"
             ),
         )
@@ -346,11 +384,12 @@ def light_wrapup_decision(
             False,
             f"diff touches source package path(s): {', '.join(src)}",
         )
+    adds = "adds only changelog fragment(s)" if added_paths else "adds no files"
     return (
         True,
         (
             f"diff is {line_count} lines under "
-            f"{LIGHT_WRAPUP_LINE_THRESHOLD}, adds no files, touches no "
+            f"{LIGHT_WRAPUP_LINE_THRESHOLD}, {adds}, touches no "
             "source or high-blast-radius paths"
         ),
     )

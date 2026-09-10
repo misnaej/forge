@@ -43,6 +43,8 @@ from forge.git_utils import FORGE_DIST_NAME, emit, pad_semver, parse_semver
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
+    STALE_CACHE_REMEDIATION,
+    PluginCacheStatus,
     find_install_dir,
     find_plugin_cache,
     hook_sidecar_version,
@@ -201,22 +203,31 @@ def _check_plugin_install(plugin_name: str) -> CheckResult:
 
 
 def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
-    """Report a Claude Code plugin cache lagging this repo's own manifest.
+    """Report a Claude Code plugin cache lagging what should be loaded.
 
     The verdict itself lives in
     :func:`forge.version_surfaces.plugin_cache_status`, shared with the
     ``plugin_sync`` pre-commit step so both name the same remediation for
     the same condition; this wraps it as an advisory.
 
+    Two findings, two remediations, because the causes differ. A repo that
+    ships the plugin can be ``"behind"`` — its cache declares an older
+    version, which ``/plugin update`` moves. A consumer gets
+    ``"stale-content"``: the declared version has not moved and cannot, so
+    the only advice that can succeed is discarding the slot.
+
     Args:
-        repo_root: Repo whose manifest ships the plugin.
+        repo_root: Repo whose manifest ships the plugin, or a consumer
+            repo whose pin names the content that should be loaded.
 
     Returns:
-        One advisory result when the cache is behind, otherwise an empty
+        One advisory result when the cache lags, otherwise an empty
         list — no plugin, no cache and an unreadable version are all
         "nothing to say", not findings.
     """
     status = plugin_cache_status(repo_root)
+    if status.state == "stale-content":
+        return [_stale_cache_advisory(status)]
     if status.state != "behind":
         return []
     return [
@@ -230,6 +241,31 @@ def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
             ),
         )
     ]
+
+
+def _stale_cache_advisory(status: PluginCacheStatus) -> CheckResult:
+    """Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
+
+    Args:
+        status: The ``"stale-content"`` verdict, carrying the hooks the
+            slot is missing.
+
+    Returns:
+        An advisory ``CheckResult`` listing the missing hooks — the
+        concrete thing not running — and a remediation that can converge.
+    """
+    missing = ", ".join(status.missing_hooks)
+    return CheckResult(
+        name="version_skew:plugin_cache",
+        passed=False,
+        info=True,
+        detail=(
+            f"plugin cache slot v{status.cached} does not carry the content "
+            f"pinned at {status.declared} — "
+            f"{len(status.missing_hooks)} hook(s) never load: {missing}. "
+            f"{STALE_CACHE_REMEDIATION.format(plugin=status.plugin_name)}"
+        ),
+    )
 
 
 def _check_version_skew(repo_root: Path) -> list[CheckResult]:

@@ -392,3 +392,37 @@ def test_light_wrapup_decision_added_file_precedence_over_threshold() -> None:
     assert use_light is False
     assert "src/foo.py" in reason
     assert "prior-art" in reason
+
+
+def test_light_wrapup_decision_changelog_fragment_add_stays_eligible() -> None:
+    """A PR whose only added file is a changelog fragment stays light-eligible.
+
+    The `changelog_updated` gate mandates one fragment on every PR that
+    changes anything else, so counting it as an added file would make the
+    light path unreachable by construction rather than merely rare.
+    """
+    use_light, reason = light_wrapup_decision(
+        line_count=10,
+        changed_paths=["tests/foo.py", "changelog.d/thing.fixed.md"],
+        added_paths=["changelog.d/thing.fixed.md"],
+    )
+    assert use_light is True
+    assert "changelog fragment" in reason
+
+
+def test_light_wrapup_decision_fragment_plus_real_add_refuses() -> None:
+    """A real added file still disqualifies, and the fragment is not blamed.
+
+    Pins that the exemption is per-path, not a blanket pass once any
+    fragment is present: the reason names only the path the prior-art
+    gate actually needs to see.
+    """
+    use_light, reason = light_wrapup_decision(
+        line_count=10,
+        changed_paths=["tests/foo.py", "changelog.d/thing.fixed.md"],
+        added_paths=["changelog.d/thing.fixed.md", "tests/new_helper.py"],
+    )
+    assert use_light is False
+    assert "tests/new_helper.py" in reason
+    assert "changelog.d/thing.fixed.md" not in reason
+    assert "prior-art" in reason
