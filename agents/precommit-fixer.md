@@ -59,7 +59,7 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
 | Mode | Behavior |
 |---|---|
 | `normal` (default) | Fix everything fixable in the repo's own code. `pip_audit` advisories are REPORTED with the suggested pin — never auto-bumped (FOUNDATION §6: dependency bumps ship in dedicated PRs). Exit success. |
-| `strict` | Same as `normal`, but any remaining non-blocking warning (e.g. residual `pip_audit`) is treated as a hard failure to SURFACE — still no auto-bump. Used at PR finalization. |
+| `strict` | Same as `normal`, but any remaining non-blocking warning (e.g. residual `pip_audit`) is treated as a hard failure to SURFACE — still no auto-bump. Used at PR finalization; Phase 1 below carries the flag that forces a current CVE scan. |
 
 Caller signals via the prompt (`mode: strict`).
 
@@ -70,6 +70,16 @@ Caller signals via the prompt (`mode: strict`).
 ```bash
 forge-precommit
 ```
+
+In `strict` mode, run this one instead — the CVE scan runs once per
+branch, so escalating a stale answer would report nothing either way:
+
+```bash
+FORGE_PIP_AUDIT_FORCE=1 forge-precommit
+```
+
+One invocation carries the variable. Exporting it in a separate command
+does not reach this one.
 
 `forge-precommit` runs each step CLI (the Allowed-CLIs list) plus an inline `pip_audit` check; each writes its own `code_health/*.log`. When nothing needs fixing, the ruff step is near-instant and silent. Residue (rules without autofix) lands in `code_health/ruff.log` and FAILs the step.
 

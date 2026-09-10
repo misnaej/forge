@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from forge import doctor, precommit, version_surfaces
+from forge import doctor, git_utils, precommit, version_surfaces
 from tests.conftest import make_fake_run
 
 
@@ -300,7 +300,7 @@ def test_version_skew_aligned_normalizes_dev_suffix(
     )
     monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
 
-    results = doctor._check_version_skew(tmp_path, tmp_path)
+    results = doctor._check_version_skew(tmp_path)
 
     assert len(results) == 1
     assert results[0].name == "version_skew"
@@ -313,37 +313,35 @@ def test_version_skew_flags_lagging_surface_as_advisory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Lagging plugin cache produces an advisory version_skew result.
+    """A lagging git-hook sidecar produces an advisory version_skew result.
 
     A lagging surface is always reported as advisory (``info=True``,
     ``passed=False``) — it carries the remediation but never sways the exit
-    code, regardless of interactive vs. CI context.
+    code, regardless of interactive vs. CI context. The plugin cache is no
+    longer part of this comparison (it's judged against the repo's own
+    manifest by :func:`doctor._check_plugin_cache_skew` instead) — only pip
+    and the git hooks derive from the same installed line, so pip is the
+    single "current" surface here.
 
-    MOCK SETUP: pip + hooks report v2.23.1; the cached plugin.json reports
-    the older v2.22.0.
+    MOCK SETUP: pip reports v2.23.1; the git-hook sidecar reports the
+    older v2.22.0.
     """
     monkeypatch.setattr(version_surfaces.metadata, "version", lambda _dist: "2.23.1")
     githooks = tmp_path / ".githooks"
     githooks.mkdir()
     (githooks / version_surfaces.HOOK_VERSION_SIDECAR).write_text(
-        "2.23.1", encoding="utf-8"
+        "2.22.0", encoding="utf-8"
     )
-    install_dir = tmp_path / "plugin" / "2.22.0"
-    (install_dir / ".claude-plugin").mkdir(parents=True)
-    (install_dir / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"version": "2.22.0"}), encoding="utf-8"
-    )
-    monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
 
-    results = doctor._check_version_skew(tmp_path, tmp_path)
+    results = doctor._check_version_skew(tmp_path)
 
     assert len(results) == 1
-    assert results[0].name == "version_skew:plugin_cache"
+    assert results[0].name == "version_skew:git_hooks"
     assert not results[0].passed
     assert results[0].info  # advisory only — never sways the exit code
     assert "2.22.0" in results[0].detail
     assert "2.23.1" in results[0].detail
-    assert "/plugin update forge@forge" in results[0].detail
+    assert "install-forge-githooks" in results[0].detail
 
 
 def test_version_skew_below_two_surfaces_reports_nothing_to_compare(
@@ -353,7 +351,7 @@ def test_version_skew_below_two_surfaces_reports_nothing_to_compare(
     """Single surface present (pip only) returns info result."""
     monkeypatch.setattr(version_surfaces.metadata, "version", lambda _dist: "2.23.1")
 
-    results = doctor._check_version_skew(tmp_path, None)
+    results = doctor._check_version_skew(tmp_path)
 
     assert len(results) == 1
     assert results[0].name == "version_skew"
@@ -384,12 +382,171 @@ def test_version_skew_drops_unparseable_surface(
     install_dir.mkdir(parents=True)
     monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
 
-    results = doctor._check_version_skew(tmp_path, tmp_path)
+    results = doctor._check_version_skew(tmp_path)
 
     assert len(results) == 1
     assert results[0].passed
     assert not results[0].info
     assert "aligned at v2.23.1" in results[0].detail
+
+
+# --- _check_plugin_cache_skew() ---------------------------------------------
+
+
+def test_plugin_cache_skew_flags_lagging_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cached plugin behind the repo's own manifest produces one advisory.
+
+    MOCK SETUP: this repo's ``.claude-plugin/plugin.json`` declares
+    v2.23.1; the cached plugin install reports the older v2.22.0.
+    """
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text(
+        json.dumps({"name": "forge", "version": "2.23.1"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        version_surfaces,
+        "find_plugin_cache",
+        lambda _name: tmp_path / "cache" / "forge",
+    )
+    install_dir = tmp_path / "plugin" / "2.22.0"
+    (install_dir / ".claude-plugin").mkdir(parents=True)
+    (install_dir / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"version": "2.22.0"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
+
+    results = doctor._check_plugin_cache_skew(tmp_path)
+
+    assert len(results) == 1
+    assert results[0].name == "version_skew:plugin_cache"
+    assert not results[0].passed
+    assert results[0].info  # advisory only — never sways the exit code
+    assert "2.22.0" in results[0].detail
+    assert "2.23.1" in results[0].detail
+    assert "/plugin update forge@forge" in results[0].detail
+
+
+def test_plugin_cache_skew_empty_when_not_behind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cache at the same version as the manifest is not "behind" (>= boundary).
+
+    MOCK SETUP: both the manifest and the cached install report v2.23.1.
+    """
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text(
+        json.dumps({"name": "forge", "version": "2.23.1"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        version_surfaces,
+        "find_plugin_cache",
+        lambda _name: tmp_path / "cache" / "forge",
+    )
+    install_dir = tmp_path / "plugin" / "2.23.1"
+    (install_dir / ".claude-plugin").mkdir(parents=True)
+    (install_dir / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"version": "2.23.1"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
+
+    assert doctor._check_plugin_cache_skew(tmp_path) == []
+
+
+def test_plugin_cache_skew_empty_when_uncached(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No cached plugin install is "nothing to compare", not a finding.
+
+    Representative case for the ``None``-guard branches (missing manifest
+    version, uncached plugin) — both degrade the same way.
+    """
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text(
+        json.dumps({"name": "forge", "version": "2.23.1"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: None)
+
+    assert doctor._check_plugin_cache_skew(tmp_path) == []
+
+
+# --- pad_semver() -------------------------------------------------------
+
+
+def test_padded_version_pads_short_components() -> None:
+    """A pin's lower bound may omit trailing components; padding fills zeros.
+
+    This is the gap that silently disabled the whole step-tool drift check
+    (it compared against :func:`forge.git_utils.parse_semver`, which
+    requires all three parts and returns ``None`` for a short pin like
+    ``"1.2"``) — pinned directly so it can't regress unnoticed.
+    """
+    assert git_utils.pad_semver("1") == (1, 0, 0)
+    assert git_utils.pad_semver("1.2") == (1, 2, 0)
+    assert git_utils.pad_semver("1.1.1") == (1, 1, 1)
+
+
+def test_padded_version_none_for_non_numeric() -> None:
+    """A non-numeric leading component can't be padded into a version."""
+    assert git_utils.pad_semver("abc") is None
+
+
+# --- _check_step_tools() step-tool-version drift ----------------------------
+
+
+def test_check_step_tools_flags_drift_when_installed_below_pin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An installed tool below this repo's pinned floor adds a second advisory.
+
+    MOCK SETUP: pyproject pins ``pyrefly>=99.0``; pyrefly resolves on PATH
+    but its installed version (1.0.0) is far below that floor.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.precommit]\nenable = ["typecheck"]\n\n'
+        '[project.optional-dependencies]\ndev = ["pyrefly>=99.0"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(doctor.importlib.metadata, "version", lambda _tool: "1.0.0")
+
+    results = doctor._check_step_tools(tmp_path)
+
+    assert len(results) == 2
+    assert results[0].name == "step-tool:typecheck"
+    assert results[0].passed
+    assert results[1].name == "step-tool-version:typecheck"
+    assert not results[1].passed
+    assert results[1].info
+    assert "1.0.0" in results[1].detail
+    assert "99.0" in results[1].detail
+
+
+def test_check_step_tools_no_drift_when_installed_meets_pin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An installed version equal to the pinned floor is not drift (>= boundary)."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.precommit]\nenable = ["typecheck"]\n\n'
+        '[project.optional-dependencies]\ndev = ["pyrefly>=99.0"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(doctor.importlib.metadata, "version", lambda _tool: "99.0.0")
+
+    results = doctor._check_step_tools(tmp_path)
+
+    assert len(results) == 1
+    assert results[0].name == "step-tool:typecheck"
 
 
 def test_surface_pin_revision_reports_mismatch(

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 951 symbols._
+_72 modules, 963 symbols._
 
 ## `forge`
 
@@ -387,10 +387,13 @@ _72 modules, 951 symbols._
 - `_check_gh() -> list[CheckResult]` _(internal)_ — Check `gh` is installed and authenticated.
 - `_validate_plugin_name(name: str) -> str` _(internal)_ — Argparse ``type`` for ``--plugin-name`` — reject a cache-escaping value.
 - `_check_plugin_install(plugin_name: str) -> CheckResult` _(internal)_ — Verify Claude Code has installed the named plugin locally.
-- `_check_version_skew(repo_root: Path, plugin_root: Path | None) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
+- `_check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report a Claude Code plugin cache lagging this repo's own manifest.
+- `_check_version_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
 - `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
 - `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
 - `_check_plugin_contents(plugin_root: Path | None) -> list[CheckResult]` _(internal)_ — Verify the expected plugin sub-directories contain files.
+- `_declared_lower_bound(repo_root: Path, tool: str) -> str | None` _(internal)_ — Return the lower bound *tool* is pinned to in an extras group.
+- `_step_tool_drift(repo_root: Path, step: str, tool: str) -> CheckResult | None` _(internal)_ — Report an installed step tool older than the version this repo pins.
 - `_check_step_tools(repo_root: Path) -> list[CheckResult]` _(internal)_ — Verify the external tool for each enabled pre-commit step is on PATH.
 - `_check_under_used_capabilities(repo_root: Path) -> list[CheckResult]` _(internal)_ — Surface installed-but-never-run forge capabilities.
 - `_print_human(results: list[CheckResult]) -> None` _(internal)_ — Print a human-readable report, separating blocking and INFO results.
@@ -607,6 +610,7 @@ _72 modules, 951 symbols._
 - `repo_root() -> Path` — Return the git repo root for the current working directory.
 - `configure_cli_logging() -> None` — Apply forge's canonical CLI logging setup.
 - `emit(msg: str) -> None` — Write *msg* to stdout with a trailing newline.
+- `pad_semver(text: str) -> tuple[int, int, int] | None` — Return *text* as a three-part version, padding what it omits.
 - `parse_semver(version: str) -> tuple[int, int, int] | None` — Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
 - `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
 - `classify_bump(old: tuple[int, int, int] | None, new: tuple[int, int, int] | None) -> str | None` — Classify the semver increment from *old* to *new*.
@@ -924,6 +928,10 @@ _72 modules, 951 symbols._
 - `step_cli_reference_check(repo_root: Path) -> StepResult` — Run ``forge-gen-cli-reference --check`` — cli-reference drift guard (opt-in).
 - `step_foundation_md_check(repo_root: Path) -> StepResult` — Verify ``FOUNDATION.md`` reproduces the installed foundation (opt-in).
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
+- `_pip_audit_scan_age_hours(repo_root: Path) -> float | None` _(internal)_ — Return how long ago the last CVE scan wrote its sidecar.
+- `_reuse_reason_hours(cfg: dict, age: float) -> str | None` _(internal)_ — Return why an hours-cadence scan may be reused, or ``None`` to scan.
+- `_reuse_reason_branch(repo_root: Path) -> str | None` _(internal)_ — Return why a branch-cadence scan may be reused, or ``None`` to scan.
+- `_pip_audit_skip(repo_root: Path) -> StepResult | None` _(internal)_ — Decide whether this commit can reuse the previous CVE scan.
 - `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.
 - `_write_audit_sidecar(repo_root: Path, data: dict) -> None` _(internal)_ — Persist pip-audit's parsed JSON to the shared sidecar.
 - `step_cve_usage(repo_root: Path) -> StepResult` — Run ``verify-forge-cve-usage`` — the usage-scoped second stage on pip_audit.
@@ -959,6 +967,8 @@ _72 modules, 951 symbols._
 - `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
 - `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
 - `_capped(output: str) -> str` _(internal)_ — Return *output* trimmed to the shared evidence cap.
+- `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult]) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
+- `_forced_steps(only: list[str]) -> Iterator[None]` _(internal)_ — Force explicitly named steps to run, then restore the environment.
 - `main() -> int` — CLI entry point.
 
 ## `forge.rebump`
@@ -1332,3 +1342,5 @@ _72 modules, 951 symbols._
 - `plugin_cache_version(plugin_root: Path | None) -> str | None` — Version of the cached Claude Code plugin install, or None when absent.
 - `editable_install_origin() -> Path | None` — Return the checkout an editable ``forge-scripts`` install points at.
 - `_direct_url() -> dict[str, object] | None` _(internal)_ — Return the distribution's parsed ``direct_url.json``, or ``None``.
+- `class PluginCacheStatus` — What the Claude Code plugin cache says relative to a repo's manifest.
+- `plugin_cache_status(repo_root: Path) -> PluginCacheStatus` — Compare the cached plugin against the manifest that ships it.

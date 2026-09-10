@@ -202,6 +202,28 @@ mode ignores `project_excludes` from `pyrefly.toml` — keep `typecheck` on
 > you touched," not "what's clean." `all` is the honest floor (FOUNDATION §4).
 > Use `diff` deliberately when whole-tree runtime is the bottleneck.
 
+## `[tool.forge.pip_audit]` — CVE scan cadence
+
+The scan reads the packages installed in your environment and a remote
+advisory database. Neither changes because a commit happened, so running
+it on every commit spends network time — between a twentieth and a third
+of a commit's — on an answer that cannot have moved. It runs once per
+branch by default, and PR finalization forces a scan, so nothing is
+published unscanned.
+
+Every uncertain case scans: no previous scan, an unreadable one, one
+dated in the future, or a cadence value forge does not recognise. Naming
+the step (`forge-precommit --only pip_audit`) or setting
+`FORGE_PIP_AUDIT_FORCE=1` also forces it.
+
+| Key | Default | What it does | Set it when |
+|---|---|---|---|
+| `cadence` | `"branch"` | When the scan actually runs: `branch` (once since this branch forked), `hours` (with `max_age_hours`), or `always` (every commit). | You want a fixed rhythm, or the old every-commit behaviour. |
+| `max_age_hours` | `24` | Age at which a previous scan stops counting, under `cadence = "hours"`. | Your tolerance for an older answer differs. |
+| `blocking` | `false` | Fail the commit on a CVE finding (else non-blocking WARN). | A vulnerable dependency should refuse a commit. |
+
+The reuse stamp is the modification time of `code_health/pip_audit.json`. Do not cache that directory in CI: restoring a cache sets file times to the restore, which manufactures a fresh-looking scan that never ran.
+
 ## `[tool.forge.doctest]` — opt-in doctest step
 
 Runs `pytest --doctest-modules` so docstring `>>>` examples are executed,

@@ -12,10 +12,14 @@ Checks:
      a. Plugin directory found under ``~/.claude/plugins/cache/``.
      b. ``plugin.json`` and ``marketplace.json`` present and well-formed.
      c. ``agents/``, ``skills/``, ``claude-hooks/`` directories populated.
-  4. Version skew across install surfaces (#184) — the pip package, the
-     git-hook sidecar, and the cached plugin should share a version; a
+  4. Version skew across install surfaces (#184) — the pip package and the
+     git-hook sidecar should share a version, and the cached Claude Code
+     plugin (checked separately) should match this repo's own manifest; a
      lagging surface is reported as an advisory with the exact command to
      converge it (never fails the exit code — the report line is the signal).
+  5. Pre-commit step tools (opt-in steps only) — the tool for each enabled
+     step is on PATH, and its installed version is not below this repo's
+     pinned floor; both are advisories, never a failing exit code.
 
 Usage:
     forge-doctor                              # human-readable
@@ -24,6 +28,7 @@ Usage:
 """
 
 import argparse
+import importlib.metadata
 import json
 import re
 import shutil
@@ -34,7 +39,7 @@ from pathlib import Path
 
 from forge import config
 from forge.config import installed_console_scripts
-from forge.git_utils import FORGE_DIST_NAME, emit, parse_semver
+from forge.git_utils import FORGE_DIST_NAME, emit, pad_semver, parse_semver
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
@@ -42,13 +47,13 @@ from forge.version_surfaces import (
     find_plugin_cache,
     hook_sidecar_version,
     pip_version,
-    plugin_cache_version,
+    plugin_cache_status,
     read_json,
 )
 
 
 # Drift is only meaningful across at least two surfaces; a single present
-# surface (e.g. a pip-only consumer with no hooks/plugin) has nothing to
+# surface (e.g. a pip-only consumer with no git hooks) has nothing to
 # compare against and must be skipped, not flagged.
 _MIN_SURFACES_TO_COMPARE = 2
 
@@ -195,19 +200,47 @@ def _check_plugin_install(plugin_name: str) -> CheckResult:
     return CheckResult(name="plugin:installed", passed=True, detail=str(found))
 
 
-def _check_version_skew(
-    repo_root: Path,
-    plugin_root: Path | None,
-) -> list[CheckResult]:
+def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
+    """Report a Claude Code plugin cache lagging this repo's own manifest.
+
+    The verdict itself lives in
+    :func:`forge.version_surfaces.plugin_cache_status`, shared with the
+    ``plugin_sync`` pre-commit step so both name the same remediation for
+    the same condition; this wraps it as an advisory.
+
+    Args:
+        repo_root: Repo whose manifest ships the plugin.
+
+    Returns:
+        One advisory result when the cache is behind, otherwise an empty
+        list — no plugin, no cache and an unreadable version are all
+        "nothing to say", not findings.
+    """
+    status = plugin_cache_status(repo_root)
+    if status.state != "behind":
+        return []
+    return [
+        CheckResult(
+            name="version_skew:plugin_cache",
+            passed=False,
+            info=True,
+            detail=(
+                f"plugin cache at v{status.cached}, behind this repo's manifest "
+                f"v{status.declared} — run `{SKEW_REMEDIATION['plugin cache']}`"
+            ),
+        )
+    ]
+
+
+def _check_version_skew(repo_root: Path) -> list[CheckResult]:
     """Compare forge's version across its install surfaces and flag drift (#184).
 
-    Reads the three surfaces a single forge install presents — the pip
-    ``forge-scripts`` package, the git-hook sidecar, and the cached Claude Code
-    plugin — normalizes each with :func:`parse_semver` (so a ``.devN+g<sha>``
-    editable version and a bare-semver plugin compare cleanly), and reports the
-    ones lagging the highest (current) line with the exact command to converge
-    them. Absent surfaces (no hooks, no plugin — e.g. a pip-only consumer) are
-    skipped, not failed.
+    Reads the two pip and git-hook surfaces a single forge install presents —
+    the pip ``forge-scripts`` package and the git-hook sidecar — normalizes
+    each with :func:`parse_semver` (so a ``.devN+g<sha>`` editable version
+    compares cleanly), and reports the ones lagging the highest (current) line
+    with the exact command to converge them. Absent surfaces (no hooks — e.g. a
+    pip-only consumer) are skipped, not failed.
 
     Posture: a lagging surface is reported as an **advisory** (``info``), never
     a failure — it carries the remediation but never sways ``forge-doctor``'s
@@ -217,9 +250,15 @@ def _check_version_skew(
     legitimately predates an install — FOUNDATION §15); the remediation line in
     the report is the actionable signal, not the exit code.
 
+    The plugin cache is judged against the manifest in :func:`_check_plugin_cache_skew`,
+    not here — pip and git hooks are one line (both derive from installed
+    forge-scripts), while the plugin version is the manifest's (which fragments
+    mode parks at the latest tag by design). Comparing them made a warning that
+    named a command, and the command answered that nothing was out of date:
+    both true, and never convergent.
+
     Args:
         repo_root: Repo whose ``.githooks/`` sidecar is read.
-        plugin_root: Cache slot for the plugin, or None when uncached / skipped.
 
     Returns:
         A single ``version_skew`` result when surfaces align (or too few to
@@ -229,7 +268,6 @@ def _check_version_skew(
     raw = {
         "pip package": pip_version(),
         "git hooks": hook_sidecar_version(repo_root),
-        "plugin cache": plugin_cache_version(plugin_root),
     }
     parsed = {name: parse_semver(v) for name, v in raw.items() if v is not None}
     comparable = {name: t for name, t in parsed.items() if t is not None}
@@ -429,6 +467,86 @@ _STEP_TOOLS: dict[str, str] = {
 }
 
 
+def _declared_lower_bound(repo_root: Path, tool: str) -> str | None:
+    """Return the lower bound *tool* is pinned to in an extras group.
+
+    Args:
+        repo_root: Repo whose ``pyproject.toml`` declares the pin.
+        tool: Distribution name as it appears in the requirement.
+
+    Only a ``>=`` lower bound is recognised, which is how every pin in
+    this repo is written; a ``~=`` or bare ``==`` pin reads as "not
+    pinned that way", leaving the drift check quiet rather than guessing.
+
+    Returns:
+        The ``>=`` version, or ``None`` when the tool is not pinned that
+        way anywhere in ``[project.optional-dependencies]``.
+    """
+    extras = config.read_pyproject_raw(repo_root).get("project", {})
+    groups = extras.get("optional-dependencies", {})
+    if not isinstance(groups, dict):
+        return None
+    for reqs in groups.values():
+        if not isinstance(reqs, list):
+            continue
+        for req in reqs:
+            # A PEP 508 marker after the version (`; python_version >= "3.11"`)
+            # is not part of the bound; keeping it made the version unparseable
+            # and left the check silently quiet.
+            match = re.fullmatch(
+                rf"{re.escape(tool)}\s*>=\s*([0-9][^,\s]*).*",
+                str(req).split(";", 1)[0],
+            )
+            if match:
+                return match.group(1)
+    return None
+
+
+def _step_tool_drift(repo_root: Path, step: str, tool: str) -> CheckResult | None:
+    """Report an installed step tool older than the version this repo pins.
+
+    A gate that must pass before every commit should not be free to be
+    any version: when the machine's copy predates the declared floor, it
+    disagrees with the one CI installs about what counts as an error, and
+    a change passes here and fails there on code it never touched.
+
+    The lookup assumes the binary name is also the distribution name,
+    which holds for the tools in :data:`_STEP_TOOLS` but is not general —
+    an unknown distribution simply yields nothing rather than a wrong
+    answer.
+
+    Args:
+        repo_root: Repo whose pin is read.
+        step: Pre-commit step the tool belongs to.
+        tool: Binary, and assumed distribution, name.
+
+    Returns:
+        An advisory result when the installed version is below the pin,
+        otherwise ``None``.
+    """
+    floor = _declared_lower_bound(repo_root, tool)
+    if floor is None:
+        return None
+    try:
+        installed = importlib.metadata.version(tool)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    installed_t, floor_t = parse_semver(installed), pad_semver(floor)
+    if installed_t is None or floor_t is None or installed_t >= floor_t:
+        return None
+    return CheckResult(
+        name=f"step-tool-version:{step}",
+        passed=False,
+        info=True,
+        detail=(
+            f"{tool} {installed} is below the pinned floor {floor} — CI "
+            f"installs the pin, so the two disagree about what fails. "
+            f"Refresh the environment (`./dev/setup.sh`, or your "
+            f"equivalent)."
+        ),
+    )
+
+
 def _check_step_tools(repo_root: Path) -> list[CheckResult]:
     """Verify the external tool for each enabled pre-commit step is on PATH.
 
@@ -444,8 +562,10 @@ def _check_step_tools(repo_root: Path) -> list[CheckResult]:
 
     Returns:
         One ``CheckResult`` per enabled step that maps to a known tool —
-        failing when the tool is missing. Empty when no such step is
-        enabled.
+        failing when the tool is missing — plus one advisory
+        ``CheckResult`` from :func:`_step_tool_drift` for each present
+        tool older than the repo's pinned floor. Empty when no such step
+        is enabled.
     """
     precommit = config.read_tool_forge_section(repo_root, "precommit")
     enabled = precommit.get("enable")
@@ -469,6 +589,10 @@ def _check_step_tools(repo_root: Path) -> list[CheckResult]:
                 ),
             ),
         )
+        if present:
+            drift = _step_tool_drift(repo_root, str(step), tool)
+            if drift is not None:
+                results.append(drift)
     return results
 
 
@@ -589,7 +713,8 @@ def main() -> int:
         results.extend(_check_plugin_manifests(plugin_root, args.plugin_name))
         results.extend(_check_plugin_contents(plugin_root))
 
-    results.extend(_check_version_skew(Path.cwd(), plugin_root))
+    results.extend(_check_version_skew(Path.cwd()))
+    results.extend(_check_plugin_cache_skew(Path.cwd()))
     results.extend(_surface_pin_revision(Path.cwd()))
     results.extend(_check_under_used_capabilities(Path.cwd()))
 
