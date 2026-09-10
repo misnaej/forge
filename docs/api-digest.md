@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 950 symbols._
+_72 modules, 954 symbols._
 
 ## `forge`
 
@@ -387,10 +387,14 @@ _72 modules, 950 symbols._
 - `_check_gh() -> list[CheckResult]` _(internal)_ — Check `gh` is installed and authenticated.
 - `_validate_plugin_name(name: str) -> str` _(internal)_ — Argparse ``type`` for ``--plugin-name`` — reject a cache-escaping value.
 - `_check_plugin_install(plugin_name: str) -> CheckResult` _(internal)_ — Verify Claude Code has installed the named plugin locally.
-- `_check_version_skew(repo_root: Path, plugin_root: Path | None) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
+- `_check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report a Claude Code plugin cache lagging this repo's own manifest.
+- `_check_version_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
 - `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
 - `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
 - `_check_plugin_contents(plugin_root: Path | None) -> list[CheckResult]` _(internal)_ — Verify the expected plugin sub-directories contain files.
+- `_padded_version(text: str) -> tuple[int, int, int] | None` _(internal)_ — Return *text* as a three-part version, padding what a pin omits.
+- `_declared_lower_bound(repo_root: Path, tool: str) -> str | None` _(internal)_ — Return the lower bound *tool* is pinned to in an extras group.
+- `_step_tool_drift(repo_root: Path, step: str, tool: str) -> CheckResult | None` _(internal)_ — Report an installed step tool older than the version this repo pins.
 - `_check_step_tools(repo_root: Path) -> list[CheckResult]` _(internal)_ — Verify the external tool for each enabled pre-commit step is on PATH.
 - `_check_under_used_capabilities(repo_root: Path) -> list[CheckResult]` _(internal)_ — Surface installed-but-never-run forge capabilities.
 - `_print_human(results: list[CheckResult]) -> None` _(internal)_ — Print a human-readable report, separating blocking and INFO results.
