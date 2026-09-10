@@ -11,7 +11,9 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
+from typing import cast
 
 import pytest
 
@@ -292,6 +294,39 @@ def test_delete_comment_false_and_warns_on_failure(
 # ---------------------------------------------------------------------------
 
 
+def assert_no_raw_field_reads_a_file(cmd: list[str]) -> None:
+    """Assert no `gh api` raw-field flag in *cmd* carries an `@` value.
+
+    Stated as an invariant over argv rather than as an expected list,
+    deliberately. The bug this guards against reached production *with*
+    passing coverage, because the expected list had been copied from the
+    implementation: both said `-f`, so both agreed, and agreement was all
+    the test checked. An edit that changes the call and its expected list
+    together — the same authorship pattern — would satisfy an equality
+    assertion again. This one cannot be satisfied that way: `--raw-field`
+    sends its value literally, so pairing it with `@` can only mean the
+    content was meant to be read and silently was not.
+
+    `claude-hooks/block_raw_wrapup_post.sh` encodes the same rule
+    flag-agnostically for hand-typed commands; this is its Python-layer
+    counterpart.
+
+    Args:
+        cmd: The argv a `gh api` call was invoked with.
+
+    Raises:
+        AssertionError: When a raw-field flag's value contains ``=@``.
+    """
+    raw_flags = {"-f", "--raw-field"}
+    for flag, value in itertools.pairwise(cmd):
+        if flag in raw_flags and "=@" in value:
+            msg = (
+                f"{flag} {value!r} sends the value literally — an `@` here "
+                "is never read. Use -F/--field."
+            )
+            raise AssertionError(msg)
+
+
 def test_patch_comment_true_with_expected_argv_and_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -299,11 +334,10 @@ def test_patch_comment_true_with_expected_argv_and_body(
 
     The flag is the whole point, which is why it is asserted as argv
     rather than by exit code. `-f/--raw-field` sends static strings, so
-    `-f body=@-` PATCHed the two literal characters `@-` over the
+    `-f body=@-` PATCHes the two literal characters `@-` over the
     comment: a valid request, a zero exit, and the collapsed text
     unrecoverable. Only `-F/--field` gives `@` its documented meaning
-    and reads the body from stdin. An earlier version of this test
-    pinned `-f`, which is how the defect survived.
+    and reads the body from stdin.
     """
     captured: dict[str, object] = {}
 
@@ -334,7 +368,7 @@ def test_patch_comment_true_with_expected_argv_and_body(
         "body=@-",
     ]
     assert captured["input"] == "new body"
-    assert "-f" not in captured["cmd"]
+    assert_no_raw_field_reads_a_file(cast("list[str]", captured["cmd"]))
 
 
 def test_patch_comment_false_and_warns_on_failure(

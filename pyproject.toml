@@ -92,10 +92,7 @@ test = ["pytest>=8.0"]
 audit = ["jsonschema>=4.0", "PyYAML>=6.0"]
 audit-tach = ["tach>=0.30"]
 # Type checker for the opt-in `typecheck` pre-commit step (pyrefly only).
-# One-minor pin, same cap-and-triage cadence as ruff above (FOUNDATION §5):
-# pyrefly ships new checks in minors, and an unbounded range let a
-# workstation resolve one minor while CI resolved another — a blocking
-# gate that passed locally and failed in CI on untouched code.
+# One-minor pin — cap-and-triage cadence, policy in FOUNDATION.md §5.
 typecheck = ["pyrefly>=1.2,<1.3"]
 # Resource profiling for forge-telemetry / forge-smart-test --telemetry.
 # psutil is required for sampling; matplotlib only for the PNG chart.
