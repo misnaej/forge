@@ -9,6 +9,12 @@ in the cache. ``forge-doctor`` reports the skew as an advisory and
 ``forge-precommit``'s ``env_sync`` / ``plugin_sync`` steps block on it, so
 the readers live here once and both consumers see the same numbers and
 name the same remediation.
+
+A consumer repo ships no manifest, so it has no declared version to
+compare — the module also reads Claude Code's
+``known_marketplaces.json`` registry to resolve the marketplace clone a
+consumer's pin points at, and judges the cache slot by comparing that
+clone's content against what is loaded instead.
 """
 
 from __future__ import annotations
