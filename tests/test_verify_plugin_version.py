@@ -85,6 +85,28 @@ def test_skipped_without_tags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert "no git tags" in log
 
 
+def test_main_fails_when_no_tags_and_declared_version_undocumented(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No tags AND an undocumented declared version → exit 1.
+
+    Regression lock for the hole a design review found: the no-tags
+    early return used to skip both invariants, but the exemption is
+    rolling-next only — a pre-tag repo still owes its declared version a
+    heading. No tags exist at all here (not merely a stale reference),
+    so this proves the gate is reached even when ``latest_v_tag`` is
+    ``None``, not only from the tagged branches covered elsewhere.
+    """
+    _init_git_repo(tmp_path)
+    _write_plugin(tmp_path, "1.0.0")
+    (tmp_path / "CHANGELOG.md").write_text("## v0.9.0\n- prior release\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 1
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "revert it and let" in log
+
+
 def test_fail_when_version_not_strictly_greater(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -548,28 +570,29 @@ def test_declared_version_documented_passes_without_changelog(tmp_path: Path) ->
     Covers consumer repos (no changelog convention) and pre-first-release
     checkouts — the guard clause this test pins.
     """
-    _write_plugin(tmp_path, "1.0.0")
-    assert verify_plugin_version._declared_version_documented(tmp_path) == 0
+    assert verify_plugin_version._declared_version_documented(tmp_path, "1.0.0") == 0
 
 
 def test_declared_version_documented_passes_when_no_version_declared(
     tmp_path: Path,
 ) -> None:
-    """No ``.claude-plugin/plugin.json`` → 0.
+    """No version declared (``version=None``) → 0.
 
-    Covers the ``or not version`` half of the same guard clause.
+    Covers the ``or not version`` half of the same guard clause. The
+    caller now reads the manifest before calling in, so "no version
+    declared" is expressed by passing ``None`` explicitly rather than by
+    an absent ``plugin.json`` on disk.
     """
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
-    assert verify_plugin_version._declared_version_documented(tmp_path) == 0
+    assert verify_plugin_version._declared_version_documented(tmp_path, None) == 0
 
 
 def test_declared_version_documented_passes_with_matching_heading(
     tmp_path: Path,
 ) -> None:
     """Declared version has a matching ``## vX.Y.Z`` heading → 0."""
-    _write_plugin(tmp_path, "1.0.0")
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n- initial release\n")
-    assert verify_plugin_version._declared_version_documented(tmp_path) == 0
+    assert verify_plugin_version._declared_version_documented(tmp_path, "1.0.0") == 0
 
 
 def test_declared_version_documented_fails_with_missing_heading(
@@ -580,10 +603,11 @@ def test_declared_version_documented_fails_with_missing_heading(
     The primary enforcing test: catches a hand-edited manifest whose
     version the assembler never wrote a heading for.
     """
-    _write_plugin(tmp_path, "1.0.0")
     (tmp_path / "CHANGELOG.md").write_text("## v0.9.0\n- prior release\n")
     with caplog.at_level("ERROR"):
-        assert verify_plugin_version._declared_version_documented(tmp_path) == 1
+        assert (
+            verify_plugin_version._declared_version_documented(tmp_path, "1.0.0") == 1
+        )
     assert "revert it and let" in caplog.text
 
 
@@ -600,9 +624,8 @@ def test_declared_version_documented_passes_even_when_stale(
     heading AND a strictly newer heading in the changelog, so that
     regression trips this test.
     """
-    _write_plugin(tmp_path, "1.0.0")
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n- old\n\n## v1.1.0\n- newer\n")
-    assert verify_plugin_version._declared_version_documented(tmp_path) == 0
+    assert verify_plugin_version._declared_version_documented(tmp_path, "1.0.0") == 0
 
 
 def test_main_fails_when_declared_version_undocumented_in_fragment_mode(

@@ -1275,11 +1275,11 @@ _72 modules, 951 symbols._
 
 ## `forge.verify_plugin_version`
 
-> _Enforce that ``.claude-plugin/plugin.json["version"]`` > latest git tag._
+> _Enforce the rolling-next and declared-version manifest invariants._
 
 - `_is_release_commit(repo_root: Path) -> bool` _(internal)_ — Return True when ``HEAD``'s release fingerprint matches ANY published ``v*`` tag.
-- `main() -> int` — Enforce plugin.json version > latest git tag.
-- `_declared_version_documented(repo_root: Path) -> int` _(internal)_ — Refuse a declared plugin version that ``CHANGELOG.md`` never mentions.
+- `main() -> int` — Enforce the rolling-next and declared-version manifest invariants.
+- `_declared_version_documented(repo_root: Path, version: str | None) -> int` _(internal)_ — Refuse a declared plugin version that ``CHANGELOG.md`` never mentions.
 - `_not_ahead_verdict(repo_root: Path, plugin_ver: tuple[int, int, int], tag_ver: tuple[int, int, int], latest_tag: str) -> int` _(internal)_ — Resolve the verdict when ``plugin.json`` is NOT ahead of the latest tag.
 - `_fragment_parked_verdict(repo_root: Path, latest_tag: str) -> int` _(internal)_ — Gate the fragment-mode resting state: manifest at or behind the tag.
 

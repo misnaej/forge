@@ -17,12 +17,13 @@ name: assemble-release
 
 on:
   schedule:
-    # DAILY WHILE THIS IS BEING PROVEN. The 2026-09-07 weekly run failed
-    # and told nobody, so the manifest sat at 5.2.0 through 15 tags and
-    # consumers could not reach the guard hardening those tags shipped —
-    # a weekly cadence turns one silent failure into a week of stale
-    # plugin distribution. Once daily runs have demonstrably opened (or
-    # quietly no-op'd) for a stretch, drop to Mon/Wed/Fri:
+    # DAILY WHILE THIS IS BEING PROVEN. A silently failing scheduled run
+    # leaves the manifest frozen — and every tag cut since unreachable to
+    # consumers — until someone notices; a weekly cadence turns one such
+    # failure into a week of stale plugin distribution, so cadence stays
+    # daily until the failure-reporting step below has demonstrably
+    # caught one. Once daily runs have demonstrably opened (or quietly
+    # no-op'd) for a stretch, drop to Mon/Wed/Fri:
     #   - cron: '0 6 * * 1,3,5'
     - cron: '0 6 * * *'   # daily 06:00 UTC
   workflow_dispatch:
@@ -78,15 +79,20 @@ jobs:
 
       # A scheduled workflow that fails notifies nobody: GitHub mails only
       # whoever last touched the cron, and nothing appears in the backlog
-      # everyone actually reads. That is how the 2026-09-07 failure went
-      # unseen for a week while the manifest — and therefore every
-      # consumer's plugin — stayed pinned to 5.2.0. The failure now files
-      # itself. One open report at a time: a repeat comments on the
-      # existing issue rather than opening another.
+      # everyone actually reads — so a failure can go unseen indefinitely
+      # while the manifest, and therefore every consumer's plugin, stays
+      # frozen. The failure now files itself. One open report at a time:
+      # a repeat comments on the existing issue rather than opening
+      # another.
       - name: Report a failed assembly run
         if: failure()
         env:
-          GH_TOKEN: ${{ secrets.FORGE_ASSEMBLY_PAT || github.token }}
+          # Deliberately the default token, not the PAT the steps above
+          # use: the PAT is scoped to contents + pull-requests, so filing
+          # an issue under it would fail and this step would report
+          # nothing — the silence it exists to end. `issues: write` on the
+          # job grants the default token exactly this.
+          GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TITLE: 'assemble-release: the scheduled assembly run is failing'
         run: |

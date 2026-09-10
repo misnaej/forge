@@ -1,14 +1,27 @@
-"""Enforce that ``.claude-plugin/plugin.json["version"]`` > latest git tag.
+"""Enforce the rolling-next and declared-version manifest invariants.
 
 Standalone phase CLI for the ``plugin_version`` step in the forge
-pre-commit sequence. Implements the rolling-next invariant: the manifest
-version always names the next release about to be tagged, so consumers
-pinning by tag never receive a stale manifest.
+pre-commit sequence. Two invariants, both required for a healthy exit:
 
-Skipped when:
+1. **Rolling-next**: ``.claude-plugin/plugin.json["version"]`` > latest
+   git tag. The manifest version always names the next release about to
+   be tagged, so consumers pinning by tag never receive a stale
+   manifest.
+2. **Declared-version documented**: whatever version the manifest
+   declares has a matching ``## vX.Y.Z`` heading in ``CHANGELOG.md``, so
+   the identity Claude Code keys its plugin cache on is always one
+   consumers can read about (see :func:`_declared_version_documented`).
+
+Both invariants are skipped when:
 - ``.claude-plugin/plugin.json`` does not exist (consumer repo without
-  a plugin manifest).
-- The repo has no git tags yet (pre-release repo).
+  a plugin manifest) — nothing declares a version, so neither rule has
+  a subject.
+
+Only the rolling-next invariant is skipped — declared-version
+documentation is still checked — when:
+- The repo has no git tags yet (pre-release repo): there is no tag to
+  be newer than, but a declared version still has to be one consumers
+  can read about. A repo with no ``CHANGELOG.md`` passes anyway.
 - ``HEAD``'s release fingerprint (tree content minus ``CHANGELOG.md``)
   reproduces any published ``v*`` release tag — so a staged
   ``release/vX.Y.Z`` branch promoting an older minor still passes even
@@ -107,15 +120,17 @@ def _is_release_commit(repo_root: Path) -> bool:
 
 
 def main() -> int:
-    """Enforce plugin.json version > latest git tag.
+    """Enforce the rolling-next and declared-version manifest invariants.
 
     Returns:
         ``0`` on success or when skipped — including fragment mode
         parked at the latest tag with valid pending fragments (see
         :func:`_not_ahead_verdict`). ``1`` when ``plugin.json["version"]``
         is below the latest semver-style tag, at the tag outside a
-        healthy fragment-mode parked state, or when either version
-        string is unparseable.
+        healthy fragment-mode parked state, when either version string
+        is unparseable, or when the declared version has no matching
+        heading in ``CHANGELOG.md`` (see
+        :func:`_declared_version_documented`).
     """
     argparse.ArgumentParser(
         prog="verify-forge-plugin-version",
@@ -139,11 +154,13 @@ def main() -> int:
         # the dual-track case (a release tagged on main is absent from
         # dev's history). See forge.git_utils.latest_v_tag.
         latest_tag = latest_v_tag(repo_root)
-        if latest_tag is None:
-            logger.info("(no git tags yet — skipped)")
-            return 0
-
         plugin_version_str = read_local_plugin_version(repo_root)
+        if latest_tag is None:
+            # No tag to be newer than, so rolling-next has nothing to
+            # say — but a declared version still owes its heading.
+            logger.info("(no git tags yet — rolling-next skipped)")
+            return _declared_version_documented(repo_root, plugin_version_str)
+
         tag_ver = _parse_semver(latest_tag)
         plugin_ver = _parse_semver(plugin_version_str) if plugin_version_str else None
         if tag_ver is None or plugin_ver is None:
@@ -176,13 +193,13 @@ def main() -> int:
             rc = 0
         else:
             rc = _not_ahead_verdict(repo_root, plugin_ver, tag_ver, latest_tag)
-        # Applied to every healthy exit above, not to one branch: the
+        # Applied to every healthy exit, not to one branch: the
         # declared version is what consumers adopt, so it must be a
         # version they can read about.
-        return rc or _declared_version_documented(repo_root)
+        return rc or _declared_version_documented(repo_root, plugin_version_str)
 
 
-def _declared_version_documented(repo_root: Path) -> int:
+def _declared_version_documented(repo_root: Path, version: str | None) -> int:
     """Refuse a declared plugin version that ``CHANGELOG.md`` never mentions.
 
     The manifest version is not bookkeeping: Claude Code keys its plugin
@@ -199,6 +216,8 @@ def _declared_version_documented(repo_root: Path) -> int:
 
     Args:
         repo_root: Git repo root.
+        version: Version the manifest declares, or ``None`` when it
+            declares none.
 
     Returns:
         ``0`` when the declared version has a heading, when no
@@ -206,7 +225,6 @@ def _declared_version_documented(repo_root: Path) -> int:
         ``1`` when the heading is missing.
     """
     changelog = repo_root / "CHANGELOG.md"
-    version = read_local_plugin_version(repo_root)
     if not changelog.is_file() or not version:
         return 0
     tag = f"v{version}"
