@@ -41,6 +41,7 @@ from forge.changelog_fragments import discover_fragments
 from forge.config import (
     is_fragments_mode,
     load_config,
+    read_tool_forge_section,
 )
 from forge.git_utils import (
     configure_cli_logging,
@@ -153,6 +154,12 @@ def _tag_misuse_warning(repo_root: Path) -> str | None:
             "--tag skipped: .claude-plugin/plugin.json declares a version "
             "that is not bare X.Y.Z semver — fix it (verify-forge-manifest "
             "names the problem)."
+        )
+    if read_tool_forge_section(repo_root, "release").get("auto") == "merge":
+        return (
+            "--tag skipped: no .claude-plugin/plugin.json, and tag-per-merge "
+            '([tool.forge.release].auto = "merge") already cuts this repo\'s '
+            "tags — `forge-changelog auto-tag` owns them."
         )
     return (
         "--tag skipped: no .claude-plugin/plugin.json and a single-track "

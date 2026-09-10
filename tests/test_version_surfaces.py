@@ -21,17 +21,14 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from forge import version_surfaces
 from tests.conftest import GIT_ENV, commit_all, init_git_repo, init_single_track_repo
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +205,26 @@ def test_find_install_dir_prefers_recorded_slot_over_semver_name(
     assert version_surfaces.find_install_dir(tmp_path) == newer
 
     assert version_surfaces.find_install_dir(tmp_path, preferred=older) == older
+
+
+def test_find_install_dir_ignores_unresolvable_preferred(tmp_path: Path) -> None:
+    """An unresolvable ``preferred`` path degrades to the semver fallback.
+
+    SCENARIO: ``installed_plugins.json`` is untrusted registry state — a
+    NUL byte in a recorded ``installPath`` makes ``Path.resolve()`` raise.
+    ``find_install_dir`` must not propagate that: a malformed preference
+    is no different from no preference at all.
+    """
+    older = tmp_path / "forge" / "1.9.0"
+    (older / ".claude-plugin").mkdir(parents=True)
+    (older / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+    newer = tmp_path / "forge" / "2.0.0"
+    (newer / ".claude-plugin").mkdir(parents=True)
+    (newer / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+
+    result = version_surfaces.find_install_dir(tmp_path, preferred=Path("x\x00y"))
+
+    assert result == newer
 
 
 def test_find_plugin_cache_none_when_cache_dir_absent(
@@ -415,6 +432,44 @@ def test_installed_record_prefers_this_repos_record(tmp_path: Path) -> None:
     assert record.version == "2.0.0"
 
 
+def test_installed_record_ignores_unresolvable_project_path(tmp_path: Path) -> None:
+    """A record whose ``projectPath`` cannot be resolved is skipped, not raised.
+
+    SCENARIO: the registry is untrusted Claude Code state — a
+    ``projectPath`` carrying a NUL byte makes ``Path.resolve()`` raise.
+    ``_pick_record`` must not let one malformed entry crash the whole
+    lookup; a valid user-scope record elsewhere in the list still answers.
+    """
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    plugins_file = tmp_path / "installed_plugins.json"
+    plugins_file.write_text(
+        json.dumps(
+            {
+                "plugins": {
+                    "forge@forge": [
+                        {
+                            "scope": "project",
+                            "projectPath": "bad\x00path",
+                            "version": "9.9.9",
+                            "gitCommitSha": "dddd",
+                        },
+                        {"scope": "user", "version": "1.0.0", "gitCommitSha": "aaaa"},
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record = version_surfaces.installed_record(
+        "forge@forge", repo_root, plugins_file=plugins_file
+    )
+
+    assert record is not None
+    assert record.commit == "aaaa"
+
+
 # ---------------------------------------------------------------------------
 # plugin_cache_status
 # ---------------------------------------------------------------------------
@@ -577,7 +632,7 @@ def test_plugin_cache_status_behind_when_cache_lags_manifest(
         pytest.param(None, "/plugin update", id="version-less-clone"),
         pytest.param(
             "5.2.0",
-            "delete ~/.claude/plugins/cache/forge/",
+            "claude plugin install forge@forge",
             id="declared-version-clone",
         ),
     ],
@@ -604,8 +659,9 @@ def test_consumer_status_stale_when_installed_commit_differs_from_clone_head(
     CLONE's own manifest: a version-less (commit-keyed) clone can only be
     re-pulled with ``/plugin update`` (an `/plugin update` compares
     declared versions, which a commit-keyed manifest has none of — so
-    only re-pulling helps); a clone declaring a version needs the
-    slot-deletion remedy (`/plugin update` there reports "already
+    only re-pulling helps); a clone declaring a version names the
+    record's exact cache slot for deletion and a ``claude plugin
+    install`` reinstall (`/plugin update` there reports "already
     current" without moving the stale slot). The installed record also
     names an install slot carrying no hooks at all, so ``missing_hooks``
     must report exactly the one hook the clone's advance added.
@@ -663,34 +719,52 @@ def test_consumer_status_stale_when_installed_commit_differs_from_clone_head(
 
     assert status.state == "stale-content"
     assert remedy_snippet in status.remedy
+    if clone_version is not None:
+        # The declared-version branch must name the RECORD's own slot,
+        # not a generic `~/.claude/plugins/cache/<plugin>/` guess.
+        assert str(stale_slot) in status.remedy
     assert status.missing_hooks == ("a.sh",)
 
 
+@pytest.mark.parametrize(
+    "installed_kwargs",
+    [
+        pytest.param({"version": "6.11.0"}, id="no-gitCommitSha"),
+        pytest.param({"commit": "a", "version": "6.11.0"}, id="junk-gitCommitSha"),
+    ],
+)
 def test_consumer_status_semver_record_without_commit_is_no_finding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    installed_kwargs: dict[str, str],
 ) -> None:
-    """A record's bare semver ``version`` (no ``gitCommitSha``) is never a commit.
+    """A record with no commit-shaped value anywhere is never a commit.
 
     Behavior test: pins down :func:`version_surfaces._installed_commit`'s
     commit-shape guard end to end — a regression here would silently
-    compare a version string like "6.11.0" against a real SHA and
-    misreport every commit-keyed install lacking a recorded
-    ``gitCommitSha`` as "stale-content".
+    compare a version string like "6.11.0" (or a junk ``gitCommitSha``
+    like ``"a"``) against a real SHA and misreport a commit-keyed install
+    as "stale-content".
 
     SCENARIO: same consumer/clone setup as
     ``test_consumer_status_stale_when_installed_commit_differs_from_clone_head``,
-    but the install record carries only a semver-shaped ``version`` and
-    no ``gitCommitSha`` at all.
+    but the install record carries a semver-shaped ``version`` and either
+    no ``gitCommitSha`` at all, or one too short/junk to be a real SHA
+    (``_SHA_RE`` requires 7-40 hex chars — ``"a"`` is valid hex but fails
+    that requirement on length alone).
     MOCK SETUP: a real git clone declaring ``"version": "6.11.0"`` (the
     realistic shape — Claude Code records whatever version the manifest
     declares, distinct from the sibling stale test's ``None`` /
     ``"5.2.0"`` clone-manifest parametrization; the declared value plays
     no role in this branch) so ``resolve_commit(clone, "HEAD")``
-    resolves; the installed record has ``"version": "6.11.0"`` and no
-    ``gitCommitSha``.
-    EXPECTED BEHAVIOR: ``"unparsed"``, never "stale-content" — a semver
-    string must not be compared against the clone's SHA.
+    resolves; the installed record varies per *installed_kwargs*.
+    EXPECTED BEHAVIOR: ``"unparsed"``, never "stale-content" — neither a
+    semver string nor a junk ``gitCommitSha`` may be compared against the
+    clone's SHA.
+
+    Args:
+        installed_kwargs: Keyword arguments forwarded to
+            :func:`_write_installed_plugins` for the install record.
     """
     repo = tmp_path / "consumer"
     _write_consumer_pin(repo, "main")
@@ -707,7 +781,7 @@ def test_consumer_status_semver_record_without_commit_is_no_finding(
     _write_registry(registry, clone, ref="main")
     monkeypatch.setattr(version_surfaces, "KNOWN_MARKETPLACES", registry)
     installed_plugins = tmp_path / "installed_plugins.json"
-    _write_installed_plugins(installed_plugins, version="6.11.0")
+    _write_installed_plugins(installed_plugins, **installed_kwargs)
     monkeypatch.setattr(version_surfaces, "INSTALLED_PLUGINS", installed_plugins)
 
     status = version_surfaces.plugin_cache_status(repo)
@@ -757,6 +831,39 @@ def test_consumer_status_wrong_ref_when_registration_serves_another_ref(
     assert status.declared == "v6.11.0"
     assert "re-point" in status.remedy
     assert "claude plugin marketplace remove forge" in status.remedy
+
+
+def test_wrong_ref_remedy_quotes_shell_metacharacters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pin ref carrying shell metacharacters is shlex-quoted in the remedy.
+
+    SCENARIO: :data:`version_surfaces.WRONG_REF_REMEDIATION` formats
+    registry- and clone-derived values straight into ``claude plugin ...``
+    commands a person may paste; an unquoted ref containing a space or
+    ``;`` would let it break out of the intended argument.
+    MOCK SETUP: same shape as the sibling wrong-ref test, but the pin's
+    ref carries a space and a semicolon; the clone has no manifest git
+    history at all (unneeded — the name mismatch alone settles the verdict).
+    EXPECTED BEHAVIOR: "wrong-ref", and the remedy carries the
+    ``shlex.quote``d ref, not the raw value.
+    """
+    ref = "v1.0.0; touch pwned"
+    repo = tmp_path / "consumer"
+    _write_consumer_pin(repo, ref)
+    clone = _write_plugin_tree(tmp_path / "marketplaces" / "forge", version="5.2.0")
+    registry = tmp_path / "known_marketplaces.json"
+    _write_registry(registry, clone, ref="main")
+    monkeypatch.setattr(version_surfaces, "KNOWN_MARKETPLACES", registry)
+    monkeypatch.setattr(version_surfaces, "INSTALLED_PLUGINS", tmp_path / "absent.json")
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == "wrong-ref"
+    assert status.declared == ref  # the raw field is never quoted
+    assert shlex.quote(ref) in status.remedy
+    assert f"@{ref}" not in status.remedy  # raw ref never appears unquoted after @
 
 
 def test_plugin_cache_status_consumer_current_when_installed_commit_matches_clone(

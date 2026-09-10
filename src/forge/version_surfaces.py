@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from importlib import metadata
 from pathlib import Path
 from typing import Final, NamedTuple
@@ -98,12 +99,12 @@ UPDATE_REMEDIATION: Final[str] = (
 # *declared* version. It cannot be ``/plugin update``: that command
 # compares declared manifest versions, and an unmoved declared version is
 # exactly the condition here — the update reports "already current" while
-# the slot keeps whatever it was first filled with. Only discarding the
-# slot (or moving the clone it is filled from) converges.
+# the slot keeps whatever it was first filled with. Discarding the slot
+# and *installing* (not updating) refills it from the clone.
 STALE_CACHE_REMEDIATION: Final[str] = (
-    "delete ~/.claude/plugins/cache/{plugin}/ and restart the session "
-    "(move the marketplace ref first if the clone is behind too) — "
-    "`/plugin update` compares declared versions and reports no change"
+    "delete {slot}, reinstall with `claude plugin install "
+    "{plugin}@{marketplace}`, and restart the session — `/plugin update` "
+    "compares declared versions and reports no change"
 )
 
 # The machine's one registration tracks a different ref than this repo
@@ -219,8 +220,8 @@ def find_install_dir(
     valid = [c.parent for c in candidates if (c / "plugin.json").is_file()]
     if not valid:
         return None
-    if preferred is not None:
-        target = preferred.resolve()
+    target = _safe_resolve(preferred) if preferred is not None else None
+    if target is not None:
         for candidate in valid:
             if candidate.resolve() == target:
                 return candidate
@@ -313,12 +314,30 @@ def _pick_record(records: list[dict], repo_root: Path | None) -> dict | None:
         r
         for r in records
         if isinstance(r.get("projectPath"), str)
-        and Path(r["projectPath"]).resolve() == here
+        and _safe_resolve(Path(r["projectPath"])) == here
     ]
     if mine:
         return mine[-1]
     user = [r for r in records if r.get("scope") == "user"]
     return user[-1] if user else None
+
+
+def _safe_resolve(path: Path) -> Path | None:
+    """Resolve *path*, or ``None`` when it cannot be (e.g. a NUL byte).
+
+    Paths here come from Claude Code's registry files; a malformed one must
+    read as "no match", never crash a gate that runs on every commit.
+
+    Args:
+        path: A path read from local registry state.
+
+    Returns:
+        The resolved path, or ``None``.
+    """
+    try:
+        return path.resolve()
+    except (OSError, ValueError):
+        return None
 
 
 def pip_version() -> str | None:
@@ -629,7 +648,7 @@ def _commit_identity_status(repo_root: Path, plugin_name: str) -> PluginCacheSta
         remedy), ``"uncached"`` when this repo has no install record, and
         ``"unparsed"`` when the commits cannot be compared.
     """
-    marketplace = _own_marketplace_name(repo_root, plugin_name)
+    marketplace = own_marketplace_name(repo_root, plugin_name)
     record = installed_record(f"{plugin_name}@{marketplace}", repo_root)
     installed = _installed_commit(record)
     if not installed:
@@ -651,7 +670,7 @@ def _commit_identity_status(repo_root: Path, plugin_name: str) -> PluginCacheSta
     )
 
 
-def _own_marketplace_name(repo_root: Path, plugin_name: str) -> str:
+def own_marketplace_name(repo_root: Path, plugin_name: str) -> str:
     """Name of the marketplace a plugin-shipping repo publishes, else the plugin's.
 
     Args:
@@ -698,12 +717,16 @@ def _consumer_cache_status(repo_root: Path) -> PluginCacheStatus:
     plugin_name = str(data.get("name") or repo_root.name)
     names = {"marketplace": clone.name, "plugin": plugin_name}
     if not _clone_serves_ref(clone, pin.ref):
+        # Registry- and clone-derived values land in shell commands a person
+        # may paste — quote them.
+        values = {**names, "ref": pin.ref, "slug": slug}
+        shell = {key: shlex.quote(value) for key, value in values.items()}
         return PluginCacheStatus(
             "wrong-ref",
             plugin_name,
             clone.ref or "(default branch)",
             pin.ref,
-            remedy=WRONG_REF_REMEDIATION.format(ref=pin.ref, slug=slug, **names),
+            remedy=WRONG_REF_REMEDIATION.format(**shell),
         )
     record = installed_record(f"{plugin_name}@{clone.name}", repo_root)
     if record is None:
@@ -711,7 +734,9 @@ def _consumer_cache_status(repo_root: Path) -> PluginCacheStatus:
     installed = _installed_commit(record)
     head = resolve_commit(clone.path, "HEAD")
     if not installed or head is None:
-        return PluginCacheStatus("unparsed", plugin_name, installed, pin.ref)
+        return PluginCacheStatus(
+            "unparsed", plugin_name, installed[:12] if installed else None, pin.ref
+        )
     if head.startswith(installed) or installed.startswith(head):
         return PluginCacheStatus("current", plugin_name, installed[:12], pin.ref)
     return PluginCacheStatus(
@@ -721,20 +746,44 @@ def _consumer_cache_status(repo_root: Path) -> PluginCacheStatus:
         pin.ref,
         _missing_hooks(source_dir, record.install_dir),
         remedy=(
-            STALE_CACHE_REMEDIATION.format(plugin=clone.name)
+            _stale_slot_remedy(record, names)
             if plugin_manifest_declares_version(source_dir)
             else UPDATE_REMEDIATION.format(**names)
         ),
     )
 
 
+def _stale_slot_remedy(record: InstallRecord, names: dict[str, str]) -> str:
+    """The slot-discarding remedy for a declared-version install, quoted.
+
+    Args:
+        record: The stale install record — its slot is what to delete.
+        names: ``marketplace`` and ``plugin`` names for the reinstall.
+
+    Returns:
+        :data:`STALE_CACHE_REMEDIATION` naming the exact slot when the
+        record names one, else the plugin's cache directory.
+    """
+    slot = (
+        str(record.install_dir)
+        if record.install_dir is not None
+        else f"~/.claude/plugins/cache/{names['marketplace']}/{names['plugin']}/"
+    )
+    return STALE_CACHE_REMEDIATION.format(
+        slot=shlex.quote(slot),
+        plugin=shlex.quote(names["plugin"]),
+        marketplace=shlex.quote(names["marketplace"]),
+    )
+
+
 def _installed_commit(record: InstallRecord | None) -> str | None:
     """The commit an install record names, or ``None`` when it names none.
 
-    ``gitCommitSha`` when recorded; otherwise the recorded version only if
-    it is commit-shaped (a commit-keyed install records its SHA there). A
-    semver version is not a commit, and comparing one against a SHA would
-    report every install as stale.
+    ``gitCommitSha`` when it is commit-shaped; otherwise the recorded
+    version, only if commit-shaped (a commit-keyed install records its SHA
+    there). A semver version is not a commit — comparing one against a SHA
+    would report every install as stale — and a short or junk value could
+    prefix-match any commit, reporting a stale install as current.
 
     Args:
         record: The install record, or ``None``.
@@ -744,10 +793,9 @@ def _installed_commit(record: InstallRecord | None) -> str | None:
     """
     if record is None:
         return None
-    if record.commit:
-        return record.commit
-    if record.version and _SHA_RE.fullmatch(record.version):
-        return record.version
+    for candidate in (record.commit, record.version):
+        if candidate and _SHA_RE.fullmatch(candidate):
+            return candidate
     return None
 
 

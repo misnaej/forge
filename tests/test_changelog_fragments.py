@@ -1624,6 +1624,11 @@ def test_assembly_pr_body_version_less_manifest_claims_no_sync(
     assert "syncs `.claude-plugin/plugin.json`" not in body
     assert "forge-release --from-changelog" in body
     assert "forge-next-prep --tag" not in body
+    # The manifest IS present (just version-less) — "No plugin manifest"
+    # would misstate that; the sentence must name the declared version,
+    # not manifest presence.
+    assert "No plugin manifest" not in body
+    assert "No declared plugin version" in body
 
 
 def test_assembly_pr_body_per_merge_repo_names_fragment_merge_tag(

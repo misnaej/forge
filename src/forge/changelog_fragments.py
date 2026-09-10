@@ -1069,7 +1069,7 @@ _TAGGING_PER_MERGE = (
     "merge is not tagged."
 )
 _TAGGING_MANIFEST_LESS = (
-    "No plugin manifest: cut the release tag after merging — "
+    "No declared plugin version: cut the release tag after merging — "
     "`forge-release --from-changelog` reads the heading this PR writes "
     "(auto-tag cannot cover it; the fragments are deleted by this very "
     "assembly)."

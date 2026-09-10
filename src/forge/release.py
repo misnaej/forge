@@ -14,9 +14,11 @@ Guards, in order (all failures reported at once, exit ``1``):
    ``main``) — single-track releases are cut from the trunk.
 3. **Single-track release model** — refuses when a
    ``.claude-plugin/plugin.json`` manifest's declared version drives
-   versioning (use ``forge-next-prep --tag``). Two different version
-   sources, two different orchestrators; a manifest that declares no
-   version leaves the tags as the only source.
+   versioning (use ``forge-next-prep --tag``), and when tag-per-merge
+   (``[tool.forge.release].auto = "merge"``) already cuts the tags (use
+   ``forge-changelog auto-tag``). Two different version sources, two
+   different orchestrators; a manifest that declares no version leaves
+   the tags as the only source.
 4. **CHANGELOG gate** — when ``CHANGELOG.md`` exists it must already
    carry a ``## vX.Y.Z`` heading for the tag being cut. A repo with no
    CHANGELOG gets a warning, not a failure.
@@ -55,7 +57,7 @@ from forge.changelog import (
     stranded_added_versions,
     top_release_heading,
 )
-from forge.config import load_config
+from forge.config import load_config, read_tool_forge_section
 from forge.git_utils import (
     configure_cli_logging,
     create_annotated_tag,
@@ -113,7 +115,9 @@ def _wrong_release_model_error(repo_root: Path) -> str | None:
     source is ``plugin.json``, owned by ``forge-next-prep --tag``, so
     ``forge-release``'s tag computation would fight the rolling-next
     flow. A manifest without one is keyed on its commit and leaves the
-    tags as the only version source.
+    tags as the only version source — unless tag-per-merge
+    (``[tool.forge.release].auto = "merge"``) already cuts them, where a
+    second tag-cutter would fight ``forge-changelog auto-tag``.
 
     Args:
         repo_root: Repo root.
@@ -125,6 +129,12 @@ def _wrong_release_model_error(repo_root: Path) -> str | None:
         return (
             ".claude-plugin/plugin.json drives this repo's versioning — "
             "use `forge-next-prep --tag` (rolling-next flow) instead."
+        )
+    if read_tool_forge_section(repo_root, "release").get("auto") == "merge":
+        return (
+            'tag-per-merge ([tool.forge.release].auto = "merge") cuts this '
+            "repo's tags — `forge-changelog auto-tag` owns them; re-run it on "
+            "the fragment-carrying commit instead of cutting one here."
         )
     return None
 

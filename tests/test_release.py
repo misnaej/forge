@@ -171,6 +171,38 @@ def test_wrong_release_model_error_reports_plugin_manifest(tmp_path: Path) -> No
     assert "plugin.json" in error
 
 
+def test_wrong_release_model_error_refuses_tag_per_merge_repo(tmp_path: Path) -> None:
+    """Tag-per-merge (`auto = "merge"`) refuses even with a version-less manifest.
+
+    SCENARIO: forge's own repo shape — no declared plugin version (keyed
+    on commit, so the first guard clause doesn't fire), but
+    `[tool.forge.release].auto = "merge"` already cuts tags via
+    `forge-changelog auto-tag`. `forge-release` would fight that tagger.
+    """
+    (tmp_path / "pyproject.toml").write_text('[tool.forge.release]\nauto = "merge"\n')
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text('{"name": "x"}')
+    error = release._wrong_release_model_error(tmp_path)
+    assert error is not None
+    assert "forge-changelog auto-tag" in error
+
+
+def test_wrong_release_model_error_none_for_version_less_manifest_without_auto_merge(
+    tmp_path: Path,
+) -> None:
+    """A version-less manifest with no tag-per-merge config is a valid model.
+
+    Distinguishes the new tag-per-merge guard from the pre-existing
+    version-less-manifest pass-through: without `auto = "merge"` in
+    config, `forge-release` is exactly the right tool.
+    """
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text('{"name": "x"}')
+    assert release._wrong_release_model_error(tmp_path) is None
+
+
 # ---------------------------------------------------------------------------
 # _changelog_gate_error
 # ---------------------------------------------------------------------------

@@ -44,12 +44,12 @@ from forge.git_utils import FORGE_DIST_NAME, emit, pad_semver, parse_semver
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
-    STALE_CACHE_REMEDIATION,
     PluginCacheStatus,
     find_install_dir,
     find_plugin_cache,
     hook_sidecar_version,
     installed_record,
+    own_marketplace_name,
     pip_version,
     plugin_cache_status,
     read_json,
@@ -271,14 +271,13 @@ def _stale_cache_advisory(status: PluginCacheStatus) -> CheckResult:
         if status.missing_hooks
         else ""
     )
-    remedy = status.remedy or STALE_CACHE_REMEDIATION.format(plugin=status.plugin_name)
     return CheckResult(
         name="version_skew:plugin_cache",
         passed=False,
         info=True,
         detail=(
             f"installed {status.plugin_name} plugin {status.cached} is not the "
-            f"commit pinned at {status.declared} — {hooks}Run: {remedy}"
+            f"commit pinned at {status.declared} — {hooks}Run: {status.remedy}"
         ),
     )
 
@@ -793,7 +792,8 @@ def main() -> int:
         )
         # Judge the copy this repo runs, not the newest-named slot: a
         # commit-keyed slot is named by a SHA, which does not sort.
-        record = installed_record(f"{args.plugin_name}@{args.plugin_name}", Path.cwd())
+        marketplace = own_marketplace_name(Path.cwd(), args.plugin_name)
+        record = installed_record(f"{args.plugin_name}@{marketplace}", Path.cwd())
         preferred = record.install_dir if record is not None else None
         results.extend(
             _check_plugin_manifests(plugin_root, args.plugin_name, preferred=preferred)

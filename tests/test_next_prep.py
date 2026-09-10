@@ -320,6 +320,21 @@ def test_tag_misuse_warning_silent_with_manifest(tmp_path: Path) -> None:
     assert next_prep._tag_misuse_warning(tmp_path) is None
 
 
+def test_tag_misuse_warning_names_auto_tag_for_per_merge_repo(tmp_path: Path) -> None:
+    """A tag-per-merge repo with no manifest is told auto-tag owns its tags.
+
+    SCENARIO: forge's own repo shape — no `.claude-plugin/plugin.json` at
+    all, `[tool.forge.release].auto = "merge"` already cuts tags via
+    `forge-changelog auto-tag`. The generic single-track misuse warning
+    (naming `forge-release`) would send the reader to the wrong tool.
+    """
+    (tmp_path / "pyproject.toml").write_text('[tool.forge.release]\nauto = "merge"\n')
+    warning = next_prep._tag_misuse_warning(tmp_path)
+    assert warning is not None
+    assert "forge-changelog auto-tag" in warning
+    assert "forge-release" not in warning
+
+
 def test_tag_misuse_warning_malformed_semver_warns(tmp_path: Path) -> None:
     """A declared version that isn't bare X.Y.Z semver warns, naming the tool.
 

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 984 symbols._
+_72 modules, 986 symbols._
 
 ## `forge`
 
@@ -1347,6 +1347,7 @@ _72 modules, 984 symbols._
 - `class InstallRecord` — One ``installed_plugins.json`` entry — a copy Claude Code runs.
 - `installed_record(plugin_key: str, repo_root: Path | None = None, *, plugins_file: Path | None = None) -> InstallRecord | None` — Return the install record of *plugin_key* that applies to *repo_root*.
 - `_pick_record(records: list[dict], repo_root: Path | None) -> dict | None` _(internal)_ — Choose the record that applies to *repo_root* (see :func:`installed_record`).
+- `_safe_resolve(path: Path) -> Path | None` _(internal)_ — Resolve *path*, or ``None`` when it cannot be (e.g. a NUL byte).
 - `pip_version() -> str | None` — Version of the installed ``forge-scripts`` package, or None if absent.
 - `hook_sidecar_version(repo_root: Path) -> str | None` — Forge version recorded in the git-hook sidecar, or None when absent.
 - `plugin_cache_version(plugin_root: Path | None) -> str | None` — Version of the cached Claude Code plugin install, or None when absent.
@@ -1360,8 +1361,9 @@ _72 modules, 984 symbols._
 - `class PluginCacheStatus` — What the Claude Code plugin cache says relative to what ships it.
 - `plugin_cache_status(repo_root: Path) -> PluginCacheStatus` — Compare the cached plugin against what ships it.
 - `_commit_identity_status(repo_root: Path, plugin_name: str) -> PluginCacheStatus` _(internal)_ — Judge a commit-keyed plugin against the base branch of the repo shipping it.
-- `_own_marketplace_name(repo_root: Path, plugin_name: str) -> str` _(internal)_ — Name of the marketplace a plugin-shipping repo publishes, else the plugin's.
+- `own_marketplace_name(repo_root: Path, plugin_name: str) -> str` — Name of the marketplace a plugin-shipping repo publishes, else the plugin's.
 - `_consumer_cache_status(repo_root: Path) -> PluginCacheStatus` _(internal)_ — Judge a consumer's installed commit against the ref it pinned.
+- `_stale_slot_remedy(record: InstallRecord, names: dict[str, str]) -> str` _(internal)_ — The slot-discarding remedy for a declared-version install, quoted.
 - `_installed_commit(record: InstallRecord | None) -> str | None` _(internal)_ — The commit an install record names, or ``None`` when it names none.
 - `_clone_serves_ref(clone: MarketplaceClone, ref: str) -> bool` _(internal)_ — Whether the registered clone is at *ref* — by name, or by commit.
 - `_missing_hooks(source_dir: Path, install_dir: Path | None) -> tuple[str, ...]` _(internal)_ — Hooks the pinned tree ships that the installed slot lacks (detail only).
