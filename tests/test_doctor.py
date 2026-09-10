@@ -408,7 +408,9 @@ def test_plugin_cache_skew_flags_lagging_cache(
         json.dumps({"name": "forge", "version": "2.23.1"}), encoding="utf-8"
     )
     monkeypatch.setattr(
-        doctor, "find_plugin_cache", lambda _name: tmp_path / "cache" / "forge"
+        version_surfaces,
+        "find_plugin_cache",
+        lambda _name: tmp_path / "cache" / "forge",
     )
     install_dir = tmp_path / "plugin" / "2.22.0"
     (install_dir / ".claude-plugin").mkdir(parents=True)
@@ -442,7 +444,9 @@ def test_plugin_cache_skew_empty_when_not_behind(
         json.dumps({"name": "forge", "version": "2.23.1"}), encoding="utf-8"
     )
     monkeypatch.setattr(
-        doctor, "find_plugin_cache", lambda _name: tmp_path / "cache" / "forge"
+        version_surfaces,
+        "find_plugin_cache",
+        lambda _name: tmp_path / "cache" / "forge",
     )
     install_dir = tmp_path / "plugin" / "2.23.1"
     (install_dir / ".claude-plugin").mkdir(parents=True)
@@ -468,7 +472,7 @@ def test_plugin_cache_skew_empty_when_uncached(
     (plugin_dir / "plugin.json").write_text(
         json.dumps({"name": "forge", "version": "2.23.1"}), encoding="utf-8"
     )
-    monkeypatch.setattr(doctor, "find_plugin_cache", lambda _name: None)
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: None)
 
     assert doctor._check_plugin_cache_skew(tmp_path) == []
 

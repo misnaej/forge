@@ -11,7 +11,10 @@ pin maintenance.
 
 
 **Reproduce a runner locally.** A suite can pass on a workstation and fail on a runner without either being wrong: the runner has no global git identity, no `init.defaultBranch`, and `CI` set, and forge's own tools branch on the last of those. Run
-`CI=true GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null pytest` before blaming the runner.
+`CI=true HOME=$(mktemp -d) GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null pytest`
+before blaming the runner. The empty `HOME` matters as much as the rest: a test that
+reads a real cache or config under your home directory passes on your machine for a
+reason the runner does not have.
 
 ## 1. Pin a channel in `pyproject.toml`
 
