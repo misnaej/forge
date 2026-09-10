@@ -19,7 +19,7 @@ This skill never plans (that is `/plan-issue`) and **never merges** —
 An explicit bounded polling loop, not an implied daemon:
 
 ```bash
-gh issue list --state open --label plan-ready \
+gh issue list --state open --label plan-ready --limit 1000 \
   --json number,title,labels,updatedAt
 ```
 

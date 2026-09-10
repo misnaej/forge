@@ -117,7 +117,7 @@ task-selection precedence rule in Important Rules).
 2. **Find open successors**: open issues whose `Requires:` line names
    one of those closed issues:
    ```bash
-   gh issue list --state open --json number,title,body \
+   gh issue list --state open --limit 1000 --json number,title,body \
      --jq '.[] | select(.body | test("^Requires:.*#<N>\\b"))'
    ```
 

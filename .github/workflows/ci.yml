@@ -71,9 +71,13 @@ jobs:
 
       # Full suite with the durations sections the slow-tests reporter
       # consumes (flags live in [tool.pytest.ini_options] addopts; the
-      # tee mirrors the documented CI recipe). GitHub's bash default is
-      # pipefail, so the tee does not mask pytest's exit code.
+      # tee mirrors the documented CI recipe). `shell: bash` is load
+      # bearing: an unspecified `run:` step is `bash -e {0}`, with no
+      # pipefail, so `pytest | tee` would exit with tee's status and a
+      # failing suite would report success. Only the explicit form gets
+      # `bash --noprofile --norc -eo pipefail {0}`.
       - name: pytest (full suite, durations captured)
+        shell: bash
         run: |
           mkdir -p code_health
           pytest -q | tee code_health/pytest.log

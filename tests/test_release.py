@@ -20,6 +20,8 @@ import logging
 import subprocess
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge import git_utils, release
 from forge.config import ForgeConfig
 from tests.conftest import GIT_ENV as _GIT_ENV
@@ -31,7 +33,19 @@ from tests.conftest import tag_exists as conftest_tag_exists
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pytest
+
+@pytest.fixture(autouse=True)
+def _workstation_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the workstation branch guard unless a test asks for CI.
+
+    `forge-release --from-changelog` picks its branch check by
+    environment: on a workstation it asks whether HEAD is on the base
+    branch, in CI whether HEAD is the tip of `origin/<base>`. Without
+    this, each test here exercises whichever path it happens to run
+    under — the suite passed locally and failed on the runner. The two
+    tests that mean CI set it back to true themselves.
+    """
+    monkeypatch.setattr(release, "is_ci", lambda: False)
 
 
 def _repo_with_origin(base: Path) -> tuple[Path, Path]:

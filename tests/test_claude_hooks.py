@@ -213,7 +213,12 @@ def test_protected_branches_blocks_bypass_forms(command: str) -> None:
         command: A `git push origin main` invocation wrapped in one of the
             five bypass forms.
     """
-    assert _run_hook(_PROTECTED, command, agent_type="forge:git-commit-push") == 2
+    assert (
+        _run_hook(
+            _PROTECTED, command, options=HookOptions(agent_type="forge:git-commit-push")
+        )
+        == 2
+    )
 
 
 @pytest.mark.parametrize(
@@ -241,7 +246,12 @@ def test_protected_branches_blocks_protected_push_earlier_in_a_chain(
         command: A two-push chain with the protected destination in a
             different position (or refspec form) each time.
     """
-    assert _run_hook(_PROTECTED, command, agent_type="forge:git-commit-push") == 2
+    assert (
+        _run_hook(
+            _PROTECTED, command, options=HookOptions(agent_type="forge:git-commit-push")
+        )
+        == 2
+    )
 
 
 def test_protected_branches_allows_a_chain_with_no_protected_destination() -> None:
@@ -254,7 +264,7 @@ def test_protected_branches_allows_a_chain_with_no_protected_destination() -> No
         _run_hook(
             _PROTECTED,
             "git push origin safe-branch && git push origin other-branch",
-            agent_type="forge:git-commit-push",
+            options=HookOptions(agent_type="forge:git-commit-push"),
         )
         == 0
     )
@@ -929,7 +939,7 @@ def test_gh_guards_block_a_repo_override_before_the_subcommand(
         _run_hook(
             "block_unverified_pr_create.sh",
             "gh --repo owner/name pr create --title x",
-            cwd=repo,
+            options=HookOptions(cwd=repo),
         )
         == 2
     )
@@ -937,7 +947,7 @@ def test_gh_guards_block_a_repo_override_before_the_subcommand(
         _run_hook(
             "block_unverified_pr_create.sh",
             "gh -R owner/name pr create --title x",
-            cwd=repo,
+            options=HookOptions(cwd=repo),
         )
         == 2
     )
@@ -2421,7 +2431,7 @@ def test_unverified_pr_create_blocks_gh_bypass_forms(
     """
     repo, _sha = git_repo_with_commit
     command = template.format(cmd="gh pr create --title x")
-    assert _run_hook(_UNVERIFIED_PR_CREATE, command, cwd=repo) == 2
+    assert _run_hook(_UNVERIFIED_PR_CREATE, command, options=HookOptions(cwd=repo)) == 2
 
 
 def test_unverified_pr_create_allows_text_mention() -> None:

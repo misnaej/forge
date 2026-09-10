@@ -17,6 +17,8 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import pytest
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,7 +34,34 @@ GIT_ENV: dict[str, str] = {
     "GIT_COMMITTER_NAME": "t",
     "GIT_COMMITTER_EMAIL": "t@t",
     "PATH": os.environ.get("PATH", ""),
+    # Read no configuration from the machine. A developer's global config
+    # commonly sets init.defaultBranch=main and an identity; a CI runner
+    # has neither, which is how these suites passed locally and failed on
+    # the runner. Every branch name and identity the tests rely on is set
+    # explicitly below.
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_SYSTEM": os.devnull,
 }
+
+
+@pytest.fixture(autouse=True)
+def _git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give every test a git identity in its own environment.
+
+    ``GIT_ENV`` covers the git commands the tests run themselves, but a
+    test that calls forge code which shells out to git — tagging a
+    release, say — inherits the process environment instead. A
+    workstation has a global identity there and a CI runner does not, so
+    the call fails only on the runner. These variables are a fallback:
+    where a real identity is configured, git prefers it.
+    """
+    for key, value in (
+        ("GIT_AUTHOR_NAME", "t"),
+        ("GIT_AUTHOR_EMAIL", "t@t"),
+        ("GIT_COMMITTER_NAME", "t"),
+        ("GIT_COMMITTER_EMAIL", "t@t"),
+    ):
+        monkeypatch.setenv(key, value)
 
 
 def init_git_repo(repo: Path) -> None:
@@ -46,6 +75,13 @@ def init_git_repo(repo: Path) -> None:
     """
     for cmd in (
         ["git", "init", "-q", "-b", "main"],
+        # Write the identity into the repo, not just this call's env: the
+        # suites run plenty of later `git` calls without `env=GIT_ENV`,
+        # and those inherit whatever the machine has. A workstation has a
+        # global identity and a CI runner does not, which is how these
+        # tests passed locally and failed on the runner.
+        ["git", "config", "user.name", "t"],
+        ["git", "config", "user.email", "t@t"],
         ["git", "commit", "-q", "--allow-empty", "-m", "initial"],
     ):
         subprocess.run(cmd, cwd=repo, env=GIT_ENV, check=True)
@@ -87,7 +123,12 @@ def init_single_track_repo(base: Path) -> tuple[Path, Path]:
     work.mkdir()
     bare.mkdir()
     init_git_repo(work)
-    subprocess.run(["git", "init", "--bare", "-q"], cwd=bare, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "init", "--bare", "-q", "-b", "main"],
+        cwd=bare,
+        env=GIT_ENV,
+        check=True,
+    )
     subprocess.run(
         ["git", "remote", "add", "origin", str(bare)],
         cwd=work,
