@@ -35,6 +35,7 @@ import logging
 import sys
 from pathlib import Path
 
+from forge.changelog import changelog_lacks_entry
 from forge.changelog_fragments import check_pending, discover_fragments
 from forge.config import is_fragments_mode
 from forge.git_utils import (
@@ -172,8 +173,56 @@ def main() -> int:
             logger.info(
                 "plugin.json %s > latest tag %s (%s)", plugin_ver, latest_tag, tag_ver
             )
-            return 0
-        return _not_ahead_verdict(repo_root, plugin_ver, tag_ver, latest_tag)
+            rc = 0
+        else:
+            rc = _not_ahead_verdict(repo_root, plugin_ver, tag_ver, latest_tag)
+        # Applied to every healthy exit above, not to one branch: the
+        # declared version is what consumers adopt, so it must be a
+        # version they can read about.
+        return rc or _declared_version_documented(repo_root)
+
+
+def _declared_version_documented(repo_root: Path) -> int:
+    """Refuse a declared plugin version that ``CHANGELOG.md`` never mentions.
+
+    The manifest version is not bookkeeping: Claude Code keys its plugin
+    cache on it, so it is the identity consumers actually adopt. A
+    version nobody can read about is one they cannot evaluate before
+    running it, and hand-editing the manifest is the way that happens —
+    the assembler writes the version and its heading together, so its
+    output always satisfies this.
+
+    Scope, deliberately: this asks whether the declared version is
+    *real*, never whether it is *current*. A manifest parked at an old
+    version keeps its old heading and passes — staleness is the
+    scheduled assembly's job, not this gate's.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``0`` when the declared version has a heading, when no
+        ``CHANGELOG.md`` exists, or when no version is declared;
+        ``1`` when the heading is missing.
+    """
+    changelog = repo_root / "CHANGELOG.md"
+    version = read_local_plugin_version(repo_root)
+    if not changelog.is_file() or not version:
+        return 0
+    tag = f"v{version}"
+    if changelog_lacks_entry(changelog.read_text(encoding="utf-8"), tag):
+        logger.error(
+            "plugin_version: plugin.json declares %s but CHANGELOG.md has no "
+            "`## %s` heading. Consumers adopt the declared version — it must "
+            "be one they can read about. The assembler writes both together, "
+            "so a mismatch means the manifest was edited by hand: revert it "
+            "and let `forge-changelog release` write the version.",
+            version,
+            tag,
+        )
+        return 1
+    logger.info("declared version %s is documented in CHANGELOG.md", tag)
+    return 0
 
 
 def _not_ahead_verdict(

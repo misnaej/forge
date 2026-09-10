@@ -540,3 +540,92 @@ def test_fails_when_release_branch_changes_non_changelog_file(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 1
+
+
+def test_declared_version_documented_passes_without_changelog(tmp_path: Path) -> None:
+    """No ``CHANGELOG.md`` at all → 0.
+
+    Covers consumer repos (no changelog convention) and pre-first-release
+    checkouts — the guard clause this test pins.
+    """
+    _write_plugin(tmp_path, "1.0.0")
+    assert verify_plugin_version._declared_version_documented(tmp_path) == 0
+
+
+def test_declared_version_documented_passes_when_no_version_declared(
+    tmp_path: Path,
+) -> None:
+    """No ``.claude-plugin/plugin.json`` → 0.
+
+    Covers the ``or not version`` half of the same guard clause.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    assert verify_plugin_version._declared_version_documented(tmp_path) == 0
+
+
+def test_declared_version_documented_passes_with_matching_heading(
+    tmp_path: Path,
+) -> None:
+    """Declared version has a matching ``## vX.Y.Z`` heading → 0."""
+    _write_plugin(tmp_path, "1.0.0")
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n- initial release\n")
+    assert verify_plugin_version._declared_version_documented(tmp_path) == 0
+
+
+def test_declared_version_documented_fails_with_missing_heading(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``CHANGELOG.md`` exists but has no heading for the declared version → 1.
+
+    The primary enforcing test: catches a hand-edited manifest whose
+    version the assembler never wrote a heading for.
+    """
+    _write_plugin(tmp_path, "1.0.0")
+    (tmp_path / "CHANGELOG.md").write_text("## v0.9.0\n- prior release\n")
+    with caplog.at_level("ERROR"):
+        assert verify_plugin_version._declared_version_documented(tmp_path) == 1
+    assert "revert it and let" in caplog.text
+
+
+def test_declared_version_documented_passes_even_when_stale(
+    tmp_path: Path,
+) -> None:
+    """The declared version's own heading exists, even though a newer one also does → 0.
+
+    Pins the deliberate non-goal stated in ``_declared_version_documented``'s
+    docstring: this gate asks whether the declared version is *real*, never
+    whether it is *current*. A single-heading fixture would not catch a
+    future "fix" that starts checking the declared version is the latest
+    heading — this fixture declares an OLD version and puts both its own
+    heading AND a strictly newer heading in the changelog, so that
+    regression trips this test.
+    """
+    _write_plugin(tmp_path, "1.0.0")
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n- old\n\n## v1.1.0\n- newer\n")
+    assert verify_plugin_version._declared_version_documented(tmp_path) == 0
+
+
+def test_main_fails_when_declared_version_undocumented_in_fragment_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E2E: fragment-mode gate rejects undocumented declared version.
+
+    Manifest parked at the tag (inner verdict 0) plus a ``CHANGELOG.md``
+    missing the declared version's heading proves the gate is reached from
+    ``main()``, not merely correct when called in isolation.
+    """
+    _init_fragments_repo(tmp_path)
+    _commit_post_tag_work(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text("## v0.9.0\n- prior release\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add changelog"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 1
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "revert it and let" in log
