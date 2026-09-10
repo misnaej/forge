@@ -99,6 +99,7 @@ from forge.git_utils import (
     merge_base_with_head,
     merge_in_progress,
     parse_semver,
+    plugin_manifest_declares_version,
     require_cli,
     resolve_base_branch_ref,
     resolve_current_branch,
@@ -651,24 +652,29 @@ def step_env_sync(repo_root: Path) -> StepResult:
 
 
 def step_plugin_sync(repo_root: Path) -> StepResult:
-    """Block when the cached Claude Code plugin is older than the repo's manifest.
+    """Block when the cached Claude Code plugin is older than what the repo ships.
 
     A repo that ships a plugin runs its agents and hooks from Claude Code's
-    cache, not from the tree — so after a plugin release merges, every
+    cache, not from the tree — so after a plugin change merges, every
     session keeps the old cache until someone runs the update. Nothing in
     a git hook can do that (``/plugin update`` is a session command), so
     the gate names it and, for forge itself, refuses to commit until it
     happened (``[tool.forge.plugin_sync].blocking = true``); consumers get
-    an advisory unless they opt in. Self-skips when the repo ships no
-    plugin, when the plugin is not installed locally, and in
-    non-interactive contexts (FOUNDATION §15).
+    an advisory unless they opt in. "Older" follows the plugin's identity
+    (:func:`forge.version_surfaces.plugin_cache_status`): a declared
+    version below the manifest's, or — for a manifest that declares none —
+    an installed commit that ``origin/<base>`` has since changed the
+    plugin surface of. The second fires after every such merge, not once
+    per release. Self-skips when the repo ships no plugin, when the plugin
+    is not installed locally, when the installed commit cannot be
+    compared, and in non-interactive contexts (FOUNDATION §15).
 
     Args:
         repo_root: Git repo root.
 
     Returns:
         ``StepResult`` — skipped when nothing applies; failed (blocking or
-        WARN per config) when the cache lags ``.claude-plugin/plugin.json``.
+        WARN per config) when the cache lags what the repo ships.
     """
     manifest = repo_root / ".claude-plugin" / "plugin.json"
     if not manifest.is_file():
@@ -687,7 +693,6 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
         )
     status = plugin_cache_status(repo_root)
     plugin_name, cached = status.plugin_name, status.cached
-    manifest_version = status.declared
     if status.state == "uncached":
         return StepResult(
             name="plugin_sync",
@@ -695,20 +700,39 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
             output=f"({plugin_name} plugin not installed in Claude Code — skipped)",
             skipped=True,
         )
-    if status.state != "behind":
+    if status.state == "unparsed":
         return StepResult(
             name="plugin_sync",
             passed=True,
-            output=f"plugin cache {cached} is current (manifest {manifest_version}).",
+            output=(
+                f"(installed {plugin_name} plugin {cached} cannot be compared "
+                f"with {status.declared or 'the base branch'} — skipped)"
+            ),
+            skipped=True,
+        )
+    # A declared version is quoted as the manifest's; a commit-keyed
+    # plugin is judged against the base branch, which `declared` names.
+    versioned = plugin_manifest_declares_version(repo_root)
+    if status.state != "behind":
+        against = f"manifest {status.declared}" if versioned else status.declared
+        return StepResult(
+            name="plugin_sync",
+            passed=True,
+            output=f"plugin cache {cached} is current ({against}).",
         )
     blocking = bool(_forge_step_config(repo_root, "plugin_sync").get("blocking", False))
+    lag = (
+        f"this repo's manifest says {status.declared}"
+        if versioned
+        else f"{status.declared} has changed its agents, skills or hooks since"
+    )
+    remedy = status.remedy or SKEW_REMEDIATION["plugin cache"]
     return StepResult(
         name="plugin_sync",
         passed=False,
         output=(
             f"{'⛔' if blocking else '⚠️ '} Cached {plugin_name} plugin is {cached}; "
-            f"this repo's manifest says {manifest_version}. Your session runs "
-            f"stale agents and hooks — run `{SKEW_REMEDIATION['plugin cache']}`."
+            f"{lag}. Your session runs stale agents and hooks — run `{remedy}`."
         ),
         non_blocking=not blocking,
     )
@@ -1590,8 +1614,9 @@ def step_plugin_version(repo_root: Path) -> StepResult:
     """Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
 
     Thin shell-out matching the pattern of every other phase step. The
-    CLI itself decides whether to skip (no plugin.json, no tags, release
-    commit) and writes the corresponding log entry.
+    CLI itself decides whether to skip (no plugin.json, a plugin.json
+    that declares no version, no tags, release commit) and writes the
+    corresponding log entry.
 
     Args:
         repo_root: Git repo root.
@@ -2194,7 +2219,10 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
                 + "\n".join(errors)
             ),
         )
-    if (repo_root / ".claude-plugin" / "plugin.json").exists():
+    # Only a manifest that declares a version hands the heading checks to
+    # verify-forge-plugin-version; a version-less one is keyed on its
+    # commit, the guard skips it, and the tags are the version source.
+    if plugin_manifest_declares_version(repo_root):
         return StepResult(
             name=name,
             passed=True,

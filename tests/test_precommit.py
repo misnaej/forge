@@ -3364,6 +3364,51 @@ def test_step_plugin_sync_blocks_when_behind_and_configured_blocking(
     assert "⛔" in result.output
 
 
+def test_plugin_sync_blocks_version_less_manifest_behind_base(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A commit-keyed plugin behind its base blocks with the surface remedy.
+
+    SCENARIO: forge's own manifest shape (no declared version) — the
+    plugin is judged by installed commit vs. base branch, not by version
+    string. ``plugin_cache_status`` is mocked to report the "behind"
+    verdict a commit-keyed plugin gets from
+    ``_commit_identity_status`` (real commit-identity comparison is
+    exercised directly in test_version_surfaces.py).
+    MOCK SETUP: ``precommit.plugin_cache_status`` monkeypatched to return
+    a "behind" status naming ``origin/main (abc1234)`` as ``declared``
+    with a concrete refresh ``remedy`` set.
+    EXPECTED BEHAVIOR: the step fails and is blocking (not non_blocking)
+    under ``[tool.forge.plugin_sync].blocking = true``; the output names
+    the mocked remedy verbatim (never falling back to the generic
+    SKEW_REMEDIATION) and never prints a stray "None".
+    """
+    manifest_dir = tmp_path / ".claude-plugin"
+    manifest_dir.mkdir()
+    (manifest_dir / "plugin.json").write_text(json.dumps({"name": "forge"}))
+    _write_pyproject(tmp_path, "[tool.forge.plugin_sync]\nblocking = true\n")
+    fake_status = version_surfaces.PluginCacheStatus(
+        state="behind",
+        plugin_name="forge",
+        cached="abc1234def56",
+        declared="origin/main (abc1234)",
+        remedy=(
+            "/plugin marketplace update forge, then /plugin update "
+            "forge@forge (then /reload-plugins)"
+        ),
+    )
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "plugin_cache_status", lambda _root: fake_status)
+
+    result = precommit.step_plugin_sync(tmp_path)
+
+    assert not result.passed
+    assert not result.non_blocking
+    assert fake_status.remedy in result.output
+    assert "None" not in result.output
+
+
 # ---------------------------------------------------------------------------
 # Helpers for vendored-integrity + regen-docs test groups
 # ---------------------------------------------------------------------------
@@ -4801,12 +4846,37 @@ def test_step_changelog_version_skips_without_changelog(tmp_path: Path) -> None:
 
 
 def test_step_changelog_version_skips_manifest_repo(tmp_path: Path) -> None:
-    """Plugin-manifest repo → verify-forge-plugin-version owns it; skip."""
+    """A manifest DECLARING a version → verify-forge-plugin-version owns it; skip.
+
+    Only a manifest that carries a "version" key hands the
+    declared-version invariant to ``verify-forge-plugin-version`` — a
+    manifest present but declaring none (forge's own shape) does not;
+    see ``test_changelog_version_runs_for_version_less_manifest``.
+    """
     (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
     (tmp_path / ".claude-plugin").mkdir()
-    (tmp_path / ".claude-plugin" / "plugin.json").write_text("{}")
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "x", "version": "1.0.0"})
+    )
     result = precommit.step_changelog_version(tmp_path)
     assert result.skipped
+
+
+def test_changelog_version_runs_for_version_less_manifest(tmp_path: Path) -> None:
+    """A version-less manifest does not hand the changelog gate away.
+
+    Only a manifest that DECLARES a version hands the declared-version
+    invariant to ``verify-forge-plugin-version`` (FOUNDATION §12 single
+    source of truth); forge's own manifest carries no "version" key, so
+    ``_changelog_version_skip_gate`` must let ``step_changelog_version``
+    run its own checks rather than returning the "Manifest-versioned
+    repo" skip.
+    """
+    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "x"}))
+    result = precommit._changelog_version_skip_gate(tmp_path)
+    assert result is None
 
 
 def test_step_changelog_version_fails_on_invalid_heading(

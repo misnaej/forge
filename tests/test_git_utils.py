@@ -734,6 +734,46 @@ def test_read_plugin_version_returns_none_on_malformed_json(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
+# plugin_manifest_declares_version
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        pytest.param(None, False, id="missing-file"),
+        pytest.param(json.dumps({"name": "x"}), False, id="no-version-key"),
+        pytest.param(
+            json.dumps({"name": "x", "version": "bad"}),
+            True,
+            id="malformed-version-value",
+        ),
+        pytest.param("{not valid", True, id="unparseable-text"),
+    ],
+)
+def test_plugin_manifest_declares_version(
+    tmp_path: Path, content: str | None, *, expected: bool
+) -> None:
+    """Presence of the "version" key, not its validity, decides the verdict.
+
+    A malformed value (``"bad"``) or wholly unparseable JSON both still
+    "declare" — the callers' own malformed-manifest error paths must
+    still fire downstream; only a manifest that parses cleanly AND omits
+    the key entirely reads as version-less (Claude Code then keys the
+    plugin on its commit SHA — see :mod:`forge.version_surfaces`).
+
+    Args:
+        content: Manifest text to write, or ``None`` for no manifest file.
+        expected: Expected return value.
+    """
+    if content is not None:
+        plugin_dir = tmp_path / ".claude-plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "plugin.json").write_text(content)
+    assert git_utils.plugin_manifest_declares_version(tmp_path) is expected
+
+
+# ---------------------------------------------------------------------------
 # render_plugin_version / write_plugin_version
 # ---------------------------------------------------------------------------
 

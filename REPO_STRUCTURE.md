@@ -39,7 +39,7 @@ Code.
    - pr_wrapup.py: `forge-pr-wrapup` — validates the wrap-up comment against the report-by-exception rule (one line per clean section, one summary line, findings-scaled word budget, no AI attribution) and posts it with a marker, collapsing every earlier wrap-up into a `<details>` block and keeping the squash comment newest
    - gh_comments.py: shared GitHub comment plumbing for the PR-comment CLIs — paginated marker listing, post, delete, edit, and the FOUNDATION §2 attribution gate
    - pr_squash_comment.py: `forge-pr-squash-comment` — validates + posts the squash-merge message (title and body in separate fences), forces the PR title to match, and keeps that comment the PR's newest; canonical `CONVENTIONAL_COMMIT_TYPES` source
-   - changelog_fragments.py: `forge-changelog` — changelog fragments (changelog.d/): per-PR `<slug>.<type>.md` files with level-only `bump:` front-matter, validated by the fragment gate and assembled into CHANGELOG.md once at release (single writer; zero merge conflicts by construction); `next-version` prints the computed next release, tag-aware (fragments already in a tag's tree assemble under that tag; only unreleased ones mint: latest tag + their max level) and `release` assembles per tag then under the minted version, writes plugin.json (when present), and stages everything (never commits); `restrand` subcommand mechanically repairs stranded entries in shared-heading repos (no manifest needed; stages, never commits); `auto-tag` cuts and pushes the tag-per-merge release tag in CI (fragments not in latest tag's tree -> max level -> next tag)
+   - changelog_fragments.py: `forge-changelog` — changelog fragments (changelog.d/): per-PR `<slug>.<type>.md` files with level-only `bump:` front-matter, validated by the fragment gate and assembled into CHANGELOG.md once at release (single writer; zero merge conflicts by construction); `next-version` prints the computed next release, tag-aware (fragments already in a tag's tree assemble under that tag; only unreleased ones mint: latest tag + their max level) and `release` assembles per tag then under the minted version, writes plugin.json (when it declares a version), and stages everything (never commits); `restrand` subcommand mechanically repairs stranded entries in shared-heading repos (no manifest needed; stages, never commits); `auto-tag` cuts and pushes the tag-per-merge release tag in CI (fragments not in latest tag's tree -> max level -> next tag)
    - pr_delta.py: the finalization-path classification primitives — every threshold, glob, and predicate (delta, docs-only, regen-only, light-code) consumed by `forge-pr-plan`, the pr-manager agent, and the wrap-up publish hook
    - pr_plan.py: `forge-pr-plan` — deterministic finalization-path classifier for the `/pr` skill; composes the pr_delta primitives over the real diff and emits the JSON plan (mode/reporters/precommit_scope/reasons); `--freshness --pr N` is the read-only wrap-up-staleness verdict the FOUNDATION §6 monitor polls (and forge-emergency's repayment check reuses)
    - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; `--baseline`/`--update-baseline` compare against the committed `.forge-test-durations.json` (WARN-shaped, never gates; absent or malformed baseline = one skip line, not a wall of new-slow); `--coverage-json` ranks test functions by unique covered statements per second from a `coverage json --show-contexts` export; wired via the `/perf` skill
@@ -60,7 +60,7 @@ Code.
    - verify_cve_usage.py: `verify-forge-cve-usage` — usage-scoped second stage on `pip_audit`; intersects live pip-audit CVE IDs with a consumer `cve_usage_patterns.toml` map and greps source for the patterns; backs the opt-in `cve_usage` pre-commit step (non-blocking). `--audit-json` reuses the `pip_audit` step's scan (one pip-audit run/commit); `--list-inactive` reports dormant map entries (read-only)
    - pip_audit_json.py: shared single-invocation pip-audit JSON helper (`run_json` + `ids_from_data` / `has_vulns` / `render_report`); the neutral seam both `precommit.step_pip_audit` and `verify_cve_usage` depend on so pip-audit runs at most once per invocation
    - install_readme_badges.py: `install-forge-readme-badges` — write/verify a drift-aware README status-badge managed block (shields.io + local docstring-coverage SVG); opt-in via `[tool.forge.badges]`; `--check` mode
-   - verify_plugin_version.py: `verify-forge-plugin-version` — rolling-next guard (plugin.json["version"] > latest git tag)
+   - verify_plugin_version.py: `verify-forge-plugin-version` — rolling-next guard (plugin.json["version"] > latest git tag; skips a version-less manifest)
    - gen_cli_reference.py: `forge-gen-cli-reference` — CLI reference
      doc generator
    - gen_api_digest.py: `forge-gen-api-digest` — public-symbol API
@@ -190,7 +190,7 @@ enforcement:
 
 ## Plugin Manifest (`.claude-plugin/`)
 
-- plugin.json: Claude Code plugin manifest (rolling-next version)
+- plugin.json: Claude Code plugin manifest (declares no version — the plugin is keyed on its commit)
 - marketplace.json: marketplace listing manifest
 
 ## Git Hooks Directory (`.githooks/`)

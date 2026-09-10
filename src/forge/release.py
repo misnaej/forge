@@ -1,9 +1,9 @@
 """forge-release — cut an annotated ``vX.Y.Z`` release tag for tag-versioned repos.
 
-The single-track counterpart to forge's own rolling-next flow: for a
-repo whose version is *derived from* its ``v*`` tags (setuptools-scm)
-rather than driven by a ``.claude-plugin/plugin.json`` manifest, the tag
-IS the release. This CLI owns the orchestration so consumers don't
+The single-track counterpart to the rolling-next flow: for a repo whose
+version is *derived from* its ``v*`` tags (setuptools-scm) rather than
+driven by a version a ``.claude-plugin/plugin.json`` manifest declares,
+the tag IS the release. This CLI owns the orchestration so consumers don't
 reimplement it: guard checks, semver bump off the latest ``v*`` tag, a
 CHANGELOG gate, then annotated tag + push.
 
@@ -13,9 +13,10 @@ Guards, in order (all failures reported at once, exit ``1``):
 2. **On the base branch** (``[tool.forge].base_branch``, default
    ``main``) — single-track releases are cut from the trunk.
 3. **Single-track release model** — refuses when a
-   ``.claude-plugin/plugin.json`` manifest drives versioning (use
-   ``forge-next-prep --tag``). Two different version sources, two
-   different orchestrators.
+   ``.claude-plugin/plugin.json`` manifest's declared version drives
+   versioning (use ``forge-next-prep --tag``). Two different version
+   sources, two different orchestrators; a manifest that declares no
+   version leaves the tags as the only source.
 4. **CHANGELOG gate** — when ``CHANGELOG.md`` exists it must already
    carry a ``## vX.Y.Z`` heading for the tag being cut. A repo with no
    CHANGELOG gets a warning, not a failure.
@@ -108,10 +109,11 @@ def _wrong_branch_error(repo_root: Path, base_branch: str) -> str | None:
 def _wrong_release_model_error(repo_root: Path) -> str | None:
     """Return an error when this repo's release model isn't single-track.
 
-    A plugin manifest disqualifies: the version source is
-    ``plugin.json``, owned by ``forge-next-prep --tag``, so
+    A plugin manifest that declares a version disqualifies: the version
+    source is ``plugin.json``, owned by ``forge-next-prep --tag``, so
     ``forge-release``'s tag computation would fight the rolling-next
-    flow.
+    flow. A manifest without one is keyed on its commit and leaves the
+    tags as the only version source.
 
     Args:
         repo_root: Repo root.

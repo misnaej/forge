@@ -889,9 +889,14 @@ def test_main_release_manifest_refusal_leaves_tree_untouched(
 ) -> None:
     """A manifest render refusal fires before ANY write — no half-release.
 
-    Compute-then-write pin (mirrors rebump's invariant): a manifest with
-    no ``"version"`` field refuses at render time, so the changelog is
-    not assembled, no fragment is deleted, and nothing is staged.
+    Compute-then-write pin (mirrors rebump's invariant): a manifest whose
+    ``"version"`` field exists but cannot be rewritten (not a quoted
+    string — ``render_plugin_version``'s regex only matches
+    ``"version": "..."``) refuses at render time, so the changelog is not
+    assembled, no fragment is deleted, and nothing is staged. A manifest
+    that DECLARES no version at all takes a different path entirely (the
+    write is skipped, not refused — see
+    ``test_main_release_version_less_manifest_left_untouched``).
     """
     _init_tagged_repo(tmp_path)
     original = "# Changelog\n"
@@ -899,7 +904,7 @@ def test_main_release_manifest_refusal_leaves_tree_untouched(
     _write_fragment(tmp_path / "changelog.d", "ok.added.md", "bump: minor\n- x\n")
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir(exist_ok=True)
-    (plugin_dir / "plugin.json").write_text('{"name": "forge"}\n')
+    (plugin_dir / "plugin.json").write_text('{"name": "forge", "version": 123}\n')
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
 
     assert main(["release"]) == 2
@@ -907,6 +912,46 @@ def test_main_release_manifest_refusal_leaves_tree_untouched(
     assert 'no "version" field' in capsys.readouterr().out
     assert (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8") == original
     assert (tmp_path / "changelog.d" / "ok.added.md").exists()
+
+
+def test_main_release_version_less_manifest_left_untouched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A manifest that declares no version is left untouched by ``release``.
+
+    SCENARIO: forge's own manifest shape — no ``"version"`` key, since
+    Claude Code keys a commit-identity plugin on its commit SHA.
+    EXPECTED BEHAVIOR: ``release`` still assembles and succeeds (exit 0),
+    but the manifest file is byte-identical afterward and is never
+    staged — ``_stage_release``'s manifest write is conditional on
+    ``plugin_manifest_declares_version``, not merely on the file existing.
+    """
+    _init_tagged_repo(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    manifest_path = plugin_dir / "plugin.json"
+    manifest_text = '{"name": "forge"}\n'
+    manifest_path.write_text(manifest_text)
+    _write_fragment(tmp_path / "changelog.d", "a.added.md", "bump: minor\n- x\n")
+    commit_all(tmp_path, "fragment + manifest")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+
+    assert main(["release"]) == 0
+
+    assert manifest_path.read_text(encoding="utf-8") == manifest_text
+    status = subprocess.run(
+        ["git", "diff", "--cached", "--name-status"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert ".claude-plugin/plugin.json" not in status
+    assert "Release v1.1.0 prepared" in capsys.readouterr().out
 
 
 def test_main_release_exit_two_on_invalid_fragment_touches_nothing(
@@ -1543,7 +1588,7 @@ def test_assembly_pr_body_with_manifest_says_workflow_tags_merge(
     """A repo with a plugin manifest gets the auto-tag-on-merge sentence."""
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()
-    (plugin_dir / "plugin.json").write_text('{"name": "forge"}\n')
+    (plugin_dir / "plugin.json").write_text('{"name": "forge", "version": "1.0.0"}\n')
     plan = AssemblyPlan(
         tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
     )
@@ -1551,6 +1596,59 @@ def test_assembly_pr_body_with_manifest_says_workflow_tags_merge(
     body = changelog_fragments._assembly_pr_body(tmp_path, plan)
 
     assert "forge-next-prep --tag" in body
+    assert "forge-release --from-changelog" not in body
+
+
+def test_assembly_pr_body_version_less_manifest_claims_no_sync(
+    tmp_path: Path,
+) -> None:
+    """A manifest present but declaring no version still claims no manifest sync.
+
+    SCENARIO: forge's own manifest shape (``.claude-plugin/plugin.json``
+    present, no ``"version"`` key) — the "no sync" claim the manifest-less
+    case gets must hold here too, because the body's sync claim keys on
+    ``plugin_manifest_declares_version``, not on mere manifest presence.
+    EXPECTED BEHAVIOR: the body never claims a
+    ``.claude-plugin/plugin.json`` sync, and carries the manifest-less
+    tagging sentence.
+    """
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text('{"name": "forge"}\n')
+    plan = AssemblyPlan(
+        tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
+    )
+
+    body = changelog_fragments._assembly_pr_body(tmp_path, plan)
+
+    assert "syncs `.claude-plugin/plugin.json`" not in body
+    assert "forge-release --from-changelog" in body
+    assert "forge-next-prep --tag" not in body
+
+
+def test_assembly_pr_body_per_merge_repo_names_fragment_merge_tag(
+    tmp_path: Path,
+) -> None:
+    """Tag-per-merge repos name the merge that already tags a minted version.
+
+    SCENARIO: ``[tool.forge.release].auto = "merge"`` with no manifest
+    declaring a version — tag-per-merge (``forge-changelog auto-tag``)
+    already cut the release tag on the merge that carried the minted
+    fragment, so THIS assembly PR's own merge carries none and must not
+    claim either the tag-release workflow (``forge-next-prep --tag``) or
+    the manifest-less ``forge-release --from-changelog`` flow.
+    EXPECTED BEHAVIOR: the body names the fragment-carrying merge as
+    already tagged.
+    """
+    (tmp_path / "pyproject.toml").write_text('[tool.forge.release]\nauto = "merge"\n')
+    plan = AssemblyPlan(
+        tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
+    )
+
+    body = changelog_fragments._assembly_pr_body(tmp_path, plan)
+
+    assert "Tag-per-merge cuts" in body
+    assert "forge-next-prep --tag" not in body
     assert "forge-release --from-changelog" not in body
 
 
@@ -1569,6 +1667,7 @@ def test_assembly_pr_body_all_tagged_says_nothing_to_tag(tmp_path: Path) -> None
     assert "Nothing to tag" in body
     assert "forge-next-prep --tag" not in body
     assert "forge-release --from-changelog" not in body
+    assert "syncs the manifest" not in body
 
 
 def test_assembly_pr_body_mixed_mentions_backfilled_tags(tmp_path: Path) -> None:

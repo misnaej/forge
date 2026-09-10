@@ -730,6 +730,10 @@ def test_is_behind_false_when_either_unresolvable() -> None:
     assert install_claudemd._is_behind(None, "v1.2.9") is False
     assert install_claudemd._is_behind("1.2.2", None) is False
     assert install_claudemd._is_behind("garbage", "v1.2.9") is False
+    # A commit-SHA-shaped "installed" value — forge's own version-less
+    # manifest is keyed on its commit — is not semver-parseable either,
+    # so it must not false-positive as "behind" a real v* tag.
+    assert install_claudemd._is_behind("63e797cd753b", "v1.2.9") is False
 
 
 def test_installed_plugin_version_reads_manifest(tmp_path: Path) -> None:

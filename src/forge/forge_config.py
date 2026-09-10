@@ -203,9 +203,10 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         ("tool", "forge", "plugin_sync", "blocking"),
         default=False,
         description="Make the plugin_sync step fail the commit when the cached "
-        "Claude Code plugin is older than .claude-plugin/plugin.json "
-        "(default: non-blocking WARN; forge sets true — it ships the "
-        "plugin it runs).",
+        "Claude Code plugin is older than what the repo ships — the version "
+        ".claude-plugin/plugin.json declares, or for a manifest that declares "
+        "none, the base branch's agents/skills/hooks (default: non-blocking "
+        "WARN; forge sets true — it ships the plugin it runs).",
     ),
     ConfigKey(
         ("tool", "forge", "pip_audit", "blocking"),

@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 971 symbols._
+_72 modules, 984 symbols._
 
 ## `forge`
 
@@ -319,11 +319,12 @@ _72 modules, 971 symbols._
 - `_create_and_push_tag(root: Path, version: str, level: str, n_fragments: int) -> int` _(internal)_ — Create and push an annotated tag, handling concurrent-runner races.
 - `_cmd_auto_tag(root: Path) -> int` _(internal)_ — Tag the current commit from its newly merged fragments (CI seam).
 - `_assembly_pr_body(root: Path, plan: AssemblyPlan) -> str` _(internal)_ — Render the assembly PR body with the repo-correct tagging sentence.
+- `_minted_tagging_sentence(root: Path, version: str, *, versioned: bool) -> str` _(internal)_ — Name who tags a minted *version*, per the repo's version source.
 - `_gate_evidence(root: Path) -> tuple[bool, str]` _(internal)_ — Run the versioning gates and format PR-body evidence.
 - `_computed_next_version(root: Path, cmd: str, *, none_pending_rc: int) -> tuple[int | None, AssemblyPlan | None]` _(internal)_ — Run the shared version-computation guard for a subcommand.
 - `_gh_preflight() -> int | None` _(internal)_ — Refuse loudly up front when ``gh`` is missing or unauthenticated.
 - `_cmd_release_pr(root: Path, date: str, *, draft: bool) -> int` _(internal)_ — Open the assembly PR for the pending fragments (scheduled CI seam).
-- `_stage_and_commit_assembly(root: Path, date: str, plan: AssemblyPlan) -> int` _(internal)_ — Stage and commit the assembly changelog and manifest.
+- `_stage_and_commit_assembly(root: Path, date: str, plan: AssemblyPlan) -> int` _(internal)_ — Stage and commit the assembly changelog (and a versioned manifest).
 - `_publish_assembly_pr(root: Path, plan: AssemblyPlan, *, date: str = '', draft: bool = False) -> int` _(internal)_ — Branch, stage, commit, push the assembly and open its PR.
 - `_push_and_open_pr(root: Path, branch: str, plan: AssemblyPlan, base_branch: str, *, draft: bool) -> int` _(internal)_ — Push the assembly branch and open its PR, deferring to race winners.
 - `_restrand_old_text(root: Path) -> str | None` _(internal)_ — Return the comparison-point ``CHANGELOG.md`` for the restrand.
@@ -389,10 +390,11 @@ _72 modules, 971 symbols._
 - `_check_plugin_install(plugin_name: str) -> CheckResult` _(internal)_ — Verify Claude Code has installed the named plugin locally.
 - `_check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report a Claude Code plugin cache lagging what should be loaded.
 - `_stale_cache_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
+- `_wrong_ref_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"wrong-ref"`` verdict: the machine serves another repo's pin.
 - `_check_version_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
 - `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
-- `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
-- `_check_plugin_contents(plugin_root: Path | None) -> list[CheckResult]` _(internal)_ — Verify the expected plugin sub-directories contain files.
+- `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str, *, preferred: Path | None = None) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
+- `_check_plugin_contents(plugin_root: Path | None, *, preferred: Path | None = None) -> list[CheckResult]` _(internal)_ — Verify the expected plugin sub-directories contain files.
 - `_declared_lower_bound(repo_root: Path, tool: str) -> str | None` _(internal)_ — Return the lower bound *tool* is pinned to in an extras group.
 - `_step_tool_drift(repo_root: Path, step: str, tool: str) -> CheckResult | None` _(internal)_ — Report an installed step tool older than the version this repo pins.
 - `_check_step_tools(repo_root: Path) -> list[CheckResult]` _(internal)_ — Verify the external tool for each enabled pre-commit step is on PATH.
@@ -638,6 +640,7 @@ _72 modules, 971 symbols._
 - `create_commit(repo_root: Path, message: str) -> None` — Commit the staged index, surviving identity-less runners.
 - `resolve_current_branch(repo_root: Path) -> tuple[str, str] | None` — Return the current branch name and where it came from, or ``None``.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
+- `resolve_commit(repo_root: Path, ref: str) -> str | None` — Return the full commit SHA *ref* resolves to, or ``None``.
 - `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
 - `unmerged_paths(repo_root: Path) -> list[str]` — Return the repo-relative paths currently in an unmerged index state.
 - `has_conflict_markers(text: str) -> bool` — Return whether *text* contains unresolved git conflict markers.
@@ -652,10 +655,12 @@ _72 modules, 971 symbols._
 - `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring changelog paths.
 - `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
 - `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
+- `plugin_manifest_declares_version(repo_root: Path) -> bool` — Return whether ``.claude-plugin/plugin.json`` carries a ``version`` key.
 - `render_plugin_version(source_text: str, version: str) -> str` — Return *source_text* with its ``"version"`` field rewritten to *version*.
 - `write_plugin_version(root: Path, version: str) -> None` — Rewrite ``.claude-plugin/plugin.json``'s version field on disk.
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
 - `is_ancestor(root: Path | None, ancestor_ref: str, descendant_ref: str) -> bool` — Return whether *ancestor_ref* is an ancestor of *descendant_ref*.
+- `paths_differ(root: Path | None, ref_a: str, ref_b: str, paths: tuple[str, ...]) -> bool` — Return whether any of *paths* differs between *ref_a* and *ref_b*.
 - `added_or_moved_files(*, repo_root: Path | None = None, base_branch: str = 'main', suffix: str = '.py') -> list[str]` — Return files ADDED or RENAMED vs the base branch (``--diff-filter=AR``).
 - `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None, base_branch: str = 'main') -> list[str]` — Get list of modified files from git.
 - `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
@@ -718,7 +723,6 @@ _72 modules, 971 symbols._
 - `scaffold_claude_settings(settings_path: Path) -> bool` — Write a minimal ``.claude/settings.json`` if the file does not exist.
 - `ensure_claude_hooks_dir(hooks_dir: Path) -> bool` — Create ``.claude/hooks/`` with a README documenting the path convention.
 - `_installed_forge_scripts_version() -> str | None` _(internal)_ — Return the installed ``forge-scripts`` distribution version.
-- `_plugin_entry_version(entry: object) -> str | None` _(internal)_ — Pull the ``version`` field out of a single forge@forge entry.
 - `_installed_plugin_version(plugins_file: Path) -> str | None` _(internal)_ — Read the installed Claude Code plugin version from the manifest.
 - `_read_configured_channel(settings_path: Path) -> str | None` _(internal)_ — Return the marketplace ``ref`` consumers set to track a forge release channel.
 - `_upstream_cache_path() -> Path` _(internal)_ — Return the upstream-version-check cache file path.
@@ -917,7 +921,7 @@ _72 modules, 971 symbols._
 - `_check_hook_sidecar(repo_root: Path) -> StepResult | None` _(internal)_ — Block when the git hooks were last written by an older forge than the install.
 - `_env_sync_precheck(repo_root: Path) -> StepResult | None` _(internal)_ — Return the result that ends ``env_sync`` early, or ``None`` to continue.
 - `step_env_sync(repo_root: Path) -> StepResult` — Fail fast when the local install is stale vs the repo's declared CLIs.
-- `step_plugin_sync(repo_root: Path) -> StepResult` — Block when the cached Claude Code plugin is older than the repo's manifest.
+- `step_plugin_sync(repo_root: Path) -> StepResult` — Block when the cached Claude Code plugin is older than what the repo ships.
 - `step_ruff(repo_root: Path) -> StepResult` — Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
 - `step_docstrings(repo_root: Path) -> StepResult` — Run ``verify-forge-docstrings`` over the resolved scope.
 - `step_docstring_coverage(repo_root: Path) -> StepResult` — Run ``verify-forge-docstring-coverage`` — full-codebase % reporter.
@@ -1339,16 +1343,25 @@ _72 modules, 971 symbols._
 - `read_json(path: Path) -> tuple[dict, str | None]` — Read a JSON file. Returns (data, error_message_or_None).
 - `version_key(name: str) -> tuple[int, ...]` — Return a sortable key for a version-shaped directory name.
 - `find_plugin_cache(plugin_name: str) -> Path | None` — Locate a Claude Code plugin cache directory by name.
-- `find_install_dir(plugin_root: Path) -> Path | None` — Walk the Claude Code cache layout to find the active plugin install.
+- `find_install_dir(plugin_root: Path, *, preferred: Path | None = None) -> Path | None` — Walk the Claude Code cache layout to find the active plugin install.
+- `class InstallRecord` — One ``installed_plugins.json`` entry — a copy Claude Code runs.
+- `installed_record(plugin_key: str, repo_root: Path | None = None, *, plugins_file: Path | None = None) -> InstallRecord | None` — Return the install record of *plugin_key* that applies to *repo_root*.
+- `_pick_record(records: list[dict], repo_root: Path | None) -> dict | None` _(internal)_ — Choose the record that applies to *repo_root* (see :func:`installed_record`).
 - `pip_version() -> str | None` — Version of the installed ``forge-scripts`` package, or None if absent.
 - `hook_sidecar_version(repo_root: Path) -> str | None` — Forge version recorded in the git-hook sidecar, or None when absent.
 - `plugin_cache_version(plugin_root: Path | None) -> str | None` — Version of the cached Claude Code plugin install, or None when absent.
 - `install_version(install_dir: Path) -> str` — Version a plugin install directory reports.
 - `editable_install_origin() -> Path | None` — Return the checkout an editable ``forge-scripts`` install points at.
 - `_direct_url() -> dict[str, object] | None` _(internal)_ — Return the distribution's parsed ``direct_url.json``, or ``None``.
-- `marketplace_clone(repo_slug: str) -> Path | None` — Local clone Claude Code keeps for the marketplace serving *repo_slug*.
+- `class MarketplaceClone` — A marketplace Claude Code has registered on this machine.
+- `marketplace_clone(repo_slug: str) -> MarketplaceClone | None` — The registered marketplace serving *repo_slug*, with its clone and ref.
 - `_repo_slug(url: str) -> str | None` _(internal)_ — Return the ``owner/repo`` a git pin URL names.
 - `_hook_names(plugin_dir: Path) -> frozenset[str]` _(internal)_ — Names of the Claude Code hooks a plugin directory ships.
 - `class PluginCacheStatus` — What the Claude Code plugin cache says relative to what ships it.
-- `plugin_cache_status(repo_root: Path) -> PluginCacheStatus` — Compare the cached plugin against the manifest that ships it.
-- `_consumer_cache_status(repo_root: Path) -> PluginCacheStatus` _(internal)_ — Compare a consumer's active cache slot against the ref it pinned.
+- `plugin_cache_status(repo_root: Path) -> PluginCacheStatus` — Compare the cached plugin against what ships it.
+- `_commit_identity_status(repo_root: Path, plugin_name: str) -> PluginCacheStatus` _(internal)_ — Judge a commit-keyed plugin against the base branch of the repo shipping it.
+- `_own_marketplace_name(repo_root: Path, plugin_name: str) -> str` _(internal)_ — Name of the marketplace a plugin-shipping repo publishes, else the plugin's.
+- `_consumer_cache_status(repo_root: Path) -> PluginCacheStatus` _(internal)_ — Judge a consumer's installed commit against the ref it pinned.
+- `_installed_commit(record: InstallRecord | None) -> str | None` _(internal)_ — The commit an install record names, or ``None`` when it names none.
+- `_clone_serves_ref(clone: MarketplaceClone, ref: str) -> bool` _(internal)_ — Whether the registered clone is at *ref* — by name, or by commit.
+- `_missing_hooks(source_dir: Path, install_dir: Path | None) -> tuple[str, ...]` _(internal)_ — Hooks the pinned tree ships that the installed slot lacks (detail only).

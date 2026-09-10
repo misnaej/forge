@@ -2,4 +2,4 @@
 # exempts these). Each needs a one-line reason.
 
 [exempt."forge-release"]
-reason = "Consumer-facing release orchestrator for single-track tag-versioned repos; run by a human at release time, not from a pre-commit/hook/bootstrap path (forge itself uses the rolling-next flow instead)."
+reason = "Consumer-facing release orchestrator for single-track tag-versioned repos; run by a human at release time, not from a pre-commit/hook/bootstrap path (forge itself tags per merge via forge-changelog auto-tag instead)."

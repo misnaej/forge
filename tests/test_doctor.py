@@ -126,10 +126,31 @@ def test_doctor_cli_rejects_unsafe_plugin_name() -> None:
 
 def test_main_emits_json(
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--json flag produces parseable JSON output."""
+    """--json flag produces parseable JSON output.
+
+    MOCK SETUP: ``Path.cwd`` is pinned to an empty ``tmp_path`` — with no
+    ``.claude-plugin/plugin.json`` of its own, ``main()``'s
+    ``_check_plugin_cache_skew`` call takes the consumer / "no-manifest"
+    branch instead of reaching this repo's own real (version-less)
+    manifest, which would otherwise route through
+    ``_commit_identity_status`` and shell out to git / read the real
+    ``~/.claude/plugins/installed_plugins.json``. ``INSTALLED_PLUGINS`` /
+    ``KNOWN_MARKETPLACES`` are pinned to absent paths under ``tmp_path``
+    too, so the ``installed_record`` call ``main()`` makes when
+    ``--skip-plugin-checks`` is absent (as here) can't read the real
+    registry either.
+    """
     monkeypatch.setattr(doctor.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(doctor.Path, "cwd", classmethod(lambda _: tmp_path))
+    monkeypatch.setattr(
+        version_surfaces, "INSTALLED_PLUGINS", tmp_path / "absent-installed.json"
+    )
+    monkeypatch.setattr(
+        version_surfaces, "KNOWN_MARKETPLACES", tmp_path / "absent-marketplaces.json"
+    )
     with patch.object(doctor.sys, "argv", ["forge-doctor", "--json"]):
         rc = doctor.main()
     captured = capsys.readouterr()
@@ -141,10 +162,26 @@ def test_main_emits_json(
 
 def test_main_skip_plugin_checks_omits_plugin_results(
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--skip-plugin-checks drops every plugin:* / plugin.json / plugin/* check."""
+    """--skip-plugin-checks drops every plugin:* / plugin.json / plugin/* check.
+
+    MOCK SETUP: same ``Path.cwd`` / registry isolation as
+    ``test_main_emits_json`` — ``_check_plugin_cache_skew`` still runs
+    unconditionally even with ``--skip-plugin-checks`` (only the
+    ``plugin:*`` / ``plugin.json`` / ``plugin/*`` checks are gated on the
+    flag), so it must not reach this repo's real manifest or registries
+    either.
+    """
     monkeypatch.setattr(doctor.shutil, "which", lambda _name: "/usr/bin/found")
+    monkeypatch.setattr(doctor.Path, "cwd", classmethod(lambda _: tmp_path))
+    monkeypatch.setattr(
+        version_surfaces, "INSTALLED_PLUGINS", tmp_path / "absent-installed.json"
+    )
+    monkeypatch.setattr(
+        version_surfaces, "KNOWN_MARKETPLACES", tmp_path / "absent-marketplaces.json"
+    )
     monkeypatch.setattr(
         doctor.subprocess,
         "run",
@@ -477,31 +514,57 @@ def test_plugin_cache_skew_empty_when_uncached(
     assert doctor._check_plugin_cache_skew(tmp_path) == []
 
 
-def test_plugin_cache_skew_names_missing_hooks_for_a_consumer(
+@pytest.mark.parametrize(
+    ("state", "cached", "extra_kwargs"),
+    [
+        pytest.param(
+            "stale-content",
+            "5.2.0",
+            {
+                "missing_hooks": (
+                    "block_raw_wrapup_post.sh",
+                    "warn_generated_conflicts.sh",
+                )
+            },
+            id="stale-content",
+        ),
+        pytest.param("wrong-ref", "dev", {}, id="wrong-ref"),
+    ],
+)
+def test_plugin_cache_skew_consumer_remedy_follows_manifest_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    cached: str,
+    extra_kwargs: dict[str, tuple[str, ...]],
 ) -> None:
-    """A consumer's stale slot advises a remedy that can actually converge.
+    """A consumer advisory always echoes the verdict's own remedy verbatim.
 
-    SCENARIO: the repo ships no manifest of its own, so the verdict comes
-    from the pin-vs-cache content comparison.
-    MOCK SETUP: ``plugin_cache_status`` is stubbed with a
-    ``"stale-content"`` verdict listing two absent hooks.
-    EXPECTED BEHAVIOR: one advisory naming both hooks and the cache-slot
-    deletion — never ``/plugin update``, which compares the frozen
-    declared versions and reports no change.
+    SCENARIO: ``_stale_cache_advisory`` / ``_wrong_ref_advisory`` must not
+    reconstruct a remedy from the plugin name alone — only
+    ``plugin_cache_status`` (the same verdict ``plugin_sync`` blocks on)
+    knows whether the pinned content declares a version (slot-deletion
+    remedy) or not (``/plugin update``), or which ref this machine's one
+    registration should track instead.
+    MOCK SETUP: ``doctor.plugin_cache_status`` stubbed per state, with a
+    concrete ``remedy`` string set on the status — distinct from either
+    real remediation constant, so a match proves the value was echoed,
+    not reconstructed.
+    EXPECTED BEHAVIOR: exactly one advisory whose detail contains the
+    mocked ``status.remedy`` verbatim (and, for "stale-content", every
+    missing hook by name).
+
+    Args:
+        state: The ``PluginCacheStatus.state`` to construct.
+        cached: Value for the status's ``cached`` field.
+        extra_kwargs: Extra ``PluginCacheStatus`` fields for this state
+            (``missing_hooks`` for "stale-content").
     """
-    monkeypatch.setattr(
-        doctor,
-        "plugin_cache_status",
-        lambda _root: version_surfaces.PluginCacheStatus(
-            "stale-content",
-            "forge",
-            "5.2.0",
-            "v6.11.0",
-            ("block_raw_wrapup_post.sh", "warn_generated_conflicts.sh"),
-        ),
+    remedy = f"do-the-{state}-thing"
+    status = version_surfaces.PluginCacheStatus(
+        state, "forge", cached, "v6.11.0", remedy=remedy, **extra_kwargs
     )
+    monkeypatch.setattr(doctor, "plugin_cache_status", lambda _root: status)
 
     results = doctor._check_plugin_cache_skew(tmp_path)
 
@@ -509,12 +572,10 @@ def test_plugin_cache_skew_names_missing_hooks_for_a_consumer(
     assert results[0].name == "version_skew:plugin_cache"
     assert not results[0].passed
     assert results[0].info  # advisory only — never sways the exit code
-    detail = results[0].detail
-    assert "block_raw_wrapup_post.sh" in detail
-    assert "warn_generated_conflicts.sh" in detail
-    assert "v6.11.0" in detail
-    assert "~/.claude/plugins/cache/forge/" in detail
-    assert "/plugin update forge@forge (then /reload-plugins)" not in detail
+    assert remedy in results[0].detail
+    if state == "stale-content":
+        assert "block_raw_wrapup_post.sh" in results[0].detail
+        assert "warn_generated_conflicts.sh" in results[0].detail
 
 
 # --- pad_semver() -------------------------------------------------------

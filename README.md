@@ -343,7 +343,7 @@ outside forge's refresh cycle, so forge never inspects or rewrites it.
 | `cli_wiring` | `verify-forge-cli-wiring` — asserts every `[project.scripts]` entry is reachable from a wiring source (install/precommit/audit/hooks/agents/skills) | Opt-in via `[tool.forge.cli_wiring] enabled = true`; self-skips otherwise |
 | `c4` | `forge-gen-c4 --check` — keeps the architecture diagram (`docs/architecture.dsl` + README block) in sync with the import graph | Opt-in via `[tool.forge.c4]`; self-skips otherwise |
 | `commit_types_parity` | `forge-gen-commit-types --check` — asserts the conventional-commit types in `claude-hooks/check_commit_format.sh` match the canonical `CONVENTIONAL_COMMIT_TYPES` tuple | Only when `claude-hooks/check_commit_format.sh` exists |
-| `plugin_version` | Asserts `plugin.json["version"] > latest_tag` (semver) | Only when `.claude-plugin/plugin.json` exists and tags exist; skipped on the release commit |
+| `plugin_version` | Asserts `plugin.json["version"] > latest_tag` (semver) | Only when `.claude-plugin/plugin.json` declares a version and tags exist; skipped on the release commit, and for a version-less manifest (keyed on its commit, as forge's is) |
 | `pip_audit` | `pip-audit --skip-editable --desc` — dependency CVE scan | Always (skipped if `pip-audit` not on PATH). **Non-blocking**: failures render as yellow `WARN` and do NOT refuse the commit. |
 
 Pytest is **not** in the default sequence — too slow for pre-commit.
@@ -532,9 +532,12 @@ rewrites that surprise contributors after a `git pull`.
 In addition to the local FOUNDATION drift check above, every
 `install-forge-claude-md` run also queries the latest forge tag from
 GitHub once per 24h (cached at `~/.cache/forge/upstream_check.json`)
-and emits a `⚠` warning when your installed `forge-scripts` or Claude
-plugin version is behind. The post-merge / post-checkout hooks inherit
-this automatically — no consumer-side hook changes needed.
+and emits a `⚠` warning when your installed `forge-scripts` is behind.
+The installed Claude plugin is keyed on its commit (forge's manifest
+declares no version), which a tag comparison cannot order, so
+`forge-doctor` judges it instead — against the commit your pin serves.
+The post-merge / post-checkout hooks inherit this automatically — no
+consumer-side hook changes needed.
 
 Strictly warning-only: network failures, missing `gh`, or stale-but-
 working installs never change the exit code. Includes the exact upgrade
@@ -589,12 +592,17 @@ pip install --upgrade --force-reinstall --no-deps \
 # 2. Re-sync every managed artifact in one call (idempotent):
 install-forge-bootstrap
 
-# 3. (If you use Claude Code) bump the plugin pin:
-#    ~/.claude/installed_plugins.json → { "forge@forge": { "version": "v1.3.0" } }
-#    Then: /plugin update forge@forge
+# 3. (If you use Claude Code) move the plugin to the new release:
+#    set extraKnownMarketplaces.forge.source.ref = "v1.3.0" in
+#    .claude/settings.json (forge-upgrade does this), then:
+#          /plugin marketplace update forge
+#          /plugin update forge@forge
 #          /reload-plugins      # required: makes the new agents / hooks /
 #                               # skills / MCP+LSP visible in this session
-#    Note: monitor changes still need a full session restart.
+#    Note: monitor changes still need a full session restart. Claude Code
+#    keeps ONE forge marketplace registration per machine; if another repo
+#    registered it at a different ref, forge-doctor says so and names the
+#    re-registration that fixes it.
 
 # 4. Review the diff:
 git diff FOUNDATION.md       # foundation content changes

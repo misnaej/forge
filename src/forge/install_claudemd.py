@@ -62,6 +62,7 @@ from forge.git_utils import (
     repo_root,
 )
 from forge.run_context import is_non_interactive
+from forge.version_surfaces import installed_record
 
 
 if TYPE_CHECKING:
@@ -604,49 +605,22 @@ def _installed_forge_scripts_version() -> str | None:
         return None
 
 
-def _plugin_entry_version(entry: object) -> str | None:
-    """Pull the ``version`` field out of a single forge@forge entry.
-
-    Args:
-        entry: One element of the ``plugins.forge@forge`` value — either
-            a dict (per-instance install record) or something else (ignored).
-
-    Returns:
-        The version string when *entry* is a dict carrying a non-empty
-        ``version``; otherwise ``None``.
-    """
-    if isinstance(entry, dict) and entry.get("version"):
-        return str(entry["version"])
-    return None
-
-
 def _installed_plugin_version(plugins_file: Path) -> str | None:
     """Read the installed Claude Code plugin version from the manifest.
+
+    A commit-keyed install records a 12-character SHA here, which the
+    semver channel comparison cannot order — :func:`_is_behind` then stays
+    quiet, and ``forge-doctor`` judges that install by commit instead.
 
     Args:
         plugins_file: Path to ``~/.claude/plugins/installed_plugins.json``.
 
     Returns:
-        Version string for ``forge@forge``, or ``None`` if the file
-        does not exist, is malformed, or does not list forge.
+        The most recent recorded version for ``forge@forge``, or ``None``
+        if the file does not exist, is malformed, or does not list forge.
     """
-    if not plugins_file.is_file():
-        return None
-    try:
-        data = json.loads(plugins_file.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    forge_entries = data.get("plugins", {}).get(PLUGIN_KEY)
-    # Two manifest shapes seen in the wild: a list of per-instance
-    # install records, or a single dict for a single install. Walk both
-    # and return the most recent version field found.
-    if isinstance(forge_entries, list):
-        for entry in reversed(forge_entries):
-            version = _plugin_entry_version(entry)
-            if version is not None:
-                return version
-        return None
-    return _plugin_entry_version(forge_entries)
+    record = installed_record(PLUGIN_KEY, plugins_file=plugins_file)
+    return record.version if record is not None else None
 
 
 def _read_configured_channel(settings_path: Path) -> str | None:

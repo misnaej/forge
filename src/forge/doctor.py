@@ -14,7 +14,8 @@ Checks:
      c. ``agents/``, ``skills/``, ``claude-hooks/`` directories populated.
   4. Version skew across install surfaces (#184) — the pip package and the
      git-hook sidecar should share a version, and the cached Claude Code
-     plugin (checked separately) should match this repo's own manifest; a
+     plugin (checked separately) should be what this repo ships or pins —
+     by declared version, or by commit for a manifest that declares none; a
      lagging surface is reported as an advisory with the exact command to
      converge it (never fails the exit code — the report line is the signal).
   5. Pre-commit step tools (opt-in steps only) — the tool for each enabled
@@ -48,6 +49,7 @@ from forge.version_surfaces import (
     find_install_dir,
     find_plugin_cache,
     hook_sidecar_version,
+    installed_record,
     pip_version,
     plugin_cache_status,
     read_json,
@@ -210,11 +212,13 @@ def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
     ``plugin_sync`` pre-commit step so both name the same remediation for
     the same condition; this wraps it as an advisory.
 
-    Two findings, two remediations, because the causes differ. A repo that
-    ships the plugin can be ``"behind"`` — its cache declares an older
-    version, which ``/plugin update`` moves. A consumer gets
-    ``"stale-content"``: the declared version has not moved and cannot, so
-    the only advice that can succeed is discarding the slot.
+    Three findings, each with the remediation its cause allows. A repo
+    that ships the plugin can be ``"behind"`` — an older declared version,
+    or, for a commit-keyed plugin, an installed commit the base branch has
+    since changed the plugin surface of. A consumer gets
+    ``"stale-content"`` when its installed commit is not the one its pin
+    serves, and ``"wrong-ref"`` when this machine's single registration
+    serves another repo's pin — which no update in this repo can fix.
 
     Args:
         repo_root: Repo whose manifest ships the plugin, or a consumer
@@ -228,17 +232,23 @@ def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
     status = plugin_cache_status(repo_root)
     if status.state == "stale-content":
         return [_stale_cache_advisory(status)]
+    if status.state == "wrong-ref":
+        return [_wrong_ref_advisory(status)]
     if status.state != "behind":
         return []
+    if status.remedy:
+        detail = (
+            f"plugin cache at commit {status.cached}, behind {status.declared} — "
+            f"run `{status.remedy}`"
+        )
+    else:
+        detail = (
+            f"plugin cache at v{status.cached}, behind this repo's manifest "
+            f"v{status.declared} — run `{SKEW_REMEDIATION['plugin cache']}`"
+        )
     return [
         CheckResult(
-            name="version_skew:plugin_cache",
-            passed=False,
-            info=True,
-            detail=(
-                f"plugin cache at v{status.cached}, behind this repo's manifest "
-                f"v{status.declared} — run `{SKEW_REMEDIATION['plugin cache']}`"
-            ),
+            name="version_skew:plugin_cache", passed=False, info=True, detail=detail
         )
     ]
 
@@ -247,23 +257,52 @@ def _stale_cache_advisory(status: PluginCacheStatus) -> CheckResult:
     """Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
 
     Args:
-        status: The ``"stale-content"`` verdict, carrying the hooks the
-            slot is missing.
+        status: The ``"stale-content"`` verdict, carrying the remedy its
+            pinned manifest allows and any hooks the slot is missing.
 
     Returns:
-        An advisory ``CheckResult`` listing the missing hooks — the
-        concrete thing not running — and a remediation that can converge.
+        An advisory ``CheckResult`` naming the installed commit, the pin,
+        the hooks that never load when any are missing — the concrete
+        thing not running — and a remediation that can converge.
     """
-    missing = ", ".join(status.missing_hooks)
+    hooks = (
+        f"{len(status.missing_hooks)} hook(s) never load: "
+        f"{', '.join(status.missing_hooks)}. "
+        if status.missing_hooks
+        else ""
+    )
+    remedy = status.remedy or STALE_CACHE_REMEDIATION.format(plugin=status.plugin_name)
     return CheckResult(
         name="version_skew:plugin_cache",
         passed=False,
         info=True,
         detail=(
-            f"plugin cache slot v{status.cached} does not carry the content "
-            f"pinned at {status.declared} — "
-            f"{len(status.missing_hooks)} hook(s) never load: {missing}. "
-            f"{STALE_CACHE_REMEDIATION.format(plugin=status.plugin_name)}"
+            f"installed {status.plugin_name} plugin {status.cached} is not the "
+            f"commit pinned at {status.declared} — {hooks}Run: {remedy}"
+        ),
+    )
+
+
+def _wrong_ref_advisory(status: PluginCacheStatus) -> CheckResult:
+    """Wrap a ``"wrong-ref"`` verdict: the machine serves another repo's pin.
+
+    Args:
+        status: The ``"wrong-ref"`` verdict — ``cached`` holds the ref the
+            registration tracks, ``declared`` the ref this repo pins.
+
+    Returns:
+        An advisory ``CheckResult`` naming both refs and the
+        re-registration that converges.
+    """
+    return CheckResult(
+        name="version_skew:plugin_cache",
+        passed=False,
+        info=True,
+        detail=(
+            f"this machine's {status.plugin_name} marketplace tracks "
+            f"{status.cached}, but this repo pins {status.declared} — Claude "
+            f"Code keeps one registration per marketplace, so updating here "
+            f"cannot help. Run: {status.remedy}"
         ),
     )
 
@@ -286,12 +325,12 @@ def _check_version_skew(repo_root: Path) -> list[CheckResult]:
     legitimately predates an install — FOUNDATION §15); the remediation line in
     the report is the actionable signal, not the exit code.
 
-    The plugin cache is judged against the manifest in :func:`_check_plugin_cache_skew`,
-    not here — pip and git hooks are one line (both derive from installed
-    forge-scripts), while the plugin version is the manifest's (which fragments
-    mode parks at the latest tag by design). Comparing them made a warning that
-    named a command, and the command answered that nothing was out of date:
-    both true, and never convergent.
+    The plugin cache is judged in :func:`_check_plugin_cache_skew`, not here —
+    pip and git hooks are one line (both derive from installed forge-scripts),
+    while the plugin's identity is its manifest's version or, for a manifest
+    that declares none, its commit. Neither is the pip version, so comparing
+    them made a warning that named a command, and the command answered that
+    nothing was out of date: both true, and never convergent.
 
     Args:
         repo_root: Repo whose ``.githooks/`` sidecar is read.
@@ -382,6 +421,8 @@ def _surface_pin_revision(root: Path) -> list[CheckResult]:
 def _check_plugin_manifests(
     plugin_root: Path | None,
     plugin_name: str,
+    *,
+    preferred: Path | None = None,
 ) -> list[CheckResult]:
     """Validate plugin.json + marketplace.json under the installed plugin root.
 
@@ -389,6 +430,7 @@ def _check_plugin_manifests(
         plugin_root: Root directory of the installed plugin, or None if not found.
         plugin_name: Expected plugin name to match against ``plugin.json`` /
             ``marketplace.json``.
+        preferred: The cache slot the install record names, when known.
 
     Returns:
         List of check results for plugin.json and marketplace.json validation.
@@ -403,7 +445,7 @@ def _check_plugin_manifests(
             ),
         ]
 
-    install_dir = find_install_dir(plugin_root)
+    install_dir = find_install_dir(plugin_root, preferred=preferred)
     manifest_dir = (install_dir / ".claude-plugin") if install_dir else None
     if manifest_dir is None:
         return [
@@ -438,11 +480,14 @@ def _check_plugin_manifests(
     ]
 
 
-def _check_plugin_contents(plugin_root: Path | None) -> list[CheckResult]:
+def _check_plugin_contents(
+    plugin_root: Path | None, *, preferred: Path | None = None
+) -> list[CheckResult]:
     """Verify the expected plugin sub-directories contain files.
 
     Args:
         plugin_root: Root directory of the installed plugin, or None if not found.
+        preferred: The cache slot the install record names, when known.
 
     Returns:
         List of check results for each expected plugin directory.
@@ -453,7 +498,7 @@ def _check_plugin_contents(plugin_root: Path | None) -> list[CheckResult]:
             for d in EXPECTED_PLUGIN_DIRS
         ]
 
-    plugin_dir = find_install_dir(plugin_root)
+    plugin_dir = find_install_dir(plugin_root, preferred=preferred)
     if plugin_dir is None:
         return [
             CheckResult(
@@ -746,8 +791,14 @@ def main() -> int:
         plugin_root = (
             find_plugin_cache(args.plugin_name) if plugin_check.passed else None
         )
-        results.extend(_check_plugin_manifests(plugin_root, args.plugin_name))
-        results.extend(_check_plugin_contents(plugin_root))
+        # Judge the copy this repo runs, not the newest-named slot: a
+        # commit-keyed slot is named by a SHA, which does not sort.
+        record = installed_record(f"{args.plugin_name}@{args.plugin_name}", Path.cwd())
+        preferred = record.install_dir if record is not None else None
+        results.extend(
+            _check_plugin_manifests(plugin_root, args.plugin_name, preferred=preferred)
+        )
+        results.extend(_check_plugin_contents(plugin_root, preferred=preferred))
 
     results.extend(_check_version_skew(Path.cwd()))
     results.extend(_check_plugin_cache_skew(Path.cwd()))

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from forge import precommit
+from forge.git_utils import plugin_manifest_declares_version
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -17,10 +18,23 @@ def test_plugin_json_present_and_well_formed() -> None:
     path = MANIFEST_DIR / "plugin.json"
     assert path.is_file()
     data = json.loads(path.read_text())
-    for field in ("name", "version", "description", "author", "license"):
+    for field in ("name", "description", "author", "license"):
         assert field in data, f"plugin.json missing {field}"
     assert data["name"] == "forge"
     assert data["license"] == "MIT"
+
+
+def test_forge_manifest_declares_no_version() -> None:
+    """Forge's own manifest carries no "version" key — commit-keyed identity.
+
+    Claude Code then keys the plugin cache on its commit SHA rather than
+    a declared version (`docs/release-process.md` §4); every versioning
+    invariant that reads the declared version treats this manifest as
+    having nothing to check.
+    """
+    data = json.loads((MANIFEST_DIR / "plugin.json").read_text())
+    assert "version" not in data
+    assert plugin_manifest_declares_version(REPO_ROOT) is False
 
 
 def test_plugin_json_inline_hooks() -> None:

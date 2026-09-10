@@ -320,6 +320,47 @@ def test_tag_misuse_warning_silent_with_manifest(tmp_path: Path) -> None:
     assert next_prep._tag_misuse_warning(tmp_path) is None
 
 
+def test_tag_misuse_warning_malformed_semver_warns(tmp_path: Path) -> None:
+    """A declared version that isn't bare X.Y.Z semver warns, naming the tool.
+
+    Distinct from both the version-less-manifest case (no warning — keyed
+    on commit) and the well-formed-manifest case (no warning — the
+    intended pattern): a manifest that DECLARES a version but fails to
+    parse as semver is a misconfiguration ``--tag`` cannot act on, and the
+    misuse warning is the only surface that says so before a confused
+    rerun.
+    """
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "x", "version": "not-a-version"})
+    )
+    warning = next_prep._tag_misuse_warning(tmp_path)
+    assert warning is not None
+    assert "verify-forge-manifest" in warning
+
+
+def test_tag_and_report_no_tag_needed_for_version_less_manifest(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A version-less manifest under --tag reports nothing to do, no misuse warning.
+
+    forge's own manifest shape: Claude Code keys the plugin on its
+    commit SHA, so ``--tag``'s rolling-next comparison correctly finds
+    no version to tag — this is NOT the single-track-repo misuse case
+    ``_tag_misuse_warning`` exists to catch, and the tail must not warn.
+    """
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "forge"})
+    )
+    args = argparse.Namespace(tag=True, no_prune_branches=True)
+    with caplog.at_level("INFO"):
+        assert next_prep._tag_and_report(tmp_path, args) == 0
+    assert "No release tag needed." in caplog.text
+    assert "skipped:" not in caplog.text
+
+
 def test_tag_and_report_advises_on_pending_fragments(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,

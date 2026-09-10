@@ -52,15 +52,15 @@ equivalent block by hand.)
 > Track 3 covers the rationale and how to keep it out of (or disabled in)
 > non-forge repos.
 
-To pin a specific plugin version (recommended):
+To pin a specific release (recommended), pin the marketplace `ref` to
+its tag (next section). Forge's `plugin.json` declares no version, so
+Claude Code identifies the installed plugin by the commit that ref
+resolves to — every release installs, including the ones cut between
+changelog assemblies ([`release-process.md`](release-process.md) §1).
 
-```jsonc
-// ~/.claude/installed_plugins.json
-{ "forge@forge": { "version": "v1.2.5" } }
-```
-
-Keep two version pins aligned: the pip `forge-scripts @ ...@vX.Y.Z` dep
-and the Claude plugin version. Releases bump both together.
+Keep two pins on the same tag: the pip `forge-scripts @ ...@vX.Y.Z` dep
+and the marketplace `ref`. `forge-upgrade` writes both; the next section
+covers making Claude Code follow a changed `ref`.
 
 ## Changing the marketplace `ref`
 

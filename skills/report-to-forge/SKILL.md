@@ -29,8 +29,11 @@ grep -n "forge" pyproject.toml | grep -i "git+\|forge-scripts"   # the pin
 ```
 
 Record: the installed `forge-scripts` version, the `pyproject.toml`
-pin, and the active plugin version — and **flag any mismatch between
-them explicitly**; skew is itself often the bug. `forge-doctor`'s skew
+pin, and the active plugin — forge's manifest declares no version, so
+that is the installed commit — and **flag any mismatch `forge-doctor`
+reports explicitly**; skew is itself often the bug. A commit and a
+version string are never comparable by eye: the doctor judges the
+plugin against the commit the pin serves. `forge-doctor`'s skew
 section is the source of truth (FOUNDATION §2: the forge CLI, never a
 hand-rolled fallback).
 

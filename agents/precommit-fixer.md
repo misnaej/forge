@@ -102,7 +102,7 @@ the install hint. Never fall back to raw `ruff` / `python -m`.
 | `test_naming_check.log` | **Edit** — rename per `expected → actual` pairs in the log; update keyword call sites. |
 | `repo_structure_check.log` | **Edit** `REPO_STRUCTURE.md` to match the tree per the log diff. |
 | `manifest_json.log` | **Edit** `.claude-plugin/plugin.json` per the parse / schema error. |
-| `plugin_version.log` | **Edit** `plugin.json["version"]` per your repo's plugin-version policy (the consumer `CLAUDE.md` should document it). The log states the required version. |
+| `plugin_version.log` | **Edit** `plugin.json["version"]` per your repo's plugin-version policy (the consumer `CLAUDE.md` should document it). The log states the required version. Never *add* a `version` to a manifest that declares none — it is keyed on its commit by design, and the step skips it. |
 | `changelog_version.log` — "N fragments added since this branch's base" | **REPORT ONLY.** A `changelog.d/` file this change did not create is another PR's entry (a stacked branch carries its parent's). Never merge, rewrite, or delete it, nor ask the caller to; report the names and that the branch looks stacked. |
 | `pip_audit.log` | **REPORT ONLY — never Edit dependency pins.** A pin bump ships in a dedicated `chore(deps)` PR or with explicit user approval, never riding a feature PR (FOUNDATION §6). Report each advisory with the affected pin, the suggested version, and where the pin lives. Never run `pip install`. |
 | Anything that looks like a secret leak (gitleaks-style) | **STOP.** Escalate to the human. Never rewrite history. |

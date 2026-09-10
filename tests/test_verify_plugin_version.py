@@ -6,6 +6,8 @@ import json
 import subprocess
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge import verify_plugin_version
 from tests.conftest import GIT_ENV as _GIT_ENV
 from tests.conftest import init_git_repo as _init_git_repo
@@ -13,8 +15,6 @@ from tests.conftest import init_git_repo as _init_git_repo
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def _write_plugin(repo: Path, version: str) -> None:
@@ -59,6 +59,64 @@ def test_parse_semver_rejects_invalid() -> None:
     assert verify_plugin_version._parse_semver("1.2") is None
     assert verify_plugin_version._parse_semver("v1.x.3") is None
     assert verify_plugin_version._parse_semver("") is None
+
+
+def test_main_skips_version_less_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A manifest with no "version" key skips both invariants: exit 0.
+
+    forge's own manifest shape: Claude Code keys a version-less manifest
+    on its commit SHA, so neither the rolling-next tag comparison nor
+    the declared-version documentation check has a version to judge —
+    even with a tag present, which would otherwise make the guard fire.
+    """
+    _init_git_repo(tmp_path)
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, check=True)
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text(json.dumps({"name": "x"}))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 0
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "commit SHA" in log
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        pytest.param(123, id="non-string"),
+        pytest.param("not-a-version", id="non-semver-string"),
+    ],
+)
+def test_main_fails_on_malformed_declared_version(
+    version: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A declared version that isn't readable as X.Y.Z semver → exit 1.
+
+    The manifest DECLARES a version (the "version" key is present —
+    `plugin_manifest_declares_version` keys on presence, not validity),
+    so neither invariant is skipped; but a bare number or a non-semver
+    string cannot be read as a version at all, so the comparison against
+    the tag fails outright rather than being silently skipped.
+
+    Args:
+        version: The malformed value to write into the manifest's
+            "version" field.
+    """
+    _init_git_repo(tmp_path)
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, check=True)
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text(
+        json.dumps({"name": "x", "version": version})
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
+    assert verify_plugin_version.main() == 1
+    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    assert "cannot compare" in log
 
 
 def test_skipped_without_plugin_json(

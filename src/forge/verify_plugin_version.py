@@ -1,12 +1,12 @@
 """Enforce the rolling-next and declared-version manifest invariants.
 
 Standalone phase CLI for the ``plugin_version`` step in the forge
-pre-commit sequence. Two invariants, both required for a healthy exit:
+pre-commit sequence. Both invariants apply only to a manifest that
+declares a version, and both are required for a healthy exit:
 
 1. **Rolling-next**: ``.claude-plugin/plugin.json["version"]`` > latest
-   git tag. The manifest version always names the next release about to
-   be tagged, so consumers pinning by tag never receive a stale
-   manifest.
+   git tag — the manifest names the next release about to be tagged
+   (shared-heading mode; fragment mode relaxes it, below).
 2. **Declared-version documented**: whatever version the manifest
    declares has a matching ``## vX.Y.Z`` heading in ``CHANGELOG.md``, so
    the identity Claude Code keys its plugin cache on is always one
@@ -16,6 +16,10 @@ Both invariants are skipped when:
 - ``.claude-plugin/plugin.json`` does not exist (consumer repo without
   a plugin manifest) — nothing declares a version, so neither rule has
   a subject.
+- The manifest has no ``version`` key (forge's own manifest): Claude
+  Code then keys the plugin on its commit SHA, so there is no declared
+  version for either rule to judge. A present but malformed value is
+  not this case — it still fails.
 
 Only the rolling-next invariant is skipped — declared-version
 documentation is still checked — when:
@@ -35,7 +39,9 @@ auto-tag``) advances tags past the manifest, and ``forge-changelog
 release`` is the single writer that re-syncs ``plugin.json``.
 ``plugin.json <= tag`` is therefore healthy, provided every pending
 fragment passes the gate (the next version must stay derivable);
-below-tag stays an error only in shared-heading mode.
+below-tag stays an error only in shared-heading mode. This module checks
+fragment validity only on that declared-version path; for a version-less
+manifest the ``changelog_version`` fragment gate is the sole enforcer.
 
 ``forge-precommit`` shells out to this CLI; agents may invoke it
 standalone to refresh just ``plugin_version.log``.
@@ -56,6 +62,7 @@ from forge.git_utils import (
     configure_cli_logging,
     latest_v_tag,
     parse_semver,
+    plugin_manifest_declares_version,
     read_local_plugin_version,
     release_tree_fingerprint,
     run_git,
@@ -123,9 +130,10 @@ def main() -> int:
     """Enforce the rolling-next and declared-version manifest invariants.
 
     Returns:
-        ``0`` on success or when skipped — including fragment mode
-        parked at the latest tag with valid pending fragments (see
-        :func:`_not_ahead_verdict`). ``1`` when ``plugin.json["version"]``
+        ``0`` on success or when skipped — including a manifest that
+        declares no version, and fragment mode parked at the latest tag
+        with valid pending fragments (see :func:`_not_ahead_verdict`).
+        ``1`` when ``plugin.json["version"]``
         is below the latest semver-style tag, at the tag outside a
         healthy fragment-mode parked state, when either version string
         is unparseable, or when the declared version has no matching
@@ -136,8 +144,9 @@ def main() -> int:
         prog="verify-forge-plugin-version",
         description=(
             "Assert .claude-plugin/plugin.json['version'] is strictly "
-            "greater than the latest git tag. Writes "
-            "code_health/plugin_version.log."
+            "greater than the latest git tag, when the manifest declares "
+            "a version (a version-less manifest is keyed on its commit "
+            "SHA and skipped). Writes code_health/plugin_version.log."
         ),
     ).parse_args()
 
@@ -146,6 +155,12 @@ def main() -> int:
         plugin = repo_root / ".claude-plugin" / "plugin.json"
         if not plugin.is_file():
             logger.info("(no .claude-plugin/plugin.json — skipped)")
+            return 0
+        if not plugin_manifest_declares_version(repo_root):
+            logger.info(
+                "(plugin.json declares no version — Claude Code keys the "
+                "plugin on its commit SHA; nothing declared to check — skipped)"
+            )
             return 0
 
         # Global semver-max ``v*`` tag, NOT ancestry-scoped ``git

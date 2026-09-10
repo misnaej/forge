@@ -73,7 +73,7 @@ sequence:
 | `ruff` | `fix-forge-ruff`: `ruff format` + `ruff check --fix --unsafe-fixes`, `git add` modified tracked files, write `code_health/ruff.log`. PASSes iff every violation cleared. |
 | `docstrings` | `verify-forge-docstrings` on the diff vs main |
 | `manifest_json` | Validates `.claude-plugin/*.json` parses |
-| `plugin_version` | Guards `plugin.json` version > latest git tag |
+| `plugin_version` | Guards `plugin.json` version > latest git tag, when the manifest declares one (forge's does not — skipped) |
 | `pip_audit` | `pip-audit` dependency scan (non-blocking — warns only) |
 
 `pytest` is intentionally **not** a pre-commit step (too slow for commit
@@ -98,19 +98,20 @@ forge-precommit --json
 The package version comes from the latest git tag. There is no manual
 `version = "x.y.z"` to bump in `pyproject.toml`.
 
-### Rolling-next plugin.json
+### A version-less plugin.json
 
-`.claude-plugin/plugin.json` is a static JSON file — Claude Code reads
-it as-is, no setuptools-scm. To keep the manifest from drifting from
-the git tag, `forge-precommit` runs `step_plugin_version`: it asserts
-`plugin.json["version"]` is strictly greater than the latest semver
-git tag. The guard skips on the release commit itself (HEAD == tag's
-commit) and when `.claude-plugin/plugin.json` is absent.
+`.claude-plugin/plugin.json` declares **no** `version`. Claude Code then
+keys the plugin on the commit it installs, so every commit is its own
+plugin version and nothing about the manifest has to track the tags
+([`docs/release-process.md`](docs/release-process.md) §1). Do not add a
+`version` back: tag-per-merge cuts the tag after the merge, so no
+committed manifest could name the tag that ships it, and `/plugin update`
+would stop delivering new commits.
 
-**Convention (fragments mode):** a PR never bumps `plugin.json` — it
-adds a `changelog.d/<slug>.<type>.md` fragment carrying a `bump:` level;
-the tag-release workflow computes and cuts the tag on merge, and
-`forge-changelog release` later syncs the manifest at an assembly PR.
+**Convention (fragments mode):** a PR adds a
+`changelog.d/<slug>.<type>.md` fragment carrying a `bump:` level; the
+tag-release workflow computes and cuts the tag on merge, and
+`forge-changelog release` later assembles `CHANGELOG.md` at an assembly PR.
 
 ### Release flow (single-track)
 
@@ -119,10 +120,10 @@ the tag-release workflow computes and cuts the tag on merge, and
    CI green → user merges.
 2. The `tag-release` workflow tags the merge automatically
    (`forge-changelog auto-tag`): last tag + strongest new fragment
-   level. `forge-next-prep --tag` is the manual fallback.
+   level. Running `forge-changelog auto-tag` on that commit is the
+   manual fallback.
 3. Periodically a release/assembly PR runs `forge-changelog release` to
-   assemble `CHANGELOG.md` from the accumulated fragments and sync
-   `.claude-plugin/plugin.json`.
+   assemble `CHANGELOG.md` from the accumulated fragments.
 
 For breaking changes, document the migration in the PR description
 and the GitHub release notes before tagging.
