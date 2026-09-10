@@ -295,7 +295,16 @@ def test_delete_comment_false_and_warns_on_failure(
 def test_patch_comment_true_with_expected_argv_and_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The edit runs `-X PATCH ... -f body=@-` with the new body on stdin."""
+    """The edit runs `-X PATCH ... -F body=@-` with the new body on stdin.
+
+    The flag is the whole point, which is why it is asserted as argv
+    rather than by exit code. `-f/--raw-field` sends static strings, so
+    `-f body=@-` PATCHed the two literal characters `@-` over the
+    comment: a valid request, a zero exit, and the collapsed text
+    unrecoverable. Only `-F/--field` gives `@` its documented meaning
+    and reads the body from stdin. An earlier version of this test
+    pinned `-f`, which is how the defect survived.
+    """
     captured: dict[str, object] = {}
 
     def _fake_run(cmd: list[str], **kwargs: object) -> FakeProc:
@@ -321,10 +330,11 @@ def test_patch_comment_true_with_expected_argv_and_body(
         "-X",
         "PATCH",
         "repos/{owner}/{repo}/issues/comments/555",
-        "-f",
+        "-F",
         "body=@-",
     ]
     assert captured["input"] == "new body"
+    assert "-f" not in captured["cmd"]
 
 
 def test_patch_comment_false_and_warns_on_failure(

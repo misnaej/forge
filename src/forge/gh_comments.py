@@ -282,7 +282,12 @@ def patch_comment(comment_id: int, body: str) -> bool:
             "-X",
             "PATCH",
             f"repos/{{owner}}/{{repo}}/issues/comments/{comment_id}",
-            "-f",
+            # `-F`, never `-f`: only `--field` gives `@` its documented
+            # meaning, so `@-` reads the body from stdin. `--raw-field`
+            # sends static strings, which made this PATCH overwrite the
+            # comment with the two literal characters `@-` — a valid
+            # request, a success exit, and the collapsed text gone.
+            "-F",
             "body=@-",
         ],
         input=body,
