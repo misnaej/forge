@@ -130,12 +130,13 @@ def _tag_misuse_warning(repo_root: Path) -> str | None:
 
     Per-merge tagging is the plugin-repo pattern: the rolling-next
     manifest names the version to tag. A single-track repo with no
-    ``.claude-plugin/plugin.json`` releases via ``forge-release``
-    instead, so ``--tag`` there is almost always a command copied from
-    forge's own workflow — warn loudly rather than no-op silently. A
-    manifest that declares no version is not misuse: it is keyed on its
-    commit, tags come from tag-per-merge, and ``--tag`` correctly finds
-    nothing to do.
+    ``.claude-plugin/plugin.json`` releases via ``forge-release`` — or,
+    under tag-per-merge (``[tool.forge.release].auto = "merge"``), via
+    ``forge-changelog auto-tag`` — so ``--tag`` there is almost always a
+    command copied from forge's own workflow: warn loudly, naming the
+    repo's actual tagger, rather than no-op silently. A manifest that
+    declares no version is not misuse: it is keyed on its commit, tags
+    come from tag-per-merge, and ``--tag`` correctly finds nothing to do.
 
     Args:
         repo_root: Repo root.

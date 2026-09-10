@@ -83,16 +83,18 @@ claude plugin install forge@forge  # CRITICAL — marketplace remove also
 ```
 
 `add <repo>@<ref>` records the ref in the registration directly
-(verified on Claude Code 2.1.267: `known_marketplaces.json` then carries
-`"ref": "<ref>"`), so no hand edit of `~/.claude/settings.json` is
-needed. `forge-doctor` names this exact sequence when the machine's
-registration serves a different ref than the repo pins.
+(verified on Claude Code 2.1.267: the `forge` entry in
+`known_marketplaces.json` then carries `source.ref = "<ref>"`), so no
+hand edit of `~/.claude/settings.json` is needed. `forge-doctor` names
+this exact sequence when the machine's registration serves a different
+ref than the repo pins.
 
-The `/plugin install forge@forge` step is the footgun. `/plugin marketplace remove` evicts the
-plugin from `~/.claude/installed_plugins.json` along with the
-marketplace entry. Without `/plugin install forge@forge` after the
-re-add, `/reload-plugins` finds nothing to load and returns silently —
-no error, no warning. The agent ecosystem just stops working.
+The `claude plugin install forge@forge` step is the footgun. `claude
+plugin marketplace remove` evicts the plugin from
+`~/.claude/plugins/installed_plugins.json` along with the marketplace
+entry. Without the install after the re-add, `/reload-plugins` finds
+nothing to load and returns silently — no error, no warning. The agent
+ecosystem just stops working.
 
 ### The `/reload-plugins` `0 skills` counter
 
