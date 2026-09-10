@@ -24,7 +24,7 @@ from unittest.mock import patch
 
 import pytest
 
-from forge import config, git_utils, precommit
+from forge import config, git_utils, precommit, version_surfaces
 from forge.pip_audit_json import AuditRun
 from forge.smart_test import lifecycle as _lifecycle
 from tests.conftest import (
@@ -3036,8 +3036,8 @@ def test_step_plugin_sync_skips_when_not_cached(
     """No cached install of the plugin → skip mentioning it isn't installed."""
     _write_plugin_manifest(tmp_path, "2.9.0")
     monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
-    monkeypatch.setattr(precommit, "find_plugin_cache", lambda _name: None)
-    monkeypatch.setattr(precommit, "plugin_cache_version", lambda _root: None)
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: None)
+    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: None)
     result = precommit.step_plugin_sync(tmp_path)
     assert result.passed
     assert result.skipped
@@ -3051,8 +3051,8 @@ def test_step_plugin_sync_passes_when_cache_matches_manifest(
     """A cache version equal to the manifest's is current — no failure."""
     _write_plugin_manifest(tmp_path, "2.9.0")
     monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
-    monkeypatch.setattr(precommit, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(precommit, "plugin_cache_version", lambda _root: "2.9.0")
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
+    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.9.0")
     result = precommit.step_plugin_sync(tmp_path)
     assert result.passed
     assert not result.skipped
@@ -3066,8 +3066,10 @@ def test_step_plugin_sync_passes_when_cache_ahead_of_manifest(
     """A cache version ahead of the manifest is also current — no failure."""
     _write_plugin_manifest(tmp_path, "2.9.0")
     monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
-    monkeypatch.setattr(precommit, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(precommit, "plugin_cache_version", lambda _root: "2.10.0")
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
+    monkeypatch.setattr(
+        version_surfaces, "plugin_cache_version", lambda _root: "2.10.0"
+    )
     result = precommit.step_plugin_sync(tmp_path)
     assert result.passed
 
@@ -3079,8 +3081,8 @@ def test_step_plugin_sync_warns_when_behind_and_unconfigured(
     """Lagging cache with no [tool.forge.plugin_sync] config is WARN, not block."""
     _write_plugin_manifest(tmp_path, "2.9.0")
     monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
-    monkeypatch.setattr(precommit, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(precommit, "plugin_cache_version", lambda _root: "2.8.0")
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
+    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.8.0")
     result = precommit.step_plugin_sync(tmp_path)
     assert not result.passed
     assert result.non_blocking
@@ -3095,8 +3097,8 @@ def test_step_plugin_sync_blocks_when_behind_and_configured_blocking(
     _write_plugin_manifest(tmp_path, "2.9.0")
     _write_pyproject(tmp_path, "[tool.forge.plugin_sync]\nblocking = true\n")
     monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
-    monkeypatch.setattr(precommit, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(precommit, "plugin_cache_version", lambda _root: "2.8.0")
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
+    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.8.0")
     result = precommit.step_plugin_sync(tmp_path)
     assert not result.passed
     assert not result.non_blocking

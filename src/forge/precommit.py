@@ -113,11 +113,9 @@ from forge.version_surfaces import (
     DIST_NAME,
     SKEW_REMEDIATION,
     editable_install_origin,
-    find_plugin_cache,
     hook_sidecar_version,
     pip_version,
-    plugin_cache_version,
-    read_json,
+    plugin_cache_status,
 )
 
 
@@ -685,19 +683,17 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
             output="(CI / non-interactive — skipped)",
             skipped=True,
         )
-    data, _err = read_json(manifest)
-    plugin_name = str(data.get("name") or repo_root.name)
-    manifest_version = str(data["version"]) if data.get("version") else None
-    cached = plugin_cache_version(find_plugin_cache(plugin_name))
-    if cached is None:
+    status = plugin_cache_status(repo_root)
+    plugin_name, cached = status.plugin_name, status.cached
+    manifest_version = status.declared
+    if status.state == "uncached":
         return StepResult(
             name="plugin_sync",
             passed=True,
             output=f"({plugin_name} plugin not installed in Claude Code — skipped)",
             skipped=True,
         )
-    cached_t, manifest_t = parse_semver(cached), parse_semver(manifest_version or "")
-    if cached_t is None or manifest_t is None or cached_t >= manifest_t:
+    if status.state != "behind":
         return StepResult(
             name="plugin_sync",
             passed=True,
