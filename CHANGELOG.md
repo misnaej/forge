@@ -20,6 +20,116 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v6.11.0 — 2026-09-10
+
+### Changes
+- **The CVE scan runs when its answer could have changed, not on every commit.** It reads the packages installed in your environment and a remote advisory database, neither of which moves because a commit happened — yet every commit waited on the network for it, costing between a twentieth and a third of the commit. It now runs once since the branch forked, configurable through `[tool.forge.pip_audit].cadence` (`branch`, `hours` with `max_age_hours`, or `always` for the old behaviour). Every uncertain case still scans: no previous scan, an unreadable one, one dated in the future, an unrecognised cadence.
+- **Nothing publishes unscanned.** PR finalization forces a scan, as does naming the step (`forge-precommit --only pip_audit`) or setting `FORGE_PIP_AUDIT_FORCE=1`, so strict mode always has a current answer to escalate. Three documents that said the scan runs on every commit, and one docstring that treated a stale sidecar as abnormal, are corrected.
+
+## v6.10.0 — 2026-09-10
+
+### Fixes
+- **`forge-doctor` no longer reports a plugin-cache skew nothing can clear.** It compared the cached plugin's version against the pip package's, which are not the same number and never converge: in fragments mode the manifest parks at the latest tag while the pip version derives from it. So the warning named a command, and the command answered that nothing was out of date — both true. The cache is now judged against the repository's own manifest, the comparison the `plugin_sync` pre-commit step already makes, and the three-surface check compares only the pip package and the git hooks, which genuinely share one install. That warning sits exactly where a real staleness problem appears, so one that could never be cleared was training people to ignore the one that matters.
+- **`forge-doctor` tells you when a gate's tool has drifted below its pin.** An opt-in step's tool — the type checker, say — could be any version the pin allows. A machine's copy and the one CI installs then disagree about what counts as an error, and a change passes locally and fails in the cloud on code it never touched. When the installed version is below the declared floor, the doctor now says so, as an advisory that never sways the exit code.
+- **The documented way to reproduce a runner now empties `HOME` too.** One of this change's own tests passed locally only because a real plugin cache existed under the developer's home directory, and failed on a runner that has none. The recipe's line gains `HOME=$(mktemp -d)` alongside the CI flag and the git-config scrubbing.
+
+## v6.9.0 — 2026-09-10
+
+### Fixes
+- **The one-fragment-per-PR gate runs on a manifest-versioned repo.** `changelog_version` checked for a plugin manifest first and skipped everything, so on a repo that has both a manifest and fragments mode — forge itself — the fragment checks never ran at all, and the step's own log said "skipped" every time. Fragments mode is judged first now; the two checks are independent, since the manifest short-circuit only concerns the declared-version invariant that `verify-forge-plugin-version` owns. Expect the gate to start blocking a branch that legitimately carries two fragments, which is the point of it.
+- **A failing check in CI prints what was wrong.** The summary named the step and pointed at a file under `code_health/`, which on a runner is deleted the moment the run ends — so the failure named itself and nothing else, and diagnosing it meant reproducing the checker locally at the right tool version. The step's own output is now echoed under that pointer when `forge.run_context.is_ci()` is true. Blocking failures only, and the text is capped at the same limit forge already uses for embedded evidence, so a large lint failure cannot flood a log. Local runs are unchanged. The output lands in the job log: consumers whose logs are forwarded beyond the repository should weigh that.
+
+## v6.8.1 — 2026-09-10
+
+### Fixes
+- **The hook test file runs again on main.** Two pull requests were green apart and broken together: one replaced the hook-test helpers' keyword arguments with an options object and converted every call site it could see, the other added tests written against the old signature. Git merged both without a conflict, and fourteen tests raised `TypeError` on main. The six stranded call sites are converted.
+- **CI can fail on a test failure again.** The workflow piped `pytest` into `tee` under a step whose comment claimed GitHub's default shell sets `pipefail`. It does not: an unspecified `run:` step is `bash -e {0}`, so the step exited with `tee`'s status and a red suite reported success — which is why main stayed green through fourteen failing tests. The step declares `shell: bash`, the only form that gets `-eo pipefail`. The same line ships to consumers in the CI recipe and is fixed there too, so anyone who adopted it should re-run their suite: a failure may have been masked.
+- **The git-touching tests no longer depend on the machine's git identity.** Once CI could fail, five of them did — on a runner, where no global `user.email` exists, a `git commit` inside a temporary repo exits 128 and the branch it was meant to create never appears. The shared helper writes the identity into each repo it creates, so the later calls that inherit the ambient environment work anywhere. The shared git environment now reads no configuration from the machine at all and names every branch it creates, including the bare repositories whose default branch a runner would otherwise call `master` — so the suite behaves the same on a workstation and a runner instead of quietly depending on whatever the developer configured.
+- **Two suites read their environment instead of stating what they test.** The release tests inherited whichever branch guard the environment selected — `forge-release --from-changelog` asks a different question on a workstation than in CI — so they exercised one path locally and the other on the runner. They pin the mode now, as the two tests that always meant CI already did. The CI recipe documents how to reproduce a runner locally: `CI=true GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null pytest`.
+
+## v6.8.0 — 2026-09-09
+
+### Fixes
+- **`forge:issue-triage` sees the whole backlog, or refuses to publish.** Its data pulls capped at 200 rows — three of them at `gh`'s silent default of 30, including the one the Backlog Index is built from — and `gh issue list` returns the newest rows first, so a backlog larger than the cap lost its oldest issues with no warning and exited 0. Every pull now asks for 1000, and any mode that publishes a count or the Index first compares the rows it got against the repository's real open-issue total; short means report and stop, leaving the previous Index standing.
+- **The 180-day staleness scan runs off macOS.** It used `date -u -v-180d`, a BSD-only form that fails on Linux and in CI. The date is computed with Python, which every forge install already requires.
+- **`forge:pr-manager` trusts the evidence it is handed.** Reporter reports, pre-commit results and a change-scoped test run, named with the SHA they were gathered at, are authoritative and are never re-run — twice the agent started its own suite instead and handed back "waiting for the run to complete" having created no pull request, once after more than two hours. The strict pre-commit pass is likewise skipped when results for the current `HEAD` were supplied, and the agent's two modes are stated so a caller knows what supplying evidence changes.
+- **FOUNDATION §6 now binds every agent, not just this one:** a job an agent starts carries a bound it chose, and exceeding it is a finding reported with what ran and what remains — never a silent wait returned as a result.
+- **The same silent truncation is fixed in `/next` and `/sentinel`,** whose own open-issue lookups asked for no limit either — `/next`'s successor search was already truncating on forge's own backlog.
+
+## v6.7.1 — 2026-09-09
+
+### Fixes
+- **Five git/gh guards no longer miss a command that does not start the line.** `block_protected_branches`, `block_no_verify`, `block_claude_attribution`, `block_pr_merge` and `block_unverified_pr_create` matched their own hand-rolled `^git …` / `^gh …` patterns, so a leading space, an environment-variable prefix, a `cd … &&` chain or a subshell walked past all five. They now source the shared anchor library the rest of the guard family already uses, and fail closed if it is unreadable. This matters most for `forge:git-commit-push`, the one agent exempt from `block_raw_git`.
+- **The `gh` guards see a repository override.** The new `GH_ANCHOR` tolerates `gh`'s global options, so `gh --repo owner/name pr merge 1` no longer slips past `block_pr_merge`, `block_unverified_pr_create` or `block_claude_attribution` — a gap the hand-rolled patterns had too.
+- **The protected-branch destination guard reads every push in a command.** It stripped its prefix literally and then judged only one invocation, so a chain could carry a push to a protected branch in front of a harmless one. Each invocation is now checked on its own.
+- **`block_no_verify` catches the short form.** `git commit -n` is `--no-verify` and now blocks, whether or not a separator follows it; `git push -n` is `--dry-run` and deliberately does not.
+
+## v6.7.0 — 2026-09-09
+
+### Fixes
+- **`forge:precommit-fixer`'s three-run cap is enforced by the `block_fixer_recon` hook.** Each full `forge-precommit` the fixer runs is recorded in `code_health/agent_timing.jsonl` (a `precommit_full_run` line beside the agent-timing events); the fourth is refused with a STUCK reason the agent relays. `--only <step>` refreshes never count. `forge-agent-profile` reads those lines as its primary cap-breach source. A fixer that legitimately needed a fourth run now hands back instead.
+- **The one-fragment-per-PR gate counts against the PR's real base.** On a branch stacked on an unmerged PR, the parent's `changelog.d/` fragment used to count as this branch's, and the gate's advice ("merge the bullets") once led the fixer to propose deleting it. The gate now resolves the PR's base (`GITHUB_BASE_REF`, else the open PR's target via `gh`, else the configured base) and its message names the stacked-PR case instead of prescribing a merge; the fixer treats fragment-count failures as REPORT-ONLY and never edits a fragment it did not create.
+- **The profile is consulted, not just available.** `/report-to-forge` now requires `forge-agent-profile` for any report about an agent's behaviour, and `/next` reads it once per cleanup phase so a loop suspect or a cap breach from the task just finished is named while it is still fresh — the ledger was previously written on every run and read only when someone thought to look.
+
+## v6.6.0 — 2026-09-09
+
+### Features
+- **Choosing a model tier above `opus` is now the user's call, not an agent's.** A new FOUNDATION §2 rule states it alongside the other approval gates: an agent raises `fable` as a possibility with one line on what the step would gain, then waits — it never sets `model: fable` in a shipped definition, and never spawns a subagent on it, on its own judgment. Approval covers the work it was granted for, not every later step; absent it the ceiling stays `opus`. `agents/_TEMPLATE.md` carries the mechanism (the tier in its model-per-role table and frontmatter enum) and points at §2. The gate exists because either an agent's frontmatter or a spawned subagent's `model` param can name the tier silently, spending on a choice the user never made.
+
+## v6.5.1 — 2026-09-09
+
+### Fixes
+- **Generated docs are rebuilt by the forge you are committing with.** `regen_docs` and `forge-resync --resolve-conflicts` used to start `forge-gen-cli-reference` / `forge-gen-api-digest` by name, so on a machine with several forge checkouts another checkout's older generator could rewrite the doc while the step reported PASS. Both now launch the generator from the running installation (`python -m <module>`, via the new `forge_cli_argv` helper), and a name the running forge does not declare fails loudly instead of falling back to PATH.
+
+## v6.5.0 — 2026-09-09
+
+### Features
+- **Agent and subagent time is now measured.** A new `log_agent_timing` Claude Code hook appends one JSON line per `SubagentStart`, `SubagentStop` and `PostToolUse` event to `code_health/agent_timing.jsonl` (per-workspace, gitignored; `FORGE_NO_AGENT_TIMING=1` switches it off). The new `forge-agent-profile` reporter turns that ledger — and, best-effort, the subagent transcripts it names — into per-agent-type wall and active time, the slowest runs, the costliest tools, loop suspects (one identical tool call repeated inside a single prompt) and `forge:precommit-fixer` runs past its three-run cap; `--agent-type`, `--since`, `--last`, `--json`, `--transcripts <dir>` for history predating the hook, and an append-only `agent_profile_history.log`. `/perf analyze` reads it as a fifth surface and `/report-to-forge` quotes it as evidence for an agent defect.
+- **One ledger writer.** `telemetry_history.log`, `smart_test_history.log` and the new profile ledger are written and parsed by `forge.ledger` (`append_ledger_line` / `parse_ledger`); `smart_test_history.log` lines now use the same two-space field separator as the other ledgers.
+
+## v6.4.0 — 2026-09-09
+
+### Fixes
+- **`forge:perf-optimizer` is an advisor with no `Write`/`Edit`.** It no longer edits the repo tree while benchmarking: every strategy is applied to a scratch copy under `/tmp/perf_<target>_src/` and the winner is delivered as a patch the main agent applies. The agent's contract is unchanged for callers — it always reverted its edits and left a clean tree — but the winner now arrives as a patch instead of a description. `forge-audit-agents` now checks advisor agents (`ADVISOR_AGENT_NAMES`) for mutating tools, so this cannot regress.
+- **`install-forge-readme-badges` picks the CI workflow deterministically** — `ci.yml`/`ci.yaml` by name, else the workflow whose `on:` includes `pull_request`. With neither, the README's existing CI badge is kept and a warning logged instead of the badge being re-pointed at the alphabetically first workflow.
+- **`forge-pr-squash-comment` and `forge-pr-wrapup` only retire their own comments.** Marker-carrying comments are matched by author against the `gh` login (`own_login`); a stranger's comment with the same marker is logged and left alone, and with no identifiable login nothing is deleted or collapsed. Both hooks' self-exclusion is anchored to the command position, so a raw `gh pr comment` merely mentioning the CLI name is no longer exempt.
+
+## v6.3.0 — 2026-09-09
+
+### Features
+- **A stale forge install can no longer commit.** `env_sync` now also blocks when the editable install on `PATH` was built from a different clone or when the git hooks lag the installed package; the new `plugin_sync` step blocks (forge) or warns (consumers, `[tool.forge.plugin_sync].blocking`) when the cached Claude Code plugin is older than `.claude-plugin/plugin.json`, naming `/plugin update` + `/reload-plugins`. The version readers move to `forge.version_surfaces`, shared with `forge-doctor`. Forge's own tree gains tracked `.githooks/post-merge.d/` and `post-checkout.d/` extensions that re-run `./dev/setup.sh` on every merge and branch switch, plus a CLAUDE.md contributing rule (file freely; resolve only through triage → plan → sentinel) and a `[sentinel]` pickup/PR comment trail on issues.
+
+## v6.2.0 — 2026-09-09
+
+### Features
+- **`forge-pr-wrapup` — the wrap-up comment is validated and posted mechanically.** `validate` refuses a wrap-up that narrates a clean check (a clean section is one line), carries more than one summary line, or exceeds 120 words plus 40 per findings section; `post` stamps the new wrap-up, collapses every earlier one into a `<details>` block (history kept, one live attestation visible), and keeps the squash comment newest. A new `block_raw_wrapup_post` hook refuses raw `gh` posts of `code_health/pr_wrapup.md`. Shared comment plumbing moved to `forge.gh_comments`.
+
+## v6.1.0 — 2026-09-09
+
+### Features
+- **Generated-artifact merge conflicts resolve mechanically.** `forge-resync --resolve-conflicts` resolves a merge whose only conflicts are forge-generated artifacts (`docs/api-digest.md`, `docs/cli-reference.md`, `FOUNDATION.md`, `docs/architecture.dsl` when C4 is configured) by regenerating each from the merged tree, verifying with the generator's `--check`, and staging — refusing, touching nothing, when any other path conflicts. The generator table is `pr_delta.REGEN_COMMANDS`; `git_utils.unmerged_paths` is shared with `forge-rebump`. The new `warn_generated_conflicts` Claude Code hook names the command right after such a merge, and `/pr` Step 0.5, pr-manager, and FOUNDATION §6 state the rule: a generated file is never hand-merged.
+
+## v6.0.0 — 2026-09-09
+
+### Changes
+- **BREAKING: `block_install_deps` now governs pixi by an allowlist.** `run`, `shell`, `install`, `list`, `info` and `tree` are permitted; every other pixi verb blocks, including ones pixi has yet to ship. Previously allowed verbs that now block: `lock` and `project … add` (both write the manifest or the lock), `exec` (materialises a temporary environment of arbitrary packages), plus `config`, `auth`, `clean`, `self-update`, `task` and anything unrecognised. Enumerating verbs to block kept missing them, so the short permitted set is named instead and the guard fails closed. A read-only verb caught by that default costs one `!`; drop `pixi` from `[tool.forge.hooks] block_install_deps` to exempt it entirely.
+- **`<mgr> run … pip install` no longer needs the install verb adjacent to `run`.** `conda run -n base pip install x` and `pixi run --locked pip install x` — the latter being the exact form this hook's own advisory recommends — were allowed through; so was `python -m pip install` after any manager's `run`. All five managers are covered.
+- **Compound-command syntax no longer hides an install from the guard.** Every rule now treats parentheses, braces, a leading `!` and the keywords `then`/`else`/`elif`/`do` as command boundaries, so `(pip install x)`, `{ pip install x; }`, `! pip install x`, `if true; then pip install x; fi` and `case v in x) pip install y;; esac` all block — as do the conda, uv, poetry, pipenv and `python -m pip` forms, and `(pixi run pip install x)`. Previously a single pair of parentheses defeated the whole hook, for every manager; the `--locked` advisory was silent inside one too. This predates the pixi feature and is the widest of the gaps closed here. The cost is more false positives on quoted prose containing those characters — the same trade the git-guard family already makes.
+- **`uv tool install` and `uv python install` now block**, matching the existing `pixi global install` treatment; both install outside the project.
+
+## v5.3.0 — 2026-09-09
+
+### Features
+- **FOUNDATION §18 "Cost Goals"** — two standing goals every consumer inherits. Cost already had machinery — the §8 test lifecycle, §17's depth-tier selection, the non-gating duration warning — but no stated goal those mechanisms serve. **Test economy**: a test's runtime is justified by what only it detects, so when a test is slow the question is what unique behaviour would go unchecked if it were shrunk — shrink inputs, never assertions. **Library performance**: hot paths are profiled rather than guessed, and a change shows a same-machine before/after.
+- **Both are measured as ratios, not seconds**, because wall-clock durations are not comparable across machines: unique covered statements per second for a test (computable from a `coverage json --show-contexts` export, with parametrized variants collapsed to their base function first), and the same-machine before/after ratio `forge:perf-optimizer` already reports for a hot path. Neither carries a threshold to tune.
+- **Enforcement is a review lens, never a gate** — no build fails on a duration. `forge:design-checker` gains a cost lens for diffs that add tests or touch a hot path, and `forge:test-advisor`'s necessity gate now asks what a test uniquely detects against what it costs every run.
+
+## v5.2.1 — 2026-09-09
+
+### Features
+- **`forge-slow-tests-report --coverage-json` ranks tests by worth, not just by seconds** — given a `coverage json --show-contexts` export (record it with `pytest --cov-context=test`) it reports unique covered statements per second per test function, lowest first: a slow test whose coverage is entirely duplicated is a deletion candidate, while a slow test with unique coverage is kept and its inputs shrunk. Parametrized variants collapse to the base function before uniqueness is computed, phases and variants sum into one cost, and statements are scoped to `[tool.forge].source_dirs`.
+- **A repo with no duration baseline no longer reports its whole suite as new-slow.** `--baseline` against a missing or malformed file now prints one skip line instead of an `(new)` entry for every test above the floor; a real but empty baseline still reports new-slow, which is correct. `/perf analyze` passes `--baseline` unconditionally, so this was that mode's default output in any repo without the file.
+
 ## v5.2.0 — 2026-09-08
 
 ### Features
