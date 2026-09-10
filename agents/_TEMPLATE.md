@@ -89,13 +89,20 @@ return to the caller, which owns remediation and posting.
 Tier on **frequency × judgment-load**, not judgment alone. `haiku`
 pays off only where an agent is **both** high-frequency **and**
 low-judgment (dispatch / transcription off structured input) —
-`precommit-fixer`, `git-commit-push`. A low-judgment agent that runs
+`precommit-fixer`. A low-judgment agent that runs
 **rarely** (e.g. `weekly-summary`) saves almost nothing on a downgrade,
 so leave it at the tier its output quality wants. A **content-generating**
 agent whose value is the quality of what it writes (`docs-types-checker`
 writes docstrings that ship) stays `sonnet`+ regardless of frequency — a
 shallow-but-passing artifact is worse than none. Downgrade only when the
 cost win is real *and* quality is untouched.
+
+**Irreversibility raises the floor too.** `git-commit-push` looks like
+dispatch and was tiered as such, until it met a gate its contract did
+not cover and invented a changelog fragment to get past it — choosing a
+slug, a type and a bump level, and with them the released version. An
+agent whose actions cannot be undone, and which will meet gates no
+contract enumerates in full, is judging whether or not the tier says so.
 
 `fable` is the exception to tiering by workload: it is never chosen
 here. The ceiling is `opus` until the user says otherwise, per

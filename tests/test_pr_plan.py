@@ -126,6 +126,53 @@ def _repo_with_modified_file(
     return repo
 
 
+def _repo_with_base_merge(
+    tmp_path: Path, branch_work_after_merge: str | None = None
+) -> tuple[Path, str]:
+    """Build a feature branch that merged a large ``main`` after being verified.
+
+    The shape a routine base sync produces, and the one linear-history
+    fixtures cannot express: ``<verified>..HEAD`` is dominated by commits
+    the branch never authored (200 lines plus an ``agents/`` path), while
+    the branch's own file moved only if *branch_work_after_merge* says so.
+
+    Args:
+        tmp_path: Pytest ``tmp_path`` fixture directory to build under.
+        branch_work_after_merge: Content committed to the branch's own
+            file after the merge; ``None`` leaves it at the verified
+            content.
+
+    Returns:
+        ``(repo root checked out on feature, verified branch SHA)``.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    _commit_files(repo, {"tests/fixture.py": "x = 1\n"}, "seed on main")
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature"], cwd=repo, env=GIT_ENV, check=True
+    )
+    verified_sha = _commit_files(repo, {"tests/fixture.py": "x = 2\n"}, "branch work")
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, env=GIT_ENV, check=True)
+    bulk = "\n".join(f"line {i}" for i in range(200)) + "\n"
+    _commit_files(
+        repo,
+        {"docs/bulk.md": bulk, "agents/other.md": "shipped behavior\n"},
+        "large unrelated main work",
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "feature"], cwd=repo, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "merge", "-q", "--no-edit", "main"], cwd=repo, env=GIT_ENV, check=True
+    )
+    if branch_work_after_merge is not None:
+        _commit_files(
+            repo, {"tests/fixture.py": branch_work_after_merge}, "more branch work"
+        )
+    return repo, verified_sha
+
+
 def _git_short_sha(repo: Path, ref: str = "HEAD") -> str:
     """Return the short SHA of *ref* via a real ``git rev-parse``.
 
@@ -443,6 +490,51 @@ def test_classify_delta_unresolvable_sha_falls_back_to_full(
 
     assert plan.mode == "full"
     assert any("does not resolve" in r for r in plan.reasons)
+
+
+def test_classify_delta_survives_base_merge_with_unchanged_branch_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A base merge alone never costs the branch its delta eligibility.
+
+    SCENARIO: after the wrap-up was posted the branch merged a large
+    ``main`` carrying 200 lines and a high-blast-radius path. The
+    branch's own file is byte-identical to the verified tree, so the
+    reviewed content did not move — an unscoped ``<sha>..HEAD`` reading
+    would measure the merge and force a full re-review of work the branch
+    did not author.
+
+    MOCK SETUP: ``pr_plan._latest_verified_sha`` returns the real
+    pre-merge branch commit, the same seam the other delta cases use.
+    """
+    repo, verified_sha = _repo_with_base_merge(tmp_path)
+    monkeypatch.setattr(pr_plan, "_latest_verified_sha", lambda _pr: verified_sha)
+
+    plan = pr_plan.classify(repo, "main", 7)
+
+    assert plan.mode == "delta"
+    assert any("differs only by a base merge" in r for r in plan.reasons)
+
+
+def test_classify_delta_after_base_merge_still_sees_branch_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scoping to the branch's own files never hides the branch's own work.
+
+    SCENARIO: the same base merge, but the branch then rewrote its own
+    file past ``DELTA_LINE_THRESHOLD`` — that IS unreviewed content, so
+    the full round is correct even though the merge's lines are excluded.
+    """
+    big = "\n".join(f"y{i} = {i}" for i in range(60)) + "\n"
+    repo, verified_sha = _repo_with_base_merge(tmp_path, branch_work_after_merge=big)
+    monkeypatch.setattr(pr_plan, "_latest_verified_sha", lambda _pr: verified_sha)
+
+    plan = pr_plan.classify(repo, "main", 7)
+
+    assert plan.mode == "full"
+    assert any("full re-check required" in r for r in plan.reasons)
 
 
 # --- _latest_verified_sha(): happy path -----------------------------------

@@ -2471,9 +2471,12 @@ def _handle_fragment_mode(
             passed=False,
             output=(
                 f"{len(triggers)} changed file(s) require a changelog "
-                f"fragment (first: {triggers[0]}). Add "
-                f"{FRAGMENTS_DIR}/<slug>.<type>.md with a "
-                "'bump: patch|minor|major' first line "
+                f"fragment (first: {triggers[0]}). The fragment is the PR "
+                "author's to write — the main agent, before this commit; a "
+                "commit agent that meets this gate reports and stops instead "
+                "of authoring one, because slug, type and bump level choose "
+                f"the released version. Add {FRAGMENTS_DIR}/<slug>.<type>.md "
+                "with a 'bump: patch|minor|major' first line "
                 "(docs/consumer-release.md, fragments mode). "
                 "No-version opt-outs apply unchanged."
             ),

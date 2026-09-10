@@ -134,3 +134,23 @@ def test_strict_mode_agent_command_forces_cve_scan() -> None:
     body = (REPO_ROOT / "agents" / "precommit-fixer.md").read_text()
     forced = f"{precommit._PIP_AUDIT_FORCE_ENV}=1 forge-precommit"
     assert forced in body, f"strict-mode Phase 1 must run `{forced}`"
+
+
+def test_git_commit_push_agent_carries_changelog_contract() -> None:
+    """The shipped commit agent is forbidden from authoring fragments.
+
+    SCENARIO: `forge:git-commit-push` was observed inventing a
+    `changelog.d/` fragment to clear the `changelog_updated` gate,
+    picking slug, type and `bump:` level — and with them the released
+    version — inside a commit told to stage two files. The contract that
+    stops a repeat only works if it ships, and the agent doc is what the
+    agent reads.
+
+    EXPECTED BEHAVIOR: the shipped body marks `changelog.d/` REPORT ONLY,
+    forbids every write verb, and hands ownership to the PR author.
+    """
+    body = (REPO_ROOT / "agents" / "git-commit-push.md").read_text()
+    unwrapped = " ".join(body.split())
+    assert "**`changelog.d/` — REPORT ONLY.**" in unwrapped
+    assert "you never author, edit, rename, or delete one" in unwrapped
+    assert "The fragment is the PR author's." in unwrapped

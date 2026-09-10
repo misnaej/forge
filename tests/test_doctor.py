@@ -477,6 +477,46 @@ def test_plugin_cache_skew_empty_when_uncached(
     assert doctor._check_plugin_cache_skew(tmp_path) == []
 
 
+def test_plugin_cache_skew_names_missing_hooks_for_a_consumer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A consumer's stale slot advises a remedy that can actually converge.
+
+    SCENARIO: the repo ships no manifest of its own, so the verdict comes
+    from the pin-vs-cache content comparison.
+    MOCK SETUP: ``plugin_cache_status`` is stubbed with a
+    ``"stale-content"`` verdict listing two absent hooks.
+    EXPECTED BEHAVIOR: one advisory naming both hooks and the cache-slot
+    deletion — never ``/plugin update``, which compares the frozen
+    declared versions and reports no change.
+    """
+    monkeypatch.setattr(
+        doctor,
+        "plugin_cache_status",
+        lambda _root: version_surfaces.PluginCacheStatus(
+            "stale-content",
+            "forge",
+            "5.2.0",
+            "v6.11.0",
+            ("block_raw_wrapup_post.sh", "warn_generated_conflicts.sh"),
+        ),
+    )
+
+    results = doctor._check_plugin_cache_skew(tmp_path)
+
+    assert len(results) == 1
+    assert results[0].name == "version_skew:plugin_cache"
+    assert not results[0].passed
+    assert results[0].info  # advisory only — never sways the exit code
+    detail = results[0].detail
+    assert "block_raw_wrapup_post.sh" in detail
+    assert "warn_generated_conflicts.sh" in detail
+    assert "v6.11.0" in detail
+    assert "~/.claude/plugins/cache/forge/" in detail
+    assert "/plugin update forge@forge (then /reload-plugins)" not in detail
+
+
 # --- pad_semver() -------------------------------------------------------
 
 

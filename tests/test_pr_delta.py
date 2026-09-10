@@ -18,6 +18,7 @@ from forge.pr_delta import (
     docs_only_diff,
     extract_verified_shas,
     light_wrapup_decision,
+    non_fragment_adds,
     regen_commands,
     regen_only_diff,
     touches_high_blast_radius,
@@ -309,6 +310,48 @@ def test_touches_source_paths_case_insensitive_collision() -> None:
     assert touches_source_paths(["Src/forge/pr_delta.py"]) == ["Src/forge/pr_delta.py"]
 
 
+def test_non_fragment_adds_exempts_a_real_fragment() -> None:
+    """A direct-child fragment with a valid filename is exempted."""
+    assert non_fragment_adds(["changelog.d/slug.fixed.md"]) == []
+
+
+def test_non_fragment_adds_refuses_a_case_variant_directory() -> None:
+    """A case-varied fragment directory is NOT exempted.
+
+    Git paths are case-sensitive regardless of what the host filesystem
+    does, so `Changelog.D/evil.py` is a distinct, genuinely new source
+    file — not the same path as `changelog.d/`. Casefolding an exemption
+    excuses more rather than less (the opposite of casefolding a
+    disqualifier, which is safe), so the match must stay case-sensitive.
+    """
+    assert non_fragment_adds(["Changelog.D/evil.py"]) == ["Changelog.D/evil.py"]
+
+
+def test_non_fragment_adds_refuses_a_non_fragment_file_in_the_directory() -> None:
+    """A file in the fragments directory that isn't a fragment is not exempted.
+
+    The directory prefix alone is not the contract — the filename must
+    also parse via `_parse_and_validate_filename`.
+    """
+    assert non_fragment_adds(["changelog.d/evil.py"]) == ["changelog.d/evil.py"]
+
+
+def test_non_fragment_adds_refuses_a_nested_path() -> None:
+    """A fragment-shaped file nested under a subdirectory is not exempted.
+
+    Only direct children of `changelog.d/` are fragments.
+    """
+    assert non_fragment_adds(["changelog.d/sub/x.fixed.md"]) == [
+        "changelog.d/sub/x.fixed.md"
+    ]
+
+
+def test_non_fragment_adds_returns_only_the_non_fragments() -> None:
+    """A mix of a real fragment and a source file returns just the source file."""
+    added = ["changelog.d/slug.fixed.md", "src/forge/new.py"]
+    assert non_fragment_adds(added) == ["src/forge/new.py"]
+
+
 def test_light_wrapup_decision_empty_diff_refuses() -> None:
     """An empty diff refuses the light wrap-up — nothing to classify."""
     use_light, reason = light_wrapup_decision(
@@ -391,4 +434,57 @@ def test_light_wrapup_decision_added_file_precedence_over_threshold() -> None:
     )
     assert use_light is False
     assert "src/foo.py" in reason
+    assert "prior-art" in reason
+
+
+def test_light_wrapup_decision_changelog_fragment_add_stays_eligible() -> None:
+    """A PR whose only added file is a changelog fragment stays light-eligible.
+
+    The `changelog_updated` gate mandates one fragment on every PR that
+    changes anything else, so counting it as an added file would make the
+    light path unreachable by construction rather than merely rare.
+    """
+    use_light, reason = light_wrapup_decision(
+        line_count=10,
+        changed_paths=["tests/foo.py", "changelog.d/thing.fixed.md"],
+        added_paths=["changelog.d/thing.fixed.md"],
+    )
+    assert use_light is True
+    assert "changelog fragment" in reason
+
+
+def test_light_wrapup_decision_fragment_plus_real_add_refuses() -> None:
+    """A real added file still disqualifies, and the fragment is not blamed.
+
+    Pins that the exemption is per-path, not a blanket pass once any
+    fragment is present: the reason names only the path the prior-art
+    gate actually needs to see.
+    """
+    use_light, reason = light_wrapup_decision(
+        line_count=10,
+        changed_paths=["tests/foo.py", "changelog.d/thing.fixed.md"],
+        added_paths=["changelog.d/thing.fixed.md", "tests/new_helper.py"],
+    )
+    assert use_light is False
+    assert "tests/new_helper.py" in reason
+    assert "changelog.d/thing.fixed.md" not in reason
+    assert "prior-art" in reason
+
+
+def test_light_wrapup_decision_case_variant_fragment_add_refuses() -> None:
+    """A case-variant fragment directory does not earn the exemption end to end.
+
+    Regression pin for the control weakening where `non_fragment_adds`
+    casefolded its prefix match: a small diff whose only added file sits
+    under `Changelog.D/` must still route to the full wrap-up, since git
+    treats that as a distinct, genuinely new source file, not the same
+    fragment directory.
+    """
+    use_light, reason = light_wrapup_decision(
+        line_count=5,
+        changed_paths=["tests/foo.py", "Changelog.D/thing.fixed.md"],
+        added_paths=["Changelog.D/thing.fixed.md"],
+    )
+    assert use_light is False
+    assert "Changelog.D/thing.fixed.md" in reason
     assert "prior-art" in reason

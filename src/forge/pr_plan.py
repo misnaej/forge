@@ -54,14 +54,13 @@ exactly as the delta path does.
 ``light-regen`` is *eligibility only*: the skill still earns the escape by
 running the provenance gates (``precommit_scope`` lists them); any gate
 failure falls back to the full round. ``light-code`` (small, no added
-files, no ``src/`` or high-blast-radius path) skips the reporters and
-authorizes the short-form ``wrapup-mode: light`` wrap-up — enforced
-fail-closed by ``block_unverified_pr_create``, which re-runs this
-classifier at ``gh pr create`` time; the strict pre-commit battery still
-runs in full. The delta path degrades, never
-crashes: no ``--pr``, a missing/unauthenticated ``gh``, or no
-``verified-at:`` comment each add a reason and classification continues
-to ``full``.
+files bar changelog fragments, no ``src/`` or high-blast-radius path)
+skips the reporters and authorizes the short-form ``wrapup-mode: light``
+wrap-up — enforced fail-closed by ``block_unverified_pr_create``, which
+re-runs this classifier at ``gh pr create`` time; the strict pre-commit
+battery still runs in full. The delta path degrades, never crashes: no
+``--pr``, a missing/unauthenticated ``gh``, or no ``verified-at:``
+comment each add a reason and classification continues to ``full``.
 
 Exit codes:
     0  plan (or freshness verdict) emitted
@@ -90,6 +89,7 @@ from forge.pr_delta import (
     extract_verified_shas,
     light_wrapup_decision,
     regen_only_diff,
+    touches_high_blast_radius,
 )
 
 
@@ -162,18 +162,31 @@ class WrapupFreshness:
     reason: str = ""
 
 
-def _changed_paths(root: Path, diff_range: str) -> list[str]:
+def _changed_paths(
+    root: Path, diff_range: str, pathspec: list[str] | None = None
+) -> list[str]:
     """Return the repo-relative paths changed across *diff_range*.
 
     Args:
         root: Repository root directory.
         diff_range: A git range spec (e.g. ``origin/dev...HEAD`` or
             ``<sha>..HEAD``).
+        pathspec: Optional non-empty path list limiting the diff to those
+            paths. ``None`` (the default) diffs the whole tree; an empty
+            list is treated as ``None`` by git, so callers with nothing
+            to scope to must short-circuit instead of passing ``[]``.
 
     Returns:
         One path per changed file, empty for an empty diff.
     """
-    out = run_git("diff", "--name-only", diff_range, cwd=root)
+    args = ["diff", "--name-only", diff_range]
+    if pathspec:
+        # `--literal-pathspecs`: these are known filenames, not
+        # patterns. A real name carrying glob magic (`a[b].py`) is read
+        # as a wildcard by default and drags unrelated paths (`ab.py`)
+        # into a scope that must mean exactly the paths given.
+        args = ["--literal-pathspecs", *args, "--", *pathspec]
+    out = run_git(*args, cwd=root)
     return [line for line in out.splitlines() if line]
 
 
@@ -204,18 +217,25 @@ def _added_paths(root: Path, diff_range: str) -> list[str]:
     return [line for line in out.splitlines() if line]
 
 
-def _line_count(root: Path, diff_range: str) -> int:
+def _line_count(root: Path, diff_range: str, pathspec: list[str] | None = None) -> int:
     """Return insertions + deletions across *diff_range*.
 
     Args:
         root: Repository root directory.
         diff_range: A git range spec (e.g. ``<sha>..HEAD``).
+        pathspec: Optional non-empty path list limiting the count to
+            those paths, with the same empty-list caveat as
+            :func:`_changed_paths`.
 
     Returns:
         The summed line count ``pr_delta.delta_decision`` expects; ``0``
         for an empty diff.
     """
-    out = run_git("diff", "--numstat", diff_range, cwd=root)
+    args = ["diff", "--numstat", diff_range]
+    if pathspec:
+        # Literal pathspecs, same rationale as :func:`_changed_paths`.
+        args = ["--literal-pathspecs", *args, "--", *pathspec]
+    out = run_git(*args, cwd=root)
     total = 0
     for line in out.splitlines():
         parts = line.split("\t")
@@ -365,21 +385,38 @@ def wrapup_freshness(pr_number: int) -> WrapupFreshness:
     )
 
 
+#: A base merge wider than this is named in the delta reason — not a
+#: disqualifier, just something a reviewer should know went by.
+_LARGE_MERGE_PATHS = 20
+
+
 def _try_delta(
     root: Path,
     pr_number: int | None,
     reasons: list[str],
+    branch_paths: list[str],
 ) -> bool:
     """Evaluate delta-mode eligibility, appending the trail to *reasons*.
+
+    Scoped to the branch's OWN files, never the raw ``<sha>..HEAD``
+    range. That range also contains everything a base merge brought in
+    from main, so an unscoped reading measures other people's work: a
+    branch whose reviewed files are byte-identical to the verified tree
+    would be pushed into a full re-review by a merge it did not author,
+    and any high-blast-radius path that merge touched would force it
+    outright. Nothing under review changed, so nothing needs
+    re-reviewing.
 
     Args:
         root: Repository root directory.
         pr_number: The existing PR, or ``None`` when no PR exists yet.
         reasons: Classification trail, mutated with each decision taken.
+        branch_paths: The branch's own changed paths (``<base>...HEAD``),
+            the universe the since-verified diff is measured over.
 
     Returns:
-        ``True`` when the diff since the last verified SHA qualifies for
-        delta mode.
+        ``True`` when the branch's own contribution since the last
+        verified SHA qualifies for delta mode.
     """
     if pr_number is None:
         reasons.append("delta: no --pr given (no existing PR); ineligible")
@@ -404,9 +441,31 @@ def _try_delta(
             f"delta: verified-at SHA {sha} does not resolve; falling back to full"
         )
         return False
+    own_changed = (
+        _changed_paths(root, f"{sha}..HEAD", pathspec=branch_paths)
+        if branch_paths
+        else []
+    )
+    if not own_changed:
+        # Delta holds, but say what the merge carried. The branch's own
+        # code is unreviewed-unchanged, not unaffected: a base merge can
+        # change what that code *means* without touching a file it edits.
+        # Nothing downstream re-checks that, so name it here — the reason
+        # reaches the wrap-up, and a reader can judge what went unlooked-at.
+        merged = _changed_paths(root, f"{sha}..HEAD")
+        note = ""
+        if touches_high_blast_radius(merged):
+            note = "; the merge touched high-blast-radius paths"
+        elif len(merged) > _LARGE_MERGE_PATHS:
+            note = f"; the merge brought {len(merged)} paths"
+        reasons.append(
+            f"delta vs {sha}: the branch's own changed paths are identical "
+            f"to the verified tree (the range differs only by a base merge){note}"
+        )
+        return True
     use_delta, reason = delta_decision(
-        line_count=_line_count(root, f"{sha}..HEAD"),
-        changed_paths=_changed_paths(root, f"{sha}..HEAD"),
+        line_count=_line_count(root, f"{sha}..HEAD", pathspec=own_changed),
+        changed_paths=own_changed,
     )
     reasons.append(f"delta vs {sha}: {reason}")
     return use_delta
@@ -461,7 +520,7 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
         )
     reasons.append("not regen-only: diff touches non-managed paths")
 
-    if _try_delta(root, pr_number, reasons):
+    if _try_delta(root, pr_number, reasons, paths):
         return PrPlan(
             mode="delta",
             reporters=[],

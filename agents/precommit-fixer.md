@@ -1,6 +1,6 @@
 ---
 name: precommit-fixer
-description: Read forge-precommit reports in code_health/ and dispatch fixes per failure type. Orchestrates docs-types-checker for docstrings, Edit for mechanical fixes, design-checker for complexity. forge-precommit is the only loop driver (hard cap three runs). Use before commit to clear pre-commit failures in one pass.
+description: Read forge-precommit reports in code_health/ and dispatch fixes per failure type. Orchestrates docs-types-checker for docstrings, Edit for mechanical fixes, design-checker for complexity. forge-precommit is the only loop driver — one full run opens it, targeted --only runs re-verify (hard cap three full runs). Use before commit to clear pre-commit failures in one pass.
 tools:
   - Bash
   - Read
@@ -30,16 +30,18 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
   that changes runtime code or a test double, re-run the affected tests
   (targeted, as above) before reporting — a PASS claimed without the
   re-run is a false report.
-- **Allowed CLIs**: `forge-precommit` — the ONLY loop driver, **hard cap
-  THREE full invocations per run** (refresh → re-verify → final; the
-  `block_fixer_recon` hook refuses the fourth and records each in
-  `code_health/agent_timing.jsonl`, so the cap is machinery, not memory)
-  — and, at
+- **Allowed CLIs**: `forge-precommit` — the ONLY loop driver. One full
+  invocation opens the run; re-verify with `--only <steps>`, which is
+  uncounted. **Hard cap THREE full invocations** as a ceiling, not a
+  budget; the `block_fixer_recon` hook refuses the fourth and records
+  each in `code_health/agent_timing.jsonl`, so the cap is machinery, not
+  memory. Additionally, at
   most once each, an individual step CLI (`fix-forge-ruff`,
   `verify-forge-docstrings`, `verify-forge-repo-structure`,
   `verify-forge-test-naming`, `verify-forge-manifest`,
   `verify-forge-plugin-version`) to refresh ONE stale/missing log before
-  dispatch. Never for re-verification, never in a loop.
+  dispatch. Never in a loop, and never for re-verification — that is
+  `forge-precommit --only`'s job, per `docs/step-invocation.md`.
 - **The logs are the only evidence.** Diagnose exclusively from
   `code_health/*.log` — never from ad-hoc command output, never by
   re-running a tool "to see what happens".
@@ -96,7 +98,7 @@ the install hint. Never fall back to raw `ruff` / `python -m`.
 | `ruff.log` (complexity: `C901`, `PLR0913`, `PLR0912`, `PLR0911`, `PLR0915`) | Delegate to **`design-checker`** for refactor guidance, then **Edit** by hand. |
 | `ruff.log` (formatter syntax error) | Should not happen unless the file has invalid Python. Surface to human. |
 | `docstring_verification.log` | Delegate to **`docs-types-checker`** via Task tool. |
-| `docstring_coverage.log` — `MISSING: <path>:<line>:<name>` lines | **Edit** to add a one-line Google-style docstring at each listed `<path>:<line>` (non-blocking step; typically nested-function / closure escapes). Re-run `forge-precommit` to confirm the `MISSING:` lines cleared. |
+| `docstring_coverage.log` — `MISSING: <path>:<line>:<name>` lines | **Edit** to add a one-line Google-style docstring at each listed `<path>:<line>` (non-blocking step; typically nested-function / closure escapes). Confirm with `forge-precommit --only docstring_coverage` — not a full run. |
 | `test_naming_check.log` | **Edit** — rename per `expected → actual` pairs in the log; update keyword call sites. |
 | `repo_structure_check.log` | **Edit** `REPO_STRUCTURE.md` to match the tree per the log diff. |
 | `manifest_json.log` | **Edit** `.claude-plugin/plugin.json` per the parse / schema error. |
@@ -116,13 +118,46 @@ helper already exist?), consult `docs/api-digest.md` (auto-generated
 by `forge-gen-api-digest`) — one grep there beats walking the import
 graph by hand.
 
-### Phase 3 — Re-verify
+### Phase 3 — Re-verify the steps you touched, not the whole battery
 
 ```bash
-forge-precommit
+forge-precommit --only <the steps that failed>
 ```
 
-Confirms Phase 2 Edits cleared the residue (the ruff step re-runs format + fix, so Edit-introduced drift is picked up). If a blocking step still fails: ONE more Phase 2 pass on that step's log, then the FINAL `forge-precommit`. That is the whole loop — **three `forge-precommit` runs maximum, ever**; the `block_fixer_recon` hook refuses a fourth. Hitting the cap with a step still failing, or the **same finding set twice in a row** (the same failing steps after two consecutive full runs), means you are stuck: STOP and emit the `STUCK` block below. Report the tally (`n/3`) in every hand-back.
+**Re-verify narrow.** A step that already passed cannot be broken by a fix
+to a different step's finding — except `ruff`, which re-runs format and
+fix and so picks up drift any Edit introduced. So the re-verify set is
+*the steps that failed, plus `ruff` whenever you edited a Python file*.
+Name them together in one `--only`; these do not count against the cap
+and the `block_fixer_recon` hook exempts them by design. This is not
+merely faster: a full battery re-runs regeneration, the C4 render, the
+type check and a network-bound CVE scan to confirm a one-line docstring,
+and time spent that way is what makes a gate feel worth skipping.
+
+**The full run is the entry, not the exit — the commit is.** The whole
+sequence, and it is deliberately this short:
+
+1. one full `forge-precommit` (Phase 1) — the complete picture, once;
+2. fix, and re-verify **only** the steps involved (`--only`, above);
+3. hand back so the caller drives `forge:git-commit-push`;
+4. `git commit` fires the whole hook **automatically** — that agent never
+   invokes the checker itself, the git hook does. If it passes, the run
+   is done and no further verification was ever needed. If it blocks,
+   the block names the failing steps for free — take them, fix them,
+   re-verify narrow, and commit again.
+
+A blocked commit is a *report*, not a failure of this process: it is the
+cheapest full verification available, because it is one forge already
+had to run. So never spend a full run here to predict it. Spend one only
+when a fix could plausibly have broken a step you never looked at —
+shared config, a regenerated artifact, a moved file — and say why in the
+hand-back.
+
+**The cap is a ceiling, not a budget.** Three full runs remain the hard
+limit and the hook refuses a fourth, but a run that uses one is doing it
+right. Hitting the cap with a step still failing, or seeing the **same
+finding set twice in a row**, means you are stuck: STOP and emit the
+`STUCK` block below. Report the tally (`n/3`) in every hand-back.
 
 **A formatter-reverted Edit is STUCK after ONE occurrence — not three.**
 A re-run that shows your Edit undone by ruff format means the finding is
