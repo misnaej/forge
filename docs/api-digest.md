@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 954 symbols._
+_72 modules, 956 symbols._
 
 ## `forge`
 
@@ -392,7 +392,6 @@ _72 modules, 954 symbols._
 - `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
 - `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
 - `_check_plugin_contents(plugin_root: Path | None) -> list[CheckResult]` _(internal)_ — Verify the expected plugin sub-directories contain files.
-- `_padded_version(text: str) -> tuple[int, int, int] | None` _(internal)_ — Return *text* as a three-part version, padding what a pin omits.
 - `_declared_lower_bound(repo_root: Path, tool: str) -> str | None` _(internal)_ — Return the lower bound *tool* is pinned to in an extras group.
 - `_step_tool_drift(repo_root: Path, step: str, tool: str) -> CheckResult | None` _(internal)_ — Report an installed step tool older than the version this repo pins.
 - `_check_step_tools(repo_root: Path) -> list[CheckResult]` _(internal)_ — Verify the external tool for each enabled pre-commit step is on PATH.
@@ -611,6 +610,7 @@ _72 modules, 954 symbols._
 - `repo_root() -> Path` — Return the git repo root for the current working directory.
 - `configure_cli_logging() -> None` — Apply forge's canonical CLI logging setup.
 - `emit(msg: str) -> None` — Write *msg* to stdout with a trailing newline.
+- `pad_semver(text: str) -> tuple[int, int, int] | None` — Return *text* as a three-part version, padding what it omits.
 - `parse_semver(version: str) -> tuple[int, int, int] | None` — Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
 - `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
 - `classify_bump(old: tuple[int, int, int] | None, new: tuple[int, int, int] | None) -> str | None` — Classify the semver increment from *old* to *new*.
@@ -1335,3 +1335,5 @@ _72 modules, 954 symbols._
 - `plugin_cache_version(plugin_root: Path | None) -> str | None` — Version of the cached Claude Code plugin install, or None when absent.
 - `editable_install_origin() -> Path | None` — Return the checkout an editable ``forge-scripts`` install points at.
 - `_direct_url() -> dict[str, object] | None` _(internal)_ — Return the distribution's parsed ``direct_url.json``, or ``None``.
+- `class PluginCacheStatus` — What the Claude Code plugin cache says relative to a repo's manifest.
+- `plugin_cache_status(repo_root: Path) -> PluginCacheStatus` — Compare the cached plugin against the manifest that ships it.

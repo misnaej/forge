@@ -91,6 +91,34 @@ _SEMVER_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)")
 _CONFLICT_OPEN_RE = re.compile(r"^<{7}( |$)", re.MULTILINE)
 
 
+def pad_semver(text: str) -> tuple[int, int, int] | None:
+    """Return *text* as a three-part version, padding what it omits.
+
+    :func:`parse_semver` requires all three components and is relied on
+    as a strict validator. A dependency pin's lower bound is written the
+    way a person writes it — ``1``, ``1.2`` — so comparing the two
+    directly meant a check could never fire, whatever the versions were.
+    This is the lenient reader for that case, here so the next caller
+    finds it instead of re-deriving it.
+
+    Args:
+        text: A version, possibly with fewer than three components.
+
+    Returns:
+        The padded triple, or ``None`` when the leading component is not
+        a number.
+    """
+    parts = re.split(r"[.+-]", text.strip())[:3]
+    try:
+        nums = [int(part) for part in parts if part != ""]
+    except ValueError:
+        return None
+    if not nums:
+        return None
+    nums += [0] * (3 - len(nums))
+    return (nums[0], nums[1], nums[2])
+
+
 def parse_semver(version: str) -> tuple[int, int, int] | None:
     """Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
 

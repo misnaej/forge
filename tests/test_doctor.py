@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from forge import doctor, precommit, version_surfaces
+from forge import doctor, git_utils, precommit, version_surfaces
 from tests.conftest import make_fake_run
 
 
@@ -473,7 +473,7 @@ def test_plugin_cache_skew_empty_when_uncached(
     assert doctor._check_plugin_cache_skew(tmp_path) == []
 
 
-# --- _padded_version() -------------------------------------------------------
+# --- pad_semver() -------------------------------------------------------
 
 
 def test_padded_version_pads_short_components() -> None:
@@ -484,14 +484,14 @@ def test_padded_version_pads_short_components() -> None:
     requires all three parts and returns ``None`` for a short pin like
     ``"1.2"``) — pinned directly so it can't regress unnoticed.
     """
-    assert doctor._padded_version("1") == (1, 0, 0)
-    assert doctor._padded_version("1.2") == (1, 2, 0)
-    assert doctor._padded_version("1.1.1") == (1, 1, 1)
+    assert git_utils.pad_semver("1") == (1, 0, 0)
+    assert git_utils.pad_semver("1.2") == (1, 2, 0)
+    assert git_utils.pad_semver("1.1.1") == (1, 1, 1)
 
 
 def test_padded_version_none_for_non_numeric() -> None:
     """A non-numeric leading component can't be padded into a version."""
-    assert doctor._padded_version("abc") is None
+    assert git_utils.pad_semver("abc") is None
 
 
 # --- _check_step_tools() step-tool-version drift ----------------------------

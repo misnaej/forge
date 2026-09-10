@@ -16,9 +16,9 @@ from __future__ import annotations
 import json
 from importlib import metadata
 from pathlib import Path
-from typing import Final
+from typing import Final, NamedTuple
 
-from forge.git_utils import FORGE_DIST_NAME
+from forge.git_utils import FORGE_DIST_NAME, parse_semver
 from forge.install_githooks import SIDECAR_NAME as HOOK_VERSION_SIDECAR
 
 
@@ -230,3 +230,57 @@ def _direct_url() -> dict[str, object] | None:
     except json.JSONDecodeError:
         return None
     return data if isinstance(data, dict) else None
+
+
+class PluginCacheStatus(NamedTuple):
+    """What the Claude Code plugin cache says relative to a repo's manifest.
+
+    Attributes:
+        state: ``"no-manifest"``, ``"uncached"``, ``"unparsed"``,
+            ``"current"`` or ``"behind"``.
+        plugin_name: Name the manifest declares, falling back to the repo
+            directory's own name.
+        cached: Version in the cache, when there is one.
+        declared: Version the manifest declares, when it declares one.
+    """
+
+    state: str
+    plugin_name: str
+    cached: str | None
+    declared: str | None
+
+
+def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
+    """Compare the cached plugin against the manifest that ships it.
+
+    One reader for a question two checks ask: the ``plugin_sync``
+    pre-commit step, which may refuse a commit, and ``forge-doctor``,
+    which reports an advisory. Both need the same verdict and the same
+    remediation; only what they do with it differs.
+
+    The manifest is the plugin's version. Comparing the cache against the
+    pip package's instead — as the doctor once did — asks about two
+    numbers that are parked apart by design, which produced a warning no
+    command could clear.
+
+    Args:
+        repo_root: Repo whose ``.claude-plugin/plugin.json`` ships the plugin.
+
+    Returns:
+        A :class:`PluginCacheStatus`; only ``"behind"`` is a finding.
+    """
+    manifest = repo_root / ".claude-plugin" / "plugin.json"
+    if not manifest.is_file():
+        return PluginCacheStatus("no-manifest", repo_root.name, None, None)
+    data, _err = read_json(manifest)
+    plugin_name = str(data.get("name") or repo_root.name)
+    declared = str(data["version"]) if data.get("version") else None
+    cached = plugin_cache_version(find_plugin_cache(plugin_name))
+    if cached is None:
+        return PluginCacheStatus("uncached", plugin_name, None, declared)
+    cached_t = parse_semver(cached)
+    declared_t = parse_semver(declared or "")
+    if cached_t is None or declared_t is None:
+        return PluginCacheStatus("unparsed", plugin_name, cached, declared)
+    state = "current" if cached_t >= declared_t else "behind"
+    return PluginCacheStatus(state, plugin_name, cached, declared)

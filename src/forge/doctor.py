@@ -12,10 +12,14 @@ Checks:
      a. Plugin directory found under ``~/.claude/plugins/cache/``.
      b. ``plugin.json`` and ``marketplace.json`` present and well-formed.
      c. ``agents/``, ``skills/``, ``claude-hooks/`` directories populated.
-  4. Version skew across install surfaces (#184) — the pip package, the
-     git-hook sidecar, and the cached plugin should share a version; a
+  4. Version skew across install surfaces (#184) — the pip package and the
+     git-hook sidecar should share a version, and the cached Claude Code
+     plugin (checked separately) should match this repo's own manifest; a
      lagging surface is reported as an advisory with the exact command to
      converge it (never fails the exit code — the report line is the signal).
+  5. Pre-commit step tools (opt-in steps only) — the tool for each enabled
+     step is on PATH, and its installed version is not below this repo's
+     pinned floor; both are advisories, never a failing exit code.
 
 Usage:
     forge-doctor                              # human-readable
@@ -35,7 +39,7 @@ from pathlib import Path
 
 from forge import config
 from forge.config import installed_console_scripts
-from forge.git_utils import FORGE_DIST_NAME, emit, parse_semver
+from forge.git_utils import FORGE_DIST_NAME, emit, pad_semver, parse_semver
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
@@ -43,13 +47,13 @@ from forge.version_surfaces import (
     find_plugin_cache,
     hook_sidecar_version,
     pip_version,
-    plugin_cache_version,
+    plugin_cache_status,
     read_json,
 )
 
 
 # Drift is only meaningful across at least two surfaces; a single present
-# surface (e.g. a pip-only consumer with no hooks/plugin) has nothing to
+# surface (e.g. a pip-only consumer with no git hooks) has nothing to
 # compare against and must be skipped, not flagged.
 _MIN_SURFACES_TO_COMPARE = 2
 
@@ -199,33 +203,21 @@ def _check_plugin_install(plugin_name: str) -> CheckResult:
 def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
     """Report a Claude Code plugin cache lagging this repo's own manifest.
 
-    The manifest is the plugin's version; the pip package's is derived
-    from the latest tag, and in fragments mode those two are parked apart
-    on purpose. Comparing the cache against the pip line therefore
-    produced a warning no command could clear, in the exact place a real
-    staleness problem shows up. This asks the question
-    ``step_plugin_sync`` already asks correctly: is the cache behind the
-    manifest that ships it?
+    The verdict itself lives in
+    :func:`forge.version_surfaces.plugin_cache_status`, shared with the
+    ``plugin_sync`` pre-commit step so both name the same remediation for
+    the same condition; this wraps it as an advisory.
 
     Args:
-        repo_root: Repo to read ``.claude-plugin/plugin.json`` from.
+        repo_root: Repo whose manifest ships the plugin.
 
     Returns:
         One advisory result when the cache is behind, otherwise an empty
-        list — a repo that ships no plugin, an uncached plugin, and an
-        unreadable manifest are all "nothing to say", not findings.
+        list — no plugin, no cache and an unreadable version are all
+        "nothing to say", not findings.
     """
-    manifest = repo_root / ".claude-plugin" / "plugin.json"
-    if not manifest.is_file():
-        return []
-    data, _err = read_json(manifest)
-    declared = str(data["version"]) if data.get("version") else None
-    plugin_name = str(data.get("name") or repo_root.name)
-    cached = plugin_cache_version(find_plugin_cache(plugin_name))
-    if declared is None or cached is None:
-        return []
-    cached_t, declared_t = parse_semver(cached), parse_semver(declared)
-    if cached_t is None or declared_t is None or cached_t >= declared_t:
+    status = plugin_cache_status(repo_root)
+    if status.state != "behind":
         return []
     return [
         CheckResult(
@@ -233,8 +225,8 @@ def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
             passed=False,
             info=True,
             detail=(
-                f"plugin cache at v{cached}, behind this repo's manifest "
-                f"v{declared} — run `{SKEW_REMEDIATION['plugin cache']}`"
+                f"plugin cache at v{status.cached}, behind this repo's manifest "
+                f"v{status.declared} — run `{SKEW_REMEDIATION['plugin cache']}`"
             ),
         )
     ]
@@ -475,38 +467,16 @@ _STEP_TOOLS: dict[str, str] = {
 }
 
 
-def _padded_version(text: str) -> tuple[int, int, int] | None:
-    """Return *text* as a three-part version, padding what a pin omits.
-
-    A pin's lower bound is written the way a human writes it — ``1``,
-    ``1.2`` — while :func:`parse_semver` requires all three parts and
-    returns ``None`` otherwise. Comparing the two directly meant the
-    check could never fire, whatever the versions were.
-
-    Args:
-        text: A version, possibly with fewer than three components.
-
-    Returns:
-        The padded triple, or ``None`` when the leading component is not
-        a number.
-    """
-    parts = re.split(r"[.+-]", text.strip())[:3]
-    try:
-        nums = [int(part) for part in parts if part != ""]
-    except ValueError:
-        return None
-    if not nums:
-        return None
-    nums += [0] * (3 - len(nums))
-    return (nums[0], nums[1], nums[2])
-
-
 def _declared_lower_bound(repo_root: Path, tool: str) -> str | None:
     """Return the lower bound *tool* is pinned to in an extras group.
 
     Args:
         repo_root: Repo whose ``pyproject.toml`` declares the pin.
         tool: Distribution name as it appears in the requirement.
+
+    Only a ``>=`` lower bound is recognised, which is how every pin in
+    this repo is written; a ``~=`` or bare ``==`` pin reads as "not
+    pinned that way", leaving the drift check quiet rather than guessing.
 
     Returns:
         The ``>=`` version, or ``None`` when the tool is not pinned that
@@ -520,8 +490,12 @@ def _declared_lower_bound(repo_root: Path, tool: str) -> str | None:
         if not isinstance(reqs, list):
             continue
         for req in reqs:
+            # A PEP 508 marker after the version (`; python_version >= "3.11"`)
+            # is not part of the bound; keeping it made the version unparseable
+            # and left the check silently quiet.
             match = re.fullmatch(
-                rf"{re.escape(tool)}\s*>=\s*([0-9][^,\s]*).*", str(req)
+                rf"{re.escape(tool)}\s*>=\s*([0-9][^,\s]*).*",
+                str(req).split(";", 1)[0],
             )
             if match:
                 return match.group(1)
@@ -557,7 +531,7 @@ def _step_tool_drift(repo_root: Path, step: str, tool: str) -> CheckResult | Non
         installed = importlib.metadata.version(tool)
     except importlib.metadata.PackageNotFoundError:
         return None
-    installed_t, floor_t = parse_semver(installed), _padded_version(floor)
+    installed_t, floor_t = parse_semver(installed), pad_semver(floor)
     if installed_t is None or floor_t is None or installed_t >= floor_t:
         return None
     return CheckResult(
@@ -588,8 +562,10 @@ def _check_step_tools(repo_root: Path) -> list[CheckResult]:
 
     Returns:
         One ``CheckResult`` per enabled step that maps to a known tool —
-        failing when the tool is missing. Empty when no such step is
-        enabled.
+        failing when the tool is missing — plus one advisory
+        ``CheckResult`` from :func:`_step_tool_drift` for each present
+        tool older than the repo's pinned floor. Empty when no such step
+        is enabled.
     """
     precommit = config.read_tool_forge_section(repo_root, "precommit")
     enabled = precommit.get("enable")
