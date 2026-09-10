@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 970 symbols._
+_72 modules, 971 symbols._
 
 ## `forge`
 
@@ -841,6 +841,7 @@ _72 modules, 970 symbols._
 - `regen_only_diff(changed_paths: list[str]) -> bool` — Return whether every changed path is a forge-managed regen artifact.
 - `touches_source_paths(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`SOURCE_PATHS`.
 - `non_fragment_adds(added_paths: list[str]) -> list[str]` — Return the subset of *added_paths* that is not a changelog fragment.
+- `_is_fragment_path(path: str) -> bool` _(internal)_ — Whether *path* is a changelog fragment by directory AND by name.
 - `light_wrapup_decision(*, line_count: int, changed_paths: list[str], added_paths: list[str]) -> tuple[bool, str]` — Decide whether a diff qualifies for the light wrap-up path.
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
 - `regen_commands(repo_root: Path) -> dict[str, tuple[str, ...]]` — Return :data:`REGEN_COMMANDS` filtered to the artifacts this repo generates.

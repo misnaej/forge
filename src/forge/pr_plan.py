@@ -89,6 +89,7 @@ from forge.pr_delta import (
     extract_verified_shas,
     light_wrapup_decision,
     regen_only_diff,
+    touches_high_blast_radius,
 )
 
 
@@ -384,6 +385,11 @@ def wrapup_freshness(pr_number: int) -> WrapupFreshness:
     )
 
 
+#: A base merge wider than this is named in the delta reason — not a
+#: disqualifier, just something a reviewer should know went by.
+_LARGE_MERGE_PATHS = 20
+
+
 def _try_delta(
     root: Path,
     pr_number: int | None,
@@ -441,9 +447,20 @@ def _try_delta(
         else []
     )
     if not own_changed:
+        # Delta holds, but say what the merge carried. The branch's own
+        # code is unreviewed-unchanged, not unaffected: a base merge can
+        # change what that code *means* without touching a file it edits.
+        # Nothing downstream re-checks that, so name it here — the reason
+        # reaches the wrap-up, and a reader can judge what went unlooked-at.
+        merged = _changed_paths(root, f"{sha}..HEAD")
+        note = ""
+        if touches_high_blast_radius(merged):
+            note = "; the merge touched high-blast-radius paths"
+        elif len(merged) > _LARGE_MERGE_PATHS:
+            note = f"; the merge brought {len(merged)} paths"
         reasons.append(
             f"delta vs {sha}: the branch's own changed paths are identical "
-            "to the verified tree (the range differs only by a base merge)"
+            f"to the verified tree (the range differs only by a base merge){note}"
         )
         return True
     use_delta, reason = delta_decision(

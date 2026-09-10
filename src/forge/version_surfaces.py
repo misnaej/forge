@@ -313,6 +313,14 @@ def marketplace_clone(repo_slug: str) -> Path | None:
 def _repo_slug(url: str) -> str | None:
     """Return the ``owner/repo`` a git pin URL names.
 
+    Splitting on ``://`` drops any embedded credentials with the host, so
+    a token in the pin never reaches the returned slug. A path with more
+    than two segments is returned whole rather than trimmed to its last
+    two: every caller resolves a GitHub pin, and a longer path simply
+    fails to match, which degrades the check to "unknown" — the safe
+    direction. Guessing which segment to drop would instead match the
+    wrong repository.
+
     Args:
         url: The ``git+...`` URL portion of a pin (no ref).
 
@@ -327,7 +335,7 @@ def _repo_slug(url: str) -> str | None:
     owner, _, repo = cleaned.strip("/").rpartition("/")
     if not owner or not repo:
         return None
-    return f"{owner.rsplit('/', 1)[-1]}/{repo}"
+    return f"{owner}/{repo}"
 
 
 def _hook_names(plugin_dir: Path) -> frozenset[str]:

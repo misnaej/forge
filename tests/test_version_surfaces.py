@@ -631,3 +631,32 @@ def test_marketplace_clone_none_for_unknown_repo(
     monkeypatch.setattr(version_surfaces, "KNOWN_MARKETPLACES", registry)
 
     assert version_surfaces.marketplace_clone("other/plugin") is None
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("git+https://github.com/misnaej/forge", "misnaej/forge"),
+        ("git+https://github.com/misnaej/forge.git", "misnaej/forge"),
+        ("git+ssh://git@github.com/misnaej/forge", "misnaej/forge"),
+        ("git@github.com:misnaej/forge.git", "misnaej/forge"),
+        ("git+https://token:x@github.com/misnaej/forge", "misnaej/forge"),
+        ("git+https://gitlab.com/group/sub/repo", "group/sub/repo"),
+        ("nonsense", None),
+    ],
+)
+def test_repo_slug_reads_every_pin_url_shape(url: str, expected: str | None) -> None:
+    """Each pin URL form resolves to its slug, or to None when it names none.
+
+    Two cases carry the weight. A URL with embedded credentials must not
+    leak them into the slug — they belong to the host half, which the
+    ``://`` split discards. And a path of more than two segments is
+    returned whole: trimming it to the last two would silently name a
+    different repository, where returning it intact simply fails to match
+    and leaves the check reading "unknown".
+
+    Args:
+        url: Pin URL to test.
+        expected: Expected slug result or None.
+    """
+    assert version_surfaces._repo_slug(url) == expected

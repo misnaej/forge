@@ -165,16 +165,20 @@ gate.
   ask, confirm **once**, naming what protection is dropped and for what,
   then act: the confirmation buys attribution — the cheapest proof a human
   was present — not friction, since friction only teaches people to route
-  around controls (exactly how `--no-verify` becomes a habit). The
-  authorising act must be one an agent cannot perform: a human running
-  `! <command>`, or supplying `FORGE_EMERGENCY_ACK=1` to arm
-  `forge-emergency`'s ledgered one-shot. A bare environment variable an
-  agent could export for itself is a suggestion, not a gate. Record every
-  use — what was bypassed, why, and that a human authorised it — and treat
-  a recurring bypass as evidence the guard is wrong or too costly, never as
-  grounds to loosen the rule. The **no bypass** hooks below have no
-  agent-side escape at all: their `! …` form is the human acting, not a
-  bypass the agent was granted.
+  around controls (exactly how `--no-verify` becomes a habit). Know which
+  kind of gate you are at, because they are not equally strong. A human
+  running `! <command>` is **technically** unreachable by an agent — the
+  **no bypass** hooks below rest on that, and their `! …` form is the
+  human acting, not an escape the agent was granted. `FORGE_EMERGENCY_ACK=1`
+  is **not** of that kind: it is an ordinary environment variable an agent
+  could set for itself, held instead by policy plus an audit trail it
+  cannot suppress — `forge-emergency` files a public ledger issue before
+  the sentinel exists. Never treat the second kind as if it were the
+  first, and never let a bare variable with no ledger behind it stand as a
+  gate at all; that is a suggestion. Record every use — what was bypassed,
+  why, and that a human authorised it — and treat a recurring bypass as
+  evidence the guard is wrong or too costly, never as grounds to loosen
+  the rule.
 - **NEVER force push** without explicit user approval. Check upstream divergence
   first: `git fetch origin && git log origin/<branch>`. The `block_force_push`
   hook enforces this across every force vector — `--force` / `--force-with-lease`,

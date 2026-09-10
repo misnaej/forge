@@ -24,7 +24,7 @@ from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Final
 
 from forge import config
-from forge.changelog_fragments import FRAGMENTS_DIR
+from forge.changelog_fragments import FRAGMENTS_DIR, _parse_and_validate_filename
 
 
 if TYPE_CHECKING:
@@ -313,17 +313,44 @@ def non_fragment_adds(added_paths: list[str]) -> list[str]:
     unreachable by construction rather than merely rare, so it is the
     one exemption; any other added path still disqualifies.
 
-    Casefolded prefix match, same rationale as
-    :func:`touches_high_blast_radius`.
+    **Matched case-sensitively, and by the fragment contract — not by
+    directory alone.** The casefolding in
+    :func:`touches_high_blast_radius` widens a *disqualifier*, which can
+    only refuse more; widening an *exemption* excuses more, so the same
+    move here is the unsafe direction. Git paths are case-sensitive
+    whatever the host filesystem does, so a file added at
+    ``Changelog.D/x.py`` is a genuinely new source file, and matching it
+    loosely would let it skip prior-art, design and security review —
+    the publish gate re-runs this very function, so nothing downstream
+    would catch it. The name must also satisfy the real fragment shape:
+    a directory prefix alone would exempt anything dropped there.
 
     Args:
         added_paths: Paths from ``git diff --name-only --diff-filter=ACR``.
 
     Returns:
-        Added paths outside the fragments directory, in input order.
+        Added paths that are not valid changelog fragments, in input order.
     """
-    prefix = FRAGMENT_PATH_PREFIX.casefold()
-    return [path for path in added_paths if not path.casefold().startswith(prefix)]
+    return [path for path in added_paths if not _is_fragment_path(path)]
+
+
+def _is_fragment_path(path: str) -> bool:
+    """Whether *path* is a changelog fragment by directory AND by name.
+
+    Args:
+        path: A repo-relative path from a diff listing.
+
+    Returns:
+        ``True`` only for a direct child of the fragments directory whose
+        filename parses as a fragment.
+    """
+    if not path.startswith(FRAGMENT_PATH_PREFIX):
+        return False
+    name = path[len(FRAGMENT_PATH_PREFIX) :]
+    if "/" in name:
+        return False
+    _slug, _type, errors = _parse_and_validate_filename(name)
+    return not errors
 
 
 def light_wrapup_decision(
