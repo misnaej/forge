@@ -215,6 +215,20 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "stays a WARN regardless).",
     ),
     ConfigKey(
+        ("tool", "forge", "pip_audit", "cadence"),
+        default="branch",
+        description="How often the CVE scan actually runs: 'branch' (once "
+        "per branch, the default), 'always' (every commit, the old "
+        "behaviour), or 'hours' with max_age_hours. PR finalization "
+        "forces a scan regardless, so nothing publishes unscanned.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "pip_audit", "max_age_hours"),
+        default=24.0,
+        description="Maximum age of a previous CVE scan before it is "
+        "re-run, when cadence is 'hours'.",
+    ),
+    ConfigKey(
         ("tool", "forge", "cve_usage", "paths"),
         "source_dirs + test_dirs",
         "Per-tool override of the CVE-usage scan roots; otherwise inherits "

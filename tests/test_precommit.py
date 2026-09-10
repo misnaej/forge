@@ -15,10 +15,12 @@ import contextlib
 import datetime as _dt
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import patch
 
@@ -53,6 +55,20 @@ def _clear_wip_sync_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv.
     """
     monkeypatch.delenv("FORGE_WIP_SYNC", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _clear_pip_audit_force_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip FORGE_PIP_AUDIT_FORCE from the environment before every test.
+
+    main()'s ``--only pip_audit`` handling sets this var directly on
+    ``os.environ`` (not via monkeypatch), so a run that names
+    ``pip_audit`` explicitly would otherwise leave it set for every
+    later test in the same process — including cadence tests that
+    depend on the gate actually running. Tests that exercise the
+    override itself set it explicitly via monkeypatch.setenv.
+    """
+    monkeypatch.delenv(precommit._PIP_AUDIT_FORCE_ENV, raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1204,6 +1220,212 @@ def test_step_pip_audit_passing_run_emits_no_banner(
     assert "⚠️" not in result.output
 
 
+# ---------------------------------------------------------------------------
+# pip_audit cadence: reuse-scan sidecar and the skip gate (#511)
+# ---------------------------------------------------------------------------
+
+
+def test_pip_audit_scan_age_hours_future_dated_returns_none(tmp_path: Path) -> None:
+    """A sidecar timestamped in the future is untrusted, not a negative age.
+
+    Clock skew or a manually-touched stamp could otherwise report a
+    negative "hours ago" that reads as impossibly fresh; treating it as
+    unknown instead falls back to the safe direction — scan.
+    """
+    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("{}", encoding="utf-8")
+    future = time.time() + 3600
+    os.utime(sidecar, (future, future))
+    assert precommit._pip_audit_scan_age_hours(tmp_path) is None
+
+
+def test_pip_audit_scan_age_hours_fresh_stamp_computes_hours(tmp_path: Path) -> None:
+    """A stamp N hours old reports age_hours ≈ N — the reuse decision's input."""
+    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("{}", encoding="utf-8")
+    mtime = time.time() - 2 * 3600
+    os.utime(sidecar, (mtime, mtime))
+    age = precommit._pip_audit_scan_age_hours(tmp_path)
+    assert age == pytest.approx(2.0, abs=0.01)
+
+
+def test_pip_audit_skip_cadence_always_never_skips(tmp_path: Path) -> None:
+    """`cadence = "always"` bypasses the reuse gate even with a fresh sidecar."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.pip_audit]\ncadence = "always"\n'
+    )
+    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("{}", encoding="utf-8")
+    assert precommit._pip_audit_skip(tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    ("max_age_hours_cfg", "sidecar_age_hours", "expected_output"),
+    [
+        pytest.param(
+            "24",
+            1.0,
+            "(last scan 1.0h ago, under the 24h cadence — skipped; "
+            "`/pr` forces a scan before anything publishes)",
+            id="fresh",
+        ),
+        pytest.param("24", 30.0, None, id="stale"),
+        pytest.param('"bogus"', 1.0, None, id="unparseable"),
+    ],
+)
+def test_pip_audit_skip_cadence_hours(
+    tmp_path: Path,
+    max_age_hours_cfg: str,
+    sidecar_age_hours: float,
+    expected_output: str | None,
+) -> None:
+    """`cadence = "hours"` skips only inside the configured window.
+
+    Parametrizes the three branches: a sidecar younger than
+    ``max_age_hours`` (skip, with the exact reuse message asserted), one
+    older (scan), and a non-numeric ``max_age_hours`` (scan — an
+    uncertain case, per the "every uncertain case scans" contract).
+
+    Args:
+        tmp_path: Temporary directory with pyproject.toml config.
+        max_age_hours_cfg: Config value for `max_age_hours` (as string).
+        sidecar_age_hours: Age of the pip_audit sidecar in hours.
+        expected_output: Expected skip message, or None to expect a scan.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        f'[tool.forge.pip_audit]\ncadence = "hours"\n'
+        f"max_age_hours = {max_age_hours_cfg}\n"
+    )
+    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("{}", encoding="utf-8")
+    mtime = time.time() - sidecar_age_hours * 3600
+    os.utime(sidecar, (mtime, mtime))
+
+    result = precommit._pip_audit_skip(tmp_path)
+    if expected_output is None:
+        assert result is None
+    else:
+        assert result is not None
+        assert result.skipped
+        assert result.output == expected_output
+
+
+@pytest.mark.parametrize(
+    ("sidecar_offset_s", "expect_skip"),
+    [
+        pytest.param(-3600, False, id="older-than-fork-scans"),
+        pytest.param(3600, True, id="newer-than-fork-skips"),
+    ],
+)
+def test_pip_audit_skip_cadence_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sidecar_offset_s: int,
+    expect_skip: bool,
+) -> None:
+    """`cadence = "branch"` (the default) reuses a scan taken since the branch forked.
+
+    SCENARIO: the sidecar's mtime straddles the fork-point commit's
+    timestamp.
+    MOCK SETUP: precommit.merge_base_with_head → a fixed fork SHA;
+    precommit.run_git → a fixed `git show -s --format=%ct` timestamp for
+    that SHA — both plain functions, no real git repo needed.
+    EXPECTED BEHAVIOR: a sidecar older than the fork commit means no scan
+    has happened on this branch yet (scan); newer means one already has
+    (skip).
+
+    Args:
+        tmp_path: Temporary directory with pyproject.toml config.
+        monkeypatch: Pytest fixture for mocking.
+        sidecar_offset_s: Offset in seconds from fork commit timestamp.
+        expect_skip: Whether to expect the scan to be skipped.
+    """
+    fork_committed_at = 1_700_000_000
+
+    def _fake_merge_base(_root: object, _base_branch: str) -> str:
+        return "deadbeef"
+
+    def _fake_run_git(*_args: str, **_kwargs: object) -> str:
+        return str(fork_committed_at)
+
+    monkeypatch.setattr(precommit, "merge_base_with_head", _fake_merge_base)
+    monkeypatch.setattr(precommit, "run_git", _fake_run_git)
+
+    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("{}", encoding="utf-8")
+    sidecar_mtime = fork_committed_at + sidecar_offset_s
+    os.utime(sidecar, (sidecar_mtime, sidecar_mtime))
+
+    result = precommit._pip_audit_skip(tmp_path)
+    if expect_skip:
+        assert result is not None
+        assert result.skipped
+        assert "already scanned on this branch" in result.output
+    else:
+        assert result is None
+
+
+def test_pip_audit_skip_unknown_cadence_scans(tmp_path: Path) -> None:
+    """An unrecognised `cadence` value is an uncertain case — it always scans."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.pip_audit]\ncadence = "fortnightly"\n'
+    )
+    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("{}", encoding="utf-8")
+    assert precommit._pip_audit_skip(tmp_path) is None
+
+
+def test_pip_audit_skip_env_override_forces_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FORGE_PIP_AUDIT_FORCE=1 always scans, even with a fresh sidecar.
+
+    This is the escape hatch `main()` sets for `--only pip_audit` (see
+    test_main_only_pip_audit_sets_force_env) — checked before any
+    cadence config is even read.
+    """
+    monkeypatch.setenv(precommit._PIP_AUDIT_FORCE_ENV, "1")
+    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("{}", encoding="utf-8")
+    assert precommit._pip_audit_skip(tmp_path) is None
+
+
+def test_step_pip_audit_skips_call_to_run_json_when_reuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cadence gate precedes the network call — reuse never invokes pip-audit.
+
+    SCENARIO: `cadence = "hours"` with a wide window and a fresh sidecar
+    — the reuse path.
+    MOCK SETUP: precommit.pip_audit_json.run_json raises if called at
+    all, proving the gate short-circuits before reaching it.
+    EXPECTED BEHAVIOR: a skipped, passing StepResult; run_json never runs.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.pip_audit]\ncadence = "hours"\nmax_age_hours = 24\n'
+    )
+    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("{}", encoding="utf-8")
+
+    def _boom(_root: object) -> None:
+        msg = "run_json must not be called when reusing a scan"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(precommit.pip_audit_json, "run_json", _boom)
+    result = precommit.step_pip_audit(tmp_path)
+    assert result.skipped
+    assert result.passed
+
+
 def test_non_blocking_warning_does_not_fail_main(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1626,6 +1848,42 @@ def test_main_only_flag_runs_subset(
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
     assert [r["name"] for r in data] == ["ruff"]
+
+
+def test_main_only_pip_audit_sets_force_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--only pip_audit` forces a scan for the duration of that run.
+
+    SCENARIO: naming the step explicitly (as `/pr` does) means the cadence gate
+    must not silently reuse a stale scan — but a step function receives
+    only `repo_root`, so main() communicates the override via env var
+    rather than a parameter. The other `--only` tests above stub the
+    step and never observe this, so it needs its own case.
+
+    MOCK SETUP: step_pip_audit is stubbed and records what the env var
+    held while it ran.
+
+    EXPECTED BEHAVIOR: the step sees the override, and the environment
+    is left as it was found — the flag belongs to the run, not to the
+    process that happened to start it.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setenv(precommit._PIP_AUDIT_FORCE_ENV, "0")
+    seen: list[str | None] = []
+
+    def _audit(_root: object) -> precommit.StepResult:
+        seen.append(os.environ.get(precommit._PIP_AUDIT_FORCE_ENV))
+        return precommit.StepResult(name="pip_audit", passed=True, output="x")
+
+    monkeypatch.setattr(precommit, "step_pip_audit", _audit)
+    with patch.object(
+        precommit.sys, "argv", ["forge-precommit", "--only", "pip_audit"]
+    ):
+        rc = precommit.main()
+    assert rc == 0
+    assert seen == ["1"]
+    assert os.environ.get(precommit._PIP_AUDIT_FORCE_ENV) == "0"
 
 
 def test_main_unknown_step_name_exits_one(

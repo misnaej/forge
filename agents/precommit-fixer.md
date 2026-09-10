@@ -59,7 +59,7 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
 | Mode | Behavior |
 |---|---|
 | `normal` (default) | Fix everything fixable in the repo's own code. `pip_audit` advisories are REPORTED with the suggested pin — never auto-bumped (FOUNDATION §6: dependency bumps ship in dedicated PRs). Exit success. |
-| `strict` | Same as `normal`, but any remaining non-blocking warning (e.g. residual `pip_audit`) is treated as a hard failure to SURFACE — still no auto-bump. Used at PR finalization. |
+| `strict` | Same as `normal`, but any remaining non-blocking warning (e.g. residual `pip_audit`) is treated as a hard failure to SURFACE — still no auto-bump. Used at PR finalization, where the caller sets `FORGE_PIP_AUDIT_FORCE=1`: the CVE scan runs once per branch by default, so strict mode needs it forced to have a current answer to escalate. |
 
 Caller signals via the prompt (`mode: strict`).
 

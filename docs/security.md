@@ -17,7 +17,7 @@ Four concrete mechanisms ship with forge:
 | Mechanism | What it does | Where |
 |---|---|---|
 | `block_protected_files` Claude Code hook | Blocks edits to known secret files (`.env`, `.hf_token`, etc.) before they reach git | `${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_files.sh` |
-| `pip_audit` pre-commit step | Scans dependencies for known CVEs on every commit (non-blocking warning) | `forge-precommit` sequence |
+| `pip_audit` pre-commit step | Scans dependencies for known CVEs once per branch by default, and always at PR finalization, which forces it (non-blocking warning; `[tool.forge.pip_audit].cadence` sets the rhythm) | `forge-precommit` sequence |
 | FOUNDATION §2 rules | "No secrets in code or commits"; "No private organizational names in code, docs, or examples" | [`FOUNDATION.md`](../FOUNDATION.md) |
 | `forge:security-checker` agent | Reviews PRs for dangerous patterns, secrets, dependency issues, agent prompt safety | `agents/security-checker.md` |
 

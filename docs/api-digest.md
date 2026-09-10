@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 956 symbols._
+_72 modules, 962 symbols._
 
 ## `forge`
 
@@ -928,6 +928,10 @@ _72 modules, 956 symbols._
 - `step_cli_reference_check(repo_root: Path) -> StepResult` — Run ``forge-gen-cli-reference --check`` — cli-reference drift guard (opt-in).
 - `step_foundation_md_check(repo_root: Path) -> StepResult` — Verify ``FOUNDATION.md`` reproduces the installed foundation (opt-in).
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
+- `_pip_audit_scan_age_hours(repo_root: Path) -> float | None` _(internal)_ — Return how long ago the last CVE scan wrote its sidecar.
+- `_reuse_reason_hours(cfg: dict, age: float) -> str | None` _(internal)_ — Return why an hours-cadence scan may be reused, or ``None`` to scan.
+- `_reuse_reason_branch(repo_root: Path) -> str | None` _(internal)_ — Return why a branch-cadence scan may be reused, or ``None`` to scan.
+- `_pip_audit_skip(repo_root: Path) -> StepResult | None` _(internal)_ — Decide whether this commit can reuse the previous CVE scan.
 - `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.
 - `_write_audit_sidecar(repo_root: Path, data: dict) -> None` _(internal)_ — Persist pip-audit's parsed JSON to the shared sidecar.
 - `step_cve_usage(repo_root: Path) -> StepResult` — Run ``verify-forge-cve-usage`` — the usage-scoped second stage on pip_audit.
@@ -963,6 +967,8 @@ _72 modules, 956 symbols._
 - `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
 - `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
 - `_capped(output: str) -> str` _(internal)_ — Return *output* trimmed to the shared evidence cap.
+- `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult]) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
+- `_forced_steps(only: list[str]) -> Iterator[None]` _(internal)_ — Force explicitly named steps to run, then restore the environment.
 - `main() -> int` — CLI entry point.
 
 ## `forge.rebump`

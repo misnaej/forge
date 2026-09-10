@@ -70,7 +70,9 @@ import shlex
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from importlib import resources
 from typing import TYPE_CHECKING
 
@@ -120,7 +122,7 @@ from forge.version_surfaces import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterator, Sequence
     from pathlib import Path
 
     StepFn = Callable[[Path], "StepResult"]
@@ -1202,6 +1204,123 @@ def _count_pip_audit_advisories(output: str) -> int:
     return len(_ADVISORY_ID_RE.findall(output))
 
 
+_PIP_AUDIT_FORCE_ENV = "FORGE_PIP_AUDIT_FORCE"
+#: A stamp dated further ahead than this is treated as invalid rather
+#: than allowed to suppress scans indefinitely (mirrors smart_test).
+_PIP_AUDIT_FUTURE_TOLERANCE_S = 300.0
+
+
+def _pip_audit_scan_age_hours(repo_root: Path) -> float | None:
+    """Return how long ago the last CVE scan wrote its sidecar.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        Age in hours, or ``None`` when there is no readable stamp or it
+        is dated in the future — both mean scan, which is the safe
+        direction.
+    """
+    sidecar = repo_root / PIP_AUDIT_SIDECAR
+    try:
+        mtime = sidecar.stat().st_mtime
+    except OSError:
+        return None
+    delta_s = datetime.now(tz=UTC).timestamp() - mtime
+    if delta_s < -_PIP_AUDIT_FUTURE_TOLERANCE_S:
+        return None
+    return max(0.0, delta_s / 3600.0)
+
+
+def _reuse_reason_hours(cfg: dict, age: float) -> str | None:
+    """Return why an hours-cadence scan may be reused, or ``None`` to scan.
+
+    Args:
+        cfg: The ``[tool.forge.pip_audit]`` section.
+        age: Age of the previous scan, in hours.
+
+    Returns:
+        A phrase for the skip message, or ``None`` — an unreadable
+        ``max_age_hours`` scans rather than guessing.
+    """
+    try:
+        max_age = float(cfg.get("max_age_hours") or 24.0)
+    except (TypeError, ValueError):
+        return None
+    if age >= max_age:
+        return None
+    return f"under the {max_age:g}h cadence"
+
+
+def _reuse_reason_branch(repo_root: Path) -> str | None:
+    """Return why a branch-cadence scan may be reused, or ``None`` to scan.
+
+    "Once per branch" means the sidecar was written after this branch
+    left its base. An unresolvable fork point scans.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        A phrase for the skip message, or ``None``.
+    """
+    fork = merge_base_with_head(repo_root, config.load_config(repo_root).base_branch)
+    if not fork:
+        return None
+    forked_at = run_git("show", "-s", "--format=%ct", fork, cwd=repo_root, check=False)
+    if not forked_at.strip().isdigit():
+        return None
+    sidecar_mtime = (repo_root / PIP_AUDIT_SIDECAR).stat().st_mtime
+    if sidecar_mtime <= float(forked_at.strip()):
+        return None
+    return "already scanned on this branch"
+
+
+def _pip_audit_skip(repo_root: Path) -> StepResult | None:
+    """Decide whether this commit can reuse the previous CVE scan.
+
+    The scan's inputs are the installed packages and a remote advisory
+    database, neither of which changes because a commit happened — so
+    running it on every commit spends network time on an answer that
+    cannot have moved. It runs once per branch by default, and always at
+    PR finalization, where `/pr` forces it.
+
+    Every uncertain case scans: no stamp, an unreadable one, a
+    future-dated one, an unknown cadence.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        A skipped ``StepResult`` when the previous scan still stands,
+        otherwise ``None``.
+    """
+    if os.environ.get(_PIP_AUDIT_FORCE_ENV) == "1":
+        return None
+    cfg = _forge_step_config(repo_root, "pip_audit")
+    cadence = str(cfg.get("cadence", "branch"))
+    age = _pip_audit_scan_age_hours(repo_root)
+    if cadence == "always" or age is None:
+        return None
+    if cadence == "hours":
+        detail = _reuse_reason_hours(cfg, age)
+    elif cadence == "branch":
+        detail = _reuse_reason_branch(repo_root)
+    else:
+        detail = None
+    if detail is None:
+        return None
+    return StepResult(
+        name="pip_audit",
+        passed=True,
+        output=(
+            f"(last scan {age:.1f}h ago, {detail} — skipped; "
+            f"`/pr` forces a scan before anything publishes)"
+        ),
+        skipped=True,
+    )
+
+
 def step_pip_audit(repo_root: Path) -> StepResult:
     """Run ``pip-audit --skip-editable`` and report findings as non-blocking.
 
@@ -1242,6 +1361,9 @@ def step_pip_audit(repo_root: Path) -> StepResult:
         ``[tool.forge.pip_audit].blocking`` for CVE findings, always
         ``True`` when the binary is missing.
     """
+    reuse = _pip_audit_skip(repo_root)
+    if reuse is not None:
+        return reuse
     blocking = bool(_forge_step_config(repo_root, "pip_audit").get("blocking", False))
     run = pip_audit_json.run_json(repo_root)
     if run is None:
@@ -1326,9 +1448,12 @@ def step_cve_usage(repo_root: Path) -> StepResult:
     finalization (strict), same as ``pip_audit``.
 
     Reuses ``step_pip_audit``'s scan: when the ``code_health/pip_audit.json``
-    sidecar exists (the normal case — ``pip_audit`` runs first), it is passed
-    via ``--audit-json`` so pip-audit is invoked **once** per commit (#78). If
-    the sidecar is absent (``pip_audit`` disabled or skipped), the CLI falls
+    sidecar exists (the normal case), it is passed via ``--audit-json`` so
+    pip-audit is invoked **once** (#78). The sidecar is now routinely older
+    than this commit — ``pip_audit`` runs once per branch by default — which
+    is the intended reuse, not staleness: the packages installed and the
+    advisory database are what it describes, and neither moves because a
+    commit happened. If the sidecar is absent, the CLI falls
     back to running pip-audit itself, so the check still works standalone.
     The sidecar is trusted as current; ``pip_audit`` rewrites it every run and
     sits immediately before this step, so the only stale case is an explicit
@@ -2769,6 +2894,79 @@ def _capped(output: str) -> str:
     return f"{text[:EVIDENCE_OUTPUT_CAP]}\n… (truncated; full output in the log)"
 
 
+def _emit_human_summary(
+    results: list[StepResult],
+    blocking_failures: list[StepResult],
+    non_blocking_warnings: list[StepResult],
+) -> None:
+    """Print the human-readable pre-commit summary (non-JSON mode).
+
+    Args:
+        results: All step results.
+        blocking_failures: Steps that failed and blocked the pre-commit.
+        non_blocking_warnings: Steps that failed but did not block.
+    """
+    emit("")
+    if blocking_failures:
+        emit(f"{RED}Pre-commit checks failed:{NC}")
+        for r in blocking_failures:
+            emit(f"  - {r.name}: see code_health/{r.name}.log")
+            # In CI that log is on a machine that no longer exists by
+            # the time anyone reads the run, so the failure names
+            # itself and never says what was wrong. Echo the step's
+            # own output — blocking failures only, to bound volume.
+            # `is_ci()`, never `is_non_interactive()`: the latter is
+            # true in any non-tty local shell and would dump logs
+            # into every commit.
+            if is_ci() and r.output.strip():
+                emit(_capped(r.output))
+        if non_blocking_warnings:
+            emit(
+                f"{YELLOW}Plus {len(non_blocking_warnings)} non-blocking "
+                f"warning(s) — see code_health/ logs.{NC}",
+            )
+    elif non_blocking_warnings:
+        emit(
+            f"{YELLOW}All blocking checks passed. "
+            f"{len(non_blocking_warnings)} non-blocking warning(s):{NC}",
+        )
+        for r in non_blocking_warnings:
+            emit(f"  - {r.name}: see code_health/{r.name}.log")
+    else:
+        emit(f"{GREEN}All checks passed.{NC}")
+    total_elapsed = sum(r.elapsed_s for r in results)
+    emit(f"total {total_elapsed:.1f}s (per-step: code_health/precommit_timing.log)")
+
+
+@contextmanager
+def _forced_steps(only: list[str]) -> Iterator[None]:
+    """Force explicitly named steps to run, then restore the environment.
+
+    A step function receives only ``repo_root``, so a cadence self-skip
+    cannot see ``--only`` on its own; the force travels as an env var,
+    the same channel ``FORGE_WIP_SYNC`` uses. It is restored afterwards
+    rather than left set, so the flag does not outlive the run it was
+    meant for — this process exits immediately, but nothing about the
+    contract should depend on that.
+
+    Args:
+        only: Step names the caller asked for.
+
+    Yields:
+        Nothing; the environment is set for the duration.
+    """
+    previous = os.environ.get(_PIP_AUDIT_FORCE_ENV)
+    if "pip_audit" in only:
+        os.environ[_PIP_AUDIT_FORCE_ENV] = "1"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(_PIP_AUDIT_FORCE_ENV, None)
+        else:
+            os.environ[_PIP_AUDIT_FORCE_ENV] = previous
+
+
 def main() -> int:
     """CLI entry point.
 
@@ -2828,7 +3026,8 @@ def main() -> int:
     skip = _split_csv(args.skip)
     only = _split_csv(args.only)
     try:
-        results = run_all(print_progress=not args.json, skip=skip, only=only)
+        with _forced_steps(only):
+            results = run_all(print_progress=not args.json, skip=skip, only=only)
     except ValueError as exc:
         emit(f"{RED}forge-precommit: {exc}{NC}")
         return 1
@@ -2838,36 +3037,7 @@ def main() -> int:
     if args.json:
         emit(json.dumps([asdict(r) for r in results], indent=2))
     else:
-        emit("")
-        if blocking_failures:
-            emit(f"{RED}Pre-commit checks failed:{NC}")
-            for r in blocking_failures:
-                emit(f"  - {r.name}: see code_health/{r.name}.log")
-                # In CI that log is on a machine that no longer exists by
-                # the time anyone reads the run, so the failure names
-                # itself and never says what was wrong. Echo the step's
-                # own output — blocking failures only, to bound volume.
-                # `is_ci()`, never `is_non_interactive()`: the latter is
-                # true in any non-tty local shell and would dump logs
-                # into every commit.
-                if is_ci() and r.output.strip():
-                    emit(_capped(r.output))
-            if non_blocking_warnings:
-                emit(
-                    f"{YELLOW}Plus {len(non_blocking_warnings)} non-blocking "
-                    f"warning(s) — see code_health/ logs.{NC}",
-                )
-        elif non_blocking_warnings:
-            emit(
-                f"{YELLOW}All blocking checks passed. "
-                f"{len(non_blocking_warnings)} non-blocking warning(s):{NC}",
-            )
-            for r in non_blocking_warnings:
-                emit(f"  - {r.name}: see code_health/{r.name}.log")
-        else:
-            emit(f"{GREEN}All checks passed.{NC}")
-        total_elapsed = sum(r.elapsed_s for r in results)
-        emit(f"total {total_elapsed:.1f}s (per-step: code_health/precommit_timing.log)")
+        _emit_human_summary(results, blocking_failures, non_blocking_warnings)
 
     return 1 if blocking_failures else 0
 
