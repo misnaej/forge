@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from forge import precommit
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_DIR = REPO_ROOT / ".claude-plugin"
@@ -115,3 +117,20 @@ def test_license_file_exists() -> None:
     contents = license_file.read_text()
     assert "MIT License" in contents
     assert "Jean Simonnet" in contents
+
+
+def test_strict_mode_agent_command_forces_cve_scan() -> None:
+    """`precommit-fixer`'s strict-mode command carries the force flag.
+
+    SCENARIO: the CVE scan runs once per branch, so strict mode escalating
+    "remaining advisories" would escalate a stale answer unless its own
+    invocation forces a rescan. The agent doc is what the agent executes,
+    so the claim and the command have to be the same string — this pins
+    them together across a rename of either.
+
+    EXPECTED BEHAVIOR: the doc contains the env var precommit reads,
+    prefixed onto a single `forge-precommit` invocation.
+    """
+    body = (REPO_ROOT / "agents" / "precommit-fixer.md").read_text()
+    forced = f"{precommit._PIP_AUDIT_FORCE_ENV}=1 forge-precommit"
+    assert forced in body, f"strict-mode Phase 1 must run `{forced}`"
