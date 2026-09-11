@@ -734,6 +734,46 @@ def test_read_plugin_version_returns_none_on_malformed_json(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
+# plugin_manifest_declares_version
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        pytest.param(None, False, id="missing-file"),
+        pytest.param(json.dumps({"name": "x"}), False, id="no-version-key"),
+        pytest.param(
+            json.dumps({"name": "x", "version": "bad"}),
+            True,
+            id="malformed-version-value",
+        ),
+        pytest.param("{not valid", True, id="unparseable-text"),
+    ],
+)
+def test_plugin_manifest_declares_version(
+    tmp_path: Path, content: str | None, *, expected: bool
+) -> None:
+    """Presence of the "version" key, not its validity, decides the verdict.
+
+    A malformed value (``"bad"``) or wholly unparseable JSON both still
+    "declare" — the callers' own malformed-manifest error paths must
+    still fire downstream; only a manifest that parses cleanly AND omits
+    the key entirely reads as version-less (Claude Code then keys the
+    plugin on its commit SHA — see :mod:`forge.version_surfaces`).
+
+    Args:
+        content: Manifest text to write, or ``None`` for no manifest file.
+        expected: Expected return value.
+    """
+    if content is not None:
+        plugin_dir = tmp_path / ".claude-plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "plugin.json").write_text(content)
+    assert git_utils.plugin_manifest_declares_version(tmp_path) is expected
+
+
+# ---------------------------------------------------------------------------
 # render_plugin_version / write_plugin_version
 # ---------------------------------------------------------------------------
 
@@ -1267,6 +1307,39 @@ def test_ref_exists_false_for_missing_ref(tmp_path: Path) -> None:
     """A ref with no matching commit resolves to ``False``."""
     _init_git_repo(tmp_path)
     assert git_utils.ref_exists(tmp_path, "nonexistent_branch_xyz") is False
+
+
+# ---------------------------------------------------------------------------
+# resolve_commit
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_commit_rejects_flag_shaped_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `-`-prefixed ref (option injection) is rejected, no git invocation.
+
+    A leading ``-`` would parse as a git option rather than a revision;
+    the guard sits in :func:`git_utils.resolve_commit` itself so every
+    caller (``ref_exists``, ``is_ancestor``-adjacent callers) inherits it.
+    """
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "deadbeef\n"})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.resolve_commit(tmp_path, "--output=pwned") is None
+    assert calls == []
+
+
+def test_resolve_commit_real_repo_resolves_head(tmp_path: Path) -> None:
+    """A real repo: ``HEAD`` resolves to a full 40-char SHA."""
+    _init_git_repo(tmp_path)
+    sha = git_utils.resolve_commit(tmp_path, "HEAD")
+    assert sha is not None
+    assert len(sha) == 40
 
 
 # ---------------------------------------------------------------------------
@@ -2757,6 +2830,43 @@ def test_is_ancestor_rejects_flag_shaped_refs() -> None:
     """
     assert git_utils.is_ancestor(None, "-v1.0.0", "HEAD") is False
     assert git_utils.is_ancestor(None, "v1.0.0", "--all") is False
+
+
+# ---------------------------------------------------------------------------
+# paths_differ
+# ---------------------------------------------------------------------------
+
+
+def test_paths_differ_rejects_flag_shaped_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `-`-prefixed ref on either side is rejected, no git invocation.
+
+    Mirrors :func:`test_is_ancestor_rejects_flag_shaped_refs`: a leading
+    ``-`` on ``ref_a`` or ``ref_b`` would parse as a ``git diff`` option
+    rather than a revision.
+    """
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 1})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.paths_differ(tmp_path, "--pwned", "HEAD", ("x",)) is False
+    assert git_utils.paths_differ(tmp_path, "HEAD", "--pwned", ("x",)) is False
+    assert calls == []
+
+
+def test_paths_differ_real_repo_true_for_changed_path(tmp_path: Path) -> None:
+    """A real repo: a path touched between two commits differs."""
+    _init_git_repo(tmp_path)
+    first = git_utils.resolve_commit(tmp_path, "HEAD")
+    assert first is not None
+    (tmp_path / "changed.txt").write_text("x")
+    commit_all(tmp_path, "change")
+    assert git_utils.paths_differ(tmp_path, first, "HEAD", ("changed.txt",)) is True
+    assert git_utils.paths_differ(tmp_path, first, "HEAD", ("other.txt",)) is False
 
 
 # ---------------------------------------------------------------------------

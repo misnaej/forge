@@ -457,10 +457,15 @@ A repo that ships a Claude Code plugin (`.claude-plugin/plugin.json`) runs its
 agents and hooks from Claude Code's **cache**, not from the tree. After a plugin
 release merges, every session keeps the old cache until someone runs
 `/plugin update <plugin>@<marketplace>` and `/reload-plugins` — commands no git
-hook can run. The `plugin_sync` step compares the cached plugin's version with
-the manifest's and names those commands when the cache lags. It self-skips when
-the repo ships no plugin, when the plugin is not installed locally, and in
-non-interactive contexts (FOUNDATION §15).
+hook can run. The `plugin_sync` step compares the installed plugin with what the
+repo ships and names those commands when it lags: by declared version when the
+manifest declares one; otherwise (the plugin is keyed on its commit) the
+installed commit against `origin/<base>`, finding a lag whenever the base has
+since changed `.claude-plugin/`, `agents/`, `skills/` or `claude-hooks/` —
+then `/plugin marketplace update <marketplace>` comes first. It self-skips when
+the repo ships no plugin, when the plugin is not installed locally, when the
+installed commit cannot be compared, and in non-interactive contexts
+(FOUNDATION §15).
 
 | Key | Default | Meaning | Set it when |
 |---|---|---|---|
@@ -754,8 +759,8 @@ following the [consumer changelog convention](../docs/consumer-release.md)
   normal state right after a release is cut), and on a feature branch no
   entries gain content under an already-released heading since the merge
   base (the stranded-entries race). Self-skips without a root
-  `CHANGELOG.md` and on manifest-versioned repos
-  (`verify-forge-plugin-version` owns the invariant).
+  `CHANGELOG.md` and on repos whose manifest declares a version
+  (`verify-forge-plugin-version` owns the invariant there).
 - **`changelog_updated`** — the per-PR freshness gate: a change set that
   touches a changelog-requiring path without touching `CHANGELOG.md`
   fails. Self-skips without a `CHANGELOG.md` and on the base branch;

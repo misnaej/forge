@@ -24,8 +24,8 @@ assemble under its heading; only fragments no tag holds mint a new
 version — ``latest v* tag + max(bump level over the unreleased
 fragments)`` (:func:`plan_assembly`), computed at release, never
 carried per-PR. When every pending fragment is tagged, nothing is
-minted: the assembly backfills the per-tag headings and syncs the
-manifest to the latest tag.
+minted: the assembly backfills the per-tag headings and syncs a
+manifest that declares a version to the latest tag.
 
 Usage:
 
@@ -39,7 +39,8 @@ Usage:
 - ``forge-changelog release`` — plan the assembly (tag-aware), assemble
   ``CHANGELOG.md`` with a heading per already-tagged group plus any
   minted heading, write ``.claude-plugin/plugin.json`` to the plan's
-  version (when a manifest exists — the manifest's single writer), and
+  version (when the manifest declares one — the manifest's single
+  writer; a version-less manifest is keyed on its commit), and
   stage everything (never commits). Merge the resulting PR; tag-on-merge
   cuts the tag when the plan minted one.
 - ``forge-changelog next-version`` — read-only print of the computed
@@ -78,6 +79,7 @@ from forge.git_utils import (
     latest_v_tag,
     merge_base_with_head,
     next_version,
+    plugin_manifest_declares_version,
     render_plugin_version,
     repo_root,
     require_cli,
@@ -162,7 +164,8 @@ class AssemblyPlan:
         untagged: Fragments no tag holds — the unreleased set.
         version: Bare release version: the latest tag bumped by
             ``untagged``'s strongest level, or the latest tag itself when
-            ``untagged`` is empty (the manifest syncs, nothing is minted).
+            ``untagged`` is empty (nothing is minted; a manifest that
+            declares a version syncs to it).
         level: The bump level behind a minted version; ``None`` when
             nothing is minted.
     """
@@ -774,12 +777,12 @@ def _cmd_release(root: Path, date: str) -> int:
     Computes the plan once (:func:`plan_assembly`), assembles
     ``CHANGELOG.md`` — one heading per already-cut tag, plus the minted
     heading for unreleased fragments — with fragment deletions staged,
-    and — when the repo ships a plugin manifest — writes
+    and — when the repo's plugin manifest declares a version — writes
     ``.claude-plugin/plugin.json`` to the plan's version and stages
     it. Never commits: the caller branches, commits, and opens the
     release PR; tag-on-merge cuts the tag. Manifest-less (tag-versioned)
-    repos skip the manifest write and use the printed version for their
-    own tag flow.
+    repos, and repos whose manifest declares no version, skip the
+    manifest write and use the printed version for their own tag flow.
 
     Args:
         root: Repository root directory.
@@ -797,9 +800,14 @@ def _cmd_release(root: Path, date: str) -> int:
     if outcome != 0:
         return outcome
     if plan.level is None:
+        synced = (
+            f" (manifest synced to v{plan.version})"
+            if plugin_manifest_declares_version(root)
+            else ""
+        )
         emit(
-            f"Assembly under existing tags prepared (manifest synced to "
-            f"v{plan.version}) — commit, PR, merge; nothing to tag."
+            f"Assembly under existing tags prepared{synced} — commit, PR, "
+            "merge; nothing to tag."
         )
     else:
         emit(
@@ -830,9 +838,11 @@ def _stage_release(root: Path, date: str, plan: AssemblyPlan) -> int:
     # validation — so a manifest refusal leaves the tree untouched
     # instead of stranding a half-release (heading written, fragments
     # already deleted, manifest stale).
+    # A manifest without a version key is keyed on its commit SHA —
+    # there is no version slot to write, and rendering one would fail.
     manifest = root / ".claude-plugin" / "plugin.json"
     manifest_text: str | None = None
-    if manifest.is_file():
+    if plugin_manifest_declares_version(root):
         try:
             manifest_text = render_plugin_version(
                 manifest.read_text(encoding="utf-8"), plan.version
@@ -986,8 +996,8 @@ def _cmd_auto_tag(root: Path) -> int:
     :func:`fragments_new_since_tag`), bump, tag, push the tag. Tag refs
     sit outside branch rulesets, so no commit to the base branch is
     needed; fragment files persist until an assembly PR collates the
-    changelog and syncs the manifest. Never silent: every path emits
-    what happened or why nothing did.
+    changelog. Never silent: every path emits what happened or why
+    nothing did.
 
     Args:
         root: Repository root directory.
@@ -1033,8 +1043,7 @@ ASSEMBLY_BRANCH_PREFIX = "chore/assemble-"
 # not a cron log nobody reads — carries what the merger must know.
 _ASSEMBLY_PR_BODY = """\
 Scheduled changelog assembly ({version}): collates the pending
-`changelog.d/` fragments into `CHANGELOG.md` {headings} and
-syncs `.claude-plugin/plugin.json` (when present).
+`changelog.d/` fragments into `CHANGELOG.md` {headings}{manifest_sync}.
 
 **Merging this PR is the release act for the changelog**: the fragments
 are consumed. {tagging} Merge stays a human decision.
@@ -1042,32 +1051,43 @@ are consumed. {tagging} Merge stays a human decision.
 Opened by `forge-changelog release-pr` (assemble-release workflow).
 """
 
-# The tagging sentence must match the repo's version source: a manifest
-# repo's tag-release workflow tags the merge (`forge-next-prep --tag`
-# sees the manifest ahead); a manifest-less repo has nothing ahead and
+# The tagging sentence must match the repo's version source. A manifest
+# that declares a version: the tag-release workflow tags the merge
+# (`forge-next-prep --tag` sees the manifest ahead). Tag-per-merge with no
+# declared version: the tag belongs to the merge that carried the
+# fragment, which auto-tag cuts — this assembly carries none. Otherwise
 # `auto-tag` no-ops on the merge (the fragments were just deleted), so
 # the tag is a post-merge step the body must name — not claim happened.
 _TAGGING_WITH_MANIFEST = (
     "`forge-next-prep --tag` in the tag-release workflow tags the merge "
     "(the manifest is ahead)."
 )
+_TAGGING_PER_MERGE = (
+    "Tag-per-merge cuts {version} on the merge that carried its fragment "
+    "(`forge-changelog auto-tag` in the tag-release workflow — re-run that "
+    "job if it failed); this assembly carries no fragment, so its own "
+    "merge is not tagged."
+)
 _TAGGING_MANIFEST_LESS = (
-    "No plugin manifest: cut the release tag after merging — "
+    "No declared plugin version: cut the release tag after merging — "
     "`forge-release --from-changelog` reads the heading this PR writes "
     "(auto-tag cannot cover it; the fragments are deleted by this very "
     "assembly)."
 )
 # Every fragment already shipped under its own tag: the assembly only
-# backfills headings (and syncs the manifest) — there is nothing to tag.
+# backfills headings (and syncs a versioned manifest) — nothing to tag.
 _TAGGING_ALL_RELEASED = (
     "Nothing to tag: every fragment already shipped under its own tag — "
-    "this assembly backfills their headings and syncs the manifest to "
-    "{version}."
+    "this assembly backfills their headings{manifest_sync}."
 )
 
 
 def _assembly_pr_body(root: Path, plan: AssemblyPlan) -> str:
     """Render the assembly PR body with the repo-correct tagging sentence.
+
+    Every manifest claim branches on whether the manifest declares a
+    version: a version-less one is keyed on its commit, so the assembly
+    writes nothing to it and no tag follows from it.
 
     Args:
         root: Repository root directory.
@@ -1078,16 +1098,40 @@ def _assembly_pr_body(root: Path, plan: AssemblyPlan) -> str:
     """
     version = f"v{plan.version}"
     tags = ", ".join(tag for tag, _group in plan.tagged)
+    versioned = plugin_manifest_declares_version(root)
     if plan.level is None:
         headings = f"under their release tags ({tags})"
-        tagging = _TAGGING_ALL_RELEASED.format(version=version)
+        sync = f" and syncs the manifest to {version}" if versioned else ""
+        tagging = _TAGGING_ALL_RELEASED.format(manifest_sync=sync)
     else:
         headings = f"under **{version}**"
         if tags:
             headings += f" (plus backfilled headings for {tags})"
-        manifest = (root / ".claude-plugin" / "plugin.json").is_file()
-        tagging = _TAGGING_WITH_MANIFEST if manifest else _TAGGING_MANIFEST_LESS
-    return _ASSEMBLY_PR_BODY.format(version=version, headings=headings, tagging=tagging)
+        tagging = _minted_tagging_sentence(root, version, versioned=versioned)
+    header_sync = (
+        f" and syncs `.claude-plugin/plugin.json` to {version}" if versioned else ""
+    )
+    return _ASSEMBLY_PR_BODY.format(
+        version=version, headings=headings, manifest_sync=header_sync, tagging=tagging
+    )
+
+
+def _minted_tagging_sentence(root: Path, version: str, *, versioned: bool) -> str:
+    """Name who tags a minted *version*, per the repo's version source.
+
+    Args:
+        root: Repository root, used to read the release config.
+        version: The version string being minted (e.g. ``"v1.2.3"``).
+        versioned: Whether the plugin manifest declares a version.
+
+    Returns:
+        The sentence naming who tags the release.
+    """
+    if versioned:
+        return _TAGGING_WITH_MANIFEST
+    if read_tool_forge_section(root, "release").get("auto") == "merge":
+        return _TAGGING_PER_MERGE.format(version=version)
+    return _TAGGING_MANIFEST_LESS
 
 
 def _gate_evidence(root: Path) -> tuple[bool, str]:
@@ -1215,7 +1259,7 @@ def _cmd_release_pr(root: Path, date: str, *, draft: bool) -> int:
 
 
 def _stage_and_commit_assembly(root: Path, date: str, plan: AssemblyPlan) -> int:
-    """Stage and commit the assembly changelog and manifest.
+    """Stage and commit the assembly changelog (and a versioned manifest).
 
     Args:
         root: Repository root directory.
@@ -1456,7 +1500,8 @@ def main(argv: list[str] | None = None) -> int:
     rel = sub.add_parser(
         "release",
         help="assemble CHANGELOG.md under the computed next version, write "
-        "plugin.json to it (when present), stage everything — never commits",
+        "plugin.json to it (when it declares a version), stage everything "
+        "— never commits",
     )
     rel.add_argument("--date", default="", help="heading date (default: today, UTC)")
     asm = sub.add_parser(

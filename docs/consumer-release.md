@@ -5,8 +5,8 @@ How a consumer repo whose version is **derived from `v*` git tags**
 `.claude-plugin/plugin.json`) cuts `vX.Y.Z` releases with forge instead
 of hand-rolling the flow.
 
-This is the tag-versioned counterpart to forge's own manifest-versioned
-release process ([`release-process.md`](release-process.md), forge-only):
+This is the manually cut, tag-versioned counterpart to forge's own
+tag-per-merge release process ([`release-process.md`](release-process.md), forge-only):
 one trunk (`base_branch`, default `main`), and the tag **is** the
 release.
 
@@ -22,7 +22,9 @@ enforces, in order — all failures reported at once, exit `1`:
 1. **Clean working tree.**
 2. **On `base_branch`** (`[tool.forge].base_branch`, default `main`).
 3. **Single-track release model** — refuses on a manifest-versioned repo
-   (`.claude-plugin/plugin.json` present → use `forge-next-prep --tag`).
+   (`.claude-plugin/plugin.json` declares a version → use
+   `forge-next-prep --tag`; a manifest that declares none leaves the tags
+   as the only version source).
 4. **CHANGELOG gate** — when `CHANGELOG.md` exists, it must already
    carry a `## vX.Y.Z` heading for the tag being cut. A repo with no
    CHANGELOG gets a warning and proceeds.
@@ -57,8 +59,8 @@ in spirit; the deliberate divergences are listed at the end.
 - **No `## Unreleased` section.** The top heading always names the
   version **about to be released** — the CHANGELOG *declares* the next
   version, and the tag `forge-release` cuts *confirms* it. This is the
-  tag-versioned analogue of forge's own rolling-next invariant
-  ([`release-process.md`](release-process.md), forge-only). Right after
+  tag-versioned analogue of the rolling-next invariant a declared-version
+  manifest carries ([`release-process.md`](release-process.md) §1). Right after
   a release is cut, top heading and latest tag are **equal** — that
   window is valid; the **first PR after a tag opens the next
   `## vX.Y.Z` heading** (and carries its own entries under it).
@@ -233,10 +235,12 @@ the per-tag headings and syncs the manifest to the latest tag.
   an invalid fragment.
 - `forge-changelog release` computes the plan, assembles `CHANGELOG.md`
   (one heading per already-cut tag, then the minted heading on top), and
-  stages the result (fragment deletions included). Plugin repos: it also
-  rewrites `.claude-plugin/plugin.json` to the plan's version and stages
-  it — the manifest's single writer.
-  Tag-versioned (manifest-less) repos: no manifest write; use the
+  stages the result (fragment deletions included). Plugin repos whose
+  manifest declares a version: it also rewrites
+  `.claude-plugin/plugin.json` to the plan's version and stages it — the
+  manifest's single writer.
+  Tag-versioned repos — manifest-less, or a manifest that declares no
+  version: no manifest write; use the
   printed version for the tag (`git tag vX.Y.Z && git push origin
   vX.Y.Z`, or `forge-release`). It never commits — branch, run it,
   open an ordinary PR, merge, tag.
@@ -257,15 +261,22 @@ the per-tag headings and syncs the manifest to the latest tag.
   to the base branch — last tag + strongest level among the fragments
   merged since it → annotated tag, no base-branch commit. Without the
   opt-in the job emits a loud pending-fragments warning instead (it is
-  never silent). Changelog assembly and manifest sync happen at the
-  next `forge-changelog release` PR, which may collate several tags.
+  never silent). Changelog assembly (and, for a manifest that declares a
+  version, the manifest sync) happens at the next `forge-changelog
+  release` PR, which may collate several tags.
   If you mitigated the pre-fragments gap by guarding your tagger to
   **fail while fragments are pending**, remove that guard when adopting
   fragments — released fragments legitimately persist until assembly.
-- Between assemblies a plugin manifest **parks at or lags the latest
-  tag** (auto-cut tags advance past it): the `plugin_version` guard
-  accepts `manifest <= tag` while every pending fragment is valid, and
-  keeps the strictly-ahead pass for the assembly PR.
+- Between assemblies a plugin manifest that declares a version **parks
+  at or lags the latest tag** (auto-cut tags advance past it): the
+  `plugin_version` guard accepts `manifest <= tag` while every pending
+  fragment is valid, and keeps the strictly-ahead pass for the assembly
+  PR. Claude Code keys its plugin cache on that version, so every tag
+  cut in between ships the previous assembly's version and `/plugin
+  update` installs nothing new. Omit `version` from `plugin.json` to key
+  the plugin on its commit instead — every commit is then its own plugin
+  version, and the guard skips the manifest (what forge does,
+  [`release-process.md`](release-process.md) §1).
 
 No-version opt-outs (`NO_VERSION=1`, branch token, commit marker) apply
 unchanged.
@@ -274,8 +285,8 @@ unchanged.
 
 ## Choosing the bump
 
-The same decision axis governs both forge's own manifest-versioned
-bumps and any single-track repo's `forge-release --bump`, stated
+The same decision axis governs both forge's own fragment `bump:`
+levels and any single-track repo's `forge-release --bump`, stated
 generically here so every consumer picks the increment the same way.
 
 **First, declare your public surface** — the set of things a consumer

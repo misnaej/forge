@@ -798,13 +798,17 @@ invariants:
 When a forge release renames or adds an agent, an already-running session keeps
 the **cached** plugin from startup. Symptom: `Agent type 'forge:<name>' not found`
 though the agent is on disk — the cache
-(`~/.claude/plugins/cache/forge/forge/<version>/`) is behind. Recovery: `/plugin
-update forge@forge`, then `/reload-plugins` — agents, hooks, and MCP / LSP
-servers reload reliably; **skills and monitors may need a full session
-restart** — trust the command's own output over any fixed rule, and restart
-when a surface stays stale. The
-`check_upstream` warning (`install-forge-claude-md` + the `post-merge` /
-`post-checkout` / `SessionStart` hooks) surfaces the version lag automatically.
+(`~/.claude/plugins/cache/forge/forge/<commit>/` — forge's manifest declares no
+version, so Claude Code names the slot for the commit it installed) is behind.
+Recovery: `/plugin marketplace update forge`, `/plugin update forge@forge`, then
+`/reload-plugins` — agents, hooks, and MCP / LSP servers reload reliably;
+**skills and monitors may need a full session restart** — trust the command's
+own output over any fixed rule, and restart when a surface stays stale.
+`forge-doctor` names the lag: the installed commit against the one your pin
+serves — including when this machine's single `forge` marketplace registration
+serves another repo's pin, which no update can fix. The `check_upstream`
+warning (`install-forge-claude-md` + the `post-merge` / `post-checkout` /
+`SessionStart` hooks) covers the `forge-scripts` pin.
 
 ### Consumer Claude Code hook path convention
 

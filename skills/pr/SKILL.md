@@ -68,8 +68,9 @@ silently merge.** Which variant depends on Step 0:
   next open slot, restacks the changelog (shared-heading mode), and
   stages — refusing loudly if any other file conflicts. **Fragments
   mode**: rebump refuses here by design — a manifest conflict is a
-  racing release PR; follow the refusal's recovery (base side of both
-  files, restore consumed fragments from the merge base, re-run
+  racing release PR; follow the refusal's recovery (base side of
+  `CHANGELOG.md`, and of `plugin.json` where it carries a version;
+  restore consumed fragments from the merge base, re-run
   `forge-changelog release`). When the conflict is confined to
   forge-generated artifacts (`docs/api-digest.md`,
   `docs/cli-reference.md`, `FOUNDATION.md`, `docs/architecture.dsl`),
@@ -94,7 +95,8 @@ the convention doesn't apply). A `stranded` finding means: run
 the next open `## vX.Y.Z` heading and stages the result; `--bump
 minor|major` when the change deserves more than a patch slot), commit,
 and re-run from Step 0.5. (`forge-rebump` is the plugin-repo tool —
-rolling-next manifest repos only; manifest-less repos use `restrand`.)
+repos whose manifest declares a version only; manifest-less repos use
+`restrand`.)
 
 Merging the base re-triggers CI. Do **not** wait for it: per FOUNDATION §6
 "PR finalization", the wrap-up never blocks on CI — it posts as soon as the

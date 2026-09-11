@@ -14,10 +14,12 @@ Operations (in order, each idempotent):
    then ``git pull --ff-only`` — sync to latest.
 3. **Optional auto-tag** (``--tag``): if ``.claude-plugin/plugin.json``
    has a ``version`` strictly ahead of the latest ``v*`` tag, tag the
-   merge commit and push the tag. Forge's rolling-next workflow. On a
-   single-track repo with no plugin manifest the flag warns and skips
-   (per-merge tagging is a plugin-repo pattern — ``forge-release`` cuts
-   release tags there).
+   merge commit and push the tag — the rolling-next workflow of a plugin
+   repo whose manifest declares a version. A manifest that declares none
+   (forge's — the plugin is keyed on its commit) has nothing to tag, so
+   the flag reports that. On a single-track repo with no plugin manifest
+   the flag warns and skips (per-merge tagging is a plugin-repo pattern —
+   ``forge-release`` cuts release tags there).
 4. **Prune stale branches** (``--prune-branches``, default ON): delete
    local branches whose remote shows ``[origin/...: gone]``. Uses
    ``git branch -d`` (safe) — never ``-D``.
@@ -39,6 +41,7 @@ from forge.changelog_fragments import discover_fragments
 from forge.config import (
     is_fragments_mode,
     load_config,
+    read_tool_forge_section,
 )
 from forge.git_utils import (
     configure_cli_logging,
@@ -46,6 +49,7 @@ from forge.git_utils import (
     fetch_tags_best_effort,
     latest_v_tag,
     parse_semver,
+    plugin_manifest_declares_version,
     read_local_plugin_version,
     run_git,
 )
@@ -126,19 +130,38 @@ def _tag_misuse_warning(repo_root: Path) -> str | None:
 
     Per-merge tagging is the plugin-repo pattern: the rolling-next
     manifest names the version to tag. A single-track repo with no
-    ``.claude-plugin/plugin.json`` releases via ``forge-release``
-    instead, so ``--tag`` there is almost always a command copied from
-    forge's own workflow — warn loudly rather than no-op silently.
+    ``.claude-plugin/plugin.json`` releases via ``forge-release`` — or,
+    under tag-per-merge (``[tool.forge.release].auto = "merge"``), via
+    ``forge-changelog auto-tag`` — so ``--tag`` there is almost always a
+    command copied from forge's own workflow: warn loudly, naming the
+    repo's actual tagger, rather than no-op silently. A manifest that
+    declares no version is not misuse: it is keyed on its commit, tags
+    come from tag-per-merge, and ``--tag`` correctly finds nothing to do.
 
     Args:
         repo_root: Repo root.
 
     Returns:
-        A one-line warning when the repo has no plugin manifest;
-        ``None`` when ``--tag`` is applicable.
+        A one-line warning when the repo has no plugin manifest, or when
+        its declared version is not bare semver; ``None`` when ``--tag``
+        is applicable or has nothing to tag.
     """
     if read_local_plugin_version(repo_root) is not None:
         return None
+    if (repo_root / ".claude-plugin" / "plugin.json").is_file():
+        if not plugin_manifest_declares_version(repo_root):
+            return None
+        return (
+            "--tag skipped: .claude-plugin/plugin.json declares a version "
+            "that is not bare X.Y.Z semver — fix it (verify-forge-manifest "
+            "names the problem)."
+        )
+    if read_tool_forge_section(repo_root, "release").get("auto") == "merge":
+        return (
+            "--tag skipped: no .claude-plugin/plugin.json, and tag-per-merge "
+            '([tool.forge.release].auto = "merge") already cuts this repo\'s '
+            "tags — `forge-changelog auto-tag` owns them."
+        )
     return (
         "--tag skipped: no .claude-plugin/plugin.json and a single-track "
         "branch model — per-merge tagging is the rolling-next plugin-repo "
@@ -264,7 +287,8 @@ def main() -> int:
         action="store_true",
         help=(
             "Tag plugin.json's version when it's ahead of the latest v* tag "
-            "and push the tag (forge's rolling-next workflow). Off by default."
+            "and push the tag (the rolling-next workflow of a manifest that "
+            "declares a version). Off by default."
         ),
     )
     parser.add_argument(

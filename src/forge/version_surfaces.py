@@ -10,21 +10,34 @@ in the cache. ``forge-doctor`` reports the skew as an advisory and
 the readers live here once and both consumers see the same numbers and
 name the same remediation.
 
-A consumer repo ships no manifest, so it has no declared version to
-compare — the module also reads Claude Code's
-``known_marketplaces.json`` registry to resolve the marketplace clone a
-consumer's pin points at, and judges the cache slot by comparing that
-clone's content against what is loaded instead.
+Which plugin is installed, and from which commit, is Claude Code's own
+state: ``installed_plugins.json`` records each install (its cache slot and
+source commit) and ``known_marketplaces.json`` each registered marketplace
+(its clone and tracked ref). A manifest that declares no version is keyed
+on its commit, so the plugin verdict compares commits, not version
+strings: a plugin-shipping repo against its base branch, a consumer — which
+ships no manifest of its own — against the clone its pin resolves to.
 """
 
 from __future__ import annotations
 
 import json
+import re
+import shlex
 from importlib import metadata
 from pathlib import Path
 from typing import Final, NamedTuple
 
-from forge.git_utils import FORGE_DIST_NAME, parse_semver
+from forge.config import load_config
+from forge.git_utils import (
+    FORGE_DIST_NAME,
+    is_ancestor,
+    parse_semver,
+    paths_differ,
+    plugin_manifest_declares_version,
+    resolve_base_branch_ref,
+    resolve_commit,
+)
 from forge.install_githooks import SIDECAR_NAME as HOOK_VERSION_SIDECAR
 from forge.upgrade import find_pin
 
@@ -32,12 +45,33 @@ from forge.upgrade import find_pin
 DIST_NAME: Final[str] = FORGE_DIST_NAME
 
 # Registry Claude Code keeps of every marketplace it has cloned, mapping a
-# marketplace name to its source repo and the local clone path. Reading it
-# is what lets a consumer — which ships no manifest of its own — say what
-# content it actually pinned.
+# marketplace name to its source repo, tracked ref and local clone path.
+# Claude Code keeps one entry per name per user, so a repo's own pin is
+# only served when the registration tracks that same ref.
 KNOWN_MARKETPLACES: Final[Path] = (
     Path.home() / ".claude" / "plugins" / "known_marketplaces.json"
 )
+
+# Registry of installed plugins: per plugin key, one record per install
+# scope (user, or a project path) naming its cache slot, recorded version
+# and source commit. It — not the newest-named cache slot — says which
+# copy a repo runs.
+INSTALLED_PLUGINS: Final[Path] = (
+    Path.home() / ".claude" / "plugins" / "installed_plugins.json"
+)
+
+# What Claude Code loads from a plugin tree: a change under any of these is
+# a change to the running plugin; anything else in the repo is not.
+PLUGIN_SURFACE: Final[tuple[str, ...]] = (
+    ".claude-plugin",
+    "agents",
+    "skills",
+    "claude-hooks",
+)
+
+# An abbreviated or full commit SHA — what a commit-keyed install records
+# as its version.
+_SHA_RE: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{7,40}")
 
 # Remediation per surface — the single command that re-converges that one
 # onto the current line. Doctor prints it as advice; precommit prints it
@@ -48,16 +82,40 @@ SKEW_REMEDIATION: Final[dict[str, str]] = {
     "plugin cache": "/plugin update forge@forge (then /reload-plugins)",
 }
 
-# The remediation for a cache slot holding stale *content*. It cannot be
-# ``/plugin update``: that command compares declared manifest versions, and
-# a frozen declared version is exactly the condition here — the update
-# reports "already current" while the slot keeps whatever it was first
-# filled with. Only discarding the slot (or moving the clone it is filled
-# from) converges.
+# A commit-keyed plugin behind its base: the marketplace clone has to move
+# to the new commit before `/plugin update` has anything to install.
+REFRESH_REMEDIATION: Final[str] = (
+    "/plugin marketplace update {marketplace}, then /plugin update "
+    "{plugin}@{marketplace} (then /reload-plugins)"
+)
+
+# A commit-keyed plugin whose clone already moved: a plain update installs
+# the new commit, because a new commit is a new version.
+UPDATE_REMEDIATION: Final[str] = (
+    "/plugin update {plugin}@{marketplace} (then /reload-plugins)"
+)
+
+# The remediation for a cache slot holding stale *content* under a
+# *declared* version. It cannot be ``/plugin update``: that command
+# compares declared manifest versions, and an unmoved declared version is
+# exactly the condition here — the update reports "already current" while
+# the slot keeps whatever it was first filled with. Discarding the slot
+# and *installing* (not updating) refills it from the clone.
 STALE_CACHE_REMEDIATION: Final[str] = (
-    "delete ~/.claude/plugins/cache/{plugin}/ and restart the session "
-    "(move the marketplace ref first if the clone is behind too) — "
-    "`/plugin update` compares declared versions and reports no change"
+    "delete {slot}, reinstall with `claude plugin install "
+    "{plugin}@{marketplace}`, and restart the session — `/plugin update` "
+    "compares declared versions and reports no change"
+)
+
+# The machine's one registration tracks a different ref than this repo
+# pins. Updating cannot fix that; only re-registering at the pinned ref
+# does, and removal uninstalls the plugin everywhere it came from.
+WRONG_REF_REMEDIATION: Final[str] = (
+    "re-point this machine's `{marketplace}` marketplace to {ref}: "
+    "`claude plugin marketplace remove {marketplace}`, "
+    "`claude plugin marketplace add {slug}@{ref}`, then "
+    "`claude plugin install {plugin}@{marketplace}` in every repo that uses "
+    "it — the removal uninstalls {plugin} everywhere on this machine"
 )
 
 
@@ -131,7 +189,9 @@ def find_plugin_cache(plugin_name: str) -> Path | None:
     return cache if cache.is_dir() else None
 
 
-def find_install_dir(plugin_root: Path) -> Path | None:
+def find_install_dir(
+    plugin_root: Path, *, preferred: Path | None = None
+) -> Path | None:
     """Walk the Claude Code cache layout to find the active plugin install.
 
     Claude Code stores installed plugins under
@@ -139,12 +199,15 @@ def find_install_dir(plugin_root: Path) -> Path | None:
     nested below the cache slot, with one directory per cached version.
     Older versions and forks may flatten to one level or none. Walk
     up to two levels looking for the first directory that carries a
-    ``.claude-plugin/plugin.json``; when multiple versions are
-    present, pick the one with the highest semver-shaped name.
+    ``.claude-plugin/plugin.json``. The slot an install record names wins;
+    without one, the highest semver-shaped name does — a fallback only,
+    because a commit-keyed slot is named by a SHA, which does not sort.
 
     Args:
         plugin_root: Cache slot for the plugin
             (``~/.claude/plugins/cache/<plugin>``).
+        preferred: The slot ``installed_plugins.json`` records for the
+            install being judged, when known.
 
     Returns:
         Path of the directory carrying ``.claude-plugin/plugin.json`` (the
@@ -157,7 +220,124 @@ def find_install_dir(plugin_root: Path) -> Path | None:
     valid = [c.parent for c in candidates if (c / "plugin.json").is_file()]
     if not valid:
         return None
+    target = _safe_resolve(preferred) if preferred is not None else None
+    if target is not None:
+        for candidate in valid:
+            if candidate.resolve() == target:
+                return candidate
     return max(valid, key=lambda p: version_key(p.name))
+
+
+class InstallRecord(NamedTuple):
+    """One ``installed_plugins.json`` entry — a copy Claude Code runs.
+
+    Attributes:
+        install_dir: The cache slot the entry points at, when it names one.
+        version: The version Claude Code recorded: a semver string, or a
+            12-character commit SHA for a manifest that declares none.
+        commit: The source commit (``gitCommitSha``), when recorded.
+    """
+
+    install_dir: Path | None
+    version: str | None
+    commit: str | None
+
+
+def installed_record(
+    plugin_key: str,
+    repo_root: Path | None = None,
+    *,
+    plugins_file: Path | None = None,
+) -> InstallRecord | None:
+    """Return the install record of *plugin_key* that applies to *repo_root*.
+
+    A plugin can be installed once per scope — user-wide, or per project —
+    and each install is a separate cache slot, possibly a different
+    commit. Judging a repo means judging the copy recorded for that repo,
+    so the project's own record wins, then the user-scope one; another
+    project's install says nothing about this one. Every degradation
+    (missing, unreadable, or foreign-shaped registry) is "no record",
+    never an exception — the callers are advisories and gates that must
+    not crash on Claude Code's internal state.
+
+    Args:
+        plugin_key: ``<plugin>@<marketplace>``.
+        repo_root: Repo being judged; ``None`` takes the last record that
+            carries a version, whatever its scope.
+        plugins_file: Registry to read; defaults to :data:`INSTALLED_PLUGINS`.
+
+    Returns:
+        The applicable record, or ``None`` when there is none.
+    """
+    try:
+        data, err = read_json(plugins_file or INSTALLED_PLUGINS)
+    except OSError:
+        return None
+    if err is not None or not isinstance(data, dict):
+        return None
+    plugins = data.get("plugins")
+    entries = plugins.get(plugin_key) if isinstance(plugins, dict) else None
+    # Two shapes seen in the wild: a list of per-scope records, or one dict.
+    if isinstance(entries, dict):
+        entries = [entries]
+    if not isinstance(entries, list):
+        return None
+    chosen = _pick_record([e for e in entries if isinstance(e, dict)], repo_root)
+    if chosen is None:
+        return None
+    install = chosen.get("installPath")
+    version = chosen.get("version")
+    commit = chosen.get("gitCommitSha")
+    return InstallRecord(
+        Path(install) if isinstance(install, str) and install else None,
+        str(version) if version else None,
+        str(commit) if commit else None,
+    )
+
+
+def _pick_record(records: list[dict], repo_root: Path | None) -> dict | None:
+    """Choose the record that applies to *repo_root* (see :func:`installed_record`).
+
+    Args:
+        records: The plugin's per-scope install records.
+        repo_root: The repo to match by ``projectPath``, or ``None`` to fall
+            back to the last record carrying a version.
+
+    Returns:
+        The matching record, or ``None`` when no record applies.
+    """
+    if repo_root is None:
+        with_version = [r for r in records if r.get("version")]
+        return with_version[-1] if with_version else None
+    here = repo_root.resolve()
+    mine = [
+        r
+        for r in records
+        if isinstance(r.get("projectPath"), str)
+        and _safe_resolve(Path(r["projectPath"])) == here
+    ]
+    if mine:
+        return mine[-1]
+    user = [r for r in records if r.get("scope") == "user"]
+    return user[-1] if user else None
+
+
+def _safe_resolve(path: Path) -> Path | None:
+    """Resolve *path*, or ``None`` when it cannot be (e.g. a NUL byte).
+
+    Paths here come from Claude Code's registry files; a malformed one must
+    read as "no match", never crash a gate that runs on every commit.
+
+    Args:
+        path: A path read from local registry state.
+
+    Returns:
+        The resolved path, or ``None``.
+    """
+    try:
+        return path.resolve()
+    except (OSError, ValueError):
+        return None
 
 
 def pip_version() -> str | None:
@@ -273,21 +453,38 @@ def _direct_url() -> dict[str, object] | None:
     return data if isinstance(data, dict) else None
 
 
-def marketplace_clone(repo_slug: str) -> Path | None:
-    """Local clone Claude Code keeps for the marketplace serving *repo_slug*.
+class MarketplaceClone(NamedTuple):
+    """A marketplace Claude Code has registered on this machine.
+
+    Attributes:
+        name: The registration key — the ``<marketplace>`` in plugin keys.
+        path: The local clone.
+        ref: The ref the registration tracks; ``None`` for the default
+            branch.
+    """
+
+    name: str
+    path: Path
+    ref: str | None
+
+
+def marketplace_clone(repo_slug: str) -> MarketplaceClone | None:
+    """The registered marketplace serving *repo_slug*, with its clone and ref.
 
     Claude Code records every marketplace it has fetched in
     ``~/.claude/plugins/known_marketplaces.json``, keyed by marketplace
-    name, each entry carrying ``source.repo`` (``owner/repo``) and
-    ``installLocation`` (a real git checkout at the ref the consumer
-    registered). Matching on the source repo rather than the marketplace
-    name keeps the lookup tied to what the pin names.
+    name, each entry carrying ``source.repo`` (``owner/repo``), an optional
+    ``source.ref``, and ``installLocation`` (a real git checkout of that
+    ref). Matching on the source repo rather than the marketplace name
+    keeps the lookup tied to what the pin names. The ref is returned, not
+    assumed: the registration is machine-wide, so it may track another
+    repo's pin.
 
     Args:
         repo_slug: ``owner/repo`` the consumer's pin points at.
 
     Returns:
-        The clone directory, or ``None`` when the registry is absent,
+        The registration, or ``None`` when the registry is absent,
         unreadable, carries no entry for *repo_slug*, or names a path
         that no longer exists. Every degradation is "unknown", never an
         exception — this reader runs inside an advisory.
@@ -298,7 +495,7 @@ def marketplace_clone(repo_slug: str) -> Path | None:
         return None
     if err is not None or not isinstance(data, dict):
         return None
-    for entry in data.values():
+    for name, entry in data.items():
         if not isinstance(entry, dict):
             continue
         source = entry.get("source")
@@ -306,7 +503,10 @@ def marketplace_clone(repo_slug: str) -> Path | None:
             continue
         location = entry.get("installLocation")
         if isinstance(location, str) and Path(location).is_dir():
-            return Path(location)
+            ref = source.get("ref")
+            return MarketplaceClone(
+                str(name), Path(location), ref if isinstance(ref, str) and ref else None
+            )
     return None
 
 
@@ -360,16 +560,22 @@ class PluginCacheStatus(NamedTuple):
 
     Attributes:
         state: ``"no-manifest"``, ``"uncached"``, ``"unparsed"``,
-            ``"current"``, ``"behind"``, or ``"stale-content"`` — the
-            consumer verdict, where the slot's declared version is not
-            behind but its content is.
+            ``"current"``, ``"behind"``, ``"stale-content"`` (a consumer's
+            installed commit is not the one its pin serves), or
+            ``"wrong-ref"`` (the machine's registration tracks another ref
+            than the consumer pins).
         plugin_name: Name the manifest declares, falling back to the repo
             directory's own name.
-        cached: Version in the cache, when there is one.
-        declared: Version the manifest declares — or, on the consumer
-            branch, the ref the repo pins.
+        cached: What is installed: the cached version, or for a
+            commit-keyed plugin the installed commit (12 characters); for
+            ``"wrong-ref"``, the ref the registration tracks.
+        declared: What should be installed: the manifest's version, the
+            base ref a commit-keyed plugin is judged against, or on the
+            consumer branch the ref the repo pins.
         missing_hooks: Hooks the pinned content ships that the cache slot
-            does not; populated only for ``"stale-content"``.
+            does not; detail for ``"stale-content"``.
+        remedy: The command that converges this verdict, when one is
+            specific to it.
     """
 
     state: str
@@ -377,38 +583,41 @@ class PluginCacheStatus(NamedTuple):
     cached: str | None
     declared: str | None
     missing_hooks: tuple[str, ...] = ()
+    remedy: str = ""
 
 
 def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
-    """Compare the cached plugin against the manifest that ships it.
+    """Compare the cached plugin against what ships it.
 
     One reader for a question two checks ask: the ``plugin_sync``
     pre-commit step, which may refuse a commit, and ``forge-doctor``,
     which reports an advisory. Both need the same verdict and the same
     remediation; only what they do with it differs.
 
-    The manifest is the plugin's version. Comparing the cache against the
-    pip package's instead — as the doctor once did — asks about two
-    numbers that are parked apart by design, which produced a warning no
-    command could clear.
-
-    A repo that ships no manifest of its own is a *consumer*, and the
-    population that actually suffers a frozen cache. It gets the branch in
-    :func:`_consumer_cache_status`, which compares content rather than
-    version strings.
+    Three branches, by what identifies the plugin. A manifest that
+    declares a version is judged by that version. A manifest that declares
+    none is keyed on its commit, so :func:`_commit_identity_status` judges
+    the installed commit against the base branch. A repo with no manifest
+    is a *consumer*: :func:`_consumer_cache_status` judges the installed
+    commit against the clone its pin resolves to. Comparing the cache
+    against the pip package's version instead — as the doctor once did —
+    asks about two numbers that are apart by design.
 
     Args:
-        repo_root: Repo whose ``.claude-plugin/plugin.json`` ships the plugin.
+        repo_root: Repo whose ``.claude-plugin/plugin.json`` ships the
+            plugin, or a consumer repo.
 
     Returns:
-        A :class:`PluginCacheStatus`; ``"behind"`` and ``"stale-content"``
-        are the findings.
+        A :class:`PluginCacheStatus`; ``"behind"``, ``"stale-content"``
+        and ``"wrong-ref"`` are the findings.
     """
     manifest = repo_root / ".claude-plugin" / "plugin.json"
     if not manifest.is_file():
         return _consumer_cache_status(repo_root)
     data, _err = read_json(manifest)
     plugin_name = str(data.get("name") or repo_root.name)
+    if not plugin_manifest_declares_version(repo_root):
+        return _commit_identity_status(repo_root, plugin_name)
     declared = str(data["version"]) if data.get("version") else None
     cached = plugin_cache_version(find_plugin_cache(plugin_name))
     if cached is None:
@@ -421,43 +630,204 @@ def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
     return PluginCacheStatus(state, plugin_name, cached, declared)
 
 
-def _consumer_cache_status(repo_root: Path) -> PluginCacheStatus:
-    """Compare a consumer's active cache slot against the ref it pinned.
+def _commit_identity_status(repo_root: Path, plugin_name: str) -> PluginCacheStatus:
+    """Judge a commit-keyed plugin against the base branch of the repo shipping it.
 
-    A consumer ships no manifest, so there is no declared version to
-    compare — and under tag-per-merge with assemble-later release, the
-    declared version would not identify the content anyway: no tagged
-    tree's manifest equals its own tag, so materially different trees
-    share one cache slot. What the consumer *did* declare is the pin, and
-    the marketplace clone that pin resolves to is a real checkout of the
-    pinned content. Comparing its hook set against the cache slot's asks
-    the question the version string cannot answer, and names the concrete
-    harm: hooks that are not loaded.
+    Every commit is a plugin version, so "behind" means the base branch
+    changed what Claude Code loads (:data:`PLUGIN_SURFACE`) since the
+    installed commit — not merely that it moved. The check never guesses:
+    an installed commit this clone does not know, or one that is not an
+    ancestor of the base (a newer install, a fork), is no finding.
+
+    Args:
+        repo_root: Repo whose version-less manifest ships the plugin.
+        plugin_name: Name the manifest declares.
+
+    Returns:
+        ``"current"`` or ``"behind"`` (with the refresh-and-update
+        remedy), ``"uncached"`` when this repo has no install record, and
+        ``"unparsed"`` when the commits cannot be compared.
+    """
+    marketplace = own_marketplace_name(repo_root, plugin_name)
+    record = installed_record(f"{plugin_name}@{marketplace}", repo_root)
+    installed = _installed_commit(record)
+    if not installed:
+        return PluginCacheStatus("uncached", plugin_name, None, None)
+    base_ref = resolve_base_branch_ref(repo_root, load_config(repo_root).base_branch)
+    base_sha = resolve_commit(repo_root, base_ref) if base_ref else None
+    if base_ref is None or base_sha is None:
+        return PluginCacheStatus("unparsed", plugin_name, installed[:12], None)
+    declared = f"{base_ref} ({base_sha[:7]})"
+    if not is_ancestor(repo_root, installed, base_sha):
+        return PluginCacheStatus("unparsed", plugin_name, installed[:12], declared)
+    behind = paths_differ(repo_root, installed, base_sha, PLUGIN_SURFACE)
+    return PluginCacheStatus(
+        "behind" if behind else "current",
+        plugin_name,
+        installed[:12],
+        declared,
+        remedy=REFRESH_REMEDIATION.format(marketplace=marketplace, plugin=plugin_name),
+    )
+
+
+def own_marketplace_name(repo_root: Path, plugin_name: str) -> str:
+    """Name of the marketplace a plugin-shipping repo publishes, else the plugin's.
+
+    Args:
+        repo_root: Repo root to read ``.claude-plugin/marketplace.json`` from.
+        plugin_name: Fallback name when the repo ships no marketplace manifest.
+
+    Returns:
+        The marketplace's declared name, or *plugin_name* when absent.
+    """
+    data, err = read_json(repo_root / ".claude-plugin" / "marketplace.json")
+    name = data.get("name") if err is None and isinstance(data, dict) else None
+    return str(name) if name else plugin_name
+
+
+def _consumer_cache_status(repo_root: Path) -> PluginCacheStatus:
+    """Judge a consumer's installed commit against the ref it pinned.
+
+    A consumer ships no manifest, so it has no declared version to compare
+    — and a declared version would not identify the content anyway: under
+    tag-per-merge, distinct commits can share one. What the consumer did
+    declare is the pin. Two questions follow, in order. Does this
+    machine's registration serve that ref at all? Claude Code keeps one
+    registration per marketplace name per user, so another repo can hold
+    it at a different ref, and then no update in this repo can help. And
+    is the installed commit the one the clone is at?
 
     Args:
         repo_root: Consumer repo root — searched for a ``forge-scripts``
             pin.
 
     Returns:
-        ``"stale-content"`` when the slot is missing hooks the pinned
-        content ships, ``"current"`` when it is not, ``"uncached"`` when
-        nothing is installed, and ``"no-manifest"`` when the pin or the
+        ``"wrong-ref"``, ``"stale-content"``, ``"current"``, ``"uncached"``
+        when this repo has no install record, ``"unparsed"`` when the
+        commits cannot be read, and ``"no-manifest"`` when the pin or the
         clone cannot be resolved at all.
     """
     pin = find_pin(repo_root)
     slug = _repo_slug(pin.url) if pin is not None else None
     clone = marketplace_clone(slug) if slug is not None else None
-    source_dir = find_install_dir(clone) if clone is not None else None
-    if pin is None or source_dir is None:
+    source_dir = find_install_dir(clone.path) if clone is not None else None
+    if pin is None or slug is None or clone is None or source_dir is None:
         return PluginCacheStatus("no-manifest", repo_root.name, None, None)
     data, _err = read_json(source_dir / ".claude-plugin" / "plugin.json")
     plugin_name = str(data.get("name") or repo_root.name)
-    cache_root = find_plugin_cache(plugin_name)
-    install_dir = find_install_dir(cache_root) if cache_root is not None else None
-    if install_dir is None:
+    names = {"marketplace": clone.name, "plugin": plugin_name}
+    if not _clone_serves_ref(clone, pin.ref):
+        # Registry- and clone-derived values land in shell commands a person
+        # may paste — quote them.
+        values = {**names, "ref": pin.ref, "slug": slug}
+        shell = {key: shlex.quote(value) for key, value in values.items()}
+        return PluginCacheStatus(
+            "wrong-ref",
+            plugin_name,
+            clone.ref or "(default branch)",
+            pin.ref,
+            remedy=WRONG_REF_REMEDIATION.format(**shell),
+        )
+    record = installed_record(f"{plugin_name}@{clone.name}", repo_root)
+    if record is None:
         return PluginCacheStatus("uncached", plugin_name, None, pin.ref)
-    cached = install_version(install_dir)
-    missing = tuple(sorted(_hook_names(source_dir) - _hook_names(install_dir)))
-    if not missing:
-        return PluginCacheStatus("current", plugin_name, cached, pin.ref)
-    return PluginCacheStatus("stale-content", plugin_name, cached, pin.ref, missing)
+    installed = _installed_commit(record)
+    head = resolve_commit(clone.path, "HEAD")
+    if not installed or head is None:
+        return PluginCacheStatus(
+            "unparsed", plugin_name, installed[:12] if installed else None, pin.ref
+        )
+    if head.startswith(installed) or installed.startswith(head):
+        return PluginCacheStatus("current", plugin_name, installed[:12], pin.ref)
+    return PluginCacheStatus(
+        "stale-content",
+        plugin_name,
+        installed[:12],
+        pin.ref,
+        _missing_hooks(source_dir, record.install_dir),
+        remedy=(
+            _stale_slot_remedy(record, names)
+            if plugin_manifest_declares_version(source_dir)
+            else UPDATE_REMEDIATION.format(**names)
+        ),
+    )
+
+
+def _stale_slot_remedy(record: InstallRecord, names: dict[str, str]) -> str:
+    """The slot-discarding remedy for a declared-version install, quoted.
+
+    Args:
+        record: The stale install record — its slot is what to delete.
+        names: ``marketplace`` and ``plugin`` names for the reinstall.
+
+    Returns:
+        :data:`STALE_CACHE_REMEDIATION` naming the exact slot when the
+        record names one, else the plugin's cache directory.
+    """
+    slot = (
+        str(record.install_dir)
+        if record.install_dir is not None
+        else f"~/.claude/plugins/cache/{names['marketplace']}/{names['plugin']}/"
+    )
+    return STALE_CACHE_REMEDIATION.format(
+        slot=shlex.quote(slot),
+        plugin=shlex.quote(names["plugin"]),
+        marketplace=shlex.quote(names["marketplace"]),
+    )
+
+
+def _installed_commit(record: InstallRecord | None) -> str | None:
+    """The commit an install record names, or ``None`` when it names none.
+
+    ``gitCommitSha`` when it is commit-shaped; otherwise the recorded
+    version, only if commit-shaped (a commit-keyed install records its SHA
+    there). A semver version is not a commit — comparing one against a SHA
+    would report every install as stale — and a short or junk value could
+    prefix-match any commit, reporting a stale install as current.
+
+    Args:
+        record: The install record, or ``None``.
+
+    Returns:
+        A full or abbreviated commit SHA, or ``None``.
+    """
+    if record is None:
+        return None
+    for candidate in (record.commit, record.version):
+        if candidate and _SHA_RE.fullmatch(candidate):
+            return candidate
+    return None
+
+
+def _clone_serves_ref(clone: MarketplaceClone, ref: str) -> bool:
+    """Whether the registered clone is at *ref* — by name, or by commit.
+
+    Args:
+        clone: The registered marketplace clone to check.
+        ref: The ref the consumer pins.
+
+    Returns:
+        True when the clone's tracked ref matches *ref*, or its ``HEAD``
+        resolves to the same commit as *ref*.
+    """
+    if clone.ref == ref:
+        return True
+    pinned = resolve_commit(clone.path, ref)
+    return pinned is not None and pinned == resolve_commit(clone.path, "HEAD")
+
+
+def _missing_hooks(source_dir: Path, install_dir: Path | None) -> tuple[str, ...]:
+    """Hooks the pinned tree ships that the installed slot lacks (detail only).
+
+    Args:
+        source_dir: The pinned marketplace clone's source tree.
+        install_dir: The installed cache slot, or ``None`` when unknown.
+
+    Returns:
+        Sorted names of hooks present in *source_dir* but missing from
+        *install_dir*; empty when *install_dir* is ``None`` or not a
+        directory.
+    """
+    if install_dir is None or not install_dir.is_dir():
+        return ()
+    return tuple(sorted(_hook_names(source_dir) - _hook_names(install_dir)))

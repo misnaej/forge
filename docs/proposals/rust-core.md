@@ -175,8 +175,8 @@ matrix triggered by the tag.
 
 ### 6.3 Three versioned artifacts, not two
 
-Forge already coordinates a pip version and a rolling-next plugin
-version. The binary adds a third axis:
+Forge already coordinates a pip version (derived from the tags) and a
+commit-keyed plugin. The binary adds a third axis:
 
 - **binary version** × **`forge-analysis` version** × **plugin
   version**.

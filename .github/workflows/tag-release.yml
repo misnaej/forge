@@ -7,8 +7,10 @@ name: tag-release
 #   (1) `forge-changelog auto-tag` — tag-per-merge: cut the tag computed
 #       from the fragments merged since the last tag (loud `::warning`
 #       instead when [tool.forge.release].auto != "merge");
-#   (2) `forge-next-prep --tag` — covers assembly-PR merges, where the
-#       manifest is ahead and no new fragments exist.
+#   (2) `forge-next-prep --tag` — covers assembly-PR merges in a repo
+#       whose manifest declares a version ahead of the latest tag; forge's
+#       declares none (the plugin is keyed on the commit), so for forge it
+#       reports that no tag is needed.
 #   Both idempotent no-ops when nothing applies.
 #
 # Gating uses `workflow_run` because `needs:` cannot cross workflow
@@ -71,5 +73,5 @@ jobs:
           fi
           exit $rc
 
-      - name: Tag the rolling-next release when plugin.json is ahead
+      - name: Tag a declared-version release when plugin.json is ahead
         run: forge-next-prep --tag --no-sync --no-prune-branches

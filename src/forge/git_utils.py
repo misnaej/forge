@@ -898,16 +898,33 @@ def ref_exists(repo_root: Path, ref: str) -> bool:
         ``True`` when ``git rev-parse --verify`` resolves *ref* to a
         commit.
     """
-    return bool(
-        run_git(
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            f"{ref}^{{commit}}",
-            cwd=repo_root,
-            check=False,
-        )
+    return resolve_commit(repo_root, ref) is not None
+
+
+def resolve_commit(repo_root: Path, ref: str) -> str | None:
+    """Return the full commit SHA *ref* resolves to, or ``None``.
+
+    Args:
+        repo_root: Git repo root.
+        ref: Any ref or revision expression.
+
+    Returns:
+        The SHA when ``git rev-parse --verify`` peels *ref* to a commit;
+        ``None`` when it does not, or when *ref* is flag-shaped (a
+        leading ``-`` would parse as a git option).
+    """
+    if ref.startswith("-"):
+        return None
+    sha = run_git(
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        f"{ref}^{{commit}}",
+        cwd=repo_root,
+        check=False,
+        log_errors=False,
     )
+    return sha or None
 
 
 def merge_in_progress(repo_root: Path) -> bool:
@@ -1299,6 +1316,33 @@ def read_local_plugin_version(repo_root: Path) -> str | None:
     return version
 
 
+def plugin_manifest_declares_version(repo_root: Path) -> bool:
+    """Return whether ``.claude-plugin/plugin.json`` carries a ``version`` key.
+
+    A manifest without the key is deliberate, not broken: Claude Code then
+    keys the plugin on its commit SHA, so every versioning rule that reads
+    the declared version has nothing to act on. Presence is judged by key
+    only — a present but malformed value still "declares", so the callers'
+    malformed-manifest errors keep firing. An unreadable manifest also
+    counts as declaring, for the same reason: nothing proves it version-less.
+
+    Args:
+        repo_root: Repo root.
+
+    Returns:
+        ``False`` when there is no manifest, or when it parses to a JSON
+        object with no ``version`` key; ``True`` otherwise.
+    """
+    plugin = repo_root / ".claude-plugin" / "plugin.json"
+    if not plugin.is_file():
+        return False
+    try:
+        data = json.loads(plugin.read_text())
+    except (json.JSONDecodeError, OSError):
+        return True
+    return not isinstance(data, dict) or "version" in data
+
+
 # Targeted version-field rewrite: preserves the manifest's formatting
 # byte-for-byte outside the one value (a json round-trip would reformat).
 _VERSION_FIELD_RE = re.compile(r'("version"\s*:\s*")[^"]+(")')
@@ -1432,6 +1476,39 @@ def is_ancestor(
             check=False,
         ).returncode
         == 0
+    )
+
+
+def paths_differ(
+    root: Path | None, ref_a: str, ref_b: str, paths: tuple[str, ...]
+) -> bool:
+    """Return whether any of *paths* differs between *ref_a* and *ref_b*.
+
+    ``git diff --quiet`` exits 1 exactly when there is a difference, so
+    only that exit counts; an unresolvable ref (exit 128) reads as "no
+    difference". Callers that must tell those apart establish the refs
+    first — :func:`is_ancestor` is the usual guard.
+
+    Args:
+        root: Git repo root; ``None`` uses the current directory.
+        ref_a: Older side of the comparison.
+        ref_b: Newer side of the comparison.
+        paths: Pathspecs the comparison is restricted to.
+
+    Returns:
+        True when the restricted diff is non-empty; False when it is empty,
+        when a ref does not resolve, or when a ref is flag-shaped.
+    """
+    if ref_a.startswith("-") or ref_b.startswith("-"):
+        return False
+    return (
+        subprocess.run(
+            ["git", "diff", "--quiet", ref_a, ref_b, "--", *paths],
+            cwd=root,
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 1
     )
 
 

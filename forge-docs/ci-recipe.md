@@ -388,13 +388,18 @@ verifies it is the tip of `origin/<base_branch>` instead of requiring a
 branch checkout. Only the `push` trigger is safe here — never run a
 `contents: write` job from `pull_request_target`.
 
-### Dual-track plugin repos (manifest-declared version)
+### Plugin repos (fragments + tag-per-merge)
 
-Same idea, tagging with the rolling-next version from
-`.claude-plugin/plugin.json`. **The reference implementation is forge's
-own `.github/workflows/tag-release.yml`** — a workflow separate from
-the read-only CI one, gated via `workflow_run` (single-track: one
-tag-on-merge job).
+Same idea, tagging each fragment-carrying merge with `forge-changelog
+auto-tag` — and, in a repo whose `.claude-plugin/plugin.json` declares
+a version, tagging an assembly merge with `forge-next-prep --tag`.
+**The reference implementation is forge's own
+`.github/workflows/tag-release.yml`** — a workflow separate from the
+read-only CI one, gated via `workflow_run` (single-track: one
+tag-on-merge job). Forge's manifest declares no version: a declared one
+lags every tag cut between assemblies, and Claude Code keys the plugin
+cache on it, so those releases never install
+([`release-process.md`](../docs/release-process.md) §1).
 
 One `workflow_run` gotcha: GitHub evaluates the trigger from the
 workflow definition on the repo's **default branch** — a

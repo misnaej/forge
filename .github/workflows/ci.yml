@@ -29,10 +29,9 @@ concurrency:
 
 jobs:
   ci:
-    # Dependabot PRs bump workflow SHAs but cannot author the rolling-next
-    # plugin.json bump the plugin_version gate demands, so the full
-    # sequence can never pass for them. A skipped job satisfies required
-    # status checks; the human reviewing the deps PR is the gate.
+    # Dependabot PRs skip the full sequence: they only bump workflow SHAs
+    # and author no forge change of their own. A skipped job satisfies
+    # required status checks; the human reviewing the deps PR is the gate.
     # Draft PRs (the /pr skill's early-visibility escape hatch) skip too:
     # verification-first finalization runs the checks locally before
     # publishing, so CI on an unfinished draft is pure waste — the

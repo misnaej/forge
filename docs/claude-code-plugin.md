@@ -52,15 +52,15 @@ equivalent block by hand.)
 > Track 3 covers the rationale and how to keep it out of (or disabled in)
 > non-forge repos.
 
-To pin a specific plugin version (recommended):
+To pin a specific release (recommended), pin the marketplace `ref` to
+its tag (next section). Forge's `plugin.json` declares no version, so
+Claude Code identifies the installed plugin by the commit that ref
+resolves to — every release installs, including the ones cut between
+changelog assemblies ([`release-process.md`](release-process.md) §1).
 
-```jsonc
-// ~/.claude/installed_plugins.json
-{ "forge@forge": { "version": "v1.2.5" } }
-```
-
-Keep two version pins aligned: the pip `forge-scripts @ ...@vX.Y.Z` dep
-and the Claude plugin version. Releases bump both together.
+Keep two pins on the same tag: the pip `forge-scripts @ ...@vX.Y.Z` dep
+and the marketplace `ref`. `forge-upgrade` writes both; the next section
+covers making Claude Code follow a changed `ref`.
 
 ## Changing the marketplace `ref`
 
@@ -68,33 +68,33 @@ To change the ref the forge marketplace is pinned to (`main` ↔ a
 specific tag, or a fork's branch), editing the `ref`
 field in `~/.claude/settings.json` and running `/plugin marketplace
 update forge` is **not enough**. Claude Code keeps the cached
-marketplace `ref` frozen at the value it was first registered with.
-The verified workaround is a five-command sequence; the order matters
-and skipping the install step silently leaves the consumer with zero
-forge skills loaded.
+marketplace `ref` frozen at the value it was first registered with —
+and that registration is machine-wide, shared by every repo on the
+machine. Re-register it at the new ref; the order matters, and skipping
+the install step silently leaves the consumer with zero forge skills
+loaded.
 
 ```
-/plugin marketplace remove forge
-/plugin marketplace add misnaej/forge
-```
-
-Then edit `~/.claude/settings.json` by hand: in the `forge.source`
-block, add or change `"ref"` to the target (e.g. `"main"` or a tag).
-This is the step that actually changes the pin — the slash commands
-alone cannot update an already-cached marketplace `ref`.
-
-```
-/plugin marketplace update forge
-/plugin install forge@forge        # CRITICAL — marketplace remove also
+claude plugin marketplace remove forge
+claude plugin marketplace add misnaej/forge@<ref>   # e.g. @v6.12.0 or @main
+claude plugin install forge@forge  # CRITICAL — marketplace remove also
                                    # uninstalls the plugin
 /reload-plugins
 ```
 
-The `/plugin install forge@forge` step is the footgun. `/plugin marketplace remove` evicts the
-plugin from `~/.claude/installed_plugins.json` along with the
-marketplace entry. Without `/plugin install forge@forge` after the
-re-add, `/reload-plugins` finds nothing to load and returns silently —
-no error, no warning. The agent ecosystem just stops working.
+`add <repo>@<ref>` records the ref in the registration directly
+(verified on Claude Code 2.1.267: the `forge` entry in
+`known_marketplaces.json` then carries `source.ref = "<ref>"`), so no
+hand edit of `~/.claude/settings.json` is needed. `forge-doctor` names
+this exact sequence when the machine's registration serves a different
+ref than the repo pins.
+
+The `claude plugin install forge@forge` step is the footgun. `claude
+plugin marketplace remove` evicts the plugin from
+`~/.claude/plugins/installed_plugins.json` along with the marketplace
+entry. Without the install after the re-add, `/reload-plugins` finds
+nothing to load and returns silently — no error, no warning. The agent
+ecosystem just stops working.
 
 ### The `/reload-plugins` `0 skills` counter
 

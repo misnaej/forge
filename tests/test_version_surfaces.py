@@ -1,24 +1,34 @@
 """Tests for forge.version_surfaces — the three install-version readers."""
 
-# MOCKING STRATEGY: every reader touches either the filesystem (tmp_path) or
-# importlib.metadata; metadata calls are stubbed so no real distribution
-# needs to be installed.
+# MOCKING STRATEGY: every reader touches either the filesystem (tmp_path),
+# importlib.metadata, or Claude Code's own JSON registries
+# (known_marketplaces.json / installed_plugins.json). metadata calls are
+# stubbed so no real distribution needs to be installed; the registries are
+# stubbed via KNOWN_MARKETPLACES / INSTALLED_PLUGINS so no test reads the
+# real ~/.claude/plugins/ state.
 #   - version_surfaces.metadata.version / .distribution: stubbed per test.
 #   - version_surfaces.find_install_dir: stubbed for plugin_cache_version
 #     tests that don't need a real two-level cache layout on disk.
+#   - version_surfaces.KNOWN_MARKETPLACES / INSTALLED_PLUGINS: stubbed to
+#     tmp_path files for every test reaching marketplace_clone /
+#     installed_record — directly, or via plugin_cache_status.
+#   - The commit-identity tests (_commit_identity_status / the
+#     "stale-content" / "wrong-ref" consumer states) build REAL git repos
+#     via tests.conftest's init_git_repo / init_single_track_repo /
+#     commit_all: resolve_commit() and is_ancestor() shell out to git and
+#     cannot be faked with a plain directory tree.
 
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+import shlex
+import subprocess
+from pathlib import Path
 
 import pytest
 
 from forge import version_surfaces
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from tests.conftest import GIT_ENV, commit_all, init_git_repo, init_single_track_repo
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +180,51 @@ def test_find_install_dir_picks_highest_semver_not_lexicographic(
     result = version_surfaces.find_install_dir(tmp_path)
     assert result is not None
     assert result.name == "1.13.0"
+
+
+def test_find_install_dir_prefers_recorded_slot_over_semver_name(
+    tmp_path: Path,
+) -> None:
+    """The install-record's named slot wins over the highest-semver fallback.
+
+    SCENARIO: two cache slots exist — an older-named one that happens to
+    be the ACTUAL install per Claude Code's own record, and a
+    higher-semver-named one that is stale or unrelated. Without a
+    ``preferred`` hint the highest-semver fallback would pick the wrong
+    slot; a caller that knows what ``installed_plugins.json`` recorded
+    must be able to override it.
+    """
+    older = tmp_path / "forge" / "1.9.0"
+    (older / ".claude-plugin").mkdir(parents=True)
+    (older / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+    newer = tmp_path / "forge" / "2.0.0"
+    (newer / ".claude-plugin").mkdir(parents=True)
+    (newer / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+
+    # Sanity: without a preference, the semver fallback picks the newer slot.
+    assert version_surfaces.find_install_dir(tmp_path) == newer
+
+    assert version_surfaces.find_install_dir(tmp_path, preferred=older) == older
+
+
+def test_find_install_dir_ignores_unresolvable_preferred(tmp_path: Path) -> None:
+    """An unresolvable ``preferred`` path degrades to the semver fallback.
+
+    SCENARIO: ``installed_plugins.json`` is untrusted registry state — a
+    NUL byte in a recorded ``installPath`` makes ``Path.resolve()`` raise.
+    ``find_install_dir`` must not propagate that: a malformed preference
+    is no different from no preference at all.
+    """
+    older = tmp_path / "forge" / "1.9.0"
+    (older / ".claude-plugin").mkdir(parents=True)
+    (older / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+    newer = tmp_path / "forge" / "2.0.0"
+    (newer / ".claude-plugin").mkdir(parents=True)
+    (newer / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+
+    result = version_surfaces.find_install_dir(tmp_path, preferred=Path("x\x00y"))
+
+    assert result == newer
 
 
 def test_find_plugin_cache_none_when_cache_dir_absent(
@@ -333,6 +388,89 @@ def test_editable_install_origin_none_when_url_not_file_scheme(
 
 
 # ---------------------------------------------------------------------------
+# installed_record
+# ---------------------------------------------------------------------------
+
+
+def test_installed_record_prefers_this_repos_record(tmp_path: Path) -> None:
+    """A project-scoped record for THIS repo wins over a user-scope record.
+
+    SCENARIO: the registry carries two records for the same plugin key —
+    a user-wide install and a project-scoped one for THIS repo (Claude
+    Code lets a plugin be installed both ways). Judging this repo means
+    judging the copy installed for it, so the project record must win
+    even though it is not the last entry in the list.
+    """
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    plugins_file = tmp_path / "installed_plugins.json"
+    plugins_file.write_text(
+        json.dumps(
+            {
+                "plugins": {
+                    "forge@forge": [
+                        {"scope": "user", "version": "1.0.0", "gitCommitSha": "aaaa"},
+                        {
+                            "scope": "project",
+                            "projectPath": str(repo_root),
+                            "version": "2.0.0",
+                            "gitCommitSha": "bbbb",
+                        },
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record = version_surfaces.installed_record(
+        "forge@forge", repo_root, plugins_file=plugins_file
+    )
+
+    assert record is not None
+    assert record.commit == "bbbb"
+    assert record.version == "2.0.0"
+
+
+def test_installed_record_ignores_unresolvable_project_path(tmp_path: Path) -> None:
+    """A record whose ``projectPath`` cannot be resolved is skipped, not raised.
+
+    SCENARIO: the registry is untrusted Claude Code state — a
+    ``projectPath`` carrying a NUL byte makes ``Path.resolve()`` raise.
+    ``_pick_record`` must not let one malformed entry crash the whole
+    lookup; a valid user-scope record elsewhere in the list still answers.
+    """
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    plugins_file = tmp_path / "installed_plugins.json"
+    plugins_file.write_text(
+        json.dumps(
+            {
+                "plugins": {
+                    "forge@forge": [
+                        {
+                            "scope": "project",
+                            "projectPath": "bad\x00path",
+                            "version": "9.9.9",
+                            "gitCommitSha": "dddd",
+                        },
+                        {"scope": "user", "version": "1.0.0", "gitCommitSha": "aaaa"},
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record = version_surfaces.installed_record(
+        "forge@forge", repo_root, plugins_file=plugins_file
+    )
+
+    assert record is not None
+    assert record.commit == "aaaa"
+
+
+# ---------------------------------------------------------------------------
 # plugin_cache_status
 # ---------------------------------------------------------------------------
 
@@ -381,23 +519,63 @@ def _write_consumer_pin(repo_root: Path, ref: str) -> None:
     )
 
 
-def _write_registry(path: Path, install_location: Path | str) -> None:
+def _write_registry(
+    path: Path, install_location: Path | str, *, ref: str | None = None
+) -> None:
     """Write a ``known_marketplaces.json`` pointing forge at *install_location*.
 
     Args:
         path: File to write.
         install_location: Value for the entry's ``installLocation``.
+        ref: Value for ``source.ref`` (the tracked ref), when given.
     """
+    source: dict[str, str] = {"source": "github", "repo": "misnaej/forge"}
+    if ref is not None:
+        source["ref"] = ref
     path.write_text(
         json.dumps(
-            {
-                "forge": {
-                    "source": {"source": "github", "repo": "misnaej/forge"},
-                    "installLocation": str(install_location),
-                }
-            }
+            {"forge": {"source": source, "installLocation": str(install_location)}}
         ),
         encoding="utf-8",
+    )
+
+
+def _write_installed_plugins(
+    path: Path,
+    *,
+    commit: str | None = None,
+    version: str | None = None,
+    project_path: Path | None = None,
+    install_path: Path | None = None,
+) -> None:
+    """Write an ``installed_plugins.json`` carrying one ``forge@forge`` record.
+
+    Shared by every test that reaches :func:`version_surfaces.installed_record`
+    — directly or via :func:`version_surfaces.plugin_cache_status` — so none
+    of them read the real ``~/.claude/plugins/installed_plugins.json``.
+
+    Args:
+        path: File to write.
+        commit: Value for the record's ``gitCommitSha``, when given.
+        version: Value for the record's ``version``, when given.
+        project_path: When given, scopes the record to that project
+            (``scope: "project"``, ``projectPath: str(project_path)``);
+            otherwise the record is user-scoped.
+        install_path: Value for the record's ``installPath`` (the cache
+            slot :func:`version_surfaces.InstallRecord.install_dir`
+            reads), when given.
+    """
+    record: dict[str, object] = {"scope": "project" if project_path else "user"}
+    if project_path is not None:
+        record["projectPath"] = str(project_path)
+    if commit is not None:
+        record["gitCommitSha"] = commit
+    if version is not None:
+        record["version"] = version
+    if install_path is not None:
+        record["installPath"] = str(install_path)
+    path.write_text(
+        json.dumps({"plugins": {"forge@forge": [record]}}), encoding="utf-8"
     )
 
 
@@ -448,86 +626,300 @@ def test_plugin_cache_status_behind_when_cache_lags_manifest(
     assert (status.cached, status.declared) == ("2.22.0", "2.23.1")
 
 
-def test_plugin_cache_status_consumer_reports_hooks_the_cache_lacks(
+@pytest.mark.parametrize(
+    ("clone_version", "remedy_snippet"),
+    [
+        pytest.param(None, "/plugin update", id="version-less-clone"),
+        pytest.param(
+            "5.2.0",
+            "claude plugin install forge@forge",
+            id="declared-version-clone",
+        ),
+    ],
+)
+def test_consumer_status_stale_when_installed_commit_differs_from_clone_head(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    clone_version: str | None,
+    remedy_snippet: str,
 ) -> None:
-    """A consumer's stale slot is caught by content, not by version.
+    """A consumer's installed commit lagging the clone HEAD is "stale-content".
 
-    SCENARIO: the failure the version comparison cannot see — the slot
-    declares a version no higher than the clone's, yet ships fewer hooks.
-    MOCK SETUP: no repo manifest; a pin at v6.11.0; a marketplace clone
-    carrying three hooks; a cache slot carrying one of them.
-    EXPECTED BEHAVIOR: ``"stale-content"`` naming the two absent hooks.
+    SCENARIO: Claude Code installed one commit of the pinned marketplace
+    clone and the clone has since advanced (a new commit pushed to the
+    tracked ref) — the commit-based model's counterpart to a version
+    string falling behind. Under tag-per-merge distinct commits can share
+    one declared version (or none at all), so commit identity — not the
+    version string — is what "stale" means here.
+    MOCK SETUP: the marketplace clone is a REAL git repo (so
+    ``resolve_commit(clone, "HEAD")`` — real git — resolves); the
+    registered install commit is the clone's first commit, and the clone
+    then advances with a second.
+    EXPECTED BEHAVIOR: "stale-content", and the remedy follows the
+    CLONE's own manifest: a version-less (commit-keyed) clone can only be
+    re-pulled with ``/plugin update`` (an `/plugin update` compares
+    declared versions, which a commit-keyed manifest has none of — so
+    only re-pulling helps); a clone declaring a version names the
+    record's exact cache slot for deletion and a ``claude plugin
+    install`` reinstall (`/plugin update` there reports "already
+    current" without moving the stale slot). The installed record also
+    names an install slot carrying no hooks at all, so ``missing_hooks``
+    must report exactly the one hook the clone's advance added.
+
+    Args:
+        clone_version: Value for the CLONE's own manifest ``"version"``
+            field, or ``None`` to omit the key entirely.
+        remedy_snippet: Substring the resulting ``status.remedy`` must
+            contain for this manifest shape.
     """
     repo = tmp_path / "consumer"
-    _write_consumer_pin(repo, "v6.11.0")
-    clone = _write_plugin_tree(
-        tmp_path / "marketplaces" / "forge",
-        version="5.2.0",
-        hooks=("block_no_verify.sh", "warn_generated_conflicts.sh", "a.sh"),
+    _write_consumer_pin(repo, "main")
+    clone = tmp_path / "marketplaces" / "forge"
+    clone.mkdir(parents=True)
+    init_git_repo(clone)
+    manifest_dir = clone / ".claude-plugin"
+    manifest_dir.mkdir()
+    manifest = (
+        {"name": "forge"}
+        if clone_version is None
+        else {
+            "name": "forge",
+            "version": clone_version,
+        }
     )
+    (manifest_dir / "plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
+    commit_all(clone, "add manifest")
+    installed_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=clone,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    (clone / "claude-hooks").mkdir()
+    (clone / "claude-hooks" / "a.sh").write_text("x", encoding="utf-8")
+    commit_all(clone, "advance")
+
     registry = tmp_path / "known_marketplaces.json"
-    _write_registry(registry, clone)
+    _write_registry(registry, clone, ref="main")
     monkeypatch.setattr(version_surfaces, "KNOWN_MARKETPLACES", registry)
-    cache_root = _write_plugin_tree(
-        tmp_path / "cache" / "forge" / "forge" / "5.2.0",
-        version="5.2.0",
-        hooks=("a.sh",),
-    ).parent.parent
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _n: cache_root)
+    # An installed slot with no hooks at all — proves missing_hooks is
+    # computed via hook set difference, not merely
+    # rendered from a hand-built PluginCacheStatus (test_doctor.py covers
+    # rendering separately).
+    stale_slot = _write_plugin_tree(tmp_path / "slot", version="0.0.0", hooks=())
+    installed_plugins = tmp_path / "installed_plugins.json"
+    _write_installed_plugins(
+        installed_plugins, commit=installed_sha, install_path=stale_slot
+    )
+    monkeypatch.setattr(version_surfaces, "INSTALLED_PLUGINS", installed_plugins)
 
     status = version_surfaces.plugin_cache_status(repo)
 
     assert status.state == "stale-content"
-    assert status.plugin_name == "forge"
-    assert status.cached == "5.2.0"
-    assert status.declared == "v6.11.0"
-    assert status.missing_hooks == (
-        "block_no_verify.sh",
-        "warn_generated_conflicts.sh",
+    assert remedy_snippet in status.remedy
+    if clone_version is not None:
+        # The declared-version branch must name the RECORD's own slot,
+        # not a generic `~/.claude/plugins/cache/<plugin>/` guess.
+        assert str(stale_slot) in status.remedy
+    assert status.missing_hooks == ("a.sh",)
+
+
+@pytest.mark.parametrize(
+    "installed_kwargs",
+    [
+        pytest.param({"version": "6.11.0"}, id="no-gitCommitSha"),
+        pytest.param({"commit": "a", "version": "6.11.0"}, id="junk-gitCommitSha"),
+    ],
+)
+def test_consumer_status_semver_record_without_commit_is_no_finding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    installed_kwargs: dict[str, str],
+) -> None:
+    """A record with no commit-shaped value anywhere is never a commit.
+
+    Behavior test: pins down :func:`version_surfaces._installed_commit`'s
+    commit-shape guard end to end — a regression here would silently
+    compare a version string like "6.11.0" (or a junk ``gitCommitSha``
+    like ``"a"``) against a real SHA and misreport a commit-keyed install
+    as "stale-content".
+
+    SCENARIO: same consumer/clone setup as
+    ``test_consumer_status_stale_when_installed_commit_differs_from_clone_head``,
+    but the install record carries a semver-shaped ``version`` and either
+    no ``gitCommitSha`` at all, or one too short/junk to be a real SHA
+    (``_SHA_RE`` requires 7-40 hex chars — ``"a"`` is valid hex but fails
+    that requirement on length alone).
+    MOCK SETUP: a real git clone declaring ``"version": "6.11.0"`` (the
+    realistic shape — Claude Code records whatever version the manifest
+    declares, distinct from the sibling stale test's ``None`` /
+    ``"5.2.0"`` clone-manifest parametrization; the declared value plays
+    no role in this branch) so ``resolve_commit(clone, "HEAD")``
+    resolves; the installed record varies per *installed_kwargs*.
+    EXPECTED BEHAVIOR: ``"unparsed"``, never "stale-content" — neither a
+    semver string nor a junk ``gitCommitSha`` may be compared against the
+    clone's SHA.
+
+    Args:
+        installed_kwargs: Keyword arguments forwarded to
+            :func:`_write_installed_plugins` for the install record.
+    """
+    repo = tmp_path / "consumer"
+    _write_consumer_pin(repo, "main")
+    clone = tmp_path / "marketplaces" / "forge"
+    clone.mkdir(parents=True)
+    init_git_repo(clone)
+    (clone / ".claude-plugin").mkdir()
+    (clone / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "forge", "version": "6.11.0"}), encoding="utf-8"
     )
+    commit_all(clone, "add manifest")
+
+    registry = tmp_path / "known_marketplaces.json"
+    _write_registry(registry, clone, ref="main")
+    monkeypatch.setattr(version_surfaces, "KNOWN_MARKETPLACES", registry)
+    installed_plugins = tmp_path / "installed_plugins.json"
+    _write_installed_plugins(installed_plugins, **installed_kwargs)
+    monkeypatch.setattr(version_surfaces, "INSTALLED_PLUGINS", installed_plugins)
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == "unparsed"
 
 
-def test_plugin_cache_status_consumer_current_when_hook_sets_match(
+def test_consumer_status_wrong_ref_when_registration_serves_another_ref(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A consumer slot carrying every pinned hook is current.
+    """The machine's one registration tracking another ref is "wrong-ref".
 
-    MOCK SETUP: clone and cache slot ship the same two hooks, with the
-    slot's declared version *below* the pinned ref.
-    EXPECTED BEHAVIOR: ``"current"`` — the lagging version string is not
-    the signal, the content is.
+    SCENARIO: Claude Code keeps ONE ``known_marketplaces.json``
+    registration per marketplace name per user — another repo on this
+    machine may have registered the forge marketplace at a DIFFERENT ref
+    than this repo pins, and no update in THIS repo can change that.
+    MOCK SETUP: a real git clone (so ``find_install_dir`` resolves a
+    manifest); the registration's ``source.ref`` is ``"dev"``; the
+    consumer pins the tag ``"v6.11.0"``, which does not exist in the
+    clone — so ``_clone_serves_ref`` cannot fall back to resolving the
+    pin by commit either.
+    EXPECTED BEHAVIOR: "wrong-ref", naming both the tracked ref
+    (``cached``) and the pinned ref (``declared``), with the
+    re-registration remedy.
     """
     repo = tmp_path / "consumer"
     _write_consumer_pin(repo, "v6.11.0")
-    clone = _write_plugin_tree(
-        tmp_path / "marketplaces" / "forge", version="5.2.0", hooks=("a.sh", "b.sh")
+    clone = tmp_path / "marketplaces" / "forge"
+    clone.mkdir(parents=True)
+    init_git_repo(clone)
+    (clone / ".claude-plugin").mkdir()
+    (clone / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "forge"}), encoding="utf-8"
     )
+    commit_all(clone, "add manifest")
+
     registry = tmp_path / "known_marketplaces.json"
-    _write_registry(registry, clone)
+    _write_registry(registry, clone, ref="dev")
     monkeypatch.setattr(version_surfaces, "KNOWN_MARKETPLACES", registry)
-    cache_root = _write_plugin_tree(
-        tmp_path / "cache" / "forge" / "forge" / "5.2.0",
-        version="5.2.0",
-        hooks=("a.sh", "b.sh"),
-    ).parent.parent
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _n: cache_root)
+    monkeypatch.setattr(version_surfaces, "INSTALLED_PLUGINS", tmp_path / "absent.json")
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == "wrong-ref"
+    assert status.cached == "dev"
+    assert status.declared == "v6.11.0"
+    assert "re-point" in status.remedy
+    assert "claude plugin marketplace remove forge" in status.remedy
+
+
+def test_wrong_ref_remedy_quotes_shell_metacharacters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pin ref carrying shell metacharacters is shlex-quoted in the remedy.
+
+    SCENARIO: :data:`version_surfaces.WRONG_REF_REMEDIATION` formats
+    registry- and clone-derived values straight into ``claude plugin ...``
+    commands a person may paste; an unquoted ref containing a space or
+    ``;`` would let it break out of the intended argument.
+    MOCK SETUP: same shape as the sibling wrong-ref test, but the pin's
+    ref carries a space and a semicolon; the clone has no manifest git
+    history at all (unneeded — the name mismatch alone settles the verdict).
+    EXPECTED BEHAVIOR: "wrong-ref", and the remedy carries the
+    ``shlex.quote``d ref, not the raw value.
+    """
+    ref = "v1.0.0; touch pwned"
+    repo = tmp_path / "consumer"
+    _write_consumer_pin(repo, ref)
+    clone = _write_plugin_tree(tmp_path / "marketplaces" / "forge", version="5.2.0")
+    registry = tmp_path / "known_marketplaces.json"
+    _write_registry(registry, clone, ref="main")
+    monkeypatch.setattr(version_surfaces, "KNOWN_MARKETPLACES", registry)
+    monkeypatch.setattr(version_surfaces, "INSTALLED_PLUGINS", tmp_path / "absent.json")
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == "wrong-ref"
+    assert status.declared == ref  # the raw field is never quoted
+    assert shlex.quote(ref) in status.remedy
+    assert f"@{ref}" not in status.remedy  # raw ref never appears unquoted after @
+
+
+def test_plugin_cache_status_consumer_current_when_installed_commit_matches_clone(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A consumer whose installed commit equals the clone HEAD is "current".
+
+    Commit-based counterpart of the old hook-set comparison: content
+    identity is judged by commit, not by a declared version string or a
+    hook-name diff.
+    MOCK SETUP: a real git clone; the registered install's
+    ``gitCommitSha`` is the clone's own HEAD.
+    """
+    repo = tmp_path / "consumer"
+    _write_consumer_pin(repo, "main")
+    clone = tmp_path / "marketplaces" / "forge"
+    clone.mkdir(parents=True)
+    init_git_repo(clone)
+    (clone / ".claude-plugin").mkdir()
+    (clone / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "forge"}), encoding="utf-8"
+    )
+    commit_all(clone, "add manifest")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=clone,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    registry = tmp_path / "known_marketplaces.json"
+    _write_registry(registry, clone, ref="main")
+    monkeypatch.setattr(version_surfaces, "KNOWN_MARKETPLACES", registry)
+    installed_plugins = tmp_path / "installed_plugins.json"
+    _write_installed_plugins(installed_plugins, commit=head)
+    monkeypatch.setattr(version_surfaces, "INSTALLED_PLUGINS", installed_plugins)
 
     status = version_surfaces.plugin_cache_status(repo)
 
     assert status.state == "current"
-    assert status.missing_hooks == ()
+    assert status.cached == head[:12]
 
 
-def test_plugin_cache_status_consumer_uncached_when_no_slot_installed(
+def test_plugin_cache_status_consumer_uncached_when_no_install_record(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A resolvable pin with nothing installed reports ``"uncached"``.
+    """A resolvable pin with no install record reports ``"uncached"``.
 
-    MOCK SETUP: pin and clone resolve; ``find_plugin_cache`` finds no slot.
+    MOCK SETUP: the clone's registered ``ref`` matches the pin by NAME,
+    short-circuiting ``_clone_serves_ref`` without needing a real git
+    repo; ``INSTALLED_PLUGINS`` points at a file that does not exist, so
+    ``installed_record`` finds nothing.
     """
     repo = tmp_path / "consumer"
     _write_consumer_pin(repo, "v6.11.0")
@@ -535,9 +927,9 @@ def test_plugin_cache_status_consumer_uncached_when_no_slot_installed(
         tmp_path / "marketplaces" / "forge", version="5.2.0", hooks=("a.sh",)
     )
     registry = tmp_path / "known_marketplaces.json"
-    _write_registry(registry, clone)
+    _write_registry(registry, clone, ref="v6.11.0")
     monkeypatch.setattr(version_surfaces, "KNOWN_MARKETPLACES", registry)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _n: None)
+    monkeypatch.setattr(version_surfaces, "INSTALLED_PLUGINS", tmp_path / "absent.json")
 
     status = version_surfaces.plugin_cache_status(repo)
 
@@ -660,3 +1052,141 @@ def test_repo_slug_reads_every_pin_url_shape(url: str, expected: str | None) -> 
         expected: Expected slug result or None.
     """
     assert version_surfaces._repo_slug(url) == expected
+
+
+# ---------------------------------------------------------------------------
+# _commit_identity_status (via plugin_cache_status, a version-less manifest)
+# ---------------------------------------------------------------------------
+
+
+def _sha_identity_repo(base: Path, *, surface_change: bool) -> tuple[Path, str]:
+    """Build a single-track plugin repo and return ``(work_tree, installed_sha)``.
+
+    Seeds ``.claude-plugin/`` (a version-less manifest, forge's own
+    shape) plus ``claude-hooks/a.sh`` (the plugin surface) on ``main``,
+    records the installed commit, then advances the pushed base with
+    either a plugin-surface change (``claude-hooks/a.sh``) or an
+    unrelated one (``README.md``) — the fork point every
+    ``_commit_identity_status`` test in this module shares.
+
+    Args:
+        base: Parent temp directory (``work``/``origin.git`` created
+            inside it via :func:`init_single_track_repo`).
+        surface_change: When ``True``, the advance touches the plugin
+            surface (→ "behind"); otherwise an unrelated file (→
+            "current").
+
+    Returns:
+        ``(work_tree, installed_commit_sha)``.
+    """
+    work, _bare = init_single_track_repo(base)
+    (work / ".claude-plugin").mkdir()
+    (work / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "forge"}), encoding="utf-8"
+    )
+    (work / ".claude-plugin" / "marketplace.json").write_text(
+        json.dumps({"name": "forge"}), encoding="utf-8"
+    )
+    (work / "claude-hooks").mkdir()
+    (work / "claude-hooks" / "a.sh").write_text("x", encoding="utf-8")
+    commit_all(work, "seed")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+    installed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    target = "claude-hooks/a.sh" if surface_change else "README.md"
+    (work / target).write_text("changed", encoding="utf-8")
+    commit_all(work, "advance")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+    return work, installed
+
+
+def test_sha_identity_behind_when_base_changed_plugin_surface(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A base-branch push touching claude-hooks/ makes a commit-keyed plugin "behind".
+
+    SCENARIO: forge's own manifest shape (no declared version) — the
+    plugin is keyed on its installed commit, so "behind" means the base
+    branch has since changed what Claude Code actually loads
+    (:data:`version_surfaces.PLUGIN_SURFACE`), not merely that it moved.
+    MOCK SETUP: a real single-track repo; the installed commit is the
+    seed commit; ``origin/main`` (the base) advances with a
+    ``claude-hooks/a.sh`` edit — squarely inside the plugin surface.
+    EXPECTED BEHAVIOR: "behind", with the refresh remedy naming this
+    repo's own marketplace + plugin name.
+    """
+    work, installed = _sha_identity_repo(tmp_path, surface_change=True)
+    installed_plugins = tmp_path / "installed_plugins.json"
+    _write_installed_plugins(installed_plugins, commit=installed, project_path=work)
+    monkeypatch.setattr(version_surfaces, "INSTALLED_PLUGINS", installed_plugins)
+
+    status = version_surfaces.plugin_cache_status(work)
+
+    assert status.state == "behind"
+    assert status.cached == installed[:12]
+    assert "origin/main" in status.declared
+    assert "/plugin marketplace update forge" in status.remedy
+
+
+def test_sha_identity_current_when_base_changed_only_other_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A base-branch push touching only unrelated files stays "current".
+
+    SCENARIO: mirrors ``test_sha_identity_behind_when_base_changed_plugin_surface``
+    with ``surface_change=False`` — the advance touches ``README.md``,
+    outside :data:`version_surfaces.PLUGIN_SURFACE`, so nothing Claude
+    Code loads changed even though the base has moved past the installed
+    commit.
+    MOCK SETUP: same real single-track repo + installed-commit setup as
+    the sibling "behind" test; only the touched path differs.
+    EXPECTED BEHAVIOR: "current" — a base-branch advance outside the
+    plugin surface must not be reported as skew.
+    """
+    work, installed = _sha_identity_repo(tmp_path, surface_change=False)
+    installed_plugins = tmp_path / "installed_plugins.json"
+    _write_installed_plugins(installed_plugins, commit=installed, project_path=work)
+    monkeypatch.setattr(version_surfaces, "INSTALLED_PLUGINS", installed_plugins)
+
+    status = version_surfaces.plugin_cache_status(work)
+
+    assert status.state == "current"
+    assert status.cached == installed[:12]
+
+
+def test_sha_identity_unknown_commit_is_no_finding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An installed commit this clone doesn't know degrades to "unparsed" (no finding).
+
+    SCENARIO: a newer local install (or a fork) can carry an installed
+    commit not reachable in THIS repo's history — the guard never
+    guesses; it must not misreport "behind" (or "current") for a commit
+    it cannot place.
+    MOCK SETUP: same real single-track repo as the sibling identity
+    tests, but the installed record's ``gitCommitSha`` is an all-zero
+    SHA never committed to the repo.
+    EXPECTED BEHAVIOR: "unparsed" — what both ``plugin_sync`` and
+    ``forge-doctor`` treat as nothing to report.
+    """
+    work, _installed = _sha_identity_repo(tmp_path, surface_change=True)
+    installed_plugins = tmp_path / "installed_plugins.json"
+    _write_installed_plugins(installed_plugins, commit="0" * 40, project_path=work)
+    monkeypatch.setattr(version_surfaces, "INSTALLED_PLUGINS", installed_plugins)
+
+    status = version_surfaces.plugin_cache_status(work)
+
+    assert status.state == "unparsed"

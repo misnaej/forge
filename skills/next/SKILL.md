@@ -21,24 +21,26 @@ Stop immediately and report if any step fails.
    call. **Pick the command by repo class first:**
 
    ```bash
-   # Plugin-manifest repo (e.g. forge itself):
+   # Plugin repo whose .claude-plugin/plugin.json declares a version:
    forge-next-prep --tag
 
-   # Repo without a plugin manifest (the standard consumer case) —
-   # no --tag; release tags are cut only at release time via
-   # forge-release (docs/consumer-release.md):
+   # Any other repo — forge itself (its manifest declares no version;
+   # tag-per-merge cuts its tags in CI) and the standard consumer case
+   # (release tags are cut at release time via forge-release,
+   # docs/consumer-release.md):
    forge-next-prep
    ```
 
    - `git fetch --prune` → `git checkout main && git pull --ff-only`.
-   - With `--tag` (plugin repos only): if
+   - With `--tag` (repos whose manifest declares a version): if
      `.claude-plugin/plugin.json["version"]` is strictly ahead of the
      latest `v*` tag, tag the merge commit and push. Rationale and
      cadence live in `docs/release-process.md` (forge-only). No-op when
      the version equals the latest tag or is older (the `tag-main`
      workflow job usually tags first; this is the idempotent manual
-     fallback). On a repo with no plugin manifest, the CLI warns and
-     skips the tag step — per-merge tagging is not a consumer pattern.
+     fallback). On a manifest that declares no version it reports that
+     no tag is needed; on a repo with no plugin manifest, the CLI warns
+     and skips the tag step — per-merge tagging is not a consumer pattern.
    - Deletes local branches with `[origin/...: gone]` tracking via safe `git branch -d`. Branches with unmerged commits are reported, not deleted by the CLI — the skill then `-D`s any whose PR is confirmed merged (the squash-merge case `-d` cannot detect; see Important Rules). Use `--no-prune-branches` to skip.
    - Exits non-zero (1) when main cannot fast-forward — stop and report.
 

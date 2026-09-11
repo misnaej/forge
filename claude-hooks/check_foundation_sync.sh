@@ -14,9 +14,9 @@ if ! command -v install-forge-claude-md >/dev/null 2>&1; then
 fi
 
 # Note: stderr is NOT redirected — install-forge-claude-md emits the
-# channel-aware upstream-version warning (forge-scripts and Claude
-# plugin staleness) at WARNING level, and SessionStart is the prime
-# moment for the consumer to see it. Suppressing stderr here would
+# channel-aware upstream-version warning (forge-scripts staleness; the
+# commit-keyed plugin is judged by forge-doctor instead) at WARNING
+# level, and SessionStart is the prime moment for the consumer to see it. Suppressing stderr here would
 # silently eat that signal.
 if ! install-forge-claude-md --check --quiet; then
     echo "[forge] CLAUDE.md is out of sync with installed FOUNDATION.md." >&2

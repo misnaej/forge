@@ -51,7 +51,7 @@ number+title, so the product backlog reads cleanly without them.
 
 `forge-internal` qualifies an issue about: release tooling & mechanics
 (`forge-next-prep`, `forge-changelog`, tag-per-merge,
-rolling-next versioning); the `/next` and contributor workflow,
+the commit-keyed plugin identity); the `/next` and contributor workflow,
 `dev/setup.sh`, `.githooks/`; forge's own test suite / CI / `CLAUDE.md`;
 forge-only agents, skills, and this wrapper. It does **not** apply to the
 shipped product surface (`[project.scripts]` CLIs, `agents/` / `skills/`

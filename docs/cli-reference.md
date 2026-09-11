@@ -268,8 +268,8 @@ positional arguments:
                         fragments already in a tag's tree assemble under that
                         tag and never bump again
     release             assemble CHANGELOG.md under the computed next version,
-                        write plugin.json to it (when present), stage
-                        everything — never commits
+                        write plugin.json to it (when it declares a version),
+                        stage everything — never commits
     assemble            collate fragments into CHANGELOG.md under a version
     auto-tag            tag HEAD from fragments merged since the last tag
                         (tag-per-merge CI seam; pushes the tag only)
@@ -447,8 +447,8 @@ rolling-next release, prune stale local branches. Used by the /next skill.
 options:
   -h, --help           show this help message and exit
   --tag                Tag plugin.json's version when it's ahead of the latest
-                       v* tag and push the tag (forge's rolling-next
-                       workflow). Off by default.
+                       v* tag and push the tag (the rolling-next workflow of a
+                       manifest that declares a version). Off by default.
   --no-prune-branches  Skip the stale-branch prune step.
   --no-sync            Skip the fetch/checkout/pull steps and operate on the
                        current HEAD (tags are still fetched for the version
@@ -950,7 +950,9 @@ options:
 usage: verify-forge-plugin-version [-h]
 
 Assert .claude-plugin/plugin.json['version'] is strictly greater than the
-latest git tag. Writes code_health/plugin_version.log.
+latest git tag, when the manifest declares a version (a version-less manifest
+is keyed on its commit SHA and skipped). Writes
+code_health/plugin_version.log.
 
 options:
   -h, --help  show this help message and exit
