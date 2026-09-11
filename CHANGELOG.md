@@ -20,6 +20,12 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v6.12.1 — 2026-09-11
+
+### Fixes
+- **Collapsing a superseded wrap-up no longer destroys it.** `forge-pr-wrapup post` tidies earlier wrap-up comments by collapsing them, and the call used `gh api -f body=@-`. `--raw-field` sends static strings, so `@-` was PATCHed over the comment verbatim — two characters where the wrap-up had been, with the body handed to stdin never read by anything. `PATCH` replaces rather than appends, so the text was unrecoverable through the API, and nothing surfaced an error because sending a literal `@-` is a valid request that exits zero. Only `--field` gives `@` its documented meaning. The regression test previously asserted the broken flag in its own docstring, which is how this survived; it now pins the correct one and refuses the other.
+- **The type checker is pinned to one minor**, matching the cadence ruff has followed since FOUNDATION §5 was written. An unbounded major range let a workstation resolve one minor while CI resolved another, so a blocking gate could pass locally and fail in CI over code the change never touched. The pin surfaces nothing new on the current tree: the findings it would have raised were already fixed.
+
 ## v6.12.0 — 2026-09-10
 
 ### Fixes
