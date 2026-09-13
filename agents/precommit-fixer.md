@@ -85,6 +85,8 @@ does not reach this one.
 
 `forge-precommit` runs each step CLI (the Allowed-CLIs list) plus an inline `pip_audit` check; each writes its own `code_health/*.log`. When nothing needs fixing, the ruff step is near-instant and silent. Residue (rules without autofix) lands in `code_health/ruff.log` and FAILs the step.
 
+Each log opens with a `# produced-at: tree=…` stamp. `regen_docs` and `ruff` — the steps that change files — run before every validator, so later logs are stamped after their fixes. `forge-precommit --freshness` (read-only, uncounted) tells you whether a log is `fresh` for the current tree.
+
 If `forge-precommit` is not on PATH, hard-fail per FOUNDATION §2 with
 the install hint. Never fall back to raw `ruff` / `python -m`.
 

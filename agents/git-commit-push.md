@@ -66,9 +66,9 @@ MUST have run first; you fail if the pre-commit hook finds violations.
 
 2. **Read the latest `code_health/` logs** to verify the tree is clean. **Do NOT run `forge-precommit` or `.githooks/pre-commit` yourself** — that is `forge:precommit-fixer`'s job ([FOUNDATION §13](../FOUNDATION.md#13-code_health-convention)); step 4 triggers the hook anyway.
    ```bash
-   ls code_health/
+   forge-precommit --freshness   # read-only verdict per log; runs no steps
    ```
-   If any **blocking** step's latest log is non-clean, or a working-tree file is newer than the logs, stop per **Failure states**.
+   If any **blocking** step's latest log is non-clean, or is anything but `fresh` (the tree changed since it was produced), stop per **Failure states**.
 
 3. **Stage changes** — only the files specified, or `git add -A` if told to stage all, then verify the staged set is exactly what the caller described:
    ```bash

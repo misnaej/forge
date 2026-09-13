@@ -839,7 +839,8 @@ Reviewed by `forge:design-checker`.
 
 - Consumer `.githooks/pre-commit` hooks **write each check's stdout / stderr** to `code_health/<check>.log` (`ruff.log`, `docstring_verification.log`, …).
 - Foundation agents (`forge:precommit-fixer`, `forge:pr-manager`, `forge:design-checker`, `forge:git-commit-push`) **read these as the source of truth** instead of re-running the checks.
-- `forge:precommit-fixer` is the only agent that may run `forge-precommit` to (re)generate the logs — the only sanctioned wrapper; no agent invokes `ruff` / `git` / `gh` directly. If a log is missing or stale, call it to refresh. **Never rewrite the logs from agents.**
+- `forge:precommit-fixer` is the only agent that may run `forge-precommit` to (re)generate the logs — the only sanctioned wrapper; no agent invokes `ruff` / `git` / `gh` directly. Any agent may run the read-only `forge-precommit --freshness`, which runs no steps. If a log is missing or stale, call precommit-fixer to refresh. **Never rewrite the logs from agents.**
+- **A log names the tree it describes.** Its first line is `# produced-at: tree=<sha> head=<short>[+dirty] <UTC time>`, where `tree` is the working tree the output was produced against. A log is **fresh** only when that tree equals the current working tree; `forge-precommit --freshness` reports fresh / stale / unstamped / unknown per log. Never judge freshness by file modification times.
 - `code_health/` is typically gitignored.
 
 ### Repo metadata for agents

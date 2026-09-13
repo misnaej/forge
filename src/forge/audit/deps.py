@@ -34,7 +34,6 @@ import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from forge.audit import common
@@ -50,7 +49,7 @@ from forge.audit.common import (
     resolve_roots,
     write_log,
 )
-from forge.git_utils import configure_cli_logging, repo_root
+from forge.git_utils import configure_cli_logging, produced_at_stamp, repo_root
 from forge.import_graph import (
     closest_known,
     extract_import_targets,
@@ -532,8 +531,8 @@ def _write_tree_log(tree: str, *, output: Path | None) -> Path:
         log_dir = common.repo_root() / CODE_HEALTH_DIR
     log_path = log_dir / TREE_LOG_NAME
     log_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(UTC).isoformat(timespec="seconds")
-    header = f"# forge-audit-deps dependency tree\n# generated: {timestamp}\n\n"
+    stamp = produced_at_stamp(common.repo_root())
+    header = f"{stamp}\n# forge-audit-deps dependency tree\n\n"
     log_path.write_text(header + tree, encoding="utf-8")
     logger.info("wrote %s", log_path)
     return log_path

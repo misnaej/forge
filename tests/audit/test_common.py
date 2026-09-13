@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from forge import git_utils
 from forge.audit import common
 from forge.audit.common import (
     Finding,
@@ -19,6 +20,8 @@ from forge.audit.common import (
     write_log,
 )
 from tests.audit.conftest import write_pyproject
+from tests.conftest import PRODUCED_AT_RE, commit_all
+from tests.conftest import init_git_repo as _init_git_repo
 
 
 if TYPE_CHECKING:
@@ -192,7 +195,19 @@ def test_relpath_renders_repo_relative(fake_repo: Path) -> None:
 
 
 def test_write_log_creates_code_health_dir_and_writes_header(fake_repo: Path) -> None:
-    """write_log emits header + finding count and creates code_health/."""
+    """write_log emits header + finding count and creates code_health/.
+
+    Also pins the header order (FOUNDATION §13): line 1 is now the
+    ``# produced-at:`` provenance stamp — replacing the old ``#
+    generated:`` timestamp line — and line 2 is the ``#
+    forge-audit-<name>`` marker that used to open the file. The stamp's
+    ``tree=`` is asserted against the fixture repo's own real
+    ``HEAD^{tree}`` (via :func:`git_utils.get_tree_sha`) rather than a
+    generic hex-or-unknown pattern, so a stamp mistakenly computed
+    against the wrong repo root would be caught, not waved through.
+    """
+    _init_git_repo(fake_repo)
+    commit_all(fake_repo, "seed")
     findings = [
         Finding(
             audit="dup",
@@ -204,16 +219,35 @@ def test_write_log_creates_code_health_dir_and_writes_header(fake_repo: Path) ->
     ]
     path = write_log("dup", findings, summary="one duplicate")
     text = path.read_text(encoding="utf-8")
-    assert "# forge-audit-dup" in text
+    lines = text.splitlines()
+    match = PRODUCED_AT_RE.match(lines[0])
+    assert match is not None
+    assert match["tree"] == git_utils.get_tree_sha(fake_repo, "HEAD")
+    assert lines[1] == "# forge-audit-dup"
+    assert "# generated:" not in text
     assert "# findings: 1" in text
     assert "one duplicate" in text
     assert "[HIGH] src/a.py:1 m" in text
 
 
 def test_write_log_handles_zero_findings(fake_repo: Path) -> None:
-    """Empty findings list still produces a parseable log."""
+    """Empty findings list still produces a parseable log.
+
+    Also pins the same header order as the populated-findings case above
+    (stamp on line 1, ``# forge-audit-dup`` on line 2) for the
+    zero-findings path, so the stamp insertion is not conditional on
+    there being findings to report.
+    """
+    _init_git_repo(fake_repo)
+    commit_all(fake_repo, "seed")
     path = write_log("dup", [], summary="clean")
     text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    match = PRODUCED_AT_RE.match(lines[0])
+    assert match is not None
+    assert match["tree"] == git_utils.get_tree_sha(fake_repo, "HEAD")
+    assert lines[1] == "# forge-audit-dup"
+    assert "# generated:" not in text
     assert "# findings: 0" in text
     assert "clean" in text
 

@@ -14,11 +14,14 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Iterator
+import tempfile
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from functools import lru_cache
 from importlib import metadata
 from pathlib import Path
+from typing import Literal
 
 
 logger = logging.getLogger(__name__)
@@ -495,13 +498,14 @@ def write_step_log(repo_root: Path, name: str, output: str) -> Path:
         output: Log content. A trailing newline is added if missing.
 
     Returns:
-        The full path to the written log file.
+        The full path to the written log file, whose first line is the
+        :func:`produced_at_stamp` naming the tree the output describes.
     """
     safe_name = Path(name).name
     log_path = repo_root / "code_health" / f"{safe_name}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     text = output if output.endswith("\n") else output + "\n"
-    log_path.write_text(text)
+    log_path.write_text(f"{produced_at_stamp(repo_root)}\n{text}")
     return log_path
 
 
@@ -624,6 +628,7 @@ def run_git(
     cwd: Path | None = None,
     check: bool = True,
     log_errors: bool = True,
+    env: Mapping[str, str] | None = None,
 ) -> str:
     """Run ``git`` with *args* in *cwd* and return stripped stdout.
 
@@ -642,6 +647,9 @@ def run_git(
         log_errors: When ``False``, suppress the failure log line and
             just raise — for callers that tolerate an expected failure
             (e.g. a raced tag push) and own the messaging themselves.
+        env: Variables to set for this invocation only, merged over the
+            current environment (e.g. ``GIT_INDEX_FILE`` pointing at a
+            scratch index).
 
     Returns:
         Trimmed stdout.
@@ -663,6 +671,7 @@ def run_git(
             capture_output=True,
             text=True,
             check=check,
+            env={**os.environ, **env} if env is not None else None,
         )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
@@ -1165,6 +1174,175 @@ def write_tree(repo_root: Path) -> str | None:
     """
     out = run_git("write-tree", cwd=repo_root, check=False, log_errors=False)
     return out.strip() or None
+
+
+STAMP_PREFIX = "# produced-at: "
+_STAMP_RE = re.compile(
+    r"^# produced-at: tree=(?P<tree>[0-9a-f]{40}|unknown) head=\S+ \S+$"
+)
+# The logs themselves live here; dropping the directory from the scratch
+# index keeps one log's write from changing the tree a sibling log was
+# stamped with in the same run, in repos that do not gitignore it. It is
+# removed after `git add -A` rather than excluded by pathspec: naming a
+# gitignored path in `git add` makes it exit non-zero.
+_STAMP_EXCLUDED_DIR = "code_health"
+
+LogFreshness = Literal["fresh", "stale", "unstamped", "unknown"]
+
+
+def working_tree_sha(repo_root: Path) -> str | None:
+    """Return the tree SHA of the working tree as ``git add -A`` would commit it.
+
+    A log written during pre-commit describes the files on disk, not
+    ``HEAD`` (still the parent then) and not only the staged part, so the
+    stamp fingerprints the working tree. It is computed on a scratch copy
+    of the active index — ``git rev-parse --git-path index`` already
+    honours a ``GIT_INDEX_FILE`` git set for a hook — so the caller's real
+    index is never modified. ``code_health/`` is left out (see
+    :data:`_STAMP_EXCLUDED_DIR`). Unresolved conflicts are refused up
+    front: ``git add`` would stage the conflict markers as resolved and
+    yield a tree that describes nothing real.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        The 40-char tree SHA, or ``None`` outside a git repo, while paths
+        are unmerged, or when git fails.
+    """
+    if unmerged_paths(repo_root):
+        return None
+    index = run_git(
+        "rev-parse", "--git-path", "index", cwd=repo_root, check=False, log_errors=False
+    )
+    if not index:
+        return None
+    return _tree_without_logs(repo_root, ("add", "-A"), source_index=repo_root / index)
+
+
+def _tree_without_logs(
+    repo_root: Path, populate: tuple[str, ...], *, source_index: Path | None
+) -> str | None:
+    """Write a tree from a scratch index with ``code_health/`` removed.
+
+    The one place both sides of a stamp comparison are built, so the
+    working tree and ``HEAD`` are fingerprinted under the same exclusion.
+
+    Args:
+        repo_root: Git repo root.
+        populate: Git argv that fills the scratch index (``add -A`` for the
+            working tree, ``read-tree HEAD`` for the last commit).
+        source_index: Index to copy first (keeps git's stat cache, so
+            unchanged files are not rehashed), or ``None`` to start empty.
+
+    Returns:
+        The tree SHA, or ``None`` when any git step fails.
+    """
+    with tempfile.TemporaryDirectory(prefix="forge-stamp-") as scratch:
+        scratch_index = Path(scratch) / "index"
+        if source_index is not None and source_index.is_file():
+            shutil.copyfile(source_index, scratch_index)
+        env = {"GIT_INDEX_FILE": str(scratch_index)}
+        try:
+            run_git(*populate, cwd=repo_root, env=env, log_errors=False)
+            run_git(
+                "rm",
+                "-r",
+                "--cached",
+                "--quiet",
+                "--ignore-unmatch",
+                "--",
+                _STAMP_EXCLUDED_DIR,
+                cwd=repo_root,
+                env=env,
+                log_errors=False,
+            )
+            tree = run_git("write-tree", cwd=repo_root, env=env, log_errors=False)
+        except subprocess.CalledProcessError:
+            return None
+    return tree or None
+
+
+def build_stamp(tree: str | None, head: str, *, dirty: bool, now: datetime) -> str:
+    """Render the ``# produced-at:`` first line of a ``code_health/`` log.
+
+    Pure so the wire format — which :func:`log_freshness` and every agent
+    reading a log depend on — is testable without git.
+
+    Args:
+        tree: Working-tree SHA, or ``None`` when it could not be computed.
+        head: Short ``HEAD`` SHA for human context; empty before the first
+            commit.
+        dirty: Whether the working tree differs from ``HEAD``'s tree.
+        now: Production time; rendered in UTC.
+
+    Returns:
+        ``# produced-at: tree=<sha|unknown> head=<sha|unknown>[+dirty] <iso>``.
+    """
+    suffix = "+dirty" if dirty else ""
+    stamp_time = now.astimezone(UTC).isoformat(timespec="seconds")
+    return (
+        f"{STAMP_PREFIX}tree={tree or 'unknown'} head={head or 'unknown'}{suffix} "
+        f"{stamp_time}"
+    )
+
+
+def produced_at_stamp(repo_root: Path) -> str:
+    """Return the stamp line for a log produced now against *repo_root*.
+
+    Args:
+        repo_root: Git repo root (any directory; outside a repo the tree
+            and head render as ``unknown``).
+
+    Returns:
+        The :func:`build_stamp` line for the current working tree.
+    """
+    tree = working_tree_sha(repo_root)
+    head = run_git(
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "HEAD",
+        cwd=repo_root,
+        check=False,
+        log_errors=False,
+    )
+    # HEAD's tree gets the same code_health/ exclusion as the working tree;
+    # otherwise a repo that tracks its logs would read +dirty on every stamp.
+    head_tree = (
+        _tree_without_logs(repo_root, ("read-tree", "HEAD"), source_index=None)
+        if head
+        else None
+    )
+    dirty = tree is not None and head_tree is not None and tree != head_tree
+    return build_stamp(tree, head[:7], dirty=dirty, now=datetime.now(UTC))
+
+
+def log_freshness(log_path: Path, current_tree: str | None) -> LogFreshness:
+    """Judge whether *log_path* was produced against *current_tree*.
+
+    Args:
+        log_path: A ``code_health/`` log.
+        current_tree: :func:`working_tree_sha` of the tree to judge against.
+
+    Returns:
+        ``"fresh"`` when the stamp names *current_tree*; ``"stale"`` when
+        it names another tree; ``"unstamped"`` when the first line is not a
+        stamp; ``"unknown"`` when either tree could not be computed or the
+        log cannot be read — never ``"fresh"`` without proof.
+    """
+    try:
+        with log_path.open(encoding="utf-8", errors="replace") as fh:
+            first = fh.readline().rstrip("\n")
+    except OSError:
+        return "unknown"
+    match = _STAMP_RE.match(first)
+    if match is None:
+        return "unstamped"
+    stamped = match.group("tree")
+    if stamped == "unknown" or current_tree is None:
+        return "unknown"
+    return "fresh" if stamped == current_tree else "stale"
 
 
 # Paths treated as release-channel curated content: excluded from the

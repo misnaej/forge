@@ -552,7 +552,7 @@ options:
 
 ```text
 usage: forge-precommit [-h] [--json] [--skip STEP[,STEP...]]
-                       [--only STEP[,STEP...]]
+                       [--only STEP[,STEP...]] [--freshness]
 
 Run the forge pre-commit check sequence: ruff (format + check, self-healing
 with --unsafe-fixes on failure) + docstring verification (diff vs main) +
@@ -571,7 +571,11 @@ options:
                         comma-separated).
   --only STEP[,STEP...]
                         Run exactly these steps (repeatable or comma-
-                        separated).
+                        separated). With --freshness: report only these log
+                        names.
+  --freshness           Run no steps: report each code_health/*.log as fresh,
+                        stale, unstamped or unknown against the current
+                        working tree. Always exits 0.
 ```
 
 ## forge-rebump

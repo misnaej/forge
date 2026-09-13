@@ -14,11 +14,15 @@ import logging
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 from forge.audit.common import CODE_HEALTH_DIR
-from forge.git_utils import configure_cli_logging, repo_root, require_cli
+from forge.git_utils import (
+    configure_cli_logging,
+    produced_at_stamp,
+    repo_root,
+    require_cli,
+)
 
 
 configure_cli_logging()
@@ -125,10 +129,8 @@ def _render_summary(results: list[SubResult]) -> str:
     Returns:
         Multi-line log content suitable for writing to disk.
     """
-    timestamp = datetime.now(UTC).isoformat(timespec="seconds")
     lines = [
         "# forge-audit-all",
-        f"# generated: {timestamp}",
         f"# subaudits: {len(results)}",
         "",
         "## Per-audit results",
@@ -179,7 +181,10 @@ def main() -> int:
     else:
         summary_path = repo_root() / CODE_HEALTH_DIR / "audit_summary.log"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
-    summary_path.write_text(_render_summary(results), encoding="utf-8")
+    # Same first-line stamp as every sub-audit log, so the summary is
+    # judged fresh or stale by the same rule.
+    stamp = produced_at_stamp(repo_root())
+    summary_path.write_text(f"{stamp}\n{_render_summary(results)}", encoding="utf-8")
     logger.info("wrote %s", summary_path)
 
     return max((r.exit_code for r in results), default=0)

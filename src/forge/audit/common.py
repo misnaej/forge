@@ -16,13 +16,12 @@ from __future__ import annotations
 import argparse
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from forge.config import declared_layout_dirs, load_config
-from forge.git_utils import get_modified_files, repo_root
+from forge.git_utils import get_modified_files, produced_at_stamp, repo_root
 
 
 if TYPE_CHECKING:
@@ -312,8 +311,10 @@ def write_log(
 ) -> Path:
     """Write findings + summary to ``code_health/audit_<name>.log``.
 
-    Output is overwritten on every run. The header includes a UTC timestamp
-    so agents can detect staleness vs the newest source file.
+    Output is overwritten on every run. The first line is the
+    :func:`forge.git_utils.produced_at_stamp` naming the tree the findings
+    describe, so a reader judges freshness by tree identity, never by
+    comparing timestamps.
 
     Args:
         name: Audit short name (e.g. ``"dup"``, ``"deps"``).
@@ -330,11 +331,10 @@ def write_log(
     log_path = output if output is not None else log_dir / f"audit_{name}.log"
 
     findings_list = list(findings)
-    timestamp = datetime.now(UTC).isoformat(timespec="seconds")
 
     lines = [
+        produced_at_stamp(root),
         f"# forge-audit-{name}",
-        f"# generated: {timestamp}",
         f"# findings: {len(findings_list)}",
         "",
         "## Summary",

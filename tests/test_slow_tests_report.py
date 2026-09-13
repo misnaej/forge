@@ -86,6 +86,21 @@ def test_parse_handles_bare_durations_header() -> None:
     assert parse_durations(bare) == [Duration(1.50, "call", "tests/test_a.py::test_z")]
 
 
+def test_parse_durations_ignores_leading_stamp_line() -> None:
+    """A `# produced-at:` provenance stamp does not disturb section parsing.
+
+    Every `code_health/*.log` writer, including `forge-smart-test`'s `pytest.log`
+    sink, now prepends a stamp line as line 1 (FOUNDATION §13). The line matches
+    none of `parse_durations`'s regexes (section header, entry, separator), so this
+    pins current behavior against a real hazard: a future parser change that anchors
+    to line 1 would silently break on a stamped log.
+    """
+    stamped = "# produced-at: tree=unknown head=abc1234 2024-01-01T00:00:00Z\n" + (
+        SINGLE_SECTION
+    )
+    assert parse_durations(stamped) == parse_durations(SINGLE_SECTION)
+
+
 def test_parse_ignores_durations_lines_outside_a_section() -> None:
     """A duration-shaped line with no preceding header is not captured."""
     stray = "0.99s call tests/test_a.py::test_orphan\n"

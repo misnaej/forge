@@ -31,10 +31,12 @@ from forge.pip_audit_json import AuditRun
 from forge.smart_test import lifecycle as _lifecycle
 from tests.conftest import (
     GIT_ENV,
+    PRODUCED_AT_RE,
     _detach_head,
     commit_all,
     init_git_repo,
     init_single_track_repo,
+    log_body,
 )
 
 
@@ -776,9 +778,21 @@ def test_run_all_writes_precommit_timing_log(
     MOCK SETUP: reuses the `_stub_*` passing/skipping helpers from
     test_run_all_writes_code_health_logs so no real CLI / network call
     fires.
-    EXPECTED BEHAVIOR: `code_health/precommit_timing.log`'s contents
-    equal `precommit._format_timing_log(results)` for the results
-    `run_all` actually returned.
+    EXPECTED BEHAVIOR: `code_health/precommit_timing.log`'s line 1
+    actually matches the ``# produced-at:`` provenance stamp shape
+    (FOUNDATION §13) — asserted on the raw text before ``log_body``
+    strips it, so a writer that dropped the stamp line would fail here
+    instead of `log_body`'s graceful no-stamp fallback silently
+    absorbing it. The remaining contents equal
+    `precommit._format_timing_log(results)` for the results `run_all`
+    actually returned — the log is a downstream consumer's ground
+    truth, so a self-consistency check catches drift between the write
+    and the render, not the render's format itself (covered by
+    test_format_timing_log_renders_header_rows_and_total).
+    *tmp_path* is deliberately left a non-git directory, matching this
+    test's established baseline (the un-stamped steps under test already
+    tolerate that); the stamp itself must degrade gracefully
+    (``tree=unknown``) rather than require a real repo.
     """
     _stub_env_sync_skipped(monkeypatch)
     _stub_docstrings_passing(monkeypatch)
@@ -789,9 +803,11 @@ def test_run_all_writes_precommit_timing_log(
     results = precommit.run_all(repo_root=tmp_path, print_progress=False)
 
     log_path = tmp_path / "code_health" / "precommit_timing.log"
-    assert log_path.read_text(encoding="utf-8").rstrip(
-        "\n"
-    ) == precommit._format_timing_log(results).rstrip("\n")
+    first_line = log_path.read_text(encoding="utf-8").splitlines()[0]
+    assert PRODUCED_AT_RE.fullmatch(first_line)
+    assert log_body(log_path).rstrip("\n") == precommit._format_timing_log(
+        results
+    ).rstrip("\n")
 
 
 def test_main_json_includes_elapsed_s(
@@ -6319,3 +6335,189 @@ def test_run_all_invokes_selected_step(
     monkeypatch.setattr(precommit, "step_ruff", _fake_step("ruff", called))
     precommit.run_all(repo_root=tmp_path, only=["ruff"], print_progress=False)
     assert "ruff" in called
+
+
+# ---------------------------------------------------------------------------
+# main() --freshness (#538)
+#
+# All behavior tests: pin the read-only freshness reporter's documented
+# contract (runs no steps, one verdict line per non-history log, --only
+# filters by log basename without step-registry validation, --json emits
+# a name->verdict map, always exits 0). Real git via init_git_repo /
+# commit_all; the sole mock is the run_all spy the wip-sync tests above
+# already establish as sanctioned.
+# ---------------------------------------------------------------------------
+
+
+def _write_log_with_stamp(
+    repo: Path, name: str, *, tree: str, body: str = "log body\n"
+) -> Path:
+    """Write ``code_health/<name>.log`` with a produced-at stamp for *tree*.
+
+    Args:
+        repo: Repo root.
+        name: Log basename (no extension).
+        tree: Value for the stamp's ``tree=`` field — a 40-hex sha,
+            ``"unknown"``, or any other string (the reader treats
+            anything but a match to the current tree as stale).
+        body: Content following the stamp line.
+
+    Returns:
+        The written log path.
+    """
+    log_dir = repo / "code_health"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / f"{name}.log"
+    path.write_text(
+        f"# produced-at: tree={tree} head=abc1234 2024-01-01T00:00:00Z\n{body}"
+    )
+    return path
+
+
+def test_main_freshness_never_invokes_run_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--freshness` runs no steps at all — the run_all spy is never called.
+
+    BEHAVIOR: pins the plan's "runs no steps" contract for the read-only
+    freshness reporter, so a future refactor cannot silently route it
+    through the step-execution path (which would run ruff, docstrings,
+    etc. just to answer a staleness question).
+    MOCK SETUP: `run_all` replaced with the same spy the wip-sync
+    short-circuit tests above use — the sanctioned mock.
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--freshness"]):
+        rc = precommit.main()
+    assert rc == 0
+    assert calls == []
+
+
+def test_main_freshness_human_output_reports_verdict_per_log_and_skips_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Human `--freshness` output covers all four verdicts and filters sidecars.
+
+    Each `code_health/*.log` file gets one `<verdict> <name>.log` line (non-history
+    logs only), and non-`.log` sidecars (`.json`, `*_history.log`) are excluded.
+
+    SCENARIO: four `code_health/*.log` files stamped fresh / stale /
+    unknown / (no stamp at all), plus a `*_history.log` and a `.json`
+    sidecar that must both be excluded from the listing.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
+
+    _write_log_with_stamp(tmp_path, "fresh", tree=head_tree)
+    _write_log_with_stamp(tmp_path, "stale", tree="0" * 40)
+    _write_log_with_stamp(tmp_path, "unknown", tree="unknown")
+    (tmp_path / "code_health" / "unstamped.log").write_text("no stamp here\n")
+    (tmp_path / "code_health" / "smart_test_history.log").write_text(
+        f"# produced-at: tree={head_tree} head=abc1234 2024-01-01T00:00:00Z\nhistory\n"
+    )
+    (tmp_path / "code_health" / "pip_audit.json").write_text("{}\n")
+
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--freshness"]):
+        rc = precommit.main()
+
+    assert rc == 0
+    # Each line is `<verdict> <name>.log`, column-padded — split() rather
+    # than an exact-spacing match so the assertion survives a padding-width
+    # tweak.
+    reported = {
+        tuple(line.split())
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip()
+    }
+    assert ("fresh", "fresh.log") in reported
+    assert ("stale", "stale.log") in reported
+    assert ("unknown", "unknown.log") in reported
+    assert ("unstamped", "unstamped.log") in reported
+    assert not any("history" in name for _verdict, name in reported)
+    assert not any("pip_audit" in name for _verdict, name in reported)
+
+
+def test_main_freshness_json_emits_name_to_verdict_map(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--freshness --json` emits `{name: verdict}`, keyed by log stem (no `.log`)."""
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
+    _write_log_with_stamp(tmp_path, "fresh", tree=head_tree)
+    _write_log_with_stamp(tmp_path, "stale", tree="0" * 40)
+
+    with patch.object(
+        precommit.sys, "argv", ["forge-precommit", "--freshness", "--json"]
+    ):
+        rc = precommit.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"fresh": "fresh", "stale": "stale"}
+    assert rc == 0
+
+
+def test_main_freshness_only_filters_by_log_basename_without_step_registry_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--freshness --only audit_summary,not_a_step` selects by log basename.
+
+    `audit_summary` names no real precommit step (it is the
+    `forge-audit-all` orchestrator's own summary log), and `not_a_step`
+    names nothing at all — the ordinary `--only` path raises `ValueError`
+    for an unknown step name via `_resolve_steps`, but `--freshness`
+    filters logs directly and must not reach that validation.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
+    _write_log_with_stamp(tmp_path, "ruff", tree=head_tree)
+    _write_log_with_stamp(tmp_path, "audit_summary", tree=head_tree)
+
+    with patch.object(
+        precommit.sys,
+        "argv",
+        ["forge-precommit", "--freshness", "--only", "audit_summary,not_a_step"],
+    ):
+        rc = precommit.main()
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "audit_summary.log" in out
+    assert "ruff.log" not in out
+    assert "unknown step" not in out.lower()
+
+
+def test_main_freshness_exits_zero_regardless_of_stale_or_unstamped_verdicts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--freshness` always exits 0 — a reporter, never a second gate.
+
+    A stale or unstamped log is exactly the finding the flag exists to
+    surface; failing the process on it would make the reporter a second
+    gate instead of a read-only advisory.
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    _write_log_with_stamp(tmp_path, "ruff", tree="0" * 40)
+    (tmp_path / "code_health" / "unstamped.log").write_text("plain text, no stamp\n")
+
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--freshness"]):
+        rc = precommit.main()
+    assert rc == 0

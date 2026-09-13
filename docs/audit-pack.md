@@ -285,13 +285,15 @@ SAP (abstractness alignment).
 ## Convention
 
 Logs follow the foundation `code_health/<check>.log` convention. The
-header carries a generation timestamp and finding count; the body lists
-findings ordered by severity. Format is stable across the suite — agents
-parse all six logs with one schema.
+header opens with the `# produced-at:` stamp naming the tree the findings
+describe (`forge-precommit --freshness` compares it with the current
+tree) and carries the finding count; the body lists findings ordered by
+severity. Format is stable across the suite — agents parse all six logs
+with one schema.
 
 ```text
+# produced-at: tree=<40-hex tree sha> head=<short sha>[+dirty] 2026-05-15T07:32:37+00:00
 # forge-audit-<name>
-# generated: 2026-05-15T07:32:37+00:00
 # findings: N
 
 ## Summary

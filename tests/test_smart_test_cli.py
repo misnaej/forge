@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from forge.smart_test import cli
 from forge.smart_test.dependencies import SelectionPlan
-from tests.conftest import CapturedCalls
+from tests.conftest import PRODUCED_AT_RE, CapturedCalls, log_body
 
 
 if TYPE_CHECKING:
@@ -134,14 +134,24 @@ def test_write_log_creates_code_health_dir_and_writes(tmp_path: Path) -> None:
 
     Two sinks, same content: ``smart_test.log`` (precommit-fixer's input)
     and ``pytest.log`` (``forge-slow-tests-report``'s documented default).
+    Line 1 of each is asserted to actually match the ``# produced-at:``
+    provenance stamp shape (FOUNDATION §13) before ``log_body`` strips it
+    — a writer that dropped the stamp would otherwise pass this
+    assertion by accident, since `log_body` degrades gracefully when line
+    1 isn't a stamp. The remaining body is compared via ``log_body``, not
+    part of the caller-supplied text under test here.
     """
     cli._write_log(tmp_path, "some output\n")
     log = tmp_path / "code_health" / "smart_test.log"
     assert log.exists()
-    assert log.read_text(encoding="utf-8") == "some output\n"
+    assert PRODUCED_AT_RE.fullmatch(log.read_text(encoding="utf-8").splitlines()[0])
+    assert log_body(log) == "some output\n"
     pytest_log = tmp_path / "code_health" / "pytest.log"
     assert pytest_log.exists()
-    assert pytest_log.read_text(encoding="utf-8") == "some output\n"
+    assert PRODUCED_AT_RE.fullmatch(
+        pytest_log.read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert log_body(pytest_log) == "some output\n"
 
 
 def test_write_log_overwrites_existing_log(tmp_path: Path) -> None:
@@ -149,9 +159,9 @@ def test_write_log_overwrites_existing_log(tmp_path: Path) -> None:
     cli._write_log(tmp_path, "first\n")
     cli._write_log(tmp_path, "second\n")
     log = tmp_path / "code_health" / "smart_test.log"
-    assert log.read_text(encoding="utf-8") == "second\n"
+    assert log_body(log) == "second\n"
     pytest_log = tmp_path / "code_health" / "pytest.log"
-    assert pytest_log.read_text(encoding="utf-8") == "second\n"
+    assert log_body(pytest_log) == "second\n"
 
 
 def test_main_show_files_prints_plan_and_exits_0(
