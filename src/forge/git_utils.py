@@ -1178,7 +1178,7 @@ def write_tree(repo_root: Path) -> str | None:
 
 STAMP_PREFIX = "# produced-at: "
 _STAMP_RE = re.compile(
-    r"^# produced-at: tree=(?P<tree>[0-9a-f]{40}|unknown) head=\S+ \S+$"
+    rf"^{re.escape(STAMP_PREFIX)}tree=(?P<tree>[0-9a-f]{{40}}|unknown) head=\S+ \S+$"
 )
 # The logs themselves live here; dropping the directory from the scratch
 # index keeps one log's write from changing the tree a sibling log was
@@ -1238,12 +1238,31 @@ def _tree_without_logs(
     Returns:
         The tree SHA, or ``None`` when any git step fails.
     """
+    objects = run_git(
+        "rev-parse",
+        "--git-path",
+        "objects",
+        cwd=repo_root,
+        check=False,
+        log_errors=False,
+    )
+    if not objects:
+        return None
     with tempfile.TemporaryDirectory(prefix="forge-stamp-") as scratch:
         scratch_index = Path(scratch) / "index"
-        if source_index is not None and source_index.is_file():
-            shutil.copyfile(source_index, scratch_index)
-        env = {"GIT_INDEX_FILE": str(scratch_index)}
+        scratch_objects = Path(scratch) / "objects"
+        # New blobs and trees land in the scratch store, never the repo's:
+        # a stamp must not persist uncommitted or untracked content into
+        # `.git/objects`. Existing objects stay readable as alternates.
+        env = {
+            "GIT_INDEX_FILE": str(scratch_index),
+            "GIT_OBJECT_DIRECTORY": str(scratch_objects),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str((repo_root / objects).resolve()),
+        }
         try:
+            scratch_objects.mkdir()
+            if source_index is not None and source_index.is_file():
+                shutil.copyfile(source_index, scratch_index)
             run_git(*populate, cwd=repo_root, env=env, log_errors=False)
             run_git(
                 "rm",
@@ -1258,7 +1277,7 @@ def _tree_without_logs(
                 log_errors=False,
             )
             tree = run_git("write-tree", cwd=repo_root, env=env, log_errors=False)
-        except subprocess.CalledProcessError:
+        except (OSError, subprocess.CalledProcessError):
             return None
     return tree or None
 

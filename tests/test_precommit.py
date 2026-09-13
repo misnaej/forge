@@ -6504,6 +6504,67 @@ def test_main_freshness_only_filters_by_log_basename_without_step_registry_valid
     assert "unknown step" not in out.lower()
 
 
+def test_main_freshness_only_missing_log_reports_missing_verdict_alongside_real_ones(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A requested log name with no `code_health/<name>.log` reports `missing`.
+
+    `--only ruff,ghost_step` names one real, fresh log and one that was
+    never written — the caller checking a specific step must see
+    `missing` for it rather than silence, alongside `ruff`'s real
+    verdict in the same run.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
+    _write_log_with_stamp(tmp_path, "ruff", tree=head_tree)
+
+    with patch.object(
+        precommit.sys,
+        "argv",
+        ["forge-precommit", "--freshness", "--only", "ruff,ghost_step"],
+    ):
+        rc = precommit.main()
+
+    reported = {
+        tuple(line.split())
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip()
+    }
+    assert rc == 0
+    assert ("fresh", "ruff.log") in reported
+    assert ("missing", "ghost_step.log") in reported
+
+
+def test_main_freshness_only_missing_log_reports_missing_in_json_map(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--freshness --json` carries `"missing"` for a requested absent log too."""
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
+    _write_log_with_stamp(tmp_path, "ruff", tree=head_tree)
+
+    with patch.object(
+        precommit.sys,
+        "argv",
+        ["forge-precommit", "--freshness", "--json", "--only", "ruff,ghost_step"],
+    ):
+        rc = precommit.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"ruff": "fresh", "ghost_step": "missing"}
+    assert rc == 0
+
+
 def test_main_freshness_exits_zero_regardless_of_stale_or_unstamped_verdicts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6521,3 +6582,39 @@ def test_main_freshness_exits_zero_regardless_of_stale_or_unstamped_verdicts(
     with patch.object(precommit.sys, "argv", ["forge-precommit", "--freshness"]):
         rc = precommit.main()
     assert rc == 0
+
+
+def test_main_freshness_human_output_drops_non_printable_chars_from_log_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A log stem containing an ESC byte prints with the byte stripped.
+
+    Defends stdout from terminal control-sequence injection via a
+    crafted `code_health/` filename: `_report_freshness`'s human-output
+    path filters each name through `str.isprintable()` before formatting
+    the line, since a log name is a file name — untrusted relative to
+    what a reporter should echo verbatim to a terminal.
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    log_dir = tmp_path / "code_health"
+    log_dir.mkdir()
+    name = "\x1b[31mruff"
+    try:
+        (log_dir / f"{name}.log").write_text(
+            "# produced-at: tree=unknown head=abc1234 2024-01-01T00:00:00Z\nbody\n"
+        )
+    except OSError as exc:
+        pytest.skip(f"filesystem rejects an ESC byte in a filename: {exc}")
+
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--freshness"]):
+        rc = precommit.main()
+
+    out = capsys.readouterr().out
+    expected_shown = "".join(ch for ch in name if ch.isprintable())
+    reported = {tuple(line.split()) for line in out.splitlines() if line.strip()}
+    assert rc == 0
+    assert "\x1b" not in out
+    assert ("unknown", f"{expected_shown}.log") in reported

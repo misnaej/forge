@@ -3004,6 +3004,8 @@ def _report_freshness(only: list[str], *, as_json: bool) -> int:
 
     Args:
         only: Log names (without ``.log``) to report; empty reports all.
+            A requested name with no log reports ``missing``, so a caller
+            checking one specific log never gets silence.
         as_json: Emit a ``{name: verdict}`` map instead of one line per log.
 
     Returns:
@@ -3011,17 +3013,21 @@ def _report_freshness(only: list[str], *, as_json: bool) -> int:
     """
     root = get_repo_root()
     current = working_tree_sha(root)
-    verdicts = {
+    verdicts: dict[str, str] = {
         path.stem: log_freshness(path, current)
         for path in sorted((root / "code_health").glob("*.log"))
         if not path.name.endswith(_HISTORY_LOG_SUFFIX)
         and (not only or path.stem in only)
     }
+    for name in only:
+        verdicts.setdefault(name, "missing")
     if as_json:
         emit(json.dumps(verdicts, indent=2))
     else:
         for name, verdict in verdicts.items():
-            emit(f"{verdict:<10} {name}.log")
+            # A log name is a file name: keep terminal control bytes off stdout.
+            shown = "".join(ch for ch in name if ch.isprintable())
+            emit(f"{verdict:<10} {shown}.log")
     return 0
 
 
@@ -3074,9 +3080,10 @@ def main() -> int:
         "--freshness",
         action="store_true",
         help=(
-            "Run no steps: report each code_health/*.log as fresh, stale, "
-            "unstamped or unknown against the current working tree. Always "
-            "exits 0."
+            "Run no steps: report each code_health/*.log (except the "
+            "append-only *_history.log files) as fresh, stale, unstamped or "
+            "unknown against the current working tree; a log named in --only "
+            "that does not exist reports missing. Always exits 0."
         ),
     )
     args = parser.parse_args()

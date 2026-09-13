@@ -573,9 +573,11 @@ options:
                         Run exactly these steps (repeatable or comma-
                         separated). With --freshness: report only these log
                         names.
-  --freshness           Run no steps: report each code_health/*.log as fresh,
-                        stale, unstamped or unknown against the current
-                        working tree. Always exits 0.
+  --freshness           Run no steps: report each code_health/*.log (except
+                        the append-only *_history.log files) as fresh, stale,
+                        unstamped or unknown against the current working tree;
+                        a log named in --only that does not exist reports
+                        missing. Always exits 0.
 ```
 
 ## forge-rebump
