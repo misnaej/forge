@@ -3340,13 +3340,12 @@ def test_produced_at_stamp_joins_preexisting_git_alternate_object_directories_en
     tree for the dirty check) does need to resolve `HEAD`'s commit and
     tree objects from scratch, so it is the call this scenario actually
     exercises.
-    EXPECTED BEHAVIOR: under the old "replace" behavior, `read-tree HEAD`
-    fails (its own `.git/objects` is now empty and the caller's alternate
-    was discarded), `head_tree` degrades to `None`, `dirty` force-computes
-    `False`, and the stamp never gets a `+dirty` suffix even though
-    `tracked.txt` is genuinely dirty. Joining the two directories lets
-    `read-tree HEAD` succeed via the preserved alternate, so the stamp
-    reports a real 40-hex tree and the genuine `+dirty` suffix.
+    EXPECTED BEHAVIOR: joining the two directories lets `read-tree HEAD`
+    succeed via the preserved alternate, so the stamp reports a real 40-hex
+    tree and the genuine `+dirty` suffix. Were the caller's alternate
+    replaced instead of joined, `read-tree HEAD` would fail (the repo's own
+    `.git/objects` is empty), `head_tree` would degrade to `None`, and the
+    stamp would lose its `+dirty` suffix even though `tracked.txt` is dirty.
     """
     _init_git_repo(tmp_path)
     (tmp_path / "tracked.txt").write_text("v1\n")

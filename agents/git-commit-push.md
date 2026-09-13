@@ -68,7 +68,7 @@ MUST have run first; you fail if the pre-commit hook finds violations.
    ```bash
    forge-precommit --freshness   # read-only verdict per log; runs no steps
    ```
-   Judge only the steps the latest run executed (the rows of `code_health/precommit_timing.log`); other logs are leftovers from earlier invocations. Stop per **Failure states** if one of those steps did not pass, or `--freshness` reports its log `stale`, `unstamped` or `unknown`. `n/a` (a step that checks the environment, not files) never stops.
+   Judge only the steps the latest run executed — the `PASS`, `WARN` and `FAIL` rows of `code_health/precommit_timing.log`; other logs are leftovers from earlier invocations. Stop per **Failure states** if a row reads `FAIL`, or `--freshness` reports that step's log `stale`, `unstamped` or `unknown`. `WARN` (non-blocking) and `n/a` (a step that checks the environment, not files) never stop.
 
 3. **Stage changes** — only the files specified, or `git add -A` if told to stage all, then verify the staged set is exactly what the caller described:
    ```bash
