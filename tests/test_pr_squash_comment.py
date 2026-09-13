@@ -241,6 +241,27 @@ def test_check_word_count_multiline_title_preview_shows_first_line_only() -> Non
     assert "secondlinemarker" not in text
 
 
+def test_check_word_count_preview_drops_terminal_escape_sequences() -> None:
+    """A bullet's raw escape byte is stripped before the breakdown is built.
+
+    Pins that a non-printable control byte (e.g. an ANSI color code) never
+    survives into the per-part preview, which is written raw to stderr —
+    while the bullet's other, printable words still appear, since the
+    fix filters characters rather than blanking the whole part.
+    """
+    title = "feat: title with five words"  # 5 words
+    escape_bullet = "escape \x1b[31m alert message here"  # 5 tokens
+    other_bullets = [" ".join(["word"] * 21)] * 2  # 42 words
+    bullets = [escape_bullet, *other_bullets]
+    problems = mod._check_word_count(title, bullets)
+    text = "\n".join(problems)
+    assert "\x1b" not in text
+    assert "escape" in text
+    assert "alert" in text
+    assert "message" in text
+    assert "here" in text
+
+
 def test_check_word_count_whitespace_only_bullet_shows_as_empty() -> None:
     """A whitespace-only bullet's preview reads as empty, not blank.
 

@@ -185,19 +185,24 @@ def _word_total(title: str, bullets: list[str]) -> int:
 
 
 def _preview(text: str) -> str:
-    """Shorten one message part to its first line, at most :data:`PREVIEW_CHARS`.
+    """Shorten one message part to a printable first line for the breakdown.
+
+    The preview is written raw to the terminal, so non-printable characters
+    are dropped: a title or bullet cannot carry an escape sequence onto
+    stderr.
 
     Args:
         text: A title or bullet.
 
     Returns:
-        The first non-blank line, cut with ``…`` when longer than
-        :data:`PREVIEW_CHARS`; ``(empty)`` for a whitespace-only part.
+        The first line with non-printable characters removed, cut to
+        :data:`PREVIEW_CHARS` characters plus ``…`` when longer;
+        ``(empty)`` when nothing printable remains.
     """
-    stripped = text.strip()
-    if not stripped:
+    lines = text.strip().splitlines()
+    first = "".join(ch for ch in lines[0] if ch.isprintable()) if lines else ""
+    if not first.strip():
         return "(empty)"
-    first = stripped.splitlines()[0]
     if len(first) <= PREVIEW_CHARS:
         return first
     return first[:PREVIEW_CHARS].rstrip() + "…"

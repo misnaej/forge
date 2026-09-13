@@ -870,7 +870,7 @@ _72 modules, 974 symbols._
 - `_check_title(title: str) -> list[str]` _(internal)_ — Return the conventional-commit problems with *title*.
 - `_check_bullets(bullets: list[str]) -> list[str]` _(internal)_ — Return the bullet-count problem and one problem per empty bullet.
 - `_word_total(title: str, bullets: list[str]) -> int` _(internal)_ — Count whitespace-split words across the title and every bullet.
-- `_preview(text: str) -> str` _(internal)_ — Shorten one message part to its first line, at most :data:`PREVIEW_CHARS`.
+- `_preview(text: str) -> str` _(internal)_ — Shorten one message part to a printable first line for the breakdown.
 - `_word_breakdown(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Render one indented line per message part: label, word count, preview.
 - `_check_word_count(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the ≤ ``MAX_WORDS`` cap problem, with a per-part breakdown.
 - `_check_attribution(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the Claude / AI attribution problem per FOUNDATION §2 (shared gate).
