@@ -1236,7 +1236,8 @@ def _tree_without_logs(
             unchanged files are not rehashed), or ``None`` to start empty.
 
     Returns:
-        The tree SHA, or ``None`` when any git step fails.
+        The tree SHA, or ``None`` when any step fails (a git call, or
+        preparing the scratch index and object store).
     """
     objects = run_git(
         "rev-parse",
@@ -1254,10 +1255,15 @@ def _tree_without_logs(
         # New blobs and trees land in the scratch store, never the repo's:
         # a stamp must not persist uncommitted or untracked content into
         # `.git/objects`. Existing objects stay readable as alternates.
+        alternates = [str((repo_root / objects).resolve())]
+        # Keep alternates the caller already relies on (shared object
+        # caches): replacing them would hide objects HEAD's tree needs.
+        if inherited := os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES"):
+            alternates.append(inherited)
         env = {
             "GIT_INDEX_FILE": str(scratch_index),
             "GIT_OBJECT_DIRECTORY": str(scratch_objects),
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str((repo_root / objects).resolve()),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": os.pathsep.join(alternates),
         }
         try:
             scratch_objects.mkdir()

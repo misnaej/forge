@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -3318,6 +3319,57 @@ def test_produced_at_stamp_renders_tree_unknown_when_index_copy_raises(
     assert match["tree"] == "unknown"
 
 
+def test_produced_at_stamp_joins_preexisting_git_alternate_object_directories_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-existing `GIT_ALTERNATE_OBJECT_DIRECTORIES` is joined, not replaced.
+
+    SCENARIO: a repo whose `HEAD` objects are reachable only through an
+    env-provided alternate — the committed loose objects are physically
+    moved out of `.git/objects` into a sibling directory inside `tmp_path`,
+    the way a `git clone --shared`/`--reference`-style object store would
+    leave them reachable only via an externally supplied
+    `GIT_ALTERNATE_OBJECT_DIRECTORIES`, set here via `monkeypatch.setenv`
+    the same way it would already be set in a caller's environment before
+    forge's stamping code runs. `working_tree_sha` alone cannot
+    discriminate the fix: its `git add -A` populate step never needs to
+    *read* a pre-existing blob for a well-formed source index (`write-tree`
+    trusts the index's own recorded shas), so it returns a real tree with
+    or without the join. `produced_at_stamp`'s second, independent
+    `_tree_without_logs` call (`git read-tree HEAD`, computing the head
+    tree for the dirty check) does need to resolve `HEAD`'s commit and
+    tree objects from scratch, so it is the call this scenario actually
+    exercises.
+    EXPECTED BEHAVIOR: under the old "replace" behavior, `read-tree HEAD`
+    fails (its own `.git/objects` is now empty and the caller's alternate
+    was discarded), `head_tree` degrades to `None`, `dirty` force-computes
+    `False`, and the stamp never gets a `+dirty` suffix even though
+    `tracked.txt` is genuinely dirty. Joining the two directories lets
+    `read-tree HEAD` succeed via the preserved alternate, so the stamp
+    reports a real 40-hex tree and the genuine `+dirty` suffix.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    (tmp_path / "tracked.txt").write_text("v2 (dirty)\n")
+
+    objects_dir = tmp_path / ".git" / "objects"
+    side = tmp_path / "side_objects"
+    side.mkdir()
+    for entry in list(objects_dir.iterdir()):
+        if entry.is_dir() and entry.name not in ("info", "pack"):
+            shutil.move(str(entry), str(side / entry.name))
+
+    monkeypatch.setenv("GIT_ALTERNATE_OBJECT_DIRECTORIES", str(side.resolve()))
+
+    stamp = git_utils.produced_at_stamp(tmp_path)
+
+    match = PRODUCED_AT_RE.fullmatch(stamp)
+    assert match is not None
+    assert re.fullmatch(r"[0-9a-f]{40}", match["tree"])
+    assert match["head"].endswith("+dirty")
+
+
 # ---------------------------------------------------------------------------
 # log_freshness
 # ---------------------------------------------------------------------------
@@ -3392,9 +3444,9 @@ def test_log_freshness_reads_a_real_build_stamp_line(tmp_path: Path) -> None:
     """`log_freshness` parses `build_stamp`'s own output, not just a hand-typed literal.
 
     Every `log_freshness` test above writes a hand-typed `# produced-at:`
-    literal; `_STAMP_RE` is now built from the same `STAMP_PREFIX`
-    constant `build_stamp` renders from, so this pins that the two
-    actually agree on the writer's real output — a clean stamp reads
+    literal; `_STAMP_RE` is built from the same `STAMP_PREFIX` constant
+    `build_stamp` renders from, so this pins that the two agree on the
+    writer's real output — a clean stamp reads
     fresh against its own tree, a `dirty=True` stamp (whose head token
     gains a `+dirty` suffix) still parses, and a `tree=None` stamp reads
     unknown.

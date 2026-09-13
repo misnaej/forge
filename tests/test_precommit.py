@@ -1737,6 +1737,22 @@ def test_cfg_str_list_falls_back_on_missing_or_scalar() -> None:
     assert precommit._cfg_str_list({"paths": "src"}, "paths", ["src"]) == ["src"]
 
 
+def test_step_registry_checks_files_false_only_for_environment_steps() -> None:
+    """Exactly `auto_rebuild`, `env_sync`, `plugin_sync` opt out of `checks_files`.
+
+    These three steps judge the installed environment rather than the
+    tracked tree, so a tree-freshness verdict is meaningless for them (see
+    the `--freshness` `n/a` tests below). Every other registry entry keeps
+    the `checks_files=True` default — pinning the exact opt-out set here
+    means a future environment-only step must choose it deliberately
+    instead of silently inheriting a tree-based verdict.
+    """
+    opted_out = {
+        step.name for step in precommit._STEP_REGISTRY if not step.checks_files
+    }
+    assert opted_out == {"auto_rebuild", "env_sync", "plugin_sync"}
+
+
 def test_validate_step_names_accepts_known() -> None:
     """`_validate_step_names` is silent for registered step names."""
     precommit._validate_step_names(["ruff", "doctest", "pip_audit"])
@@ -6343,9 +6359,11 @@ def test_run_all_invokes_selected_step(
 # All behavior tests: pin the read-only freshness reporter's documented
 # contract (runs no steps, one verdict line per non-history log, --only
 # filters by log basename without step-registry validation, --json emits
-# a name->verdict map, always exits 0). Real git via init_git_repo /
-# commit_all; the sole mock is the run_all spy the wip-sync tests above
-# already establish as sanctioned.
+# a name->verdict map, always exits 0, a checks_files=False step's log
+# always reads n/a, and --only against a *_history.log reads history
+# rather than missing). Real git via init_git_repo / commit_all; the sole
+# mock is the run_all spy the wip-sync tests above already establish as
+# sanctioned.
 # ---------------------------------------------------------------------------
 
 
@@ -6618,3 +6636,104 @@ def test_main_freshness_human_output_drops_non_printable_chars_from_log_name(
     assert rc == 0
     assert "\x1b" not in out
     assert ("unknown", f"{expected_shown}.log") in reported
+
+
+def test_main_freshness_environment_step_log_reports_na_regardless_of_stale_stamp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A `checks_files=False` step's log reads `n/a` even with a stale stamp.
+
+    `env_sync` judges the installed environment, not the tree on disk — a
+    stamp mismatch says nothing about whether the environment is stale, so
+    the reporter overrides its verdict to `n/a` regardless of what the
+    stamp says. `ruff.log`, an ordinary `checks_files=True` step, still
+    reports its real stamp-derived `stale` verdict in the same run — the
+    override is per-step, not global.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    _write_log_with_stamp(tmp_path, "env_sync", tree="0" * 40)
+    _write_log_with_stamp(tmp_path, "ruff", tree="0" * 40)
+
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--freshness"]):
+        rc = precommit.main()
+
+    reported = {
+        tuple(line.split())
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip()
+    }
+    assert rc == 0
+    assert ("n/a", "env_sync.log") in reported
+    assert ("stale", "ruff.log") in reported
+
+
+def test_main_freshness_json_reports_na_for_environment_step_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--freshness --json` carries `"n/a"` for a `checks_files=False` step's log too.
+
+    Same override as the human-output test above, exercised through the
+    JSON rendering path instead.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    _write_log_with_stamp(tmp_path, "env_sync", tree="0" * 40)
+    _write_log_with_stamp(tmp_path, "ruff", tree="0" * 40)
+
+    with patch.object(
+        precommit.sys, "argv", ["forge-precommit", "--freshness", "--json"]
+    ):
+        rc = precommit.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["env_sync"] == "n/a"
+    assert payload["ruff"] == "stale"
+
+
+def test_main_freshness_only_history_log_reports_history_not_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--only <history-log-name>` reports `history`, not `missing`.
+
+    An append-only `*_history.log` stays unlisted from a bare `--freshness`
+    (covered above) because one stamp cannot describe the many trees it
+    accumulates records from — but a caller naming it explicitly via
+    `--only` must not read `missing`, which would wrongly claim the log
+    was never written at all. A genuinely absent name in the same `--only`
+    list still reads `missing` (already pinned above for a non-history
+    name); this test only adds the history case.
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    (tmp_path / "code_health").mkdir()
+    (tmp_path / "code_health" / "smart_test_history.log").write_text(
+        "# produced-at: tree=unknown head=abc1234 2024-01-01T00:00:00Z\nhistory\n"
+    )
+
+    with patch.object(
+        precommit.sys,
+        "argv",
+        ["forge-precommit", "--freshness", "--only", "smart_test_history,ghost_step"],
+    ):
+        rc = precommit.main()
+
+    reported = {
+        tuple(line.split())
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip()
+    }
+    assert rc == 0
+    assert ("history", "smart_test_history.log") in reported
+    assert ("missing", "ghost_step.log") in reported
