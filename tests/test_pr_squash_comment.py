@@ -9,7 +9,10 @@
 # ``subprocess.run`` is patched to capture argv for the writes (``gh pr
 # comment``, ``gh api -X DELETE``). Listing fakes dispatch on the
 # endpoint path AND the ``--jq`` expression, because ``ensure_last``
-# reads the same endpoint twice for different fields.
+# reads the same endpoint twice for different fields. The rule checkers
+# (``_check_title`` and friends) and ``validate`` are pure — text in,
+# problems out — so ``capsys`` is the only seam the dry-run stderr
+# assertions need; nothing there is monkeypatched.
 """
 
 from __future__ import annotations
@@ -68,13 +71,15 @@ def _own_login(monkeypatch: pytest.MonkeyPatch) -> None:
         "chore(#99): bump",
     ],
 )
-def test_validate_title_accepts_conventional_forms(title: str) -> None:
-    """Conventional-commit titles in known shapes pass.
+def test_check_title_accepts_conventional_forms(title: str) -> None:
+    """Conventional-commit titles in known shapes report no problems.
+
+    Pins the accepted title shapes FOUNDATION §6 names.
 
     Args:
         title: A conventional-commit format title string.
     """
-    mod._validate_title(title)  # no raise
+    assert mod._check_title(title) == []
 
 
 @pytest.mark.parametrize(
@@ -89,14 +94,15 @@ def test_validate_title_accepts_conventional_forms(title: str) -> None:
         "feat: line one\nfeat: line two",
     ],
 )
-def test_validate_title_rejects_bad_forms(title: str) -> None:
-    """Empty, multi-line, or non-conventional titles raise.
+def test_check_title_rejects_bad_forms(title: str) -> None:
+    """Empty, multi-line, or non-conventional titles report a problem.
+
+    Pins which malformed shapes are rejected.
 
     Args:
         title: A malformed title string (empty, multi-line, or non-conventional).
     """
-    with pytest.raises(mod.ValidationError):
-        mod._validate_title(title)
+    assert mod._check_title(title) != []
 
 
 # ---------------------------------------------------------------------------
@@ -104,31 +110,59 @@ def test_validate_title_rejects_bad_forms(title: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_validate_bullets_accepts_min_count() -> None:
-    """Exactly MIN_BULLETS passes."""
-    mod._validate_bullets(["a", "b", "c"])
+def test_check_bullets_accepts_min_count() -> None:
+    """Exactly MIN_BULLETS reports no problems.
+
+    Pins the inclusive lower bound of the accepted range.
+    """
+    assert mod._check_bullets(["a", "b", "c"]) == []
 
 
-def test_validate_bullets_accepts_max_count() -> None:
-    """Exactly MAX_BULLETS passes."""
-    mod._validate_bullets(["a", "b", "c", "d", "e"])
+def test_check_bullets_accepts_max_count() -> None:
+    """Exactly MAX_BULLETS reports no problems.
+
+    Pins the inclusive upper bound of the accepted range.
+    """
+    assert mod._check_bullets(["a", "b", "c", "d", "e"]) == []
 
 
 @pytest.mark.parametrize("n", [0, 1, 2, 6, 7])
-def test_validate_bullets_rejects_out_of_range(n: int) -> None:
-    """Counts outside [MIN_BULLETS, MAX_BULLETS] raise.
+def test_check_bullets_rejects_out_of_range(n: int) -> None:
+    """Counts outside [MIN_BULLETS, MAX_BULLETS] report the count problem.
+
+    Pins the FOUNDATION §6 bound and its message substring.
 
     Args:
         n: Number of bullets to test (out-of-range value).
     """
-    with pytest.raises(mod.ValidationError):
-        mod._validate_bullets([f"bullet {i}" for i in range(n)])
+    problems = mod._check_bullets([f"bullet {i}" for i in range(n)])
+    assert any("requires 3-5" in p for p in problems)
 
 
-def test_validate_bullets_rejects_whitespace_only_entry() -> None:
-    """An all-whitespace bullet is treated as empty and raises."""
-    with pytest.raises(mod.ValidationError):
-        mod._validate_bullets(["real", "  ", "also real"])
+def test_check_bullets_reports_one_problem_per_empty_bullet() -> None:
+    """Each whitespace-only bullet is its own problem, count problem absent.
+
+    Pins that an in-range count with several empty entries reports one
+    problem per empty entry — not one combined problem, and not the
+    count problem, since 5 is in range.
+    """
+    bullets = ["real one", "  ", "\t", "real two", "   "]
+    problems = mod._check_bullets(bullets)
+    assert len(problems) == 3
+    assert not any("requires 3-5" in p for p in problems)
+
+
+def test_check_bullets_reports_count_and_empty_bullet_problems_together() -> None:
+    """An out-of-range count with empty entries reports both kinds together.
+
+    Pins that the count problem and the per-bullet empty problems are
+    independent — a caller broken on both learns of both in one call
+    rather than only the first rule the checker hits.
+    """
+    problems = mod._check_bullets(["", "  "])
+    text = "\n".join(problems)
+    assert "requires 3-5" in text
+    assert text.lower().count("empty") >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -136,19 +170,102 @@ def test_validate_bullets_rejects_whitespace_only_entry() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_validate_word_count_accepts_at_cap() -> None:
-    """Exactly MAX_WORDS across title + bullets passes (cap is inclusive)."""
+def test_check_word_count_accepts_at_cap() -> None:
+    """Exactly MAX_WORDS across title + bullets reports no problems (cap inclusive)."""
     title = "feat: title with five words"  # 5 words
     bullets = [" ".join(["word"] * 15)] * 3  # 45 words
-    mod._validate_word_count(title, bullets)
+    assert mod._check_word_count(title, bullets) == []
 
 
-def test_validate_word_count_rejects_above_cap() -> None:
-    """MAX_WORDS + 1 words raises, naming the observed count."""
-    title = "feat: title with five words here"  # 6 words
+def test_check_word_count_over_cap_reports_header_and_breakdown() -> None:
+    """MAX_WORDS + 1 reports the header line and a per-part breakdown.
+
+    Pins the observed count, the cut amount, that each bullet's 1-based
+    label (``bullet 1``/``bullet 2``/``bullet 3``) appears verbatim
+    rather than a 0-based or unlabeled variant, and that the breakdown
+    orders title before bullet 1 before bullet 2 before bullet 3 — a
+    reversed or scrambled breakdown must fail this test. The exact
+    column spacing is still an implementation detail this test does
+    not pin.
+    """
+    # Deliberately avoids the word "title" in the subject text itself,
+    # so counting occurrences of the label below isn't thrown off by a
+    # coincidental match in the previewed content.
+    title = "feat: message with five words here"  # 6 words
     bullets = [" ".join(["word"] * 15)] * 3  # 45 words
-    with pytest.raises(mod.ValidationError, match=r"51 words"):
-        mod._validate_word_count(title, bullets)
+    problems = mod._check_word_count(title, bullets)
+    text = "\n".join(problems).lower()
+    assert "51 words" in text
+    assert "(cut 1)" in text
+    assert text.count("bullet") >= 3
+    assert text.count("title") == 1
+    assert "bullet 1" in text
+    assert "bullet 2" in text
+    assert "bullet 3" in text
+    lines = text.splitlines()
+    title_idx = next(i for i, line in enumerate(lines) if line.startswith("  title"))
+    bullet_1_idx = next(i for i, line in enumerate(lines) if "bullet 1" in line)
+    bullet_2_idx = next(i for i, line in enumerate(lines) if "bullet 2" in line)
+    bullet_3_idx = next(i for i, line in enumerate(lines) if "bullet 3" in line)
+    assert title_idx < bullet_1_idx < bullet_2_idx < bullet_3_idx
+
+
+def test_check_word_count_truncates_a_long_part_with_ellipsis() -> None:
+    """A long part's preview is truncated, never the full text, in the breakdown.
+
+    Pins that the breakdown stays scannable — a bullet long enough to
+    matter for the cap must not reproduce itself in full.
+    """
+    title = "feat: short title"  # 3 words
+    long_bullet = "alphabetazetadelta" * 5  # one long word, no spaces
+    other_bullets = [" ".join(["word"] * 24)] * 2  # 48 words
+    bullets = [long_bullet, *other_bullets]
+    problems = mod._check_word_count(title, bullets)
+    text = "\n".join(problems)
+    assert long_bullet not in text
+    assert long_bullet[:30] in text
+    assert "…" in text
+
+
+def test_check_word_count_multiline_title_preview_shows_first_line_only() -> None:
+    """A multi-line title's preview stops at its first line.
+
+    Pins that a later line never leaks into the breakdown — the
+    preview is one line, matching the rest of the per-part rows.
+    """
+    title = "feat: firstlinemarker\nsecondlinemarker should not appear in preview"
+    bullets = [" ".join(["word"] * 20)] * 3  # 60 words, well over cap with title
+    problems = mod._check_word_count(title, bullets)
+    text = "\n".join(problems)
+    assert "firstlinemarker" in text
+    assert "secondlinemarker" not in text
+
+
+def test_check_word_count_whitespace_only_bullet_shows_as_empty() -> None:
+    """A whitespace-only bullet's preview reads as empty, not blank.
+
+    Pins that the breakdown makes an empty part visible rather than
+    rendering an indistinguishable blank line.
+    """
+    title = " ".join(["word"] * 40)  # 40 words
+    bullets = ["   ", " ".join(["word"] * 15)]  # whitespace-only + 15 words = 55 total
+    problems = mod._check_word_count(title, bullets)
+    text = "\n".join(problems)
+    assert "(empty)" in text
+
+
+def test_check_word_count_zero_bullets_breakdown_covers_only_the_title() -> None:
+    """With no bullets, the breakdown names the title and mentions no bullet.
+
+    Pins that the breakdown only ever lists parts that exist — zero
+    bullets means zero bullet rows, not empty placeholders.
+    """
+    title = " ".join(["word"] * 60)  # 60 words, no bullets
+    problems = mod._check_word_count(title, [])
+    text = "\n".join(problems).lower()
+    assert "60 words" in text
+    assert "title" in text
+    assert "bullet" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -156,16 +273,48 @@ def test_validate_word_count_rejects_above_cap() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_validate_no_ai_attribution_accepts_clean_message() -> None:
-    """A message free of attribution patterns passes.
+def test_check_attribution_accepts_clean_message() -> None:
+    """A message free of attribution patterns reports no problems.
 
     Thin delegation test: the phrase layer, the path-shaped exemption,
     and the bare-vendor-token backstop are ``gh_comments.validate_no_ai_attribution``'s
     own contract, covered in ``tests/test_gh_comments.py``. This only pins
-    that ``_validate_no_ai_attribution`` joins title + bullets and forwards
-    to the shared gate.
+    that ``_check_attribution`` joins title + bullets and forwards to
+    the shared gate.
     """
-    mod._validate_no_ai_attribution(VALID_TITLE, VALID_BULLETS)
+    assert mod._check_attribution(VALID_TITLE, VALID_BULLETS) == []
+
+
+def test_check_attribution_reports_known_pattern() -> None:
+    """A known attribution phrase in a bullet reports the shared gate's message.
+
+    Pins that the shared gate's ``ValidationError`` is converted into
+    a problem string rather than propagating as a raise.
+    """
+    problems = mod._check_attribution(VALID_TITLE, ["Generated with Claude"])
+    assert any("pattern detected" in p for p in problems)
+
+
+# ---------------------------------------------------------------------------
+# validate() — combined rule ordering
+# ---------------------------------------------------------------------------
+
+
+def test_validate_returns_empty_list_when_every_rule_passes() -> None:
+    """A fully valid title + bullets combination reports no problems."""
+    assert mod.validate(VALID_TITLE, VALID_BULLETS) == []
+
+
+def test_validate_reports_every_failing_rule_in_order() -> None:
+    """Two broken rules both appear, in rule order (title, then bullets).
+
+    Pins that a run reports every broken rule rather than stopping at
+    the first one, in the order the rules are declared — so a human
+    reads problems top-to-bottom sensibly.
+    """
+    problems = mod.validate("not conventional", ["only one"])
+    text = "\n".join(problems)
+    assert text.index("conventional-commit") < text.index("requires 3-5")
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +448,11 @@ def _cli_argv(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 def test_main_dry_run_prints_body_and_returns_zero(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``--dry-run`` writes the wrapped body to stdout, exit 0."""
+    """``--dry-run`` writes the wrapped body to stdout, exit 0.
+
+    Stderr additionally reports the word-count breakdown — a passing
+    dry run is the one place a human sees the margin to the cap.
+    """
     sys.argv.extend(
         [
             "--dry-run",
@@ -310,9 +463,14 @@ def test_main_dry_run_prints_body_and_returns_zero(
     )
     assert mod.main() == 0
     captured = capsys.readouterr()
-    assert captured.out.count("```") == 4
-    assert VALID_TITLE in captured.out
-    assert f"- {VALID_BULLETS[0]}" in captured.out
+    assert captured.out == mod.build_body(VALID_TITLE, VALID_BULLETS)
+    # VALID_TITLE is 4 words; VALID_BULLETS are 3 words x 3 bullets = 9. 4 + 9 = 13.
+    assert "13/50 words" in captured.err
+    # VALID_TITLE's own subject text contains the word "title", so this
+    # only pins presence, not an exact count (see the over-cap test for
+    # the count-pinned version, on title text chosen to avoid the clash).
+    assert "title" in captured.err.lower()
+    assert captured.err.lower().count("bullet") >= 3
 
 
 @pytest.mark.usefixtures("_cli_argv")
@@ -329,7 +487,42 @@ def test_main_validation_failure_returns_one(
         ]
     )
     assert mod.main() == 1
-    assert "conventional-commit" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "conventional-commit" in captured.err
+    assert "words" not in captured.err
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_reports_every_failing_rule_prefixed_on_its_own_stderr_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Three broken rules all reach stderr; the prefix opens each once.
+
+    SCENARIO: title, bullet count, and word count are all broken at
+    once — the last one's problem is multi-line (header + breakdown).
+    EXPECTED BEHAVIOR: all three problems are visible in one run, and
+    the ``forge-pr-squash-comment: `` prefix opens only the FIRST line
+    of each problem — the word-count problem's breakdown lines stay
+    unprefixed, since carrying the prefix would make a continuation
+    line read as a second, unrelated problem.
+    """
+    long_bullet = " ".join(["word"] * 55)  # alone pushes the total over MAX_WORDS
+    sys.argv.extend(
+        ["--dry-run", "--title", "not conventional", "--bullet", long_bullet]
+    )
+    assert mod.main() == 1
+    err = capsys.readouterr().err
+    prefix = "forge-pr-squash-comment: "
+    lines = err.splitlines()
+    prefixed_lines = [line for line in lines if line.startswith(prefix)]
+    unprefixed_lines = [line for line in lines if line and not line.startswith(prefix)]
+    assert len(prefixed_lines) == 3
+    assert any("conventional-commit" in line for line in prefixed_lines)
+    assert any("requires 3-5" in line for line in prefixed_lines)
+    assert any("words" in line for line in prefixed_lines)
+    # The word-count problem's breakdown lines are real and unprefixed.
+    assert unprefixed_lines
 
 
 @pytest.mark.usefixtures("_cli_argv")

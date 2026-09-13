@@ -526,7 +526,8 @@ options:
   --pr PR        PR number to comment on. With --bullet: syncs the PR title,
                  posts the message and prunes older squash comments. Without:
                  re-posts the existing one so it is the newest comment again.
-  --dry-run      Print the wrapped body to stdout; do not call gh.
+  --dry-run      Print the wrapped body to stdout and the per-part word counts
+                 to stderr; do not call gh.
   --title TITLE  Squash title (conventional-commit format). Required with
                  --bullet; the PR title is forced to match it.
   --bullet TEXT  Bullet line. Repeat 3-5 times.
