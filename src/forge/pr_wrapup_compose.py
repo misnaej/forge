@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 from forge.pr_delta import VERIFIED_AT_RE
+from forge.precommit import timing_markers
 
 
 if TYPE_CHECKING:
@@ -44,9 +45,6 @@ _FAILED_CONCLUSIONS: Final[frozenset[str]] = frozenset(
 )
 _FAILED_STATES: Final[frozenset[str]] = frozenset({"FAILURE", "ERROR"})
 _PENDING_STATES: Final[frozenset[str]] = frozenset({"PENDING", "EXPECTED"})
-_TIMING_ROW_RE: Final[re.Pattern[str]] = re.compile(
-    r"^(?P<name>\S+)\s+[\d.]+s\s+(?P<marker>SKIP|PASS|WARN|FAIL)\s*$"
-)
 _PYTEST_SUMMARY_RE: Final[re.Pattern[str]] = re.compile(
     r"\d+ (?:passed|failed|errors?)\b[^\n]*? in [\d.]+s"
 )
@@ -268,14 +266,10 @@ def _code_quality_rows(
     failed: list[str] = []
     warned: list[str] = []
     unverified: list[str] = []
-    seen: set[str] = set()
+    markers = timing_markers(timing_log)
+    seen = set(markers)
     passed = 0
-    for line in timing_log.splitlines():
-        match = _TIMING_ROW_RE.match(line.strip())
-        if match is None:
-            continue
-        name, marker = match.group("name"), match.group("marker")
-        seen.add(name)
+    for name, marker in markers.items():
         if marker == "SKIP":
             continue
         if marker == "FAIL":

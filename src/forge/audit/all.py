@@ -16,7 +16,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from forge.audit.common import CODE_HEALTH_DIR
+from forge.audit.common import CODE_HEALTH_DIR, read_finding_count
 from forge.git_utils import (
     configure_cli_logging,
     produced_at_stamp,
@@ -59,24 +59,6 @@ class SubResult:
     finding_count: int
 
 
-def _read_finding_count(log_text: str) -> int:
-    """Parse the ``# findings: N`` header line from a log.
-
-    Args:
-        log_text: Full log contents.
-
-    Returns:
-        Integer count, or ``-1`` if the header line is missing.
-    """
-    for line in log_text.splitlines()[:10]:
-        if line.startswith("# findings:"):
-            try:
-                return int(line.split(":", 1)[1].strip())
-            except ValueError:
-                return -1
-    return -1
-
-
 def _run_one(name: str, scope: str, roots: list[str] | None) -> SubResult:
     """Invoke a sub-audit CLI and parse its log.
 
@@ -109,7 +91,7 @@ def _run_one(name: str, scope: str, roots: list[str] | None) -> SubResult:
     log_rel = f"{CODE_HEALTH_DIR}/audit_{name}.log"
     log_abs = repo_root() / log_rel
     if log_abs.exists():
-        count = _read_finding_count(log_abs.read_text(encoding="utf-8"))
+        count = read_finding_count(log_abs.read_text(encoding="utf-8"))
     else:
         count = -1
     return SubResult(

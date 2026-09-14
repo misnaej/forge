@@ -51,6 +51,12 @@ cannot be answered — ``gh`` failed or no wrap-up carries a ``verified-at:``
 line. ``null`` is a *skip this poll*, never an alert: the mode degrades
 exactly as the delta path does.
 
+``--evidence`` additionally writes the review evidence pack
+(:mod:`forge.pr_evidence`) to ``code_health/pr_evidence.log`` after the
+plan JSON is emitted. The pack never changes the JSON or the exit code:
+the publish hook parses both fail-closed and never passes the flag, and a
+pack failure is only logged. ``--freshness`` ignores ``--evidence``.
+
 ``light-regen`` is *eligibility only*: the skill still earns the escape by
 running the provenance gates (``precommit_scope`` lists them); any gate
 failure falls back to the full round. ``light-code`` (small, no added
@@ -80,7 +86,13 @@ import sys
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING
 
-from forge.git_utils import configure_cli_logging, emit, repo_root, run_git
+from forge.git_utils import (
+    GH_TIMEOUT_S,
+    configure_cli_logging,
+    emit,
+    repo_root,
+    run_git,
+)
 from forge.pr_delta import (
     PROVENANCE_GATE_STEPS,
     configured_docs_only_globs,
@@ -91,6 +103,7 @@ from forge.pr_delta import (
     regen_only_diff,
     touches_high_blast_radius,
 )
+from forge.pr_evidence import write_pack
 
 
 if TYPE_CHECKING:
@@ -253,9 +266,9 @@ def gh_pr_view(pr_number: int, json_fields: str) -> dict[str, object] | None:
     """Return ``gh pr view N --json <fields>`` decoded, or ``None``.
 
     The one ``gh`` seam this module owns. Every failure — missing binary,
-    no auth, unknown PR (each after a warning), or output that is not a
-    JSON object — collapses to ``None`` so callers degrade (full mode,
-    ``fresh: null``) instead of crashing.
+    no auth, unknown PR, a call that outlasts its timeout (each after a
+    warning), or output that is not a JSON object — collapses to ``None`` so
+    callers degrade (full mode, ``fresh: null``) instead of crashing.
 
     Args:
         pr_number: The existing PR to read.
@@ -266,8 +279,14 @@ def gh_pr_view(pr_number: int, json_fields: str) -> dict[str, object] | None:
     """
     cmd = ["gh", "pr", "view", str(pr_number), "--json", json_fields]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, check=True, timeout=GH_TIMEOUT_S
+        )
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ) as exc:
         logger.warning("pr-plan: could not read PR #%s (%s)", pr_number, exc)
         return None
     try:
@@ -554,6 +573,33 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
     )
 
 
+def _write_evidence(root: Path, base: str, plan: PrPlan, pr_number: int | None) -> None:
+    """Write the review evidence pack; a failure is logged, never raised.
+
+    The plan JSON is already on stdout and the exit code is the publish
+    hook's contract, so nothing the pack does may change either.
+
+    Args:
+        root: Repository root directory.
+        base: The classified base ref.
+        plan: The plan just emitted.
+        pr_number: Existing PR whose body joins the closing-keyword search.
+    """
+    try:
+        view = gh_pr_view(pr_number, "body") if pr_number is not None else None
+        path = write_pack(
+            root,
+            base=base,
+            plan=asdict(plan),
+            added=added_paths(root, f"{base}...HEAD"),
+            pr_body=str(view.get("body") or "") if view is not None else None,
+        )
+    except Exception:
+        logger.exception("pr-plan: the evidence pack was not written")
+        return
+    logger.info("pr-plan: wrote %s", path)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the finalization-path classifier (or the freshness check) and emit JSON.
 
@@ -588,6 +634,13 @@ def main(argv: list[str] | None = None) -> int:
         "{fresh, head_oid, latest_verified_at, reason}. Needs --pr; "
         "ignores --base.",
     )
+    parser.add_argument(
+        "--evidence",
+        action="store_true",
+        help="Also write the review evidence pack to code_health/pr_evidence.log "
+        "after the plan; the plan JSON and exit code do not change, and a pack "
+        "failure is only logged. Ignored with --freshness.",
+    )
     args = parser.parse_args(argv)
     if args.freshness:
         if args.pr is None:
@@ -611,6 +664,8 @@ def main(argv: list[str] | None = None) -> int:
         logger.exception("pr-plan: cannot diff against base ref %r.", args.base)
         return 2
     emit(json.dumps(asdict(plan), indent=2))
+    if args.evidence:
+        _write_evidence(root, args.base, plan, args.pr)
     return 0
 
 

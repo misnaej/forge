@@ -27,6 +27,7 @@ from forge.pr_wrapup_compose import (
     summarize_rollup,
     unfilled_slots,
 )
+from tests.conftest import timing_log
 
 
 _ALL_REPORTERS = tuple(reporter for _title, reporter in REPORTER_SECTIONS)
@@ -341,38 +342,9 @@ def test_reporter_pass_line_has_no_suffix_when_the_report_sha_prefixes_head() ->
 # ---------------------------------------------------------------------------
 
 
-def _timing_log(*rows: str, stamped: bool = True) -> str:
-    """Build a ``precommit_timing.log`` body from ``"<name> <marker>"`` specs.
-
-    Args:
-        *rows: Each a ``"<name> <marker>"`` pair (marker is one of SKIP,
-            PASS, WARN, FAIL).
-        stamped: Whether to prepend a ``# produced-at:`` line —
-            it must never be mistaken for a step row.
-
-    Returns:
-        A timing-log body matching ``precommit._format_timing_log``'s shape.
-    """
-    lines = []
-    if stamped:
-        lines.append(
-            "# produced-at: tree=unknown head=abc1234 2026-01-01T00:00:00+00:00"
-        )
-    lines.append("forge-precommit per-step timing (newest run overwrites)")
-    lines.append("")
-    total = 0.0
-    for spec in rows:
-        name, marker = spec.split()
-        lines.append(f"{name:<28} {1.0:>7.1f}s  {marker}")
-        total += 1.0
-    lines.append("")
-    lines.append(f"{'total':<28} {total:>7.1f}s")
-    return "\n".join(lines)
-
-
 def test_render_code_quality_all_pass_collapses_to_a_count() -> None:
     """A clean run with no exceptions renders only the pass count."""
-    log = _timing_log("ruff PASS", "docstrings PASS")
+    log = timing_log("ruff PASS", "docstrings PASS")
     line = render_code_quality(
         log, {}, ["ruff", "docstrings"], pytest_line=None, pytest_verdict=None
     )
@@ -381,7 +353,7 @@ def test_render_code_quality_all_pass_collapses_to_a_count() -> None:
 
 def test_render_code_quality_orders_failed_warned_and_groups_unverified() -> None:
     """Code quality renders parts in order: FAIL, then WARN, then grouped unverified."""
-    log = _timing_log("ruff PASS", "pip_audit WARN", "typecheck FAIL", "docs PASS")
+    log = timing_log("ruff PASS", "pip_audit WARN", "typecheck FAIL", "docs PASS")
     line = render_code_quality(
         log,
         {"ruff": "stale", "docs": "unstamped"},
@@ -396,7 +368,7 @@ def test_render_code_quality_orders_failed_warned_and_groups_unverified() -> Non
 
 def test_render_code_quality_treats_a_stale_warn_as_grouped_not_plain() -> None:
     """A WARN row with a stale verdict is grouped, not rendered as ``⚠️ <name>``."""
-    log = _timing_log("pip_audit WARN")
+    log = timing_log("pip_audit WARN")
     line = render_code_quality(
         log,
         {"pip_audit": "stale"},
@@ -409,7 +381,7 @@ def test_render_code_quality_treats_a_stale_warn_as_grouped_not_plain() -> None:
 
 def test_render_code_quality_n_a_verdict_counts_as_verified() -> None:
     """An environment step's ``n/a`` freshness verdict counts as a verified pass."""
-    log = _timing_log("env_sync PASS")
+    log = timing_log("env_sync PASS")
     line = render_code_quality(
         log, {"env_sync": "n/a"}, ["env_sync"], pytest_line=None, pytest_verdict=None
     )
@@ -418,7 +390,7 @@ def test_render_code_quality_n_a_verdict_counts_as_verified() -> None:
 
 def test_render_code_quality_skip_row_is_entirely_omitted() -> None:
     """A SKIP row names nothing — not even a ❔ — and doesn't count as a pass."""
-    log = _timing_log("doctest SKIP", "ruff PASS")
+    log = timing_log("doctest SKIP", "ruff PASS")
     line = render_code_quality(
         log, {}, ["doctest", "ruff"], pytest_line=None, pytest_verdict=None
     )
@@ -428,7 +400,7 @@ def test_render_code_quality_skip_row_is_entirely_omitted() -> None:
 
 def test_render_code_quality_reports_missing_step_before_pass_count() -> None:
     """A step with no row at all renders ❔, ordered before the pass count."""
-    log = _timing_log("ruff PASS")
+    log = timing_log("ruff PASS")
     line = render_code_quality(
         log, {}, ["ruff", "typecheck"], pytest_line=None, pytest_verdict=None
     )

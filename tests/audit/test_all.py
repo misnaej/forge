@@ -25,8 +25,6 @@ from unittest.mock import patch
 
 from forge import git_utils
 from forge.audit import all as audit_all
-from forge.audit import common as audit_common
-from forge.audit.common import Finding, Severity, write_log
 from tests.conftest import PRODUCED_AT_RE, FakeProc, init_git_repo
 
 
@@ -34,46 +32,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
-
-
-def test_read_finding_count_parses_header() -> None:
-    """A ``# findings: N`` header line yields the integer."""
-    text = "# audit\n# findings: 7\n# generated: ...\n"
-    assert audit_all._read_finding_count(text) == 7
-
-
-def test_read_finding_count_survives_real_write_log_stamp(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`_read_finding_count` still parses a log stamped by the real `write_log`.
-
-    BEHAVIOR: pins that the `# findings: N` header this orchestrator
-    depends on survives `write_log` prepending the `# produced-at:`
-    provenance stamp (FOUNDATION §13) as line 1 — displacing the
-    `# forge-audit-<name>` header the count used to follow directly.
-    `_read_finding_count` scans the first 10 lines rather than a fixed
-    offset, so this is a real-git regression pin, not a rewrite of the
-    parser's own contract (already covered by the header-parsing tests
-    above).
-    """
-    init_git_repo(tmp_path)
-    monkeypatch.setattr(audit_common, "repo_root", lambda: tmp_path)
-    finding = Finding(
-        audit="dup", severity=Severity.HIGH, path="a.py", line=1, message="m"
-    )
-    path = write_log("dup", [finding], summary="one duplicate")
-
-    assert audit_all._read_finding_count(path.read_text(encoding="utf-8")) == 1
-
-
-def test_read_finding_count_missing_returns_minus_one() -> None:
-    """Missing header returns ``-1`` (sentinel for 'unknown')."""
-    assert audit_all._read_finding_count("no header here\n") == -1
-
-
-def test_read_finding_count_invalid_returns_minus_one() -> None:
-    """Non-integer findings value returns ``-1``."""
-    assert audit_all._read_finding_count("# findings: oops\n") == -1
 
 
 def test_render_summary_contains_each_subaudit(tmp_path: Path) -> None:

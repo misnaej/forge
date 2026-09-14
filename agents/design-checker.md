@@ -40,8 +40,6 @@ editing" / "pre-write" → Briefing; otherwise → Full Review.
 
 ### Pre-Write Briefing mode
 
-Pre-write workflow:
-
 1. **Read lint + docstring logs:**
    ```bash
    cat ./code_health/ruff.log 2>/dev/null
@@ -94,14 +92,11 @@ Keep pre-write briefings SHORT.
 
 ### Full Review mode (default)
 
-Run **every** Investigation Recipe below. Each recipe corresponds to one
-audit log. Recipes are mandatory — skipping any one is non-compliance.
-The agent must:
+Run **every** Investigation Recipe below — one per audit log; skipping
+any is non-compliance:
 
-0. **Orient first**: if `REPO_STRUCTURE.md` exists at the repo root, read
-   it before any recipe — it is the canonical, drift-verified map of the
-   repository layout and saves a blind filesystem scan.
-1. For each recipe: read the log; when it is missing or `forge-precommit --freshness --only <log name>` reports anything but `fresh`, run the script. Never judge staleness by file times.
+0. **Orient first**: read `REPO_STRUCTURE.md` (when present) before any recipe.
+1. For each recipe: read the log; when it is missing or `forge-precommit --freshness --only <log name>` reports anything but `fresh`, run the script (never judge staleness by file times). With an evidence pack ([reporter contract](_TEMPLATE.md#reporter-agent-header-contract)), start from it; re-run only an audit it marks stale or unavailable.
 2. For each finding above LOW severity: cite `file:line` and propose a fix.
 3. Stage 2: delegate the claims log to `forge:knowledge-search` for verification.
 4. Run repo-specific extras passed by the wrapper.
@@ -110,22 +105,17 @@ The agent must:
 ## Investigation Recipes (Full Review)
 
 Each recipe = `(read log, summarize substantive findings, propose fixes)`.
-All audit scripts ship with forge under
-`forge.audit.<name>` and console-script `forge-audit-<name>`.
 
 | Recipe | Log file | Run command if stale |
 |---|---|---|
-| **1. Duplicates** | `code_health/audit_dup.log` | `forge-audit-dup --scope full` |
+| **1. Duplicates** | `code_health/audit_dup.log` | `forge-audit-dup --scope changed` reviewing a PR, else `--scope full` |
 | **2. Dependencies** | `code_health/audit_deps.log` | `forge-audit-deps --scope full` |
 | **3. Suppressions** | `code_health/audit_suppressions.log` | `forge-audit-suppressions --scope full` |
 | **4. Orphans** | `code_health/audit_orphans.log` | `forge-audit-orphans --scope full` |
 | **5. Data integrity** | `code_health/audit_data.log` | `forge-audit-data --roots . --scope full` |
 | **6. Claims** | `code_health/audit_claims.log` | `forge-audit-claims --scope full` |
-| **7. Layering** | `code_health/audit_layering.log` | `forge-audit-layering --scope full` |
+| **7. Layering** | `code_health/audit_layering.log` | `forge-audit-layering --scope changed` reviewing a PR, else `--scope full` |
 | **All in one** | `code_health/audit_summary.log` | `forge-audit-all --scope full` |
-
-Convenience: invoking `forge-audit-all` runs every sub-script and
-aggregates a summary line per audit.
 
 ### Recipe 1 — Duplicate detection
 
@@ -284,8 +274,7 @@ default vs consumer override.
 
 ## Output
 
-Use the "Report format" template under each mode (Pre-Write Briefing or
-Full Review) above.
+The report templates sit under each mode above.
 
 ## Success Criteria
 

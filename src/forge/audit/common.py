@@ -85,11 +85,8 @@ class Severity(StrEnum):
     REVIEW = "review"
 
 
-_FIRST_PRINTABLE = 32  # ord(" ") — C0 control characters sit below
-
-
 def sanitize_log_text(text: str) -> str:
-    """Escape control characters so a value cannot forge log lines.
+    """Escape non-printable characters so a value cannot forge log lines.
 
     ``code_health/*.log`` files are trusted ground truth for agents
     (FOUNDATION §13), while finding paths and messages can carry
@@ -102,11 +99,12 @@ def sanitize_log_text(text: str) -> str:
         text: Raw text destined for a log line.
 
     Returns:
-        The text with every control character (except tab) escaped.
+        The text with every non-printable character (except tab) escaped —
+        notably control characters and the Unicode line separators
+        ``str.splitlines`` also breaks on.
     """
     return "".join(
-        ch if ch == "\t" or ord(ch) >= _FIRST_PRINTABLE else repr(ch)[1:-1]
-        for ch in text
+        ch if ch == "\t" or ch.isprintable() else repr(ch)[1:-1] for ch in text
     )
 
 
@@ -300,6 +298,24 @@ def relpath(path: Path) -> str:
         return path.resolve().relative_to(repo_root()).as_posix()
     except ValueError:
         return str(path)
+
+
+def read_finding_count(log_text: str) -> int:
+    """Return the ``# findings: N`` count :func:`write_log` puts in a log header.
+
+    Args:
+        log_text: Full log contents.
+
+    Returns:
+        The count, or ``-1`` when the header is missing or malformed.
+    """
+    for line in log_text.splitlines()[:10]:
+        if line.startswith("# findings:"):
+            try:
+                return int(line.split(":", 1)[1].strip())
+            except ValueError:
+                return -1
+    return -1
 
 
 def write_log(
