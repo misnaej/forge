@@ -1,2 +1,0 @@
-bump: patch
-- **Whoever writes a pull request wrap-up is now told about its length limit while writing it.** The limit was enforced only when the finished text was submitted, and it is not a fixed number: it grows with how many review sections the wrap-up carries. Finding out at the end meant cutting the record of what reviewers found in order to fit, which is the part worth keeping. The instruction now says the limit scales, says where the authority for it lives, and points at the check that reports the exact figure.
