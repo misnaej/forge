@@ -23,14 +23,14 @@ import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge import pr_create
 from tests.conftest import GIT_ENV, commit_all, init_git_repo
 
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def _head_sha(repo: Path) -> str:
@@ -253,6 +253,121 @@ def test_pr_create_refuses_emergency_wrapup_when_sentinel_not_armed(
     init_git_repo(repo)
     _write_wrapup(repo, _head_sha(repo), mode_line="wrapup-mode: emergency")
     monkeypatch.setattr(pr_create, "emergency_consume", lambda _root: 1)
+    calls = _stub_gh(monkeypatch)
+
+    assert _run_main(monkeypatch, repo) == 2
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "passthrough",
+    [
+        pytest.param(["--head", "other-branch"], id="separated"),
+        pytest.param(["--head=other-branch"], id="equals-joined"),
+        pytest.param(["-Hother-branch"], id="attached-short"),
+        pytest.param(["--repo", "other/org"], id="owned-flag-repo"),
+    ],
+)
+def test_passthrough_cannot_override_the_verified_branch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, passthrough: list[str]
+) -> None:
+    """A passthrough token setting an owned flag refuses, in every form gh accepts.
+
+    The exploit: `gh`'s parser takes the LAST occurrence of a repeated
+    flag, so a passthrough `--head other` appended after this command's
+    own `--head <verified-branch>` would win — verification would pass
+    against the real checkout while the branch actually published is
+    whatever the passthrough named. `--base`/`--repo` are owned for the
+    same reason (the light escape judged against one base, the PR opened
+    against another; the whole publication redirected). Checking both the
+    exit code and that `gh` was never invoked matters: a refusal for an
+    unrelated reason (e.g. a parser error) could exit 2 without proving
+    the passthrough itself was caught.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature/publish-me"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    (repo / "file.txt").write_text("x")
+    commit_all(repo, "add file")
+    _write_wrapup(repo, _head_sha(repo))
+    calls = _stub_gh(monkeypatch)
+
+    assert _run_main(monkeypatch, repo, "--", *passthrough) == 2
+    assert calls == []
+
+
+def test_passthrough_still_allows_flags_the_command_does_not_own(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An ordinary passthrough flag the command doesn't own still reaches `gh`.
+
+    Without this, a filter broad enough to catch the owned-flag exploit
+    above could quietly also swallow legitimate passthrough use, and
+    nothing would notice — this is the complement that proves the filter
+    is scoped to `OWNED_FLAGS`, not to "anything after `--`".
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature/publish-me"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    (repo / "file.txt").write_text("x")
+    commit_all(repo, "add file")
+    _write_wrapup(repo, _head_sha(repo))
+    calls = _stub_gh(monkeypatch)
+
+    assert _run_main(monkeypatch, repo, "--", "--label", "bug") == 0
+    assert len(calls) == 1
+    assert "--label" in calls[0]
+    assert "bug" in calls[0]
+
+
+def test_only_the_wrap_up_header_verifies_not_a_quoted_stamp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A `verified-at:` quoted below the header must not stand in for the header's own.
+
+    A wrap-up legitimately quotes an older reporter round's stamp further
+    down, naming an earlier commit. The exploit: scanning the whole file
+    for any `verified-at:` let that quoted, earlier-round stamp — which
+    happens to name the checkout's current HEAD from a prior verification
+    pass — satisfy the check even though the wrap-up's OWN header names a
+    different (stale) commit. This is the exact input the old shell
+    implementation refused and the Python rewrite initially did not, so it
+    pins a real regression rather than a hypothetical one.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    stale_sha = _head_sha(repo)
+    (repo / "file.txt").write_text("x")
+    commit_all(repo, "second commit")
+    head_sha = _head_sha(repo)
+    code_health = repo / "code_health"
+    code_health.mkdir(parents=True, exist_ok=True)
+    (code_health / "pr_wrapup.md").write_text(
+        "\n".join(
+            [
+                "# PR Wrap-up",
+                "",
+                f"verified-at: {stale_sha}",
+                "",
+                "Quoted from an earlier reporter round:",
+                f"verified-at: {head_sha}   (PR #1, branch feature/publish-me)",
+            ]
+        )
+        + "\n"
+    )
     calls = _stub_gh(monkeypatch)
 
     assert _run_main(monkeypatch, repo) == 2

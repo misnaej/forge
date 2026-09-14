@@ -38,8 +38,9 @@ import logging
 import re
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final, cast
 
+from forge.config import load_config
 from forge.emergency import consume as emergency_consume
 from forge.git_utils import (
     configure_cli_logging,
@@ -59,22 +60,86 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
-def _verified(wrapup_text: str, head_sha: str) -> bool:
-    """Whether the wrap-up names *head_sha* in a ``verified-at:`` header.
+HEADER_LINES: Final[int] = 5
+SHORT_FLAG_LENGTH: Final[int] = 2
 
-    Both abbreviations are accepted in either direction, because the
-    wrap-up records a short SHA while ``rev-parse`` yields a full one.
+# Flags this command owns. A passthrough value for any of them would be
+# appended AFTER the ones set here, and gh's parser takes the last
+# occurrence — so a second --head would publish a branch that was never
+# verified, under this command's own success. --base would let the light
+# escape be earned against one base while the PR opens against another,
+# and --repo would redirect the whole publication elsewhere. Refused
+# rather than de-duplicated: a caller passing these has a different
+# intent than this command can honour.
+OWNED_FLAGS: Final[frozenset[str]] = frozenset(
+    {
+        "--head",
+        "-H",
+        "--base",
+        "-B",
+        "--title",
+        "-t",
+        "--body",
+        "-b",
+        "--body-file",
+        "-F",
+        "--draft",
+        "-d",
+        "--repo",
+        "-R",
+    }
+)
+
+
+def _owned_in_passthrough(extra: list[str]) -> str | None:
+    """Return the first passthrough token that sets a flag this command owns.
+
+    Matches the bare form and the ``=``-joined form, and the attached
+    short form, because all three reach the same parser.
+
+    Args:
+        extra: Passthrough tokens.
+
+    Returns:
+        The offending token, or ``None``.
+    """
+    for tok in extra:
+        bare = tok.split("=", 1)[0]
+        if bare in OWNED_FLAGS:
+            return tok
+        if any(
+            tok.startswith(f) and len(f) == SHORT_FLAG_LENGTH and not f.startswith("--")
+            for f in OWNED_FLAGS
+        ):
+            return tok
+    return None
+
+
+def _verified(wrapup_text: str, head_sha: str) -> bool:
+    """Whether the wrap-up's OWN header names *head_sha*.
+
+    Scoped to the header on purpose. A wrap-up legitimately quotes older
+    reporter stamps below its own, each carrying a ``verified-at:`` line
+    that may name an earlier commit — a reporter that ran before a later
+    fixup. Scanning the whole file would let any of those stand in for the
+    file's own claim, so a wrap-up authored for one commit would verify a
+    different one. Worse, ``code_health/`` is gitignored, so a wrap-up
+    survives a branch switch: an unscoped match would let a leftover file
+    from another branch satisfy this check here.
 
     Args:
         wrapup_text: Full wrap-up contents.
         head_sha: The commit to match.
 
     Returns:
-        ``True`` when one recorded SHA is a prefix of the other.
+        ``True`` when a header ``verified-at:`` and *head_sha* share a
+        prefix in either direction — the header records a short SHA while
+        ``rev-parse`` yields a full one.
     """
+    header = "\n".join(wrapup_text.splitlines()[:HEADER_LINES])
     return any(
         head_sha.startswith(sha) or sha.startswith(head_sha)
-        for sha in extract_verified_shas(wrapup_text)
+        for sha in extract_verified_shas(header)
     )
 
 
@@ -94,15 +159,28 @@ def _earn_light(root: Path, base: str) -> str | None:
     Returns:
         A refusal reason, or ``None``.
     """
+    configured = (load_config(root).base_branch or "").strip()
+    if not configured:
+        return (
+            "the wrap-up declares wrapup-mode: light but no [tool.forge] "
+            "base_branch resolves the base to classify against — author the "
+            "full wrap-up."
+        )
+    if configured != base:
+        return (
+            f"the wrap-up declares wrapup-mode: light but this publishes against "
+            f"'{base}' while [tool.forge] base_branch is '{configured}'. The light "
+            "escape is judged against the configured base, so the two must agree."
+        )
     try:
-        mode = classify(root, f"origin/{base}", None).mode
+        mode = classify(root, f"origin/{configured}", None).mode
     except Exception:
-        logger.debug("classifier raised; refusing the light escape", exc_info=True)
+        logger.warning("classifier failed; refusing the light escape", exc_info=True)
         mode = ""
     if mode != "light-code":
         return (
             f"the wrap-up declares wrapup-mode: light but the classifier reads "
-            f"this diff as '{mode or 'unclassifiable'}' against origin/{base} — "
+            f"this diff as '{mode or 'unclassifiable'}' against origin/{configured} — "
             "the light escape is not earned. Author the full wrap-up."
         )
     return None
@@ -122,7 +200,11 @@ def _spend_emergency(root: Path) -> str | None:
     Returns:
         A refusal reason, or ``None`` when the bypass was spent.
     """
-    if emergency_consume(root) != 0:
+    try:
+        spent = emergency_consume(root)
+    except OSError as exc:
+        return f"the emergency sentinel could not be read ({exc})."
+    if spent != 0:
         return (
             "wrapup-mode: emergency but no armed bypass (not started, expired, "
             "or already spent). A human arms one with `forge-emergency start "
@@ -133,6 +215,38 @@ def _spend_emergency(root: Path) -> str | None:
         "retro-verification is owed on the ledger issue."
     )
     return None
+
+
+def _read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | None]:
+    """Read the wrap-up and confirm it verifies this checkout's HEAD.
+
+    Args:
+        root: Checkout holding the branch.
+        branch: Branch being published, for the messages.
+
+    Returns:
+        ``(text, None)`` once the wrap-up is confirmed to verify HEAD, or
+        ``(None, reason)`` naming why it does not.
+    """
+    wrapup = root / WRAPUP_PATH
+    if not wrapup.is_file():
+        return None, (
+            f"no authored wrap-up at {wrapup} for branch '{branch}'. "
+            "Author it (`/pr` Step 3.92) before publishing."
+        )
+    try:
+        text = wrapup.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return None, f"{wrapup} cannot be read ({exc}), so nothing can be verified."
+    head = run_git("rev-parse", "HEAD", cwd=root, check=False).strip()
+    if not head:
+        return None, f"{root} is not a git checkout, so nothing can be verified."
+    if not _verified(text, head):
+        return None, (
+            f"{wrapup} does not name {head[:7]} in a verified-at: line — "
+            "it was authored for a different tree. Re-run /pr Step 3.92."
+        )
+    return text, None
 
 
 def _gate(root: Path, branch: str, base: str) -> str | None:
@@ -151,21 +265,11 @@ def _gate(root: Path, branch: str, base: str) -> str | None:
     Returns:
         A refusal reason, or ``None``.
     """
-    wrapup = root / WRAPUP_PATH
-    if not wrapup.is_file():
-        return (
-            f"no authored wrap-up at {wrapup} for branch '{branch}'. "
-            "Author it (`/pr` Step 3.92) before publishing."
-        )
-    text = wrapup.read_text(encoding="utf-8", errors="replace")
-    head = run_git("rev-parse", "HEAD", cwd=root, check=False).strip()
-    if not head:
-        return f"{root} is not a git checkout, so nothing can be verified."
-    if not _verified(text, head):
-        return (
-            f"{wrapup} does not name {head[:7]} in a verified-at: line — "
-            "it was authored for a different tree. Re-run /pr Step 3.92."
-        )
+    text, reason = _read_verified_wrapup(root, branch)
+    if reason is not None:
+        return reason
+    # Invariant: if reason is None, text is a valid string (per _read_verified_wrapup).
+    text = cast("str", text)
     # Traceability is never deferred, only verification: the HEAD match
     # above applies to an emergency publication too.
     if re.search(r"^wrapup-mode:[ \t]*emergency[ \t]*$", text, re.MULTILINE):
@@ -224,6 +328,15 @@ def main() -> int:
         return 2
 
     extra = [a for a in args.passthrough if a != "--"]
+    offending = _owned_in_passthrough(extra)
+    if offending is not None:
+        logger.error(
+            "REFUSED: passthrough sets '%s', which this command owns. It would be "
+            "applied after the verified value and win, publishing something other "
+            "than what was checked.",
+            offending,
+        )
+        return 2
     cmd = [
         "gh",
         "pr",

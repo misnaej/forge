@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_75 modules, 1049 symbols._
+_75 modules, 1051 symbols._
 
 ## `forge`
 
@@ -848,9 +848,11 @@ _75 modules, 1049 symbols._
 
 > _forge-pr-create — publish a pull request from the branch being published._
 
-- `_verified(wrapup_text: str, head_sha: str) -> bool` _(internal)_ — Whether the wrap-up names *head_sha* in a ``verified-at:`` header.
+- `_owned_in_passthrough(extra: list[str]) -> str | None` _(internal)_ — Return the first passthrough token that sets a flag this command owns.
+- `_verified(wrapup_text: str, head_sha: str) -> bool` _(internal)_ — Whether the wrap-up's OWN header names *head_sha*.
 - `_earn_light(root: Path, base: str) -> str | None` _(internal)_ — Re-run the classifier so a light wrap-up is earned, not asserted.
 - `_spend_emergency(root: Path) -> str | None` _(internal)_ — Consume the armed emergency sentinel, or refuse.
+- `_read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | None]` _(internal)_ — Read the wrap-up and confirm it verifies this checkout's HEAD.
 - `_gate(root: Path, branch: str, base: str) -> str | None` _(internal)_ — Return why publication is refused, or ``None`` to allow it.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the argument parser.
 - `main() -> int` — Entry point for ``forge-pr-create``.
