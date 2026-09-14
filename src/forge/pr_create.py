@@ -63,55 +63,61 @@ logger = logging.getLogger(__name__)
 HEADER_LINES: Final[int] = 5
 SHORT_FLAG_LENGTH: Final[int] = 2
 
-# Flags this command owns. A passthrough value for any of them would be
-# appended AFTER the ones set here, and gh's parser takes the last
-# occurrence — so a second --head would publish a branch that was never
-# verified, under this command's own success. --base would let the light
-# escape be earned against one base while the PR opens against another,
-# and --repo would redirect the whole publication elsewhere. Refused
-# rather than de-duplicated: a caller passing these has a different
-# intent than this command can honour.
-OWNED_FLAGS: Final[frozenset[str]] = frozenset(
+# Passthrough is an ALLOWLIST, not a denylist. It forwards to a
+# third-party tool whose flag set grows, so a list of refusals silently
+# stops covering the surface the day that tool adds a flag doing the same
+# job under another name. An allowlist fails the other way: something
+# unrecognised is refused until someone deliberately permits it.
+#
+# Everything this command sets itself is absent by construction — base,
+# head, title, body, body-file, draft, repo. So are the fill flags, which
+# derive title and body from commits and would therefore overwrite values
+# this command owns; a denylist would have forwarded those, because it
+# never occurred to me to name them.
+ALLOWED_PASSTHROUGH: Final[frozenset[str]] = frozenset(
     {
-        "--head",
-        "-H",
-        "--base",
-        "-B",
-        "--title",
-        "-t",
-        "--body",
-        "-b",
-        "--body-file",
-        "-F",
-        "--draft",
-        "-d",
-        "--repo",
-        "-R",
+        "--assignee",
+        "-a",
+        "--label",
+        "-l",
+        "--milestone",
+        "-m",
+        "--project",
+        "-p",
+        "--reviewer",
+        "-r",
+        "--no-maintainer-edit",
     }
 )
 
 
-def _owned_in_passthrough(extra: list[str]) -> str | None:
-    """Return the first passthrough token that sets a flag this command owns.
+def _disallowed_passthrough(extra: list[str]) -> str | None:
+    """Return the first passthrough flag that is not on the allowlist.
 
-    Matches the bare form and the ``=``-joined form, and the attached
-    short form, because all three reach the same parser.
+    Walks tokens rather than filtering them: a token that does not begin
+    with ``-`` is a value belonging to the flag before it, not a flag to
+    judge. Both the ``=``-joined and attached short forms are normalised
+    first, because all three reach the same parser.
 
     Args:
         extra: Passthrough tokens.
 
     Returns:
-        The offending token, or ``None``.
+        The offending token, or ``None`` when every flag is allowed.
     """
     for tok in extra:
+        if not tok.startswith("-"):
+            continue
         bare = tok.split("=", 1)[0]
-        if bare in OWNED_FLAGS:
-            return tok
-        if any(
-            tok.startswith(f) and len(f) == SHORT_FLAG_LENGTH and not f.startswith("--")
-            for f in OWNED_FLAGS
+        if bare in ALLOWED_PASSTHROUGH:
+            continue
+        if (
+            len(bare) > SHORT_FLAG_LENGTH
+            and not bare.startswith("--")
+            and bare[:SHORT_FLAG_LENGTH] in ALLOWED_PASSTHROUGH
         ):
-            return tok
+            continue
+        return tok
     return None
 
 
@@ -328,12 +334,13 @@ def main() -> int:
         return 2
 
     extra = [a for a in args.passthrough if a != "--"]
-    offending = _owned_in_passthrough(extra)
+    offending = _disallowed_passthrough(extra)
     if offending is not None:
         logger.error(
-            "REFUSED: passthrough sets '%s', which this command owns. It would be "
-            "applied after the verified value and win, publishing something other "
-            "than what was checked.",
+            "REFUSED: passthrough carries '%s', which is not on the allowlist. "
+            "Anything this command sets itself would be applied after the verified "
+            "value and win, publishing something other than what was checked, so "
+            "unrecognised flags are refused rather than forwarded.",
             offending,
         )
         return 2

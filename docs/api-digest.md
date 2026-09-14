@@ -848,7 +848,7 @@ _75 modules, 1051 symbols._
 
 > _forge-pr-create — publish a pull request from the branch being published._
 
-- `_owned_in_passthrough(extra: list[str]) -> str | None` _(internal)_ — Return the first passthrough token that sets a flag this command owns.
+- `_disallowed_passthrough(extra: list[str]) -> str | None` _(internal)_ — Return the first passthrough flag that is not on the allowlist.
 - `_verified(wrapup_text: str, head_sha: str) -> bool` _(internal)_ — Whether the wrap-up's OWN header names *head_sha*.
 - `_earn_light(root: Path, base: str) -> str | None` _(internal)_ — Re-run the classifier so a light wrap-up is earned, not asserted.
 - `_spend_emergency(root: Path) -> str | None` _(internal)_ — Consume the armed emergency sentinel, or refuse.

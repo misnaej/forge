@@ -310,7 +310,7 @@ def test_passthrough_still_allows_flags_the_command_does_not_own(
     Without this, a filter broad enough to catch the owned-flag exploit
     above could quietly also swallow legitimate passthrough use, and
     nothing would notice — this is the complement that proves the filter
-    is scoped to `OWNED_FLAGS`, not to "anything after `--`".
+    is scoped to the allowlist, not to "anything after `--`".
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -330,6 +330,50 @@ def test_passthrough_still_allows_flags_the_command_does_not_own(
     assert len(calls) == 1
     assert "--label" in calls[0]
     assert "bug" in calls[0]
+
+
+@pytest.mark.parametrize(
+    "passthrough",
+    [
+        pytest.param(["--fill"], id="fill-derives-title-and-body-from-commits"),
+        pytest.param(["--web"], id="web-stands-for-any-unallowed-flag"),
+    ],
+)
+def test_passthrough_refuses_an_unrecognised_flag_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, passthrough: list[str]
+) -> None:
+    """A passthrough flag absent from the allowlist refuses, not just owned flags.
+
+    `--fill` is the concrete case a denylist missed: it derives title and
+    body from commits, so it would silently overwrite the verified values
+    this command sets itself. `--web` is not owned by this command at all —
+    it stands for any future `gh` flag nobody has enumerated. A denylist
+    would have forwarded both; the allowlist refuses both by default.
+    Checking both the exit code and that `gh` was never invoked matters: a
+    refusal for an unrelated reason could exit 2 without proving the
+    passthrough itself was caught.
+
+    Args:
+        monkeypatch: Pytest fixture for mocking.
+        tmp_path: Pytest fixture for temporary directory.
+        passthrough: Flag(s) to pass through to gh pr create.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature/publish-me"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    (repo / "file.txt").write_text("x")
+    commit_all(repo, "add file")
+    _write_wrapup(repo, _head_sha(repo))
+    calls = _stub_gh(monkeypatch)
+
+    assert _run_main(monkeypatch, repo, "--", *passthrough) == 2
+    assert calls == []
 
 
 def test_only_the_wrap_up_header_verifies_not_a_quoted_stamp(
