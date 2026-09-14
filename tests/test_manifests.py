@@ -207,8 +207,9 @@ def test_plan_batch_skill_self_skips_when_non_interactive() -> None:
 
     SCENARIO: the skill fans out up to three billed drafting agents whose
     entire output requires a human to validate before anything acts on
-    it, so firing that from automation spends money on drafts nobody is
-    present to accept — precisely what FOUNDATION §15 exists to prevent.
+    it, so firing that from automation bills for drafts nobody is present
+    to accept. FOUNDATION §15 makes that a run-context decision rather
+    than a default, which is why the probe has to be named.
     Asserting the imported symbol rather than a prose sentence catches
     two regressions with one pair: the self-skip clause being dropped
     from the skill, and a `run_context` rename leaving the skill pointing
@@ -250,3 +251,58 @@ def test_plan_batch_delegation_target_exists() -> None:
     assert "draft-only" in plan_batch, (
         "plan-batch must delegate to /plan-issue draft-only mode"
     )
+
+
+def test_advisory_screen_variant_is_defined_by_its_owner() -> None:
+    """The `advisory` token two skills rely on is documented where it is honoured.
+
+    SCENARIO: `/sentinel` and `/plan-batch` both request a no-mutation
+    `plan-readiness` run by naming `advisory`, having dropped the
+    hand-maintained skip lists that used to spell the suppression out.
+    That trade only holds while the owning agent defines the word: a
+    bare token whose definition is deleted fails open, because an
+    unrecognised mode falls through to the default run that rewrites
+    the Backlog Index and applies labels. Nothing else detects that —
+    `verify-forge-agent-doc` resolves agent and skill names, never a
+    mode named inside one.
+
+    EXPECTED BEHAVIOR: both callers name the variant, and the agent
+    that serves it defines the same word.
+    """
+    triage = (REPO_ROOT / "agents" / "issue-triage.md").read_text()
+    assert "`advisory` mode" in triage, (
+        "issue-triage must define the advisory variant its callers request"
+    )
+
+    for skill_name in ("sentinel", "plan-batch"):
+        skill = (REPO_ROOT / "skills" / skill_name / "SKILL.md").read_text()
+        assert "advisory" in skill, f"/{skill_name} must name the advisory variant"
+
+
+def test_planning_is_gated_on_contributor_authorship() -> None:
+    """Every surface of the plannability gate still carries it.
+
+    SCENARIO: anyone can open an issue, and a validated plan is what
+    turns issue text into work `/sentinel` performs unattended — so an
+    issue is plannable only if a collaborator authored it or endorsed
+    it with the literal `[endorsed]` marker. The rule spans FOUNDATION,
+    the screening agent and the interactive planner, and a rewrite that
+    drops any one of them leaves the other two describing a gate that
+    no longer closes. The marker is the stable part: it is what makes
+    the check mechanical rather than a judgment about approving prose.
+
+    EXPECTED BEHAVIOR: FOUNDATION states the rule and the marker, and
+    both enforcing surfaces name the marker too.
+    """
+    foundation = " ".join((REPO_ROOT / "FOUNDATION.md").read_text().split())
+    assert "Only a contributor's issue is plannable" in foundation
+    assert "`[endorsed]`" in foundation, "FOUNDATION must name the literal marker"
+    assert "authorAssociation" in foundation, (
+        "FOUNDATION must warn off GitHub's weaker authorAssociation field"
+    )
+
+    for path in (
+        REPO_ROOT / "agents" / "issue-triage.md",
+        REPO_ROOT / "skills" / "plan-issue" / "SKILL.md",
+    ):
+        assert "[endorsed]" in path.read_text(), f"{path.name} dropped the gate"
