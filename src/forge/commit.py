@@ -7,17 +7,20 @@ an agent types, never this CLI's own ``git`` calls, so every guard a
 commit needs is enforced here in code:
 
 1. Read the state: current and base branch, an in-progress merge and its
-   prepared message, the latest ``precommit_timing.log`` and each log's
-   freshness verdict.
+   prepared message, the latest ``precommit_timing.log``, the steps a full
+   pre-commit run includes, and each log's freshness verdict.
 2. :func:`plan_commit` refuses — exit 2, nothing staged — on the base
    branch, an AI attribution, a non-conventional subject (normal commits
    only), a ``wip-sync:`` pairing mismatch, or a pre-commit record that is
-   missing, stale or failed.
+   missing, stale, partial (an ``--only`` run) or failed.
 3. Stage ``--all`` or the named paths, then commit. The git pre-commit
    hook still runs as the real gate; when it blocks, its report is printed
    verbatim (exit 2). ``--no-verify``, ``--force`` and ``--amend`` are
-   never passed.
-4. Push, setting the upstream when the branch has none. A failed push
+   never passed, and git's per-process environment overrides (such as a
+   ``core.hooksPath`` injected through ``GIT_CONFIG_*``) are removed for
+   the whole run.
+4. Push the branch to its same-named remote branch with a fully qualified
+   refspec, setting the upstream when the branch has none. A failed push
    exits 1 with the local commit intact.
 5. Record the commit: the ``.plan/CONTINUATION.md`` line (after a push, or
    with ``--no-push``), a ``code_health/commit_history.log`` ledger line,
@@ -54,6 +57,7 @@ from forge.git_utils import (
     configure_cli_logging,
     create_commit,
     emit,
+    git_env_overrides_removed,
     merge_in_progress,
     merge_message,
     push_branch,
@@ -63,7 +67,7 @@ from forge.git_utils import (
 )
 from forge.ledger import append_ledger_line
 from forge.pr_squash_comment import TITLE_RE
-from forge.precommit import freshness_verdicts, timing_markers
+from forge.precommit import freshness_verdicts, resolve_steps, timing_markers
 
 
 if TYPE_CHECKING:
@@ -84,7 +88,11 @@ COMMIT_LEDGER: Final = "commit_history.log"
 
 _EXECUTED_MARKERS: Final = frozenset({"PASS", "WARN", "FAIL"})
 _TRUSTED_VERDICTS: Final = frozenset({"fresh", "n/a"})
-_REMEDY: Final = "run forge:precommit-fixer, then commit again"
+# `forge-precommit` is the remedy every caller can run; the agent is the
+# Claude Code convenience for clearing what it reports.
+_REMEDY: Final = (
+    "run forge-precommit (forge:precommit-fixer clears its failures), then commit again"
+)
 
 
 @dataclass(frozen=True)
@@ -117,6 +125,8 @@ class RepoState:
         wip_sync_env: Whether ``FORGE_WIP_SYNC=1`` is already set.
         timing_log: ``precommit_timing.log``'s text, or ``None`` when absent.
         verdicts: Log name → freshness verdict (``fresh``, ``stale``, …).
+        expected_steps: The steps a full pre-commit run includes for this
+            repository; empty when they cannot be resolved.
     """
 
     branch: str | None
@@ -126,6 +136,7 @@ class RepoState:
     wip_sync_env: bool = False
     timing_log: str | None = None
     verdicts: Mapping[str, str] = field(default_factory=dict)
+    expected_steps: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -212,11 +223,13 @@ def _mode(request: CommitRequest, state: RepoState) -> str:
     return "normal"
 
 
-def _branch_refusal(state: RepoState) -> str | None:
+def _branch_refusal(state: RepoState, *, action: str = "commit") -> str | None:
     """Refuse a detached HEAD or the protected base branch.
 
     Args:
         state: The repository facts to decide on.
+        action: What the caller is about to do (``commit`` or ``push``),
+            named in the remedy.
 
     Returns:
         A refusal reason if the branch is invalid (detached HEAD or protected base
@@ -227,7 +240,7 @@ def _branch_refusal(state: RepoState) -> str | None:
     if state.branch == state.base_branch:
         return (
             f"'{state.branch}' is the protected base branch — "
-            "commit on a feature branch"
+            f"{action} on a feature branch"
         )
     return None
 
@@ -315,26 +328,64 @@ def _message_refusal(
 
 
 def _evidence_refusal(state: RepoState) -> str | None:
-    """Refuse when the latest pre-commit run is missing, stale or failed.
+    """Refuse when the latest pre-commit run is missing, stale, partial or failed.
 
-    Only the steps that run executed (PASS, WARN, FAIL) are judged: a SKIP
-    row made no claim about this tree. WARN is non-blocking by the step's
-    own contract. The git hook re-runs every step at commit time, so this
-    check is a fast refusal before a commit the hook would block — and a
-    check that fixes were made before committing, not a replacement gate.
+    The git hook re-runs every step at commit time, so this check is a fast
+    refusal before a commit the hook would block — and a check that fixes
+    were made before committing, not a replacement gate.
 
     Args:
         state: The repository facts to decide on.
 
     Returns:
-        A refusal reason if the pre-commit record is missing, stale, or failed,
-        or ``None`` if the record is fresh and passing.
+        A refusal reason, or ``None`` when the record covers a full run for
+        this tree and nothing in it failed or went stale.
     """
     if state.timing_log is None:
         return f"no pre-commit record (code_health/{TIMING_LOG}.log) — {_REMEDY}"
     if state.verdicts.get(TIMING_LOG) != "fresh":
         return f"the pre-commit record describes a different tree — {_REMEDY}"
     markers = timing_markers(state.timing_log)
+    return _coverage_refusal(state, markers) or _result_refusal(state, markers)
+
+
+def _coverage_refusal(state: RepoState, markers: Mapping[str, str]) -> str | None:
+    """Refuse a pre-commit record that does not cover a full run.
+
+    Every ``forge-precommit`` run rewrites the timing log with only the steps
+    it ran, so a narrowed ``--only`` run (a targeted re-check, the evidence
+    pack's generated-artifact checks) would otherwise stand in for the
+    whole battery.
+
+    Args:
+        state: The repository facts to decide on.
+        markers: Step name → marker from the timing log.
+
+    Returns:
+        A refusal naming the steps the record lacks, or ``None``.
+    """
+    missing = sorted(state.expected_steps - markers.keys())
+    if missing:
+        return (
+            "the latest pre-commit run was partial (missing: "
+            f"{', '.join(missing)}) — {_REMEDY}"
+        )
+    return None
+
+
+def _result_refusal(state: RepoState, markers: Mapping[str, str]) -> str | None:
+    """Refuse a failed step, or an executed step whose log is not fresh.
+
+    Only the steps that ran (PASS, WARN, FAIL) are judged: a SKIP row made no
+    claim about this tree. WARN is non-blocking by the step's own contract.
+
+    Args:
+        state: The repository facts to decide on.
+        markers: Step name → marker from the timing log.
+
+    Returns:
+        A refusal naming the failed or stale steps, or ``None``.
+    """
     failed = sorted(name for name, marker in markers.items() if marker == "FAIL")
     if failed:
         return f"pre-commit steps failed: {', '.join(failed)} — {_REMEDY}"
@@ -350,6 +401,23 @@ def _evidence_refusal(state: RepoState) -> str | None:
             f"{_REMEDY}"
         )
     return None
+
+
+def _expected_steps(root: Path) -> frozenset[str]:
+    """Return the step names a full pre-commit run includes here.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        The resolved default step set, or an empty set when the
+        repository's pre-commit config names an unknown step (the hook
+        itself then fails loudly at commit time).
+    """
+    try:
+        return frozenset(step.name for step in resolve_steps(root))
+    except ValueError:
+        return frozenset()
 
 
 def read_state(root: Path) -> RepoState:
@@ -379,6 +447,7 @@ def read_state(root: Path) -> RepoState:
         wip_sync_env=os.environ.get(WIP_SYNC_ENV) == "1",
         timing_log=timing_log,
         verdicts=freshness_verdicts(root) if timing_log is not None else {},
+        expected_steps=_expected_steps(root),
     )
 
 
@@ -549,7 +618,7 @@ def _push_only(root: Path) -> int:
         The process exit code.
     """
     state = read_state(root)
-    reason = _branch_refusal(state)
+    reason = _branch_refusal(state, action="push")
     if reason is not None:
         emit(f"forge-commit: refused — {reason}")
         return EXIT_NOTHING_COMMITTED
@@ -571,9 +640,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         description=(
             "Stage, commit and push in one guarded call: refuses the base "
             "branch, AI attribution, a non-conventional subject and a "
-            "missing, stale or failed pre-commit record; the git pre-commit "
-            "hook still runs. Exit 0 done, 1 push or record step failed, "
-            "2 nothing committed."
+            "missing, stale, partial or failed pre-commit record; the git "
+            "pre-commit hook still runs. Exit 0 done, 1 push or record step "
+            "failed, 2 nothing committed."
         ),
     )
     source = parser.add_mutually_exclusive_group()
@@ -591,7 +660,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--wip-sync",
         action="store_true",
         help="Checkpoint commit before a base sync (FOUNDATION §2): stages "
-        "everything; the subject must start with 'wip-sync:'.",
+        "everything, never pushes; the subject must start with 'wip-sync:'.",
     )
     parser.add_argument(
         "--no-push", action="store_true", help="Commit without pushing."
@@ -617,17 +686,15 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     return args
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run ``forge-commit``.
+def _commit_or_push(args: argparse.Namespace) -> int:
+    """Run the commit (or ``--push-only``) the parsed arguments ask for.
 
     Args:
-        argv: Argument vector; ``None`` reads ``sys.argv``.
+        args: The parsed command line.
 
     Returns:
-        ``0`` done; ``1`` a push or record step failed; ``2`` nothing
-        was committed.
+        The process exit code.
     """
-    args = _parse_args(argv)
     root = repo_root()
     if args.push_only:
         return _push_only(root)
@@ -655,6 +722,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     # FOUNDATION §2 ladder's checkpoint always has.
     push = not (args.no_push or args.wip_sync)
     return _run(root, request, outcome, branch=state.branch or "", push=push)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run ``forge-commit``.
+
+    Args:
+        argv: Argument vector; ``None`` reads ``sys.argv``.
+
+    Returns:
+        ``0`` done; ``1`` a push or record step failed; ``2`` nothing
+        was committed.
+    """
+    args = _parse_args(argv)
+    with git_env_overrides_removed():
+        return _commit_or_push(args)
 
 
 if __name__ == "__main__":

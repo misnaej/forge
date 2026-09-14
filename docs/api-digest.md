@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_75 modules, 1067 symbols._
+_75 modules, 1073 symbols._
 
 ## `forge`
 
@@ -356,11 +356,14 @@ _75 modules, 1067 symbols._
 - `class _Committed` _(internal)_ — A commit that landed, and what happened to it afterwards.
 - `plan_commit(request: CommitRequest, state: RepoState) -> CommitPlan | Refusal` — Decide whether *request* may be committed in *state*.
 - `_mode(request: CommitRequest, state: RepoState) -> str` _(internal)_ — Return the commit mode: ``wip-sync``, ``merge`` or ``normal``.
-- `_branch_refusal(state: RepoState) -> str | None` _(internal)_ — Refuse a detached HEAD or the protected base branch.
+- `_branch_refusal(state: RepoState, *, action: str = 'commit') -> str | None` _(internal)_ — Refuse a detached HEAD or the protected base branch.
 - `_selection_refusal(request: CommitRequest, mode: str) -> str | None` _(internal)_ — Refuse a staging selection the mode cannot honour.
 - `_wip_sync_refusal(subject: str, request: CommitRequest, state: RepoState) -> str | None` _(internal)_ — Check for wip-sync pairing mismatches and env conflicts.
 - `_message_refusal(message: str | None, request: CommitRequest, state: RepoState, mode: str) -> str | None` _(internal)_ — Refuse a missing, attributed, mispaired or non-conventional message.
-- `_evidence_refusal(state: RepoState) -> str | None` _(internal)_ — Refuse when the latest pre-commit run is missing, stale or failed.
+- `_evidence_refusal(state: RepoState) -> str | None` _(internal)_ — Refuse when the latest pre-commit run is missing, stale, partial or failed.
+- `_coverage_refusal(state: RepoState, markers: Mapping[str, str]) -> str | None` _(internal)_ — Refuse a pre-commit record that does not cover a full run.
+- `_result_refusal(state: RepoState, markers: Mapping[str, str]) -> str | None` _(internal)_ — Refuse a failed step, or an executed step whose log is not fresh.
+- `_expected_steps(root: Path) -> frozenset[str]` _(internal)_ — Return the step names a full pre-commit run includes here.
 - `read_state(root: Path) -> RepoState` — Read the repository facts :func:`plan_commit` decides on.
 - `_stage(root: Path, request: CommitRequest) -> list[str]` _(internal)_ — Stage the selection and return the staged paths.
 - `_commit(root: Path, plan: CommitPlan) -> tuple[str, float] | None` _(internal)_ — Commit the index, printing the hook's report when it blocks.
@@ -369,6 +372,7 @@ _75 modules, 1067 symbols._
 - `_run(root: Path, request: CommitRequest, plan: CommitPlan, *, branch: str, push: bool) -> int` _(internal)_ — Stage, commit, push and record an allowed commit.
 - `_push_only(root: Path) -> int` _(internal)_ — Push existing commits on the current branch.
 - `_parse_args(argv: Sequence[str] | None) -> argparse.Namespace` _(internal)_ — Parse the command line.
+- `_commit_or_push(args: argparse.Namespace) -> int` _(internal)_ — Run the commit (or ``--push-only``) the parsed arguments ask for.
 - `main(argv: Sequence[str] | None = None) -> int` — Run ``forge-commit``.
 
 ## `forge.config`
@@ -674,6 +678,8 @@ _75 modules, 1067 symbols._
 - `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
 - `unmerged_paths(repo_root: Path) -> list[str]` — Return the repo-relative paths currently in an unmerged index state.
 - `fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool` — Fetch *refspec* from *remote* without ever prompting for credentials.
+- `_is_git_env_override(name: str) -> bool` _(internal)_ — Return whether *name* overrides git's config or repository per process.
+- `git_env_overrides_removed() -> Iterator[None]` — Run the body with git's per-process environment overrides removed.
 - `class PushResult` — The outcome of :func:`push_branch`.
 - `push_branch(repo_root: Path, branch: str, *, set_upstream: bool = False, remote: str = 'origin') -> PushResult` — Push *branch* to *remote* without ever prompting or hanging.
 - `merge_message(repo_root: Path) -> str | None` — Return git's prepared message for an in-progress merge.

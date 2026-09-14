@@ -274,12 +274,15 @@ def test_protected_branches_allows_a_chain_with_no_protected_destination(
 def test_protected_branches_allows_the_forge_commit_cli(
     feature_branch_repo: Path,
 ) -> None:
-    """`forge-commit` itself — the sanctioned replacement — is never blocked.
+    """`forge-commit` itself — the sanctioned commit path — is never blocked.
 
-    Neither guard matches: the destination guard only inspects a typed
-    `git push` invocation, and `forge-commit` never types one; the
-    current-branch guard only fires on `commit`/`push`, which
-    `forge-commit` (as a command name) doesn't contain either.
+    `forge-commit`'s own internal git calls never run through Bash (they
+    run in-process inside the CLI), so only the typed invocation of the
+    CLI matters here; neither `commit` nor `push` appear as a `git`
+    subcommand in the typed command — both guards below sit behind that
+    same anchored check, so neither ever runs. (`GIT_ANCHOR` requires a
+    literal `git` token immediately before the word; the substring
+    "commit" inside "forge-commit" itself does not satisfy it.)
     """
     assert (
         _run_hook(
@@ -1329,7 +1332,7 @@ def test_raw_git_env_prefix_has_no_agent_bypass() -> None:
 
 
 def test_raw_git_allows_the_forge_commit_cli() -> None:
-    """`forge-commit` itself — the sanctioned replacement — is never blocked.
+    """`forge-commit` itself — the sanctioned commit path — is never blocked.
 
     `forge-commit`'s own internal git calls never run through Bash (they
     run in-process inside the CLI), so only the typed invocation of the

@@ -78,7 +78,7 @@ PY
 # unprotected current branch can still land on a protected one:
 # `git push origin HEAD:main`, `feature:main`, `feature:refs/heads/main`,
 # `+main`. The current-branch check below never sees these. Nothing may
-# push directly to a protected branch (FOUNDATION §2). (#74)
+# push directly to a protected branch (FOUNDATION §2).
 if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}push\b"; then
     # EVERY invocation in the command, not just one: a literal
     # `^…git push` sed left prefixed forms unstripped, and stripping

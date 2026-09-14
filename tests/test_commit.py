@@ -24,18 +24,27 @@ change these tests' outcome. One test
 (``test_main_ledger_write_failure_still_pushed_exits_1``) replaces
 ``commit.append_ledger_line`` with a raiser: it is the one failure mode
 nothing about real filesystem state can trigger without also breaking
-the earlier pre-commit-record read ``plan_commit`` depends on.
+the earlier pre-commit-record read ``plan_commit`` depends on. A second
+(``test_main_scrubs_git_env_overrides_...``) does the opposite of the
+scrub above on purpose: it sets ``GIT_CONFIG_COUNT``/``GIT_CONFIG_KEY_0``/
+``GIT_CONFIG_VALUE_0`` to a real ``core.hooksPath`` override, so ``main()``
+must strip it via :func:`forge.git_utils.git_env_overrides_removed` for
+the installed hook to still run. ``_seed_fresh_timing_log`` defaults to a
+row per step ``precommit.resolve_steps(work)`` returns (real, not faked)
+so ``read_state``'s ``expected_steps`` coverage check never refuses these
+scenarios as partial.
 """
 
 from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
 
-from forge import commit, git_utils
+from forge import commit, git_utils, precommit
 from forge.commit import CommitPlan, CommitRequest, Refusal, RepoState, plan_commit
 from forge.ledger import parse_ledger
 from tests.conftest import GIT_ENV, commit_all, init_single_track_repo, timing_log
@@ -50,8 +59,15 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+_STATE_DEFAULTS = RepoState(branch="feat/x", base_branch="main")
+
+
 def _state(**overrides: object) -> RepoState:
     """Build a ``RepoState`` with feature-branch defaults, *overrides* applied.
+
+    ``dataclasses.replace`` types its ``**changes`` as ``Any``, so widening
+    *overrides* to ``dict[str, object]`` needs no ``# type: ignore`` the way
+    constructing ``RepoState`` directly from that dict would.
 
     Args:
         **overrides: Field values overriding the defaults.
@@ -59,9 +75,10 @@ def _state(**overrides: object) -> RepoState:
     Returns:
         The built state.
     """
-    defaults: dict[str, object] = {"branch": "feat/x", "base_branch": "main"}
-    defaults.update(overrides)
-    return RepoState(**defaults)  # type: ignore[arg-type]
+    return replace(_STATE_DEFAULTS, **overrides)
+
+
+_REQUEST_DEFAULTS = CommitRequest(message="feat: add x", stage_all=True)
 
 
 def _normal_request(**overrides: object) -> CommitRequest:
@@ -73,9 +90,7 @@ def _normal_request(**overrides: object) -> CommitRequest:
     Returns:
         The built request.
     """
-    defaults: dict[str, object] = {"message": "feat: add x", "stage_all": True}
-    defaults.update(overrides)
-    return CommitRequest(**defaults)  # type: ignore[arg-type]
+    return replace(_REQUEST_DEFAULTS, **overrides)
 
 
 @pytest.mark.parametrize(
@@ -142,7 +157,7 @@ def test_plan_commit_refuses_a_selection_its_mode_cannot_honour(
         request_kwargs: Overrides for the ``CommitRequest``.
         expected_substr: Substring the refusal reason must contain.
     """
-    outcome = plan_commit(CommitRequest(**request_kwargs), _state(**state_kwargs))  # type: ignore[arg-type]
+    outcome = plan_commit(_normal_request(**request_kwargs), _state(**state_kwargs))
     assert isinstance(outcome, Refusal)
     assert expected_substr in outcome.reason
 
@@ -305,34 +320,119 @@ def test_plan_commit_refuses_a_stale_verdict_for_an_executed_step() -> None:
     assert "pre-commit logs are not fresh for this tree: ruff" in outcome.reason
 
 
-def test_plan_commit_allows_a_skipped_step_even_when_its_own_verdict_is_stale() -> None:
-    """A SKIP row made no claim about this tree, so its own staleness is irrelevant."""
+@pytest.mark.parametrize(
+    ("timing_log_value", "verdicts"),
+    [
+        pytest.param(
+            timing_log("ruff SKIP"),
+            {"precommit_timing": "fresh", "ruff": "stale"},
+            id="skipped-step-own-verdict-stale",
+        ),
+        pytest.param(
+            timing_log("ruff WARN"),
+            {"precommit_timing": "fresh", "ruff": "fresh"},
+            id="warn-step-fresh-verdict",
+        ),
+        pytest.param(
+            timing_log("env_sync PASS"),
+            {"precommit_timing": "fresh", "env_sync": "n/a"},
+            id="pass-step-environment-only-verdict",
+        ),
+    ],
+)
+def test_plan_commit_allows_skip_warn_and_environment_only_steps(
+    timing_log_value: str, verdicts: dict[str, str]
+) -> None:
+    """SKIP, WARN and environment-only rows never refuse ``_result_refusal``.
+
+    A SKIP row made no claim about this tree, so its own staleness is
+    irrelevant; WARN is non-blocking by the step's own contract; and an
+    environment-only step (verdict ``n/a``) is trusted like ``fresh``.
+
+    Args:
+        timing_log_value: The state's ``timing_log`` field.
+        verdicts: The state's ``verdicts`` mapping.
+    """
+    state = _state(timing_log=timing_log_value, verdicts=verdicts)
+    outcome = plan_commit(_normal_request(), state)
+    assert outcome == CommitPlan(message="feat: add x", mode="normal")
+
+
+# ---------------------------------------------------------------------------
+# _coverage_refusal — a pre-commit record that doesn't cover a full run
+# ---------------------------------------------------------------------------
+
+
+def test_plan_commit_refuses_a_partial_record_naming_the_missing_steps() -> None:
+    """A record scoped to fewer steps than ``expected_steps`` refuses, naming the gap.
+
+    Guards the ``--only``-run-stands-in-for-a-full-battery gap: the timing
+    log covers only ``ruff``, but the repo's full run expects
+    ``cli_wiring`` and ``docstring_verification`` too.
+    """
     state = _state(
         timing_log=timing_log("ruff SKIP"),
-        verdicts={"precommit_timing": "fresh", "ruff": "stale"},
+        verdicts={"precommit_timing": "fresh"},
+        expected_steps=frozenset({"ruff", "docstring_verification", "cli_wiring"}),
+    )
+    outcome = plan_commit(_normal_request(), state)
+    assert outcome == Refusal(
+        "the latest pre-commit run was partial "
+        "(missing: cli_wiring, docstring_verification) — "
+        f"{commit._REMEDY}"
+    )
+
+
+def test_plan_commit_allows_a_record_covering_every_expected_step() -> None:
+    """Every expected step present (as SKIP rows) is not partial — allowed.
+
+    Positive counterpart to the refusal above: naming every expected step
+    clears ``_coverage_refusal`` even though none of them actually ran
+    (SKIP), and SKIP rows never trip ``_result_refusal`` either.
+    """
+    expected = frozenset({"ruff", "docstring_verification", "cli_wiring"})
+    state = _state(
+        timing_log=timing_log(*(f"{name} SKIP" for name in sorted(expected))),
+        verdicts={"precommit_timing": "fresh"},
+        expected_steps=expected,
     )
     outcome = plan_commit(_normal_request(), state)
     assert outcome == CommitPlan(message="feat: add x", mode="normal")
 
 
-def test_plan_commit_allows_a_warn_step_with_a_fresh_verdict() -> None:
-    """WARN never blocks by itself — non-blocking by the step's own contract."""
+def test_plan_commit_skips_the_coverage_check_when_expected_steps_is_empty() -> None:
+    """An empty ``expected_steps`` (an unresolvable registry) never refuses as partial.
+
+    ``_expected_steps`` returns an empty set when the repo's pre-commit
+    config names an unknown step — the hook itself fails loudly at commit
+    time instead (see ``_expected_steps``'s docstring). ``plan_commit``
+    must not then treat every record as infinitely partial.
+    """
     state = _state(
-        timing_log=timing_log("ruff WARN"),
+        timing_log=timing_log("ruff SKIP"), verdicts={"precommit_timing": "fresh"}
+    )
+    assert state.expected_steps == frozenset()
+    outcome = plan_commit(_normal_request(), state)
+    assert outcome == CommitPlan(message="feat: add x", mode="normal")
+
+
+def test_plan_commit_reports_partial_coverage_before_a_failed_step() -> None:
+    """``_coverage_refusal`` runs before ``_result_refusal`` — partial wins over FAIL.
+
+    The record has both problems at once: it's missing a required step
+    AND the one step present FAILed. ``plan_commit``'s check order
+    (``_coverage_refusal(...) or _result_refusal(...)``) means the caller
+    sees the partial-coverage message, not the failure.
+    """
+    state = _state(
+        timing_log=timing_log("ruff FAIL"),
         verdicts={"precommit_timing": "fresh", "ruff": "fresh"},
+        expected_steps=frozenset({"ruff", "cli_wiring"}),
     )
     outcome = plan_commit(_normal_request(), state)
-    assert outcome == CommitPlan(message="feat: add x", mode="normal")
-
-
-def test_plan_commit_allows_a_pass_step_whose_verdict_is_environment_only() -> None:
-    """Environment-only steps (verdict ``n/a``) are trusted like ``fresh``."""
-    state = _state(
-        timing_log=timing_log("env_sync PASS"),
-        verdicts={"precommit_timing": "fresh", "env_sync": "n/a"},
-    )
-    outcome = plan_commit(_normal_request(), state)
-    assert outcome == CommitPlan(message="feat: add x", mode="normal")
+    assert isinstance(outcome, Refusal)
+    assert "was partial (missing: cli_wiring)" in outcome.reason
+    assert "pre-commit steps failed" not in outcome.reason
 
 
 @pytest.mark.parametrize(
@@ -483,16 +583,26 @@ def _seed_fresh_timing_log(work: Path, *rows: str) -> None:
     ``working_tree_sha`` hashes every non-ignored file, including
     untracked ones (only ``code_health/`` itself is excluded), so
     anything written to *work* afterward makes the log read ``stale``
-    instead of ``fresh``.
+    instead of ``fresh`` — writing further ``code_health/*.log`` files
+    from here is exempt from that rule, since the directory itself is
+    excluded from the hash.
 
     Args:
         work: Work-tree repo root.
-        *rows: ``"<name> <marker>"`` rows; defaults to one SKIP row —
-            ``plan_commit``'s evidence check never inspects a SKIP step's
-            individual freshness, so a bare SKIP row clears the check for
-            scenarios that don't care about it otherwise.
+        *rows: ``"<name> <marker>"`` rows; when omitted, defaults to one
+            row per step ``precommit.resolve_steps(work)`` returns here
+            (SKIP, except ``ruff`` PASS, backed by its own fresh
+            ``code_health/ruff.log``) — full coverage, so ``read_state``'s
+            ``expected_steps`` check never refuses these scenarios as
+            partial. ``plan_commit``'s evidence check never inspects a
+            SKIP step's individual freshness, so every other step needs
+            no log of its own.
     """
-    body = timing_log(*(rows or ("ruff SKIP",)), stamp=None)
+    if not rows:
+        names = [step.name for step in precommit.resolve_steps(work)]
+        rows = tuple(f"{name} {'PASS' if name == 'ruff' else 'SKIP'}" for name in names)
+        git_utils.write_step_log(work, "ruff", "ruff: no findings\n")
+    body = timing_log(*rows, stamp=None)
     git_utils.write_step_log(work, "precommit_timing", body)
 
 
@@ -673,6 +783,76 @@ def test_main_pre_commit_hook_block_leaves_nothing_committed(
     assert "the commit was blocked" in out
 
 
+def test_main_scrubs_git_env_overrides_so_an_injected_hookspath_cannot_skip_the_hook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A caller's ``GIT_CONFIG_COUNT``/``core.hooksPath`` override can't skip the hook.
+
+    Security regression for ``main()`` wrapping its whole run in
+    ``git_env_overrides_removed`` (module docstring point 3): an
+    environment that reconfigures git's hooks path via ``GIT_CONFIG_*`` —
+    exactly what a malicious or misconfigured caller could inject — must
+    not carry into ``commit.py``'s own in-process git calls.
+    ``create_commit`` has no filtering of its own (unlike ``push_branch``,
+    which scrubs independently), so if ``main()`` stopped wrapping the
+    call, this override would point ``core.hooksPath`` at an empty
+    directory with no ``pre-commit`` hook, and the real installed hook —
+    which would otherwise block this commit — would silently never run.
+    """
+    work, _bare = _new_repo(tmp_path, monkeypatch)
+    before = _head_sha(work)
+    (work / "hello.txt").write_text("hello\n")
+    _seed_fresh_timing_log(work)
+    monkeypatch.setenv("HOOK_EXIT", "1")
+    monkeypatch.setenv("HOOK_MSG", "synthetic-security-regression-message")
+    empty_hooks_dir = tmp_path / "empty-hooks"
+    empty_hooks_dir.mkdir()
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(empty_hooks_dir))
+
+    exit_code = commit.main(["--all", "-m", "feat: x"])
+
+    assert exit_code == commit.EXIT_NOTHING_COMMITTED
+    assert _head_sha(work) == before
+    out = capsys.readouterr().out
+    assert "synthetic-security-regression-message" in out
+    assert "the commit was blocked" in out
+    # Restored afterward, not left stripped — the whole point of a context
+    # manager over a one-way `os.environ.pop`.
+    assert os.environ["GIT_CONFIG_COUNT"] == "1"
+    assert os.environ["GIT_CONFIG_KEY_0"] == "core.hooksPath"
+    assert os.environ["GIT_CONFIG_VALUE_0"] == str(empty_hooks_dir)
+
+
+def test_main_refuses_a_pre_commit_record_partial_against_this_repos_real_steps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A record scoped to one step refuses end to end, naming a real missing step.
+
+    Pins the ``read_state`` → ``resolve_steps(root)`` →
+    ``RepoState.expected_steps`` wiring itself, not just
+    ``_coverage_refusal``'s pure logic (already covered by the planner
+    tests above): without that wiring, a real ``commit.main()`` run could
+    never produce this refusal, however ``_coverage_refusal`` behaves in
+    isolation. ``_seed_fresh_timing_log`` is called with an EXPLICIT
+    single row here — bypassing its own full-coverage default — so the
+    record really is partial against this repo's real resolved step set.
+    """
+    work, _bare = _new_repo(tmp_path, monkeypatch)
+    before = _head_sha(work)
+    (work / "hello.txt").write_text("hello\n")
+    _seed_fresh_timing_log(work, "ruff SKIP")
+
+    exit_code = commit.main(["--all", "-m", "feat: x"])
+
+    assert exit_code == commit.EXIT_NOTHING_COMMITTED
+    assert _head_sha(work) == before
+    out = capsys.readouterr().out
+    assert "was partial (missing:" in out
+    assert "cli_wiring" in out
+
+
 def test_main_wip_sync_checkpoint_stages_everything_env_scoped_never_pushes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -808,8 +988,10 @@ def test_main_push_only_on_base_branch_refuses(
 ) -> None:
     """``--push-only`` on base branch refuses — branch check still applies.
 
-    Even though ``--push-only`` bypasses ``plan_commit``, it still
-    calls ``_branch_refusal`` directly, catching the base branch.
+    Even though ``--push-only`` bypasses ``plan_commit``, it still calls
+    ``_branch_refusal(state, action="push")`` directly, catching the base
+    branch — and naming ``push`` (not ``commit``) as what was refused,
+    since nothing was ever going to be committed here.
     """
     _work, bare = _new_repo(tmp_path, monkeypatch, branch=None)
     before_bare = _bare_ref_sha(bare, "main")
@@ -819,7 +1001,7 @@ def test_main_push_only_on_base_branch_refuses(
     assert exit_code == commit.EXIT_NOTHING_COMMITTED
     assert _bare_ref_sha(bare, "main") == before_bare
     out = capsys.readouterr().out
-    assert "protected base branch" in out
+    assert "push on a feature branch" in out
 
 
 def test_main_push_only_pushes_an_existing_commit_without_consulting_pre_checks(

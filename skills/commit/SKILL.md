@@ -25,8 +25,8 @@ Run the standard commit workflow:
    - **Selection**: `--all`, or the paths the user named.
    - **Finishing a merge**: omit `-m` and paths — git's prepared merge
      message is used.
-   - What the CLI checks before committing: FOUNDATION §3 and
-     `forge-commit --help`. Do not pre-check by hand.
+   - What the CLI checks before committing: `forge-commit --help`. Do not
+     pre-check by hand.
 
 3. **Act on the exit code:**
    - `0` — committed, pushed (unless `--no-push`), and recorded; the CLI

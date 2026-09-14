@@ -2140,6 +2140,62 @@ def test_behind_ahead_dash_prefixed_ref_returns_none_without_calling_git(
 
 
 # ---------------------------------------------------------------------------
+# git_env_overrides_removed
+# ---------------------------------------------------------------------------
+
+
+def test_git_env_overrides_removed_strips_overrides_keeps_global_restores_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Overrides vanish inside the body, come back after; ``GIT_CONFIG_GLOBAL`` stays.
+
+    Covers both ``_is_git_env_override`` match forms — a fixed name
+    (``GIT_CONFIG_COUNT``, ``GIT_DIR``) and the numbered
+    ``GIT_CONFIG_KEY_0`` / ``GIT_CONFIG_VALUE_0`` pair — and the one
+    variable the docstring says must survive untouched:
+    ``GIT_CONFIG_GLOBAL``, since repository-local config (where forge
+    installs its hooks path) outranks it regardless.
+    """
+    hooks_path = "/elsewhere/empty-hooks"
+    git_dir = "/elsewhere/other-repo/.git"
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", hooks_path)
+    monkeypatch.setenv("GIT_DIR", git_dir)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+
+    with git_utils.git_env_overrides_removed():
+        assert "GIT_CONFIG_COUNT" not in os.environ
+        assert "GIT_CONFIG_KEY_0" not in os.environ
+        assert "GIT_CONFIG_VALUE_0" not in os.environ
+        assert "GIT_DIR" not in os.environ
+        assert os.environ["GIT_CONFIG_GLOBAL"] == os.devnull
+
+    assert os.environ["GIT_CONFIG_COUNT"] == "1"
+    assert os.environ["GIT_CONFIG_KEY_0"] == "core.hooksPath"
+    assert os.environ["GIT_CONFIG_VALUE_0"] == hooks_path
+    assert os.environ["GIT_DIR"] == git_dir
+    assert os.environ["GIT_CONFIG_GLOBAL"] == os.devnull
+
+
+def test_git_env_overrides_removed_restores_even_when_the_body_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The environment is restored on an exception, not only on a clean exit.
+
+    The ``finally`` clause is the point: a caller's exception must not
+    leave the process with git's overrides permanently stripped.
+    """
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    msg = "boom"
+
+    with pytest.raises(ValueError, match="boom"), git_utils.git_env_overrides_removed():
+        raise ValueError(msg)
+
+    assert os.environ["GIT_CONFIG_COUNT"] == "1"
+
+
+# ---------------------------------------------------------------------------
 # push_branch
 # ---------------------------------------------------------------------------
 
@@ -2185,6 +2241,29 @@ def test_push_branch_real_push_to_bare_succeeds(tmp_path: Path) -> None:
     assert upstream == "origin/feat/x"
 
 
+def test_push_branch_argv_uses_fully_qualified_same_name_refspec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pushed refspec is fully qualified, not a bare branch name.
+
+    A bare branch name is itself a refspec a ``remote.<name>.push``
+    mapping could redirect elsewhere; the explicit same-name
+    ``refs/heads/<branch>:refs/heads/<branch>`` form pins both source and
+    destination (see ``push_branch``'s own docstring).
+    """
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+
+    git_utils.push_branch(tmp_path, "feat/x")
+
+    assert calls == [["git", "push", "origin", "refs/heads/feat/x:refs/heads/feat/x"]]
+
+
 def test_push_branch_unreachable_remote_fails_with_git_terminal_prompt_disabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2220,10 +2299,30 @@ def test_push_branch_unreachable_remote_fails_with_git_terminal_prompt_disabled(
     assert captured["timeout"] == git_utils.PUSH_TIMEOUT_S
 
 
-def test_push_branch_dash_prefixed_remote_or_branch_returns_false_without_subprocess(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("remote", "branch"),
+    [
+        pytest.param("-evil", "main", id="dash-remote"),
+        pytest.param("origin", "-evil", id="dash-branch"),
+        pytest.param("+evil", "main", id="plus-remote"),
+        pytest.param("origin", "+main", id="plus-branch"),
+    ],
+)
+def test_push_branch_refuses_dash_or_plus_prefixed_remote_or_branch_without_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remote: str, branch: str
 ) -> None:
-    """``-`` prefix injection is rejected, no subprocess call."""
+    """``-`` or ``+`` prefix injection is rejected, no subprocess call.
+
+    ``-`` guards against option injection; ``+`` guards against git's own
+    force-push refspec syntax (``+main`` force-pushes ``main`` even under
+    the old bare-name refspec form) — ``push_branch`` has no force option,
+    so a caller-supplied ``+``-prefixed remote or branch must never reach
+    git as an implicit force.
+
+    Args:
+        remote: The ``remote`` argument to pass.
+        branch: The ``branch`` argument to pass.
+    """
     calls: list[list[str]] = []
 
     def _fake_run(cmd: list[str], **_kwargs: object) -> object:
@@ -2232,13 +2331,117 @@ def test_push_branch_dash_prefixed_remote_or_branch_returns_false_without_subpro
 
     monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
 
-    result_remote = git_utils.push_branch(tmp_path, "main", remote="-evil")
-    result_branch = git_utils.push_branch(tmp_path, "-evil")
+    result = git_utils.push_branch(tmp_path, branch, remote=remote)
 
-    assert result_remote.ok is False
-    assert result_remote.returncode is None
-    assert result_branch.ok is False
+    assert result.ok is False
+    assert result.returncode is None
+    assert "refused a remote or branch starting with '-' or '+'" in result.stderr
     assert calls == []
+
+
+def test_push_branch_env_drops_git_config_overrides_keeps_other_vars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The push subprocess's env drops ``GIT_CONFIG_*``/``GIT_DIR`` but keeps the rest.
+
+    The same class of guard ``git_env_overrides_removed`` provides for
+    in-process git calls, applied independently to the push subprocess's
+    own env: a caller's ``GIT_CONFIG_COUNT`` + ``core.hooksPath``
+    override, or a ``GIT_DIR`` pointing elsewhere, must never ride along
+    and silently redirect or unhook the push. ``PATH`` (an ordinary,
+    non-override variable) is checked present to show this is a targeted
+    removal, not ``env={}``.
+    """
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "/elsewhere/empty-hooks")
+    monkeypatch.setenv("GIT_DIR", "/elsewhere/other-repo/.git")
+    captured: dict[str, object] = {}
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> object:
+        captured.update(kwargs)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+
+    git_utils.push_branch(tmp_path, "feat/x")
+
+    env = captured["env"]
+    assert "GIT_CONFIG_COUNT" not in env
+    assert "GIT_CONFIG_KEY_0" not in env
+    assert "GIT_CONFIG_VALUE_0" not in env
+    assert "GIT_DIR" not in env
+    assert env["PATH"] == os.environ["PATH"]
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_push_branch_local_plus_main_branch_cannot_force_move_origin_main(
+    tmp_path: Path,
+) -> None:
+    """A branch literally named ``+main`` can't force-rewind ``origin/main``.
+
+    Real-git regression over the fake-subprocess refusal tested above,
+    proving the remote ``main`` genuinely survives, not just that the
+    function returns ``ok=False``. In a push refspec, a bare ``+main`` is
+    the force flag plus the ref name ``main`` — it names the *local*
+    branch called ``main`` as the source, independent of what branch is
+    literally named ``+main`` or checked out. Under the OLD bare-name
+    refspec form, ``git push origin +main`` would therefore have
+    force-pushed **local ``main``** onto remote ``main`` — so the setup
+    below deliberately rewinds local ``main`` behind origin's: only then
+    does a force-push actually move (rewind) the remote, making the
+    "unchanged" assertion below discriminate a real regression from a
+    push that was always going to be a no-op.
+    """
+    work, bare = _init_single_track_repo(tmp_path)
+    origin_c0 = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    (work / "c1.txt").write_text("c1\n")
+    commit_all(work, "feat: c1 on main")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=_GIT_ENV, check=True
+    )
+    origin_main_before = subprocess.run(
+        ["git", "rev-parse", "refs/heads/main"],
+        cwd=bare,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert origin_main_before != origin_c0  # origin is ahead — C1, not C0
+
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "+main"], cwd=work, env=_GIT_ENV, check=True
+    )
+    # Rewind the LOCAL `main` ref behind origin's, now that `+main` (not
+    # `main`) is checked out — a force-push of it as source would rewind
+    # the remote from C1 back to C0.
+    subprocess.run(
+        ["git", "update-ref", "refs/heads/main", origin_c0],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+
+    result = git_utils.push_branch(work, "+main")
+
+    assert result.ok is False
+    origin_main_after = subprocess.run(
+        ["git", "rev-parse", "refs/heads/main"],
+        cwd=bare,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert origin_main_after == origin_main_before
 
 
 # ---------------------------------------------------------------------------

@@ -895,11 +895,12 @@ def create_commit(
     """Commit the staged index, surviving identity-less runners.
 
     The one commit seam for forge CLIs that write commits
-    programmatically (``forge-commit``, ``forge-resync``) — the commit
-    twin of :func:`create_annotated_tag`. Injects a fallback committer
-    identity only when git has none (see :func:`_fallback_identity_args`);
-    a commit requires one, and a fresh CI runner configures none. The git
-    pre-commit hook runs as for any commit: nothing here skips it.
+    programmatically (``forge-commit``, ``forge-resync``,
+    ``forge-changelog``) — the commit twin of :func:`create_annotated_tag`.
+    Injects a fallback committer identity only when git has none (see
+    :func:`_fallback_identity_args`); a commit requires one, and a fresh CI
+    runner configures none. The git pre-commit hook runs as for any commit:
+    nothing here skips it.
 
     Args:
         repo_root: Repo root.
@@ -1063,6 +1064,66 @@ def fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool:
 # stalled remote, must end instead of hanging the caller (FOUNDATION §15).
 PUSH_TIMEOUT_S = 120
 
+# Environment variables that reconfigure git for one process — a
+# `core.hooksPath` set this way silently skips the pre-commit hook — or
+# point it at another repository, index or object store. A caller's
+# environment is not the repository's configuration, so commit and push
+# paths drop these and the repository's own hooks and config apply.
+_GIT_ENV_OVERRIDES = frozenset(
+    {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_DIR",
+        "GIT_EXEC_PATH",
+        "GIT_INDEX_FILE",
+        "GIT_NAMESPACE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_WORK_TREE",
+    }
+)
+_GIT_ENV_OVERRIDE_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+
+
+def _is_git_env_override(name: str) -> bool:
+    """Return whether *name* overrides git's config or repository per process.
+
+    Args:
+        name: Environment variable name.
+
+    Returns:
+        ``True`` for the variables in :data:`_GIT_ENV_OVERRIDES` and the
+        numbered ``GIT_CONFIG_KEY_*`` / ``GIT_CONFIG_VALUE_*`` pairs.
+    """
+    return name in _GIT_ENV_OVERRIDES or name.startswith(_GIT_ENV_OVERRIDE_PREFIXES)
+
+
+@contextmanager
+def git_env_overrides_removed() -> Iterator[None]:
+    """Run the body with git's per-process environment overrides removed.
+
+    Guards that a CLI enforces in its own git calls must not be undone by
+    the environment it was started in: ``GIT_CONFIG_COUNT`` with
+    ``core.hooksPath`` would skip the pre-commit hook, ``GIT_DIR`` would
+    commit into another repository. The variables are restored on exit, so
+    an in-process caller leaves the environment as it found it.
+    ``GIT_CONFIG_GLOBAL`` / ``GIT_CONFIG_SYSTEM`` stay: repository-local
+    config, where forge installs its hooks path, outranks both.
+
+    Yields:
+        Nothing; the environment is restored when the body exits.
+    """
+    removed = {
+        name: os.environ.pop(name)
+        for name in list(os.environ)
+        if _is_git_env_override(name)
+    }
+    try:
+        yield
+    finally:
+        os.environ.update(removed)
+
 
 @dataclass(frozen=True)
 class PushResult:
@@ -1090,6 +1151,14 @@ def push_branch(
     instead of raising so each caller decides what a failed push means,
     and has no force option: a forge CLI never rewrites a remote branch.
 
+    The branch is pushed as the fully qualified same-name refspec
+    ``refs/heads/<branch>:refs/heads/<branch>``. A bare name is itself a
+    refspec — a leading ``+`` would mean force (``+main`` force-pushes
+    ``main``), and a ``remote.<name>.push`` mapping could send it to
+    another branch. Git's per-process config and repository overrides are
+    dropped from the push's environment (see
+    :func:`git_env_overrides_removed`).
+
     Args:
         repo_root: Git repo root.
         branch: Branch to push.
@@ -1097,16 +1166,27 @@ def push_branch(
         remote: Remote name.
 
     Returns:
-        The outcome. A dash-prefixed *branch* or *remote* is refused
-        without running git, so it can never parse as an option.
+        The outcome. A *branch* or *remote* starting with ``-`` or ``+`` is
+        refused without running git, so it can never parse as an option or
+        a force refspec.
     """
-    if remote.startswith("-") or branch.startswith("-"):
+    if remote.startswith(("-", "+")) or branch.startswith(("-", "+")):
         return PushResult(
             ok=False,
             returncode=None,
-            stderr=f"refused a dash-prefixed remote or branch: {remote!r} {branch!r}",
+            stderr=(
+                "refused a remote or branch starting with '-' or '+': "
+                f"{remote!r} {branch!r}"
+            ),
         )
-    argv = ["git", "push", *(["-u"] if set_upstream else []), remote, branch]
+    refspec = f"refs/heads/{branch}:refs/heads/{branch}"
+    argv = ["git", "push", *(["-u"] if set_upstream else []), remote, refspec]
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if not _is_git_env_override(name)
+    }
+    env["GIT_TERMINAL_PROMPT"] = "0"
     try:
         proc = subprocess.run(
             argv,
@@ -1115,7 +1195,7 @@ def push_branch(
             text=True,
             check=False,
             timeout=PUSH_TIMEOUT_S,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return PushResult(

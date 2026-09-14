@@ -297,9 +297,9 @@ usage: forge-commit [-h] [-m MESSAGE | -F FILE] [--all] [--wip-sync]
                     [paths ...]
 
 Stage, commit and push in one guarded call: refuses the base branch, AI
-attribution, a non-conventional subject and a missing, stale or failed pre-
-commit record; the git pre-commit hook still runs. Exit 0 done, 1 push or
-record step failed, 2 nothing committed.
+attribution, a non-conventional subject and a missing, stale, partial or
+failed pre-commit record; the git pre-commit hook still runs. Exit 0 done, 1
+push or record step failed, 2 nothing committed.
 
 positional arguments:
   paths                 Paths to stage and commit.
@@ -311,8 +311,8 @@ options:
   -F, --file FILE       Read the commit message from a file.
   --all                 Stage every change (git add -A).
   --wip-sync            Checkpoint commit before a base sync (FOUNDATION §2):
-                        stages everything; the subject must start with 'wip-
-                        sync:'.
+                        stages everything, never pushes; the subject must
+                        start with 'wip-sync:'.
   --no-push             Commit without pushing.
   --push-only           Push existing commits; commit nothing.
 ```
