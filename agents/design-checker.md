@@ -20,9 +20,11 @@ and the wrapper's extras.
 
 ## Source of truth
 
-[FOUNDATION.md](../FOUNDATION.md) owns principles (§7), complexity limits
-(§5) and docstring rules — calibrate severity against them, never
-re-define them. Consumer `CLAUDE.md` may override; on conflict
+[FOUNDATION.md](../FOUNDATION.md) owns principles
+([§7](../FOUNDATION.md#7-design-principles)), complexity limits
+([§5](../FOUNDATION.md#5-ruff-configuration)) and docstring rules
+([§8](../FOUNDATION.md#8-documentation-standards)) — calibrate severity
+against them, never re-define them. Consumer `CLAUDE.md` may override; on conflict
 **consumer wins**, and the stricter of foundation default and the
 consumer's `ruff.toml` applies.
 

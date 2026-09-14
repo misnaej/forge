@@ -624,11 +624,13 @@ wrong.)
 step, a CLI — as mechanical or judgment. A step whose output depends only
 on the working tree, GitHub state and text the caller supplies is
 mechanical: make it a CLI, or better a subcommand of an existing one
-(§16's pattern C), run it once and hand its output on. Only judgment —
-reading intent, weighing trade-offs, writing for people — goes to an
-agent, which takes that output as evidence (§6). Every agent step costs
-a model round trip; a program costs one call, returns the same result
-each run, and enforces its contract in code.
+(§16's Pattern C), run it once per tree and hand its output on. Only
+judgment — reading intent, weighing trade-offs, writing for people —
+goes to an agent, which takes that output as evidence (§6). A CLI that
+performs a §2-guarded effect enforces that guard in its own code: hooks
+see only the command an agent types, never the CLI's own calls. Every
+agent step costs a model round trip; a program costs one call and
+returns the same result each run.
 
 **KISS.** The right complexity is what the task requires — no more. Three
 similar lines beat a premature abstraction. No configurability / plugins /

@@ -122,7 +122,8 @@ branch has no user to ask, so in this mode it returns the existing
 In place of the interactive gate, return:
 
 - the plain-English problem statement Step 3 would open with,
-- the drafted plan (files, order, side effects, bump class),
+- the drafted plan (files, order, side effects, which steps are
+  mechanical or judgment, bump class),
 - an explicit **decisions to validate** list — each one shaped by the
   §1 rule Step 3 points at, so the caller can relay it unedited.
 
