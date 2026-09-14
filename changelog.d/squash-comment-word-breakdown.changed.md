@@ -1,2 +1,0 @@
-bump: patch
-- **`forge-pr-squash-comment` names every broken rule in one run.** It used to stop at the first failing rule, so a message with a bad title and too many words took two retries to learn both. A word-cap violation now also lists each part's word count, a short preview, and how many words to cut, instead of only the total — authors no longer guess which bullet to shorten. `--dry-run` prints the same per-part counts to stderr while stdout stays exactly the comment body.
