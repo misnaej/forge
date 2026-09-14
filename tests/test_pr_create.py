@@ -282,6 +282,10 @@ def test_passthrough_cannot_override_the_verified_branch(
     exit code and that `gh` was never invoked matters: a refusal for an
     unrelated reason (e.g. a parser error) could exit 2 without proving
     the passthrough itself was caught.
+
+    Args:
+        passthrough: The exploit tokens under test, in every form the
+            underlying parser accepts.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
