@@ -19,7 +19,7 @@ Orchestrator for the full PR lifecycle: delegates verification to the three chec
 
 ## Workflow
 
-The caller's prompt names a `## Task:` section; all are independently callable. Finalization order: **Verification (Wrap-up) → Write Squash-Merge Message → Issue Management → CONTINUATION Log Update**.
+The caller's prompt names a `## Task:` section; all are independently callable. Finalization order: **Fill Wrap-up Slots → Write Squash-Merge Message**; `/pr` Step 4 posts both with the CLIs.
 
 ## Task: Fetch & Summarize PR
 
@@ -79,13 +79,11 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
 
 3. **Never set the PR title by hand here** — the CLI forces the PR title to match the `--title` it posts (FOUNDATION §6), so the squash title is authored in one place. A non-zero exit naming a rejected title sync means the prefill is stale: report it, do not paper over it.
 
-## Task: Author Wrap-up (pre-publication)
+## Task: Fill Wrap-up Slots (pre-publication)
 
-Execute `/pr` Step 3.92's authoring contract — composition inputs and the `block_unverified_pr_create` gate live there; the artifact is `code_health/pr_wrapup.md`. Enforced here: sections per Verification step 6, compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract); CI Status = "pending — PR not yet published"; first line `verified-at: <HEAD sha>`; file-adding diff (`--diff-filter=A`) → REFUSE without the `prior-art-searched:` block from the caller's `forge:prior-art` report. Post nothing — posting is the later posting task.
+The caller ran `forge-pr-wrapup compose` (`/pr` Step 3.92): `code_health/pr_wrapup.md` already holds every mechanical part — header, mode line, skipped or clean reporter sections, Issue Management, Code Quality, CI Status — plus `<!-- forge:fill … -->` slots. Replace each slot line and nothing else: `summary` → one plain line on what the PR does; `findings: <reporter>` → that reporter's findings, each with where and how it was dispositioned (fixed in `<sha>` / deferred to `#<issue>` / accepted, with the reason), compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract); `recommendation` → one line. Never edit a rendered section — re-run `compose` when its inputs changed. Run `forge-pr-wrapup validate code_health/pr_wrapup.md` until it passes. Return the squash-merge message in your report; never write it into the wrap-up. Post nothing.
 
-**Light variant** (caller passes `forge-pr-plan` output with `mode: light-code`): author the SHORT form instead — `verified-at: <HEAD sha>`, then `wrapup-mode: light`, a one-line rationale, the plan's `reasons` verbatim, and the squash-merge message (unchanged rules). No reporter sections exist to compress. REFUSE the light form when the plan says any other mode, when `classified_at` ≠ current HEAD, or when the diff adds files other than `changelog.d/` fragments — a fragment answers no placement question and another gate mandates it, so it alone never forces the full path. Those all take the full authoring path; the publish hook re-verifies regardless.
-
-**Comment-destined markdown is never hard-wrapped** — see [_TEMPLATE.md's reporter-agent header contract](_TEMPLATE.md#reporter-agent-header-contract) — do not restate. Applies here to the wrap-up and delta comments this agent authors directly.
+**Comment-destined markdown is never hard-wrapped** — see [_TEMPLATE.md's reporter-agent header contract](_TEMPLATE.md#reporter-agent-header-contract) — do not restate. Applies to the slot text this agent writes.
 
 ## Task: Verification (Wrap-up)
 
@@ -97,9 +95,9 @@ Execute `/pr` Step 3.92's authoring contract — composition inputs and the `blo
    Short-circuits before step 1 (decision logic: `/pr` Steps 1 + 3.92):
 
    - **Supplied evidence** is authoritative when it names the SHA it was gathered at: use it, skip step 1, **never re-run what you were handed** (a suite this agent starts can outlast the task). Reporter reports come as text in the prompt, as before; pre-commit and test results must be **file-backed** — the `code_health/` logs read in step 0, whose presence on disk is itself proof a run happened. Prose asserting a clean run is not evidence: report that section unverified. SHA equal to `HEAD` → state it as given; moved → **WARN** naming both SHAs, same idiom as the stale-plan check.
-   - **Pre-authored wrap-up** (`code_health/pr_wrapup.md` names `HEAD`) → post verbatim; refresh only the CI Status line — never recompose.
+   - **Pre-authored wrap-up** (`code_health/pr_wrapup.md` names `HEAD`) → post it with `forge-pr-wrapup post`, which refreshes CI Status and Issue Management itself — never recompose.
    - **Stale plan check**: when the caller's `forge-pr-plan` output carries a `classified_at` that is not the current `HEAD`, **WARN in the wrap-up** (do not refuse): the finalization path was classified on a different tree, so the mode may no longer apply — name both SHAs and recommend re-running `forge-pr-plan`.
-   - **Delta mode** (the full three-part gate lives in `pr_delta.py` `delta_decision()`; header contract: [_TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract) — never hardcode) → **skip step 1**; post a "Delta re-verification" comment (prior verdicts, prior SHA, line/file counts) + a refreshed squash-merge comment.
+   - **Delta mode** (the full three-part gate lives in `pr_delta.py` `delta_decision()`; header contract: [_TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract) — never hardcode) → **skip step 1**; `forge-pr-wrapup compose --base origin/<base> --pr <PR#>` renders the delta wrap-up (reporter sections `PASS — unchanged since <prior sha>`); fill its slots, post it, then refresh the squash-merge comment.
    - **Docs-only light path** (caller-declared; classifier: `pr_delta.docs_only_diff`) → docs-types report only; step 2 = the caller's targeted `--only` gates; say so in the wrap-up.
 
 **Base-sync gate** (before the numbered steps): run `/pr` Step 0.5's checks — a behind/conflicting PR is not finalizable:
@@ -127,29 +125,8 @@ unverified, not assumed.
 1. **The three checkers** via Task — one design/security/docs report each; skip per pre-run coverage, all three under delta mode.
 2. **`precommit-fixer` in `mode: strict`** — unless the caller supplied pre-commit results for the current `HEAD`; otherwise ALWAYS, because docstring fixes shift line lengths (`strict`'s `pip_audit` escalation: `/pr` Step 2).
 3. **Deferred changelog** (`precommit_enforce = false`, no `CHANGELOG.md` entry in the diff): author it now — MANDATORY per `/pr` Step 3 (bullet convention: `docs/consumer-release.md`); commit via `forge:git-commit-push`; wrap-up line "wrote CHANGELOG bullet: <text>".
-4. **Issue-closing check** (actual base, per the squash task):
-   ```bash
-   gh pr view <PR#> --json body,title,baseRefName
-   base=$(gh pr view <PR#> --json baseRefName --jq .baseRefName)
-   git log $base..HEAD --oneline
-   ```
-   Warn when an addressed issue lacks a bare `Closes`-family keyword in the description or a commit reference.
-5. **Post the wrap-up comment** via `forge-pr-wrapup post --pr <PR#> --body-file code_health/pr_wrapup.md` — never a raw `gh pr comment` (the `block_raw_wrapup_post` hook refuses it). The CLI validates report-by-exception mechanically (one line per clean section, one summary line, 120 words + 40 per findings section), collapses every earlier wrap-up into a `<details>` block, and re-posts the squash comment so it stays newest. Exactly these sections, each compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract) — clean checker = its one PASS line; findings get what/where/disposition prose:
-   ```markdown
-   ## Design Check | ## Security Review | ## Documentation Check
-   <PASS line, or findings + dispositions>
-   ## Issue Management
-   <auto-close references or warnings>
-   ## Code Quality
-   <one line: ✅/❌ per code_health/ log (ruff, test_naming,
-    repo_structure, docstring_verification)>
-   ## CI Status
-   <as of posting — never wait for CI; say plainly when it has not
-    completed (FOUNDATION §6 "PR finalization")>
-   ## Recommendation
-   <Ready for merge | Needs work | Security concerns>
-   ```
-6. **Post the squash-merge message as a separate PR comment, LAST** (task above) — MANDATORY in every wrap-up. It goes after the wrap-up because the person merging copies it out of the bottom of the conversation (FOUNDATION §6); anything posted later is followed by a `forge-pr-squash-comment --pr <PR#>` re-post, which the `keep_squash_comment_last` hook fires on its own.
+4. **Compose, fill and post the wrap-up**: `forge-pr-wrapup compose --base origin/<base> --pr <PR#> --design <file> --security <file> --docs <file> [--prior-art <file>]`, fill its slots (task above), then `forge-pr-wrapup post --pr <PR#>` — never a raw `gh pr comment` (the `block_raw_wrapup_post` hook refuses it). `post` refuses (exit 3) when the wrap-up's `verified-at:` is not the PR head or the branch conflicts with or is behind its base — report the fix it names; otherwise it refreshes CI Status and Issue Management, validates, posts, collapses earlier wrap-ups, keeps the squash comment newest and appends the CONTINUATION record.
+5. **Post the squash-merge message as a separate PR comment, LAST** (task above) — MANDATORY in every wrap-up. It goes after the wrap-up because the person merging copies it out of the bottom of the conversation (FOUNDATION §6); anything posted later is followed by a `forge-pr-squash-comment --pr <PR#>` re-post, which the `keep_squash_comment_last` hook fires on its own.
 
 ## Task: Issue Management
 
@@ -204,13 +181,7 @@ block means and how to respond: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#requ
 
 ## CONTINUATION Log Update
 
-After a successful wrap-up (skip if incomplete), append the activity record — rules: [FOUNDATION §10](../FOUNDATION.md#10-continuation-protocol); format SSoT: `forge-continuation-append`:
-
-```bash
-forge-continuation-append \
-    --pr "$(gh pr view --json number --jq '.number')" \
-    "$(gh pr view --json title --jq '.title')"
-```
+`forge-pr-wrapup post` appends the activity record after a successful post (rules: [FOUNDATION §10](../FOUNDATION.md#10-continuation-protocol)). Only when a wrap-up was posted another way, append it yourself: `forge-continuation-append --pr <PR#> "<PR title>"`.
 
 ## Output
 

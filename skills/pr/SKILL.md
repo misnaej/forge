@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Full PR finalization flow, verification-first - design check, security check, docs check, precommit-fixer (strict), plan/docs updates, then publish the PR and have pr-manager post wrap-up + squash-merge message. Use when the user wants to finalize a PR.
+description: Full PR finalization flow, verification-first - design check, security check, docs check, precommit-fixer (strict), plan/docs updates, then compose the wrap-up (pr-manager fills its judgment slots), publish the PR, and post the wrap-up + squash-merge message with forge-pr-wrapup and forge-pr-squash-comment. Use when the user wants to finalize a PR.
 user-invocable: true
 ---
 
@@ -105,13 +105,14 @@ checks are done and states CI's status plainly.
 When `forge-emergency status` reports ARMED (a human ran
 `FORGE_EMERGENCY_ACK=1 forge-emergency start` — the env marker is the
 auditable authorization; an agent never arms it on its own judgment),
-skip Steps 1–3.9 entirely: author a minimal wrap-up at
-`code_health/pr_wrapup.md` — first line `verified-at: <HEAD sha>`, a
-`wrapup-mode: emergency` line, the ledger issue number, and one
-paragraph on what ships — then push, `gh pr create` (the gate consumes
+skip Steps 1–3.9 entirely: run `forge-pr-wrapup compose --base
+origin/<base>` — with emergency armed it renders `wrapup-mode: emergency`
+and the ledger issue in place of the reporter sections — fill its summary
+slot with what ships, then push, `gh pr create` (the gate consumes
 the one-shot sentinel), run `forge-emergency record-pr <N>` (the
 structural record repayment trusts — never a free-text ledger
-comment), post the wrap-up and a title-only squash comment, and spawn
+comment), post the wrap-up (`forge-pr-wrapup post --pr <N>`) and a
+title-only squash comment, and spawn
 the monitor as normal. **Repayment after delivery**:
 when the emergency PR merges, run the full verification retroactively
 (`/pr <N>` against the landed state), post the real wrap-up, then
@@ -130,15 +131,15 @@ It composes the `pr_delta` primitives (the single source of every
 threshold, glob, and classifier) over the real diff and emits one JSON
 plan: `mode`, the `reporters` to run, the `precommit_scope` for Step 2,
 the `reasons` trail, and `classified_at` (the HEAD it classified —
-`pr-manager` warns at posting time if HEAD has moved). Follow the plan;
+`forge-pr-wrapup post` refuses a wrap-up that no longer names the PR head). Follow the plan;
 do not re-derive the classification in prose.
 
 | `mode` | Reporters to run | Step 2 pre-commit scope | Meaning |
 |---|---|---|---|
-| `light-docs` | `docs-types-checker` only | `forge-precommit --only <precommit_scope>` (changelog + doc gates; add other path-relevant steps as applicable) | Whole diff is doc-shaped, nothing high-blast-radius. Steps 3–4 run as normal; tell `pr-manager` so the wrap-up says so. Residuals documented in `pr_delta.docs_only_diff`: path-string classification only — docs-types-checker + human review stay reviewers of record. |
-| `light-regen` | none — **after earning it** | The provenance gates in `precommit_scope` | **Eligibility only** (resync PRs: every path in `pr_delta.MANAGED_REGEN_PATHS`). **Earn** the escape: `forge-precommit --only foundation_md_check,cli_reference_check,api_digest_check`. Every gate passes (absent-file skips fine) → skip all three reporters; the wrap-up embeds the gate outputs verbatim as evidence. **Any gate FAILS → full round, no exceptions** (covers the editable-install self-reference case and hand-edits to managed files — the byte check exists to catch exactly that). Steps 3–4 run as normal. |
-| `light-code` | none | Strict whole-tree battery (empty `precommit_scope`) | Small code diff (`pr_delta.light_wrapup_decision`: under `LIGHT_WRAPUP_LINE_THRESHOLD`, **no added files bar `changelog.d/` fragments** — the prior-art gate stays independent, and a fragment poses it no question while another gate compels it — no `src/` path, nothing high-blast-radius). Reporters skipped; Step 3.92 authors the **short-form** wrap-up (`wrapup-mode: light` header + one-line rationale + the classifier's reasons verbatim; squash message still mandatory). Never agent discretion: `block_unverified_pr_create` re-runs `forge-pr-plan` at `gh pr create` and blocks unless it agrees — classifier missing/erroring/disagreeing → full wrap-up applies. Skip the `/code-review` offer (no reporter round to overlap); say so in the wrap-up. |
-| `delta` | none | none | An existing PR's prior wrap-up carries a `verified-at:` SHA and the diff since it is small and out of high-blast-radius paths — **skip Step 1 entirely**, jump to Step 4 (`pr-manager` posts a delta comment + refreshed squash comment; orchestration detail in [`pr-manager.md` "Task: Verification (Wrap-up)"](../../agents/pr-manager.md#task-verification-wrap-up)). |
+| `light-docs` | `docs-types-checker` only | `forge-precommit --only <precommit_scope>` (changelog + doc gates; add other path-relevant steps as applicable) | Whole diff is doc-shaped, nothing high-blast-radius. Steps 3–4 run as normal; `compose` marks the skipped reporters `SKIPPED (light-docs)`. Residuals documented in `pr_delta.docs_only_diff`: path-string classification only — docs-types-checker + human review stay reviewers of record. |
+| `light-regen` | none — **after earning it** | The provenance gates in `precommit_scope` | **Eligibility only** (resync PRs: every path in `pr_delta.MANAGED_REGEN_PATHS`). **Earn** the escape: `forge-precommit --only foundation_md_check,cli_reference_check,api_digest_check`. Every gate passes (absent-file skips fine) → skip all three reporters; `compose` re-runs the gates and embeds their output verbatim as evidence (it refuses when a gate fails). **Any gate FAILS → full round, no exceptions** (covers the editable-install self-reference case and hand-edits to managed files — the byte check exists to catch exactly that). Steps 3–4 run as normal. |
+| `light-code` | none | Strict whole-tree battery (empty `precommit_scope`) | Small code diff (`pr_delta.light_wrapup_decision`: under `LIGHT_WRAPUP_LINE_THRESHOLD`, **no added files bar `changelog.d/` fragments** — the prior-art gate stays independent, and a fragment poses it no question while another gate compels it — no `src/` path, nothing high-blast-radius). Reporters skipped; Step 3.92's `compose` writes the light wrap-up (`wrapup-mode: light`, reporter sections `SKIPPED (light-code)`, the classifier's reasons as the Recommendation; squash message still mandatory). Never agent discretion: `block_unverified_pr_create` re-runs `forge-pr-plan` at `gh pr create` and blocks unless it agrees — classifier missing/erroring/disagreeing → full wrap-up applies. Skip the `/code-review` offer (no reporter round to overlap); say so in the wrap-up. |
+| `delta` | none | none | An existing PR's prior wrap-up carries a `verified-at:` SHA and the diff since it is small and out of high-blast-radius paths — **skip Step 1 entirely**, jump to Step 3.92 with `compose --pr <PR#>` (it renders the delta wrap-up), then Step 4 posts it and a refreshed squash comment. |
 | `full` | all three below | Strict whole-tree battery (empty `precommit_scope`) | The default round. |
 
 On `mode: full` (and after a failed `light-regen` earn), run the three
@@ -288,20 +289,28 @@ the rest of Steps 2–3.5; summarize the delta decision instead.)
 
 The wrap-up and squash-merge message are **written now**, from the Step 1
 reports and fix dispositions — publication is the last act, and nothing
-about authoring needs a PR. Delegate to `pr-manager` ("author wrap-up"
-task): it composes the full wrap-up comment body (all Step 4 sections,
-including CI Status marked "pending — PR not yet published") and the
-squash-merge message, and writes the wrap-up to
-**`code_health/pr_wrapup.md`**, first line `verified-at: <HEAD sha>`.
+about authoring needs a PR. Save each reporter report to a file, then:
+
+```bash
+forge-pr-wrapup compose --base origin/<base> \
+    --design <file> --security <file> --docs <file> [--prior-art <file>]
+```
+
+It writes **`code_health/pr_wrapup.md`** with every mechanical part
+rendered — first line `verified-at: <HEAD sha>`, the mode line, skipped
+or clean reporter sections, Issue Management, Code Quality from the
+latest pre-commit run, CI Status "pending — PR not yet published" — and
+`<!-- forge:fill … -->` slots for the judgment parts; it refuses when a
+required report is missing. Delegate the slots to `pr-manager` ("fill
+wrap-up slots" task) together with the squash-merge message, which it
+returns and never embeds in the wrap-up. `forge-pr-wrapup validate`
+refuses any unfilled slot.
 
 The `block_unverified_pr_create` hook enforces this: `gh pr create` is
 blocked unless `code_health/pr_wrapup.md` names the current `HEAD` —
 authoring at one SHA and publishing another re-runs this step. On
-`mode: light-code` the wrap-up is the short form instead — first line
-`verified-at: <HEAD sha>`, second line `wrapup-mode: light`, then a
-one-line rationale, the classifier's `reasons` verbatim, and the squash
-message (still mandatory) — and the hook re-runs `forge-pr-plan`
-fail-closed before letting the create through. When the
+`mode: light-code` `compose` writes `wrapup-mode: light`, and the hook
+re-runs `forge-pr-plan` fail-closed before letting the create through. When the
 user explicitly asks to skip the gate, prefix the create command with
 `FORGE_SKIP_WRAPUP_GATE=1` — never on the agent's own judgment.
 Promotion PRs self-exempt only with provenance: the `release/vX.Y.Z`
@@ -313,7 +322,7 @@ merely named `release/*` stays gated.
 source files, the wrap-up MUST embed a `prior-art-searched:` block (the
 `forge:prior-art` report for those additions — FOUNDATION §3 requires
 it BEFORE writing; run it retroactively now if it was skipped, and say
-so). Authoring refuses to complete without it: a file-adding PR with no
+so). `compose` refuses such a diff without `--prior-art`: a file-adding PR with no
 recorded prior-art search is exactly the placement failure the agent
 exists to prevent.
 
@@ -344,32 +353,30 @@ Verification is done, fixes are committed, and the wrap-up is authored
 3. **Draft opened in Step 0** → `gh pr ready <PR#>` — unless the user asked
    to keep it draft.
 
-## Step 4: Post via `pr-manager` (MANDATORY)
+## Step 4: Post with the CLIs (MANDATORY)
 
-16. Delegate posting. The wrap-up and squash message were **authored in
-    Step 3.92** — `pr-manager` posts them; it does NOT re-run the
-    verification agents, the test suite, or the pre-commit battery —
-    every result gathered above is passed to it with the SHA it was
-    gathered at, and re-running them is what stalls finalization (pass
-    the Step 1 reports verbatim only if 3.92
-    was somehow skipped — see [agents/pr-manager.md "Supplied
-    evidence"](../../agents/pr-manager.md)).
+16. Posting needs no agent — both comments were authored in Step 3.92,
+    and nothing is re-run here:
 
+    ```bash
+    forge-pr-wrapup post --pr <PR#>
+    forge-pr-squash-comment --pr <PR#> --title "<title>" \
+        --bullet "<b1>" --bullet "<b2>" --bullet "<b3>"
     ```
-    Agent(subagent_type="forge:pr-manager", prompt="Post the finalization
-    comments for PR #<number>. The wrap-up body is in
-    code_health/pr_wrapup.md (authored pre-publication at this HEAD);
-    refresh its CI Status line to the status as of posting — never wait
-    for CI; when CI has not completed, say so plainly (FOUNDATION §6).
-    Post it via forge-pr-wrapup post (the validator refuses narration;
-    superseded wrap-ups collapse), then post the squash-merge message via
-    forge-pr-squash-comment, check issue-closing wiring, and append the
-    CONTINUATION record.")
-    ```
+
+    `forge-pr-wrapup post` validates the wrap-up and **refuses (exit 3)**
+    when its `verified-at:` is not the PR head, or the branch conflicts
+    with or is behind its base (an emergency wrap-up may be behind) — it
+    names the fix (merge the base, re-verify with `/pr <PR#>`) and never
+    merges. Otherwise it refreshes CI Status (never waiting for CI) and
+    Issue Management from GitHub, posts, collapses superseded wrap-ups,
+    keeps the squash comment newest, and appends the CONTINUATION record.
+    Then post the squash-merge message; a non-zero exit names the broken
+    rule.
 
 ### Squash-merge message hard rules
 
-The `pr-manager` agent enforces (verify before approving its output):
+`forge-pr-squash-comment` enforces (check the bullets before posting):
 - **Maximum 50 words.** If over, rewrite tighter.
 - **3–5 bullet points.** Not 6, not 2.
 - **Conventional commit format** for the title line: `<type>: <brief description>`
@@ -392,7 +399,7 @@ The squash-merge message becomes the permanent commit message on `main`.
 
 ## Step 6: Update CONTINUATION state
 
-18. The `pr-manager` agent appends a one-line activity record to `.plan/CONTINUATION.md` automatically (gitignored).
+18. `forge-pr-wrapup post` appends a one-line activity record to `.plan/CONTINUATION.md` (gitignored).
 
 ## Step 7: Background PR monitor (default)
 
@@ -405,7 +412,7 @@ The squash-merge message becomes the permanent commit message on `main`.
 ## Rules
 
 - Do NOT auto-merge unless the user explicitly asks.
-- Both the squash-merge message and wrap-up comment are MANDATORY — `pr-manager` enforces this.
+- Both the squash-merge message and wrap-up comment are MANDATORY — `forge-pr-wrapup` and `forge-pr-squash-comment` refuse invalid ones.
 - The Step 3.9 terminal run summary is MANDATORY on the full path (skipped only by the delta-mode short-circuit) — subagent reports never reach the user; this is the run's only terminal-visible account.
 - NEVER add Claude/AI attribution in any PR content.
 - If `$ARGUMENTS` contains a PR number, use it instead of auto-detecting.

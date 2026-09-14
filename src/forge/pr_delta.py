@@ -162,6 +162,68 @@ def extract_verified_shas(text: str) -> list[str]:
     return [m.group("sha") for m in VERIFIED_AT_RE.finditer(text)]
 
 
+_FENCE_RE: Final[re.Pattern[str]] = re.compile(r"^\s*(```|~~~)")
+
+# GitHub's closing keywords. Each issue needs its own keyword: in
+# `Closes #1, #2` only #1 is linked, so a bare `#N` never counts.
+_CLOSING_KEYWORD: Final[str] = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
+_CLOSING_ITEM_RE: Final[re.Pattern[str]] = re.compile(
+    rf"\b{_CLOSING_KEYWORD}\s+#(\d+)\b", re.IGNORECASE
+)
+_CLOSING_LINE_RE: Final[re.Pattern[str]] = re.compile(
+    rf"^{_CLOSING_KEYWORD}\s+#\d+(?:[\s,]+(?:{_CLOSING_KEYWORD}\s+)?#\d+)*$",
+    re.IGNORECASE,
+)
+
+
+def strip_fences(lines: list[str]) -> list[str]:
+    """Return *lines* without fenced code blocks (fence lines included).
+
+    Fenced blocks carry quoted tool output — never prose a wrap-up budget
+    should count, and never a closing keyword GitHub would act on.
+
+    Args:
+        lines: List of markdown lines.
+
+    Returns:
+        Lines with fenced code blocks (and their delimiters) removed.
+    """
+    kept: list[str] = []
+    inside = False
+    for line in lines:
+        if _FENCE_RE.match(line):
+            inside = not inside
+            continue
+        if not inside:
+            kept.append(line)
+    return kept
+
+
+def find_closing_refs(text: str) -> list[int]:
+    """Return the issue numbers a PR body or commit message would close.
+
+    Only a line whose whole content is closing items counts — the form
+    `pr-manager` and `/next` already require, because a keyword inside a
+    sentence or behind a list marker is easy to miss when reviewing.
+
+    Args:
+        text: PR body, commit messages, or any markdown.
+
+    Returns:
+        Issue numbers in first-appearance order, without duplicates.
+    """
+    refs: list[int] = []
+    for line in strip_fences(text.splitlines()):
+        stripped = line.strip()
+        if not _CLOSING_LINE_RE.match(stripped):
+            continue
+        for number in _CLOSING_ITEM_RE.findall(stripped):
+            ref = int(number)
+            if ref not in refs:
+                refs.append(ref)
+    return refs
+
+
 def touches_high_blast_radius(changed_paths: list[str]) -> list[str]:
     """Return the subset of *changed_paths* under :data:`HIGH_BLAST_RADIUS_PATHS`.
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge.pr_delta import (
     DELTA_LINE_THRESHOLD,
     DOCS_ONLY_GLOBS,
@@ -17,10 +19,12 @@ from forge.pr_delta import (
     delta_decision,
     docs_only_diff,
     extract_verified_shas,
+    find_closing_refs,
     light_wrapup_decision,
     non_fragment_adds,
     regen_commands,
     regen_only_diff,
+    strip_fences,
     touches_high_blast_radius,
     touches_source_paths,
 )
@@ -488,3 +492,111 @@ def test_light_wrapup_decision_case_variant_fragment_add_refuses() -> None:
     assert use_light is False
     assert "Changelog.D/thing.fixed.md" in reason
     assert "prior-art" in reason
+
+
+# ---------------------------------------------------------------------------
+# strip_fences
+# ---------------------------------------------------------------------------
+
+
+def test_strip_fences_removes_a_backtick_block_including_its_delimiters() -> None:
+    """A fenced block (delimiters included) is dropped; surrounding lines survive."""
+    lines = ["before", "```", "inside the fence", "```", "after"]
+    assert strip_fences(lines) == ["before", "after"]
+
+
+def test_strip_fences_removes_a_tilde_block_too() -> None:
+    """``~~~`` fences (the other CommonMark fence style) are recognized too."""
+    lines = ["before", "~~~", "inside the fence", "~~~", "after"]
+    assert strip_fences(lines) == ["before", "after"]
+
+
+def test_strip_fences_drops_everything_after_an_unclosed_fence() -> None:
+    """An unclosed fence swallows the rest of the text — the safe default.
+
+    Treating unterminated fenced content as still-fenced (rather than
+    reverting to prose) means a malformed block can only hide MORE lines
+    from the closing-keyword scan and the word budget, never leak content
+    that should have stayed hidden.
+    """
+    lines = ["before", "```", "Closes #1", "never closed"]
+    assert strip_fences(lines) == ["before"]
+
+
+# ---------------------------------------------------------------------------
+# find_closing_refs
+# ---------------------------------------------------------------------------
+
+
+def test_find_closing_refs_bare_keyword_line() -> None:
+    """A bare ``Closes #N`` line on its own counts."""
+    assert find_closing_refs("Closes #12\n") == [12]
+
+
+@pytest.mark.parametrize(
+    "keyword",
+    [
+        "close",
+        "closes",
+        "closed",
+        "fix",
+        "fixes",
+        "fixed",
+        "resolve",
+        "resolves",
+        "resolved",
+    ],
+)
+def test_find_closing_refs_recognizes_every_github_keyword_case_insensitively(
+    keyword: str,
+) -> None:
+    """Every one of GitHub's nine closing keywords is recognized, any case.
+
+    Args:
+        keyword: One of GitHub's closing-keyword forms.
+    """
+    assert find_closing_refs(f"{keyword.upper()} #7\n") == [7]
+
+
+def test_find_closing_refs_only_the_number_with_its_own_keyword_counts() -> None:
+    """``Closes #1, #2`` links only #1 — GitHub requires a keyword per number."""
+    assert find_closing_refs("Closes #1, #2\n") == [1]
+
+
+def test_find_closing_refs_repeated_keyword_counts_every_number() -> None:
+    """``Closes #1, closes #2`` — each number has its own keyword, both count."""
+    assert find_closing_refs("Closes #1, closes #2\n") == [1, 2]
+
+
+def test_find_closing_refs_addresses_is_not_a_closing_keyword() -> None:
+    """``Addresses #N`` is GitHub's non-closing cross-reference — never counted."""
+    assert find_closing_refs("Addresses #3\n") == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- Closes #1",
+        "* Closes #1",
+        "1. Closes #1",
+        "**Closes #1**",
+    ],
+)
+def test_find_closing_refs_decorated_lines_do_not_count(line: str) -> None:
+    """A list-prefixed or bold-decorated line is not a bare closing line.
+
+    Args:
+        line: A decorated variant of an otherwise-valid closing line.
+    """
+    assert find_closing_refs(f"{line}\n") == []
+
+
+def test_find_closing_refs_ignores_a_fenced_block() -> None:
+    """A closing keyword quoted inside a fenced code block is not counted."""
+    text = "Closes #1\n```\nCloses #99\n```\n"
+    assert find_closing_refs(text) == [1]
+
+
+def test_find_closing_refs_deduplicates_repeated_refs() -> None:
+    """The same issue number closed twice is reported once, first-appearance order."""
+    assert find_closing_refs("Closes #5\nFixes #5\n") == [5]

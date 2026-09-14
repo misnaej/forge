@@ -2784,7 +2784,7 @@ def _validate_step_names(names: Sequence[str]) -> None:
         raise ValueError(msg)
 
 
-def _resolve_steps(
+def resolve_steps(
     repo_root: Path,
     *,
     skip: Sequence[str] = (),
@@ -2832,7 +2832,7 @@ def run_all(
 ) -> list[StepResult]:
     """Run the resolved step sequence in order and return their results.
 
-    The sequence is resolved from the registry via :func:`_resolve_steps`
+    The sequence is resolved from the registry via :func:`resolve_steps`
     (``[tool.forge.precommit] enable/disable`` plus ``skip`` / ``only``).
     ``step_auto_rebuild`` runs first (heals a stale editable install before
     ``step_env_sync``'s freshness gate would block on it); ``step_regen_docs``
@@ -2859,7 +2859,7 @@ def run_all(
     root = repo_root if repo_root is not None else get_repo_root()
     results: list[StepResult] = []
     this_module = sys.modules[__name__]
-    for step_def in _resolve_steps(root, skip=skip, only=only):
+    for step_def in resolve_steps(root, skip=skip, only=only):
         # Resolve each step by name through the module namespace rather than
         # calling ``step_def.fn`` directly. The registry captured the
         # original function objects at import time, so a test that does

@@ -6,7 +6,7 @@
 # unit-tested in `test_pr_delta.py`, so here the concern is `pr_plan`'s
 # composition (diff extraction, mode precedence, `classified_at` stamping).
 # Only the delta path's `gh` seam (`_latest_verified_sha`), the
-# `wrapup_freshness()` / `--freshness` `gh` seam (`_gh_pr_view`), and
+# `wrapup_freshness()` / `--freshness` `gh` seam (`gh_pr_view`), and
 # `main()`'s `repo_root` seam are monkeypatched, since those touch real
 # subprocesses.
 """
@@ -307,7 +307,7 @@ def test_classify_modified_source_path_returns_full(tmp_path: Path) -> None:
 def test_classify_renamed_file_returns_full(tmp_path: Path) -> None:
     """A rename-plus-edit disqualifies light-code — `--find-renames` catches it.
 
-    `_added_paths` uses `--diff-filter=ACR`, not the narrower `A`: a rename
+    `added_paths` uses `--diff-filter=ACR`, not the narrower `A`: a rename
     is a new module in a new place exactly as an add is, and the
     prior-art gate must run on it too.
     """

@@ -190,7 +190,7 @@ def _changed_paths(
     return [line for line in out.splitlines() if line]
 
 
-def _added_paths(root: Path, diff_range: str) -> list[str]:
+def added_paths(root: Path, diff_range: str) -> list[str]:
     """Return the new paths across *diff_range* (``--diff-filter=ACR``).
 
     The light-code class excludes file-adding diffs outright — the
@@ -249,7 +249,7 @@ def _line_count(root: Path, diff_range: str, pathspec: list[str] | None = None) 
     return total
 
 
-def _gh_pr_view(
+def gh_pr_view(
     pr_number: int, json_fields: str, *, jq: str | None = None
 ) -> str | None:
     """Run ``gh pr view N --json <fields>`` and return its stdout, or ``None``.
@@ -316,7 +316,7 @@ def _latest_verified_sha(pr_number: int) -> str | None:
         The newest comment's header SHA per :func:`_newest_header_sha`, or
         ``None`` when unavailable.
     """
-    out = _gh_pr_view(pr_number, "comments")
+    out = gh_pr_view(pr_number, "comments")
     if out is None:
         return None
     try:
@@ -346,7 +346,7 @@ def wrapup_freshness(pr_number: int) -> WrapupFreshness:
         carries a ``verified-at:`` line — an unknown head can never be
         reported stale, since a false alert costs a needless refresh.
     """
-    out = _gh_pr_view(pr_number, "headRefOid,comments")
+    out = gh_pr_view(pr_number, "headRefOid,comments")
     if out is None:
         return WrapupFreshness(fresh=None, reason="gh pr view failed; skip")
     try:
@@ -529,7 +529,7 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
             classified_at=head,
         )
 
-    added = _added_paths(root, f"{base}...HEAD")
+    added = added_paths(root, f"{base}...HEAD")
     use_light, why = light_wrapup_decision(
         line_count=_line_count(root, f"{base}...HEAD"),
         changed_paths=paths,

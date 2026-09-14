@@ -159,12 +159,12 @@ def _provenance_evidence(root: Path) -> tuple[bool, str]:
     return run_gate_evidence(
         root,
         gates,
-        pass_headline=(
+        success_headline=(
             "✅ **Regen byte-verified against the installed forge package** "
             f"(`forge-precommit --only {gates}`) — the same evidence the "
             "`/pr` regen-verified light path uses."
         ),
-        fail_headline=(
+        failure_headline=(
             "⚠️ **Provenance gates FAILED — full review required; do not "
             "take the regen-verified light path.**"
         ),

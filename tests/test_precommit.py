@@ -1768,7 +1768,7 @@ def test_validate_step_names_rejects_unknown() -> None:
 
 def test_resolve_steps_default_excludes_opt_in(tmp_path: Path) -> None:
     """The default run set is the default-on steps; opt-in steps stay out."""
-    names = _names(precommit._resolve_steps(tmp_path))
+    names = _names(precommit.resolve_steps(tmp_path))
     assert "ruff" in names
     assert "doctest" not in names
     assert "typecheck" not in names
@@ -1779,13 +1779,13 @@ def test_resolve_steps_default_excludes_opt_in(tmp_path: Path) -> None:
 def test_resolve_steps_enable_adds_opt_in(tmp_path: Path) -> None:
     """`[tool.forge.precommit] enable` opts a normally-off step in."""
     _write_pyproject(tmp_path, '[tool.forge.precommit]\nenable = ["doctest"]\n')
-    assert "doctest" in _names(precommit._resolve_steps(tmp_path))
+    assert "doctest" in _names(precommit.resolve_steps(tmp_path))
 
 
 def test_resolve_steps_disable_removes_default(tmp_path: Path) -> None:
     """`[tool.forge.precommit] disable` force-skips a default step."""
     _write_pyproject(tmp_path, '[tool.forge.precommit]\ndisable = ["pip_audit"]\n')
-    assert "pip_audit" not in _names(precommit._resolve_steps(tmp_path))
+    assert "pip_audit" not in _names(precommit.resolve_steps(tmp_path))
 
 
 def test_resolve_steps_disable_beats_enable(tmp_path: Path) -> None:
@@ -1794,24 +1794,24 @@ def test_resolve_steps_disable_beats_enable(tmp_path: Path) -> None:
         tmp_path,
         '[tool.forge.precommit]\nenable = ["doctest"]\ndisable = ["doctest"]\n',
     )
-    assert "doctest" not in _names(precommit._resolve_steps(tmp_path))
+    assert "doctest" not in _names(precommit.resolve_steps(tmp_path))
 
 
 def test_resolve_steps_skip_removes(tmp_path: Path) -> None:
     """The `skip` argument removes a step for this run only."""
-    assert "ruff" not in _names(precommit._resolve_steps(tmp_path, skip=["ruff"]))
+    assert "ruff" not in _names(precommit.resolve_steps(tmp_path, skip=["ruff"]))
 
 
 def test_resolve_steps_only_overrides_in_registry_order(tmp_path: Path) -> None:
     """`only=[...]` runs exactly those steps, ordered by the registry not the arg."""
-    resolved = _names(precommit._resolve_steps(tmp_path, only=["pip_audit", "ruff"]))
+    resolved = _names(precommit.resolve_steps(tmp_path, only=["pip_audit", "ruff"]))
     assert resolved == ["ruff", "pip_audit"]
 
 
 def test_resolve_steps_only_still_honors_skip(tmp_path: Path) -> None:
     """`skip` subtracts from the `only` set too — it is never silently ignored."""
     resolved = _names(
-        precommit._resolve_steps(
+        precommit.resolve_steps(
             tmp_path, only=["ruff", "pip_audit"], skip=["pip_audit"]
         )
     )
@@ -1821,7 +1821,7 @@ def test_resolve_steps_only_still_honors_skip(tmp_path: Path) -> None:
 def test_resolve_steps_unknown_name_raises(tmp_path: Path) -> None:
     """An unknown name in config / skip / only raises ValueError."""
     with pytest.raises(ValueError, match="unknown step name"):
-        precommit._resolve_steps(tmp_path, only=["bogus"])
+        precommit.resolve_steps(tmp_path, only=["bogus"])
 
 
 def test_split_csv_flattens_repeats_and_commas() -> None:
@@ -3103,7 +3103,7 @@ def test_step_auto_rebuild_precedes_env_sync_in_registry(tmp_path: Path) -> None
     it, and plugin_sync (a sibling install-surface gate) follows immediately
     after — the ordering is the design contract, not an implementation detail.
     """
-    resolved = precommit._resolve_steps(tmp_path)
+    resolved = precommit.resolve_steps(tmp_path)
     names = [d.name for d in resolved]
     assert names[0] == "auto_rebuild"
     assert names[1] == "env_sync"
@@ -6497,7 +6497,7 @@ def test_main_freshness_only_filters_by_log_basename_without_step_registry_valid
     `audit_summary` names no real precommit step (it is the
     `forge-audit-all` orchestrator's own summary log), and `not_a_step`
     names nothing at all — the ordinary `--only` path raises `ValueError`
-    for an unknown step name via `_resolve_steps`, but `--freshness`
+    for an unknown step name via `resolve_steps`, but `--freshness`
     filters logs directly and must not reach that validation.
     """
     init_git_repo(tmp_path)

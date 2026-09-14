@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 977 symbols._
+_73 modules, 1009 symbols._
 
 ## `forge`
 
@@ -375,7 +375,7 @@ _72 modules, 977 symbols._
 - `_render_digest(acc: dict[str, tuple[int, int, int, int, set[str]]]) -> list[str]` _(internal)_ — Render accumulators back into sorted digest lines.
 - `_partition_recent(recent: list[str], head: str, *, max_entries: int, cutoff: str) -> tuple[list[str], list[str], int]` _(internal)_ — Partition recent entries into keep/overflow with floor/cap constraints.
 - `_rotate(path: Path, archive: Path, *, max_entries: int, max_age_days: int) -> None` _(internal)_ — Rotate aged/overflowing recent entries into digest + archive.
-- `main() -> int` — Append one activity-log line and/or rotate the ledger tail.
+- `main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int` — Append one activity-log line and/or rotate the ledger tail.
 
 ## `forge.doctor`
 
@@ -633,13 +633,15 @@ _72 modules, 977 symbols._
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True, env: Mapping[str, str] | None = None) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `_fallback_identity_args(repo_root: Path) -> list[str]` _(internal)_ — Return ``-c`` identity flags when git has no usable committer identity.
 - `create_annotated_tag(repo_root: Path, tag: str, *, commit: str = 'HEAD', force: bool = False) -> None` — Create annotated *tag* at *commit*, surviving identity-less runners.
-- `run_gate_evidence(repo_root: Path, gates: str, *, pass_headline: str, fail_headline: str, section_title: str) -> tuple[bool, str]` — Run ``forge-precommit --only`` gates and format PR-body evidence.
+- `run_gate_evidence(repo_root: Path, gates: str, *, success_headline: str, failure_headline: str, section_title: str) -> tuple[bool, str]` — Run ``forge-precommit --only`` gates and format PR-body evidence.
 - `find_open_pr_by_head_prefix(repo_root: Path, prefix: str) -> str | None` — Return the URL of an open PR whose head branch starts with *prefix*.
 - `create_commit(repo_root: Path, message: str) -> None` — Commit the staged index, surviving identity-less runners.
 - `resolve_current_branch(repo_root: Path) -> tuple[str, str] | None` — Return the current branch name and where it came from, or ``None``.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
 - `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
 - `unmerged_paths(repo_root: Path) -> list[str]` — Return the repo-relative paths currently in an unmerged index state.
+- `fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool` — Fetch *refspec* from *remote* without ever prompting for credentials.
+- `behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None` — Return how many commits HEAD is behind and ahead of *base_ref*.
 - `has_conflict_markers(text: str) -> bool` — Return whether *text* contains unresolved git conflict markers.
 - `file_has_conflict_markers(path: Path) -> bool` — Return whether the file at *path* holds unresolved conflict markers.
 - `resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref diff-scoped checks should compare against, origin-first.
@@ -840,6 +842,8 @@ _72 modules, 977 symbols._
 > _pr_delta — thresholds and helpers for pr-manager finalization short-circuits._
 
 - `extract_verified_shas(text: str) -> list[str]` — Return every ``verified-at:`` SHA referenced in *text*.
+- `strip_fences(lines: list[str]) -> list[str]` — Return *lines* without fenced code blocks (fence lines included).
+- `find_closing_refs(text: str) -> list[int]` — Return the issue numbers a PR body or commit message would close.
 - `touches_high_blast_radius(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`HIGH_BLAST_RADIUS_PATHS`.
 - `configured_docs_only_globs(repo_root: Path) -> tuple[str, ...]` — Return the consumer's extra docs-only globs from ``[tool.forge.pr]``.
 - `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
@@ -858,9 +862,9 @@ _72 modules, 977 symbols._
 - `class PrPlan` — The finalization plan for one classification run.
 - `class WrapupFreshness` — Whether a PR's newest posted wrap-up still describes its head.
 - `_changed_paths(root: Path, diff_range: str, pathspec: list[str] | None = None) -> list[str]` _(internal)_ — Return the repo-relative paths changed across *diff_range*.
-- `_added_paths(root: Path, diff_range: str) -> list[str]` _(internal)_ — Return the new paths across *diff_range* (``--diff-filter=ACR``).
+- `added_paths(root: Path, diff_range: str) -> list[str]` — Return the new paths across *diff_range* (``--diff-filter=ACR``).
 - `_line_count(root: Path, diff_range: str, pathspec: list[str] | None = None) -> int` _(internal)_ — Return insertions + deletions across *diff_range*.
-- `_gh_pr_view(pr_number: int, json_fields: str, *, jq: str | None = None) -> str | None` _(internal)_ — Run ``gh pr view N --json <fields>`` and return its stdout, or ``None``.
+- `gh_pr_view(pr_number: int, json_fields: str, *, jq: str | None = None) -> str | None` — Run ``gh pr view N --json <fields>`` and return its stdout, or ``None``.
 - `_newest_header_sha(comments: list[dict[str, object]]) -> str | None` _(internal)_ — Return the header ``verified-at:`` SHA of the newest comment carrying one.
 - `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.
 - `wrapup_freshness(pr_number: int) -> WrapupFreshness` — Compare the PR's newest ``verified-at:`` SHA against its current head.
@@ -890,7 +894,6 @@ _72 modules, 977 symbols._
 
 > _forge-pr-wrapup — validate and post the PR wrap-up comment, retiring older ones._
 
-- `_strip_fences(lines: list[str]) -> list[str]` _(internal)_ — Return *lines* without fenced code blocks (fence lines included).
 - `_split(text: str) -> tuple[list[str], list[tuple[str, list[str]]]]` _(internal)_ — Split the body into its head and its ``## `` sections, in order.
 - `_prior_art_block(head: list[str]) -> set[int]` _(internal)_ — Return the indexes of the ``prior-art-searched:`` block within *head*.
 - `_check_head(head: list[str]) -> list[str]` _(internal)_ — Validate the header contract and the single summary line.
@@ -902,7 +905,41 @@ _72 modules, 977 symbols._
 - `validate_wrapup(text: str) -> list[str]` — Return every rule the wrap-up *text* breaks (empty means valid).
 - `_collapse(existing: list[dict[str, object]], new_sha: str) -> int` _(internal)_ — Fold every earlier wrap-up into a ``<details>`` block, once.
 - `post_wrapup(pr_number: int, body: str) -> int` — Post *body* as the PR's wrap-up, retiring the ones it supersedes.
-- `main(argv: list[str] | None = None) -> int` — Run ``validate`` or ``post``.
+- `_section_bounds(lines: list[str], title: str) -> tuple[int, int] | None` _(internal)_ — Return the ``(heading, end)`` line indexes of section *title*.
+- `refresh_sections(text: str, *, ci_status: str, issue_management: str) -> str` — Replace the CI Status and Issue Management bodies, leaving the rest as is.
+- `post_gates(view: Mapping[str, object], verified_sha: str, *, behind: int | None, emergency: bool) -> tuple[list[str], list[str]]` — Decide whether a wrap-up may be published on the PR as it is now.
+- `_read_optional(path: Path | None) -> str | None` _(internal)_ — Read *path* when given.
+- `_load_plan(root: Path, args: argparse.Namespace) -> tuple[str, tuple[str, ...], tuple[str, ...]]` _(internal)_ — Return the plan's ``(mode, reporters, reasons)``.
+- `_code_quality(root: Path) -> str` _(internal)_ — Render Code Quality from the timing log and each log's freshness.
+- `_pr_view(pr_number: int, fields: str) -> dict[str, object] | None` _(internal)_ — Return parsed ``gh pr view`` JSON, or ``None`` when unavailable.
+- `_branch_messages(root: Path, base_ref: str) -> str` _(internal)_ — Return the commit messages on HEAD since *base_ref*.
+- `_gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs` _(internal)_ — Collect everything ``compose`` renders from.
+- `_cmd_compose(args: argparse.Namespace) -> int` _(internal)_ — Write ``code_health/pr_wrapup.md`` with slots for the author to fill.
+- `_cmd_post(args: argparse.Namespace, text: str, path: Path) -> int` _(internal)_ — Gate, refresh, post and record a validated wrap-up.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the ``forge-pr-wrapup`` argument parser.
+- `main(argv: list[str] | None = None) -> int` — Run ``compose``, ``validate`` or ``post``.
+
+## `forge.pr_wrapup_compose`
+
+> _pr_wrapup_compose — render a PR wrap-up's mechanical parts, with slots for judgment._
+
+- `class ComposeError` — Raised when the inputs cannot yield an honest wrap-up (evidence missing).
+- `slot(name: str) -> str` — Return the fill-in marker line for slot *name*.
+- `class ComposeInputs` — Everything a wrap-up is rendered from, gathered by the caller.
+- `_report_line(report_text: str, head_sha: str) -> str | None` _(internal)_ — Return a clean report's PASS line, or ``None`` when it has findings.
+- `_reporter_body(reporter: str, inputs: ComposeInputs) -> list[str]` _(internal)_ — Render one reporter section's body lines.
+- `_recommendation(inputs: ComposeInputs) -> str` _(internal)_ — Render the one-line Recommendation, or its slot.
+- `_check_evidence(inputs: ComposeInputs) -> None` _(internal)_ — Refuse inputs that would make the wrap-up claim unverified evidence.
+- `render_wrapup(inputs: ComposeInputs) -> str` — Render the wrap-up markdown with fill-in slots for judgment.
+- `_code_quality_rows(timing_log: str, verdicts: Mapping[str, str]) -> tuple[list[str], set[str], int]` _(internal)_ — Classify the timing log's step rows for the Code Quality line.
+- `_pytest_part(pytest_line: str | None, pytest_verdict: str | None) -> str` _(internal)_ — Render the pytest part of the Code Quality line.
+- `render_code_quality(timing_log: str | None, verdicts: Mapping[str, str], expected_steps: Sequence[str], *, pytest_line: str | None, pytest_verdict: str | None) -> str` — Render the one-line Code Quality status, by exception.
+- `pytest_summary_line(log_text: str | None) -> str | None` — Return the last pytest summary fragment in *log_text*.
+- `_entry_name(entry: Mapping[str, object]) -> str` _(internal)_ — Return a rollup entry's display name.
+- `summarize_rollup(rollup: Sequence[Mapping[str, object]]) -> str` — Summarize ``gh pr view --json statusCheckRollup`` as one status line.
+- `render_issue_management(closing_refs: Sequence[int], *, pr_body_checked: bool) -> str` — Render the Issue Management line from the closing keywords found.
+- `unfilled_slots(text: str) -> list[str]` — Return the names of every fill-in slot still in *text*.
+- `evidence_fence(block: str) -> str` — Return only the fenced part of a ``run_gate_evidence`` block.
 
 ## `forge.precommit`
 
@@ -971,7 +1008,7 @@ _72 modules, 977 symbols._
 - `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
 - `_format_timing_log(results: list[StepResult]) -> str` _(internal)_ — Render the per-step timing report for ``code_health/precommit_timing.log``.
 - `_validate_step_names(names: Sequence[str]) -> None` _(internal)_ — Raise ``ValueError`` listing any *names* that are not registered steps.
-- `_resolve_steps(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepDef]` _(internal)_ — Resolve which steps to run, in registry order.
+- `resolve_steps(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepDef]` — Resolve which steps to run, in registry order.
 - `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
 - `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
 - `_capped(output: str) -> str` _(internal)_ — Return *output* trimmed to the shared evidence cap.
