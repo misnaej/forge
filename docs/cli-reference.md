@@ -536,17 +536,21 @@ options:
 ## forge-pr-wrapup
 
 ```text
-usage: forge-pr-wrapup [-h] {validate,post} ...
+usage: forge-pr-wrapup [-h] {compose,validate,post} ...
 
-Validate and post the PR wrap-up comment (FOUNDATION §6).
+Compose, validate and post the PR wrap-up comment (FOUNDATION §6).
 
 positional arguments:
-  {validate,post}
-    validate       check a wrap-up body; exit 2 listing violations
-    post           validate, post, collapse superseded wrap-ups
+  {compose,validate,post}
+    compose             write code_health/pr_wrapup.md with slots for the
+                        judgment parts
+    validate            check a wrap-up body; exit 2 listing violations
+    post                validate, refuse a stale/conflicting/behind branch
+                        (exit 3), refresh CI Status and Issue Management,
+                        post, append the CONTINUATION record
 
 options:
-  -h, --help       show this help message and exit
+  -h, --help            show this help message and exit
 ```
 
 ## forge-precommit

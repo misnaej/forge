@@ -1,11 +1,12 @@
 """Tests for ``forge.continuation_append``.
 
 Rotation is covered by two classes of test: behavior-class cases drive
-``main()`` with real files under ``tmp_path`` (matching the module's own
-``sys.argv`` + ``chdir`` invocation style); a few development-class cases
-call the private ``_parse_digests`` / ``_condense_into`` / ``_render_digest``
-helpers directly where the plan calls for pinning classification/sort logic
-independent of file I/O.
+``main()`` with real files under ``tmp_path`` — most via the module's own
+``sys.argv`` + ``chdir`` CLI invocation style, one via the explicit
+``argv`` + ``repo_root`` in-process call ``forge-pr-wrapup post`` uses; a
+few development-class cases call the private ``_parse_digests`` /
+``_condense_into`` / ``_render_digest`` helpers directly where the plan
+calls for pinning classification/sort logic independent of file I/O.
 """
 
 from __future__ import annotations
@@ -105,6 +106,23 @@ def test_creates_file_and_section_when_missing(
     assert continuation_append.FILE_HEADER in content
     assert continuation_append.RECENT_HEADER in content
     assert "abc1234 feat: x" in content
+
+
+def test_main_accepts_explicit_argv_and_repo_root_without_sys_argv_or_chdir(
+    tmp_path: Path,
+) -> None:
+    """`main(argv, repo_root=...)` works without touching `sys.argv`/cwd.
+
+    `forge-pr-wrapup post` calls this in-process with an explicit repo
+    root — the CLI's own `sys.argv` + `Path.cwd()` convention (every other
+    test in this file) must not be the only supported call path.
+    """
+    rc = continuation_append.main(
+        ["--commit", "abc1234", "subject"], repo_root=tmp_path
+    )
+    assert rc == 0
+    content = (tmp_path / ".plan" / "CONTINUATION.md").read_text()
+    assert "abc1234 subject" in content
 
 
 def test_appends_commit_line_with_iso_date(

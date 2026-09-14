@@ -846,7 +846,9 @@ def test_run_git_check_false_failure_returns_empty(tmp_path: Path) -> None:
 
 
 def test_run_git_check_true_failure_logs_git_stderr(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failing git command logs git's captured stderr before re-raising.
 
@@ -856,8 +858,13 @@ def test_run_git_check_true_failure_logs_git_stderr(
     exit code to go on.
 
     ``--verify`` is used to prevent git's passthrough mode (which echoes
-    bare unknown names to stdout with exit 0 instead of failing).
+    bare unknown names to stdout with exit 0 instead of failing). The
+    assertion pins git's own English wording, so the locale is pinned to
+    ``C`` here — ``run_git`` passes no explicit ``env`` for this call, so
+    the subprocess inherits ``os.environ`` (and would otherwise localize
+    the message under e.g. ``LANG=de_DE.UTF-8``).
     """
+    monkeypatch.setenv("LC_ALL", "C")
     _init_git_repo(tmp_path)
     with (
         caplog.at_level(logging.ERROR, logger="forge.git_utils"),
@@ -1985,6 +1992,96 @@ def test_unmerged_paths_lists_conflicted_files_mid_merge(tmp_path: Path) -> None
     )
 
     assert git_utils.unmerged_paths(tmp_path) == ["shared.txt"]
+
+
+# ---------------------------------------------------------------------------
+# fetch_quietly / behind_ahead
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_quietly_returns_false_for_an_unreachable_remote(tmp_path: Path) -> None:
+    """A remote pointing at a nonexistent local path fails cleanly, no hang."""
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(tmp_path / "does-not-exist.git")],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.fetch_quietly(tmp_path, "origin", "main") is False
+
+
+def test_fetch_quietly_sets_git_terminal_prompt_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fetch runs with `GIT_TERMINAL_PROMPT=0` for security.
+
+    A credential prompt never blocks.
+    """
+    captured: dict[str, object] = {}
+
+    def _fake_run_git(*_args: str, **kwargs: object) -> str:
+        captured.update(kwargs)
+        return ""
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    assert git_utils.fetch_quietly(tmp_path, "origin", "main") is True
+    assert captured["env"] == {"GIT_TERMINAL_PROMPT": "0"}
+
+
+def test_fetch_quietly_dash_prefixed_remote_or_refspec_returns_false_without_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `-`-prefixed remote or refspec (option injection) is rejected, no git call."""
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "0\t0\n"})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.fetch_quietly(tmp_path, "-evil", "main") is False
+    assert git_utils.fetch_quietly(tmp_path, "origin", "-evil") is False
+    assert calls == []
+
+
+def test_behind_ahead_real_repo_reports_both_directions(tmp_path: Path) -> None:
+    """A real diverging history reports the correct (behind, ahead) counts."""
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    (tmp_path / "feature.txt").write_text("x\n")
+    commit_all(tmp_path, "feature commit")
+    assert git_utils.behind_ahead(tmp_path, "main") == (0, 1)
+
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=tmp_path, env=_GIT_ENV, check=True
+    )
+    (tmp_path / "main.txt").write_text("y\n")
+    commit_all(tmp_path, "main-only commit")
+    subprocess.run(
+        ["git", "checkout", "-q", "feature"], cwd=tmp_path, env=_GIT_ENV, check=True
+    )
+    assert git_utils.behind_ahead(tmp_path, "main") == (1, 1)
+
+
+def test_behind_ahead_dash_prefixed_ref_returns_none_without_calling_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `-`-prefixed `base_ref` (option injection) is rejected, no git call."""
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "0\t0\n"})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.behind_ahead(tmp_path, "--evil") is None
+    assert calls == []
 
 
 # ---------------------------------------------------------------------------
