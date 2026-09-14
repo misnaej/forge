@@ -4,15 +4,18 @@ Lives at ``tests/conftest.py`` so pytest auto-discovers it. Exposes the
 real-git helpers ``GIT_ENV``, ``init_git_repo`` and ``init_single_track_repo``
 (ephemeral repos for the git-touching suites), the subprocess fakes
 ``FakeProc``, ``CapturedCalls`` and the ``make_fake_run`` factory — used by
-tests that monkeypatch ``subprocess.run`` in any of the forge CLIs — and
+tests that monkeypatch ``subprocess.run`` in any of the forge CLIs —
 ``page_json``, one ``gh api --paginate`` page renderer shared by every
-suite that fakes ``gh_comments.gh_api``.
+suite that fakes ``gh_comments.gh_api``, and the ``# produced-at:``
+provenance-stamp helpers (``PRODUCED_AT_RE``, ``log_body``) shared by every
+suite asserting on a ``code_health/*.log`` writer (FOUNDATION §13).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -42,6 +45,42 @@ GIT_ENV: dict[str, str] = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_SYSTEM": os.devnull,
 }
+
+
+# The ``# produced-at:`` provenance stamp every ``code_health/*.log`` writer
+# prepends as line 1 (FOUNDATION §13, git_utils.build_stamp). One pattern
+# here so every suite asserting on the shape agrees on it, and can pull the
+# ``tree`` / ``head`` / ``when`` fields out of a captured stamp line.
+PRODUCED_AT_RE = re.compile(
+    r"# produced-at: tree=(?P<tree>[0-9a-f]{40}|unknown) "
+    r"head=(?P<head>\S+) (?P<when>\S+)"
+)
+
+
+def log_body(path: Path) -> str:
+    """Return *path*'s content with a leading ``# produced-at:`` stamp stripped.
+
+    Every ``code_health/*.log`` writer now prepends a provenance stamp as
+    line 1 (FOUNDATION §13). Tests asserting a log's exact caller-supplied
+    body read through this helper instead of comparing raw file content,
+    so the assertion holds whether or not the stamp has landed yet —
+    state-tolerant on purpose: only a line 1 actually starting with the
+    marker is stripped, so a log written before the stamp existed (or by
+    a writer this feature doesn't touch) round-trips unchanged.
+
+    Args:
+        path: Log file to read.
+
+    Returns:
+        The file's content with a leading stamp line (and its trailing
+        newline) removed, or the full content unchanged when line 1 is
+        not a ``# produced-at:`` stamp.
+    """
+    text = path.read_text(encoding="utf-8")
+    first_line, sep, rest = text.partition("\n")
+    if sep and first_line.startswith("# produced-at:"):
+        return rest
+    return text
 
 
 @pytest.fixture(autouse=True)

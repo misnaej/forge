@@ -83,14 +83,14 @@ _strip_wrapper_prefix() {
 }
 
 # A full `forge-precommit` run: the bare CLI, not a `--only <step>`
-# refresh. Wrapper prefixes are stripped first, so `FORGE_X=1
-# forge-precommit` counts too.
+# refresh and not a `--freshness` report (which runs no steps). Wrapper
+# prefixes are stripped first, so `FORGE_X=1 forge-precommit` counts too.
 _is_full_precommit() {
     _strip_wrapper_prefix "$1" || return 1
     [ "${STRIPPED%%[[:space:]]*}" = "forge-precommit" ] || return 1
-    # `--only` as its own word (or `--only=<steps>`), never a substring of
-    # some future flag or step name.
-    case " $STRIPPED " in *" --only "*|*" --only="*) return 1 ;; esac
+    # Each flag as its own word (or `--only=<steps>`), never a substring
+    # of some future flag or step name.
+    case " $STRIPPED " in *" --only "*|*" --only="*|*" --freshness "*) return 1 ;; esac
     return 0
 }
 

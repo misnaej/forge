@@ -28,10 +28,11 @@ Check and fix documentation issues in the specified file(s). Ensure docstrings m
 
 1. **Check `code_health/` logs first** (pre-commit hook writes these — avoid re-running if fresh):
    ```bash
+   forge-precommit --freshness --only docstring_verification   # read-only, runs no steps
    cat ./code_health/docstring_verification.log 2>/dev/null
    ```
 
-2. **If the log is stale or missing**, ask the caller to refresh it
+2. **If the log is missing or not `fresh`** (stale, unstamped or unknown), ask the caller to refresh it
    via `forge:precommit-fixer` (which owns the
    `verify-forge-docstrings` invocation per the
    [precommit step ownership](../FOUNDATION.md#13-code_health-convention)).

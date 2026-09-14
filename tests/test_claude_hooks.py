@@ -3497,6 +3497,34 @@ def test_fixer_recon_only_flag_never_counts_toward_cap(tmp_path: Path) -> None:
     assert ledger.count('"event":"precommit_full_run"') == 3
 
 
+def test_fixer_recon_freshness_flag_never_counts_toward_cap(tmp_path: Path) -> None:
+    """`--freshness` read-only queries never count toward the cap, even exhausted.
+
+    BEHAVIOR: `forge-precommit --freshness` runs no steps at all (#538) —
+    the same class of exemption as `--only`'s refreshes, pinned here as
+    its own sibling test since `_is_full_precommit` only excludes
+    `--only` today (a bare `--freshness` call would otherwise be
+    misclassified as the fourth full run and blocked).
+    """
+    init_git_repo(tmp_path)
+    _seed_precommit_ledger(tmp_path, "agent-a", 3)
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
+    proc = _run_hook_proc(
+        _FIXER_RECON,
+        "forge-precommit --freshness",
+        options=HookOptions(
+            agent_type="forge:precommit-fixer",
+            agent_id="agent-a",
+            session_id="sess-1",
+            cwd=tmp_path,
+            env=env,
+        ),
+    )
+    assert proc.returncode == 0
+    ledger = (tmp_path / "code_health" / "agent_timing.jsonl").read_text()
+    assert ledger.count('"event":"precommit_full_run"') == 3
+
+
 def test_fixer_recon_env_prefixed_full_run_counts(tmp_path: Path) -> None:
     """`FORGE_X=1 forge-precommit` (inline env assignment) still counts as full."""
     init_git_repo(tmp_path)
