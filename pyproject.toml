@@ -233,8 +233,8 @@ badge = true
 # bootstrap `readme-badges` step.
 enabled = true
 # Pin the CI badge's workflow. Unset, the generator takes the first
-# workflow alphabetically — which `assemble-release.yml` now wins, so the
-# badge labelled CI would report the release-assembly run instead.
+# workflow alphabetically, so any workflow added ahead of `ci.yml` would
+# silently take over a badge labelled CI. The pin says which run it means.
 workflow = "ci.yml"
 
 [tool.forge.c4]
