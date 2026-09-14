@@ -1153,11 +1153,11 @@ def _gate_evidence(root: Path) -> tuple[bool, str]:
     return run_gate_evidence(
         root,
         gates,
-        pass_headline=(
+        success_headline=(
             f"✅ **Versioning gates pass on the assembled tree** "
             f"(`forge-precommit --only {gates}`)."
         ),
-        fail_headline=(
+        failure_headline=(
             "⚠️ **Versioning gates FAILED on the assembled tree — do not "
             "merge without a full review.**"
         ),

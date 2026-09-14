@@ -2812,7 +2812,7 @@ def _validate_step_names(names: Sequence[str]) -> None:
         raise ValueError(msg)
 
 
-def _resolve_steps(
+def resolve_steps(
     repo_root: Path,
     *,
     skip: Sequence[str] = (),
@@ -2860,7 +2860,7 @@ def run_all(
 ) -> list[StepResult]:
     """Run the resolved step sequence in order and return their results.
 
-    The sequence is resolved from the registry via :func:`_resolve_steps`
+    The sequence is resolved from the registry via :func:`resolve_steps`
     (``[tool.forge.precommit] enable/disable`` plus ``skip`` / ``only``).
     ``step_auto_rebuild`` runs first (heals a stale editable install before
     ``step_env_sync``'s freshness gate would block on it); ``step_regen_docs``
@@ -2887,7 +2887,7 @@ def run_all(
     root = repo_root if repo_root is not None else get_repo_root()
     results: list[StepResult] = []
     this_module = sys.modules[__name__]
-    for step_def in _resolve_steps(root, skip=skip, only=only):
+    for step_def in resolve_steps(root, skip=skip, only=only):
         # Resolve each step by name through the module namespace rather than
         # calling ``step_def.fn`` directly. The registry captured the
         # original function objects at import time, so a test that does
@@ -3029,6 +3029,32 @@ def _forced_steps(only: list[str]) -> Iterator[None]:
 _HISTORY_LOG_SUFFIX = "_history.log"
 
 
+def freshness_verdicts(root: Path) -> dict[str, str]:
+    """Return each ``code_health/`` log's freshness verdict against the working tree.
+
+    A log of a step that checks the environment rather than files reports
+    ``n/a`` — its stamp says nothing about its result. Append-only history
+    logs are left out: they describe no single tree.
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        Log name (without ``.log``) → ``fresh``, ``stale``, ``unstamped``,
+        ``unknown`` or ``n/a``, in name order.
+    """
+    log_dir = root / "code_health"
+    current = working_tree_sha(root)
+    environment_steps = {step.name for step in _STEP_REGISTRY if not step.checks_files}
+    return {
+        path.stem: (
+            "n/a" if path.stem in environment_steps else log_freshness(path, current)
+        )
+        for path in sorted(log_dir.glob("*.log"))
+        if not path.name.endswith(_HISTORY_LOG_SUFFIX)
+    }
+
+
 def _report_freshness(only: list[str], *, as_json: bool) -> int:
     """Report each ``code_health/`` log's freshness against the working tree.
 
@@ -3050,15 +3076,11 @@ def _report_freshness(only: list[str], *, as_json: bool) -> int:
     """
     root = get_repo_root()
     log_dir = root / "code_health"
-    current = working_tree_sha(root)
-    environment_steps = {step.name for step in _STEP_REGISTRY if not step.checks_files}
-    verdicts: dict[str, str] = {}
-    for path in sorted(log_dir.glob("*.log")):
-        if path.name.endswith(_HISTORY_LOG_SUFFIX) or (only and path.stem not in only):
-            continue
-        verdicts[path.stem] = (
-            "n/a" if path.stem in environment_steps else log_freshness(path, current)
-        )
+    verdicts = {
+        name: verdict
+        for name, verdict in freshness_verdicts(root).items()
+        if not only or name in only
+    }
     for name in only:
         if name not in verdicts:
             verdicts[name] = (

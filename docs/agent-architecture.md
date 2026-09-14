@@ -244,6 +244,8 @@ graph LR
   sk_pr -->|invokes, on plugin.json+CHANGELOG conflict| cli_forge_rebump
   sk_pr -->|invokes, Step 0.9 emergency short-circuit| cli_forge_emergency
   sk_pr -->|invokes restrand, on stranded entries| cli_forge_changelog
+  sk_pr -->|invokes compose + post, Steps 3.92 and 4| cli_forge_pr_wrapup
+  sk_pr -->|invokes, Step 4| cli_forge_pr_squash_comment
   sk_pr -->|invokes| design_checker
   sk_pr -->|invokes| security_checker
   sk_pr -->|invokes| docs_types_checker
@@ -252,7 +254,7 @@ graph LR
   sk_pr -->|post-pr triage via| issue_triage
   sk_pr_comments -->|invokes| pr_manager
   pr_manager -->|invokes| cli_forge_pr_squash_comment
-  pr_manager -->|invokes, posts + collapses the wrap-up| cli_forge_pr_wrapup
+  pr_manager -->|invokes, composes + posts the wrap-up| cli_forge_pr_wrapup
   pr_manager -->|invokes| cli_forge_continuation_append
   pr_manager -.->|guarded by| hk_block_pr_merge
   pr_manager -.->|guarded by| hk_block_unverified_pr_create

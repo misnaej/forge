@@ -764,8 +764,8 @@ def run_gate_evidence(
     repo_root: Path,
     gates: str,
     *,
-    pass_headline: str,
-    fail_headline: str,
+    success_headline: str,
+    failure_headline: str,
     section_title: str,
 ) -> tuple[bool, str]:
     """Run ``forge-precommit --only`` gates and format PR-body evidence.
@@ -780,8 +780,8 @@ def run_gate_evidence(
     Args:
         repo_root: Repo root passed to the gate subprocess as cwd.
         gates: Comma-joined step list for ``forge-precommit --only``.
-        pass_headline: Markdown headline when every gate exits 0.
-        fail_headline: Markdown headline on any gate failure.
+        success_headline: Markdown headline when every gate exits 0.
+        failure_headline: Markdown headline on any gate failure.
         section_title: ``##`` section title for the evidence block.
 
     Returns:
@@ -797,7 +797,7 @@ def run_gate_evidence(
         cwd=repo_root,
     )
     passed = proc.returncode == 0
-    headline = pass_headline if passed else fail_headline
+    headline = success_headline if passed else failure_headline
     output = "\n".join(
         part for part in (proc.stdout.strip(), proc.stderr.strip()) if part
     )
@@ -977,6 +977,68 @@ def unmerged_paths(repo_root: Path) -> list[str]:
     """
     raw = run_git("diff", "--name-only", "--diff-filter=U", cwd=repo_root, check=False)
     return [line for line in raw.splitlines() if line.strip()]
+
+
+def fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool:
+    """Fetch *refspec* from *remote* without ever prompting for credentials.
+
+    A caller that only compares against a remote branch must not hang on a
+    credential prompt nobody can answer (FOUNDATION §15): the fetch runs
+    with ``GIT_TERMINAL_PROMPT=0``, and any failure is returned, not raised.
+
+    Args:
+        repo_root: Git repo root.
+        remote: Remote name (e.g. ``origin``).
+        refspec: Branch or refspec to fetch.
+
+    Returns:
+        ``True`` when the fetch succeeded; ``False`` otherwise, including a
+        dash-prefixed argument (never passed to git as an option).
+    """
+    if remote.startswith("-") or refspec.startswith("-"):
+        return False
+    try:
+        run_git(
+            "fetch",
+            "--quiet",
+            remote,
+            refspec,
+            cwd=repo_root,
+            env={"GIT_TERMINAL_PROMPT": "0"},
+            log_errors=False,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    return True
+
+
+def behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None:
+    """Return how many commits HEAD is behind and ahead of *base_ref*.
+
+    Args:
+        repo_root: Git repo root.
+        base_ref: The base to compare against (e.g. ``origin/main``).
+
+    Returns:
+        ``(behind, ahead)``, or ``None`` when git fails, the output is not
+        two counts, or *base_ref* is dash-prefixed.
+    """
+    if base_ref.startswith("-"):
+        return None
+    out = run_git(
+        "rev-list",
+        "--left-right",
+        "--count",
+        f"{base_ref}...HEAD",
+        cwd=repo_root,
+        check=False,
+        log_errors=False,
+    )
+    try:
+        behind, ahead = (int(part) for part in out.split())
+    except ValueError:
+        return None
+    return behind, ahead
 
 
 def has_conflict_markers(text: str) -> bool:

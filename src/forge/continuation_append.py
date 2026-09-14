@@ -363,10 +363,17 @@ def _rotate(path: Path, archive: Path, *, max_entries: int, max_age_days: int) -
     )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int:
     """Append one activity-log line and/or rotate the ledger tail.
 
     Every invocation rotates; ``--rotate`` skips the append entirely.
+    ``forge-pr-wrapup post`` calls this in-process, so the repository is
+    passed explicitly instead of trusting the caller's working directory.
+
+    Args:
+        argv: Argument vector; ``None`` reads ``sys.argv``.
+        repo_root: Repository whose ``.plan/`` is written; ``None`` uses
+            the current directory, as the CLI does.
 
     Returns:
         ``0`` on success, ``2`` on argument error.
@@ -408,12 +415,12 @@ def main() -> int:
         help="Subject line — commit subject, PR title, or merge subject "
         "(omitted with --rotate).",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.rotate and args.subject is None:
         parser.error("subject is required unless --rotate is given")
 
-    repo_root = Path.cwd()
-    path = repo_root / CONTINUATION_PATH
+    root = repo_root if repo_root is not None else Path.cwd()
+    path = root / CONTINUATION_PATH
     _ensure_file_and_section(path)
 
     today = _today_iso()
@@ -430,7 +437,7 @@ def main() -> int:
         _append_line(path, line)
         logger.info("appended to %s: %s", path, line)
 
-    cont_cfg = _config.read_tool_forge_section(repo_root, "continuation")
+    cont_cfg = _config.read_tool_forge_section(root, "continuation")
     max_entries_raw = cont_cfg.get("max_recent_entries", DEFAULT_MAX_RECENT_ENTRIES)
     max_age_raw = cont_cfg.get("max_recent_age_days", DEFAULT_MAX_RECENT_AGE_DAYS)
     max_entries = (
@@ -445,7 +452,7 @@ def main() -> int:
     )
     _rotate(
         path,
-        repo_root / ARCHIVE_PATH,
+        root / ARCHIVE_PATH,
         max_entries=max_entries,
         max_age_days=max_age,
     )
