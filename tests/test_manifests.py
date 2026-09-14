@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from forge import precommit
+from forge import precommit, run_context
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -154,3 +154,100 @@ def test_git_commit_push_agent_carries_changelog_contract() -> None:
     assert "**`changelog.d/` — REPORT ONLY.**" in unwrapped
     assert "you never author, edit, rename, or delete one" in unwrapped
     assert "The fragment is the PR author's." in unwrapped
+
+
+def test_issue_triage_agent_never_signs_off_a_validated_plan() -> None:
+    """The triage agent refuses to author a human sign-off claim.
+
+    SCENARIO: `issue-triage` is the sole writer of the `[issue-triage]
+    plan-validated:` comment that `/sentinel` treats as authorization to
+    implement an issue unattended. A human attribution line ("validated
+    by <name>") is the one claim in that payload nothing can corroborate
+    — the agent posting it cannot establish who validated the plan, so
+    the line would manufacture exactly the trust the gate depends on.
+    The `I WILL NOT` list is template structure (`agents/_TEMPLATE.md`),
+    so pinning the bullet survives rewording and fails only if it is
+    deleted or defanged; `strip` is the obligation verb separating
+    "don't add one" from "remove one you were handed" — the half a
+    rewrite loses silently.
+
+    EXPECTED BEHAVIOR: the boundary bullet naming `plan-validated` also
+    names the sign-off, and the workflow body states both the claim it
+    refuses to write and the duty to strip an inherited one.
+    """
+    body = (REPO_ROOT / "agents" / "issue-triage.md").read_text()
+
+    boundary_heading = "### I WILL NOT (report and stop)"
+    assert boundary_heading in body, f"missing `{boundary_heading}` section"
+    boundary_start = body.index(boundary_heading)
+    boundary_end = body.index("\n## ", boundary_start)
+    boundary = body[boundary_start:boundary_end]
+
+    bullets = [" ".join(chunk.split()) for chunk in boundary.split("\n- ")[1:]]
+    signing = [bullet for bullet in bullets if "plan-validated" in bullet]
+    assert signing, "no `I WILL NOT` bullet mentions `plan-validated`"
+    for bullet in signing:
+        assert "sign-off" in bullet, (
+            f"`plan-validated` boundary bullet dropped the sign-off: {bullet}"
+        )
+
+    workflow_start = body.index("\n## Workflow\n")
+    workflow_end = body.index("\n## ", workflow_start + 1)
+    workflow = " ".join(body[workflow_start:workflow_end].split())
+    assert "sign-off claim" in workflow, (
+        "workflow must name the unverifiable `sign-off claim` it refuses"
+    )
+    assert "strip" in workflow, (
+        "workflow must oblige stripping a sign-off from an inherited plan"
+    )
+
+
+def test_plan_batch_skill_self_skips_when_non_interactive() -> None:
+    """`/plan-batch` gates its fan-out on the real run-context probe.
+
+    SCENARIO: the skill fans out up to three billed drafting agents whose
+    entire output requires a human to validate before anything acts on
+    it, so firing that from automation spends money on drafts nobody is
+    present to accept — precisely what FOUNDATION §15 exists to prevent.
+    Asserting the imported symbol rather than a prose sentence catches
+    two regressions with one pair: the self-skip clause being dropped
+    from the skill, and a `run_context` rename leaving the skill pointing
+    at a function that no longer exists.
+
+    EXPECTED BEHAVIOR: the shipped skill names the guard, and the guard
+    is a real callable on `forge.run_context` under that same name.
+    """
+    guard = run_context.is_non_interactive
+    assert callable(guard), "forge.run_context.is_non_interactive must be callable"
+
+    skill = (REPO_ROOT / "skills" / "plan-batch" / "SKILL.md").read_text()
+    assert guard.__name__ in skill, (
+        f"plan-batch must self-skip on `{guard.__name__}()` (FOUNDATION §15)"
+    )
+
+
+def test_plan_batch_delegation_target_exists() -> None:
+    """The section `/plan-batch` delegates into is still present.
+
+    SCENARIO: `plan-batch`'s dispatch prompt sends each drafter to
+    `/plan-issue` draft-only mode, and the whole drafter contract — what
+    to run, what to return, what not to touch — lives in that one
+    section. `verify-forge-agent-doc`'s dangling-reference check resolves
+    a `/skill-name` mention to a skill DIRECTORY and never to a section
+    inside it, so deleting or renaming the heading breaks every fan-out
+    silently with no gate catching it. A `##` heading is the most
+    rename-resistant token a prose file offers.
+
+    EXPECTED BEHAVIOR: `plan-issue` still publishes the heading, and
+    `plan-batch` still routes drafters to that mode.
+    """
+    heading = "## Draft-only mode"
+    plan_issue = (REPO_ROOT / "skills" / "plan-issue" / "SKILL.md").read_text()
+    assert heading in plan_issue, (
+        f"plan-issue lost `{heading}` — plan-batch's fan-out has no contract"
+    )
+
+    plan_batch = (REPO_ROOT / "skills" / "plan-batch" / "SKILL.md").read_text()
+    assert "draft-only" in plan_batch, (
+        "plan-batch must delegate to /plan-issue draft-only mode"
+    )

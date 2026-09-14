@@ -45,12 +45,19 @@ an agent, in the same register as the options, which is why "read the
 issue" does not close the gap.
 
 Then systematically confirm the judgment calls via targeted questions
-(`AskUserQuestion`-style, one decision each) **before** finalizing:
+(`AskUserQuestion`-style, one decision each) **before** finalizing.
+What each question must carry to be answerable is FOUNDATION §1
+"Plan before executing", last paragraph — options in words with their
+consequences, the recommendation and its reason, the disputable
+assumption; never a table of identifiers. It applies to every decision
+below:
 
 - scope boundaries (in / out, follow-ups to file separately)
 - approach, when more than one is reasonable (recommend one)
 - edge-case and failure handling
-- versioning / blast radius (semver bump class, consumer impact)
+- versioning / blast radius — semver bump class and consumer impact,
+  read off the affected symbol's size, its in-repo importers, and any
+  plausible use outside the repo
 - test expectations
 
 ## Step 4: Explicit validation
@@ -74,6 +81,10 @@ plan for issue #<N>: post the plan below as a comment opening with
 <validated plan text>")
 ```
 
+The plan text names no validator: `issue-triage` strips an attribution
+line rather than posting one, and FOUNDATION §14 "Decision trail" says
+what carries the sign-off instead.
+
 **The recorded payload leads with the same statement**, ahead of scope,
 approach, files and bump class. Whoever picks the work up reads this
 comment rather than the conversation that produced it, so a payload that
@@ -85,3 +96,20 @@ recorded comment URL, append it as a one-line record to
 `.plan/CONTINUATION.md` (an audit trail `/sentinel` can cross-check at
 pickup), and stop; execution belongs to `/sentinel` or a later
 session.
+
+## Draft-only mode
+
+Invoked as `/plan-issue <N> --draft-only`, and by `/plan-batch` when it
+fans several issues out at once. **Run Steps 1 and 2, then stop before
+Step 3.** In place of the interactive gate, return:
+
+- the plain-English problem statement Step 3 would open with,
+- the drafted plan (files, order, side effects, bump class),
+- an explicit **decisions to validate** list — each one shaped by the
+  §1 rule Step 3 points at, so the caller can relay it unedited.
+
+Nothing else changes and nothing is recorded: the mode ends where the
+human gate begins. It opens no branch, edits no file, applies no label,
+and posts no comment — Steps 4 and 5 belong to whoever holds the
+conversation with the user. A draft is not a validated plan, and only a
+validated plan reaches `issue-triage`.

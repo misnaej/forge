@@ -129,6 +129,20 @@ agree: someone who has followed the detail can confirm or correct one
 line, where confirming a change list means re-deriving the goal from it.
 A plan that cannot be said in one line is usually two plans.
 
+**Every decision put to the user carries enough to decide it.** The
+opening frame above is written without symbol names; an individual
+decision is the opposite case — it is *about* a symbol, and the user
+cannot judge it without knowing what that symbol does today, stated in
+one sentence someone who has not opened the file can follow. Each
+option is given in words with its consequence, never option names
+alone; the recommendation comes with the reason for it; and any
+assumption the user might dispute is stated so that they can. The
+negative form is the one that bites: **never compress a decision to a
+table of identifiers.** A relay the user cannot follow gets
+rubber-stamped, and a rubber stamp is indistinguishable from judgment
+afterwards — which matters most where a validated decision licenses
+work that then runs unattended (§14).
+
 ### Ask before acting on ambiguity
 
 Pause and ask when (a) the instruction has two reasonable readings, the user
@@ -939,6 +953,14 @@ never past it (merging stays the user's; all §2 guards hold). Screening is
 mechanical and repeatable; planning judgment is validated once, up front —
 that is what makes unattended execution safe.
 
+Draining a screened queue one interactive session at a time is the
+bottleneck in that chain, and the serialised work — investigation —
+mutates nothing. `/plan-batch` is the optional coordinator between
+screening and the human gate: it drafts several issues concurrently
+through read-only agents and relays each draft for validation, leaving
+the gate itself, and the one-at-a-time execution rule `/sentinel`
+sets, untouched.
+
 ### Decision trail
 
 Every label change leaves a comment prefixed `[issue-triage]` — auditable,
@@ -954,6 +976,16 @@ later PR marks the issue as in execution for the `plan-readiness` screen
 and for any second sentinel. Like the execution payload, the marker is
 trusted only from a write-access author — a stranger's comment can never
 veto a pickup.
+
+**Those three signals *are* the sign-off, and the recorder writes no
+fourth.** A human attribution or sign-off claim — "validated by
+<name>" — must never appear in a `plan-validated:` payload. It is the
+only claim in a comment an autonomous executor treats as authorization
+that nothing can corroborate: the agent posting it cannot establish who
+validated the plan, or that anyone did, yet it sits in the same blob the
+executor parses and reads to a human reviewer as provenance. The prefix,
+the label and write-access authorship are each checkable; an attribution
+line is decoration over the ones that count. The recorder strips it.
 
 ---
 

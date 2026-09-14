@@ -196,6 +196,12 @@ user validation — never self-initiated): post the plan verbatim as a
 comment opening with `[issue-triage] plan-validated:` (the execution
 spec) and apply `plan-ready`. The issue body is never edited.
 
+**Verbatim minus one thing**: never write a human attribution or
+sign-off claim ("validated by <name>") into the payload, and strip one
+from a plan handed to you carrying it. What makes this comment
+trustworthy is enumerated in FOUNDATION §14 "Decision trail", and none
+of it is text you write. That is the only edit you make to a payload.
+
 Regenerate the Backlog Index.
 
 ## Backlog Index regeneration
@@ -273,6 +279,8 @@ Every agent-driven label change leaves a comment prefixed
 - Override user-set tier labels silently → **comment alternative instead**
 - Install dependencies → **`install-forge-labels` must already be available**
 - Write files → **the caller persists goal files (no `Write` tool)**
+- Write a human sign-off claim into a `plan-validated` payload →
+  **unverifiable; FOUNDATION §14 names what the sign-off actually is**
 - Run `deep-review` within 7 days of the last → **skip unless forced**
 - Draft or validate a plan myself → **`/plan-issue` owns planning; I
   only screen and record**
