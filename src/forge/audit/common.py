@@ -302,6 +302,24 @@ def relpath(path: Path) -> str:
         return str(path)
 
 
+def read_finding_count(log_text: str) -> int:
+    """Return the ``# findings: N`` count :func:`write_log` puts in a log header.
+
+    Args:
+        log_text: Full log contents.
+
+    Returns:
+        The count, or ``-1`` when the header is missing or malformed.
+    """
+    for line in log_text.splitlines()[:10]:
+        if line.startswith("# findings:"):
+            try:
+                return int(line.split(":", 1)[1].strip())
+            except ValueError:
+                return -1
+    return -1
+
+
 def write_log(
     name: str,
     findings: Iterable[Finding],

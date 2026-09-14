@@ -26,7 +26,7 @@ Check and fix documentation issues in the specified file(s). Ensure docstrings m
    `code_health/audit_deps_tree.log` (if present) to understand where a
    module sits in the dependency graph.
 
-1. **Check `code_health/` logs first** (pre-commit hook writes these — avoid re-running if fresh):
+1. **Check `code_health/` logs first** (pre-commit hook writes these — avoid re-running if fresh). With a caller's evidence pack ([reporter contract](_TEMPLATE.md#reporter-agent-header-contract)), start there: it carries each log's freshness, the generated-artifact checks and the public-surface changes.
    ```bash
    forge-precommit --freshness --only docstring_verification   # read-only, runs no steps
    cat ./code_health/docstring_verification.log 2>/dev/null

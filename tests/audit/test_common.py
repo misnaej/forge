@@ -15,6 +15,7 @@ from forge.audit.common import (
     exit_code_for,
     iter_files,
     make_audit_parser,
+    read_finding_count,
     relpath,
     resolve_roots,
     write_log,
@@ -192,6 +193,47 @@ def test_iter_files_changed_scope_delegates_to_git(
 def test_relpath_renders_repo_relative(fake_repo: Path) -> None:
     """relpath() strips the repo root prefix."""
     assert relpath(fake_repo / "src" / "pkg" / "a.py") == "src/pkg/a.py"
+
+
+def test_read_finding_count_parses_header() -> None:
+    """A ``# findings: N`` header line yields the integer."""
+    text = "# audit\n# findings: 7\n# generated: ...\n"
+    assert read_finding_count(text) == 7
+
+
+def test_read_finding_count_survives_real_write_log_stamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`read_finding_count` still parses a log stamped by the real `write_log`.
+
+    BEHAVIOR: pins that the `# findings: N` header every reader of this
+    header depends on (``forge.audit.all``, ``forge.pr_evidence``)
+    survives `write_log` prepending the `# produced-at:` provenance
+    stamp (FOUNDATION §13) as line 1 — displacing the
+    `# forge-audit-<name>` header the count used to follow directly.
+    `read_finding_count` scans the first 10 lines rather than a fixed
+    offset, so this is a real-git regression pin, not a rewrite of the
+    parser's own contract (already covered by the header-parsing tests
+    above).
+    """
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(common, "repo_root", lambda: tmp_path)
+    finding = Finding(
+        audit="dup", severity=Severity.HIGH, path="a.py", line=1, message="m"
+    )
+    path = write_log("dup", [finding], summary="one duplicate")
+
+    assert read_finding_count(path.read_text(encoding="utf-8")) == 1
+
+
+def test_read_finding_count_missing_returns_minus_one() -> None:
+    """Missing header returns ``-1`` (sentinel for 'unknown')."""
+    assert read_finding_count("no header here\n") == -1
+
+
+def test_read_finding_count_invalid_returns_minus_one() -> None:
+    """Non-integer findings value returns ``-1``."""
+    assert read_finding_count("# findings: oops\n") == -1
 
 
 def test_write_log_creates_code_health_dir_and_writes_header(fake_repo: Path) -> None:

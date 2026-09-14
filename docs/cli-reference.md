@@ -498,7 +498,7 @@ options:
 ## forge-pr-plan
 
 ```text
-usage: forge-pr-plan [-h] [--base REF] [--pr N] [--freshness]
+usage: forge-pr-plan [-h] [--base REF] [--pr N] [--freshness] [--evidence]
 
 options:
   -h, --help   show this help message and exit
@@ -510,6 +510,10 @@ options:
                (verified-at:) still names its current head; emits {fresh,
                head_oid, latest_verified_at, reason}. Needs --pr; ignores
                --base.
+  --evidence   Also write the review evidence pack to
+               code_health/pr_evidence.log after the plan; the plan JSON and
+               exit code do not change, and a pack failure is only logged.
+               Ignored with --freshness.
 ```
 
 ## forge-pr-squash-comment

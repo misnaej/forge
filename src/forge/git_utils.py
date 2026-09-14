@@ -760,6 +760,42 @@ def create_annotated_tag(
 EVIDENCE_OUTPUT_CAP = 4000
 
 
+# Shortest fence `wrap_in_code_fence` emits — four backticks, so a plain
+# three-backtick example inside the content never needs a longer one.
+_MIN_CODE_FENCE = 4
+
+# A backtick run that could close a fence: CommonMark allows up to three
+# spaces of indentation before a closing fence.
+_LEADING_BACKTICKS_RE = re.compile(r"^ {0,3}(`+)")
+
+
+def wrap_in_code_fence(text: str) -> str:
+    """Return *text* inside a markdown code fence it cannot close.
+
+    Embedded output — gate logs, audit findings, commit messages — is
+    data, and a line of its own backticks must never end the block early
+    and turn the rest of the text into markdown. The fence is one
+    backtick longer than the longest run opening any line of *text*.
+
+    Args:
+        text: Content to fence.
+
+    Returns:
+        *text* between an opening and a closing fence of at least four
+        backticks.
+    """
+    longest = max(
+        (
+            len(match.group(1))
+            for line in text.splitlines()
+            if (match := _LEADING_BACKTICKS_RE.match(line))
+        ),
+        default=0,
+    )
+    fence = "`" * max(_MIN_CODE_FENCE, longest + 1)
+    return f"{fence}\n{text}\n{fence}"
+
+
 def run_gate_evidence(
     repo_root: Path,
     gates: str,
@@ -771,11 +807,11 @@ def run_gate_evidence(
     """Run ``forge-precommit --only`` gates and format PR-body evidence.
 
     The shared evidence seam for automation-opened PRs (``forge-resync``,
-    ``forge-changelog release-pr``): a PR opened outside the ``/pr``
-    wrap-up flow — possibly with a token whose events trigger no CI —
-    must carry its verification evidence in its own body. A gate
-    failure never blocks the PR; the body flags it loudly and the
-    reviewer takes over.
+    ``forge-changelog release-pr``) and the ``/pr`` light-regen wrap-up:
+    a PR opened outside the ``/pr`` wrap-up flow — possibly with a token
+    whose events trigger no CI — must carry its verification evidence in
+    its own body. A gate failure never blocks the PR; the body flags it
+    loudly and the reviewer takes over.
 
     Args:
         repo_root: Repo root passed to the gate subprocess as cwd.
@@ -787,7 +823,7 @@ def run_gate_evidence(
     Returns:
         ``(passed, evidence_block)`` — markdown section headlined by
         the verdict with the verbatim gate output fenced below it
-        (four-backtick fence; capped at :data:`EVIDENCE_OUTPUT_CAP`).
+        (:func:`wrap_in_code_fence`; capped at :data:`EVIDENCE_OUTPUT_CAP`).
     """
     proc = subprocess.run(
         ["forge-precommit", "--only", gates],
@@ -803,7 +839,9 @@ def run_gate_evidence(
     )
     if len(output) > EVIDENCE_OUTPUT_CAP:
         output = f"{output[:EVIDENCE_OUTPUT_CAP]}\n… (truncated)"
-    return passed, (f"## {section_title}\n\n{headline}\n\n````\n{output}\n````\n")
+    return passed, (
+        f"## {section_title}\n\n{headline}\n\n{wrap_in_code_fence(output)}\n"
+    )
 
 
 def find_open_pr_by_head_prefix(repo_root: Path, prefix: str) -> str | None:

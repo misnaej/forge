@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_73 modules, 1012 symbols._
+_74 modules, 1034 symbols._
 
 ## `forge`
 
@@ -109,7 +109,6 @@ _73 modules, 1012 symbols._
 > _Orchestrator: run every forge-audit-* script and write a summary log._
 
 - `class SubResult` — Outcome of running one sub-audit.
-- `_read_finding_count(log_text: str) -> int` _(internal)_ — Parse the ``# findings: N`` header line from a log.
 - `_run_one(name: str, scope: str, roots: list[str] | None) -> SubResult` _(internal)_ — Invoke a sub-audit CLI and parse its log.
 - `_render_summary(results: list[SubResult]) -> str` _(internal)_ — Render the aggregate summary log text.
 - `main() -> int` — Run every sub-audit and write ``code_health/audit_summary.log``.
@@ -146,6 +145,7 @@ _73 modules, 1012 symbols._
 - `_is_excluded(path: Path) -> bool` _(internal)_ — Return ``True`` if ``path`` lies under any default-excluded directory.
 - `iter_files(scope: Scope, roots: list[Path], *, suffix: str = '.py') -> Iterator[Path]` — Yield matching files under ``roots`` respecting ``scope``.
 - `relpath(path: Path) -> str` — Render ``path`` relative to the repo root for log stability.
+- `read_finding_count(log_text: str) -> int` — Return the ``# findings: N`` count :func:`write_log` puts in a log header.
 - `write_log(name: str, findings: Iterable[Finding], summary: str, *, output: Path | None = None) -> Path` — Write findings + summary to ``code_health/audit_<name>.log``.
 - `exit_code_for(findings: Iterable[Finding]) -> int` — Map findings to a process exit code.
 - `count_by_severity(findings: Iterable[Finding]) -> dict[Severity, int]` — Tally findings per severity tier.
@@ -633,6 +633,7 @@ _73 modules, 1012 symbols._
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True, env: Mapping[str, str] | None = None) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `_fallback_identity_args(repo_root: Path) -> list[str]` _(internal)_ — Return ``-c`` identity flags when git has no usable committer identity.
 - `create_annotated_tag(repo_root: Path, tag: str, *, commit: str = 'HEAD', force: bool = False) -> None` — Create annotated *tag* at *commit*, surviving identity-less runners.
+- `wrap_in_code_fence(text: str) -> str` — Return *text* inside a markdown code fence it cannot close.
 - `run_gate_evidence(repo_root: Path, gates: str, *, success_headline: str, failure_headline: str, section_title: str) -> tuple[bool, str]` — Run ``forge-precommit --only`` gates and format PR-body evidence.
 - `find_open_pr_by_head_prefix(repo_root: Path, prefix: str) -> str | None` — Return the URL of an open PR whose head branch starts with *prefix*.
 - `create_commit(repo_root: Path, message: str) -> None` — Commit the staged index, surviving identity-less runners.
@@ -856,6 +857,30 @@ _73 modules, 1012 symbols._
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
 - `regen_commands(repo_root: Path) -> dict[str, tuple[str, ...]]` — Return :data:`REGEN_COMMANDS` filtered to the artifacts this repo generates.
 
+## `forge.pr_evidence`
+
+> _Review evidence pack for ``forge-pr-plan --evidence``._
+
+- `class _UnavailableError` _(internal)_ — An item that ran but produced no usable result.
+- `_run_tool(argv: Sequence[str], *, cwd: Path, timeout: float) -> subprocess.CompletedProcess[str]` _(internal)_ — Run one pack tool — the module's single subprocess seam.
+- `_reason(exc: Exception) -> str` _(internal)_ — Describe in one line why an item is unavailable.
+- `_data(text: str) -> list[str]` _(internal)_ — Fence untrusted *text* as data: capped, then sanitized line by line.
+- `_section(title: str, build: Callable[[], list[str]]) -> list[str]` _(internal)_ — Render one pack section, or its ``unavailable`` line when *build* fails.
+- `_item(label: str, build: Callable[[], list[str]]) -> list[str]` _(internal)_ — Render one bullet item, isolating its failure from its siblings.
+- `_pr_lines(root: Path, base: str, plan: Mapping[str, object], added: Sequence[str]) -> list[str]` _(internal)_ — Render the PR identity: head, base, mode, diff stat, added files.
+- `_timing_snapshot(root: Path) -> dict[str, str]` _(internal)_ — Return the step markers of the newest ``forge-precommit`` run.
+- `_health_lines(root: Path) -> list[str]` _(internal)_ — Render each log's freshness beside the latest pre-commit step marker.
+- `_audit_result(root: Path, name: str, current: str | None) -> list[str]` _(internal)_ — Run one audit at changed scope and read its findings back.
+- `_reported_audit(root: Path, name: str, current: str | None) -> list[str]` _(internal)_ — Report an audit the pack does not run: its log's freshness and count.
+- `_audit_lines(root: Path, base: str, current: str | None) -> list[str]` _(internal)_ — Run dup and layering at changed scope; report every other audit log.
+- `_gate_steps(root: Path) -> list[str]` _(internal)_ — Return the ``forge-precommit`` steps that check the generated artifacts.
+- `_gate_lines(root: Path) -> tuple[list[str], bool]` _(internal)_ — Run the generated-artifact checks through ``forge-precommit --only``.
+- `_surface_lines(root: Path, base: str, *, digest_checked: bool) -> list[str]` _(internal)_ — Render the committed api-digest's changed lines over ``base...HEAD``.
+- `_fragment_line(root: Path, base: str) -> str` _(internal)_ — Describe the branch's changelog fragments, naming the base compared with.
+- `_wiring_lines(root: Path, base: str, pr_body: str | None) -> list[str]` _(internal)_ — Render closing keywords and changelog-fragment presence.
+- `build_pack(root: Path, *, base: str, plan: Mapping[str, object], added: Sequence[str], pr_body: str | None) -> str` — Gather the evidence and render the pack.
+- `write_pack(root: Path, *, base: str, plan: Mapping[str, object], added: Sequence[str], pr_body: str | None) -> Path` — Build the pack and write it to ``code_health/pr_evidence.log``.
+
 ## `forge.pr_plan`
 
 > _forge-pr-plan — deterministic finalization-path decision for the ``/pr`` skill._
@@ -871,6 +896,7 @@ _73 modules, 1012 symbols._
 - `wrapup_freshness(pr_number: int) -> WrapupFreshness` — Compare the PR's newest ``verified-at:`` SHA against its current head.
 - `_try_delta(root: Path, pr_number: int | None, reasons: list[str], branch_paths: list[str]) -> bool` _(internal)_ — Evaluate delta-mode eligibility, appending the trail to *reasons*.
 - `classify(root: Path, base: str, pr_number: int | None) -> PrPlan` — Classify the current branch's finalization path.
+- `_write_evidence(root: Path, base: str, plan: PrPlan, pr_number: int | None) -> None` _(internal)_ — Write the review evidence pack; a failure is logged, never raised.
 - `main(argv: list[str] | None = None) -> int` — Run the finalization-path classifier (or the freshness check) and emit JSON.
 
 ## `forge.pr_squash_comment`
@@ -1009,6 +1035,7 @@ _73 modules, 1012 symbols._
 - `_step_marker(result: StepResult) -> str` _(internal)_ — Return *result*'s bare status marker (``SKIP``/``PASS``/``WARN``/``FAIL``).
 - `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
 - `_format_timing_log(results: list[StepResult]) -> str` _(internal)_ — Render the per-step timing report for ``code_health/precommit_timing.log``.
+- `timing_markers(text: str) -> dict[str, str]` — Return each step's marker from a ``precommit_timing.log`` body.
 - `_validate_step_names(names: Sequence[str]) -> None` _(internal)_ — Raise ``ValueError`` listing any *names* that are not registered steps.
 - `resolve_steps(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepDef]` — Resolve which steps to run, in registry order.
 - `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepResult]` — Run the resolved step sequence in order and return their results.

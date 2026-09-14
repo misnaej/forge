@@ -2710,6 +2710,31 @@ def _format_timing_log(results: list[StepResult]) -> str:
     return "\n".join(lines)
 
 
+# One step row of :func:`_format_timing_log`; the total row carries no marker.
+_TIMING_ROW_RE = re.compile(
+    r"^(?P<name>\S+)\s+[\d.]+s\s+(?P<marker>SKIP|PASS|WARN|FAIL)\s*$"
+)
+
+
+def timing_markers(text: str) -> dict[str, str]:
+    """Return each step's marker from a ``precommit_timing.log`` body.
+
+    The reader beside :func:`_format_timing_log`, so the row shape has one
+    home; the stamp, header and total lines are skipped.
+
+    Args:
+        text: The timing log's contents.
+
+    Returns:
+        Step name → ``SKIP`` / ``PASS`` / ``WARN`` / ``FAIL``, in run order.
+    """
+    return {
+        match.group("name"): match.group("marker")
+        for line in text.splitlines()
+        if (match := _TIMING_ROW_RE.match(line.strip()))
+    }
+
+
 # Ordered registry — the single source of truth for which steps exist,
 # their run order, and which are on by default. Opt-in steps
 # (default_on=False) run only when named in [tool.forge.precommit].enable

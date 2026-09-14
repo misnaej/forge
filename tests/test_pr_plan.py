@@ -8,7 +8,11 @@
 # Only the delta path's `gh` seam (`_latest_verified_sha`), the
 # `wrapup_freshness()` / `--freshness` `gh` seam (`gh_pr_view`), and
 # `main()`'s `repo_root` seam are monkeypatched, since those touch real
-# subprocesses.
+# subprocesses. The `--evidence` cases below add two more: `pr_plan.write_pack`
+# and `pr_plan.gh_pr_view` are monkeypatched so `_write_evidence` never builds
+# a real evidence pack (`pr_evidence` has its own suite, test_pr_evidence.py) —
+# only the JSON-first / exception-swallowed / pr-body-forwarding contract
+# `_write_evidence` and `main()` own is exercised here.
 """
 
 from __future__ import annotations
@@ -1088,6 +1092,173 @@ def test_main_freshness_ignores_base(
     monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
 
     rc = pr_plan.main(["--freshness", "--pr", "7", "--base=-bogus"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["fresh"] is True
+
+
+# --- main(): --evidence ------------------------------------------------
+
+
+def test_main_evidence_flag_leaves_plan_json_and_exit_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--evidence` never changes the emitted JSON, the exit code, or its timing.
+
+    MOCK SETUP: `pr_plan.write_pack` is replaced with a fake that reads
+    `capsys.readouterr()` from *inside itself* — the only way to prove the
+    plan JSON was already flushed to stdout before the pack build ran,
+    not just that it appears somewhere in the final output.
+    EXPECTED BEHAVIOR: the JSON captured at that instant equals a plain
+    (no `--evidence`) run's output byte-for-byte, and both runs exit 0.
+    """
+    repo = _repo_with_branch_diff(tmp_path, {"src/foo.py": "x = 1\n"})
+    monkeypatch.setattr(pr_plan, "repo_root", lambda: repo)
+
+    rc_plain = pr_plan.main(["--base", "main"])
+    plain_out = capsys.readouterr().out
+
+    stdout_at_pack_time: dict[str, str] = {}
+
+    def _fake_write_pack(root: Path, **_kwargs: object) -> Path:
+        stdout_at_pack_time["out"] = capsys.readouterr().out
+        return root / "code_health" / "pr_evidence.log"
+
+    monkeypatch.setattr(pr_plan, "write_pack", _fake_write_pack)
+
+    rc_evidence = pr_plan.main(["--base", "main", "--evidence"])
+
+    assert rc_evidence == rc_plain == 0
+    assert stdout_at_pack_time["out"] == plain_out
+    assert capsys.readouterr().out == ""  # already consumed by the fake
+
+
+def test_main_without_evidence_flag_never_writes_a_pack(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Omitting `--evidence` never calls `write_pack` at all."""
+    repo = _repo_with_branch_diff(tmp_path, {"src/foo.py": "x = 1\n"})
+    monkeypatch.setattr(pr_plan, "repo_root", lambda: repo)
+    monkeypatch.setattr(
+        pr_plan,
+        "write_pack",
+        lambda *_a, **_kw: pytest.fail("write_pack must not run without --evidence"),
+    )
+
+    rc = pr_plan.main(["--base", "main"])
+
+    assert rc == 0
+    capsys.readouterr()
+    assert not (repo / "code_health" / "pr_evidence.log").exists()
+
+
+def test_main_evidence_pack_failure_is_logged_not_raised(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A `write_pack` exception is logged; the plan JSON and exit code stand.
+
+    `_write_evidence` is the publish hook's contract boundary: the plan
+    JSON is already on stdout and the exit code already decided, so
+    nothing the pack does may change either — only `logger.exception`
+    records the failure.
+    """
+    repo = _repo_with_branch_diff(tmp_path, {"src/foo.py": "x = 1\n"})
+    monkeypatch.setattr(pr_plan, "repo_root", lambda: repo)
+
+    def _boom(*_a: object, **_kw: object) -> Path:
+        msg = "disk full"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(pr_plan, "write_pack", _boom)
+
+    with caplog.at_level("ERROR", logger="forge.pr_plan"):
+        rc = pr_plan.main(["--base", "main", "--evidence"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "full"
+    assert "evidence pack was not written" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("pr_number", "gh_view", "expected_body"),
+    [
+        (None, None, None),
+        (7, {"body": "Closes #12"}, "Closes #12"),
+    ],
+)
+def test_write_evidence_forwards_pr_body_only_with_a_pr_number(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pr_number: int | None,
+    gh_view: dict[str, str] | None,
+    expected_body: str | None,
+) -> None:
+    """`_write_evidence` reads the PR body via `gh_pr_view` only when `--pr` is given.
+
+    Args:
+        pr_number: The `--pr` value under test (`None` when omitted).
+        gh_view: Canned `gh_pr_view` return value for a real PR number.
+        expected_body: The `pr_body` `write_pack` should receive.
+
+    MOCK SETUP: `pr_plan.gh_pr_view` is a recording fake; `pr_plan.write_pack`
+    records the `pr_body` it was called with. No `gh` or evidence-pack code
+    runs — this is `_write_evidence`'s own composition, not `pr_evidence`'s
+    (covered in test_pr_evidence.py).
+    """
+    repo = _init_feature_repo(tmp_path)
+    gh_calls: list[tuple[int, str]] = []
+    write_pack_calls: dict[str, str | None] = {}
+
+    def _fake_gh_pr_view(number: int, fields: str) -> dict[str, str] | None:
+        gh_calls.append((number, fields))
+        return gh_view
+
+    def _fake_write_pack(root: Path, **kwargs: object) -> Path:
+        write_pack_calls["pr_body"] = kwargs["pr_body"]  # type: ignore[assignment]
+        return root / "code_health" / "pr_evidence.log"
+
+    monkeypatch.setattr(pr_plan, "gh_pr_view", _fake_gh_pr_view)
+    monkeypatch.setattr(pr_plan, "write_pack", _fake_write_pack)
+
+    pr_plan._write_evidence(repo, "main", pr_plan.PrPlan(mode="full"), pr_number)
+
+    assert gh_calls == ([] if pr_number is None else [(pr_number, "body")])
+    assert write_pack_calls["pr_body"] == expected_body
+
+
+def test_main_freshness_ignores_evidence_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--freshness --evidence` behaves exactly like `--freshness` alone.
+
+    `write_pack` is a fail-if-called fake: the freshness branch returns
+    before `classify()` or `_write_evidence` are ever reached, so no pack
+    is ever attempted.
+    """
+    stdout = json.dumps(
+        {
+            "headRefOid": "cafebabe1234567890000000000000000000000",
+            "comments": [{"body": "verified-at: cafebab wrap-up"}],
+        }
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+    monkeypatch.setattr(
+        pr_plan,
+        "write_pack",
+        lambda *_a, **_kw: pytest.fail("write_pack must not run under --freshness"),
+    )
+
+    rc = pr_plan.main(["--freshness", "--pr", "7", "--evidence"])
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)

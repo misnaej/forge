@@ -85,7 +85,7 @@ Verify the changes follow:
 
 ## Workflow
 
-1. **Identify changed files**: `git diff --stat main...HEAD`
+1. **Identify changed files**: from the caller's evidence pack when supplied ([reporter contract](_TEMPLATE.md#reporter-agent-header-contract)) — it names the base, diff stat, added files and the api-digest changes; otherwise `git diff --stat <base>...HEAD` against the PR's base, never an assumed `main`.
 
 2. **Read `docs/api-digest.md` (when present)** — it indexes every
    top-level function and class with one-line summaries. One grep there

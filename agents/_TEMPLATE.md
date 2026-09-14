@@ -132,13 +132,21 @@ pr=$(gh pr view --json number --jq '.number' 2>/dev/null || echo "?")
 Emit the SHA value the agent computed at the moment of producing its
 findings. The `PR #` + branch suffix is human-readable context.
 
-`forge:pr-manager` parses this line on subsequent runs: when every
-prior reporter's `verified-at` SHA is reachable from current HEAD AND
-the diff since is below the delta threshold (the threshold and the
-high-blast-radius path list are constants in the forge package —
-single source of truth), the orchestrator skips re-invocation and
-posts a short delta comment instead of a full wrap-up. Reporters
-that omit the header force a full re-run on every follow-up commit.
+`forge-pr-plan` parses this line on subsequent runs: when the newest
+`verified-at` SHA is reachable from HEAD AND the diff since is below
+the delta threshold (the threshold and the high-blast-radius path list
+are constants in the forge package — single source of truth), it plans
+delta mode — the reporters are not re-invoked, and `forge-pr-wrapup
+compose` renders a delta wrap-up. Reporters that omit the header force
+a full re-run on every follow-up commit.
+
+**Supplied evidence pack.** When the caller names
+`code_health/pr_evidence.log` (written by `forge-pr-plan --evidence`),
+start from it. Check it first with `forge-precommit --freshness --only
+pr_evidence`: a `fresh` pack is ground truth for the tree it names —
+take its items as given and re-derive only what it marks `unavailable`
+or stale. A pack that is not `fresh` is no evidence: gather everything
+yourself and say so in the report.
 
 `forge-audit-agents` greps each reporter for the `verified-at:`
 substring. Missing it fails the audit step.
