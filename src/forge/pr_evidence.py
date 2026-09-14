@@ -375,8 +375,9 @@ def _gate_lines(root: Path) -> tuple[list[str], bool]:
 
     The checks run through :func:`_run_tool` rather than
     ``git_utils.run_gate_evidence``: the pack bounds them with a timeout,
-    and adding one to that shared seam would push it past ruff's argument
-    limit for its three other callers.
+    and that shared seam — used by three other callers — is already at
+    ruff's argument limit, so it cannot take a parameter only this caller
+    needs.
 
     Args:
         root: Repo root.
@@ -430,7 +431,7 @@ def _surface_lines(root: Path, base: str, *, digest_checked: bool) -> list[str]:
     ]
     lines = []
     if not digest_checked:
-        lines.append(f"⚠️ may be stale: the {_API_DIGEST_GATE} step was not verified")
+        lines.append(f"⚠️ may be stale: the {_API_DIGEST_GATE} step did not report PASS")
     if not changes:
         return [*lines, f"no changed lines in {_API_DIGEST}"]
     return [

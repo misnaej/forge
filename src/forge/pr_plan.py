@@ -86,7 +86,13 @@ import sys
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING
 
-from forge.git_utils import configure_cli_logging, emit, repo_root, run_git
+from forge.git_utils import (
+    GH_TIMEOUT_S,
+    configure_cli_logging,
+    emit,
+    repo_root,
+    run_git,
+)
 from forge.pr_delta import (
     PROVENANCE_GATE_STEPS,
     configured_docs_only_globs,
@@ -121,10 +127,6 @@ DOCS_ONLY_PRECOMMIT_STEPS = (
 
 # Minimum number of parts in a numstat line (insertions and deletions counts).
 _NUMSTAT_MIN_PARTS = 2
-
-# Seconds a `gh pr view` may take — the bound `git_utils.gh_api` uses, short
-# enough that an unreachable GitHub never stalls a CLI or the evidence pack.
-_GH_TIMEOUT_S = 10
 
 
 @dataclass(frozen=True)
@@ -278,7 +280,7 @@ def gh_pr_view(pr_number: int, json_fields: str) -> dict[str, object] | None:
     cmd = ["gh", "pr", "view", str(pr_number), "--json", json_fields]
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, check=True, timeout=_GH_TIMEOUT_S
+            cmd, capture_output=True, text=True, check=True, timeout=GH_TIMEOUT_S
         )
     except (
         subprocess.CalledProcessError,

@@ -136,7 +136,7 @@ _74 modules, 1034 symbols._
 
 - `class Scope` — Audit scope selector.
 - `class Severity` — Finding severity tier.
-- `sanitize_log_text(text: str) -> str` — Escape control characters so a value cannot forge log lines.
+- `sanitize_log_text(text: str) -> str` — Escape non-printable characters so a value cannot forge log lines.
 - `class Finding` — One audit observation with provenance.
   - `render(self) -> str` — Render this finding as a single block in the log file.
 - `under_module_prefix(module: str, prefix: str) -> bool` — Return whether *module* equals *prefix* or is a dotted child of it.
@@ -627,7 +627,7 @@ _74 modules, 1034 symbols._
 - `require_cli(name: str, *, caller: str | None = None, extra: str | None = None, hint: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
 - `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.
-- `gh_api(*args: str, timeout: int = 10) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
+- `gh_api(*args: str, timeout: int = GH_TIMEOUT_S) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
 - `own_login() -> str | None` — Return the GitHub login ``gh`` is authenticated as, once per process.
 - `_run_git(*args: str, cwd: Path | None = None) -> str` _(internal)_ — Run a git command and return stdout.
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True, env: Mapping[str, str] | None = None) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.

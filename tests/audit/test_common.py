@@ -346,9 +346,8 @@ def test_sanitize_log_text_escapes_unicode_line_separators() -> None:
     """NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR are escaped, not passed through.
 
     ``str.splitlines`` breaks on U+0085/U+2028/U+2029 as well as the ASCII
-    control characters — a value carrying one of them could still forge a
-    log line even with C0 controls escaped, since ``isprintable()`` (not a
-    bare ``ord()`` floor) is what now catches them.
+    control characters, so a value carrying one of them could forge a log
+    line unless it is escaped too — ``isprintable()`` catches them.
     """
     hostile = "a\x85b\u2028c\u2029d"
 

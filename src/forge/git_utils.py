@@ -550,7 +550,12 @@ def capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]:
         write_step_log(repo_root, name, buf.getvalue())
 
 
-def gh_api(*args: str, timeout: int = 10) -> str | None:
+# Seconds an advisory `gh` call may take — short enough that an unreachable
+# GitHub never stalls a git hook, a CLI flow or the review evidence pack.
+GH_TIMEOUT_S = 10
+
+
+def gh_api(*args: str, timeout: int = GH_TIMEOUT_S) -> str | None:
     """Run ``gh api`` with *args* and return stripped stdout, or ``None``.
 
     Forge's canonical wrapper for advisory GitHub API calls. Failure
@@ -564,8 +569,7 @@ def gh_api(*args: str, timeout: int = 10) -> str | None:
     Args:
         *args: Trailing arguments after ``gh api`` (e.g. an endpoint
             path + ``--jq`` expression).
-        timeout: Hard timeout in seconds. Defaults to 10 — short
-            enough to not block git hooks or CLI flows.
+        timeout: Hard timeout in seconds; defaults to :data:`GH_TIMEOUT_S`.
 
     Returns:
         Trimmed stdout on success; ``None`` on any failure.

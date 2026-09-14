@@ -176,7 +176,7 @@ def test_pr_lines_diff_stat_rows_have_no_leading_space(tmp_path: Path) -> None:
     SCENARIO: two files change on ``feature``, so ``git diff --stat``
     emits real per-file rows — each two-space indented by git — followed
     by an unindented summary row. ``run_git`` strips only the *whole*
-    output, which used to leave every row but the first indented.
+    output, which would otherwise leave every row but the first indented.
     EXPECTED BEHAVIOR: every line inside the "- diff stat:" fence is
     stripped, so none of them starts with a space.
     """
@@ -676,7 +676,7 @@ def test_surface_lines_shows_changed_digest_lines_when_checked(
     ]
 
 
-def test_surface_lines_flags_stale_when_the_digest_check_was_not_verified(
+def test_surface_lines_flags_stale_unless_the_digest_check_reports_pass(
     tmp_path: Path,
 ) -> None:
     """An unchecked digest gets the staleness warning even with no diff."""
@@ -693,7 +693,7 @@ def test_surface_lines_flags_stale_when_the_digest_check_was_not_verified(
 
     lines = pr_evidence._surface_lines(repo, "main", digest_checked=False)
 
-    assert lines[0] == "⚠️ may be stale: the api_digest_check step was not verified"
+    assert lines[0] == "⚠️ may be stale: the api_digest_check step did not report PASS"
     assert lines[-1] == "no changed lines in docs/api-digest.md"
 
 

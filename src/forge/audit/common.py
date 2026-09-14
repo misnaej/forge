@@ -86,7 +86,7 @@ class Severity(StrEnum):
 
 
 def sanitize_log_text(text: str) -> str:
-    """Escape control characters so a value cannot forge log lines.
+    """Escape non-printable characters so a value cannot forge log lines.
 
     ``code_health/*.log`` files are trusted ground truth for agents
     (FOUNDATION §13), while finding paths and messages can carry
@@ -100,7 +100,7 @@ def sanitize_log_text(text: str) -> str:
 
     Returns:
         The text with every non-printable character (except tab) escaped —
-        control characters and the Unicode line separators
+        notably control characters and the Unicode line separators
         ``str.splitlines`` also breaks on.
     """
     return "".join(

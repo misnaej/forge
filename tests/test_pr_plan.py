@@ -577,13 +577,13 @@ def test_gh_pr_view_returns_none_and_logs_on_timeout(
     MOCK SETUP: `pr_plan.subprocess.run` is replaced with a fake that
     records its `timeout` kwarg before raising `TimeoutExpired`.
     EXPECTED BEHAVIOR: `gh_pr_view` returns `None`, logs a warning naming
-    the PR, and the call was bounded by `pr_plan._GH_TIMEOUT_S`.
+    the PR, and the call was bounded by `pr_plan.GH_TIMEOUT_S`.
     """
     calls: list[dict[str, object]] = []
 
     def _fake_run(cmd: list[str], **kwargs: object) -> object:
         calls.append(kwargs)
-        raise subprocess.TimeoutExpired(cmd=cmd, timeout=pr_plan._GH_TIMEOUT_S)
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=pr_plan.GH_TIMEOUT_S)
 
     monkeypatch.setattr(pr_plan.subprocess, "run", _fake_run)
 
@@ -592,7 +592,7 @@ def test_gh_pr_view_returns_none_and_logs_on_timeout(
 
     assert result is None
     assert "could not read PR #42" in caplog.text
-    assert calls[0]["timeout"] == pr_plan._GH_TIMEOUT_S
+    assert calls[0]["timeout"] == pr_plan.GH_TIMEOUT_S
 
 
 # --- _latest_verified_sha(): happy path -----------------------------------
