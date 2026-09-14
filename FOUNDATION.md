@@ -105,9 +105,22 @@ not been re-verified.
 ### Plan before executing
 
 For any task touching more than one or two files, or that mutates remote
-state, write a plan FIRST (files, order, side effects) and wait for explicit
-go-ahead. Skip only for genuine one-shots — a typo, a single-line config, or
-follow-on edits in a review loop the user drives.
+state, write a plan FIRST (context, then files, order, side effects) and
+wait for explicit go-ahead. Skip only for genuine one-shots — a typo, a
+single-line config, or follow-on edits in a review loop the user drives.
+
+**A plan opens with context, not with a change list.** Before the first
+file or option, state in plain English what problem this solves, what
+happens today, and what the reader gets afterwards — written for someone
+who uses the product but not the codebase: no class, function, flag or
+hook names, consequence before mechanism. This is §6's `## Summary` rule
+applied one stage earlier, and for the same reason: a reader who cannot
+tell what a change is *for* cannot judge whether its shape is right, and
+every option offered ahead of that framing costs a round trip to
+re-explain. A bare change list satisfies "files, order, side effects"
+completely, which is exactly why context has to be named as part of the
+contract rather than left to judgment. Technical detail keeps its place —
+immediately after, where it is now.
 
 ### Ask before acting on ambiguity
 

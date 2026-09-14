@@ -1,0 +1,3 @@
+bump: minor
+- **Plans now open by saying what problem they solve.** A plan used to be defined as files, order and side effects, so an agent could present a bare change list and be entirely correct. Readers had to work out the goal from the options before they could judge any of them, which cost a round trip every time. Plans now open in plain English with what the change is for, written for someone who uses the product but not the codebase. Pull request descriptions already worked this way; this applies the same rule one stage earlier, to plans.
+- **The recorded plan carries that opening too.** Whoever picks up a validated plan reads the recorded comment, not the conversation that produced it, so the framing travels with the work instead of being lost at the handoff.
