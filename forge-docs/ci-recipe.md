@@ -435,23 +435,31 @@ Fragments-mode repos accumulate `changelog.d/` entries between
 releases; `forge-changelog release-pr` opens the assembly PR that
 collates them (branch `chore/assemble-vX.Y.Z`, `CHANGELOG.md` +
 manifest sync staged and committed, PR opened with in-body
-versioning-gate evidence). Run it on a schedule — forge's own
-`.github/workflows/assemble-release.yml` is the reference: weekly
-cron + `workflow_dispatch`, job-scoped `contents` + `pull-requests`
-write, SHA-pinned actions, and a single `forge-changelog release-pr`
-step. The command is idempotent: nothing pending or an assembly PR
-already open exits 0 quietly, so the cron cadence is safe to leave on.
+versioning-gate evidence). It can be run on a schedule: a cron plus
+`workflow_dispatch`, job-scoped `contents` + `pull-requests` write,
+SHA-pinned actions, and a single `forge-changelog release-pr` step.
+The command is idempotent: nothing pending or an assembly PR already
+open exits 0 quietly, so a cron cadence is safe to leave on.
 
-> **⚠️ Set the PAT secret before adopting the workflow.** A PR created
-> with the default `GITHUB_TOKEN` does **not** trigger `pull_request`
-> CI (GitHub's anti-recursion rule) — the assembly PR looks completely
-> normal while no CI ever ran on it, which is exactly the failure shape
-> nobody notices. Create a fine-grained PAT (contents + pull-requests
-> write, this repo only; forge uses `FORGE_ASSEMBLY_PAT`) and pass it
-> to checkout and the `gh` step. The workflow warns when it is absent,
-> and the PR body's embedded gate evidence is then the only
-> verification. Merging the assembly PR stays a human decision either
-> way.
+Decide deliberately whether you want one. Forge itself does not: a
+release is reviewed and tested before it ships, and an unattended
+assembly takes that decision away. Repos that would rather the PR be
+waiting for them each morning are the case this supports.
+
+> **⚠️ Settle PR-creation rights before adopting the workflow.** Two
+> separate things bite here. First, most repositories forbid Actions
+> from opening pull requests at all ("Allow GitHub Actions to create
+> and approve pull requests", off by default). Where that is off, the
+> `gh pr create` step **fails outright** — and because the branch is
+> pushed before the PR is opened, the run leaves a branch behind with
+> no PR, which every later run then collides with. The job does not
+> recover on its own. Second, even where creation is permitted, a PR
+> created with the default `GITHUB_TOKEN` does **not** trigger
+> `pull_request` CI (GitHub's anti-recursion rule), so it looks
+> completely normal while no CI ever ran on it. A fine-grained PAT
+> (contents + pull-requests write, this repo only), passed to checkout
+> and the `gh` step, solves both. Merging the assembly PR stays a human
+> decision either way.
 
 **Manifest-less (tag-versioned) repos: the assembly merge does not
 self-tag.** `forge-next-prep --tag` needs a manifest to be "ahead", and

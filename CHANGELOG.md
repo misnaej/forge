@@ -20,6 +20,42 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v7.2.0 — 2026-09-14
+
+### Changes
+- **Forge no longer assembles releases on a schedule.** The nightly job that prepared the version bump and opened its pull request is gone. A release is something to review and test before it ships, and an unattended job takes that decision away. Tagging on merge is unchanged, and `forge-changelog release-pr` still does the tedious part whenever you choose to run it.
+- **The shipped CI recipe now tells the truth about pull-request rights.** It said a missing token only cost you CI on the assembly pull request. In fact most repositories forbid automated jobs from opening pull requests at all, and where that is off the step fails outright, leaving a pushed branch with no pull request that every later run then collides with. Adopting the recipe as written led straight into that.
+
+## v7.1.0 — 2026-09-14
+
+### Features
+- **`forge-pr-plan --evidence` writes a review evidence pack.** It writes `code_health/pr_evidence.log`, stamped with the tree it describes: the PR's head, base, diff stat and added files; each `code_health/` log's freshness and the latest pre-commit step markers; duplicate and layering audit findings for the changed files, and the freshness of every other audit log; the generated-artifact checks; changes to the committed API digest; closing keywords and changelog-fragment presence. An item that fails or times out is marked `unavailable` and the rest of the pack stands; the plan JSON and the exit code never change, and without `--evidence` nothing is written.
+- **Reviewers start from the pack.** `/pr` writes it before design, security or documentation review and names it in each reviewer's prompt; a reviewer re-derives only what the pack marks unavailable or stale, and `design-checker` runs duplicate and layering audits at changed scope when reviewing a PR.
+
+## v7.0.0 — 2026-09-14
+
+### Changes
+- **`forge-pr-wrapup compose` writes the wrap-up's mechanical parts for you.** It renders the `verified-at:` header, the light / emergency mode line, skipped or clean reviewer sections (a clean report's own PASS line), Issue Management from the closing keywords, Code Quality from the latest pre-commit run and each log's freshness, and CI Status, into `code_health/pr_wrapup.md`. The judgment parts — summary, findings with their dispositions, recommendation — become `<!-- forge:fill … -->` slots, and `forge-pr-wrapup validate` refuses the wrap-up until each is filled. It refuses outright when a required reviewer report is missing, or when the diff adds files without a prior-art report. Every mode now produces one six-section shape, so light-code and emergency wrap-ups pass validation, and the squash-merge message is never embedded in the wrap-up.
+- **`forge-pr-wrapup post` now does the whole posting task, and can refuse.** It exits 3 without posting when it cannot read the PR, when the wrap-up's `verified-at:` is not the PR head, or when the branch conflicts with or is behind its base, naming the fix instead of merging. Only the emergency PR that `forge-emergency record-pr` recorded may be behind its base, never conflicting. It refreshes CI Status and Issue Management from GitHub before posting, fetches without waiting for an HTTPS credential prompt, and appends the CONTINUATION record (`--no-continuation` skips it). `--body-file` defaults to `code_health/pr_wrapup.md`.
+- **`/pr` posts without an agent.** Step 4 calls `forge-pr-wrapup post` and `forge-pr-squash-comment` directly; within `/pr`, `forge:pr-manager` only fills the compose slots and returns the squash-merge message. Its Verification (Wrap-up) task, called directly, still posts, through the same CLI. What to change: a workflow that asked pr-manager to post during `/pr` runs the two CLIs itself, and a script that ran `forge-pr-wrapup post` on a branch behind its base merges the base (`git merge origin/<base>`) and re-verifies before posting.
+
+## v6.13.0 — 2026-09-14
+
+### Features
+- **Every `code_health/` log now says which tree it describes.** Its first line is `# produced-at: tree=<sha> head=<short>[+dirty] <UTC time>`, written by the shared log writer, the audit logs and the smart-test logs. The tree is the working tree the output was produced against, hashed on a scratch copy of the index with its own object store, so neither the real index nor `.git/objects` is touched, and unresolved conflicts stamp `tree=unknown`. Agents used to guess whether a log was current by comparing file modification times with the last commit; they now get a verdict.
+- **`forge-precommit --freshness` reports each log as fresh, stale, unstamped or unknown** against the current working tree, without running any step. Steps that check the environment rather than files report `n/a`, and a log named in `--only` reports `missing` when absent or `history` when it is an append-only history log (`--json` emits a map; always exits 0). Reporter agents may run it, and `block_fixer_recon` does not count it toward precommit-fixer's full-run cap. The design, docs, commit and fixer agent docs replace their time-based staleness rules with it.
+
+## v6.12.2 — 2026-09-14
+
+### Changes
+- **`forge-pr-squash-comment` names every broken rule in one run.** It used to stop at the first failing rule, so a message with a bad title and too many words took two retries to learn both. A word-cap violation now also lists each part's word count, a short preview, and how many words to cut, instead of only the total — authors no longer guess which bullet to shorten. `--dry-run` prints the same per-part counts to stderr while stdout stays exactly the comment body.
+
+## v6.12.1 — 2026-09-11
+
+### Fixes
+- **Collapsing a superseded wrap-up no longer destroys it.** `forge-pr-wrapup post` tidies earlier wrap-up comments by collapsing them, and the call used `gh api -f body=@-`. `--raw-field` sends static strings, so `@-` was PATCHed over the comment verbatim — two characters where the wrap-up had been, with the body handed to stdin never read by anything. `PATCH` replaces rather than appends, so the text was unrecoverable through the API, and nothing surfaced an error because sending a literal `@-` is a valid request that exits zero. Only `--field` gives `@` its documented meaning. The regression test previously asserted the broken flag in its own docstring, which is how this survived; it now pins the correct one and refuses the other.
+- **The type checker is pinned to one minor**, matching the cadence ruff has followed since FOUNDATION §5 was written. An unbounded major range let a workstation resolve one minor while CI resolved another, so a blocking gate could pass locally and fail in CI over code the change never touched. The pin surfaces nothing new on the current tree: the findings it would have raised were already fixed.
+
 ## v6.12.0 — 2026-09-10
 
 ### Fixes
