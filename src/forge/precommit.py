@@ -96,6 +96,7 @@ from forge.git_utils import (
     forge_cli_argv,
     is_ancestor,
     latest_v_tag,
+    log_freshness,
     merge_base_with_head,
     merge_in_progress,
     parse_semver,
@@ -105,6 +106,7 @@ from forge.git_utils import (
     resolve_current_branch,
     run_git,
     stage_modified_paths,
+    working_tree_sha,
     write_step_log,
 )
 from forge.git_utils import repo_root as get_repo_root
@@ -192,11 +194,16 @@ class StepDef:
         name: Step identifier used in config, CLI flags, and the log slug.
         fn: The ``step_*`` callable producing this step's ``StepResult``.
         default_on: Whether the step is part of the default sequence.
+        checks_files: Whether the step judges repository files. ``False``
+            for steps that check the installed environment: their log's
+            tree stamp says nothing about their result, so
+            ``--freshness`` reports them ``n/a``.
     """
 
     name: str
     fn: StepFn
     default_on: bool = True
+    checks_files: bool = True
 
 
 def _forge_step_config(repo_root: Path, step: str) -> dict[str, object]:
@@ -2739,9 +2746,9 @@ def _format_timing_log(results: list[StepResult]) -> str:
 # follow because they mutate + re-stage files before any validator sees the
 # diff (regen_docs refreshes generated docs, ruff reformats source).
 _STEP_REGISTRY: tuple[StepDef, ...] = (
-    StepDef("auto_rebuild", step_auto_rebuild),
-    StepDef("env_sync", step_env_sync),
-    StepDef("plugin_sync", step_plugin_sync),
+    StepDef("auto_rebuild", step_auto_rebuild, checks_files=False),
+    StepDef("env_sync", step_env_sync, checks_files=False),
+    StepDef("plugin_sync", step_plugin_sync, checks_files=False),
     StepDef("regen_docs", step_regen_docs),
     StepDef("ruff", step_ruff),
     StepDef("docstring_verification", step_docstrings),
@@ -3017,6 +3024,56 @@ def _forced_steps(only: list[str]) -> Iterator[None]:
             os.environ[_PIP_AUDIT_FORCE_ENV] = previous
 
 
+# Append-only logs accumulate records from many trees; one stamp cannot
+# describe them.
+_HISTORY_LOG_SUFFIX = "_history.log"
+
+
+def _report_freshness(only: list[str], *, as_json: bool) -> int:
+    """Report each ``code_health/`` log's freshness against the working tree.
+
+    Read-only and step-free, so any agent may run it to decide whether a
+    log is evidence for the tree in front of it (FOUNDATION §13).
+
+    Beyond the tree verdicts, a log of a step that checks the environment
+    rather than files reports ``n/a`` (its stamp says nothing about its
+    result), and a name requested in *only* reports ``missing`` when no log
+    exists or ``history`` for an append-only history log — so a caller
+    checking one specific log never gets silence or a false absence.
+
+    Args:
+        only: Log names (without ``.log``) to report; empty reports all.
+        as_json: Emit a ``{name: verdict}`` map instead of one line per log.
+
+    Returns:
+        ``0`` — the report informs a reader; it never gates.
+    """
+    root = get_repo_root()
+    log_dir = root / "code_health"
+    current = working_tree_sha(root)
+    environment_steps = {step.name for step in _STEP_REGISTRY if not step.checks_files}
+    verdicts: dict[str, str] = {}
+    for path in sorted(log_dir.glob("*.log")):
+        if path.name.endswith(_HISTORY_LOG_SUFFIX) or (only and path.stem not in only):
+            continue
+        verdicts[path.stem] = (
+            "n/a" if path.stem in environment_steps else log_freshness(path, current)
+        )
+    for name in only:
+        if name not in verdicts:
+            verdicts[name] = (
+                "history" if (log_dir / f"{name}.log").is_file() else "missing"
+            )
+    if as_json:
+        emit(json.dumps(verdicts, indent=2))
+    else:
+        for name, verdict in verdicts.items():
+            # A log name is a file name: keep terminal control bytes off stdout.
+            shown = "".join(ch for ch in name if ch.isprintable())
+            emit(f"{verdict:<10} {shown}.log")
+    return 0
+
+
 def main() -> int:
     """CLI entry point.
 
@@ -3057,9 +3114,29 @@ def main() -> int:
         action="append",
         default=[],
         metavar="STEP[,STEP...]",
-        help="Run exactly these steps (repeatable or comma-separated).",
+        help=(
+            "Run exactly these steps (repeatable or comma-separated). With "
+            "--freshness: report only these log names."
+        ),
+    )
+    parser.add_argument(
+        "--freshness",
+        action="store_true",
+        help=(
+            "Run no steps: report each code_health/*.log (except the "
+            "append-only *_history.log files) as fresh, stale, unstamped or "
+            "unknown against the current working tree, or n/a for a step that "
+            "checks the environment rather than files. A log named in --only "
+            "reports missing when absent and history when it is an append-only "
+            "log. Always exits 0."
+        ),
     )
     args = parser.parse_args()
+
+    # A read-only report: it must not reach the wip-sync banner or the
+    # step-forcing environment below.
+    if args.freshness:
+        return _report_freshness(_split_csv(args.only), as_json=args.json)
 
     if os.environ.get("FORGE_WIP_SYNC") == "1":
         emit(

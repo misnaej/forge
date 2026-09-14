@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_72 modules, 989 symbols._
+_72 modules, 995 symbols._
 
 ## `forge`
 
@@ -632,7 +632,7 @@ _72 modules, 989 symbols._
 - `gh_api(*args: str, timeout: int = 10) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
 - `own_login() -> str | None` — Return the GitHub login ``gh`` is authenticated as, once per process.
 - `_run_git(*args: str, cwd: Path | None = None) -> str` _(internal)_ — Run a git command and return stdout.
-- `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
+- `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True, env: Mapping[str, str] | None = None) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `_fallback_identity_args(repo_root: Path) -> list[str]` _(internal)_ — Return ``-c`` identity flags when git has no usable committer identity.
 - `create_annotated_tag(repo_root: Path, tag: str, *, commit: str = 'HEAD', force: bool = False) -> None` — Create annotated *tag* at *commit*, surviving identity-less runners.
 - `run_gate_evidence(repo_root: Path, gates: str, *, pass_headline: str, fail_headline: str, section_title: str) -> tuple[bool, str]` — Run ``forge-precommit --only`` gates and format PR-body evidence.
@@ -651,6 +651,11 @@ _72 modules, 989 symbols._
 - `merge_base_with_head(root: Path | None, base_branch: str) -> str` — Return the merge-base SHA of ``HEAD`` and the resolved base ref.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 - `write_tree(repo_root: Path) -> str | None` — Return the tree SHA of the current **index** via ``git write-tree``.
+- `working_tree_sha(repo_root: Path) -> str | None` — Return the tree SHA of the working tree as ``git add -A`` would commit it.
+- `_tree_without_logs(repo_root: Path, populate: tuple[str, ...], *, source_index: Path | None) -> str | None` _(internal)_ — Write a tree from a scratch index with ``code_health/`` removed.
+- `build_stamp(tree: str | None, head: str, *, dirty: bool, now: datetime) -> str` — Render the ``# produced-at:`` first line of a ``code_health/`` log.
+- `produced_at_stamp(repo_root: Path) -> str` — Return the stamp line for a log produced now against *repo_root*.
+- `log_freshness(log_path: Path, current_tree: str | None) -> LogFreshness` — Judge whether *log_path* was produced against *current_tree*.
 - `_release_ignored(path: str) -> bool` _(internal)_ — Return whether *path* is release-curated content (fingerprint-exempt).
 - `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring changelog paths.
 - `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
@@ -979,6 +984,7 @@ _72 modules, 989 symbols._
 - `_capped(output: str) -> str` _(internal)_ — Return *output* trimmed to the shared evidence cap.
 - `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult]) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
 - `_forced_steps(only: list[str]) -> Iterator[None]` _(internal)_ — Force explicitly named steps to run, then restore the environment.
+- `_report_freshness(only: list[str], *, as_json: bool) -> int` _(internal)_ — Report each ``code_health/`` log's freshness against the working tree.
 - `main() -> int` — CLI entry point.
 
 ## `forge.rebump`

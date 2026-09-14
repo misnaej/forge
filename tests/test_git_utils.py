@@ -10,8 +10,10 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,6 +23,7 @@ from tests.conftest import (
     GIT_ENV as _GIT_ENV,
 )
 from tests.conftest import (
+    PRODUCED_AT_RE,
     _detach_head,
     commit_all,
     make_fake_run,
@@ -2962,3 +2965,711 @@ def test_file_has_conflict_markers_true_for_real_conflicted_file(
 def test_file_has_conflict_markers_false_for_missing_file(tmp_path: Path) -> None:
     """A path that does not exist is simply not mid-conflict → False."""
     assert git_utils.file_has_conflict_markers(tmp_path / "absent.md") is False
+
+
+# ---------------------------------------------------------------------------
+# working_tree_sha / build_stamp / produced_at_stamp / log_freshness (#538)
+#
+# All behavior tests: each pins a documented contract of the provenance-
+# stamp feature (FOUNDATION §13) — the working-tree fingerprint algorithm,
+# the stamp's on-disk shape, and the freshness verdicts a reader derives
+# from it — rather than an implementation detail. Real git throughout
+# (init_git_repo / GIT_ENV / commit_all); no mocks.
+# ---------------------------------------------------------------------------
+
+
+def _make_conflicted_repo(repo: Path) -> None:
+    """Leave *repo* mid-merge with ``conflict.txt`` unresolved.
+
+    Shared setup for the unresolved-conflict tests below: ``main`` and a
+    ``feature`` branch each commit a different change to the same file,
+    so the merge genuinely conflicts (git leaves it uncommitted with
+    ``conflict.txt`` reported unmerged) rather than auto-resolving.
+
+    Args:
+        repo: Directory to initialize as the conflicted repo.
+    """
+    _init_git_repo(repo)
+    (repo / "conflict.txt").write_text("base\n")
+    commit_all(repo, "add conflict.txt")
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    (repo / "conflict.txt").write_text("feature change\n")
+    commit_all(repo, "feature change")
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=repo, env=_GIT_ENV, check=True
+    )
+    (repo / "conflict.txt").write_text("main change\n")
+    commit_all(repo, "main change")
+    subprocess.run(
+        ["git", "merge", "--no-ff", "feature"],
+        cwd=repo,
+        env=_GIT_ENV,
+        check=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# working_tree_sha
+# ---------------------------------------------------------------------------
+
+
+def test_working_tree_sha_clean_tree_equals_head_tree(tmp_path: Path) -> None:
+    """A clean working tree fingerprints identically to `HEAD^{tree}`.
+
+    Matches the plan's measured invariant: `git add -A` over an
+    unmodified tree changes nothing, so a clean repo's fingerprint needs
+    no extra round-trip to equal the committed tree.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    assert git_utils.working_tree_sha(tmp_path) == git_utils.get_tree_sha(
+        tmp_path, "HEAD"
+    )
+
+
+def test_working_tree_sha_dirty_tracked_file_differs_and_leaves_repo_untouched(
+    tmp_path: Path,
+) -> None:
+    """An uncommitted edit to a tracked file changes the fingerprint.
+
+    Also pins the no-side-effect contract: the helper computes this via a
+    throwaway copy of the index, never the real one — the real index's
+    own staged content (`git ls-files --stage`) and the staging area
+    (`git diff --cached`) are unchanged by the call.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    stage_before = subprocess.run(
+        ["git", "ls-files", "--stage"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    (tmp_path / "tracked.txt").write_text("v2 (dirty)\n")
+
+    result = git_utils.working_tree_sha(tmp_path)
+
+    assert result is not None
+    assert re.fullmatch(r"[0-9a-f]{40}", result)
+    assert result != git_utils.get_tree_sha(tmp_path, "HEAD")
+    stage_after = subprocess.run(
+        ["git", "ls-files", "--stage"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert stage_after == stage_before
+    staged_diff = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert staged_diff == ""
+
+
+def test_working_tree_sha_excludes_code_health_dir(tmp_path: Path) -> None:
+    """An untracked file under ``code_health/`` never moves the fingerprint.
+
+    Every writer stamps at least one ``code_health/*.log`` per run, so
+    without this exclusion the second log written in the same run would
+    see the first log's own untracked file and falsely read dirty
+    (#538 design disposition).
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    (tmp_path / "code_health").mkdir()
+    (tmp_path / "code_health" / "some.log").write_text("noise\n")
+
+    assert git_utils.working_tree_sha(tmp_path) == git_utils.get_tree_sha(
+        tmp_path, "HEAD"
+    )
+
+
+def test_working_tree_sha_returns_none_when_not_a_git_repo(tmp_path: Path) -> None:
+    """A plain (non-git) directory degrades to ``None``, never raises."""
+    assert git_utils.working_tree_sha(tmp_path) is None
+
+
+def test_working_tree_sha_returns_none_on_unresolved_conflict(tmp_path: Path) -> None:
+    """A mid-merge conflict returns ``None``.
+
+    The `unmerged_paths()` gate must fire before `git add -A` would
+    silently stage the conflict markers as if they were ordinary content.
+    """
+    _make_conflicted_repo(tmp_path)
+    assert git_utils.unmerged_paths(tmp_path) == ["conflict.txt"]  # setup sanity
+    assert git_utils.working_tree_sha(tmp_path) is None
+
+
+def test_working_tree_sha_honors_git_index_file_and_leaves_both_indexes_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The active index is resolved via `git rev-parse --git-path index`.
+
+    SCENARIO: a gitignored file (`ignored.txt`) is force-staged into an
+    *alternate* index only — the real index never tracked it. Since
+    `git add -A` re-adds every already-tracked file regardless of disk
+    content, membership in the starting index only matters for content
+    `git add -A` would not otherwise discover on its own — exactly a
+    gitignored-but-already-tracked file. So the fingerprint differs
+    depending on which index is "active" only when `GIT_INDEX_FILE`
+    (which `git rev-parse --git-path index` honours) is actually
+    consulted.
+    MOCK SETUP: none — real git throughout. `GIT_INDEX_FILE` is set via
+    `monkeypatch.setenv` so it reaches `working_tree_sha`'s own
+    subprocess calls the same way it would reach a real pre-commit hook's
+    environment.
+    EXPECTED BEHAVIOR: the fingerprint computed with `GIT_INDEX_FILE`
+    pointed at the alternate index differs from the one computed without
+    it, and neither the real index nor the alternate index's own staged
+    content (`git ls-files --stage`, queried with an explicit env that
+    never carries `GIT_INDEX_FILE`) changes across either call — the
+    helper only ever mutates a third, temporary copy.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / ".gitignore").write_text("ignored.txt\n")
+    (tmp_path / "ignored.txt").write_text("secret\n")
+    commit_all(tmp_path, "add gitignore")
+
+    baseline = git_utils.working_tree_sha(tmp_path)
+    real_stage_before = subprocess.run(
+        ["git", "ls-files", "--stage"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+    alt_index = tmp_path / "alt_index"
+    alt_env = {**_GIT_ENV, "GIT_INDEX_FILE": str(alt_index)}
+    subprocess.run(["git", "read-tree", "HEAD"], cwd=tmp_path, env=alt_env, check=True)
+    subprocess.run(
+        ["git", "add", "-f", "ignored.txt"], cwd=tmp_path, env=alt_env, check=True
+    )
+    alt_stage_before = subprocess.run(
+        ["git", "ls-files", "--stage"],
+        cwd=tmp_path,
+        env=alt_env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+    monkeypatch.setenv("GIT_INDEX_FILE", str(alt_index))
+    honored = git_utils.working_tree_sha(tmp_path)
+
+    assert honored is not None
+    assert honored != baseline
+    real_stage_after = subprocess.run(
+        ["git", "ls-files", "--stage"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert real_stage_after == real_stage_before
+    alt_stage_after = subprocess.run(
+        ["git", "ls-files", "--stage"],
+        cwd=tmp_path,
+        env=alt_env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert alt_stage_after == alt_stage_before
+
+
+def _count_git_objects(repo: Path) -> int:
+    """Count every file under ``.git/objects`` (loose, pack, and info alike).
+
+    Args:
+        repo: Git repo whose object store is inspected.
+
+    Returns:
+        Total file count recursively under ``repo/.git/objects``.
+    """
+    objects_dir = repo / ".git" / "objects"
+    return sum(1 for p in objects_dir.rglob("*") if p.is_file())
+
+
+def test_working_tree_sha_and_produced_at_stamp_write_no_objects_to_real_store(
+    tmp_path: Path,
+) -> None:
+    """Dirty-tree fingerprinting never grows the repo's real `.git/objects`.
+
+    SCENARIO: a modified tracked file plus an untracked non-ignored file —
+    `git add -A` must create new blob (and tree) objects to represent
+    both. `_tree_without_logs` routes every scratch-index write through a
+    throwaway `GIT_OBJECT_DIRECTORY`, wiring the repo's real store in only
+    as a read-only `GIT_ALTERNATE_OBJECT_DIRECTORIES`, so those new
+    objects must land in the scratch directory and never in the repo's
+    own store — across both the `working_tree_sha` call and the
+    `produced_at_stamp` call, which makes a second, independent scratch
+    index for `HEAD`'s tree.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    (tmp_path / "tracked.txt").write_text("v2 (dirty)\n")
+    (tmp_path / "untracked.txt").write_text("new file\n")
+
+    before = _count_git_objects(tmp_path)
+    assert git_utils.working_tree_sha(tmp_path) is not None
+    assert _count_git_objects(tmp_path) == before
+
+    assert PRODUCED_AT_RE.fullmatch(git_utils.produced_at_stamp(tmp_path)) is not None
+    assert _count_git_objects(tmp_path) == before
+
+
+def test_working_tree_sha_matches_real_add_dash_a_write_tree_on_identical_copy(
+    tmp_path: Path,
+) -> None:
+    """The returned tree matches a real `git add -A && git write-tree`.
+
+    Confirms the scratch-index result from the previous test is not
+    merely stable but actually correct: an independent throwaway repo
+    seeded with the same modified-tracked-file-plus-untracked-file
+    content, fingerprinted the ordinary way, produces the identical tree
+    SHA.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    (repo / "tracked.txt").write_text("v1\n")
+    commit_all(repo, "seed")
+    (repo / "tracked.txt").write_text("v2 (dirty)\n")
+    (repo / "untracked.txt").write_text("new file\n")
+
+    result = git_utils.working_tree_sha(repo)
+
+    twin = tmp_path / "twin"
+    twin.mkdir()
+    (twin / "tracked.txt").write_text("v2 (dirty)\n")
+    (twin / "untracked.txt").write_text("new file\n")
+    subprocess.run(["git", "init", "-q"], cwd=twin, env=_GIT_ENV, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=twin, env=_GIT_ENV, check=True)
+    expected = subprocess.run(
+        ["git", "write-tree"],
+        cwd=twin,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    assert result == expected
+
+
+def test_working_tree_sha_returns_none_when_index_copy_raises_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A copy failure on the scratch index degrades to `None`, never raises.
+
+    SCENARIO: a clean, ordinary repo — the failure mode under test is the
+    copy step itself, not any repo-state edge case.
+    MOCK SETUP: `shutil.copyfile` — the single seam `_tree_without_logs`
+    uses to snapshot the active index into the scratch one — raises
+    `PermissionError`, simulating a locked or unreadable index file.
+    EXPECTED BEHAVIOR: `working_tree_sha` catches it (the same `OSError`
+    handling every other scratch-git failure in `_tree_without_logs`
+    shares) and returns `None` rather than propagating.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+
+    def _raise_permission_error(*_args: object, **_kwargs: object) -> None:
+        msg = "locked"
+        raise PermissionError(msg)
+
+    monkeypatch.setattr(git_utils.shutil, "copyfile", _raise_permission_error)
+
+    assert git_utils.working_tree_sha(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# build_stamp
+# ---------------------------------------------------------------------------
+
+
+def test_build_stamp_clean_tree_matches_format_and_carries_the_given_time() -> None:
+    """A clean call renders `tree=<hex> head=<head> <time>`, no `+dirty` suffix.
+
+    ``now``'s date must appear verbatim in the rendered timestamp — pins
+    that the render uses the injected clock, not wall-clock time.
+    """
+    now = datetime(2024, 3, 5, 12, 30, 45, tzinfo=UTC)
+    tree = "a" * 40
+    stamp = git_utils.build_stamp(tree, "abc1234", dirty=False, now=now)
+    match = PRODUCED_AT_RE.fullmatch(stamp)
+    assert match is not None
+    assert match["tree"] == tree
+    assert match["head"] == "abc1234"
+    assert "2024-03-05" in match["when"]
+
+
+def test_build_stamp_dirty_appends_suffix_to_head() -> None:
+    """``dirty=True`` appends ``+dirty`` directly after the head token."""
+    stamp = git_utils.build_stamp(
+        "a" * 40, "abc1234", dirty=True, now=datetime(2024, 1, 1, tzinfo=UTC)
+    )
+    match = PRODUCED_AT_RE.fullmatch(stamp)
+    assert match is not None
+    assert match["head"] == "abc1234+dirty"
+
+
+def test_build_stamp_none_tree_renders_unknown() -> None:
+    """``tree=None`` renders the literal ``unknown`` token, not a blank."""
+    stamp = git_utils.build_stamp(
+        None, "abc1234", dirty=False, now=datetime(2024, 1, 1, tzinfo=UTC)
+    )
+    match = PRODUCED_AT_RE.fullmatch(stamp)
+    assert match is not None
+    assert match["tree"] == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# produced_at_stamp
+# ---------------------------------------------------------------------------
+
+
+def test_produced_at_stamp_clean_repo_reports_head_tree_and_short_head_no_dirty(
+    tmp_path: Path,
+) -> None:
+    """A clean repo's stamp names the real HEAD tree and short SHA, undirty."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    expected_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
+    expected_head = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    stamp = git_utils.produced_at_stamp(tmp_path)
+
+    match = PRODUCED_AT_RE.fullmatch(stamp)
+    assert match is not None
+    assert match["tree"] == expected_tree
+    assert match["head"] == expected_head
+
+
+def test_produced_at_stamp_dirty_repo_marks_dirty_suffix(tmp_path: Path) -> None:
+    """An uncommitted tracked edit marks the stamp's head with `+dirty`."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    (tmp_path / "tracked.txt").write_text("v2\n")
+
+    stamp = git_utils.produced_at_stamp(tmp_path)
+
+    match = PRODUCED_AT_RE.fullmatch(stamp)
+    assert match is not None
+    assert match["head"].endswith("+dirty")
+
+
+def test_produced_at_stamp_unresolved_conflict_reports_tree_unknown(
+    tmp_path: Path,
+) -> None:
+    """A mid-merge conflict degrades the stamp's tree to `unknown`, never raises."""
+    _make_conflicted_repo(tmp_path)
+
+    stamp = git_utils.produced_at_stamp(tmp_path)
+
+    match = PRODUCED_AT_RE.fullmatch(stamp)
+    assert match is not None
+    assert match["tree"] == "unknown"
+
+
+def test_produced_at_stamp_renders_tree_unknown_when_index_copy_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`produced_at_stamp` degrades to `tree=unknown` on the same copy failure.
+
+    SCENARIO: a clean, ordinary repo, same as the `working_tree_sha` test
+    above.
+    MOCK SETUP: `shutil.copyfile` raises `PermissionError` — the same
+    seam as the `working_tree_sha` test above.
+    EXPECTED BEHAVIOR: `working_tree_sha` (called internally) returns
+    `None`, and the stamp built on top of it renders the literal
+    `unknown` token rather than propagating or fabricating a tree.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+
+    def _raise_permission_error(*_args: object, **_kwargs: object) -> None:
+        msg = "locked"
+        raise PermissionError(msg)
+
+    monkeypatch.setattr(git_utils.shutil, "copyfile", _raise_permission_error)
+
+    stamp = git_utils.produced_at_stamp(tmp_path)
+
+    match = PRODUCED_AT_RE.fullmatch(stamp)
+    assert match is not None
+    assert match["tree"] == "unknown"
+
+
+def test_produced_at_stamp_joins_preexisting_git_alternate_object_directories_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-existing `GIT_ALTERNATE_OBJECT_DIRECTORIES` is joined, not replaced.
+
+    SCENARIO: a repo whose `HEAD` objects are reachable only through an
+    env-provided alternate — the committed loose objects are physically
+    moved out of `.git/objects` into a sibling directory inside `tmp_path`,
+    the way a `git clone --shared`/`--reference`-style object store would
+    leave them reachable only via an externally supplied
+    `GIT_ALTERNATE_OBJECT_DIRECTORIES`, set here via `monkeypatch.setenv`
+    the same way it would already be set in a caller's environment before
+    forge's stamping code runs. `working_tree_sha` alone cannot
+    discriminate the fix: its `git add -A` populate step never needs to
+    *read* a pre-existing blob for a well-formed source index (`write-tree`
+    trusts the index's own recorded shas), so it returns a real tree with
+    or without the join. `produced_at_stamp`'s second, independent
+    `_tree_without_logs` call (`git read-tree HEAD`, computing the head
+    tree for the dirty check) does need to resolve `HEAD`'s commit and
+    tree objects from scratch, so it is the call this scenario actually
+    exercises.
+    EXPECTED BEHAVIOR: joining the two directories lets `read-tree HEAD`
+    succeed via the preserved alternate, so the stamp reports a real 40-hex
+    tree and the genuine `+dirty` suffix. Were the caller's alternate
+    replaced instead of joined, `read-tree HEAD` would fail (the repo's own
+    `.git/objects` is empty), `head_tree` would degrade to `None`, and the
+    stamp would lose its `+dirty` suffix even though `tracked.txt` is dirty.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    (tmp_path / "tracked.txt").write_text("v2 (dirty)\n")
+
+    objects_dir = tmp_path / ".git" / "objects"
+    side = tmp_path / "side_objects"
+    side.mkdir()
+    for entry in list(objects_dir.iterdir()):
+        if entry.is_dir() and entry.name not in ("info", "pack"):
+            shutil.move(str(entry), str(side / entry.name))
+
+    monkeypatch.setenv("GIT_ALTERNATE_OBJECT_DIRECTORIES", str(side.resolve()))
+
+    stamp = git_utils.produced_at_stamp(tmp_path)
+
+    match = PRODUCED_AT_RE.fullmatch(stamp)
+    assert match is not None
+    assert re.fullmatch(r"[0-9a-f]{40}", match["tree"])
+    assert match["head"].endswith("+dirty")
+
+
+# ---------------------------------------------------------------------------
+# log_freshness
+# ---------------------------------------------------------------------------
+
+
+def test_log_freshness_missing_stamp_line_is_unstamped(tmp_path: Path) -> None:
+    """A log whose first line is not a `# produced-at:` stamp reads unstamped."""
+    log_path = tmp_path / "x.log"
+    log_path.write_text("some ordinary log content\n")
+    assert git_utils.log_freshness(log_path, "a" * 40) == "unstamped"
+
+
+def test_log_freshness_stamp_not_on_first_line_is_unstamped(tmp_path: Path) -> None:
+    """A stamp-shaped line that isn't line 1 does not count — position matters.
+
+    Pins the on-disk format independently of `build_stamp`: a
+    hand-written literal line, not the builder's own render.
+    """
+    tree = "a" * 40
+    log_path = tmp_path / "x.log"
+    log_path.write_text(
+        f"some preceding line\n# produced-at: tree={tree} head=abc "
+        "2024-01-01T00:00:00Z\n"
+    )
+    assert git_utils.log_freshness(log_path, tree) == "unstamped"
+
+
+def test_log_freshness_matching_tree_is_fresh(tmp_path: Path) -> None:
+    """The stamp's tree matching the current tree reads fresh."""
+    tree = "a" * 40
+    log_path = tmp_path / "x.log"
+    log_path.write_text(
+        f"# produced-at: tree={tree} head=abc1234 2024-01-01T00:00:00Z\nbody\n"
+    )
+    assert git_utils.log_freshness(log_path, tree) == "fresh"
+
+
+def test_log_freshness_mismatched_tree_is_stale(tmp_path: Path) -> None:
+    """A stamp tree differing from the current tree reads stale."""
+    log_path = tmp_path / "x.log"
+    log_path.write_text(
+        f"# produced-at: tree={'a' * 40} head=abc1234 2024-01-01T00:00:00Z\nbody\n"
+    )
+    assert git_utils.log_freshness(log_path, "b" * 40) == "stale"
+
+
+def test_log_freshness_stamp_tree_unknown_is_unknown(tmp_path: Path) -> None:
+    """A stamp recording `tree=unknown` reads unknown, even with a real current tree."""
+    log_path = tmp_path / "x.log"
+    log_path.write_text(
+        "# produced-at: tree=unknown head=abc1234 2024-01-01T00:00:00Z\nbody\n"
+    )
+    assert git_utils.log_freshness(log_path, "a" * 40) == "unknown"
+
+
+def test_log_freshness_none_current_tree_is_unknown_even_with_real_stamp(
+    tmp_path: Path,
+) -> None:
+    """`current_tree=None` reads unknown when stamp carries real 40-hex tree.
+
+    An unresolvable *current* state is never comparably fresh or stale.
+    """
+    tree = "a" * 40
+    log_path = tmp_path / "x.log"
+    log_path.write_text(
+        f"# produced-at: tree={tree} head=abc1234 2024-01-01T00:00:00Z\nbody\n"
+    )
+    assert git_utils.log_freshness(log_path, None) == "unknown"
+
+
+def test_log_freshness_reads_a_real_build_stamp_line(tmp_path: Path) -> None:
+    """`log_freshness` parses `build_stamp`'s own output, not just a hand-typed literal.
+
+    Every `log_freshness` test above writes a hand-typed `# produced-at:`
+    literal; `_STAMP_RE` is built from the same `STAMP_PREFIX` constant
+    `build_stamp` renders from, so this pins that the two agree on the
+    writer's real output — a clean stamp reads
+    fresh against its own tree, a `dirty=True` stamp (whose head token
+    gains a `+dirty` suffix) still parses, and a `tree=None` stamp reads
+    unknown.
+    """
+    now = datetime(2024, 1, 1, tzinfo=UTC)
+    tree = "a" * 40
+    log_path = tmp_path / "x.log"
+
+    log_path.write_text(
+        git_utils.build_stamp(tree, "abc1234", dirty=False, now=now) + "\nbody\n"
+    )
+    assert git_utils.log_freshness(log_path, tree) == "fresh"
+
+    log_path.write_text(
+        git_utils.build_stamp(tree, "abc1234", dirty=True, now=now) + "\nbody\n"
+    )
+    assert git_utils.log_freshness(log_path, tree) == "fresh"
+
+    log_path.write_text(
+        git_utils.build_stamp(None, "abc1234", dirty=False, now=now) + "\nbody\n"
+    )
+    assert git_utils.log_freshness(log_path, tree) == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# write_step_log / capturing_to_step_log — real stamp integration (#538)
+# ---------------------------------------------------------------------------
+
+
+def test_write_step_log_stamps_line_one(tmp_path: Path) -> None:
+    """`write_step_log`'s line 1 is a real `# produced-at:` stamp; the rest is the body.
+
+    Real git throughout (`_init_git_repo` / `commit_all`), no mocks: pins
+    that the two shared writers actually deliver `produced_at_stamp`'s
+    output — not merely something stamp-shaped — ahead of the
+    caller-supplied text, so a writer that dropped the stamp line (or
+    dropped the body) would be caught here even though `log_body`-based
+    tests elsewhere tolerate its absence.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+
+    log_path = git_utils.write_step_log(tmp_path, "demo", "line one\nline two\n")
+
+    first_line, _, rest = log_path.read_text(encoding="utf-8").partition("\n")
+    match = PRODUCED_AT_RE.fullmatch(first_line)
+    assert match is not None
+    assert match["tree"] == git_utils.get_tree_sha(tmp_path, "HEAD")
+    assert rest == "line one\nline two\n"
+
+
+def test_capturing_to_step_log_stamps_line_one(tmp_path: Path) -> None:
+    """`capturing_to_step_log`'s emitted log carries the same real stamp.
+
+    Sibling of `test_write_step_log_stamps_line_one` above: the
+    context-manager writer (`capturing_to_step_log`) shares
+    `write_step_log` internally, but the coverage question is
+    integration, not implementation — this pins the on-disk artifact of
+    the second call site independently.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+
+    with git_utils.capturing_to_step_log(tmp_path, "demo2"):
+        logging.getLogger().info("captured line")
+
+    log_path = tmp_path / "code_health" / "demo2.log"
+    first_line, _, rest = log_path.read_text(encoding="utf-8").partition("\n")
+    match = PRODUCED_AT_RE.fullmatch(first_line)
+    assert match is not None
+    assert match["tree"] == git_utils.get_tree_sha(tmp_path, "HEAD")
+    assert rest == "captured line\n"
+
+
+# ---------------------------------------------------------------------------
+# produced_at_stamp — tracked code_health/ regression (#538)
+# ---------------------------------------------------------------------------
+
+
+def test_produced_at_stamp_clean_repo_tracking_code_health_has_no_dirty_suffix(
+    tmp_path: Path,
+) -> None:
+    """A repo that TRACKS `code_health/` stamps clean right after commit.
+
+    Regression pin: `produced_at_stamp` must fingerprint HEAD's tree
+    under the same `code_health/` exclusion as the working tree —
+    comparing the excluded working tree against HEAD's *unexcluded* tree
+    would read any repo that tracks a log as permanently dirty, even
+    right after a fresh commit. Continues past the clean case to pin two
+    complementary behaviors on the same repo: editing an ordinary
+    tracked file still marks the stamp dirty (the exclusion doesn't
+    swallow real changes), and rewriting only the tracked log does not
+    (the exclusion applies to both sides of the comparison, not just
+    one).
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    (tmp_path / "code_health").mkdir()
+    (tmp_path / "code_health" / "some.log").write_text("body\n")
+    commit_all(tmp_path, "seed with tracked code_health/")
+
+    clean_match = PRODUCED_AT_RE.fullmatch(git_utils.produced_at_stamp(tmp_path))
+    assert clean_match is not None
+    assert not clean_match["head"].endswith("+dirty")
+
+    (tmp_path / "tracked.txt").write_text("v2\n")
+    dirty_match = PRODUCED_AT_RE.fullmatch(git_utils.produced_at_stamp(tmp_path))
+    assert dirty_match is not None
+    assert dirty_match["head"].endswith("+dirty")
+    (tmp_path / "tracked.txt").write_text("v1\n")
+
+    (tmp_path / "code_health" / "some.log").write_text("rewritten body\n")
+    log_only_match = PRODUCED_AT_RE.fullmatch(git_utils.produced_at_stamp(tmp_path))
+    assert log_only_match is not None
+    assert not log_only_match["head"].endswith("+dirty")

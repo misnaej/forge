@@ -553,7 +553,7 @@ options:
 
 ```text
 usage: forge-precommit [-h] [--json] [--skip STEP[,STEP...]]
-                       [--only STEP[,STEP...]]
+                       [--only STEP[,STEP...]] [--freshness]
 
 Run the forge pre-commit check sequence: ruff (format + check, self-healing
 with --unsafe-fixes on failure) + docstring verification (diff vs main) +
@@ -572,7 +572,15 @@ options:
                         comma-separated).
   --only STEP[,STEP...]
                         Run exactly these steps (repeatable or comma-
-                        separated).
+                        separated). With --freshness: report only these log
+                        names.
+  --freshness           Run no steps: report each code_health/*.log (except
+                        the append-only *_history.log files) as fresh, stale,
+                        unstamped or unknown against the current working tree,
+                        or n/a for a step that checks the environment rather
+                        than files. A log named in --only reports missing when
+                        absent and history when it is an append-only log.
+                        Always exits 0.
 ```
 
 ## forge-rebump

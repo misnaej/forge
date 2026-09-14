@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import cast
 
 from forge import config as _config
-from forge.git_utils import configure_cli_logging
+from forge.git_utils import configure_cli_logging, produced_at_stamp
 from forge.smart_test import coverage as cov_stage
 from forge.smart_test import lifecycle
 from forge.smart_test.dependencies import (
@@ -120,16 +120,19 @@ def _write_log(repo_root: Path, body: str) -> None:
     ``forge:precommit-fixer`` reads (FOUNDATION §13), while
     ``pytest.log`` is ``forge-slow-tests-report``'s documented default
     input — writing it here makes the reporter's no-argument invocation
-    true after any smart-test run.
+    true after any smart-test run. Both open with the same
+    :func:`forge.git_utils.produced_at_stamp`, so a test result names the
+    tree it was run against.
 
     Args:
         repo_root: Git repo root.
         body: Full captured run output.
     """
+    stamped = f"{produced_at_stamp(repo_root)}\n{body}"
     for relpath in (_LOG_RELPATH, _PYTEST_LOG_RELPATH):
         log_path = repo_root / relpath
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text(body, encoding="utf-8")
+        log_path.write_text(stamped, encoding="utf-8")
 
 
 def _run_full(

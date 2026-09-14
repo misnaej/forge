@@ -47,7 +47,7 @@ Pre-write workflow:
    cat ./code_health/ruff.log 2>/dev/null
    cat ./code_health/docstring_verification.log 2>/dev/null
    ```
-   If stale or absent, ask the main agent to call `forge:precommit-fixer` to refresh `code_health/`. Do not invoke `forge-precommit` or `ruff` yourself.
+   Check them with `forge-precommit --freshness --only ruff,docstring_verification` (read-only, runs no steps). Anything but `fresh`, or absent → ask the main agent to call `forge:precommit-fixer` to refresh `code_health/`. Do not run the checks or `ruff` yourself.
 
 2. **Existence + placement belong to `forge:prior-art`** — when the
    plan creates a new file or top-level symbol, require its
@@ -101,7 +101,7 @@ The agent must:
 0. **Orient first**: if `REPO_STRUCTURE.md` exists at the repo root, read
    it before any recipe — it is the canonical, drift-verified map of the
    repository layout and saves a blind filesystem scan.
-1. For each recipe: read the log (if stale / missing, run the script).
+1. For each recipe: read the log; when it is missing or `forge-precommit --freshness --only <log name>` reports anything but `fresh`, run the script. Never judge staleness by file times.
 2. For each finding above LOW severity: cite `file:line` and propose a fix.
 3. Stage 2: delegate the claims log to `forge:knowledge-search` for verification.
 4. Run repo-specific extras passed by the wrapper.

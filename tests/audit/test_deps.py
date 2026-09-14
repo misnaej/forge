@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from forge import git_utils
 from forge.audit import common
 from forge.audit.common import Scope
 from forge.audit.deps import (
@@ -23,6 +24,8 @@ from forge.audit.deps import (
     render_dependency_tree,
     run,
 )
+from tests.conftest import PRODUCED_AT_RE, commit_all
+from tests.conftest import init_git_repo as _init_git_repo
 
 
 if TYPE_CHECKING:
@@ -283,14 +286,33 @@ def test_render_dependency_tree_marks_cycle_members() -> None:
 
 
 def test_run_writes_dependency_tree_log(fake_repo: Path) -> None:
-    """``run()`` writes ``code_health/audit_deps_tree.log`` on every run."""
+    """``run()`` writes ``code_health/audit_deps_tree.log`` on every run.
+
+    Also pins the header order (FOUNDATION §13): line 1 is the
+    ``# produced-at:`` provenance stamp and line 2 is the
+    ``# forge-audit-deps dependency tree`` marker that used to open the
+    file. The stamp's ``tree=`` is asserted against *this* fixture
+    repo's real ``HEAD^{tree}`` — ``deps.py`` binds its own
+    ``repo_root`` alongside ``common``'s (only the latter is patched by
+    the ``fake_repo`` fixture), so a stamp computed via the wrong,
+    unpatched binding would read some other (real) repo's tree and fail
+    this exact-value assertion rather than slip through a looser
+    hex-or-unknown pattern.
+    """
     _write(fake_repo / "src" / "pkg" / "__init__.py", "")
     _write(fake_repo / "src" / "pkg" / "a.py", "x = 1\n")
     _write(fake_repo / "src" / "pkg" / "b.py", "from pkg import a\n")
+    _init_git_repo(fake_repo)
+    commit_all(fake_repo, "seed")
     run(Scope.FULL, [fake_repo / "src"], DepsConfig(distance_threshold=2.0))
     tree_path = fake_repo / "code_health" / "audit_deps_tree.log"
     assert tree_path.exists()
     tree_text = tree_path.read_text(encoding="utf-8")
-    assert "# forge-audit-deps dependency tree" in tree_text
+    lines = tree_text.splitlines()
+    match = PRODUCED_AT_RE.match(lines[0])
+    assert match is not None
+    assert match["tree"] == git_utils.get_tree_sha(fake_repo, "HEAD")
+    assert lines[1] == "# forge-audit-deps dependency tree"
+    assert "# generated:" not in tree_text
     assert "pkg.b" in tree_text
     assert "└─ pkg.a" in tree_text
