@@ -900,7 +900,12 @@ def create_commit(
     Injects a fallback committer identity only when git has none (see
     :func:`_fallback_identity_args`); a commit requires one, and a fresh CI
     runner configures none. The git pre-commit hook runs as for any commit:
-    nothing here skips it.
+    nothing here skips it, and git's per-process config and repository
+    overrides are removed for the call (:func:`git_env_overrides_removed`),
+    so a ``core.hooksPath`` injected through the environment cannot skip it
+    either. The scrub lives here, not in :func:`run_git`: git sets
+    ``GIT_INDEX_FILE`` for the hooks themselves, and ``forge-precommit``
+    runs inside one.
 
     Args:
         repo_root: Repo root.
@@ -919,15 +924,16 @@ def create_commit(
     # No `--` pin needed (unlike create_annotated_tag's positionals):
     # `-m` consumes the next argv element as its value unconditionally,
     # so a `-`-prefixed message can never parse as a separate option.
-    run_git(
-        *_fallback_identity_args(repo_root),
-        "commit",
-        "-m",
-        message,
-        cwd=repo_root,
-        env=env,
-        log_errors=log_errors,
-    )
+    with git_env_overrides_removed():
+        run_git(
+            *_fallback_identity_args(repo_root),
+            "commit",
+            "-m",
+            message,
+            cwd=repo_root,
+            env=env,
+            log_errors=log_errors,
+        )
 
 
 def resolve_current_branch(repo_root: Path) -> tuple[str, str] | None:
@@ -1108,8 +1114,12 @@ def git_env_overrides_removed() -> Iterator[None]:
     ``core.hooksPath`` would skip the pre-commit hook, ``GIT_DIR`` would
     commit into another repository. The variables are restored on exit, so
     an in-process caller leaves the environment as it found it.
-    ``GIT_CONFIG_GLOBAL`` / ``GIT_CONFIG_SYSTEM`` stay: repository-local
-    config, where forge installs its hooks path, outranks both.
+    ``GIT_CONFIG_GLOBAL`` / ``GIT_CONFIG_SYSTEM`` stay. A hooks path set in
+    repository-local config — where ``install-forge-githooks`` puts it —
+    outranks both; a repository without a local ``core.hooksPath`` is not
+    protected from them, and neither is a hooks path changed with
+    ``git config``: this scrub removes per-process overrides, not
+    configuration.
 
     Yields:
         Nothing; the environment is restored when the body exits.

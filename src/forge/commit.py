@@ -353,9 +353,9 @@ def _coverage_refusal(state: RepoState, markers: Mapping[str, str]) -> str | Non
     """Refuse a pre-commit record that does not cover a full run.
 
     Every ``forge-precommit`` run rewrites the timing log with only the steps
-    it ran, so a narrowed ``--only`` run (a targeted re-check, the evidence
-    pack's generated-artifact checks) would otherwise stand in for the
-    whole battery.
+    it ran, so a narrowed run — ``--only`` (a targeted re-check, the evidence
+    pack's generated-artifact checks) or ``--skip`` — would otherwise stand
+    in for the whole battery.
 
     Args:
         state: The repository facts to decide on.

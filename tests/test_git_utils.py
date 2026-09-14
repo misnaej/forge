@@ -1262,6 +1262,64 @@ def test_create_commit_raises_when_nothing_staged(tmp_path: Path) -> None:
         git_utils.create_commit(tmp_path, "chore: nothing to commit")
 
 
+def test_create_commit_scrubs_env_hookspath_so_blocking_hook_still_fires(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller's ``GIT_CONFIG_COUNT``/``core.hooksPath`` override can't skip the hook.
+
+    Security regression for ``create_commit`` wrapping its ``git commit``
+    call in :func:`git_utils.git_env_overrides_removed` (issue #533): every
+    caller of this commit seam — ``forge-commit``, ``forge-resync``,
+    ``forge-changelog`` — must run the repository's real pre-commit hook
+    even when the process environment reconfigures git's hooks path via
+    ``GIT_CONFIG_*``, exactly what a malicious or misconfigured caller
+    could inject. Before the wrap, this override would point
+    ``core.hooksPath`` at an empty directory with no ``pre-commit``
+    script, so the real installed hook below — which would otherwise
+    block this commit — would silently never run, and the commit would
+    succeed instead of raising.
+    """
+    _init_git_repo(tmp_path)
+    before = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    hook_path = tmp_path / ".git" / "hooks" / "pre-commit"
+    hook_path.parent.mkdir(parents=True, exist_ok=True)
+    hook_path.write_text("#!/usr/bin/env bash\nexit 1\n")
+    hook_path.chmod(0o755)
+
+    (tmp_path / "file.txt").write_text("content\n", encoding="utf-8")
+    subprocess.run(["git", "add", "file.txt"], cwd=tmp_path, env=_GIT_ENV, check=True)
+
+    empty_hooks_dir = tmp_path / "empty-hooks"
+    empty_hooks_dir.mkdir()
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(empty_hooks_dir))
+
+    with pytest.raises(subprocess.CalledProcessError):
+        git_utils.create_commit(tmp_path, "feat: x", log_errors=False)
+
+    after = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert after == before
+    assert os.environ["GIT_CONFIG_COUNT"] == "1"
+    assert os.environ["GIT_CONFIG_KEY_0"] == "core.hooksPath"
+    assert os.environ["GIT_CONFIG_VALUE_0"] == str(empty_hooks_dir)
+
+
 # ---------------------------------------------------------------------------
 # ref_exists
 # ---------------------------------------------------------------------------
@@ -2314,10 +2372,10 @@ def test_push_branch_refuses_dash_or_plus_prefixed_remote_or_branch_without_subp
     """``-`` or ``+`` prefix injection is rejected, no subprocess call.
 
     ``-`` guards against option injection; ``+`` guards against git's own
-    force-push refspec syntax (``+main`` force-pushes ``main`` even under
-    the old bare-name refspec form) — ``push_branch`` has no force option,
-    so a caller-supplied ``+``-prefixed remote or branch must never reach
-    git as an implicit force.
+    force-push refspec syntax (a refspec ``+main`` force-pushes ``main``) —
+    ``push_branch`` has no force option, so a caller-supplied
+    ``+``-prefixed remote or branch must never reach git as an implicit
+    force.
 
     Args:
         remote: The ``remote`` argument to pass.
@@ -2385,13 +2443,12 @@ def test_push_branch_local_plus_main_branch_cannot_force_move_origin_main(
     function returns ``ok=False``. In a push refspec, a bare ``+main`` is
     the force flag plus the ref name ``main`` — it names the *local*
     branch called ``main`` as the source, independent of what branch is
-    literally named ``+main`` or checked out. Under the OLD bare-name
-    refspec form, ``git push origin +main`` would therefore have
-    force-pushed **local ``main``** onto remote ``main`` — so the setup
-    below deliberately rewinds local ``main`` behind origin's: only then
-    does a force-push actually move (rewind) the remote, making the
-    "unchanged" assertion below discriminate a real regression from a
-    push that was always going to be a no-op.
+    literally named ``+main`` or checked out. Passing that bare name to
+    ``git push origin +main`` force-pushes **local ``main``** onto remote
+    ``main`` — so the setup below deliberately rewinds local ``main``
+    behind origin's: only then does a force-push actually move (rewind)
+    the remote, making the "unchanged" assertion below discriminate a real
+    regression from a push that was always going to be a no-op.
     """
     work, bare = _init_single_track_repo(tmp_path)
     origin_c0 = subprocess.run(
