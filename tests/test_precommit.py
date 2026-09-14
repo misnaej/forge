@@ -37,6 +37,7 @@ from tests.conftest import (
     init_git_repo,
     init_single_track_repo,
     log_body,
+    timing_log,
 )
 
 
@@ -724,6 +725,25 @@ def test_format_timing_log_renders_header_rows_and_total() -> None:
     total = sum(r.elapsed_s for r in results)
     assert lines[6].startswith("total")
     assert f"{total:.1f}s" in lines[6]
+
+
+def test_timing_markers_reads_rows_skips_stamp_header_and_total() -> None:
+    """`timing_markers` returns name→marker for step rows only, in order.
+
+    `pr_wrapup_compose`'s `_code_quality_rows` and `pr_evidence`'s
+    `_timing_snapshot` both exercise this reader only through a rendered
+    string comparison, never against its own return value — this pins the
+    parser's own contract (a name→marker dict, insertion-ordered) directly,
+    including that the `# produced-at:` stamp, the banner line, the blank
+    separator, and the trailing `total` row are all skipped, not misread
+    as steps.
+    """
+    log = timing_log("ruff PASS", "typecheck FAIL")
+
+    markers = precommit.timing_markers(log)
+
+    assert markers == {"ruff": "PASS", "typecheck": "FAIL"}
+    assert list(markers) == ["ruff", "typecheck"]
 
 
 def test_run_all_stamps_elapsed_s_from_monotonic_delta(
