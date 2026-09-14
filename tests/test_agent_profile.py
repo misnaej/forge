@@ -1182,6 +1182,61 @@ def test_render_edit_receipt_unknown_vs_none_recorded_vs_per_file_lines() -> Non
     assert "a.py — forge:design-checker, forge:test-writer" in multi_line
 
 
+def test_subagent_edits_unknown_when_every_row_lacks_a_path(tmp_path: Path) -> None:
+    """A hook older than path recording makes every row pathless — not "clean".
+
+    Regression pin: this ledger shape was previously read as "no by_file
+    rows" and returned ``known=True`` with an empty receipt, reporting a
+    tree full of subagent edits as clean.
+    """
+    ledger = tmp_path / agent_profile.LEDGER_RELPATH
+    events = [
+        _event(
+            event="PostToolUse",
+            ts_ms=BASE_MS,
+            agent_type="forge:design-checker",
+            tool_name="Edit",
+            file_path=None,
+        ),
+        _event(
+            event="PostToolUse",
+            ts_ms=BASE_MS + 1000,
+            agent_type="forge:test-writer",
+            tool_name="Write",
+            file_path=None,
+        ),
+    ]
+    _write_jsonl(ledger, events)
+
+    receipt = subagent_edits(tmp_path)
+
+    assert receipt.known is False
+    assert receipt.pathless == len(events)
+    assert "/plugin update" in receipt.reason
+
+
+def test_render_edit_receipt_marks_partial_attribution_incomplete() -> None:
+    """A receipt with both known files and pathless rows renders as INCOMPLETE.
+
+    Distinct from both the plain per-file head and the UNKNOWN line —
+    otherwise partial evidence would read as complete.
+    """
+    partial = EditReceipt(
+        known=True,
+        by_file={"a.py": {"forge:design-checker"}},
+        pathless=2,
+    )
+    unknown = EditReceipt(known=False, reason="no ledger at code_health/x.jsonl")
+    complete = EditReceipt(known=True, by_file={"a.py": {"forge:design-checker"}})
+
+    partial_line = render_edit_receipt(partial)
+
+    assert "INCOMPLETE" in partial_line
+    assert "2" in partial_line
+    lines = {partial_line, render_edit_receipt(unknown), render_edit_receipt(complete)}
+    assert len(lines) == 3
+
+
 # ---------------------------------------------------------------------------
 # history
 # ---------------------------------------------------------------------------

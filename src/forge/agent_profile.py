@@ -231,11 +231,16 @@ class EditReceipt:
         known: Whether the ledger could be read at all.
         reason: Why it could not, when ``known`` is false.
         by_file: Repo-relative path → the agent types that wrote it.
+        pathless: Subagent writes seen with no recorded path. Rows
+            written by a hook older than path recording all look like
+            this, so a zero ``by_file`` beside a non-zero count means
+            "cannot tell", not "nothing happened".
     """
 
     known: bool
     reason: str = ""
     by_file: dict[str, set[str]] = field(default_factory=dict)
+    pathless: int = 0
 
 
 def subagent_edits(
@@ -272,6 +277,7 @@ def subagent_edits(
     wanted = set(paths) if paths is not None else None
     by_file: dict[str, set[str]] = defaultdict(set)
     seen_any = False
+    pathless = 0
     for event in _iter_jsonl(ledger):
         seen_any = True
         agent = (event.get("agent_type") or "").strip()
@@ -279,11 +285,16 @@ def subagent_edits(
             continue
         if session_id and event.get("session_id") != session_id:
             continue
-        raw = event.get("file_path")
-        if not isinstance(raw, str) or not raw:
-            continue
         when = _parse_ts(event.get("ts"))
         if since is not None and when is not None and when < since:
+            continue
+        raw = event.get("file_path")
+        if not isinstance(raw, str) or not raw:
+            # A write whose path the hook never recorded. Counted, not
+            # dropped: a hook older than path recording makes EVERY row
+            # look like this, and silently returning an empty result
+            # would report "no subagent edits" for a tree full of them.
+            pathless += 1
             continue
         rel = _relative_to_root(raw, root)
         if wanted is not None and rel not in wanted:
@@ -291,7 +302,17 @@ def subagent_edits(
         by_file[rel].add(agent)
     if not seen_any:
         return EditReceipt(known=False, reason="ledger is empty")
-    return EditReceipt(known=True, by_file=dict(by_file))
+    if not by_file and pathless:
+        return EditReceipt(
+            known=False,
+            reason=(
+                f"{pathless} subagent write(s) recorded without a file path — "
+                "the running hook predates path recording; refresh the plugin "
+                "cache (/plugin update, then /reload-plugins)"
+            ),
+            pathless=pathless,
+        )
+    return EditReceipt(known=True, by_file=dict(by_file), pathless=pathless)
 
 
 def _relative_to_root(raw: str, root: Path) -> str:
@@ -327,7 +348,13 @@ def render_edit_receipt(receipt: EditReceipt) -> str:
         )
     if not receipt.by_file:
         return "subagent edits: none recorded (tool-based writes only)."
-    lines = ["subagent edits (tool-based writes only — shell writes are invisible):"]
+    head = "subagent edits (tool-based writes only — shell writes are invisible):"
+    if receipt.pathless:
+        head = (
+            f"subagent edits — INCOMPLETE, {receipt.pathless} further write(s) "
+            "have no recorded path:"
+        )
+    lines = [head]
     lines.extend(
         f"  {path} — {', '.join(sorted(agents))}"
         for path, agents in sorted(receipt.by_file.items())
