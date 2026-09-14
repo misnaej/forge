@@ -147,6 +147,7 @@ subdirectory holds a single `SKILL.md`:
 - memory-audit/: audit agent memory against the repo's rule surface
 - next/: clean up state and pick next task
 - perf/: opt-in perf read-side — analyze ledgers/baseline, file findings as issues (report), re-check open performance issues (watch)
+- plan-batch/: coordinator that drafts several screened issues at once via drafter agents forbidden to mutate anything, relaying each draft for explicit validation
 - plan-issue/: human-validated planning for one issue — records a plan-validated execution spec + plan-ready label
 - pr/: full PR finalization flow
 - pr-comments/: address PR review comments

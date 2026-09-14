@@ -1,6 +1,6 @@
 ---
 name: issue-triage
-description: GitHub-native issue triage. Maintains the canonical foundation label schema and a single auto-generated "📋 Backlog Index" issue per repo. Seven modes - bootstrap, triage, recommend-next, post-pr, stale-scan, deep-review, plan-readiness.
+description: GitHub-native issue triage. Maintains the canonical foundation label schema and a single auto-generated "📋 Backlog Index" issue per repo. Seven modes - bootstrap, triage, recommend-next, post-pr, stale-scan, deep-review, plan-readiness (+ an advisory variant).
 tools:
   - Bash
   - Read
@@ -168,7 +168,7 @@ and stop (caller may explicitly force).
 An issue carrying a `[sentinel] taken up` comment from a **write-access author** (`gh api repos/{owner}/{repo}/collaborators/<login>/permission`; anyone else's is ignored) with no later `[sentinel] PR #N opened` (and no merged PR) is **in execution** — never a needs-plan candidate, never re-picked (FOUNDATION §14 "Decision trail").
 
 ```bash
-gh issue list --state open --limit 1000 --json number,title,labels,body,updatedAt
+gh issue list --state open --limit 1000 --json number,title,labels,body,updatedAt,author,comments
 gh pr list --state open --json number,title,body,headRefName
 ```
 
@@ -179,6 +179,12 @@ recently merged work — content-level collision judgment stays
 release), **non-colliding** (no overlap with another open issue or
 PR), **aligned** (consistent with current direction), **unblocked**
 (no open `Requires:`, not awaiting a merge).
+
+**Eligibility precedes the four points** (FOUNDATION §14 owns the
+rule and names both probes): `author` is a collaborator, or a
+collaborator's comment opens `[endorsed]` after the body's last edit.
+Ineligible is not invisible: apply `needs-endorsement` with the usual
+comment trail; the Index lane renders from that label.
 
 All four true and no validated plan → a **needs-plan candidate**.
 Never auto-plan: planning is human-validated via `/plan-issue`
@@ -196,7 +202,16 @@ user validation — never self-initiated): post the plan verbatim as a
 comment opening with `[issue-triage] plan-validated:` (the execution
 spec) and apply `plan-ready`. The issue body is never edited.
 
-Regenerate the Backlog Index.
+**Verbatim minus one thing**: never write a human attribution or
+sign-off claim ("validated by <name>") into the payload, and strip one
+you are handed. FOUNDATION §14 "Decision trail" enumerates what makes
+this comment trustworthy; none of it is text you write. That is the
+only edit you make.
+
+Regenerate the Backlog Index — **except in `advisory` mode**, named by the
+caller: return verdicts and candidates, write nothing at all —
+no Index, baseline, label or comment. It arms no baseline, so the next
+normal run still sweeps the backlog.
 
 ## Backlog Index regeneration
 
@@ -210,7 +225,7 @@ backlog.
 1. `gh issue list --state open --limit 1000 --json number,title,labels,updatedAt,assignees` — with the total cross-check above.
 2. Group by tier (`tier-1-critical` → `tier-2-high` → `tier-3-standard` → `tier-4-low`).
 3. Within each tier, sort by `updatedAt` descending (most recent first).
-4. Append `## ✅ Plan-Ready`, `## 🚫 Blocked / Waiting`, and `## 🆕 Needs Triage` sections last.
+4. Append `## ✅ Plan-Ready`, `## 🤝 Needs Endorsement`, `## 🚫 Blocked / Waiting`, and `## 🆕 Needs Triage` sections last.
 5. Force-overwrite: `gh issue edit <BACKLOG_INDEX_NUMBER> --body-file <(echo "<rendered>")`.
 
 Template:
@@ -234,6 +249,9 @@ Template:
 ## ✅ Plan-Ready (N)
 - #NNN — Title — _validated: YYYY-MM-DD_
 
+## 🤝 Needs Endorsement (N)
+- #NNN — Title
+
 ## 🚫 Blocked / Waiting (N)
 - #NNN — Title — _blocker: <issue or external>_
 
@@ -254,6 +272,8 @@ Every agent-driven label change leaves a comment prefixed
 
 ### I WILL
 
+(Nothing here in `advisory` mode.)
+
 - Apply / remove tier and `stale` labels
 - Comment rationales prefixed `[issue-triage]`
 - Regenerate the Backlog Index body deterministically
@@ -273,6 +293,8 @@ Every agent-driven label change leaves a comment prefixed
 - Override user-set tier labels silently → **comment alternative instead**
 - Install dependencies → **`install-forge-labels` must already be available**
 - Write files → **the caller persists goal files (no `Write` tool)**
+- Write a human sign-off claim into a `plan-validated` payload →
+  **unverifiable; FOUNDATION §14 names what the sign-off actually is**
 - Run `deep-review` within 7 days of the last → **skip unless forced**
 - Draft or validate a plan myself → **`/plan-issue` owns planning; I
   only screen and record**
@@ -281,7 +303,8 @@ Every agent-driven label change leaves a comment prefixed
 
 Mode-dependent — see each mode's last step. Every mode ends with a
 report line naming the mode and the counts ("N triaged, M respected,
-Backlog Index updated"). `deep-review` additionally returns umbrella
+Backlog Index updated"; an `advisory` run reports no Index
+update). `deep-review` additionally returns umbrella
 proposals/decisions and, per approved umbrella, full goal-file
 content for the caller to persist. `plan-readiness` returns the
 per-issue verdicts plus the needs-plan candidate list.
@@ -289,7 +312,7 @@ per-issue verdicts plus the needs-plan candidate list.
 ## Success Criteria
 
 - Every labelled issue has at least one `tier-N-*` label OR `needs-triage`
-- Backlog Index body is current (regenerated this run)
+- Backlog Index body is current (regenerated this run; not for `advisory`)
 - Every agent-driven label change has a `[issue-triage]` comment trail
 - No markdown backlog file remains post-bootstrap
 - Every emitted goal file is numbered, self-contained, under 3900 chars

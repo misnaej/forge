@@ -340,16 +340,20 @@ graph LR
   sk_next(["/next<br/>skill"])
   sk_triage(["/triage<br/>skill"])
   sk_plan_issue(["/plan-issue<br/>skill"])
+  sk_plan_batch(["/plan-batch<br/>skill"])
   sk_sentinel(["/sentinel<br/>skill"])
   sk_pr(["/pr<br/>skill"])
   main_agent -->|runs| sk_next
   main_agent -->|runs| sk_triage
   main_agent -->|runs| sk_plan_issue
+  main_agent -->|runs| sk_plan_batch
   main_agent -->|runs| sk_sentinel
   issue_triage_forge -->|delegates| issue_triage
   sk_next -->|invokes| issue_triage
   sk_triage -->|invokes| issue_triage
   sk_plan_issue -->|records validated plan via| issue_triage
+  sk_plan_batch -->|screens the queue via| issue_triage
+  sk_plan_batch -->|drafts via draft-only mode of| sk_plan_issue
   sk_sentinel -->|executes plan-ready issues via| sk_pr
   sk_sentinel -->|empty-loop screen via| issue_triage
   issue_triage -->|invokes| cli_install_forge_labels
@@ -363,6 +367,7 @@ graph LR
   class sk_next skill
   class sk_triage skill
   class sk_plan_issue skill
+  class sk_plan_batch skill
   class sk_sentinel skill
   class sk_pr skill
 ```
