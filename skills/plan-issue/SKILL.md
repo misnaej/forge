@@ -75,9 +75,9 @@ below:
 ## Step 4: Explicit validation
 
 Present the complete plan: the plain-English statement from Step 3
-first, then files, order, side effects and bump class, and close with
-the one-line statement of what will be done (FOUNDATION §1 owns all
-three; do not restate the rules here).
+first, then files, order, side effects, which steps are mechanical or
+judgment, and bump class, and close with the one-line statement of what
+will be done (FOUNDATION §1 owns these; do not restate the rules here).
 Proceed only on the user's explicit validation — silence, partial
 answers, or "looks fine so far" are not validation.
 

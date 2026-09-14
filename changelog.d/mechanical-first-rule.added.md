@@ -1,0 +1,4 @@
+bump: minor
+- **FOUNDATION §7 "Mechanical first"** — a design principle every consumer inherits: classify each step of new work (an agent, a skill step, a CLI) as mechanical or judgment. A step whose output depends only on the working tree, GitHub state and caller-supplied text becomes a CLI, preferably a subcommand of an existing one, instead of agent instructions; agents keep the judgment and take that output as evidence. Every agent step costs a model round trip; a program costs one call and returns the same result every run.
+- **Plans name the classification**: FOUNDATION §1's plan contract and `/plan-issue` Step 4 now list which planned steps are mechanical and which need judgment, so the question is asked before any code exists.
+- **Review lens, never a gate**: `forge:design-checker` gains a mechanical-first lens for diffs that add or change agents, skills or skill steps.
