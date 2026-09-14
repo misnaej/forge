@@ -31,7 +31,8 @@ usage: forge-agent-profile [-h] [--ledger LEDGER] [--transcripts TRANSCRIPTS]
                            [--history] [--edits] [--session SESSION]
                            [--no-history]
 
-Report where agent and subagent time goes (read-only, always exits 0).
+Report where agent and subagent time goes, and which files a subagent wrote
+(read-only, always exits 0).
 
 options:
   -h, --help            show this help message and exit

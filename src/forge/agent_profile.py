@@ -1,4 +1,4 @@
-"""forge-agent-profile — where the agents' time goes.
+"""forge-agent-profile — where the agents' time goes, and what they wrote.
 
 Forge times pre-commit steps (``precommit_timing.log``), tests
 (``forge-slow-tests-report``), and wrapped subprocesses
@@ -38,6 +38,7 @@ Usage:
 - ``forge-agent-profile --transcripts ~/.claude/projects/<proj>``
 - ``forge-agent-profile --json`` — machine-readable runs + summary.
 - ``forge-agent-profile --history`` — render the append-only ledger.
+- ``forge-agent-profile --edits`` — which uncommitted files a subagent wrote.
 """
 
 from __future__ import annotations
@@ -261,7 +262,10 @@ def subagent_edits(
     Args:
         root: Repository root.
         since: Ignore rows older than this instant (typically the last
-            commit — earlier edits are already committed).
+            commit — earlier edits are already committed). Wall-clock
+            based, so it assumes the clock that stamped the ledger and
+            the one that stamped the commit agree; under backward skew a
+            genuinely later write can compare as earlier and be dropped.
         session_id: Restrict to one session. The ledger is shared across
             sessions and worktrees in a clone, so without this a
             parallel run's edits read as this one's.
@@ -296,7 +300,7 @@ def subagent_edits(
             # would report "no subagent edits" for a tree full of them.
             pathless += 1
             continue
-        rel = _relative_to_root(raw, root)
+        rel = _safe_label(_relative_to_root(raw, root))
         if wanted is not None and rel not in wanted:
             continue
         by_file[rel].add(agent)
@@ -315,20 +319,53 @@ def subagent_edits(
     return EditReceipt(known=True, by_file=dict(by_file), pathless=pathless)
 
 
+PATH_LABEL_CAP = 200
+
+
+def _safe_label(raw: str) -> str:
+    """Render an untrusted path as one bounded, single-line label.
+
+    The value is whatever the calling tool declared as its target — a
+    string an agent chooses, not a verified filesystem fact — and it is
+    reproduced verbatim into a hand-back and from there into a published
+    PR comment. So the agent this feature exists to catch is also the one
+    supplying the text: newlines could forge extra receipt lines, control
+    characters could corrupt a terminal, and prose could address whoever
+    reads the wrap-up. Collapse and cap it (§8, generated text is
+    behavior).
+
+    Args:
+        raw: Path string as recorded.
+
+    Returns:
+        A single-line label of at most :data:`PATH_LABEL_CAP` characters.
+    """
+    flat = "".join(ch if ch.isprintable() else " " for ch in raw).strip()
+    if len(flat) > PATH_LABEL_CAP:
+        flat = flat[:PATH_LABEL_CAP] + "…"
+    return flat or "<empty>"
+
+
 def _relative_to_root(raw: str, root: Path) -> str:
-    """Return *raw* relative to *root*, or unchanged when it is outside.
+    """Return *raw* relative to *root*, marked when it is not under it.
+
+    A path that will not relativise is either outside the repository or
+    unresolvable. Both fall back to the raw string, so mark them: a
+    reviewer skimming the receipt should be able to tell an ordinary
+    repo file from one an agent wrote somewhere it had no business
+    writing.
 
     Args:
         raw: Path as the hook recorded it, usually absolute.
         root: Repository root.
 
     Returns:
-        The repo-relative form, else the original string.
+        The repo-relative form, else the label prefixed with ``!``.
     """
     try:
         return str(Path(raw).resolve().relative_to(root.resolve()))
     except (ValueError, OSError):
-        return raw
+        return f"!{_safe_label(raw)}"
 
 
 def render_edit_receipt(receipt: EditReceipt) -> str:
@@ -355,8 +392,11 @@ def render_edit_receipt(receipt: EditReceipt) -> str:
             "have no recorded path:"
         )
     lines = [head]
+    # Fenced: this line is reproduced into a markdown PR comment, and the
+    # path is agent-supplied. A code span renders it literally instead of
+    # letting it style, link, or pose as structure around it.
     lines.extend(
-        f"  {path} — {', '.join(sorted(agents))}"
+        f"  `{path}` — {', '.join(sorted(agents))}"
         for path, agents in sorted(receipt.by_file.items())
     )
     return "\n".join(lines)
@@ -1137,7 +1177,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="forge-agent-profile",
         description=(
-            "Report where agent and subagent time goes (read-only, always exits 0)."
+            "Report where agent and subagent time goes, and which files a "
+            "subagent wrote (read-only, always exits 0)."
         ),
     )
     parser.add_argument(
@@ -1185,9 +1226,15 @@ def _build_parser() -> argparse.ArgumentParser:
 def _render_edits(root: Path, *, session_id: str | None = None) -> int:
     """Print the subagent-edit receipt for the uncommitted change set.
 
-    Scoped to files that actually differ from ``HEAD``, since an edit
-    already committed is no longer the caller's to vouch for, and to
-    rows newer than the last commit for the same reason.
+    Scoped by *file*, not by time: anything already committed no longer
+    differs from ``HEAD``, so it drops out on its own. A last-commit time
+    cutoff was tried and removed — it excluded rows for files that stayed
+    dirty across an earlier commit, which is ordinary under the
+    staged-subset commit recipe, and excluding them reported those files
+    as clean. That is the failure this receipt exists to prevent, so the
+    error is taken in the safe direction instead: an old row for a file
+    dirty again today may over-attribute, which is visible and
+    correctable, where under-attribution is silent.
 
     Args:
         root: Repository root.
@@ -1202,16 +1249,10 @@ def _render_edits(root: Path, *, session_id: str | None = None) -> int:
             "ls-files", "--others", "--exclude-standard", cwd=root, check=False
         ).split()
     )
-    stamp = run_git("log", "-1", "--format=%cI", cwd=root, check=False).strip()
     logger.info(
         "%s",
         render_edit_receipt(
-            subagent_edits(
-                root,
-                since=_parse_ts(stamp) if stamp else None,
-                session_id=session_id,
-                paths=set(changed),
-            )
+            subagent_edits(root, session_id=session_id, paths=set(changed))
         ),
     )
     return 0

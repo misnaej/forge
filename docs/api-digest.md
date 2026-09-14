@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_74 modules, 1042 symbols._
+_74 modules, 1043 symbols._
 
 ## `forge`
 
@@ -20,7 +20,7 @@ _74 modules, 1042 symbols._
 
 ## `forge.agent_profile`
 
-> _forge-agent-profile — where the agents' time goes._
+> _forge-agent-profile — where the agents' time goes, and what they wrote._
 
 - `class TranscriptStats` — What a subagent transcript adds to a run's ledger record.
 - `class AgentRun` — One agent invocation, assembled from the ledger and its transcript.
@@ -34,7 +34,8 @@ _74 modules, 1042 symbols._
 - `_iter_jsonl(path: Path) -> Iterator[dict[str, Any]]` _(internal)_ — Yield the JSON objects in *path*, skipping lines that are not one.
 - `class EditReceipt` — Which working-tree files a subagent wrote, rather than the caller.
 - `subagent_edits(root: Path, *, since: datetime | None = None, session_id: str | None = None, paths: Iterable[str] | None = None) -> EditReceipt` — Read the hook ledger for files a subagent wrote.
-- `_relative_to_root(raw: str, root: Path) -> str` _(internal)_ — Return *raw* relative to *root*, or unchanged when it is outside.
+- `_safe_label(raw: str) -> str` _(internal)_ — Render an untrusted path as one bounded, single-line label.
+- `_relative_to_root(raw: str, root: Path) -> str` _(internal)_ — Return *raw* relative to *root*, marked when it is not under it.
 - `render_edit_receipt(receipt: EditReceipt) -> str` — Render the receipt as the line an agent hands back.
 - `_parse_ts(value: object) -> datetime | None` _(internal)_ — Parse an ISO-8601 timestamp (``Z`` suffix accepted); ``None`` if not one.
 - `_event_ts(event: dict[str, Any]) -> datetime | None` _(internal)_ — A ledger event's timestamp, preferring the millisecond field.

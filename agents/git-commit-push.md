@@ -201,6 +201,12 @@ carries a warning about. It also sees tool-based writes only — anything
 written through a shell command has no recorded path — so it is
 evidence, never an audit. Say so if the caller treats it as one.
 
+One more bound worth stating when you report it: the reading is
+clone-wide, not session-scoped. Another session working in the same
+checkout writes to the same ledger, so its edits can appear as though
+they were made here. `--session <id>` narrows it when the caller knows
+which session to name.
+
 ## Output
 
 ```

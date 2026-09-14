@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,7 @@ from forge.agent_profile import (
     tool_rows,
     type_rows,
 )
+from tests.conftest import GIT_ENV, commit_all, init_git_repo
 
 
 if TYPE_CHECKING:
@@ -1179,7 +1181,9 @@ def test_render_edit_receipt_unknown_vs_none_recorded_vs_per_file_lines() -> Non
     assert len({unknown_line, empty_line, multi_line}) == 3
     assert "UNKNOWN" in unknown_line
     assert "none recorded" in empty_line
-    assert "a.py — forge:design-checker, forge:test-writer" in multi_line
+    # Fenced deliberately: the path is agent-supplied and this line is
+    # reproduced into a markdown PR comment, so it must render literally.
+    assert "`a.py` — forge:design-checker, forge:test-writer" in multi_line
 
 
 def test_subagent_edits_unknown_when_every_row_lacks_a_path(tmp_path: Path) -> None:
@@ -1235,6 +1239,58 @@ def test_render_edit_receipt_marks_partial_attribution_incomplete() -> None:
     assert "2" in partial_line
     lines = {partial_line, render_edit_receipt(unknown), render_edit_receipt(complete)}
     assert len(lines) == 3
+
+
+def test_render_edits_reports_a_file_still_dirty_after_an_unrelated_commit(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A file a subagent left dirty survives an unrelated later commit.
+
+    Behavior: pins the regression a last-commit time cutoff used to cause.
+    ``_render_edits`` used to derive the cutoff from the last commit's
+    timestamp and pass it to ``subagent_edits``, dropping ledger rows for
+    files that stayed dirty across an earlier commit — ordinary whenever
+    someone stages and commits a subset — and reporting those files as
+    clean. Scoping is now by file only, so a file still differing from
+    ``HEAD`` surfaces regardless of when its ledger row was written.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "a.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("b = 1\n", encoding="utf-8")
+    commit_all(tmp_path, "seed a and b")
+
+    # The subagent edits b.py, then the hook records it.
+    (tmp_path / "b.py").write_text("b = 2\n", encoding="utf-8")
+    _write_jsonl(
+        tmp_path / agent_profile.LEDGER_RELPATH,
+        [
+            _event(
+                event="PostToolUse",
+                ts_ms=BASE_MS,
+                agent_type="forge:test-writer",
+                tool_name="Edit",
+                file_path=str(tmp_path / "b.py"),
+            )
+        ],
+    )
+
+    # An unrelated commit lands after that ledger row, touching only a.py;
+    # b.py stays modified and uncommitted.
+    (tmp_path / "a.py").write_text("a = 2\n", encoding="utf-8")
+    subprocess.run(["git", "add", "a.py"], cwd=tmp_path, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "commit a only"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        check=True,
+    )
+
+    with caplog.at_level(logging.INFO, logger="forge.agent_profile"):
+        code = agent_profile._render_edits(tmp_path)
+
+    assert code == 0
+    # Fenced deliberately (render_edit_receipt): assert on the fenced form.
+    assert "`b.py` — forge:test-writer" in caplog.text
 
 
 # ---------------------------------------------------------------------------
