@@ -85,9 +85,6 @@ class Severity(StrEnum):
     REVIEW = "review"
 
 
-_FIRST_PRINTABLE = 32  # ord(" ") — C0 control characters sit below
-
-
 def sanitize_log_text(text: str) -> str:
     """Escape control characters so a value cannot forge log lines.
 
@@ -102,11 +99,12 @@ def sanitize_log_text(text: str) -> str:
         text: Raw text destined for a log line.
 
     Returns:
-        The text with every control character (except tab) escaped.
+        The text with every non-printable character (except tab) escaped —
+        control characters and the Unicode line separators
+        ``str.splitlines`` also breaks on.
     """
     return "".join(
-        ch if ch == "\t" or ord(ch) >= _FIRST_PRINTABLE else repr(ch)[1:-1]
-        for ch in text
+        ch if ch == "\t" or ch.isprintable() else repr(ch)[1:-1] for ch in text
     )
 
 

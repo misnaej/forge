@@ -40,8 +40,6 @@ editing" / "pre-write" → Briefing; otherwise → Full Review.
 
 ### Pre-Write Briefing mode
 
-Pre-write workflow:
-
 1. **Read lint + docstring logs:**
    ```bash
    cat ./code_health/ruff.log 2>/dev/null
@@ -94,14 +92,11 @@ Keep pre-write briefings SHORT.
 
 ### Full Review mode (default)
 
-Run **every** Investigation Recipe below. Each recipe corresponds to one
-audit log. Recipes are mandatory — skipping any one is non-compliance.
-The agent must:
+Run **every** Investigation Recipe below — one per audit log; skipping
+any is non-compliance:
 
-0. **Orient first**: if `REPO_STRUCTURE.md` exists at the repo root, read
-   it before any recipe — it is the canonical, drift-verified map of the
-   repository layout and saves a blind filesystem scan.
-1. For each recipe: read the log; when it is missing or `forge-precommit --freshness --only <log name>` reports anything but `fresh`, run the script (never judge staleness by file times). With an evidence pack ([reporter contract](_TEMPLATE.md#reporter-agent-header-contract)), start from it: dup and layering already ran at changed scope; re-run only an audit it marks stale or unavailable.
+0. **Orient first**: read `REPO_STRUCTURE.md` (when present) before any recipe.
+1. For each recipe: read the log; when it is missing or `forge-precommit --freshness --only <log name>` reports anything but `fresh`, run the script (never judge staleness by file times). With an evidence pack ([reporter contract](_TEMPLATE.md#reporter-agent-header-contract)), start from it; re-run only an audit it marks stale or unavailable.
 2. For each finding above LOW severity: cite `file:line` and propose a fix.
 3. Stage 2: delegate the claims log to `forge:knowledge-search` for verification.
 4. Run repo-specific extras passed by the wrapper.
@@ -279,8 +274,7 @@ default vs consumer override.
 
 ## Output
 
-Use the "Report format" template under each mode (Pre-Write Briefing or
-Full Review) above.
+The report templates sit under each mode above.
 
 ## Success Criteria
 

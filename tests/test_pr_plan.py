@@ -565,6 +565,36 @@ def test_gh_pr_view_returns_none_for_valid_json_that_is_not_an_object(
     assert pr_plan.gh_pr_view(42, "comments") is None
 
 
+def test_gh_pr_view_returns_none_and_logs_on_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unreachable `gh` degrades to `None` instead of hanging the caller.
+
+    SCENARIO: `gh pr view` outlasts the call's bound — modelled here by
+    `subprocess.run` raising `TimeoutExpired` directly, since the fake
+    never actually blocks for the real duration.
+    MOCK SETUP: `pr_plan.subprocess.run` is replaced with a fake that
+    records its `timeout` kwarg before raising `TimeoutExpired`.
+    EXPECTED BEHAVIOR: `gh_pr_view` returns `None`, logs a warning naming
+    the PR, and the call was bounded by `pr_plan._GH_TIMEOUT_S`.
+    """
+    calls: list[dict[str, object]] = []
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> object:
+        calls.append(kwargs)
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=pr_plan._GH_TIMEOUT_S)
+
+    monkeypatch.setattr(pr_plan.subprocess, "run", _fake_run)
+
+    with caplog.at_level("WARNING", logger="forge.pr_plan"):
+        result = pr_plan.gh_pr_view(42, "comments")
+
+    assert result is None
+    assert "could not read PR #42" in caplog.text
+    assert calls[0]["timeout"] == pr_plan._GH_TIMEOUT_S
+
+
 # --- _latest_verified_sha(): happy path -----------------------------------
 
 
@@ -1216,14 +1246,14 @@ def test_write_evidence_forwards_pr_body_only_with_a_pr_number(
     """
     repo = _init_feature_repo(tmp_path)
     gh_calls: list[tuple[int, str]] = []
-    write_pack_calls: dict[str, str | None] = {}
+    write_pack_calls: dict[str, object] = {}
 
     def _fake_gh_pr_view(number: int, fields: str) -> dict[str, str] | None:
         gh_calls.append((number, fields))
         return gh_view
 
     def _fake_write_pack(root: Path, **kwargs: object) -> Path:
-        write_pack_calls["pr_body"] = kwargs["pr_body"]  # type: ignore[assignment]
+        write_pack_calls["pr_body"] = kwargs["pr_body"]
         return root / "code_health" / "pr_evidence.log"
 
     monkeypatch.setattr(pr_plan, "gh_pr_view", _fake_gh_pr_view)

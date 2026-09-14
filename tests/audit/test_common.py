@@ -339,6 +339,23 @@ def test_sanitize_log_text_escapes_control_characters() -> None:
     assert common.sanitize_log_text("\x1b[31mred") == "\\x1b[31mred"
     assert common.sanitize_log_text("keep\ttab") == "keep\ttab"
     assert common.sanitize_log_text("plain") == "plain"
+    assert common.sanitize_log_text("café") == "café"
+
+
+def test_sanitize_log_text_escapes_unicode_line_separators() -> None:
+    """NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR are escaped, not passed through.
+
+    ``str.splitlines`` breaks on U+0085/U+2028/U+2029 as well as the ASCII
+    control characters — a value carrying one of them could still forge a
+    log line even with C0 controls escaped, since ``isprintable()`` (not a
+    bare ``ord()`` floor) is what now catches them.
+    """
+    hostile = "a\x85b\u2028c\u2029d"
+
+    escaped = common.sanitize_log_text(hostile)
+
+    assert escaped == "a\\x85b\\u2028c\\u2029d"
+    assert len(escaped.splitlines()) == 1
 
 
 def test_finding_render_includes_key_line_before_evidence() -> None:

@@ -9,8 +9,10 @@ each reviewer starts from it (the reporter contract in
 ``agents/_TEMPLATE.md``) and re-derives only what it marks ``unavailable``
 or stale.
 
-Every item is bounded and isolated: a tool that fails, times out or is
-missing renders ``unavailable: <reason>`` for that item alone. Nothing here
+Every item is isolated: one that fails — a tool that crashes, times out or
+is missing — renders ``unavailable: <reason>`` for that item alone. The
+audits and the generated-artifact checks run under a timeout; the git reads
+are local and carry none. Nothing here
 writes to stdout — ``forge-pr-plan``'s plan JSON and exit code are the
 contract the publish hook parses. Untrusted text (filenames, commit
 messages, the PR body, audit findings) is sanitized line by line and
@@ -102,7 +104,7 @@ def _run_tool(
 
     Args:
         argv: Command and arguments.
-        cwd: Working directory; the repo root, so the tool finds its own.
+        cwd: Working directory — the repo root, so the tool resolves this repository.
         timeout: Seconds before the item is abandoned.
 
     Returns:
@@ -213,6 +215,8 @@ def _pr_lines(
     ]
     if isinstance(reasons, list):
         lines += [f"  - {sanitize_log_text(str(reason))}" for reason in reasons]
+    # run_git strips its output, which drops only the first stat line's indent.
+    stat = "\n".join(line.strip() for line in stat.splitlines())
     lines += ["- diff stat:", *_data(stat or "(no changes)")]
     lines += ["- added files:", *(_data("\n".join(added)) if added else ["  none"])]
     return lines
@@ -237,7 +241,10 @@ def _health_lines(root: Path) -> list[str]:
     """Render each log's freshness beside the latest pre-commit step marker.
 
     Audit logs belong to the audit section, and a previous pack describes
-    nothing, so both are left out.
+    nothing, so both are left out. The markers are read before the pack
+    runs its own generated-artifact checks, so a step can differ from the
+    live result the Generated artifacts section shows — the first line
+    says so.
 
     Args:
         root: Repo root.
@@ -251,7 +258,8 @@ def _health_lines(root: Path) -> list[str]:
         if not name.startswith("audit_") and name != EVIDENCE_LOG_NAME
     }
     markers = _timing_snapshot(root)
-    lines = [f"- latest pre-commit run: {verdicts.pop('precommit_timing', 'none')}"]
+    run = verdicts.pop("precommit_timing", "none")
+    lines = [f"- latest pre-commit run, read before this pack's own checks: {run}"]
     for name in sorted(set(verdicts) | set(markers)):
         marker = markers.get(name, "no step row")
         lines.append(
@@ -366,8 +374,9 @@ def _gate_lines(root: Path) -> tuple[list[str], bool]:
     """Run the generated-artifact checks through ``forge-precommit --only``.
 
     The checks run through :func:`_run_tool` rather than
-    ``git_utils.run_gate_evidence`` because the pack bounds every item with
-    a timeout, which that shared seam does not take.
+    ``git_utils.run_gate_evidence``: the pack bounds them with a timeout,
+    and adding one to that shared seam would push it past ruff's argument
+    limit for its three other callers.
 
     Args:
         root: Repo root.
@@ -421,7 +430,7 @@ def _surface_lines(root: Path, base: str, *, digest_checked: bool) -> list[str]:
     ]
     lines = []
     if not digest_checked:
-        lines.append(f"⚠️ may be stale: the {_API_DIGEST_GATE} step did not pass")
+        lines.append(f"⚠️ may be stale: the {_API_DIGEST_GATE} step was not verified")
     if not changes:
         return [*lines, f"no changed lines in {_API_DIGEST}"]
     return [

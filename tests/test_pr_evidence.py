@@ -116,6 +116,25 @@ def _seed_audit_log(root: Path, name: str, *, count: int, findings: str = "") ->
     )
 
 
+def _fake_run_tool_precommit_passes(
+    argv: list[str], *, cwd: object, timeout: object
+) -> FakeProc:
+    """Fake ``_run_tool``: ``forge-precommit`` succeeds, every other tool errors.
+
+    Args:
+        argv: Command line to run; dispatches on ``argv[0]`` to identify the tool.
+        cwd: Working directory (unused in this fake).
+        timeout: Timeout in seconds (unused in this fake).
+
+    Returns:
+        A FakeProc with returncode 0 if argv[0] is "forge-precommit", else 3.
+    """
+    del cwd, timeout
+    if argv[0] == "forge-precommit":
+        return FakeProc(returncode=0, stdout="ok")
+    return FakeProc(returncode=3)
+
+
 # ---------------------------------------------------------------------------
 # _pr_lines
 # ---------------------------------------------------------------------------
@@ -149,6 +168,30 @@ def test_pr_lines_renders_identity_and_added_files(
     assert "  - reason two" in lines
     assert "- diff stat:" in lines
     assert lines[-len(expected_added_tail) :] == expected_added_tail
+
+
+def test_pr_lines_diff_stat_rows_have_no_leading_space(tmp_path: Path) -> None:
+    """Per-file diff-stat rows are unindented, matching the summary row.
+
+    SCENARIO: two files change on ``feature``, so ``git diff --stat``
+    emits real per-file rows — each two-space indented by git — followed
+    by an unindented summary row. ``run_git`` strips only the *whole*
+    output, which used to leave every row but the first indented.
+    EXPECTED BEHAVIOR: every line inside the "- diff stat:" fence is
+    stripped, so none of them starts with a space.
+    """
+    repo = _repo(tmp_path)
+    (repo / "one.py").write_text("a = 1\nb = 2\n", encoding="utf-8")
+    (repo / "two.py").write_text("c = 3\nd = 4\n", encoding="utf-8")
+    commit_all(repo, "add two files")
+
+    lines = pr_evidence._pr_lines(repo, "main", {"mode": "full"}, [])
+
+    fence_start = lines.index("- diff stat:") + 2  # past the label and open fence
+    fence_end = lines.index("````", fence_start)
+    stat_rows = lines[fence_start:fence_end]
+    assert len(stat_rows) >= 3  # two per-file rows plus the summary row
+    assert not any(row.startswith(" ") for row in stat_rows)
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +232,9 @@ def test_health_lines_pairs_timing_markers_with_log_freshness(tmp_path: Path) ->
 
     lines = pr_evidence._health_lines(repo)
 
-    assert lines[0] == "- latest pre-commit run: fresh"
+    assert (
+        lines[0] == "- latest pre-commit run, read before this pack's own checks: fresh"
+    )
     assert "- ruff: PASS, log fresh" in lines
     assert "- docstring_verification: WARN, log missing" in lines
     assert "- typecheck: no step row, log fresh" in lines
@@ -198,7 +243,7 @@ def test_health_lines_pairs_timing_markers_with_log_freshness(tmp_path: Path) ->
 
 
 # ---------------------------------------------------------------------------
-# build_pack — gather order (§13 gather-before-rewrite guarantee)
+# build_pack — gather order (module docstring's gather-before-rewrite guarantee)
 # ---------------------------------------------------------------------------
 
 
@@ -507,7 +552,9 @@ def test_audit_lines_reports_a_bullet_for_every_non_run_audit(
     ],
 )
 def test_gate_lines_verdict_and_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate_params: tuple
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    gate_params: tuple[int, str, str, bool],
 ) -> None:
     """Verdict follows the return code; ``digest_checked`` follows the marker.
 
@@ -629,7 +676,7 @@ def test_surface_lines_shows_changed_digest_lines_when_checked(
     ]
 
 
-def test_surface_lines_flags_stale_when_the_digest_check_did_not_pass(
+def test_surface_lines_flags_stale_when_the_digest_check_was_not_verified(
     tmp_path: Path,
 ) -> None:
     """An unchecked digest gets the staleness warning even with no diff."""
@@ -646,7 +693,7 @@ def test_surface_lines_flags_stale_when_the_digest_check_did_not_pass(
 
     lines = pr_evidence._surface_lines(repo, "main", digest_checked=False)
 
-    assert lines[0] == "⚠️ may be stale: the api_digest_check step did not pass"
+    assert lines[0] == "⚠️ may be stale: the api_digest_check step was not verified"
     assert lines[-1] == "no changed lines in docs/api-digest.md"
 
 
@@ -763,14 +810,7 @@ def test_write_pack_writes_a_stamp_that_reads_fresh(
 ) -> None:
     """The written pack's line 1 names the tree it was built against."""
     repo = _repo(tmp_path)
-
-    def _fake_run_tool(argv: list[str], *, cwd: object, timeout: object) -> FakeProc:
-        del cwd, timeout
-        if argv[0] == "forge-precommit":
-            return FakeProc(returncode=0, stdout="ok")
-        return FakeProc(returncode=3)
-
-    monkeypatch.setattr(pr_evidence, "_run_tool", _fake_run_tool)
+    monkeypatch.setattr(pr_evidence, "_run_tool", _fake_run_tool_precommit_passes)
 
     path = pr_evidence.write_pack(
         repo, base="main", plan={"mode": "full", "reasons": []}, added=[], pr_body=None
@@ -791,14 +831,7 @@ def test_build_pack_renders_sections_in_order(
     from the *gather* order pinned separately above.
     """
     repo = _repo(tmp_path)
-
-    def _fake_run_tool(argv: list[str], *, cwd: object, timeout: object) -> FakeProc:
-        del cwd, timeout
-        if argv[0] == "forge-precommit":
-            return FakeProc(returncode=0, stdout="ok")
-        return FakeProc(returncode=3)
-
-    monkeypatch.setattr(pr_evidence, "_run_tool", _fake_run_tool)
+    monkeypatch.setattr(pr_evidence, "_run_tool", _fake_run_tool_precommit_passes)
 
     pack = pr_evidence.build_pack(
         repo, base="main", plan={"mode": "full", "reasons": []}, added=[], pr_body=None
@@ -824,9 +857,10 @@ def test_data_sanitizes_and_fences_hostile_content() -> None:
     """``_data`` escapes control characters per line and fences past content backticks.
 
     Untrusted tool output — audit findings, diffs, filenames — reaches
-    ``_data`` verbatim; this pins the composition FOUNDATION §13 requires:
-    every line sanitized before fencing, and the fence long enough that a
-    bare backtick line inside the content can never close it early.
+    ``_data`` verbatim; this pins the composition the module docstring
+    requires: every line sanitized before fencing, and the fence long
+    enough that a bare backtick line inside the content can never close
+    it early.
     """
     hostile = "before\n````\nred\x1b[31mtext"
 
