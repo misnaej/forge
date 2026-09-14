@@ -3660,3 +3660,53 @@ def test_produced_at_stamp_clean_repo_tracking_code_health_has_no_dirty_suffix(
     log_only_match = PRODUCED_AT_RE.fullmatch(git_utils.produced_at_stamp(tmp_path))
     assert log_only_match is not None
     assert not log_only_match["head"].endswith("+dirty")
+
+
+# ---------------------------------------------------------------------------
+# wrap_in_code_fence
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_fence"),
+    [
+        ("plain text\nno backticks here", "````"),
+        ("```\nonly three backticks: still under the floor", "````"),
+        ("````\nfour backticks: the fence must grow past them", "`````"),
+        ("   ````\nthree-space indent still counts (CommonMark limit)", "`````"),
+        ("    ````\nfour-space indent no longer counts as a closer", "````"),
+    ],
+)
+def test_wrap_in_code_fence_length_tracks_leading_backtick_runs(
+    text: str, expected_fence: str
+) -> None:
+    """The fence is 4, or one longer than the longest closable backtick run.
+
+    Args:
+        text: Content to fence.
+        expected_fence: The opening/closing fence this content should get.
+
+    A line's leading backticks only count toward the fence length when
+    indented by at most three spaces — CommonMark's own limit on how far
+    a closing fence may be indented — so a run indented past that could
+    never close the block anyway and is correctly ignored.
+    """
+    wrapped = git_utils.wrap_in_code_fence(text)
+    lines = wrapped.splitlines()
+    assert lines[0] == expected_fence
+    assert lines[-1] == expected_fence
+
+
+def test_wrap_in_code_fence_content_backticks_cannot_close_the_block() -> None:
+    """A content line of backticks never acts as a real fence delimiter.
+
+    Splitting the wrapped text on its own fence marker must yield exactly
+    the opening/content/closing split, proving the embedded backtick line
+    the fence grew past is inert data, not a second closer.
+    """
+    hostile = "before\n````\nafter"
+    wrapped = git_utils.wrap_in_code_fence(hostile)
+    fence = wrapped.splitlines()[0]
+
+    assert fence == "`````"
+    assert wrapped.split(fence) == ["", f"\n{hostile}\n", ""]

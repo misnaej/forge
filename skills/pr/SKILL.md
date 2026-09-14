@@ -142,12 +142,35 @@ do not re-derive the classification in prose.
 | `delta` | none | none | An existing PR's prior wrap-up carries a `verified-at:` SHA and the diff since it is small and out of high-blast-radius paths — **skip Step 1 entirely**, jump to Step 3.92 with `compose --base origin/<base> --pr <PR#>` (it renders the delta wrap-up), then Step 4 posts it and a refreshed squash comment. |
 | `full` | all three below | Strict whole-tree battery (empty `precommit_scope`) | The default round. |
 
+Whenever a reporter runs (`full`, `light-docs`, or after a failed
+`light-regen` earn), first write the evidence pack the reporters start
+from — the plan JSON and exit code do not change:
+
+```bash
+forge-pr-plan --base "origin/<base>" --evidence   # add --pr <PR#> when one exists
+```
+
+It writes `code_health/pr_evidence.log` (sections: PR, code health,
+audits, generated artifacts, public surface, wiring); an item that
+fails or times out reads `unavailable: <reason>` and the rest stands.
+
 On `mode: full` (and after a failed `light-regen` earn), run the three
-reporters:
+reporters (`light-docs`: `docs-types-checker` only):
 
 1. **`design-checker`** — design compliance report
 2. **`security-checker`** — security review report
 3. **`docs-types-checker`** — documentation report
+
+Each prompt names the pack; how a reporter uses it is the reporter
+contract's "Supplied evidence pack" rule:
+
+> Review `origin/<base>...HEAD` at `<HEAD sha>` (<PR #N or no PR yet>, branch `<branch>`). Evidence pack: `code_health/pr_evidence.log`. <focus>
+
+| Reporter | `<focus>` |
+|---|---|
+| `design-checker` | Dup and layering findings are in the pack at changed scope; re-run a recipe only for an audit the pack marks stale or unavailable. |
+| `security-checker` | Changed files and the api-digest changes are in the pack; the dangerous-pattern scan stays yours. |
+| `docs-types-checker` | Log freshness, generated-artifact checks and the public-surface changes are in the pack. |
 
 Each report's first line MUST be the `verified-at:` header per the
 [reporter-agent contract](../../agents/_TEMPLATE.md#reporter-agent-header-contract);

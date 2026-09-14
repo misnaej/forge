@@ -6,9 +6,11 @@ real-git helpers ``GIT_ENV``, ``init_git_repo`` and ``init_single_track_repo``
 ``FakeProc``, ``CapturedCalls`` and the ``make_fake_run`` factory — used by
 tests that monkeypatch ``subprocess.run`` in any of the forge CLIs —
 ``page_json``, one ``gh api --paginate`` page renderer shared by every
-suite that fakes ``gh_comments.gh_api``, and the ``# produced-at:``
+suite that fakes ``gh_comments.gh_api``, the ``# produced-at:``
 provenance-stamp helpers (``PRODUCED_AT_RE``, ``log_body``) shared by every
-suite asserting on a ``code_health/*.log`` writer (FOUNDATION §13).
+suite asserting on a ``code_health/*.log`` writer (FOUNDATION §13), and
+``timing_log``, the ``precommit_timing.log`` body builder shared by the
+wrap-up-compose and evidence-pack suites.
 """
 
 from __future__ import annotations
@@ -55,6 +57,48 @@ PRODUCED_AT_RE = re.compile(
     r"# produced-at: tree=(?P<tree>[0-9a-f]{40}|unknown) "
     r"head=(?P<head>\S+) (?P<when>\S+)"
 )
+
+
+# The fixed placeholder stamp `timing_log` prepends by default: a reader
+# that only cares about the marker rows (not real tree freshness) must
+# never mistake the stamp line for a step row.
+_UNKNOWN_TIMING_STAMP = (
+    "# produced-at: tree=unknown head=abc1234 2026-01-01T00:00:00+00:00"
+)
+
+
+def timing_log(*rows: str, stamp: str | None = _UNKNOWN_TIMING_STAMP) -> str:
+    """Build a ``precommit_timing.log`` body from ``"<name> <marker>"`` specs.
+
+    Shared by every suite reading a timing log's step rows
+    (``pr_wrapup_compose``'s ``_code_quality_rows``, ``pr_evidence``'s
+    ``_timing_snapshot``) — one row-shape builder instead of two
+    near-identical copies.
+
+    Args:
+        *rows: Each a ``"<name> <marker>"`` pair (marker is one of SKIP,
+            PASS, WARN, FAIL).
+        stamp: The ``# produced-at:`` line to prepend, or ``None`` to
+            omit it. The default placeholder suits a reader that only
+            parses marker rows; a caller judging real tree freshness
+            passes a real :func:`forge.git_utils.produced_at_stamp` line.
+
+    Returns:
+        A timing-log body matching ``precommit._format_timing_log``'s shape.
+    """
+    lines = []
+    if stamp is not None:
+        lines.append(stamp)
+    lines.append("forge-precommit per-step timing (newest run overwrites)")
+    lines.append("")
+    total = 0.0
+    for spec in rows:
+        name, marker = spec.split()
+        lines.append(f"{name:<28} {1.0:>7.1f}s  {marker}")
+        total += 1.0
+    lines.append("")
+    lines.append(f"{'total':<28} {total:>7.1f}s")
+    return "\n".join(lines)
 
 
 def log_body(path: Path) -> str:
