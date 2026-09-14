@@ -541,7 +541,7 @@ def test_classify_delta_after_base_merge_still_sees_branch_changes(
 # Syntactically-invalid JSON is already pinned indirectly, elsewhere in
 # this file, by test_latest_verified_sha_returns_none_on_invalid_json and
 # test_wrapup_freshness_returns_none_on_invalid_json (same
-# json.JSONDecodeError branch `gh_pr_view` now owns) — not duplicated here.
+# json.JSONDecodeError branch inside `gh_pr_view`) — not duplicated here.
 
 
 def test_gh_pr_view_returns_none_for_valid_json_that_is_not_an_object(

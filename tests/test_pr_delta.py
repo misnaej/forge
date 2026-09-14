@@ -563,8 +563,8 @@ def test_strip_fences_closing_rule_matches_commonmark(
     Each case is a way a naive "any fence-shaped line toggles" reading
     would get wrong — a mismatched fence character, a shorter or
     info-carrying line, or a longer closer — regression coverage for
-    :func:`fenced_line_indexes` now that it drives both `strip_fences`
-    and `pr_wrapup._section_bounds`.
+    :func:`fenced_line_indexes`, which drives both `strip_fences` and
+    `pr_wrapup._section_bounds`.
 
     Args:
         lines: Markdown lines under test.
