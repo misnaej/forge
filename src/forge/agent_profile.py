@@ -261,11 +261,11 @@ def subagent_edits(
 
     Args:
         root: Repository root.
-        since: Ignore rows older than this instant (typically the last
-            commit — earlier edits are already committed). Wall-clock
-            based, so it assumes the clock that stamped the ledger and
-            the one that stamped the commit agree; under backward skew a
-            genuinely later write can compare as earlier and be dropped.
+        since: Ignore rows older than this instant. Wall-clock based, so
+            it assumes whatever produced the cutoff and whatever stamped
+            the ledger agree; under backward skew a genuinely later write
+            compares as earlier and is dropped, which is why the receipt
+            does not scope by time.
         session_id: Restrict to one session. The ledger is shared across
             sessions and worktrees in a clone, so without this a
             parallel run's edits read as this one's.
@@ -375,7 +375,8 @@ def render_edit_receipt(receipt: EditReceipt) -> str:
         receipt: The receipt to render.
 
     Returns:
-        One line when nothing qualifies, else a line per file.
+        One line when the evidence is missing, one when nothing
+        qualifies, else a header and a line per file.
     """
     if not receipt.known:
         return (
@@ -1226,15 +1227,15 @@ def _build_parser() -> argparse.ArgumentParser:
 def _render_edits(root: Path, *, session_id: str | None = None) -> int:
     """Print the subagent-edit receipt for the uncommitted change set.
 
-    Scoped by *file*, not by time: anything already committed no longer
-    differs from ``HEAD``, so it drops out on its own. A last-commit time
-    cutoff was tried and removed — it excluded rows for files that stayed
-    dirty across an earlier commit, which is ordinary under the
-    staged-subset commit recipe, and excluding them reported those files
-    as clean. That is the failure this receipt exists to prevent, so the
-    error is taken in the safe direction instead: an old row for a file
-    dirty again today may over-attribute, which is visible and
-    correctable, where under-attribution is silent.
+    Scoped by *file*, never by time: anything already committed no
+    longer differs from ``HEAD``, so it drops out on its own. Time
+    scoping is deliberately avoided — a row for a file that stayed dirty
+    across an earlier commit, ordinary under the staged-subset commit
+    recipe, would be excluded and the file reported clean, which is the
+    failure this receipt exists to prevent. Attribution therefore errs
+    toward over-reporting: an old row for a file dirty again today may
+    over-attribute, which a reader can see and correct, where
+    under-attribution is silent.
 
     Args:
         root: Repository root.
