@@ -4632,8 +4632,54 @@ def test_log_agent_timing_subagent_stop_appends_expected_line_shape(
     assert event["transcript_path"] == "/path/to/transcript.jsonl"
     assert event["tool_name"] is None
     assert event["duration_ms"] is None
+    assert event["file_path"] is None  # payload carries no tool_input at all
     assert "ts" in event
     assert "ts_ms" in event
+
+
+def test_log_agent_timing_post_tool_use_records_file_path_from_tool_input(
+    tmp_path: Path,
+) -> None:
+    """Extract ``file_path`` from ``tool_input``, with notebook fallback.
+
+    Defaults to ``tool_input.file_path``, falling back to
+    ``tool_input.notebook_path`` when ``file_path`` is absent.
+
+    No hook test set ``tool_input`` before this — the shipped happy path
+    (an Edit/Write call's ``file_path``, a NotebookEdit's
+    ``notebook_path``) was unpinned.
+    """
+    init_git_repo(tmp_path)
+    ledger = tmp_path / "code_health" / "agent_timing.jsonl"
+
+    edit_payload = {
+        "hook_event_name": "PostToolUse",
+        "session_id": "s1",
+        "agent_id": "a1",
+        "agent_type": "forge:design-checker",
+        "transcript_path": None,
+        "tool_name": "Edit",
+        "tool_use_id": "t1",
+        "duration_ms": 10,
+        "tool_input": {"file_path": "/repo/src/foo.py"},
+    }
+    proc = _run_agent_timing_hook(edit_payload, cwd=tmp_path)
+    assert proc.returncode == 0
+    event = json.loads(ledger.read_text(encoding="utf-8").strip())
+    assert event["file_path"] == "/repo/src/foo.py"
+
+    notebook_payload = {
+        **edit_payload,
+        "tool_name": "NotebookEdit",
+        "tool_use_id": "t2",
+        "tool_input": {"notebook_path": "/repo/notebooks/analysis.ipynb"},
+    }
+    proc = _run_agent_timing_hook(notebook_payload, cwd=tmp_path)
+    assert proc.returncode == 0
+    lines = ledger.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    second_event = json.loads(lines[-1])
+    assert second_event["file_path"] == "/repo/notebooks/analysis.ipynb"
 
 
 def test_log_agent_timing_post_tool_use_keeps_duration_ms(tmp_path: Path) -> None:

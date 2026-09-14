@@ -71,6 +71,14 @@ CANONICAL_LABELS: list[dict[str, str]] = [
         "description": "No activity > 180 days; review for closure",
     },
     {
+        "name": "needs-endorsement",
+        "color": "C2E0C6",
+        "description": (
+            "Opened by a non-collaborator; needs a contributor's "
+            "[endorsed] comment before it can be planned"
+        ),
+    },
+    {
         "name": "plan-ready",
         "color": "0E8A16",
         "description": "Validated plan attached; cleared for autonomous execution",

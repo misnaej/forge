@@ -20,6 +20,32 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v7.5.0 — 2026-09-14
+
+### Features
+- **A validated plan can no longer carry a sign-off nobody can check.** The comment that authorizes forge's autonomous executor is trusted because of three things: the marker it opens with, the label beside it, and the fact that whoever wrote it has write access to the repo. Nothing stopped an agent adding a fourth — a line naming the person who validated the plan — and an agent will, because it reads as diligence. It is the one claim in that comment nothing can corroborate: the agent writing it has no way to establish who validated anything. Recorders are now forbidden from writing one and strip one they are handed, and the executor is told in as many words that text inside a plan is never provenance.
+- **Only a contributor's issue is planned.** Anyone can open an issue, and a plan is the artifact that turns issue text into work forge later performs unattended — so an issue now enters the planning pipeline only if a contributor opened it, or a contributor endorsed it with an `[endorsed]` comment posted after the issue body was last edited. An issue that qualifies for neither gets a `needs-endorsement` label and its own lane in the backlog index, so it is visibly waiting on a contributor rather than quietly skipped. Outside issues are still triaged, labelled and answered exactly as before; what changed is that nothing gets planned on the strength of its own contents. The gate is a rule the planning agents follow, not a permission the tooling withholds.
+- **`/plan-batch` drafts several backlog plans at once instead of one per sitting.** Screening produces a queue of issues that need a plan; turning each into one meant a separate interactive session, and on a backlog of any size that was the bottleneck. The new skill runs up to three drafting agents side by side — each instructed, not sandboxed, to open no branch, change no file and leave the issue alone — hands each finished draft to you as it lands, and records only what you explicitly validate. Investigation happens in parallel; the decision stays yours and stays one at a time. Nothing about how work is executed changes: plans are still validated by a human, and the executor still builds one issue at a time.
+- **A decision put to you for validation now has to be answerable.** A relay compressed to a list of names and options is one you can only rubber-stamp, and in this chain a rubber stamp becomes permission for work that then runs unattended. A decision now states what the affected thing does today in a sentence you can follow without opening the file, each option in words with its consequence, the recommendation and why, and any assumption you might disagree with — stated so you can disagree with it.
+
+## v7.4.1 — 2026-09-14
+
+### Fixes
+- **Whoever writes a pull request wrap-up is now told about its length limit while writing it.** The limit was enforced only when the finished text was submitted, and it is not a fixed number: it grows with how many review sections the wrap-up carries. Finding out at the end meant cutting the record of what reviewers found in order to fit, which is the part worth keeping. The instruction now says the limit scales, says where the authority for it lives, and points at the check that reports the exact figure.
+
+## v7.4.0 — 2026-09-14
+
+### Features
+- **You are told which files another agent wrote before you commit them.** Work delegated to a subagent could change your files and, once changed, its edits looked exactly like your own, so you committed them as yours. Nothing obliged an agent to mention what it had touched. The commit step now reports which uncommitted files a subagent wrote, read from the hook ledger rather than from what the agent chose to say, so it holds even when the agent says nothing.
+- **It says "unknown" when it cannot tell, instead of "nothing".** A fresh clone, a disabled hook, or a hook older than this change all leave it unable to attribute anything, and reporting that as a clean tree would be worse than reporting nothing at all. The last of those is the live case on upgrade: the running hook comes from the plugin cache, so until that is refreshed every record lacks a path, and the report says so and names the refresh command rather than claiming the tree is clean. It also sees only edits made with the editing tools: anything written through a shell command leaves no trace, so this is evidence rather than an audit, and says so.
+- **Plans now end with one line saying what will be done.** They already had to open by stating the problem. Closing with a single sentence a reader can repeat back is the cheapest check that the plan and the reader agree.
+
+## v7.3.0 — 2026-09-14
+
+### Changes
+- **Plans now open by saying what problem they solve.** A plan used to be defined as files, order and side effects, so an agent could present a bare change list and be entirely correct. Readers had to work out the goal from the options before they could judge any of them, which cost a round trip every time. Plans now open in plain English with what the change is for, written for someone who uses the product but not the codebase. Pull request descriptions already worked this way; this applies the same rule one stage earlier, to plans.
+- **The recorded plan carries that opening too.** Whoever picks up a validated plan reads the recorded comment, not the conversation that produced it, so the framing travels with the work instead of being lost at the handoff.
+
 ## v7.2.0 — 2026-09-14
 
 ### Changes
