@@ -50,14 +50,83 @@ if echo "$COMMAND" | grep -qE '(^|[;&|(])[[:space:]]*FORGE_SKIP_WRAPUP_GATE=1[[:
     exit 0
 fi
 
+# Resolve the checkout holding the branch being PUBLISHED, which is not
+# necessarily the one this session sits in. A `cd` inside the command
+# takes effect only after this hook runs, so the hook's own cwd is the
+# session's — and judging that tree both blocks legitimate worktree
+# publication AND passes a branch whose wrap-up was never written,
+# whenever the session checkout happens to hold a valid one of its own.
+#
+# The branch name is read from the create invocation's own argument
+# span, isolated the way block_protected_branches.sh isolates each push,
+# so an agent-authored --title/--body cannot reach the extraction. The
+# light path below refuses command text outright for its base ref; this
+# is a deliberate, bounded relaxation of that stance, not an oversight:
+# the value here must additionally match a live worktree, so a steered
+# one can only ever select a checkout that exists and already holds a
+# wrap-up naming its own HEAD — strictly weaker than the fail-open it
+# replaces.
+#
+# All three spellings must parse — `--head x`, `--head=x` and the
+# attached short form `-Hx` that pflag accepts. A form that fails to
+# parse yields an empty branch, which falls through to session-checkout
+# behaviour: silently the very hole this resolver closes, reopened for
+# one syntax. Tests cover each form for that reason.
+CREATE_SPAN=$(echo "$COMMAND" | grep -oE "${GH_ANCHOR}pr[[:space:]]+create\b[^;&|)]*" | head -1)
+HEAD_TOKENS=$(printf '%s' "$CREATE_SPAN" \
+    | grep -oE '(--head([[:space:]]+|=)|-H[[:space:]]*)[^[:space:]]+' \
+    | sed -E 's/^(--head([[:space:]]+|=)|-H[[:space:]]*)//' | sort -u)
+HEAD_COUNT=$(printf '%s' "$HEAD_TOKENS" | grep -c . || true)
+
+# Ambiguity is refused, never resolved by picking one. This scan is
+# quote-blind, while `gh` parses properly and takes the LAST repeat of a
+# flag — so where the two readings differ, taking any single match means
+# checking a branch `gh` will not publish. Two `--head` flags, or a
+# `--head`-shaped token inside `--title` prose alongside a real flag,
+# both produce disagreeing tokens here and both now block.
+if [ "$HEAD_COUNT" -gt 1 ]; then
+    echo "BLOCKED: the create command carries more than one --head value ($(printf '%s' "$HEAD_TOKENS" | tr '\n' ' ')). Which branch publishes cannot be determined from the command text, so the wrap-up cannot be checked against it. Issue one unambiguous --head." >&2
+    exit 2
+fi
+PUBLISHED_BRANCH=$HEAD_TOKENS
+
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+SESSION_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+
+if [ -n "$PUBLISHED_BRANCH" ] && [ "$PUBLISHED_BRANCH" != "$SESSION_BRANCH" ]; then
+    # Find the checkout holding it. Skip `prunable` entries (a worktree
+    # whose gitdir is gone) and detached ones (no branch line at all).
+    # Decide per RECORD, not per line: `git worktree list --porcelain`
+    # emits `prunable` AFTER `branch`, so testing it while reading the
+    # branch line always sees the previous record's value — the check
+    # would never fire. Each `worktree` line therefore judges the record
+    # that just ended, and END judges the last one. A prunable entry
+    # (gitdir gone) and a detached one (no branch line) both fail the
+    # match and are skipped.
+    TARGET_ROOT=$(git worktree list --porcelain 2>/dev/null | awk -v want="refs/heads/$PUBLISHED_BRANCH" '
+        function emit() { if (br == want && !pru) { print path; return 1 } return 0 }
+        /^worktree /  { if (emit()) exit; path = substr($0, 10); br = ""; pru = 0; next }
+        /^branch /    { br = substr($0, 8); next }
+        /^prunable/   { pru = 1; next }
+        END           { emit() }
+    ')
+    if [ -z "$TARGET_ROOT" ]; then
+        # Never fall back to the session checkout: that fallback IS the
+        # reported fail-open, publishing an unverified branch because
+        # some other branch's wrap-up happened to be valid.
+        echo "BLOCKED: --head names '$PUBLISHED_BRANCH', which no live worktree holds, so its wrap-up cannot be checked. Publish from a checkout of that branch, or drop --head to publish the current one." >&2
+        exit 2
+    fi
+    REPO_ROOT="$TARGET_ROOT"
+fi
+
 WRAPUP="$REPO_ROOT/code_health/pr_wrapup.md"
 if [ ! -f "$WRAPUP" ]; then
     echo "BLOCKED: no authored wrap-up at $WRAPUP. FOUNDATION §6: author the wrap-up (\`/pr\` Step 3.92) before creating the PR." >&2
     exit 2
 fi
 
-HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || true)
+HEAD_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)
 if [ -z "$HEAD_SHA" ]; then
     exit 0  # not a git repo — nothing to verify against
 fi

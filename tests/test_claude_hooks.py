@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -2549,6 +2550,251 @@ def test_unverified_pr_create_blocks_release_branch_without_wrapup(
     )
     assert proc.returncode == 2
     assert "authored wrap-up" in proc.stderr
+
+
+@pytest.fixture
+def session_and_worktree_checkouts(tmp_path: Path) -> tuple[Path, Path, str]:
+    """A repo (session checkout) plus a linked worktree on its own branch.
+
+    Models the shape every `--head`-resolution test in this section builds
+    on: an agent session sitting in one checkout (`main`) while a
+    *different* branch is actually checked out in a linked worktree — the
+    case the resolver exists for, per the hook's own header comment.
+
+    Returns:
+        A `(session_path, worktree_path, branch)` tuple: the main checkout
+        (stays on `main`), the linked worktree's path, and the branch
+        checked out there.
+    """
+    session_path = tmp_path / "session"
+    session_path.mkdir()
+    init_git_repo(session_path)
+    worktree_path = tmp_path / "worktree"
+    branch = "feature"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", branch, str(worktree_path), "main"],
+        cwd=session_path,
+        env=GIT_ENV,
+        check=True,
+    )
+    return session_path, worktree_path, branch
+
+
+def _head_sha(repo: Path) -> str:
+    """Return *repo*'s current HEAD commit's full sha.
+
+    Args:
+        repo: Git checkout to read HEAD from.
+
+    Returns:
+        The full HEAD sha.
+    """
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def test_unverified_pr_create_worktree_wrapup_passes_despite_stale_session(
+    session_and_worktree_checkouts: tuple[Path, Path, str],
+) -> None:
+    """`--head` naming another worktree's branch passes on ITS OWN valid wrap-up.
+
+    Regression for the resolver's whole reason to exist (§556): the
+    session checkout here holds a stale wrap-up naming a sha that matches
+    neither checkout's real HEAD. Judging that tree — what the hook did
+    before the fix — would have wrongly blocked a legitimate worktree
+    publication. Only the worktree's own wrap-up, naming its own HEAD,
+    must be checked.
+    """
+    session, worktree, branch = session_and_worktree_checkouts
+    _write_wrapup(worktree, _head_sha(worktree))
+    _write_wrapup(session, "0" * 40)
+    assert (
+        _run_hook(
+            _UNVERIFIED_PR_CREATE,
+            f"gh pr create --head {branch} --title x",
+            options=HookOptions(cwd=session),
+        )
+        == 0
+    )
+
+
+def test_unverified_pr_create_worktree_missing_wrapup_blocks_despite_valid_session(
+    session_and_worktree_checkouts: tuple[Path, Path, str],
+) -> None:
+    """Session wrap-up must not mask the target checkout's missing one.
+
+    This is the security hole #556 closes: the session checkout's wrap-up
+    is valid for the session's OWN branch — a different tree than the one
+    actually being published. Asserting the worktree's own wrap-up path
+    appears in stderr proves the right tree was checked, not a
+    coincidental block.
+    """
+    session, worktree, branch = session_and_worktree_checkouts
+    _write_wrapup(session, _head_sha(session))
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE,
+        f"gh pr create --head {branch} --title x",
+        options=HookOptions(cwd=session),
+    )
+    assert proc.returncode == 2
+    assert str(worktree / "code_health" / "pr_wrapup.md") in proc.stderr
+
+
+def test_unverified_pr_create_head_names_branch_with_no_live_worktree_blocks(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """`--head` naming a branch no checkout holds blocks citing that fact.
+
+    Distinct failure path from the found-target-missing-wrap-up case
+    above: here `TARGET_ROOT` resolves empty (no worktree's `branch` line
+    matches at all), so the hook never reaches a wrap-up file check.
+    """
+    repo, _sha = git_repo_with_commit
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE,
+        "gh pr create --head no-such-branch --title x",
+        options=HookOptions(cwd=repo),
+    )
+    assert proc.returncode == 2
+    assert "no live worktree holds" in proc.stderr
+
+
+def test_unverified_pr_create_stale_worktree_entry_never_authorizes_publish(
+    session_and_worktree_checkouts: tuple[Path, Path, str],
+) -> None:
+    """A prunable (gitdir-gone) worktree entry is excluded from selection outright.
+
+    `git worktree list --porcelain` still lists an entry whose directory
+    was removed outside `git worktree remove` (a `prunable ...` line) —
+    the way a stale worktree in this very repo sits today. Regression
+    guard for the per-line/per-record bug: `prunable` is emitted AFTER
+    `branch` in the porcelain output, so a filter that tests it while
+    reading the `branch` line always sees the previous record's value and
+    never actually excludes anything — dead code that still happened to
+    block, because the removed directory can't hold a wrap-up file
+    either. Asserting the "no live worktree holds" wording (not just exit
+    2) distinguishes true exclusion from that accidental block: a
+    regression back to the per-line bug would still exit 2 here, but via
+    the OTHER message, naming the now-nonexistent stale directory.
+    """
+    session, worktree, branch = session_and_worktree_checkouts
+    shutil.rmtree(worktree)  # goes stale without `git worktree remove`
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE,
+        f"gh pr create --head {branch} --title x",
+        options=HookOptions(cwd=session),
+    )
+    assert proc.returncode == 2
+    assert "no live worktree holds" in proc.stderr
+    assert "no authored wrap-up" not in proc.stderr
+
+
+@pytest.mark.parametrize(
+    "flag_form",
+    ["--head {branch}", "--head={branch}", "-H {branch}", "-H{branch}"],
+)
+def test_unverified_pr_create_blocks_every_head_extraction_form(
+    flag_form: str, session_and_worktree_checkouts: tuple[Path, Path, str]
+) -> None:
+    """Every `--head`/`-H` spelling pflag accepts is extracted and blocks.
+
+    Same case as the security-hole test above (worktree has no wrap-up,
+    session's own wrap-up is valid for its own branch) — only the flag
+    spelling varies. A form that fails to parse yields an empty
+    `PUBLISHED_BRANCH`, which falls through to session-checkout behavior —
+    silently reopening the hole for just that one syntax.
+
+    Args:
+        flag_form: A `{branch}`-templated `--head`/`-H` spelling.
+    """
+    session, _worktree, branch = session_and_worktree_checkouts
+    _write_wrapup(session, _head_sha(session))
+    command = f"gh pr create {flag_form.format(branch=branch)} --title x"
+    assert (
+        _run_hook(_UNVERIFIED_PR_CREATE, command, options=HookOptions(cwd=session)) == 2
+    )
+
+
+def test_unverified_pr_create_head_inside_title_text_blocks_not_bypasses(
+    git_repo_with_commit: tuple[Path, str],
+) -> None:
+    """`--head` appearing only inside `--title` prose still blocks — the safe bound.
+
+    The extraction is a naive text scan over the whole `create` invocation,
+    including a quoted `--title` argument — it cannot tell prose from a
+    real flag. Steering it can only ever make the hook MORE cautious: even
+    though the session's own branch holds a valid wrap-up here (so the
+    command would otherwise legitimately pass), the crafted mention is
+    read as a `--head` for a branch no worktree holds, so the result is an
+    over-block, never a bypass — proving the bound the hook's own header
+    comment claims.
+    """
+    repo, sha = git_repo_with_commit
+    _write_wrapup(repo, sha)
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE,
+        'gh pr create --title "supports --head other-branch now"',
+        options=HookOptions(cwd=repo),
+    )
+    assert proc.returncode == 2
+    assert "no live worktree holds" in proc.stderr
+
+
+def test_unverified_pr_create_refuses_two_head_flags(
+    session_and_worktree_checkouts: tuple[Path, Path, str],
+) -> None:
+    """Two disagreeing `--head` flags refuse outright, never resolve to one.
+
+    Demonstrated exploit: the extraction used to take the first match,
+    while `gh` itself parses properly and honors the LAST repeat of a
+    flag. A command naming the worktree (valid wrap-up) first and the
+    session's own branch (no wrap-up) second would have had the naive
+    scan check the worktree and allow the command, while `gh` would
+    actually publish the session's branch — unverified. Asserting the
+    ambiguity wording, not just exit 2, proves the block is for
+    disagreement and not a coincidental missing-wrap-up finding.
+    """
+    session, worktree, branch = session_and_worktree_checkouts
+    _write_wrapup(worktree, _head_sha(worktree))
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE,
+        f"gh pr create --head {branch} --head main --title x",
+        options=HookOptions(cwd=session),
+    )
+    assert proc.returncode == 2
+    assert "more than one --head value" in proc.stderr
+    assert "no authored wrap-up" not in proc.stderr
+
+
+def test_unverified_pr_create_refuses_head_shaped_text_beside_a_real_flag(
+    session_and_worktree_checkouts: tuple[Path, Path, str],
+) -> None:
+    """A real `--head` plus a `--head`-shaped token in `--title` prose also refuses.
+
+    Second demonstrated exploit: a real `--head` naming the unverified
+    branch, paired with a `--head`-shaped mention inside `--title` naming
+    a branch that DOES hold a valid wrap-up, produced two disagreeing
+    tokens the naive scan could be lured into resolving toward the
+    verified one. Asserting the ambiguity wording (not exit 2 alone)
+    confirms the block traces to that disagreement rather than the real
+    `--head`'s own missing wrap-up.
+    """
+    session, worktree, branch = session_and_worktree_checkouts
+    _write_wrapup(worktree, _head_sha(worktree))
+    proc = _run_hook_proc(
+        _UNVERIFIED_PR_CREATE,
+        f'gh pr create --head main --title "mentions --head {branch} in passing"',
+        options=HookOptions(cwd=session),
+    )
+    assert proc.returncode == 2
+    assert "more than one --head value" in proc.stderr
+    assert "no authored wrap-up" not in proc.stderr
 
 
 # --- block_unverified_pr_create.sh: LIGHT wrap-up re-check -----------------
