@@ -6205,12 +6205,12 @@ def test_step_changelog_updated_fragments_mode_message_names_fragment_owner(
 ) -> None:
     """The fragments-mode failure names whose job the fragment is.
 
-    SCENARIO: this gate fires inside the `git commit` that
-    `forge:git-commit-push` runs, so a commit agent is its usual reader.
-    A message that states the requirement and hands over the authoring
-    recipe — path template, slug/type placeholders, exact first line —
-    without naming an owner is one that reader will satisfy itself,
-    choosing a `bump:` level and with it the released version.
+    SCENARIO: this gate fires inside the `git commit` that `forge-commit`
+    runs, so a commit agent is its usual reader. A message that states
+    the requirement and hands over the authoring recipe — path template,
+    slug/type placeholders, exact first line — without naming an owner is
+    one that reader will satisfy itself, choosing a `bump:` level and
+    with it the released version.
 
     MOCK SETUP: fragments mode with one changelog-requiring source file
     in the diff and no fragment anywhere.
@@ -6232,7 +6232,7 @@ def test_step_changelog_updated_fragments_mode_message_names_fragment_owner(
     result = precommit.step_changelog_updated(tmp_path)
     assert not result.passed
     assert "the PR author's to write" in result.output
-    assert "reports and stops instead of authoring one" in result.output
+    assert "reports this gate and stops instead of authoring one" in result.output
 
 
 def test_step_changelog_updated_fragments_mode_trigger_with_valid_fragment_passes(

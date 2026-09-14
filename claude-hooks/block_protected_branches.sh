@@ -6,8 +6,8 @@
 # forge's own repo for its release workflow — most consumers leave it
 # alone).
 #
-# The forge:git-commit-push subagent bypasses via the `agent_type` field
-# on the hook payload — keeps the canonical commit/push path working.
+# No agent bypass. Commits go through `forge-commit`, whose command text
+# never matches this hook and which refuses the protected branch itself.
 #
 # Reads `[tool.forge]` via an inline `python3 -c` heredoc rather than
 # importing `forge.config` from forge-scripts. The duplication is
@@ -43,7 +43,6 @@ REPO_ROOT=$(echo "$INPUT" | jq -r '.cwd // empty')
 if [ -n "$REPO_ROOT" ] && ! echo "$REPO_ROOT" | grep -qE '^/'; then
     REPO_ROOT="."
 fi
-AGENT_TYPE=$(echo "$INPUT" | jq -r '.agent_type // empty')
 
 # Read the protected-branch list from pyproject.toml. python3 is already a
 # hard dependency of every forge repo (forge IS Python), so this is safe.
@@ -78,9 +77,8 @@ PY
 # `src:dst` push refspec is the authoritative target, so a push from an
 # unprotected current branch can still land on a protected one:
 # `git push origin HEAD:main`, `feature:main`, `feature:refs/heads/main`,
-# `+main`. The current-branch check below never sees these. Nothing — not
-# even forge:git-commit-push — may push directly to a protected branch
-# (FOUNDATION §2). (#74)
+# `+main`. The current-branch check below never sees these. Nothing may
+# push directly to a protected branch (FOUNDATION §2). (#74)
 if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}push\b"; then
     # EVERY invocation in the command, not just one: a literal
     # `^…git push` sed left prefixed forms unstripped, and stripping
@@ -116,14 +114,8 @@ if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}push\b"; then
     done <<< "$invocations"
 fi
 
-# (2) The canonical commit/push path bypasses the *current-branch* check
-# below (so the agent can commit + push feature branches freely). The
-# refspec-destination guard above still applies to it — by design.
-if [ "$AGENT_TYPE" = "git-commit-push" ] || [ "$AGENT_TYPE" = "forge:git-commit-push" ]; then
-    exit 0
-fi
-
-# (3) Current-branch guard. Membership check via line-anchored grep so a
+# (2) Current-branch guard. No agent bypass: `forge-commit` never matches
+# the anchor above, and refuses the protected branch in its own code. Membership check via line-anchored grep so a
 # branch literally named "main" doesn't match "mainframe" (and vice versa).
 branch=$(git -C "${REPO_ROOT:-.}" branch --show-current 2>/dev/null)
 if echo "$protected" | grep -qFx "$branch"; then

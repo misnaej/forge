@@ -25,7 +25,9 @@ ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
 [ -f "$ANCHOR_LIB" ] || exit 0
 # shellcheck source=git_anchor.sh
 source "$ANCHOR_LIB"
-printf '%s' "$COMMAND" | grep -qE "${GIT_ANCHOR}push\b" || exit 0
+# `forge-commit` pushes through its own git call, which no git anchor can
+# see — match a real invocation of the CLI too.
+printf '%s' "$COMMAND" | grep -qE "${GIT_ANCHOR}push\b|${FORGE_COMMIT_ANCHOR}" || exit 0
 
 command -v forge-pr-plan >/dev/null 2>&1 || exit 0
 

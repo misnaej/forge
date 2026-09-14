@@ -11,7 +11,7 @@ pre-commit hook to work.
 ## Install — enable it **per repo** (recommended)
 
 If your team uses [Claude Code](https://claude.com/claude-code) and
-wants the agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, etc.)
+wants the agents (`pr-manager`, `precommit-fixer`, `design-checker`, etc.)
 and slash commands (`/commit`, `/pr`, `/next`, …):
 
 Enable it in the **consumer repo's** `.claude/settings.json`, so the plugin

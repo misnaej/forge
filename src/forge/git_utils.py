@@ -17,6 +17,7 @@ import sys
 import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from importlib import metadata
@@ -884,27 +885,48 @@ def find_open_pr_by_head_prefix(repo_root: Path, prefix: str) -> str | None:
     return None
 
 
-def create_commit(repo_root: Path, message: str) -> None:
+def create_commit(
+    repo_root: Path,
+    message: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    log_errors: bool = True,
+) -> None:
     """Commit the staged index, surviving identity-less runners.
 
     The one commit seam for forge CLIs that write commits
-    programmatically (``forge-resync``) — the commit twin of
-    :func:`create_annotated_tag`. Injects a fallback committer identity
-    only when git has none (see :func:`_fallback_identity_args`); a
-    commit requires one, and a fresh CI runner configures none.
+    programmatically (``forge-commit``, ``forge-resync``) — the commit
+    twin of :func:`create_annotated_tag`. Injects a fallback committer
+    identity only when git has none (see :func:`_fallback_identity_args`);
+    a commit requires one, and a fresh CI runner configures none. The git
+    pre-commit hook runs as for any commit: nothing here skips it.
 
     Args:
         repo_root: Repo root.
         message: Commit message.
+        env: Variables set for this git call only, merged over the current
+            environment — ``FORGE_WIP_SYNC=1`` for a checkpoint commit must
+            not leak into the caller's process.
+        log_errors: When ``False``, raise without logging git's output —
+            for a caller that prints the pre-commit hook's report itself.
 
     Raises:
-        subprocess.CalledProcessError: When git fails for any other
-            reason (stderr is logged by :func:`run_git`).
+        subprocess.CalledProcessError: When git fails, including a
+            pre-commit hook that blocks the commit; its ``stdout`` and
+            ``stderr`` carry the hook's report.
     """
     # No `--` pin needed (unlike create_annotated_tag's positionals):
     # `-m` consumes the next argv element as its value unconditionally,
     # so a `-`-prefixed message can never parse as a separate option.
-    run_git(*_fallback_identity_args(repo_root), "commit", "-m", message, cwd=repo_root)
+    run_git(
+        *_fallback_identity_args(repo_root),
+        "commit",
+        "-m",
+        message,
+        cwd=repo_root,
+        env=env,
+        log_errors=log_errors,
+    )
 
 
 def resolve_current_branch(repo_root: Path) -> tuple[str, str] | None:
@@ -1035,6 +1057,107 @@ def fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool:
     except (OSError, subprocess.CalledProcessError):
         return False
     return True
+
+
+# A push crosses the network; a credential prompt nobody can answer, or a
+# stalled remote, must end instead of hanging the caller (FOUNDATION §15).
+PUSH_TIMEOUT_S = 120
+
+
+@dataclass(frozen=True)
+class PushResult:
+    """The outcome of :func:`push_branch`.
+
+    Attributes:
+        ok: Whether the push succeeded.
+        returncode: Git's exit code, or ``None`` when git did not finish
+            (timed out, could not start, or the arguments were refused).
+        stderr: Git's error output, or why the push never ran.
+    """
+
+    ok: bool
+    returncode: int | None
+    stderr: str
+
+
+def push_branch(
+    repo_root: Path, branch: str, *, set_upstream: bool = False, remote: str = "origin"
+) -> PushResult:
+    """Push *branch* to *remote* without ever prompting or hanging.
+
+    The one push seam for forge CLIs that publish a branch. It runs with
+    ``GIT_TERMINAL_PROMPT=0`` and a bounded timeout, returns failure
+    instead of raising so each caller decides what a failed push means,
+    and has no force option: a forge CLI never rewrites a remote branch.
+
+    Args:
+        repo_root: Git repo root.
+        branch: Branch to push.
+        set_upstream: Pass ``-u`` so the branch tracks *remote*.
+        remote: Remote name.
+
+    Returns:
+        The outcome. A dash-prefixed *branch* or *remote* is refused
+        without running git, so it can never parse as an option.
+    """
+    if remote.startswith("-") or branch.startswith("-"):
+        return PushResult(
+            ok=False,
+            returncode=None,
+            stderr=f"refused a dash-prefixed remote or branch: {remote!r} {branch!r}",
+        )
+    argv = ["git", "push", *(["-u"] if set_upstream else []), remote, branch]
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=PUSH_TIMEOUT_S,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except subprocess.TimeoutExpired:
+        return PushResult(
+            ok=False,
+            returncode=None,
+            stderr=f"git push timed out after {PUSH_TIMEOUT_S}s",
+        )
+    except OSError as exc:
+        return PushResult(ok=False, returncode=None, stderr=str(exc))
+    return PushResult(
+        ok=proc.returncode == 0, returncode=proc.returncode, stderr=proc.stderr.strip()
+    )
+
+
+def merge_message(repo_root: Path) -> str | None:
+    """Return git's prepared message for an in-progress merge.
+
+    Resolved through ``git rev-parse --git-path`` like
+    :func:`merge_in_progress`, so linked worktrees work. Git writes
+    ``#``-prefixed hint lines (conflict lists) into the file for an editor
+    to strip; they are removed here because a commit made with ``-m``
+    would keep them.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        The message without comment lines, or ``None`` when there is no
+        prepared message.
+    """
+    git_path = run_git(
+        "rev-parse", "--git-path", "MERGE_MSG", cwd=repo_root, check=False
+    )
+    if not git_path:
+        return None
+    try:
+        text = (repo_root / git_path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    kept = [line for line in text.splitlines() if not line.startswith("#")]
+    message = "\n".join(kept).strip()
+    return message or None
 
 
 def behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None:

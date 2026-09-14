@@ -289,6 +289,34 @@ options:
   -h, --help            show this help message and exit
 ```
 
+## forge-commit
+
+```text
+usage: forge-commit [-h] [-m MESSAGE | -F FILE] [--all] [--wip-sync]
+                    [--no-push] [--push-only]
+                    [paths ...]
+
+Stage, commit and push in one guarded call: refuses the base branch, AI
+attribution, a non-conventional subject and a missing, stale or failed pre-
+commit record; the git pre-commit hook still runs. Exit 0 done, 1 push or
+record step failed, 2 nothing committed.
+
+positional arguments:
+  paths                 Paths to stage and commit.
+
+options:
+  -h, --help            show this help message and exit
+  -m, --message MESSAGE
+                        Commit message.
+  -F, --file FILE       Read the commit message from a file.
+  --all                 Stage every change (git add -A).
+  --wip-sync            Checkpoint commit before a base sync (FOUNDATION §2):
+                        stages everything; the subject must start with 'wip-
+                        sync:'.
+  --no-push             Commit without pushing.
+  --push-only           Push existing commits; commit nothing.
+```
+
 ## forge-config
 
 ```text
@@ -311,8 +339,8 @@ usage: forge-continuation-append [-h] (--rotate | --commit HASH |
                                  [subject]
 
 Append one line to .plan/CONTINUATION.md's auto-appended activity section.
-Single source of truth for the format used by forge:git-commit-push and
-forge:pr-manager.
+Single source of truth for the format used by forge-commit and forge-pr-wrapup
+post.
 
 positional arguments:
   subject        Subject line — commit subject, PR title, or merge subject

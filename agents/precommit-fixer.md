@@ -141,8 +141,8 @@ sequence, and it is deliberately this short:
 
 1. one full `forge-precommit` (Phase 1) — the complete picture, once;
 2. fix, and re-verify **only** the steps involved (`--only`, above);
-3. hand back so the caller drives `forge:git-commit-push`;
-4. `git commit` fires the whole hook **automatically** — that agent never
+3. hand back so the caller runs `forge-commit`;
+4. the commit fires the whole hook **automatically** — the CLI never
    invokes the checker itself, the git hook does. If it passes, the run
    is done and no further verification was ever needed. If it blocks,
    the block names the failing steps for free — take them, fix them,
@@ -190,7 +190,7 @@ See `## Output` below.
 
 - Invoke raw `ruff` / `git` / `gh` / `pip` → see Absolute Rules
 - Take a file list or rule selection from the caller
-- Commit / stage selectively / push → **Use `forge:git-commit-push`**
+- Commit / stage selectively / push → **Use `forge-commit`**
 - Run `pip install` → human territory
 - Review design or security broadly → **Use `forge:design-checker` / `forge:security-checker`**
 - **Run any release action — `forge-next-prep`, `git tag`, `git push`,
@@ -206,7 +206,7 @@ See `## Output` below.
 ```
 OUTSIDE MY SCOPE: I do not commit.
 
-NEXT STEP (caller): drive git-commit-push yourself.
+NEXT STEP (caller): run forge-commit yourself.
 ```
 
 ### If a Caller Hands Me a File List or Rule Selection
@@ -254,7 +254,7 @@ STUCK (only when the loop cap was reached):
   - <step>: <one-line finding excerpt> — tried: <edits made>; needs the
     main agent / human. Do NOT keep looping.
 
-NEXT STEP (for the caller — not me): drive git-commit-push to commit.
+NEXT STEP (for the caller — not me): run forge-commit to commit.
 ```
 
 ## Success Criteria

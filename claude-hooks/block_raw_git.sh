@@ -1,20 +1,12 @@
 #!/usr/bin/env bash
 # Block raw `git commit` / `git push` invocations from Bash.
-# FOUNDATION §3 mandatory-delegation — use the forge:git-commit-push agent.
-#
-# Bypass: the forge:git-commit-push agent itself must call these. The
-# PreToolUse payload includes `agent_type` (the `name:` frontmatter of the
-# calling subagent, per code.claude.com/docs/en/hooks). When that matches
-# `git-commit-push` or `forge:git-commit-push`, allow the call.
+# FOUNDATION §3 — commits and pushes go through `forge-commit`, which
+# enforces the commit guards in its own code (FOUNDATION §7: hooks see only
+# the command an agent types, never a CLI's internal git calls). No agent
+# bypass: every agent, subagent or not, commits through the CLI.
 set -e
 INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
-AGENT_TYPE=$(jq -r '.agent_type // empty' <<< "$INPUT")
-
-if [ "$AGENT_TYPE" = "git-commit-push" ] || [ "$AGENT_TYPE" = "forge:git-commit-push" ]; then
-    # The one agent legitimately allowed to drive `git commit` / `git push`.
-    exit 0
-fi
 
 # Anchor + rationale live in the shared lib (one home for the whole
 # git-guard family — issue #348).
@@ -28,6 +20,6 @@ if [ ! -r "$ANCHOR_LIB" ]; then
 fi
 source "$ANCHOR_LIB"
 if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}(commit|push)\b"; then
-    echo "BLOCKED: raw 'git commit' / 'git push' from Bash is forbidden by FOUNDATION §3 mandatory-delegation. Use the forge:git-commit-push agent — it runs pre-commit, signs the commit per the convention, and pushes with the right tracking flags." >&2
+    echo "BLOCKED: raw 'git commit' / 'git push' from Bash is forbidden by FOUNDATION §3. Use forge-commit: 'forge-commit -m \"<type>: <subject>\" (--all | <paths>)' commits and pushes with the guards checked; 'forge-commit --push-only' pushes existing commits; 'forge-commit --wip-sync -m \"wip-sync: <what>\"' makes a checkpoint commit." >&2
     exit 2
 fi

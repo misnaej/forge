@@ -194,7 +194,7 @@ Check for these common vulnerabilities:
 - Make any code changes → **Report only, main agent decides action**
 - Fix security issues → **Report only, main agent implements fixes**
 - Fix linting/formatting → **Use `precommit-fixer`**
-- Commit anything → **Use `git-commit-push`**
+- Commit anything → **Use `forge-commit`**
 - Review design principles → **Use `design-checker`**
 
 ### If Asked to Fix Issues:

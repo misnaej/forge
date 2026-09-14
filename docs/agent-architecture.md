@@ -117,7 +117,7 @@ graph LR
   cli_forge_continuation_append[("forge-continuation-append<br/>CLI")]
   cli_forge_precommit[("forge-precommit<br/>CLI")]
   cli_forge_smart_test[("forge-smart-test<br/>CLI")]
-  git_commit_push["git-commit-push<br/>AI agent"]
+  cli_forge_commit[("forge-commit<br/>CLI")]
   knowledge_search["knowledge-search<br/>AI agent"]
   perf_optimizer["perf-optimizer<br/>AI agent"]
   prior_art["prior-art<br/>AI agent"]
@@ -146,19 +146,15 @@ graph LR
   design_checker -->|delegates| knowledge_search
   perf_optimizer -->|delegates| design_checker
   sk_commit -->|invokes| precommit_fixer
-  sk_commit -->|invokes| git_commit_push
+  sk_commit -->|invokes| cli_forge_commit
   sk_fix -->|invokes| precommit_fixer
   sk_test -->|invokes| test_advisor
   sk_test -->|invokes| test_writer
   sk_test -->|invokes| precommit_fixer
   sk_test -->|chains| sk_commit
   precommit_fixer -->|invokes| cli_forge_precommit
-  git_commit_push -->|invokes| cli_forge_continuation_append
+  cli_forge_commit -->|invokes| cli_forge_continuation_append
   sk_smart_test -->|invokes| cli_forge_smart_test
-  git_commit_push -.->|guarded by| hk_block_no_verify
-  git_commit_push -.->|guarded by| hk_block_force_push
-  git_commit_push -.->|guarded by| hk_block_git_destructive
-  git_commit_push -.->|guarded by| hk_block_amend_pushed_commit
   precommit_fixer -.->|guarded by| hk_block_fixer_recon
   class human person
   class main_agent orchestrator
@@ -176,8 +172,7 @@ graph LR
   class cli_forge_continuation_append cli
   class cli_forge_precommit cli
   class cli_forge_smart_test cli
-  class git_commit_push agent
-  class git_commit_push mutator
+  class cli_forge_commit cli
   class knowledge_search agent
   class knowledge_search reporter
   class perf_optimizer agent

@@ -19,6 +19,11 @@
 #   - resync._provenance_evidence: stubbed at the function boundary in
 #     `_publish_resync` tests (its own subprocess.run seam is exercised
 #     directly in its dedicated test section instead).
+#   - resync.push_branch: `_publish_resync` tests patch the imported
+#     `push_branch` name directly with a recorder returning a real
+#     `git_utils.PushResult` — the push no longer shells out through
+#     `subprocess.run`, so faking that seam for the push (as the gh calls
+#     still do) would silently also fake the push's own success/failure.
 #   - A stateful counter fake for `_working_tree_dirty` where a test needs
 #     the pre-bootstrap and post-bootstrap dirty checks to disagree.
 #   - `_regenerate` unit tests fake `resync.subprocess.run` directly (per-call
@@ -41,7 +46,13 @@ import pytest
 
 from forge import git_utils, resync
 from forge.config import ForgeConfig
-from tests.conftest import GIT_ENV, FakeProc, commit_all, init_git_repo
+from tests.conftest import (
+    GIT_ENV,
+    FakeProc,
+    commit_all,
+    init_git_repo,
+    make_fake_push_branch,
+)
 
 
 if TYPE_CHECKING:
@@ -520,13 +531,15 @@ def test_publish_resync_happy_path(
     MOCK SETUP: `run_git` recorder captures every git invocation and
         reports `"main"` for `branch --show-current`; `create_commit`
         replaced with a recorder capturing `(root, message)`;
-        `subprocess.run` (gh) records its argv and returns a `FakeProc`
-        carrying the created PR's URL on stdout.
+        `push_branch` replaced with a recorder returning
+        `PushResult(ok=True, ...)`; `subprocess.run` (gh only, now that
+        the push no longer shells through it) records its argv and
+        returns a `FakeProc` carrying the created PR's URL on stdout.
     EXPECTED BEHAVIOR: `switch -c chore/forge-resync-<ver>-no-version`,
         `add -A`, a `create_commit` call with the "chore: resync..."
-        message (marker included), `push -u origin <branch>`, a `gh pr
-        create --base main ...` call, then a final `switch` back to
-        `"main"`; returns 0.
+        message (marker included), a `push_branch(root, <branch>,
+        set_upstream=True)` call, a `gh pr create --base main ...` call,
+        then a final `switch` back to `"main"`; returns 0.
     """
     git_calls: list[list[str]] = []
 
@@ -541,6 +554,7 @@ def test_publish_resync_happy_path(
     def _fake_create_commit(*args: object) -> None:
         commit_calls.append(args)
 
+    push_calls: list[tuple[object, object, dict[str, object]]] = []
     gh_calls: list[list[str]] = []
 
     def _fake_subprocess_run(cmd: list[str], **_kw: object) -> FakeProc:
@@ -549,6 +563,9 @@ def test_publish_resync_happy_path(
 
     monkeypatch.setattr(resync, "run_git", _fake_run_git)
     monkeypatch.setattr(resync, "create_commit", _fake_create_commit)
+    monkeypatch.setattr(
+        resync, "push_branch", make_fake_push_branch(ok=True, calls=push_calls)
+    )
     monkeypatch.setattr(resync.subprocess, "run", _fake_subprocess_run)
     monkeypatch.setattr(
         resync, "_provenance_evidence", lambda *_a, **_kw: (True, "<evidence>")
@@ -566,7 +583,7 @@ def test_publish_resync_happy_path(
         f"{resync.NO_VERSION_COMMIT_MARKER}"
     )
     assert commit_calls == [(tmp_path, commit_message)]
-    assert ["push", "-u", "origin", branch] in git_calls
+    assert push_calls == [(tmp_path, branch, {"set_upstream": True})]
     assert git_calls[-1] == ["switch", "main"]  # returns to start branch
 
     assert len(gh_calls) == 1
@@ -590,10 +607,14 @@ def test_publish_resync_gh_create_failure_leaves_branch_pushed_returns_1(
 
     SCENARIO: the branch push succeeds but `gh pr create` exits non-zero.
     MOCK SETUP: `run_git` recorder reports `"main"` for `show-current`;
-        `create_commit` replaced with a no-op recorder; `subprocess.run`
-        (gh) returns `FakeProc(1, stderr="boom")`.
-    EXPECTED BEHAVIOR: returns 1, an error naming the branch is logged,
-        and the `finally`-block switch-back to `"main"` still runs.
+        `create_commit` replaced with a no-op recorder; `push_branch`
+        replaced with a fake returning `PushResult(ok=True, ...)`, so the
+        `gh` failure below is isolated to `gh pr create` and not a
+        same-named side effect of a blanket-failing `subprocess.run`
+        fake; `subprocess.run` (gh only) returns `FakeProc(1, stderr="boom")`.
+    EXPECTED BEHAVIOR: returns 1, an error naming `gh pr create` and the
+        branch is logged, and the `finally`-block switch-back to `"main"`
+        still runs.
     """
     git_calls: list[list[str]] = []
 
@@ -609,6 +630,7 @@ def test_publish_resync_gh_create_failure_leaves_branch_pushed_returns_1(
     monkeypatch.setattr(
         resync, "create_commit", lambda *args: commit_calls.append(args)
     )
+    monkeypatch.setattr(resync, "push_branch", make_fake_push_branch(ok=True))
     monkeypatch.setattr(
         resync.subprocess,
         "run",
@@ -623,7 +645,65 @@ def test_publish_resync_gh_create_failure_leaves_branch_pushed_returns_1(
 
     assert rc == 1
     branch = f"chore/forge-resync-2.7.0-{resync.NO_VERSION_BRANCH_TOKEN}"
-    assert any(branch in r.getMessage() for r in caplog.records)
+    assert any(
+        "gh pr create" in r.getMessage() and branch in r.getMessage()
+        for r in caplog.records
+    )
+    assert git_calls[-1] == ["switch", "main"]  # finally still switches back
+
+
+def test_publish_resync_push_failure_returns_1_gh_never_called(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A push failure returns 1 before `gh pr create` is ever attempted.
+
+    SCENARIO: `push_branch` reports failure (e.g. a rejected non-fast-forward).
+    MOCK SETUP: `run_git` recorder reports `"main"` for `show-current`;
+        `create_commit` no-op; `push_branch` replaced with a fake
+        returning `PushResult(ok=False, stderr="rejected")`;
+        `subprocess.run` (gh) recorder — asserted never called, since a
+        failed push returns before `_provenance_evidence`/`gh pr create`
+        run at all.
+    EXPECTED BEHAVIOR: returns 1, an error naming the branch and the
+        push's stderr is logged, `gh pr create` is never invoked, and the
+        `finally`-block switch-back to `"main"` still runs (the branch is
+        committed locally for a manual retry).
+    """
+    git_calls: list[list[str]] = []
+
+    def _fake_run_git(*args: str, **_kw: object) -> str:
+        git_calls.append(list(args))
+        if args[:2] == ("branch", "--show-current"):
+            return "main"
+        return ""
+
+    gh_calls: list[list[str]] = []
+
+    def _fake_subprocess_run(cmd: list[str], **_kw: object) -> FakeProc:
+        gh_calls.append(cmd)
+        return FakeProc(0, stdout="https://github.com/x/y/pull/9")
+
+    monkeypatch.setattr(resync, "run_git", _fake_run_git)
+    monkeypatch.setattr(resync, "create_commit", lambda *_args: None)
+    monkeypatch.setattr(
+        resync, "push_branch", make_fake_push_branch(ok=False, stderr="rejected")
+    )
+    monkeypatch.setattr(resync.subprocess, "run", _fake_subprocess_run)
+
+    with caplog.at_level("ERROR"):
+        rc = resync._publish_resync(tmp_path, "2.7.0", "main")
+
+    assert rc == 1
+    assert gh_calls == []
+    branch = f"chore/forge-resync-2.7.0-{resync.NO_VERSION_BRANCH_TOKEN}"
+    assert any(
+        "git push failed" in r.getMessage()
+        and branch in r.getMessage()
+        and "rejected" in r.getMessage()
+        for r in caplog.records
+    )
     assert git_calls[-1] == ["switch", "main"]  # finally still switches back
 
 
@@ -745,9 +825,10 @@ def test_publish_resync_body_includes_pass_evidence(
 
     SCENARIO: `_provenance_evidence` reports a pass.
     MOCK SETUP: `run_git` recorder reports `"main"` for `show-current`;
-        `create_commit` no-op; `_provenance_evidence` stubbed to return
-        `(True, "<pass block>")`; `subprocess.run` (gh) recorder captures
-        the `gh pr create` argv.
+        `create_commit` no-op; `push_branch` replaced with a fake
+        returning `PushResult(ok=True, ...)`; `_provenance_evidence`
+        stubbed to return `(True, "<pass block>")`; `subprocess.run` (gh
+        only) recorder captures the `gh pr create` argv.
     EXPECTED BEHAVIOR: the `--body` argv contains the standard `_PR_BODY`
         text followed by the pass evidence block, and `_publish_resync`
         still returns 0.
@@ -766,6 +847,7 @@ def test_publish_resync_body_includes_pass_evidence(
 
     monkeypatch.setattr(resync, "run_git", _fake_run_git)
     monkeypatch.setattr(resync, "create_commit", lambda *_a: None)
+    monkeypatch.setattr(resync, "push_branch", make_fake_push_branch(ok=True))
     monkeypatch.setattr(resync.subprocess, "run", _fake_subprocess_run)
     monkeypatch.setattr(
         resync,
@@ -792,9 +874,10 @@ def test_publish_resync_body_includes_fail_evidence(
 
     SCENARIO: `_provenance_evidence` reports a failure.
     MOCK SETUP: `run_git` recorder reports `"main"` for `show-current`;
-        `create_commit` no-op; `_provenance_evidence` stubbed to return
-        `(False, "<fail block>")`; `subprocess.run` (gh) recorder
-        captures the `gh pr create` argv.
+        `create_commit` no-op; `push_branch` replaced with a fake
+        returning `PushResult(ok=True, ...)`; `_provenance_evidence`
+        stubbed to return `(False, "<fail block>")`; `subprocess.run`
+        (gh only) recorder captures the `gh pr create` argv.
     EXPECTED BEHAVIOR: the `--body` argv contains the fail evidence
         block, and `_publish_resync` still returns 0 — a gate failure
         never blocks PR creation, it only flags the body for full review.
@@ -814,6 +897,7 @@ def test_publish_resync_body_includes_fail_evidence(
 
     monkeypatch.setattr(resync, "run_git", _fake_run_git)
     monkeypatch.setattr(resync, "create_commit", lambda *_a: None)
+    monkeypatch.setattr(resync, "push_branch", make_fake_push_branch(ok=True))
     monkeypatch.setattr(resync.subprocess, "run", _fake_subprocess_run)
     monkeypatch.setattr(
         resync,

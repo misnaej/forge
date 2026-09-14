@@ -356,9 +356,11 @@ Verification is done, fixes are committed, and the wrap-up is authored
 (Step 3.92 — the create hook checks it). Three cases:
 
 1. **PR already open** → nothing to create; confirm the branch is pushed
-   (`git-commit-push` pushes by default — check `git status`).
-2. **No PR yet** → push the branch (`git push -u origin <branch>` if
-   untracked), analyze the diff (`git diff --stat origin/<base>...HEAD`,
+   (`forge-commit` pushes by default — check `git status`; push any
+   unpushed commits with `forge-commit --push-only`).
+2. **No PR yet** → push the branch (`forge-commit --push-only`; it sets
+   the upstream when the branch has none), analyze the diff
+   (`git diff --stat origin/<base>...HEAD`,
    `git log origin/<base>..HEAD --oneline`), then create the PR
    (description rules: FOUNDATION §6 "PR descriptions"):
    ```bash

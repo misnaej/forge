@@ -78,6 +78,7 @@ from forge.git_utils import (
     latest_v_tag,
     merge_base_with_head,
     next_version,
+    push_branch,
     render_plugin_version,
     repo_root,
     require_cli,
@@ -1284,19 +1285,13 @@ def _push_and_open_pr(
         push/create failure; ``2`` on a failure no race explains.
     """
     _passed, evidence = _gate_evidence(root)
-    push = subprocess.run(
-        ["git", "push", "-u", "origin", branch],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=root,
-    )
-    if push.returncode != 0:
+    push = push_branch(root, branch, set_upstream=True)
+    if not push.ok:
         racing = find_open_pr_by_head_prefix(root, ASSEMBLY_BRANCH_PREFIX)
         if racing:
             emit(f"release-pr: lost the race — assembly PR open at {racing}")
             return 0
-        emit(f"release-pr: push FAILED:\n{push.stderr.strip()}")
+        emit(f"release-pr: push FAILED:\n{push.stderr}")
         return 2
     create = subprocess.run(
         [

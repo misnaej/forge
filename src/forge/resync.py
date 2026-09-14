@@ -50,6 +50,7 @@ from forge.git_utils import (
     find_open_pr_by_head_prefix,
     forge_cli_argv,
     merge_in_progress,
+    push_branch,
     repo_root,
     require_cli,
     run_gate_evidence,
@@ -181,13 +182,14 @@ def _publish_resync(root: Path, version: str, base_branch: str) -> int:
         base_branch: PR base — the consumer's ``[tool.forge].base_branch``.
 
     Returns:
-        ``0`` on success; ``1`` when ``gh pr create`` fails (the pushed
-        branch is left in place for a manual retry).
+        ``0`` on success; ``1`` when the push fails (the branch is left
+        committed locally) or ``gh pr create`` fails (the pushed branch is
+        left in place for a manual retry).
 
     Raises:
-        subprocess.CalledProcessError: When a git step (``add`` /
-            ``commit`` / ``push``) fails — propagated after the
-            ``finally`` block has switched back to the starting branch.
+        subprocess.CalledProcessError: When a local git step (``add`` /
+            ``commit``) fails — propagated after the ``finally`` block has
+            switched back to the starting branch.
     """
     start_branch = run_git("branch", "--show-current", cwd=root).strip()
     # Branch token + commit marker: a mechanical regen is the textbook
@@ -203,7 +205,15 @@ def _publish_resync(root: Path, version: str, base_branch: str) -> int:
             f"chore: resync forge-managed artifacts ({version}) "
             f"{NO_VERSION_COMMIT_MARKER}",
         )
-        run_git("push", "-u", "origin", branch, cwd=root)
+        push = push_branch(root, branch, set_upstream=True)
+        if not push.ok:
+            logger.error(
+                "git push failed (branch %s is committed locally — "
+                "push it manually):\n%s",
+                branch,
+                push.stderr,
+            )
+            return 1
         passed, evidence = _provenance_evidence(root)
         if not passed:
             logger.warning("provenance gates did not pass — PR body flags full review.")

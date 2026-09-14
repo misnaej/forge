@@ -150,7 +150,7 @@ theme: `(done)` / `(in progress PR#<n>)` / `(draft PR#<n>)`.
 
 - Make any code changes → **summary generation only**
 - Create PRs or issues → **report only**
-- Commit anything → **Use `forge:git-commit-push`**
+- Commit anything → **Use `forge-commit`**
 - Fix any code issues → **Use `forge:precommit-fixer`**
 
 ## Critical Rules

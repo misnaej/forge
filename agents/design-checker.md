@@ -275,7 +275,7 @@ Clean result → one PASS line after the header (_TEMPLATE.md report-by-exceptio
 
 ### I WILL NOT (report and stop)
 
-- Make code/doc changes or commit → **report only** (`forge:git-commit-push` commits)
+- Make code/doc changes or commit → **report only** (the caller commits with `forge-commit`)
 - Propose raising complexity limits or adding ruff ignores (user approval required)
 - Re-define principles — always cite FOUNDATION.md or consumer CLAUDE.md
 - Skip a recipe because its log is missing — run the audit script first

@@ -3,9 +3,8 @@
 # (base_branch, default `main`).
 #
 # Why this exists separately from block_raw_git / block_protected_branches:
-#   - block_raw_git blocks raw `git push` from Bash, BUT the
-#     forge:git-commit-push agent bypasses it — so a delete-push could
-#     still get through that agent. This hook has NO bypass.
+#   - block_raw_git blocks every raw `git push`; this hook names the
+#     deletion forms explicitly so the refusal says why, and has NO bypass.
 #   - block_raw_git is git-only; `gh api -X DELETE .../branches/...` is a
 #     gh call it never sees. This hook covers the gh-api delete path too.
 #   - Server-side rulesets that "restrict deletions" do NOT stop a

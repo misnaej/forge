@@ -35,7 +35,8 @@ Code.
    - emergency.py: `forge-emergency` — one-shot deferred-verification bypass (start/status/consume/end): ledger issue first, gitignored sentinel, the wrap-up gate consumes the single allowed `wrapup-mode: emergency` publication, retroactive verification closes the ledger after delivery; pre-commit and §2 hooks never relieved
    - rebump.py: `forge-rebump` — mechanical post-merge version-slot resolver: classifies a feature branch's bump intent from its fork-point manifest delta (merge stages mid-merge, merge-base on a clean tree), takes the next open slot above the latest tag, restacks/retitles the CHANGELOG in shared-heading mode (fragments mode: no-op), stages, never commits; refuses on unrelated conflicts
    - release.py: `forge-release` — single-track release orchestrator for tag-versioned (setuptools-scm) consumer repos: guards (clean tree, on base branch, single-track model, CHANGELOG entry) → annotated tag + push (exempt in `cli_wiring_exempt.toml`)
-   - continuation_append.py: `forge-continuation-append` — single source of truth for `.plan/CONTINUATION.md` append format; called by `forge:git-commit-push` and `forge-pr-wrapup post`; every append (and `--rotate`) rotates done entries older than one week to `.plan/CONTINUATION-archive.md` + per-day digests, pinning entries the structured sections still reference
+   - commit.py: `forge-commit` — stage, commit and push in one guarded call: the commit guards (base branch, AI attribution, conventional subject, a fresh passing pre-commit record) are checked in code because hooks never see a CLI's own git calls; the git pre-commit hook still runs; pushes with `-u` when the branch has no upstream; records the CONTINUATION line, a `code_health/commit_history.log` ledger line and the subagent edit receipt; `--wip-sync` makes FOUNDATION §2's checkpoint commit, `--push-only` pushes existing commits
+   - continuation_append.py: `forge-continuation-append` — single source of truth for `.plan/CONTINUATION.md` append format; called by `forge-commit` and `forge-pr-wrapup post`; every append (and `--rotate`) rotates done entries older than one week to `.plan/CONTINUATION-archive.md` + per-day digests, pinning entries the structured sections still reference
    - pr_wrapup.py: `forge-pr-wrapup` — `compose` renders `code_health/pr_wrapup.md` with fill-in slots for the judgment parts; `validate` refuses unfilled slots and enforces the report-by-exception rule (one line per clean section, one summary line, findings-scaled word budget, no AI attribution); `post` refuses a stale head or a branch that conflicts with or is behind its base (exit 3), refreshes CI Status and Issue Management, posts with a marker (collapsing earlier wrap-ups, keeping the squash comment newest) and appends the CONTINUATION record
    - pr_wrapup_compose.py: pure wrap-up rendering for `forge-pr-wrapup compose` — header and mode line, per-mode reporter sections, Code Quality by exception, CI rollup summary, closing-keyword line, and the `<!-- forge:fill … -->` slots
    - gh_comments.py: shared GitHub comment plumbing for the PR-comment CLIs — paginated marker listing, post, delete, edit, and the FOUNDATION §2 attribution gate
@@ -125,7 +126,6 @@ ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-proto
 - _TEMPLATE.md: canonical agent template (excluded from plugin auto-discovery via underscore prefix)
 - design-checker.md: design review agent
 - docs-types-checker.md: docs and type-hint checker agent
-- git-commit-push.md: commit and push agent
 - issue-triage.md: GitHub issue triage agent
 - knowledge-search.md: grounded knowledge retrieval agent
 - perf-optimizer.md: performance optimization agent
@@ -181,7 +181,7 @@ enforcement:
 - block_amend_pushed_commit.sh: block `git commit --amend` when `HEAD` already exists on a remote-tracking ref — the single-commit form of a rebase; unpushed amends stay allowed (no bypass; live-state check anchored to the payload cwd)
 - git_anchor.sh: NOT a hook — sourced library holding the shared `GIT_ANCHOR`/`SEG_ANCHOR` invocation anchors for the git-guard family (single home; never registered in plugin.json)
 - block_fixer_recon.sh: agent-scoped Bash allowlist for the precommit-fixer (gate CLIs + targeted pytest node-ids only; other agents unaffected)
-- block_raw_git.sh: hard-block raw `git commit` / `git push` from agents (bypass: `git-commit-push` subagent)
+- block_raw_git.sh: hard-block raw `git commit` / `git push` from agents (no bypass — every agent commits and pushes through `forge-commit`)
 - block_raw_wrapup_post.sh: block a raw `gh pr comment`/`gh api` post of `code_health/pr_wrapup.md` — the wrap-up is posted only through `forge-pr-wrapup post` (validation, supersede-collapse, squash-last)
 - block_unverified_pr_create.sh: block `gh pr create` (draft or not) until the authored wrap-up names HEAD; only a self-verifying release/vX.Y.Z promotion branch exempts itself (FOUNDATION §6)
 - block_raw_ruff.sh: hard-block raw `ruff check` / `ruff format` from agents (no bypass — agents use forge-precommit)

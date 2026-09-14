@@ -1926,6 +1926,61 @@ def test_merge_in_progress_false_when_not_a_git_repo(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# merge_message
+# ---------------------------------------------------------------------------
+
+
+def _write_merge_msg(repo: Path, content: str) -> None:
+    """Write *content* to *repo*'s resolved ``MERGE_MSG`` git-path.
+
+    Resolved via ``git rev-parse --git-path`` rather than a hardcoded
+    ``.git/MERGE_MSG`` — the same resolution :func:`merge_message` itself
+    uses.
+
+    Args:
+        repo: Git repo working tree.
+        content: Raw ``MERGE_MSG`` file content.
+    """
+    git_path = subprocess.run(
+        ["git", "rev-parse", "--git-path", "MERGE_MSG"],
+        cwd=repo,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    (repo / git_path).write_text(content)
+
+
+def test_merge_message_strips_comment_lines_keeps_real_content(tmp_path: Path) -> None:
+    """Git's hint lines are stripped; real content survives.
+
+    No actual merge is needed: ``merge_message`` only reads the
+    ``MERGE_MSG`` file at its resolved git-path, so writing straight to
+    it isolates the comment-stripping behavior from any
+    ``merge_in_progress`` state.
+    """
+    _init_git_repo(tmp_path)
+    _write_merge_msg(
+        tmp_path,
+        "Merge branch 'other'\n"
+        "\n"
+        "# Conflicts:\n"
+        "#\tfile.py\n"
+        "A real line kept after the comments.\n",
+    )
+    assert git_utils.merge_message(tmp_path) == (
+        "Merge branch 'other'\n\nA real line kept after the comments."
+    )
+
+
+def test_merge_message_none_when_no_merge_msg(tmp_path: Path) -> None:
+    """No ``MERGE_MSG`` file at all (no merge ever started) returns ``None``."""
+    _init_git_repo(tmp_path)
+    assert git_utils.merge_message(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
 # unmerged_paths
 # ---------------------------------------------------------------------------
 
@@ -2081,6 +2136,108 @@ def test_behind_ahead_dash_prefixed_ref_returns_none_without_calling_git(
 
     monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
     assert git_utils.behind_ahead(tmp_path, "--evil") is None
+    assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# push_branch
+# ---------------------------------------------------------------------------
+
+
+def test_push_branch_real_push_to_bare_succeeds(tmp_path: Path) -> None:
+    """Real push to bare remote succeeds and sets upstream."""
+    work, bare = _init_single_track_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=work, env=_GIT_ENV, check=True
+    )
+    (work / "feat.txt").write_text("x\n")
+    commit_all(work, "feat: add feat.txt")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    result = git_utils.push_branch(work, "feat/x", set_upstream=True)
+
+    assert result.ok is True
+    assert result.returncode == 0
+    bare_sha = subprocess.run(
+        ["git", "rev-parse", "refs/heads/feat/x"],
+        cwd=bare,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert bare_sha == head
+    upstream = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "feat/x@{u}"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert upstream == "origin/feat/x"
+
+
+def test_push_branch_unreachable_remote_fails_with_git_terminal_prompt_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nonexistent remote fails cleanly without credential prompt.
+
+    Wraps the real ``subprocess.run`` so the push genuinely fails, while
+    capturing the ``env`` kwarg, proving both failure behavior and the
+    credential-prompt guard work correctly.
+    """
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(tmp_path / "does-not-exist.git")],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    real_run = subprocess.run
+    captured: dict[str, object] = {}
+
+    def _wrapped_run(
+        cmd: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs)
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _wrapped_run)
+
+    result = git_utils.push_branch(tmp_path, "main")
+
+    assert result.ok is False
+    assert result.stderr
+    assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert captured["timeout"] == git_utils.PUSH_TIMEOUT_S
+
+
+def test_push_branch_dash_prefixed_remote_or_branch_returns_false_without_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``-`` prefix injection is rejected, no subprocess call."""
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+
+    result_remote = git_utils.push_branch(tmp_path, "main", remote="-evil")
+    result_branch = git_utils.push_branch(tmp_path, "-evil")
+
+    assert result_remote.ok is False
+    assert result_remote.returncode is None
+    assert result_branch.ok is False
     assert calls == []
 
 

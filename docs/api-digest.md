@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_74 modules, 1043 symbols._
+_75 modules, 1067 symbols._
 
 ## `forge`
 
@@ -345,6 +345,32 @@ _74 modules, 1043 symbols._
 - `marketplace_entry(ref: str) -> dict[str, object]` — Return forge's ``extraKnownMarketplaces[forge]`` value for *ref*.
 - `read_marketplace_ref(settings: dict[str, object]) -> str | None` — Return ``extraKnownMarketplaces.forge.source.ref`` from *settings*.
 
+## `forge.commit`
+
+> _forge-commit — stage, commit and push in one guarded call._
+
+- `class CommitRequest` — What the caller asked to commit.
+- `class RepoState` — The repository facts a commit decision reads.
+- `class CommitPlan` — A commit every check allows.
+- `class Refusal` — Why nothing may be committed.
+- `class _Committed` _(internal)_ — A commit that landed, and what happened to it afterwards.
+- `plan_commit(request: CommitRequest, state: RepoState) -> CommitPlan | Refusal` — Decide whether *request* may be committed in *state*.
+- `_mode(request: CommitRequest, state: RepoState) -> str` _(internal)_ — Return the commit mode: ``wip-sync``, ``merge`` or ``normal``.
+- `_branch_refusal(state: RepoState) -> str | None` _(internal)_ — Refuse a detached HEAD or the protected base branch.
+- `_selection_refusal(request: CommitRequest, mode: str) -> str | None` _(internal)_ — Refuse a staging selection the mode cannot honour.
+- `_wip_sync_refusal(subject: str, request: CommitRequest, state: RepoState) -> str | None` _(internal)_ — Check for wip-sync pairing mismatches and env conflicts.
+- `_message_refusal(message: str | None, request: CommitRequest, state: RepoState, mode: str) -> str | None` _(internal)_ — Refuse a missing, attributed, mispaired or non-conventional message.
+- `_evidence_refusal(state: RepoState) -> str | None` _(internal)_ — Refuse when the latest pre-commit run is missing, stale or failed.
+- `read_state(root: Path) -> RepoState` — Read the repository facts :func:`plan_commit` decides on.
+- `_stage(root: Path, request: CommitRequest) -> list[str]` _(internal)_ — Stage the selection and return the staged paths.
+- `_commit(root: Path, plan: CommitPlan) -> tuple[str, float] | None` _(internal)_ — Commit the index, printing the hook's report when it blocks.
+- `_push(root: Path, branch: str) -> tuple[bool, float]` _(internal)_ — Push *branch*, setting its upstream when it has none.
+- `_record(root: Path, committed: _Committed) -> bool` _(internal)_ — Record the commit: handoff line, ledger line, edit receipt.
+- `_run(root: Path, request: CommitRequest, plan: CommitPlan, *, branch: str, push: bool) -> int` _(internal)_ — Stage, commit, push and record an allowed commit.
+- `_push_only(root: Path) -> int` _(internal)_ — Push existing commits on the current branch.
+- `_parse_args(argv: Sequence[str] | None) -> argparse.Namespace` _(internal)_ — Parse the command line.
+- `main(argv: Sequence[str] | None = None) -> int` — Run ``forge-commit``.
+
 ## `forge.config`
 
 > _Read forge-internal config from a repo's ``pyproject.toml``._
@@ -642,12 +668,15 @@ _74 modules, 1043 symbols._
 - `wrap_in_code_fence(text: str) -> str` — Return *text* inside a markdown code fence it cannot close.
 - `run_gate_evidence(repo_root: Path, gates: str, *, success_headline: str, failure_headline: str, section_title: str) -> tuple[bool, str]` — Run ``forge-precommit --only`` gates and format PR-body evidence.
 - `find_open_pr_by_head_prefix(repo_root: Path, prefix: str) -> str | None` — Return the URL of an open PR whose head branch starts with *prefix*.
-- `create_commit(repo_root: Path, message: str) -> None` — Commit the staged index, surviving identity-less runners.
+- `create_commit(repo_root: Path, message: str, *, env: Mapping[str, str] | None = None, log_errors: bool = True) -> None` — Commit the staged index, surviving identity-less runners.
 - `resolve_current_branch(repo_root: Path) -> tuple[str, str] | None` — Return the current branch name and where it came from, or ``None``.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
 - `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
 - `unmerged_paths(repo_root: Path) -> list[str]` — Return the repo-relative paths currently in an unmerged index state.
 - `fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool` — Fetch *refspec* from *remote* without ever prompting for credentials.
+- `class PushResult` — The outcome of :func:`push_branch`.
+- `push_branch(repo_root: Path, branch: str, *, set_upstream: bool = False, remote: str = 'origin') -> PushResult` — Push *branch* to *remote* without ever prompting or hanging.
+- `merge_message(repo_root: Path) -> str | None` — Return git's prepared message for an in-progress merge.
 - `behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None` — Return how many commits HEAD is behind and ahead of *base_ref*.
 - `has_conflict_markers(text: str) -> bool` — Return whether *text* contains unresolved git conflict markers.
 - `file_has_conflict_markers(path: Path) -> bool` — Return whether the file at *path* holds unresolved conflict markers.

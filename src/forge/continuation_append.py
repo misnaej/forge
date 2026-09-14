@@ -1,8 +1,8 @@
 """forge-continuation-append — append one line to ``.plan/CONTINUATION.md``.
 
 Single source of truth for the activity-log append format used by
-``forge:git-commit-push`` and ``forge:pr-manager``. Both agents shell out
-to this CLI instead of carrying duplicated Bash blocks — keeps the
+``forge-commit`` and ``forge-pr-wrapup post``. Both call :func:`main`
+in-process instead of carrying their own copy of the format — keeps the
 format consistent if it ever needs to change.
 
 ``.plan/CONTINUATION.md`` is gitignored — appends MUST NOT be committed
@@ -383,7 +383,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
         description=(
             "Append one line to .plan/CONTINUATION.md's auto-appended "
             "activity section. Single source of truth for the format "
-            "used by forge:git-commit-push and forge:pr-manager."
+            "used by forge-commit and forge-pr-wrapup post."
         ),
     )
     group = parser.add_mutually_exclusive_group(required=True)

@@ -245,16 +245,17 @@ gate.
   (0 clean / 1 conflicts), never by output emptiness; (2) probe clean and
   index clean → plain `git merge origin/<base>` (git's own dirty-overlap
   guard is the backstop); (3) otherwise secure the work as a
-  **checkpoint commit** first — `git add -A`, then
-  `FORGE_WIP_SYNC=1 git commit -m "wip-sync: <what>"` (the gate defers to
-  the next real commit; the PR squash erases the checkpoint) — and merge
-  on the clean tree. `git merge --abort` is the permitted recovery verb
-  **only after** a checkpoint secured the work (git documents it as lossy
-  for uncommitted changes). Stash is no longer part of any sanctioned
-  procedure. Humans: never `export FORGE_WIP_SYNC` in a persistent shell
-  — it would silently defer the gate on every later commit; use it
-  inline, once. The `block_git_destructive` hook enforces all of this with
-  **no bypass**; a human runs the blocked form via `! git ...`.
+  **checkpoint commit** first — `forge-commit --wip-sync -m "wip-sync: <what>"`
+  (stages everything; the gate defers to the next real commit; the PR
+  squash erases the checkpoint) — and merge on the clean tree.
+  `git merge --abort` is the permitted recovery verb **only after** a
+  checkpoint secured the work (git documents it as lossy for uncommitted
+  changes). Stash is no longer part of any sanctioned procedure. The CLI
+  sets `FORGE_WIP_SYNC` for its own git call only; a human on raw git
+  sets it inline, once — exported in a persistent shell it silently
+  defers the gate on every later commit. The `block_git_destructive` hook
+  enforces all of this with **no bypass**; a human runs the blocked form
+  via `! git ...`.
 - **On deviation: STOP and report.** When you detect you have deviated from
   instructions or repository state is not what you expected, halt and
   surface it — never undo, rewind, or clean. An unwanted commit is
@@ -309,12 +310,11 @@ them directly is forbidden.
 ### Agent naming convention
 
 Foundation agents resolve as `forge:<name>`; a bare name fails with
-`Agent type '<name>' not found`. The thirteen foundation agents:
-`forge:design-checker`, `forge:docs-types-checker`, `forge:git-commit-push`,
-`forge:issue-triage`, `forge:knowledge-search`, `forge:perf-optimizer`,
-`forge:pr-manager`, `forge:precommit-fixer`, `forge:prior-art`,
-`forge:security-checker`, `forge:test-advisor`, `forge:test-writer`,
-`forge:weekly-summary`.
+`Agent type '<name>' not found`. The twelve foundation agents:
+`forge:design-checker`, `forge:docs-types-checker`, `forge:issue-triage`,
+`forge:knowledge-search`, `forge:perf-optimizer`, `forge:pr-manager`,
+`forge:precommit-fixer`, `forge:prior-art`, `forge:security-checker`,
+`forge:test-advisor`, `forge:test-writer`, `forge:weekly-summary`.
 
 **Consumer wrappers MUST use distinct names** — a local
 `.claude/agents/<name>.md` matching a shipped name shadows it and makes
@@ -326,7 +326,7 @@ Foundation agents resolve as `forge:<name>`; a bare name fails with
 | Create a new file / module / top-level symbol | `forge:prior-art` | **BEFORE** writing — a REUSE verdict means no new file at all |
 | Edit existing file | `forge:design-checker` (or a `design-checker-<repo>` wrapper that delegates here) | **BEFORE** writing code |
 | Clear pre-commit failures | `forge:precommit-fixer` | Before commit |
-| Commit + push | `forge:git-commit-push` | After `forge:precommit-fixer` |
+| Commit + push | `forge-commit` (CLI) | After `forge:precommit-fixer` |
 | Plan test coverage / review tests | `forge:test-advisor` | Before writing tests; and after, to review |
 | Write tests | `forge:test-writer` | After `forge:test-advisor` (advise) |
 | Design / security review | `forge:design-checker` / `forge:security-checker` | Reports only — main agent acts |
@@ -335,7 +335,7 @@ Foundation agents resolve as `forge:<name>`; a bare name fails with
 | Grounded knowledge retrieval | `forge:knowledge-search` | When summarizing from sources |
 
 **Forbidden — do NOT handle directly:** running `git commit` / `git push`
-(→ `forge:git-commit-push`); invoking `ruff` or `fix-forge-ruff` from
+(→ `forge-commit`); invoking `ruff` or `fix-forge-ruff` from
 an agent (→ `forge:precommit-fixer`, which reads `code_health/` — only the
 pre-commit hook runs ruff); hand-curating a file list for `forge:precommit-fixer` (it
 scopes itself off the report); writing PR descriptions or squash messages
@@ -344,7 +344,7 @@ agents); installing dependencies (never — tell the user).
 
 ### Standard workflow orders
 
-**Commit:** `forge:prior-art` (when creating files/symbols — first, a REUSE verdict ends the plan) → `forge:design-checker` (pre-write) → code changes → `forge:precommit-fixer` → `forge:git-commit-push`
+**Commit:** `forge:prior-art` (when creating files/symbols — first, a REUSE verdict ends the plan) → `forge:design-checker` (pre-write) → code changes → `forge:precommit-fixer` → `forge-commit`
 
 **PR finalization:** `forge:design-checker` + `forge:security-checker` + `forge:docs-types-checker` (parallel) → `forge:precommit-fixer` (mode `strict`) → `forge:pr-manager` → background PR monitor (§6 — "The flow does not end at posting")
 
@@ -786,8 +786,8 @@ entry point in its `CLAUDE.md`.)
 ## 10. Continuation Protocol
 
 To survive context compaction, agents maintain `.plan/CONTINUATION.md`
-(gitignored) after every meaningful work step — append-only for foundation
-agents (`forge:git-commit-push`, `forge:pr-manager`); structured rewrites are
+(gitignored) after every meaningful work step — append-only for
+`forge-commit` and `forge:pr-manager`; structured rewrites are
 the main agent's responsibility.
 
 ### After every work session or significant step
@@ -805,9 +805,10 @@ branch / PR / commit refs) · `Next potential work` (ranked) · `Open follow-ups
 - It is **gitignored** — never commit it; **never delete it** (deleting on
   `/next` destroys the handoff exactly when context is cleared) — rewrite
   structured sections in place.
-- Foundation agents append one line on success — even invoked outside the
-  `/commit` / `/pr` skills — and never delete or overwrite existing content;
-  the main agent owns structured-section rewrites.
+- `forge-commit` and `forge:pr-manager` append one line on success — even
+  invoked outside the `/commit` / `/pr` skills — and never delete or
+  overwrite existing content; the main agent owns structured-section
+  rewrites.
 - **The ledger is bounded; the archive is not.** Every append rotates the
   activity tail: done entries older than one week (or beyond the count
   cap) move verbatim to `.plan/CONTINUATION-archive.md` — never deleted —
@@ -888,7 +889,7 @@ Reviewed by `forge:design-checker`.
 ## 13. `code_health/` Convention
 
 - Consumer `.githooks/pre-commit` hooks **write each check's stdout / stderr** to `code_health/<check>.log` (`ruff.log`, `docstring_verification.log`, …).
-- Foundation agents (`forge:precommit-fixer`, `forge:pr-manager`, `forge:design-checker`, `forge:git-commit-push`) **read these as the source of truth** instead of re-running the checks.
+- Foundation agents (`forge:precommit-fixer`, `forge:pr-manager`, `forge:design-checker`) **read these as the source of truth** instead of re-running the checks.
 - `forge:precommit-fixer` is the only agent that may run `forge-precommit` to (re)generate the logs — the only sanctioned wrapper; no agent invokes `ruff` / `git` / `gh` directly. Any agent may run the read-only `forge-precommit --freshness`, which runs no steps. `/pr`'s evidence commands (`forge-pr-plan --evidence`, `forge-pr-wrapup compose` in light-regen) run the generated-artifact checks through `forge-precommit --only`: they fix nothing in the tree and, like any `forge-precommit` run, rewrite those steps' logs and `precommit_timing.log` (`--evidence` also refreshes `audit_dup.log` and `audit_layering.log`). If a log is missing or stale, call precommit-fixer to refresh. **Never rewrite the logs from agents.**
 - **A log names the tree it describes.** Its first line is `# produced-at: tree=<sha> head=<short>[+dirty] <UTC time>`, where `tree` is the working tree the output was produced against. A log is **fresh** only when that tree equals the current working tree; `forge-precommit --freshness` reports a verdict per log (`fresh`, `stale`, `unstamped`, `unknown`; `n/a` for a step that checks the environment rather than files). Never judge freshness by file modification times.
 - `code_health/` is typically gitignored.

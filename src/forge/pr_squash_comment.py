@@ -104,11 +104,13 @@ CONVENTIONAL_COMMIT_TYPES: Final[tuple[str, ...]] = (
     "revert",
 )
 
-# Conventional commit: `<type>(<scope>)?: <subject>` — scope optional,
-# allows multiple `#N` refs separated by commas inside parens.
+# Conventional commit: `<type>(<scope>)?!?: <subject>` — scope optional,
+# allows multiple `#N` refs separated by commas inside parens; a `!`
+# right before the colon marks a breaking change.
 TITLE_RE: Final[re.Pattern[str]] = re.compile(
     r"^(?P<type>" + "|".join(CONVENTIONAL_COMMIT_TYPES) + r")"
     r"(?:\((?P<scope>[^)]+)\))?"
+    r"(?P<breaking>!)?"
     r": (?P<subject>.+)$",
 )
 
@@ -142,7 +144,7 @@ def _check_title(title: str) -> list[str]:
         return [
             (
                 f"title {title!r} is not conventional-commit format. "
-                f"Expected '<type>(<scope>)?: <subject>' where type is one of: "
+                f"Expected '<type>(<scope>)?!?: <subject>' where type is one of: "
                 f"{', '.join(CONVENTIONAL_COMMIT_TYPES)}"
             )
         ]

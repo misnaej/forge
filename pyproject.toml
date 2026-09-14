@@ -53,6 +53,7 @@ forge-gen-api-digest = "forge.gen_api_digest:main"
 forge-gen-c4 = "forge.gen_c4:main"
 forge-gen-commit-types = "forge.gen_commit_types:main"
 forge-continuation-append = "forge.continuation_append:main"
+forge-commit = "forge.commit:main"
 forge-doctor = "forge.doctor:main"
 forge-next-prep = "forge.next_prep:main"
 forge-emergency = "forge.emergency:main"
@@ -148,7 +149,6 @@ path = "docs/agent-architecture.md"
 [tool.forge.agent_doc.guarded_by]
 # Agent node id -> the guard hooks protecting it; verify-forge-agent-doc
 # requires a matching agent->hook edge in the doc for every entry.
-git_commit_push = ["block_no_verify", "block_force_push", "block_git_destructive", "block_amend_pushed_commit"]
 pr_manager = ["block_pr_merge", "block_unverified_pr_create"]
 precommit_fixer = ["block_fixer_recon"]
 

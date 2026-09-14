@@ -24,9 +24,9 @@ the hook or agent runs**. Both higher layers shell out to its CLIs:
   (`forge-precommit: command not found`). *Downside:* a teammate who
   clones the repo but hasn't installed the env has a broken commit gate
   until they install layer 1.
-- **Layer 3 (plugin)** — the agents/skills orchestrate the CLIs
-  (`forge:precommit-fixer` → `forge-precommit`, `forge:git-commit-push` →
-  the gate, …). The plugin installs **once, globally** in Claude Code
+- **Layer 3 (plugin)** — the agents/skills drive the CLIs
+  (`forge:precommit-fixer` → `forge-precommit`; `/commit` calls
+  `forge-commit` directly, no agent in between; …). The plugin installs **once, globally** in Claude Code
   (`~/.claude`), but it drives CLIs that must exist in **each repo's**
   env. *Downside:* install the plugin, then open a repo whose env lacks
   `forge-scripts`, and the agents fail the moment they invoke a CLI. The

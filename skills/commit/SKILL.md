@@ -1,6 +1,6 @@
 ---
 name: commit
-description: Run the standard commit flow - precommit-fixer then git-commit-push. Use when the user wants to commit changes.
+description: Run the standard commit flow - precommit-fixer, then the forge-commit CLI. Use when the user wants to commit changes.
 user-invocable: true
 ---
 
@@ -13,18 +13,33 @@ Run the standard commit workflow:
    Agent(subagent_type="forge:precommit-fixer", prompt="Clear all pre-commit failures.")
    ```
 
-2. **Run `git-commit-push`** to stage and commit:
+2. **Commit with `forge-commit`** — one direct Bash call, no subagent:
+   ```bash
+   forge-commit -m "<message>" --all      # or name the paths instead of --all
    ```
-   Agent(subagent_type="forge:git-commit-push", prompt="Commit changes with message: $ARGUMENTS")
-   ```
-   If no message provided via `$ARGUMENTS`, the agent generates an appropriate conventional commit message.
+   - **Message**: `$ARGUMENTS` minus any push flags (below). When it gives
+     none, write the conventional commit message yourself (FOUNDATION §6
+     "Commit messages"). For a multi-line message, or one that names a git
+     command (text-matching hooks read the whole Bash line), write it to a
+     scratch file and pass `-F <file>`.
+   - **Selection**: `--all`, or the paths the user named.
+   - **Finishing a merge**: omit `-m` and paths — git's prepared merge
+     message is used.
+   - What the CLI checks before committing: FOUNDATION §3 and
+     `forge-commit --help`. Do not pre-check by hand.
 
-3. If pre-commit hook fails, go back to step 1.
+3. **Act on the exit code:**
+   - `0` — committed, pushed (unless `--no-push`), and recorded; the CLI
+     appends the `.plan/CONTINUATION.md` activity line itself.
+   - `2` with `refused — <reason>` — nothing committed; do what the reason
+     names.
+   - `2` with the pre-commit hook's report — the hook blocked; go back to
+     step 1, then commit again.
+   - `1` — the commit landed, but the push or a record step failed; the
+     output says which. After fixing a failed push, run
+     `forge-commit --push-only`.
 
-4. **Update CONTINUATION state** for significant commits:
-   - `git-commit-push` agent appends a one-line activity record to `.plan/CONTINUATION.md` automatically (gitignored).
-
-5. **Continue into verification when the branch's work is done.** If this
+4. **Continue into verification when the branch's work is done.** If this
    commit completes the branch's planned implementation, do NOT stop here —
    go straight into the `/pr` flow's verification steps (FOUNDATION §6
    "Verification starts itself"): the reviews are read-only and need no
@@ -33,10 +48,9 @@ Run the standard commit workflow:
 
 ## Push behavior
 
-**Push by default** after commit succeeds. Skip the push only when:
+**Push by default** after the commit succeeds. Pass `--no-push` only when:
 - `$ARGUMENTS` contains `--no-push` or `--local-only`
-- The current branch is `main` (the `block_protected_branches` hook already prevents this case for agents).
 - The user explicitly says "commit only" / "no push"
 
-The default push goes to the current branch's tracking remote (or sets up the
-remote with `git push -u origin <branch>` if the branch isn't tracked yet).
+`forge-commit` refuses to commit on the base branch itself, and sets the
+upstream on the first push of a branch that has none.

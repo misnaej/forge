@@ -41,5 +41,13 @@ SEG_ANCHOR='^[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|
 # arg-bearing `-R` / `--repo` (`gh --repo o/r pr view 1` is ordinary
 # syntax), so the same bounded global-option run GIT_ANCHOR allows
 # follows `gh` here.
+# FORGE_COMMIT_ANCHOR matches a real `forge-commit` invocation with the
+# same line-start / separator anchoring and VAR=val / wrapper-token prefix
+# run, so a mention inside a quoted body never counts. The CLI does its own
+# git calls, which no git anchor can see — hooks that react to a commit or
+# push from an agent session match this too.
+# shellcheck disable=SC2034  # consumed by sourcing hooks
+FORGE_COMMIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*forge-commit([[:space:]]|$)'
+
 # shellcheck disable=SC2034  # consumed by sourcing hooks
 GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*gh[[:space:]]+((-R|--repo)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][a-zA-Z-]*(=[^[:space:]]*)?[[:space:]]+)*'

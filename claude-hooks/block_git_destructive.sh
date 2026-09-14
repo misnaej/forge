@@ -25,7 +25,7 @@
 # - `git stash drop` / `git stash clear`. A dropped stash is
 #   unreferenced; `stash push`/`pop`/`list` stay allowed.
 #
-# No agent bypass — not even forge:git-commit-push. A human who truly
+# No agent bypass. A human who truly
 # needs one of these runs it themselves with `! git …`.
 set -e
 INPUT=$(cat)

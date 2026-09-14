@@ -55,8 +55,11 @@ def _run_hook_proc(
         command: The ``Bash`` tool command the hook inspects.
         options: Optional hook configuration — defaults to empty (no
             agent_type/id, session_id, cwd, env overrides). Set
-            ``agent_type="forge:git-commit-push"`` to exercise the
-            sanctioned-agent bypass path.
+            ``agent_type="forge:precommit-fixer"`` to exercise
+            ``block_fixer_recon.sh``'s per-agent restriction — the only
+            hook in this suite that still reads ``agent_type``;
+            ``block_raw_git.sh`` and ``block_protected_branches.sh``
+            apply to every agent alike, with no bypass.
 
     Returns:
         The completed subprocess (exit code + captured stdout/stderr).
@@ -122,6 +125,30 @@ def git_repo_with_commit(tmp_path: Path) -> tuple[Path, str]:
     return tmp_path, sha
 
 
+@pytest.fixture
+def feature_branch_repo(tmp_path: Path) -> Path:
+    """A tmp git repo checked out on a non-protected feature branch.
+
+    `block_protected_branches.sh`'s current-branch guard resolves the
+    branch via `git -C <cwd> branch --show-current`, so an "allowed"
+    assertion is only deterministic when the hook's `cwd` is pinned to a
+    repo that is NOT checked out on `main` — otherwise the test's outcome
+    silently depends on whichever branch the pytest process itself
+    happens to be run from.
+
+    Returns:
+        The repo root path, checked out on `feat/allowed`.
+    """
+    init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/allowed"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        check=True,
+    )
+    return tmp_path
+
+
 def _write_wrapup(repo: Path, sha: str) -> None:
     """Write a minimal `code_health/pr_wrapup.md` naming *sha* in `verified-at:`.
 
@@ -158,30 +185,13 @@ def test_protected_blocks_push_fully_qualified_main_ref() -> None:
     assert _run_hook(_PROTECTED, "git push -u origin my-feat:refs/heads/main") == 2
 
 
-def test_protected_destination_guard_has_no_agent_bypass() -> None:
-    """Even forge:git-commit-push cannot push to a protected destination (#74).
-
-    This is the exact incident: the sanctioned agent bypasses the
-    current-branch check, but the refspec-destination guard must still block
-    a push whose destination is a protected branch.
-    """
-    assert (
-        _run_hook(
-            _PROTECTED,
-            "git push origin HEAD:main",
-            options=HookOptions(agent_type="forge:git-commit-push"),
-        )
-        == 2
-    )
-
-
-def test_protected_allows_feature_push() -> None:
-    """A normal feature-branch push (unprotected destination) is allowed."""
+def test_protected_allows_feature_push(feature_branch_repo: Path) -> None:
+    """A normal feature-branch push on unprotected branches is allowed."""
     assert (
         _run_hook(
             _PROTECTED,
             "git push -u origin my-feat:refs/heads/my-feat",
-            options=HookOptions(agent_type="forge:git-commit-push"),
+            options=HookOptions(cwd=feature_branch_repo),
         )
         == 0
     )
@@ -202,23 +212,15 @@ def test_protected_branches_blocks_bypass_forms(command: str) -> None:
 
     Leading whitespace, an inline env-var prefix, a `cd &&` chain, a
     subshell, and a `--no-pager` global option are the shared bypass
-    forms `GIT_ANCHOR` (`git_anchor.sh`) now tolerates for every hook that
-    sources it; the sanctioned `forge:git-commit-push` agent bypasses only
-    the *current-branch* check (guard 2), never the destination guard
-    (guard 1) — same no-bypass posture as
-    `test_protected_destination_guard_has_no_agent_bypass`, exercised
-    across each syntactic form.
+    forms `GIT_ANCHOR` (`git_anchor.sh`) now tolerates for every hook
+    that sources it — no `agent_type` bypasses any guard here, so every
+    form is exercised without one.
 
     Args:
         command: A `git push origin main` invocation wrapped in one of the
             five bypass forms.
     """
-    assert (
-        _run_hook(
-            _PROTECTED, command, options=HookOptions(agent_type="forge:git-commit-push")
-        )
-        == 2
-    )
+    assert _run_hook(_PROTECTED, command) == 2
 
 
 @pytest.mark.parametrize(
@@ -246,25 +248,52 @@ def test_protected_branches_blocks_protected_push_earlier_in_a_chain(
         command: A two-push chain with the protected destination in a
             different position (or refspec form) each time.
     """
-    assert (
-        _run_hook(
-            _PROTECTED, command, options=HookOptions(agent_type="forge:git-commit-push")
-        )
-        == 2
-    )
+    assert _run_hook(_PROTECTED, command) == 2
 
 
-def test_protected_branches_allows_a_chain_with_no_protected_destination() -> None:
+def test_protected_branches_allows_a_chain_with_no_protected_destination(
+    feature_branch_repo: Path,
+) -> None:
     """A chain of two pushes, neither targeting a protected branch, is allowed.
 
     Companion to the blocking cases above — confirms the per-invocation
-    loop doesn't over-block a chain that never touches `main`.
+    loop doesn't over-block a chain that never touches `main`. `cwd` is
+    pinned to an unprotected branch so the current-branch guard (which
+    this "allows" outcome also depends on) is deterministic.
     """
     assert (
         _run_hook(
             _PROTECTED,
             "git push origin safe-branch && git push origin other-branch",
-            options=HookOptions(agent_type="forge:git-commit-push"),
+            options=HookOptions(cwd=feature_branch_repo),
+        )
+        == 0
+    )
+
+
+def test_protected_branches_allows_the_forge_commit_cli(
+    feature_branch_repo: Path,
+) -> None:
+    """`forge-commit` itself — the sanctioned replacement — is never blocked.
+
+    Neither guard matches: the destination guard only inspects a typed
+    `git push` invocation, and `forge-commit` never types one; the
+    current-branch guard only fires on `commit`/`push`, which
+    `forge-commit` (as a command name) doesn't contain either.
+    """
+    assert (
+        _run_hook(
+            _PROTECTED,
+            'forge-commit -m "feat: add x" file.py',
+            options=HookOptions(cwd=feature_branch_repo),
+        )
+        == 0
+    )
+    assert (
+        _run_hook(
+            _PROTECTED,
+            "forge-commit --push-only",
+            options=HookOptions(cwd=feature_branch_repo),
         )
         == 0
     )
@@ -977,12 +1006,12 @@ def test_rebase_blocks_pull_rebase_short_flag() -> None:
 
 
 def test_rebase_has_no_agent_bypass() -> None:
-    """Even forge:git-commit-push cannot rebase — the block has no bypass."""
+    """No ``agent_type`` bypasses the rebase block."""
     assert (
         _run_hook(
             _REBASE,
             "git rebase origin/dev",
-            options=HookOptions(agent_type="forge:git-commit-push"),
+            options=HookOptions(agent_type="forge:pr-manager"),
         )
         == 2
     )
@@ -1283,16 +1312,32 @@ def test_raw_git_blocks_env_var_prefix_push() -> None:
     assert _run_hook(_RAW_GIT, "GIT_DIR=/tmp/x git push origin main") == 2
 
 
-def test_raw_git_env_prefix_still_bypassable_slips_agent_bypass() -> None:
-    """The git-commit-push bypass still applies under an env prefix."""
+def test_raw_git_env_prefix_has_no_agent_bypass() -> None:
+    """No `agent_type` bypasses raw `git push`, env-prefixed or not.
+
+    `block_raw_git.sh` reads no `agent_type` field at all, so passing one
+    changes nothing.
+    """
     assert (
         _run_hook(
             _RAW_GIT,
             "GIT_DIR=/tmp/x git push origin main",
-            options=HookOptions(agent_type="forge:git-commit-push"),
+            options=HookOptions(agent_type="forge:pr-manager"),
         )
-        == 0
+        == 2
     )
+
+
+def test_raw_git_allows_the_forge_commit_cli() -> None:
+    """`forge-commit` itself — the sanctioned replacement — is never blocked.
+
+    `forge-commit`'s own internal git calls never run through Bash (they
+    run in-process inside the CLI), so only the typed invocation of the
+    CLI matters here; neither `commit` nor `push` appear as a `git`
+    subcommand in the typed command.
+    """
+    assert _run_hook(_RAW_GIT, 'forge-commit -m "feat: add x" file.py') == 0
+    assert _run_hook(_RAW_GIT, "forge-commit --push-only") == 0
 
 
 def test_rebase_blocks_env_var_prefix() -> None:
@@ -1379,12 +1424,12 @@ def test_destructive_allows_restore_staged_path() -> None:
 
 
 def test_destructive_reset_has_no_agent_bypass() -> None:
-    """Even forge:git-commit-push cannot reset — the block has no bypass."""
+    """No ``agent_type`` bypasses the destructive-git block."""
     assert (
         _run_hook(
             _DESTRUCTIVE,
             "git reset",
-            options=HookOptions(agent_type="forge:git-commit-push"),
+            options=HookOptions(agent_type="forge:pr-manager"),
         )
         == 2
     )
@@ -2091,17 +2136,16 @@ def test_amend_blocks_double_dollar_before_quote(tmp_path: Path) -> None:
 
 
 def test_amend_has_no_agent_bypass(tmp_path: Path) -> None:
-    """Even forge:git-commit-push — the one agent that runs `git commit` — cannot amend.
+    """No ``agent_type`` bypasses the amend block — always a new commit.
 
-    Its own contract is "never amend — always a new commit"; this hook
-    deliberately carries no sanctioned-agent bypass.
+    This hook deliberately carries no sanctioned-agent bypass.
     """
     work, _bare = init_single_track_repo(tmp_path)
     assert (
         _run_hook(
             _AMEND,
             'git commit --amend -m "fix"',
-            options=HookOptions(cwd=work, agent_type="forge:git-commit-push"),
+            options=HookOptions(cwd=work, agent_type="forge:pr-manager"),
         )
         == 2
     )
@@ -3345,7 +3389,7 @@ def test_fixer_recon_ignores_other_agent() -> None:
         _run_hook(
             _FIXER_RECON,
             "git status",
-            options=HookOptions(agent_type="forge:git-commit-push"),
+            options=HookOptions(agent_type="forge:pr-manager"),
         )
         == 0
     )
@@ -4397,6 +4441,22 @@ def test_warn_stale_wrapup_fires_in_compound_command(tmp_path: Path) -> None:
     assert "PR #42" in proc.stdout
 
 
+def test_warn_stale_wrapup_fires_on_forge_commit(tmp_path: Path) -> None:
+    """SCENARIO: `forge-commit`'s internal git call bypasses the anchor.
+
+    The hook's second anchor match (``FORGE_COMMIT_ANCHOR``) fires even
+    though the typed command never mentions `git push`.
+    """
+    env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
+    proc = _run_hook_proc(
+        _WARN_STALE_WRAPUP,
+        'forge-commit -m "feat: add x" file.py',
+        options=HookOptions(cwd=tmp_path, env=env),
+    )
+    assert proc.returncode == 0
+    assert "PR #42" in proc.stdout
+
+
 def test_warn_stale_wrapup_ignores_quoted_mention(tmp_path: Path) -> None:
     """A `git push` mention inside a quoted string body must not anchor.
 
@@ -4409,6 +4469,27 @@ def test_warn_stale_wrapup_ignores_quoted_mention(tmp_path: Path) -> None:
     proc = _run_hook_proc(
         _WARN_STALE_WRAPUP,
         'echo "please run git push later"',
+        options=HookOptions(cwd=tmp_path, env=env),
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+    assert _record(env) == ""
+
+
+def test_warn_stale_wrapup_ignores_quoted_forge_commit_mention(tmp_path: Path) -> None:
+    """A `forge-commit` mention inside a quoted string body must not anchor either.
+
+    MOCK SETUP: both CLIs stubbed and ready to answer; FORGE_COMMIT_ANCHOR
+    requires `forge-commit` immediately after a shell separator (or at
+    line start), which text inside a quoted argument never provides —
+    same shape as `test_warn_stale_wrapup_ignores_quoted_mention` above,
+    for the second anchor the hook now matches on.
+    EXPECTED BEHAVIOR: the hook exits before probing either CLI.
+    """
+    env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
+    proc = _run_hook_proc(
+        _WARN_STALE_WRAPUP,
+        'echo "run forge-commit next"',
         options=HookOptions(cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
