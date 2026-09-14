@@ -75,7 +75,7 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
        --bullet "<key change 1>" --bullet "<key change 2>" --bullet "<key change 3>"
    ```
 
-   3–5 `--bullet`s; validation failure exits non-zero naming the broken rule — fix until it passes.
+   3–5 `--bullet`s; validation failure exits non-zero naming every broken rule, with per-part word counts on a cap violation — fix until it passes.
 
 3. **Never set the PR title by hand here** — the CLI forces the PR title to match the `--title` it posts (FOUNDATION §6), so the squash title is authored in one place. A non-zero exit naming a rejected title sync means the prefill is stale: report it, do not paper over it.
 

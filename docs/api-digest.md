@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_73 modules, 1012 symbols._
+_73 modules, 1015 symbols._
 
 ## `forge`
 
@@ -877,12 +877,15 @@ _73 modules, 1012 symbols._
 
 > _forge-pr-squash-comment — post the squash-merge message and keep it last._
 
-- `_validate_title(title: str) -> None` _(internal)_ — Reject titles outside the conventional-commit format.
-- `_validate_bullets(bullets: list[str]) -> None` _(internal)_ — Enforce bullet count + non-empty content.
-- `_validate_word_count(title: str, bullets: list[str]) -> None` _(internal)_ — Enforce the ≤ ``MAX_WORDS`` cap on title + bullets combined.
-- `_validate_no_ai_attribution(title: str, bullets: list[str]) -> None` _(internal)_ — Reject Claude / AI attribution per FOUNDATION §2 (shared gate).
+- `_check_title(title: str) -> list[str]` _(internal)_ — Return the conventional-commit problems with *title*.
+- `_check_bullets(bullets: list[str]) -> list[str]` _(internal)_ — Return the bullet-count problem and one problem per empty bullet.
+- `_word_total(title: str, bullets: list[str]) -> int` _(internal)_ — Count whitespace-split words across the title and every bullet.
+- `_preview(text: str) -> str` _(internal)_ — Shorten one message part to a printable first line for the breakdown.
+- `_word_breakdown(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Render one indented line per message part: label, word count, preview.
+- `_check_word_count(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the ≤ ``MAX_WORDS`` cap problem, with a per-part breakdown.
+- `_check_attribution(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the Claude / AI attribution problem per FOUNDATION §2 (shared gate).
 - `build_body(title: str, bullets: list[str]) -> str` — Build the GitHub comment body around a validated message.
-- `validate(title: str, bullets: list[str]) -> None` — Run every FOUNDATION §6 check in order.
+- `validate(title: str, bullets: list[str]) -> list[str]` — Return every FOUNDATION §6 rule the message breaks.
 - `_list_squash_comments(pr_number: int) -> list[dict[str, object]] | None` _(internal)_ — Return this CLI's own comments on *pr_number*, oldest first.
 - `_latest_activity_at(pr_number: int) -> str | None` _(internal)_ — Return the newest timestamp across every comment surface of a PR.
 - `sync_pr_title(pr_number: int, title: str) -> bool` — Force the PR title to match the squash title.
