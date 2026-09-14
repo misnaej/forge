@@ -1,4 +1,4 @@
-"""forge-agent-profile — where the agents' time goes.
+"""forge-agent-profile — where the agents' time goes, and what they wrote.
 
 Forge times pre-commit steps (``precommit_timing.log``), tests
 (``forge-slow-tests-report``), and wrapped subprocesses
@@ -38,6 +38,7 @@ Usage:
 - ``forge-agent-profile --transcripts ~/.claude/projects/<proj>``
 - ``forge-agent-profile --json`` — machine-readable runs + summary.
 - ``forge-agent-profile --history`` — render the append-only ledger.
+- ``forge-agent-profile --edits`` — which uncommitted files a subagent wrote.
 """
 
 from __future__ import annotations
@@ -53,7 +54,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from forge.git_utils import configure_cli_logging, repo_root
+from forge.git_utils import configure_cli_logging, repo_root, run_git
 from forge.ledger import append_ledger_line, parse_ledger
 
 
@@ -208,6 +209,198 @@ def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
                     yield obj
     except OSError:
         return
+
+
+MUTATING_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "MultiEdit"})
+
+
+@dataclass(frozen=True)
+class EditReceipt:
+    """Which working-tree files a subagent wrote, rather than the caller.
+
+    An edit is indistinguishable from the caller's own once it is in the
+    tree, so the caller commits it as theirs. This answers that from the
+    hook ledger instead of from an agent's self-report.
+
+    ``known`` is the load-bearing field. An absent or empty ledger means
+    the evidence is missing, NOT that no subagent wrote anything — a
+    fresh clone, ``FORGE_NO_AGENT_TIMING=1`` and a machine without
+    ``jq`` all produce one, and reading that as "clean" is the
+    absence-of-evidence error this receipt exists to prevent.
+
+    Attributes:
+        known: Whether the ledger could be read at all.
+        reason: Why it could not, when ``known`` is false.
+        by_file: Repo-relative path → the agent types that wrote it.
+        pathless: Subagent writes seen with no recorded path. Rows
+            written by a hook older than path recording all look like
+            this, so a zero ``by_file`` beside a non-zero count means
+            "cannot tell", not "nothing happened".
+    """
+
+    known: bool
+    reason: str = ""
+    by_file: dict[str, set[str]] = field(default_factory=dict)
+    pathless: int = 0
+
+
+def subagent_edits(
+    root: Path,
+    *,
+    since: datetime | None = None,
+    session_id: str | None = None,
+    paths: Iterable[str] | None = None,
+) -> EditReceipt:
+    """Read the hook ledger for files a subagent wrote.
+
+    Rows with no ``agent_type`` are the main session's own work and are
+    excluded — the question is what someone else changed. Only
+    tool-based writes carry a path, so anything an agent writes through
+    a shell command is invisible here; the result is partial evidence by
+    construction and callers must not present it as an audit.
+
+    Args:
+        root: Repository root.
+        since: Ignore rows older than this instant. Wall-clock based, so
+            it assumes whatever produced the cutoff and whatever stamped
+            the ledger agree; under backward skew a genuinely later write
+            compares as earlier and is dropped, which is why the receipt
+            does not scope by time.
+        session_id: Restrict to one session. The ledger is shared across
+            sessions and worktrees in a clone, so without this a
+            parallel run's edits read as this one's.
+        paths: Restrict to these repo-relative paths, e.g. the files
+            about to be committed.
+
+    Returns:
+        The receipt. Check ``known`` before reading ``by_file``.
+    """
+    ledger = root / LEDGER_RELPATH
+    if not ledger.is_file():
+        return EditReceipt(known=False, reason=f"no ledger at {LEDGER_RELPATH}")
+    wanted = set(paths) if paths is not None else None
+    by_file: dict[str, set[str]] = defaultdict(set)
+    seen_any = False
+    pathless = 0
+    for event in _iter_jsonl(ledger):
+        seen_any = True
+        agent = (event.get("agent_type") or "").strip()
+        if not agent or event.get("tool_name") not in MUTATING_TOOLS:
+            continue
+        if session_id and event.get("session_id") != session_id:
+            continue
+        when = _parse_ts(event.get("ts"))
+        if since is not None and when is not None and when < since:
+            continue
+        raw = event.get("file_path")
+        if not isinstance(raw, str) or not raw:
+            # A write whose path the hook never recorded. Counted, not
+            # dropped: a hook older than path recording makes EVERY row
+            # look like this, and silently returning an empty result
+            # would report "no subagent edits" for a tree full of them.
+            pathless += 1
+            continue
+        rel = _safe_label(_relative_to_root(raw, root))
+        if wanted is not None and rel not in wanted:
+            continue
+        by_file[rel].add(agent)
+    if not seen_any:
+        return EditReceipt(known=False, reason="ledger is empty")
+    if not by_file and pathless:
+        return EditReceipt(
+            known=False,
+            reason=(
+                f"{pathless} subagent write(s) recorded without a file path — "
+                "the running hook predates path recording; refresh the plugin "
+                "cache (/plugin update, then /reload-plugins)"
+            ),
+            pathless=pathless,
+        )
+    return EditReceipt(known=True, by_file=dict(by_file), pathless=pathless)
+
+
+PATH_LABEL_CAP = 200
+
+
+def _safe_label(raw: str) -> str:
+    """Render an untrusted path as one bounded, single-line label.
+
+    The value is whatever the calling tool declared as its target — a
+    string an agent chooses, not a verified filesystem fact — and it is
+    reproduced verbatim into a hand-back and from there into a published
+    PR comment. So the agent this feature exists to catch is also the one
+    supplying the text: newlines could forge extra receipt lines, control
+    characters could corrupt a terminal, and prose could address whoever
+    reads the wrap-up. Collapse and cap it (§8, generated text is
+    behavior).
+
+    Args:
+        raw: Path string as recorded.
+
+    Returns:
+        A single-line label of at most :data:`PATH_LABEL_CAP` characters.
+    """
+    flat = "".join(ch if ch.isprintable() else " " for ch in raw).strip()
+    if len(flat) > PATH_LABEL_CAP:
+        flat = flat[:PATH_LABEL_CAP] + "…"
+    return flat or "<empty>"
+
+
+def _relative_to_root(raw: str, root: Path) -> str:
+    """Return *raw* relative to *root*, marked when it is not under it.
+
+    A path that will not relativise is either outside the repository or
+    unresolvable. Both fall back to the raw string, so mark them: a
+    reviewer skimming the receipt should be able to tell an ordinary
+    repo file from one an agent wrote somewhere it had no business
+    writing.
+
+    Args:
+        raw: Path as the hook recorded it, usually absolute.
+        root: Repository root.
+
+    Returns:
+        The repo-relative form, else the label prefixed with ``!``.
+    """
+    try:
+        return str(Path(raw).resolve().relative_to(root.resolve()))
+    except (ValueError, OSError):
+        return f"!{_safe_label(raw)}"
+
+
+def render_edit_receipt(receipt: EditReceipt) -> str:
+    """Render the receipt as the line an agent hands back.
+
+    Args:
+        receipt: The receipt to render.
+
+    Returns:
+        One line when the evidence is missing, one when nothing
+        qualifies, else a header and a line per file.
+    """
+    if not receipt.known:
+        return (
+            f"subagent edits: UNKNOWN ({receipt.reason}) — "
+            "absent evidence is not evidence of absence; "
+            "check by hand before committing."
+        )
+    if not receipt.by_file:
+        return "subagent edits: none recorded (tool-based writes only)."
+    head = "subagent edits (tool-based writes only — shell writes are invisible):"
+    if receipt.pathless:
+        head = (
+            f"subagent edits — INCOMPLETE, {receipt.pathless} further write(s) "
+            "have no recorded path:"
+        )
+    lines = [head]
+    # Fenced: this line is reproduced into a markdown PR comment, and the
+    # path is agent-supplied. A code span renders it literally instead of
+    # letting it style, link, or pose as structure around it.
+    lines.extend(
+        f"  `{path}` — {', '.join(sorted(agents))}"
+        for path, agents in sorted(receipt.by_file.items())
+    )
+    return "\n".join(lines)
 
 
 def _parse_ts(value: object) -> datetime | None:
@@ -985,7 +1178,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="forge-agent-profile",
         description=(
-            "Report where agent and subagent time goes (read-only, always exits 0)."
+            "Report where agent and subagent time goes, and which files a "
+            "subagent wrote (read-only, always exits 0)."
         ),
     )
     parser.add_argument(
@@ -1016,9 +1210,53 @@ def _build_parser() -> argparse.ArgumentParser:
         "--history", action="store_true", help="Render the append-only history ledger."
     )
     parser.add_argument(
+        "--edits",
+        action="store_true",
+        help="Report which uncommitted files a subagent wrote, not the caller.",
+    )
+    parser.add_argument(
+        "--session",
+        help="Restrict --edits to one session id (the ledger is shared per clone).",
+    )
+    parser.add_argument(
         "--no-history", action="store_true", help="Do not append to the history ledger."
     )
     return parser
+
+
+def _render_edits(root: Path, *, session_id: str | None = None) -> int:
+    """Print the subagent-edit receipt for the uncommitted change set.
+
+    Scoped by *file*, never by time: anything already committed no
+    longer differs from ``HEAD``, so it drops out on its own. Time
+    scoping is deliberately avoided — a row for a file that stayed dirty
+    across an earlier commit, ordinary under the staged-subset commit
+    recipe, would be excluded and the file reported clean, which is the
+    failure this receipt exists to prevent. Attribution therefore errs
+    toward over-reporting: an old row for a file dirty again today may
+    over-attribute, which a reader can see and correct, where
+    under-attribution is silent.
+
+    Args:
+        root: Repository root.
+        session_id: Restrict to one session id.
+
+    Returns:
+        ``0`` always — a reporter never gates.
+    """
+    changed = (
+        run_git("diff", "HEAD", "--name-only", cwd=root, check=False).split()
+        + run_git(
+            "ls-files", "--others", "--exclude-standard", cwd=root, check=False
+        ).split()
+    )
+    logger.info(
+        "%s",
+        render_edit_receipt(
+            subagent_edits(root, session_id=session_id, paths=set(changed))
+        ),
+    )
+    return 0
 
 
 def main() -> int:
@@ -1030,6 +1268,8 @@ def main() -> int:
     """
     args = _build_parser().parse_args()
     root = repo_root()
+    if args.edits:
+        return _render_edits(root, session_id=args.session)
     if args.history:
         return _render_history(root)
     since = _parse_ts(args.since) if args.since else None

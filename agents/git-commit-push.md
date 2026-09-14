@@ -64,19 +64,24 @@ MUST have run first; you fail if the pre-commit hook finds violations.
    git diff --stat
    ```
 
-2. **Read the latest `code_health/` logs** to verify the tree is clean. **Do NOT run `forge-precommit` or `.githooks/pre-commit` yourself** — that is `forge:precommit-fixer`'s job ([FOUNDATION §13](../FOUNDATION.md#13-code_health-convention)); step 4 triggers the hook anyway.
+2. **Read the latest `code_health/` logs** to verify the tree is clean. **Do NOT run `forge-precommit` or `.githooks/pre-commit` yourself** — that is `forge:precommit-fixer`'s job ([FOUNDATION §13](../FOUNDATION.md#13-code_health-convention)); step 5 triggers the hook anyway.
    ```bash
    forge-precommit --freshness   # read-only verdict per log; runs no steps
    ```
    Judge only the steps the latest run executed — the `PASS`, `WARN` and `FAIL` rows of `code_health/precommit_timing.log`; other logs are leftovers from earlier invocations. Stop per **Failure states** if a row reads `FAIL`, or `--freshness` reports that step's log `stale`, `unstamped` or `unknown`. `WARN` (non-blocking) and `n/a` (a step that checks the environment, not files) never stop.
 
-3. **Stage changes** — only the files specified, or `git add -A` if told to stage all, then verify the staged set is exactly what the caller described:
+3. **Report who wrote what** — run `forge-agent-profile --edits` and keep
+   its output for the hand-back. Do this BEFORE staging, and see
+   **Report who wrote what** below for what the verdict may and may not
+   be turned into.
+
+4. **Stage changes** — only the files specified, or `git add -A` if told to stage all, then verify the staged set is exactly what the caller described:
    ```bash
    git add <files>
    git status --short
    ```
 
-4. **Create commit** with conventional format:
+5. **Create commit** with conventional format:
    ```bash
    git commit -m "<type>: <description>"
    ```
@@ -85,12 +90,12 @@ MUST have run first; you fail if the pre-commit hook finds violations.
    `feat:`, `refactor:`, `test:`, `docs:`, `chore:`); what/why, not how;
    **NEVER any Claude or AI attribution**.
 
-5. **Push to remote** (`-u` if the branch is not on the remote yet):
+6. **Push to remote** (`-u` if the branch is not on the remote yet):
    ```bash
    git push origin <branch>
    ```
 
-6. **Update CONTINUATION log** — after each successful push, record the
+7. **Update CONTINUATION log** — after each successful push, record the
    commit via `forge-continuation-append`, the SSoT for
    [FOUNDATION §10](../FOUNDATION.md#10-continuation-protocol)'s format
    (idempotent):
@@ -103,7 +108,7 @@ MUST have run first; you fail if the pre-commit hook finds violations.
 
    Skip on push failure.
 
-7. **Report** the commit hash and push status
+8. **Report** the commit hash and push status
 
 ## Recipe: commit a subset
 
@@ -179,6 +184,36 @@ Specific errors from logs:
 - Review code quality → **`forge:design-checker`**
 - Review security → **`forge:security-checker`**
 
+## Report who wrote what (before you commit)
+
+```bash
+forge-agent-profile --edits
+```
+
+Run this before staging and put its output in the hand-back verbatim.
+Once an edit is in the tree it is indistinguishable from the caller's
+own, so the caller commits another agent's work as theirs without ever
+being told. This reads the hook ledger and says which uncommitted files
+a subagent wrote — a derived fact, not an agent's self-report, which is
+the point: nothing here depends on the agent that made the edit choosing
+to mention it.
+
+Never paraphrase the verdict, and never convert `UNKNOWN` into "none".
+They are different claims: `UNKNOWN` means the ledger could not be read
+(a fresh clone, `FORGE_NO_AGENT_TIMING=1`, no `jq`), and reporting that
+as a clean tree is exactly the absence-of-evidence error the line
+carries a warning about. It also sees tool-based writes only, and that
+limit is stronger than the one above: a shell write leaves no ledger
+trace at all, so it is not even counted among the pathless. It produces
+no signal in either direction. The receipt is evidence, never an audit.
+Say so if the caller treats it as one.
+
+One more bound worth stating when you report it: the reading is
+clone-wide, not session-scoped. Another session working in the same
+checkout writes to the same ledger, so its edits can appear as though
+they were made here. `--session <id>` narrows it when the caller knows
+which session to name.
+
 ## Output
 
 ```
@@ -186,6 +221,7 @@ GIT-COMMIT-PUSH COMPLETE
 
 Commit: <short-hash> <subject>
 Files staged: <paths, or "all (-A)">
+Authorship: <the `forge-agent-profile --edits` output, verbatim>
 Pre-commit: passed
 Pushed: <branch> → origin/<branch> (tracking set, if -u)
 CONTINUATION: appended

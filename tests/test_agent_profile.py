@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -13,21 +14,26 @@ from forge import agent_profile
 from forge.agent_profile import (
     LOOP_REPEAT_THRESHOLD,
     MAIN_SESSION_TYPE,
+    MUTATING_TOOLS,
     PRECOMMIT_FIXER_AGENT,
     PRECOMMIT_RUN_CAP,
     AgentRun,
+    EditReceipt,
     ToolRow,
     TranscriptStats,
     collect_runs,
     filter_runs,
     parse_transcript,
+    render_edit_receipt,
     render_json,
     render_report,
     runs_from_ledger,
     runs_from_transcripts,
+    subagent_edits,
     tool_rows,
     type_rows,
 )
+from tests.conftest import GIT_ENV, commit_all, init_git_repo
 
 
 if TYPE_CHECKING:
@@ -69,7 +75,7 @@ def _event(
         agent_id: Optional agent identifier.
         agent_type: Optional agent type.
         **kwargs: Extra fields (transcript_path, tool_name, tool_use_id,
-            duration_ms) passed through to the result dict.
+            duration_ms, file_path) passed through to the result dict.
 
     Returns:
         A dict shaped like the real hook payload.
@@ -85,6 +91,7 @@ def _event(
         "tool_name": kwargs.get("tool_name"),
         "tool_use_id": kwargs.get("tool_use_id"),
         "duration_ms": kwargs.get("duration_ms"),
+        "file_path": kwargs.get("file_path"),
     }
 
 
@@ -1004,6 +1011,286 @@ def test_render_report_with_tool_rows_renders_tool_time_section() -> None:
     report = render_report([run], tools, top=5)
     assert "Tool time" in report
     assert any("Bash" in line and "calls=3" in line for line in report.splitlines())
+
+
+# ---------------------------------------------------------------------------
+# subagent_edits / EditReceipt / render_edit_receipt
+# ---------------------------------------------------------------------------
+
+
+def test_subagent_edits_excludes_main_session_and_stale_since_and_other_session(
+    tmp_path: Path,
+) -> None:
+    """Only the row with an agent_type, a fresh ts, and the wanted session survives."""
+    ledger = tmp_path / agent_profile.LEDGER_RELPATH
+    cutoff = _ms_to_dt(BASE_MS + 5000)
+    events = [
+        _event(
+            event="PostToolUse",
+            ts_ms=BASE_MS + 10_000,
+            session_id="s1",
+            agent_type=None,  # main session's own edit — excluded
+            tool_name="Edit",
+            file_path=str(tmp_path / "main.py"),
+        ),
+        _event(
+            event="PostToolUse",
+            ts_ms=BASE_MS + 1000,  # older than cutoff — excluded
+            session_id="s1",
+            agent_type="forge:design-checker",
+            tool_name="Edit",
+            file_path=str(tmp_path / "stale.py"),
+        ),
+        _event(
+            event="PostToolUse",
+            ts_ms=BASE_MS + 10_000,
+            session_id="other-session",  # different session — excluded
+            agent_type="forge:design-checker",
+            tool_name="Edit",
+            file_path=str(tmp_path / "other.py"),
+        ),
+        _event(
+            event="PostToolUse",
+            ts_ms=BASE_MS + 10_000,
+            session_id="s1",
+            agent_type="forge:design-checker",
+            tool_name="Edit",
+            file_path=str(tmp_path / "qualifying.py"),
+        ),
+    ]
+    _write_jsonl(ledger, events)
+
+    receipt = subagent_edits(tmp_path, since=cutoff, session_id="s1")
+
+    assert receipt.known is True
+    assert receipt.by_file == {"qualifying.py": {"forge:design-checker"}}
+
+
+def test_subagent_edits_aggregates_multiple_agents_per_file_ignores_non_mutating_tool(
+    tmp_path: Path,
+) -> None:
+    """Two agents editing same path land in its set; non-mutating Bash adds nothing."""
+    assert "Bash" not in MUTATING_TOOLS
+    ledger = tmp_path / agent_profile.LEDGER_RELPATH
+    shared = str(tmp_path / "shared.py")
+    events = [
+        _event(
+            event="PostToolUse",
+            ts_ms=BASE_MS,
+            agent_type="forge:design-checker",
+            tool_name="Edit",
+            file_path=shared,
+        ),
+        _event(
+            event="PostToolUse",
+            ts_ms=BASE_MS + 1000,
+            agent_type="forge:test-writer",
+            tool_name="Write",
+            file_path=shared,
+        ),
+        _event(
+            event="PostToolUse",
+            ts_ms=BASE_MS + 2000,
+            agent_type="forge:precommit-fixer",
+            tool_name="Bash",
+            file_path=None,
+        ),
+    ]
+    _write_jsonl(ledger, events)
+
+    receipt = subagent_edits(tmp_path)
+
+    assert receipt.known is True
+    assert receipt.by_file == {
+        "shared.py": {"forge:design-checker", "forge:test-writer"}
+    }
+
+
+def test_subagent_edits_normalizes_absolute_paths_and_matches_restricted_paths(
+    tmp_path: Path,
+) -> None:
+    """A ``paths`` filter given in relative form matches the ledger's absolute rows.
+
+    If relativizing an absolute ledger path ever broke, every real run
+    would silently report "none recorded" — indistinguishable from a
+    clean tree — so this is the highest-value case in the group.
+    """
+    ledger = tmp_path / agent_profile.LEDGER_RELPATH
+    absolute = tmp_path / "src" / "foo.py"
+    events = [
+        _event(
+            event="PostToolUse",
+            ts_ms=BASE_MS,
+            agent_type="forge:design-checker",
+            tool_name="Edit",
+            file_path=str(absolute),
+        ),
+    ]
+    _write_jsonl(ledger, events)
+
+    receipt = subagent_edits(tmp_path, paths={"src/foo.py"})
+
+    assert receipt.known is True
+    assert receipt.by_file == {"src/foo.py": {"forge:design-checker"}}
+
+
+@pytest.mark.parametrize(
+    ("create_empty", "expected_reason"),
+    [(False, "no ledger at"), (True, "ledger is empty")],
+    ids=["missing", "empty"],
+)
+def test_subagent_edits_known_false_when_ledger_missing_or_empty(
+    tmp_path: Path, *, create_empty: bool, expected_reason: str
+) -> None:
+    """A missing ledger and an empty one are both unknown, for distinct reasons.
+
+    Args:
+        create_empty: Whether to create an empty ledger file, vs. none at all.
+        expected_reason: Substring the receipt's ``reason`` must contain.
+    """
+    if create_empty:
+        ledger = tmp_path / agent_profile.LEDGER_RELPATH
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.touch()
+
+    receipt = subagent_edits(tmp_path)
+
+    assert receipt.known is False
+    assert receipt.reason
+    assert expected_reason in receipt.reason
+
+
+def test_render_edit_receipt_unknown_vs_none_recorded_vs_per_file_lines() -> None:
+    """Unknown, empty-but-known, and multi-agent receipts render distinctly.
+
+    Testing only the unknown case would still pass if "known but empty"
+    and "known with edits" were swapped — the three-way comparison is
+    the point.
+    """
+    unknown = EditReceipt(known=False, reason="no ledger at code_health/x.jsonl")
+    empty = EditReceipt(known=True, by_file={})
+    multi = EditReceipt(
+        known=True,
+        by_file={"a.py": {"forge:test-writer", "forge:design-checker"}},
+    )
+
+    unknown_line = render_edit_receipt(unknown)
+    empty_line = render_edit_receipt(empty)
+    multi_line = render_edit_receipt(multi)
+
+    assert len({unknown_line, empty_line, multi_line}) == 3
+    assert "UNKNOWN" in unknown_line
+    assert "none recorded" in empty_line
+    # Fenced deliberately: the path is agent-supplied and this line is
+    # reproduced into a markdown PR comment, so it must render literally.
+    assert "`a.py` — forge:design-checker, forge:test-writer" in multi_line
+
+
+def test_subagent_edits_unknown_when_every_row_lacks_a_path(tmp_path: Path) -> None:
+    """A hook older than path recording makes every row pathless — not "clean".
+
+    Regression pin: this ledger shape was previously read as "no by_file
+    rows" and returned ``known=True`` with an empty receipt, reporting a
+    tree full of subagent edits as clean.
+    """
+    ledger = tmp_path / agent_profile.LEDGER_RELPATH
+    events = [
+        _event(
+            event="PostToolUse",
+            ts_ms=BASE_MS,
+            agent_type="forge:design-checker",
+            tool_name="Edit",
+            file_path=None,
+        ),
+        _event(
+            event="PostToolUse",
+            ts_ms=BASE_MS + 1000,
+            agent_type="forge:test-writer",
+            tool_name="Write",
+            file_path=None,
+        ),
+    ]
+    _write_jsonl(ledger, events)
+
+    receipt = subagent_edits(tmp_path)
+
+    assert receipt.known is False
+    assert receipt.pathless == len(events)
+    assert "/plugin update" in receipt.reason
+
+
+def test_render_edit_receipt_marks_partial_attribution_incomplete() -> None:
+    """A receipt with both known files and pathless rows renders as INCOMPLETE.
+
+    Distinct from both the plain per-file head and the UNKNOWN line —
+    otherwise partial evidence would read as complete.
+    """
+    partial = EditReceipt(
+        known=True,
+        by_file={"a.py": {"forge:design-checker"}},
+        pathless=2,
+    )
+    unknown = EditReceipt(known=False, reason="no ledger at code_health/x.jsonl")
+    complete = EditReceipt(known=True, by_file={"a.py": {"forge:design-checker"}})
+
+    partial_line = render_edit_receipt(partial)
+
+    assert "INCOMPLETE" in partial_line
+    assert "2" in partial_line
+    lines = {partial_line, render_edit_receipt(unknown), render_edit_receipt(complete)}
+    assert len(lines) == 3
+
+
+def test_render_edits_reports_a_file_still_dirty_after_an_unrelated_commit(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A file a subagent left dirty survives an unrelated later commit.
+
+    Behavior: pins the regression a last-commit time cutoff used to cause.
+    ``_render_edits`` used to derive the cutoff from the last commit's
+    timestamp and pass it to ``subagent_edits``, dropping ledger rows for
+    files that stayed dirty across an earlier commit — ordinary whenever
+    someone stages and commits a subset — and reporting those files as
+    clean. Scoping is now by file only, so a file still differing from
+    ``HEAD`` surfaces regardless of when its ledger row was written.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "a.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("b = 1\n", encoding="utf-8")
+    commit_all(tmp_path, "seed a and b")
+
+    # The subagent edits b.py, then the hook records it.
+    (tmp_path / "b.py").write_text("b = 2\n", encoding="utf-8")
+    _write_jsonl(
+        tmp_path / agent_profile.LEDGER_RELPATH,
+        [
+            _event(
+                event="PostToolUse",
+                ts_ms=BASE_MS,
+                agent_type="forge:test-writer",
+                tool_name="Edit",
+                file_path=str(tmp_path / "b.py"),
+            )
+        ],
+    )
+
+    # An unrelated commit lands after that ledger row, touching only a.py;
+    # b.py stays modified and uncommitted.
+    (tmp_path / "a.py").write_text("a = 2\n", encoding="utf-8")
+    subprocess.run(["git", "add", "a.py"], cwd=tmp_path, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "commit a only"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        check=True,
+    )
+
+    with caplog.at_level(logging.INFO, logger="forge.agent_profile"):
+        code = agent_profile._render_edits(tmp_path)
+
+    assert code == 0
+    # Fenced deliberately (render_edit_receipt): assert on the fenced form.
+    assert "`b.py` — forge:test-writer" in caplog.text
 
 
 # ---------------------------------------------------------------------------

@@ -122,6 +122,13 @@ completely, which is exactly why context has to be named as part of the
 contract rather than left to judgment. Technical detail keeps its place —
 immediately after, where it is now.
 
+**And it closes with one line saying what will be done.** After the
+detail, state the whole intended change in a single sentence a reader
+can repeat back. It is the cheapest check that the plan and the reader
+agree: someone who has followed the detail can confirm or correct one
+line, where confirming a change list means re-deriving the goal from it.
+A plan that cannot be said in one line is usually two plans.
+
 ### Ask before acting on ambiguity
 
 Pause and ask when (a) the instruction has two reasonable readings, the user
