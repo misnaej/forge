@@ -15,11 +15,11 @@ model: sonnet
 
 Orchestrator for the full PR lifecycle: delegates verification to the three checkers and `forge:precommit-fixer` (`mode: strict` at finalization) via `Task`; delegates' own descriptions own "what", this agent owns "when and how".
 
-**Checkers and ad-hoc verifiers are report-only** per the [reporter contract](_TEMPLATE.md#tool-sets-per-role); remediation returns here (see Scope Boundaries), and only this agent posts to the PR.
+**Checkers and ad-hoc verifiers are report-only** per the [reporter contract](_TEMPLATE.md#tool-sets-per-role); remediation returns here (see Scope Boundaries), and they never post to the PR.
 
 ## Workflow
 
-The caller's prompt names a `## Task:` section; all are independently callable. Finalization order: **Fill Wrap-up Slots → Write Squash-Merge Message**; `/pr` Step 4 posts both with the CLIs.
+The caller's prompt names a `## Task:` section; all are independently callable. In `/pr`: **Fill Wrap-up Slots → Write Squash-Merge Message**, and Step 4 posts both with the CLIs; called directly, **Verification (Wrap-up)** posts them itself.
 
 ## Task: Fetch & Summarize PR
 
@@ -125,7 +125,7 @@ unverified, not assumed.
 1. **The three checkers** via Task — one design/security/docs report each; skip per pre-run coverage, all three under delta mode.
 2. **`precommit-fixer` in `mode: strict`** — unless the caller supplied pre-commit results for the current `HEAD`; otherwise ALWAYS, because docstring fixes shift line lengths (`strict`'s `pip_audit` escalation: `/pr` Step 2).
 3. **Deferred changelog** (`precommit_enforce = false`, no `CHANGELOG.md` entry in the diff): author it now — MANDATORY per `/pr` Step 3 (bullet convention: `docs/consumer-release.md`); commit via `forge:git-commit-push`; wrap-up line "wrote CHANGELOG bullet: <text>".
-4. **Compose, fill and post the wrap-up**: `forge-pr-wrapup compose --base origin/<base> --pr <PR#> --design <file> --security <file> --docs <file> [--prior-art <file>]`, fill its slots (task above), then `forge-pr-wrapup post --pr <PR#>` — never a raw `gh pr comment` (the `block_raw_wrapup_post` hook refuses it). `post` refuses (exit 3) when the wrap-up's `verified-at:` is not the PR head or the branch conflicts with or is behind its base — report the fix it names; otherwise it refreshes CI Status and Issue Management, validates, posts, collapses earlier wrap-ups, keeps the squash comment newest and appends the CONTINUATION record.
+4. **Compose, fill and post the wrap-up**: `forge-pr-wrapup compose --base origin/<base> --pr <PR#> --design <file> --security <file> --docs <file> [--prior-art <file>]`, fill its slots (task above), then `forge-pr-wrapup post --pr <PR#>` — never a raw `gh pr comment` (the `block_raw_wrapup_post` hook refuses it). What `post` refuses and refreshes: [`/pr` Step 4](../skills/pr/SKILL.md#step-4-post-with-the-clis) — do not restate; on exit 3 report the fix it names.
 5. **Post the squash-merge message as a separate PR comment, LAST** (task above) — MANDATORY in every wrap-up. It goes after the wrap-up because the person merging copies it out of the bottom of the conversation (FOUNDATION §6); anything posted later is followed by a `forge-pr-squash-comment --pr <PR#>` re-post, which the `keep_squash_comment_last` hook fires on its own.
 
 ## Task: Issue Management

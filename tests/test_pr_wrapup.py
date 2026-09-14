@@ -11,11 +11,15 @@
 # patches `gh_pr_view` / `fetch_quietly` / `behind_ahead` / `repo_root` (a real
 # ``tmp_path`` repo, never the checkout this suite runs from) and
 # `continuation_append.main` — all real `gh`/git seams `post` now reaches
-# before it ever gets to `post_wrapup`. `main`'s `compose` subcommand runs
-# against a real (`init_git_repo`) ``tmp_path`` repo too, patching only
-# `repo_root` plus whichever of `gh_pr_view` / `wrapup_freshness` /
-# `run_gate_evidence` a given plan mode reaches (delta, light-regen
-# respectively); an armed emergency uses a real sentinel file
+# before it ever gets to `post_wrapup`. One `post` test deliberately leaves
+# `continuation_append.main` unpatched (a real ``tmp_path`` repo) to pin the
+# ``--`` argv-separator contract for a dash-prefixed PR title. The emergency
+# waiver (`_is_emergency_post`) is exercised with a real sentinel file
+# (`forge.emergency.write_state`), never a patched `read_state`. `main`'s
+# `compose` subcommand runs against a real (`init_git_repo`) ``tmp_path`` repo
+# too, patching only `repo_root` plus whichever of `gh_pr_view` /
+# `wrapup_freshness` / `run_gate_evidence` a given plan mode reaches (delta,
+# light-regen respectively); an armed emergency uses a real sentinel file
 # (`forge.emergency.write_state`), never a patched `armed_state`.
 """
 
@@ -719,6 +723,29 @@ def test_refresh_sections_inserts_issue_management_before_code_quality() -> None
     assert refreshed.endswith("## Recommendation\nApprove and merge.\n")
 
 
+def test_refresh_sections_ignores_a_heading_shaped_line_inside_an_earlier_fence() -> (
+    None
+):
+    """SCENARIO: an earlier section quotes tool output containing ``## CI Status``.
+
+    EXPECTED BEHAVIOR: `_section_bounds` (via `fenced_line_indexes`) never
+    mistakes the fenced heading-shaped line for a real section boundary —
+    the true ``## CI Status`` section is replaced, the fenced block
+    survives byte-identical, and the result still validates.
+    """
+    fenced_block = "```\nsome tool output\n## CI Status\nmore output\n```"
+    body = _body(
+        [VERIFIED_AT, "One summary line."],
+        overrides={"Design Check": f"PASS — no issues.\n\n{fenced_block}"},
+    )
+    refreshed = mod.refresh_sections(
+        body, ci_status="✅ passed (3 checks)", issue_management="Closes #5"
+    )
+    assert fenced_block in refreshed
+    assert "## CI Status\n\n✅ passed (3 checks)\n\n## Recommendation" in refreshed
+    assert mod.validate_wrapup(refreshed) == []
+
+
 # ---------------------------------------------------------------------------
 # post_gates
 # ---------------------------------------------------------------------------
@@ -765,15 +792,20 @@ def test_post_gates_behind_base_refuses() -> None:
 
 
 def test_post_gates_emergency_exempts_the_behind_base_refusal() -> None:
-    """An armed emergency may publish while behind base — never while conflicting."""
+    """An armed emergency may publish while behind base — never while conflicting.
+
+    The exemption is also named as a note (never silent) so a reader sees
+    that the behind-base check was skipped on purpose, not overlooked.
+    """
     view = {
         "number": 61,
         "headRefOid": "7ab3e4e999",
         "baseRefName": "main",
         "mergeable": "MERGEABLE",
     }
-    refusals, _notes = mod.post_gates(view, "7ab3e4e", behind=3, emergency=True)
+    refusals, notes = mod.post_gates(view, "7ab3e4e", behind=3, emergency=True)
     assert refusals == []
+    assert any("behind" in n for n in notes)
 
 
 def test_post_gates_unknown_mergeability_is_a_note_not_a_refusal() -> None:
@@ -863,14 +895,14 @@ def test_main_post_with_violations_never_calls_post_wrapup(
     assert mod.main(["post", "--pr", "61", "--body-file", str(path)]) == 2
 
 
-def _pr_view_json(**overrides: object) -> str:
-    """Build a ``gh pr view --json ...`` payload string, overridable per test.
+def _pr_view(**overrides: object) -> dict[str, object]:
+    """Build a ``gh pr view --json ...`` payload, overridable per test.
 
     Args:
         **overrides: Fields to replace on top of a clean, mergeable default.
 
     Returns:
-        The JSON string ``gh_pr_view`` would return.
+        The dict ``gh_pr_view`` would return.
     """
     view: dict[str, object] = {
         "number": 61,
@@ -884,7 +916,7 @@ def _pr_view_json(**overrides: object) -> str:
         "title": "Some PR title",
     }
     view.update(overrides)
-    return json.dumps(view)
+    return view
 
 
 def test_main_post_gate_refusal_exits_three_and_never_posts_or_appends(
@@ -905,7 +937,7 @@ def test_main_post_gate_refusal_exits_three_and_never_posts_or_appends(
     monkeypatch.setattr(
         mod,
         "gh_pr_view",
-        lambda *_a, **_kw: _pr_view_json(headRefOid="deadbeef0000"),
+        lambda *_a, **_kw: _pr_view(headRefOid="deadbeef0000"),
     )
     monkeypatch.setattr(mod, "fetch_quietly", lambda *_a, **_kw: True)
     monkeypatch.setattr(mod, "behind_ahead", lambda *_a, **_kw: (0, 1))
@@ -949,7 +981,7 @@ def test_main_post_clean_run_writes_refreshed_body_posts_and_appends_continuatio
     path = tmp_path / "wrapup.md"
     path.write_text(clean_wrapup_body, encoding="utf-8")
     monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
-    monkeypatch.setattr(mod, "gh_pr_view", lambda *_a, **_kw: _pr_view_json())
+    monkeypatch.setattr(mod, "gh_pr_view", lambda *_a, **_kw: _pr_view())
     monkeypatch.setattr(mod, "fetch_quietly", lambda *_a, **_kw: True)
     monkeypatch.setattr(mod, "behind_ahead", lambda *_a, **_kw: (0, 1))
     post_calls: list[tuple[int, str]] = []
@@ -972,7 +1004,7 @@ def test_main_post_clean_run_writes_refreshed_body_posts_and_appends_continuatio
     assert "Closes #42" in posted_body
     assert "✅ passed (1 checks)" in posted_body
     assert path.read_text(encoding="utf-8") == posted_body
-    assert continuation_calls == [(["--pr", "61", "Some PR title"], tmp_path)]
+    assert continuation_calls == [(["--pr", "61", "--", "Some PR title"], tmp_path)]
 
 
 def test_main_post_no_continuation_flag_skips_the_append(
@@ -984,7 +1016,7 @@ def test_main_post_no_continuation_flag_skips_the_append(
     path = tmp_path / "wrapup.md"
     path.write_text(clean_wrapup_body, encoding="utf-8")
     monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
-    monkeypatch.setattr(mod, "gh_pr_view", lambda *_a, **_kw: _pr_view_json())
+    monkeypatch.setattr(mod, "gh_pr_view", lambda *_a, **_kw: _pr_view())
     monkeypatch.setattr(mod, "fetch_quietly", lambda *_a, **_kw: True)
     monkeypatch.setattr(mod, "behind_ahead", lambda *_a, **_kw: (0, 1))
     monkeypatch.setattr(mod, "post_wrapup", lambda _pr, _body: 0)
@@ -1006,6 +1038,219 @@ def test_main_post_no_continuation_flag_skips_the_append(
 
     rc = mod.main(["post", "--pr", "61", "--body-file", str(path), "--no-continuation"])
     assert rc == 0
+
+
+def _emergency_body_in_head() -> str:
+    """Build a valid wrap-up whose HEAD carries ``wrapup-mode: emergency``.
+
+    Returns:
+        A wrap-up text ``_is_emergency_post`` reads the marker from.
+    """
+    return _body([VERIFIED_AT, "wrapup-mode: emergency", "One summary line."])
+
+
+def _emergency_body_in_section(*, fenced: bool) -> str:
+    """Build a valid wrap-up with the emergency marker inside a section body.
+
+    The marker text sits in a genuine (non-clean) finding — never in the
+    head ``_is_emergency_post`` reads — so the body stays a text any
+    author could write, fenced-evidence quote included.
+
+    Args:
+        fenced: Whether the marker line sits inside a fenced block.
+
+    Returns:
+        A wrap-up text carrying the marker outside its head.
+    """
+    marker = "wrapup-mode: emergency"
+    placed = f"```\n{marker}\n```" if fenced else marker
+    finding = f"Found: something happened.\n{placed}\nDisposition: nothing further."
+    return _body(
+        [VERIFIED_AT, "One summary line."], overrides={"Design Check": finding}
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "sentinel_pr", "expect_posted"),
+    [
+        pytest.param(
+            _emergency_body_in_section(fenced=False),
+            None,
+            False,
+            id="marker-in-a-section-body-never-counts",
+        ),
+        pytest.param(
+            _emergency_body_in_section(fenced=True),
+            None,
+            False,
+            id="marker-inside-a-fenced-section-never-counts",
+        ),
+        pytest.param(
+            _emergency_body_in_section(fenced=False),
+            61,
+            False,
+            id="marker-in-a-section-body-with-a-matching-sentinel-still-refuses",
+        ),
+        pytest.param(
+            _emergency_body_in_head(), None, False, id="head-marker-with-no-sentinel"
+        ),
+        pytest.param(
+            _emergency_body_in_head(),
+            999,
+            False,
+            id="head-marker-with-a-sentinel-for-a-different-pr",
+        ),
+        pytest.param(
+            _emergency_body_in_head(),
+            61,
+            True,
+            id="head-marker-with-a-sentinel-for-this-pr",
+        ),
+    ],
+)
+def test_main_post_emergency_waiver_needs_head_marker_and_matching_sentinel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    body: str,
+    sentinel_pr: int | None,
+    *,
+    expect_posted: bool,
+) -> None:
+    """SCENARIO: a branch 3 commits behind base claims the emergency waiver.
+
+    MOCK SETUP: `gh_pr_view` reports a matching head and a MERGEABLE
+    branch; `behind_ahead` reports 3 commits behind; when *sentinel_pr* is
+    given, a REAL sentinel file (`forge.emergency.write_state`) records it
+    — never a patched `read_state`. `post_wrapup` / `continuation_append.main`
+    are faked to record whether they ran. `tmp_path` needs no git init on
+    the success path — `_branch_messages` degrades softly, per the
+    existing clean-run test.
+    EXPECTED BEHAVIOR: the behind-base refusal is waived ONLY when the
+    marker sits in the wrap-up's head (never a section body, fenced or
+    not) AND a sentinel structurally records this exact PR — every other
+    combination refuses with exit 3 and never posts.
+
+    Args:
+        body: The wrap-up text under test.
+        sentinel_pr: PR number a real sentinel records, or `None` for no
+            sentinel at all.
+        expect_posted: Whether this combination should succeed and post.
+    """
+    path = tmp_path / "wrapup.md"
+    path.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(mod, "gh_pr_view", lambda *_a, **_kw: _pr_view())
+    monkeypatch.setattr(mod, "fetch_quietly", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mod, "behind_ahead", lambda *_a, **_kw: (3, 0))
+    if sentinel_pr is not None:
+        write_state(
+            tmp_path,
+            EmergencyState(
+                ledger_issue=777,
+                reason="prod is down",
+                expires_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+                spent=True,
+                pr_number=sentinel_pr,
+            ),
+        )
+    post_calls: list[int] = []
+    continuation_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        mod, "post_wrapup", lambda pr, _body: post_calls.append(pr) or 0
+    )
+    monkeypatch.setattr(
+        mod.continuation_append,
+        "main",
+        lambda argv, **_kwargs: continuation_calls.append(argv) or 0,
+    )
+
+    rc = mod.main(["post", "--pr", "61", "--body-file", str(path)])
+
+    if expect_posted:
+        assert rc == 0
+        assert post_calls == [61]
+        assert continuation_calls
+    else:
+        assert rc == mod.EXIT_REFUSED
+        assert post_calls == []
+        assert continuation_calls == []
+
+
+def test_main_post_title_starting_with_dash_reaches_the_real_continuation_append(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    clean_wrapup_body: str,
+) -> None:
+    """SCENARIO: a PR titled like a CLI flag (``--wip``, no space).
+
+    A space-free dash-prefixed title is deliberate: argparse treats any
+    arg containing a space as positional on its own (confirmed: even
+    ``"--rotate things"`` parses fine with no ``--`` separator at all), so
+    only a space-free title like ``--wip`` actually exercises the ``--``
+    argv-separator contract this test pins.
+
+    MOCK SETUP: only `gh_pr_view` / `fetch_quietly` / `behind_ahead` /
+    `post_wrapup` are faked — `continuation_append.main` runs for REAL
+    against `tmp_path`, the exact seam the ``--`` argv separator protects.
+    EXPECTED BEHAVIOR: no `SystemExit` from argparse mis-parsing the title
+    as a flag; `.plan/CONTINUATION.md` gains a line naming the PR and the
+    literal, dash-prefixed title.
+    """
+    path = tmp_path / "wrapup.md"
+    path.write_text(clean_wrapup_body, encoding="utf-8")
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(mod, "gh_pr_view", lambda *_a, **_kw: _pr_view(title="--wip"))
+    monkeypatch.setattr(mod, "fetch_quietly", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mod, "behind_ahead", lambda *_a, **_kw: (0, 1))
+    monkeypatch.setattr(mod, "post_wrapup", lambda _pr, _body: 0)
+
+    rc = mod.main(["post", "--pr", "61", "--body-file", str(path)])
+
+    assert rc == 0
+    continuation = (tmp_path / ".plan" / "CONTINUATION.md").read_text(encoding="utf-8")
+    assert "PR #61 wrap-up: --wip" in continuation
+
+
+def test_main_post_refuses_when_the_refreshed_body_fails_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    clean_wrapup_body: str,
+) -> None:
+    """SCENARIO: `refresh_sections` corrupts an otherwise-valid wrap-up.
+
+    MOCK SETUP: `mod.refresh_sections` is patched to drop the ``## CI
+    Status`` section entirely — a refresh-time regression, not an
+    authoring mistake; `post_wrapup` is faked to fail the test if called.
+    EXPECTED BEHAVIOR: exit 2 (a body defect, distinct from the gate's
+    exit 3), no post, and the file on disk is untouched — the write only
+    happens after the refreshed body validates.
+    """
+    path = tmp_path / "wrapup.md"
+    path.write_text(clean_wrapup_body, encoding="utf-8")
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(mod, "gh_pr_view", lambda *_a, **_kw: _pr_view())
+    monkeypatch.setattr(mod, "fetch_quietly", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mod, "behind_ahead", lambda *_a, **_kw: (0, 1))
+    monkeypatch.setattr(
+        mod, "refresh_sections", lambda text, **_kw: text.replace("## CI Status", "")
+    )
+
+    def _fail(*_args: object, **_kwargs: object) -> int:
+        """Fail the test if `post_wrapup` runs for an invalid refreshed body.
+
+        Args:
+            *_args: Unused arguments.
+            **_kwargs: Unused keyword arguments.
+        """
+        msg = "must not post an invalid refreshed wrap-up"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(mod, "post_wrapup", _fail)
+
+    rc = mod.main(["post", "--pr", "61", "--body-file", str(path)])
+
+    assert rc == 2
+    assert path.read_text(encoding="utf-8") == clean_wrapup_body
 
 
 # ---------------------------------------------------------------------------
@@ -1142,22 +1387,20 @@ def test_main_compose_delta_mode_renders_prior_sha_rollup_and_checked_issue_mana
     reaches in delta mode.
     EXPECTED BEHAVIOR: every reporter section renders compose's mechanical
     delta line naming the prior SHA, CI Status carries the rollup summary,
-    and Issue Management carries no "PR body not yet available" suffix —
-    the PR body was read (`pr_body_checked=True`).
+    and Issue Management carries no "the PR body was not searched" suffix
+    — the PR body was read (`pr_body_checked=True`).
     """
     init_git_repo(tmp_path)
     monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(
         mod,
         "gh_pr_view",
-        lambda *_a, **_kw: json.dumps(
-            {
-                "body": "Closes #99",
-                "statusCheckRollup": [
-                    {"name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}
-                ],
-            }
-        ),
+        lambda *_a, **_kw: {
+            "body": "Closes #99",
+            "statusCheckRollup": [
+                {"name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}
+            ],
+        },
     )
     monkeypatch.setattr(
         mod,
@@ -1174,7 +1417,64 @@ def test_main_compose_delta_mode_renders_prior_sha_rollup_and_checked_issue_mana
     assert written.count("PASS — unchanged since abc1234 (delta)") == 3
     assert "✅ passed (1 checks)" in written
     assert "Closes #99" in written
-    assert "PR body not yet available" not in written
+    assert "the PR body was not searched" not in written
+
+
+def test_main_compose_pr_view_unavailable_reports_unknown_ci_and_unsearched_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: `compose --pr N` when `gh` cannot read the PR at all.
+
+    MOCK SETUP: `mod.gh_pr_view` returns `None` (gh failure, missing auth,
+    or an unknown PR) — the light-code plan needs no reporter reports, so
+    this isolates `_ci_status` / `render_issue_management`'s degrade path.
+    EXPECTED BEHAVIOR: CI Status reads `unknown — could not read PR #61`
+    (never the "pending" wording reserved for a PR that does not exist
+    yet), and Issue Management carries the "the PR body was not searched"
+    suffix — the closing-keyword search fell back to commit messages alone.
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(mod, "gh_pr_view", lambda *_a, **_kw: None)
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({"mode": "light-code", "reporters": [], "reasons": ["small diff"]})
+    )
+
+    rc = mod.main(["compose", "--base", "HEAD", "--pr", "61", "--plan", str(plan_path)])
+
+    assert rc == 0
+    written = (tmp_path / "code_health" / "pr_wrapup.md").read_text(encoding="utf-8")
+    assert "unknown — could not read PR #61" in written
+    assert "the PR body was not searched" in written
+
+
+def test_main_compose_pr_view_without_rollup_reports_no_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: `compose --pr N` reads a PR whose checks haven't started yet.
+
+    MOCK SETUP: `mod.gh_pr_view` returns a readable view carrying no
+    `statusCheckRollup` key at all — isolates `_ci_status`'s "no checks
+    reported" fallback from its `view is None` branch, covered by the
+    sibling test above.
+    EXPECTED BEHAVIOR: CI Status reads `no checks reported` — distinct
+    from both the "pending" wording (no PR yet) and the "unknown" wording
+    (PR unreadable): here the PR IS readable, it just has no rollup.
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(mod, "gh_pr_view", lambda *_a, **_kw: {"body": "Closes #7"})
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({"mode": "light-code", "reporters": [], "reasons": ["small diff"]})
+    )
+
+    rc = mod.main(["compose", "--base", "HEAD", "--pr", "61", "--plan", str(plan_path)])
+
+    assert rc == 0
+    written = (tmp_path / "code_health" / "pr_wrapup.md").read_text(encoding="utf-8")
+    assert "no checks reported" in written
 
 
 @pytest.mark.parametrize("passed", [False, True])
@@ -1187,15 +1487,15 @@ def test_main_compose_light_regen_gates_or_fences_the_evidence(
 ) -> None:
     """SCENARIO: light-regen mode runs the provenance gates.
 
-    Args:
-        passed: Whether the mocked gate evidence check passes.
-
     MOCK SETUP: `mod.run_gate_evidence` is patched to return a fixed
     `(passed, block)` pair — the real gate subprocess is `run_gate_evidence`'s
     own seam (`tests/test_git_utils.py`), not `_gather_inputs`'s.
     EXPECTED BEHAVIOR: a failing gate refuses composing (exit 2, naming the
     refusal); a passing gate carries the evidence fence into the
     Documentation Check section.
+
+    Args:
+        passed: Whether the mocked gate evidence check passes.
     """
     init_git_repo(tmp_path)
     monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
@@ -1228,13 +1528,13 @@ def test_main_compose_code_quality_overrides_unstamped_environment_step_log(
     """SCENARIO: an unstamped environment-step log sits next to a clean PASS row.
 
     MOCK SETUP: none — `_code_quality` reads the real `code_health/` files
-    and the real (empty-config) `resolve_steps` for the tmp repo, where
-    `env_sync` is a default-on step with `StepDef.checks_files=False`.
-    EXPECTED BEHAVIOR: `_code_quality` overrides `env_sync`'s freshness
-    verdict to `n/a` before rendering, so an unstamped `env_sync.log` never
-    turns a passing row into a "not verified at this tree" warning — an
-    environment step judges the machine, not the tree, so its own log is
-    never expected to carry a tree stamp.
+    and calls the real `precommit.freshness_verdicts` for the tmp repo,
+    where `env_sync` is a default-on step with `StepDef.checks_files=False`.
+    EXPECTED BEHAVIOR: `freshness_verdicts` overrides `env_sync`'s freshness
+    verdict to `n/a` before `_code_quality` renders, so an unstamped
+    `env_sync.log` never turns a passing row into a "not verified at this
+    tree" warning — an environment step judges the machine, not the tree,
+    so its own log is never expected to carry a tree stamp.
     """
     init_git_repo(tmp_path)
     monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)

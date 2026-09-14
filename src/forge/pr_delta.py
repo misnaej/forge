@@ -162,7 +162,9 @@ def extract_verified_shas(text: str) -> list[str]:
     return [m.group("sha") for m in VERIFIED_AT_RE.finditer(text)]
 
 
-_FENCE_RE: Final[re.Pattern[str]] = re.compile(r"^\s*(```|~~~)")
+_FENCE_RE: Final[re.Pattern[str]] = re.compile(
+    r"^\s*(?P<fence>`{3,}|~{3,})(?P<info>.*)$"
+)
 
 # GitHub's closing keywords. Each issue needs its own keyword: in
 # `Closes #1, #2` only #1 is linked, so a bare `#N` never counts.
@@ -174,6 +176,40 @@ _CLOSING_LINE_RE: Final[re.Pattern[str]] = re.compile(
     rf"^{_CLOSING_KEYWORD}\s+#\d+(?:[\s,]+(?:{_CLOSING_KEYWORD}\s+)?#\d+)*$",
     re.IGNORECASE,
 )
+
+
+def fenced_line_indexes(lines: list[str]) -> set[int]:
+    """Return the indexes of *lines* inside fenced code blocks, delimiters included.
+
+    A block closes only on a bare fence of its own character at least as
+    long as its opener, as in CommonMark — so a four-backtick evidence
+    block can quote a three-backtick example without ending early. An
+    unclosed fence runs to the end.
+
+    Args:
+        lines: List of markdown lines.
+
+    Returns:
+        Indexes of every line that belongs to a fenced block.
+    """
+    fenced: set[int] = set()
+    opener: str | None = None
+    for i, line in enumerate(lines):
+        match = _FENCE_RE.match(line)
+        if opener is None:
+            if match is not None:
+                opener = match.group("fence")
+                fenced.add(i)
+            continue
+        fenced.add(i)
+        if (
+            match is not None
+            and match.group("fence")[0] == opener[0]
+            and len(match.group("fence")) >= len(opener)
+            and not match.group("info").strip()
+        ):
+            opener = None
+    return fenced
 
 
 def strip_fences(lines: list[str]) -> list[str]:
@@ -188,15 +224,8 @@ def strip_fences(lines: list[str]) -> list[str]:
     Returns:
         Lines with fenced code blocks (and their delimiters) removed.
     """
-    kept: list[str] = []
-    inside = False
-    for line in lines:
-        if _FENCE_RE.match(line):
-            inside = not inside
-            continue
-        if not inside:
-            kept.append(line)
-    return kept
+    fenced = fenced_line_indexes(lines)
+    return [line for i, line in enumerate(lines) if i not in fenced]
 
 
 def find_closing_refs(text: str) -> list[int]:

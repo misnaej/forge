@@ -1,4 +1,4 @@
-"""forge-pr-wrapup — validate and post the PR wrap-up comment, retiring older ones.
+"""forge-pr-wrapup — compose, validate and post the PR wrap-up, retiring older ones.
 
 The wrap-up is the verification record a reviewer trusts most: which
 reporters ran at which commit, what they found, how each finding was
@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from forge import continuation_append
-from forge.emergency import armed_state
+from forge.emergency import armed_state, read_state
 from forge.gh_comments import (
     ValidationError,
     list_marker_comments,
@@ -63,16 +63,15 @@ from forge.git_utils import (
     configure_cli_logging,
     emit,
     fetch_quietly,
-    log_freshness,
     repo_root,
     run_gate_evidence,
     run_git,
-    working_tree_sha,
 )
 from forge.pr_delta import (
     PROVENANCE_GATE_STEPS,
     VERIFIED_AT_RE,
     extract_verified_shas,
+    fenced_line_indexes,
     find_closing_refs,
     non_fragment_adds,
     strip_fences,
@@ -91,7 +90,7 @@ from forge.pr_wrapup_compose import (
     summarize_rollup,
     unfilled_slots,
 )
-from forge.precommit import resolve_steps
+from forge.precommit import freshness_verdicts, resolve_steps
 
 
 if TYPE_CHECKING:
@@ -457,6 +456,10 @@ def post_wrapup(pr_number: int, body: str) -> int:
 def _section_bounds(lines: list[str], title: str) -> tuple[int, int] | None:
     """Return the ``(heading, end)`` line indexes of section *title*.
 
+    A heading-shaped line inside a fence (a quoted report, gate output) is
+    not a section — the same reading ``_split`` gives ``validate_wrapup``,
+    so a refresh never splices into a fence.
+
     Args:
         lines: The wrap-up split on newlines.
         title: Section title (case-insensitive).
@@ -465,21 +468,22 @@ def _section_bounds(lines: list[str], title: str) -> tuple[int, int] | None:
         Heading index and the index of the next heading (or the end), or
         ``None`` when the section is absent.
     """
+    fenced = fenced_line_indexes(lines)
+    headings = [
+        i for i, line in enumerate(lines) if i not in fenced and _HEADING_RE.match(line)
+    ]
     start = next(
         (
             i
-            for i, line in enumerate(lines)
-            if (m := _HEADING_RE.match(line))
+            for i in headings
+            if (m := _HEADING_RE.match(lines[i]))
             and m.group("title").casefold() == title.casefold()
         ),
         None,
     )
     if start is None:
         return None
-    end = next(
-        (i for i in range(start + 1, len(lines)) if _HEADING_RE.match(lines[i])),
-        len(lines),
-    )
+    end = next((i for i in headings if i > start), len(lines))
     return start, end
 
 
@@ -533,7 +537,7 @@ def post_gates(
         verified_sha: The wrap-up's ``verified-at:`` SHA.
         behind: Commits the branch is behind ``origin/<base>``, or ``None``
             when that could not be determined.
-        emergency: Whether the wrap-up is an armed-emergency publication,
+        emergency: Whether the wrap-up is the recorded emergency PR's,
             which may be behind base (never conflicting).
 
     Returns:
@@ -560,7 +564,12 @@ def post_gates(
         notes.append("GitHub has not computed mergeability yet (UNKNOWN)")
     if behind is None:
         notes.append(f"could not compare with origin/{base}; behind-base check skipped")
-    elif behind > 0 and not emergency:
+    elif behind > 0 and emergency:
+        notes.append(
+            f"the branch is {behind} commit(s) behind origin/{base}; allowed "
+            "for the recorded emergency PR"
+        )
+    elif behind > 0:
         refusals.append(
             f"the branch is {behind} commit(s) behind origin/{base}: run "
             f"`git merge origin/{base}`, then re-verify with {rerun}"
@@ -636,20 +645,11 @@ def _code_quality(root: Path) -> str:
     health = root / "code_health"
     timing = health / "precommit_timing.log"
     timing_text = timing.read_text(encoding="utf-8") if timing.is_file() else None
-    current = working_tree_sha(root)
-    # str, not LogFreshness: environment steps are overridden with "n/a" below.
-    verdicts: dict[str, str] = (
-        {path.stem: log_freshness(path, current) for path in health.glob("*.log")}
-        if health.is_dir()
-        else {}
-    )
+    verdicts = freshness_verdicts(root)
     try:
         steps = resolve_steps(root)
     except ValueError:
         steps = []
-    for step in steps:
-        if not step.checks_files and step.name in verdicts:
-            verdicts[step.name] = "n/a"
     smart = health / "smart_test.log"
     smart_text = smart.read_text(encoding="utf-8") if smart.is_file() else None
     return render_code_quality(
@@ -661,24 +661,29 @@ def _code_quality(root: Path) -> str:
     )
 
 
-def _pr_view(pr_number: int, fields: str) -> dict[str, object] | None:
-    """Return parsed ``gh pr view`` JSON, or ``None`` when unavailable.
+def _ci_status(pr_number: int | None, view: Mapping[str, object] | None) -> str:
+    """Return the CI Status line for the PR as *view* shows it.
+
+    Only a PR that does not exist yet is pending publication; an existing
+    PR whose view could not be read says so instead of claiming it is
+    unpublished.
 
     Args:
-        pr_number: PR number.
-        fields: ``--json`` field list.
+        pr_number: The PR, or ``None`` before it exists.
+        view: ``gh pr view --json`` fields including ``statusCheckRollup``,
+            or ``None`` when the PR could not be read.
 
     Returns:
-        The decoded object, or ``None`` on a ``gh`` or JSON failure.
+        The one-line CI Status.
     """
-    raw = gh_pr_view(pr_number, fields)
-    if raw is None:
-        return None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
+    if pr_number is None:
+        return PENDING_CI
+    if view is None:
+        return f"unknown — could not read PR #{pr_number}"
+    rollup = view.get("statusCheckRollup")
+    return (
+        summarize_rollup(rollup) if isinstance(rollup, list) else "no checks reported"
+    )
 
 
 def _branch_messages(root: Path, base_ref: str) -> str:
@@ -722,7 +727,7 @@ def _gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs:
         for flag, name in _REPORT_FLAGS
         if (text := _read_optional(getattr(args, flag))) is not None
     }
-    view = _pr_view(args.pr, "body,statusCheckRollup") if args.pr else None
+    view = gh_pr_view(args.pr, "body,statusCheckRollup") if args.pr else None
     body = str(view.get("body") or "") if view else ""
     refs = find_closing_refs(f"{body}\n{_branch_messages(root, args.base)}")
     emergency = armed_state(root)
@@ -739,7 +744,6 @@ def _gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs:
             msg = "light-regen provenance gates failed: run the full reporter round"
             raise ComposeError(msg)
         evidence = evidence_fence(block)
-    rollup = view.get("statusCheckRollup") if view else None
     return ComposeInputs(
         head_sha=run_git(
             "rev-parse", "--short", "HEAD", cwd=root, check=False, log_errors=False
@@ -756,7 +760,7 @@ def _gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs:
             refs, pr_body_checked=view is not None
         ),
         code_quality=_code_quality(root),
-        ci_status=summarize_rollup(rollup) if isinstance(rollup, list) else PENDING_CI,
+        ci_status=_ci_status(args.pr, view),
         emergency_ledger=emergency.ledger_issue if emergency else None,
         delta_prior_sha=(
             wrapup_freshness(args.pr).latest_verified_at
@@ -774,7 +778,8 @@ def _cmd_compose(args: argparse.Namespace) -> int:
         args: Parsed ``compose`` arguments.
 
     Returns:
-        ``0`` when written; ``2`` when evidence is missing or unreadable.
+        ``0`` when written; ``2`` when evidence is missing or unreadable,
+        or ``--base`` looks like an option.
     """
     if args.base.startswith("-"):
         emit(f"pr-wrapup: invalid --base {args.base!r}")
@@ -798,13 +803,38 @@ def _cmd_compose(args: argparse.Namespace) -> int:
     return 0
 
 
+def _is_emergency_post(root: Path, text: str, pr: int) -> bool:
+    """Return whether *text* is the recorded emergency PR's own wrap-up.
+
+    The head's ``wrapup-mode: emergency`` line alone is text any author —
+    or a filled slot quoting it — can write, so waiving the behind-base
+    refusal also needs the sentinel's structural record of this PR
+    (``forge-emergency record-pr``), the same evidence repayment trusts.
+
+    Args:
+        root: Repo root.
+        text: The wrap-up.
+        pr: The PR being posted to.
+
+    Returns:
+        ``True`` only when the head declares emergency mode and the
+        sentinel records *pr*.
+    """
+    head, _sections = _split(text)
+    if not any(_EMERGENCY_RE.match(line) for line in head):
+        return False
+    state = read_state(root)
+    return state is not None and state.pr_number == pr
+
+
 def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
     """Gate, refresh, post and record a validated wrap-up.
 
     Args:
         args: Parsed ``post`` arguments.
         text: The validated wrap-up.
-        path: Where the wrap-up lives (rewritten with the refreshed text).
+        path: Where the wrap-up lives (rewritten with the refreshed text
+            once it validates).
 
     Returns:
         ``0`` when posted; ``2`` when the refreshed body fails validation;
@@ -812,7 +842,7 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
         code when the post fails.
     """
     root = repo_root()
-    view = _pr_view(args.pr, _PR_VIEW_FIELDS)
+    view = gh_pr_view(args.pr, _PR_VIEW_FIELDS)
     if view is None:
         emit(f"pr-wrapup: refused: cannot read PR #{args.pr} with gh; nothing posted")
         return EXIT_REFUSED
@@ -826,7 +856,7 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
         view,
         extract_verified_shas(text)[0],
         behind=counts[0] if counts is not None else None,
-        emergency=bool(_EMERGENCY_RE.search(text)),
+        emergency=_is_emergency_post(root, text, args.pr),
     )
     for note in notes:
         emit(f"pr-wrapup: note: {note}")
@@ -834,29 +864,27 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
         for refusal in refusals:
             emit(f"pr-wrapup: refused: {refusal}")
         return EXIT_REFUSED
-    rollup = view.get("statusCheckRollup")
     refs = find_closing_refs(
         f"{view.get('body') or ''}\n{_branch_messages(root, f'origin/{base}')}"
     )
     refreshed = refresh_sections(
         text,
-        ci_status=summarize_rollup(rollup)
-        if isinstance(rollup, list)
-        else "no checks reported",
+        ci_status=_ci_status(args.pr, view),
         issue_management=render_issue_management(refs, pr_body_checked=True),
     )
-    path.write_text(refreshed, encoding="utf-8")
     problems = validate_wrapup(refreshed)
     if problems:
         for problem in problems:
             emit(f"pr-wrapup: {problem}")
         return 2
+    path.write_text(refreshed, encoding="utf-8")
     rc = post_wrapup(args.pr, refreshed)
     if rc != 0:
         return rc
     if not args.no_continuation:
         title = str(view.get("title") or f"PR #{args.pr}")
-        continuation_append.main(["--pr", str(args.pr), title], repo_root=root)
+        # "--": a PR title may start with "-" and must never parse as a flag.
+        continuation_append.main(["--pr", str(args.pr), "--", title], repo_root=root)
     return 0
 
 
@@ -926,7 +954,8 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         ``0`` on success; ``2`` when validation fails (every violation
-        printed), a body file is unreadable, or compose lacks evidence;
+        printed), a body file is unreadable, or compose lacks evidence or
+        gets an option-like ``--base``;
         ``3`` when ``post`` refuses the publication; ``gh``'s exit code
         when the post fails.
     """

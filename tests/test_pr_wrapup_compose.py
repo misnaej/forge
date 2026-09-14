@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from forge.pr_delta import extract_verified_shas
@@ -52,6 +54,19 @@ def _findings_report() -> str:
     return "Found: an unused import. Disposition: removed before commit.\n"
 
 
+_DEFAULT_INPUTS = ComposeInputs(
+    head_sha="abc1234",
+    mode="full",
+    reasons=(),
+    reporters=_ALL_REPORTERS,
+    reports={reporter: _pass_report() for reporter in _ALL_REPORTERS},
+    prior_art_report=None,
+    added_non_fragment_paths=(),
+    issue_management="Closes #1",
+    code_quality="✅ pre-commit: 5 pass ✅ pytest 100 passed in 1.0s",
+)
+
+
 def _inputs(**overrides: object) -> ComposeInputs:
     """Build full-mode, all-clean ``ComposeInputs``; override per test.
 
@@ -61,19 +76,7 @@ def _inputs(**overrides: object) -> ComposeInputs:
     Returns:
         A ``ComposeInputs`` ready for :func:`render_wrapup`.
     """
-    base: dict[str, object] = {
-        "head_sha": "abc1234",
-        "mode": "full",
-        "reasons": (),
-        "reporters": _ALL_REPORTERS,
-        "reports": {reporter: _pass_report() for reporter in _ALL_REPORTERS},
-        "prior_art_report": None,
-        "added_non_fragment_paths": (),
-        "issue_management": "Closes #1",
-        "code_quality": "✅ pre-commit: 5 pass ✅ pytest 100 passed in 1.0s",
-    }
-    base.update(overrides)
-    return ComposeInputs(**base)  # type: ignore[arg-type]
+    return dataclasses.replace(_DEFAULT_INPUTS, **overrides)
 
 
 def _fill(text: str) -> str:
@@ -139,9 +142,8 @@ def test_render_wrapup_full_mode_with_one_finding_uses_a_findings_slot() -> None
 def test_render_wrapup_light_code_mode_token_and_mechanical_recommendation() -> None:
     """light-code writes ``wrapup-mode: light`` and a reasons-only Recommendation.
 
-    Pins the refinement in the test plan: only ``light-code`` (and
-    emergency) get the ``wrapup-mode:`` token the publish hook matches —
-    every other mode renders no mode line at all.
+    Only ``light-code`` (and emergency) get the ``wrapup-mode:`` token the
+    publish hook matches — every other mode renders no mode line at all.
     """
     inputs = _inputs(
         mode="light-code",
@@ -345,7 +347,7 @@ def _timing_log(*rows: str, stamped: bool = True) -> str:
     Args:
         *rows: Each a ``"<name> <marker>"`` pair (marker is one of SKIP,
             PASS, WARN, FAIL).
-        stamped: Whether to prepend a ``# produced-at:`` line (#538 shape) —
+        stamped: Whether to prepend a ``# produced-at:`` line —
             it must never be mistaken for a step row.
 
     Returns:
@@ -542,6 +544,12 @@ def test_summarize_rollup_failure_beats_running() -> None:
     assert summarize_rollup(rollup) == "❌ failed: test"
 
 
+def test_summarize_rollup_joins_a_newline_in_a_check_name() -> None:
+    """A newline in a check name becomes a space: CI Status stays one line."""
+    rollup = [{"name": "build\nreport", "status": "COMPLETED", "conclusion": "FAILURE"}]
+    assert summarize_rollup(rollup) == "❌ failed: build report"
+
+
 def test_summarize_rollup_status_context_legacy_shapes() -> None:
     """StatusContext (pre-Checks-API) entries use ``context``/``state``.
 
@@ -575,17 +583,19 @@ def test_render_issue_management_warns_when_none_found() -> None:
     assert text.startswith("⚠️ no closing keyword found")
 
 
-def test_render_issue_management_notes_pr_body_not_yet_checked() -> None:
-    """Before a PR exists, the line notes commit messages were the only source."""
+def test_render_issue_management_notes_an_unsearched_pr_body() -> None:
+    """Without a readable PR body, the line says only commits were searched."""
     text = render_issue_management([7], pr_body_checked=False)
-    assert text == "Closes #7 — commit messages only, PR body not yet available"
+    assert text == "Closes #7 — commit messages only; the PR body was not searched"
 
 
-def test_render_issue_management_notes_absence_before_pr_body_checked() -> None:
-    """The not-yet-available note appends even when nothing was found either."""
+def test_render_issue_management_notes_absence_when_the_pr_body_was_not_searched() -> (
+    None
+):
+    """The not-searched note appends even when nothing was found either."""
     text = render_issue_management([], pr_body_checked=False)
     assert text.startswith("⚠️ no closing keyword found")
-    assert text.endswith("— commit messages only, PR body not yet available")
+    assert text.endswith("— commit messages only; the PR body was not searched")
 
 
 # ---------------------------------------------------------------------------

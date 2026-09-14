@@ -523,6 +523,56 @@ def test_strip_fences_drops_everything_after_an_unclosed_fence() -> None:
     assert strip_fences(lines) == ["before"]
 
 
+@pytest.mark.parametrize(
+    ("lines", "expected"),
+    [
+        pytest.param(
+            ["before", "````", "```", "still inside", "````", "after"],
+            ["before", "after"],
+            id="four-backtick-opener-survives-a-nested-triple-backtick-line",
+        ),
+        pytest.param(
+            ["before", "```", "~~~", "still fenced", "```", "after"],
+            ["before", "after"],
+            id="tilde-line-does-not-close-a-backtick-fence",
+        ),
+        pytest.param(
+            [
+                "before",
+                "```",
+                "``` with an info string",
+                "still inside",
+                "```",
+                "after",
+            ],
+            ["before", "after"],
+            id="a-closing-shaped-line-carrying-an-info-string-does-not-close",
+        ),
+        pytest.param(
+            ["before", "```", "inside", "````", "after"],
+            ["before", "after"],
+            id="a-longer-closing-fence-closes-a-shorter-opener",
+        ),
+    ],
+)
+def test_strip_fences_closing_rule_matches_commonmark(
+    lines: list[str], expected: list[str]
+) -> None:
+    """CommonMark's fence-closing rule: same char, length >= opener, no info.
+
+    Each case is a way a naive "any fence-shaped line toggles" reading
+    would get wrong — a mismatched fence character, a shorter or
+    info-carrying line, or a longer closer — regression coverage for
+    :func:`fenced_line_indexes` now that it drives both `strip_fences`
+    and `pr_wrapup._section_bounds`.
+
+    Args:
+        lines: Markdown lines under test.
+        expected: The lines `strip_fences` should keep.
+    """
+    assert strip_fences(lines) == expected
+
+
 # ---------------------------------------------------------------------------
 # find_closing_refs
 # ---------------------------------------------------------------------------

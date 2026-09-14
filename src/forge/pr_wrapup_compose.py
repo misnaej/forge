@@ -369,13 +369,17 @@ def pytest_summary_line(log_text: str | None) -> str | None:
 def _entry_name(entry: Mapping[str, object]) -> str:
     """Return a rollup entry's display name.
 
+    Whitespace runs collapse to one space: the name is GitHub-sourced text
+    joined into the one-line CI Status, so a newline in it must not start
+    a line of its own.
+
     Args:
         entry: One ``statusCheckRollup`` entry.
 
     Returns:
         The check-run name or status-context name.
     """
-    return str(entry.get("name") or entry.get("context") or "?")
+    return " ".join(str(entry.get("name") or entry.get("context") or "?").split())
 
 
 def summarize_rollup(rollup: Sequence[Mapping[str, object]]) -> str:
@@ -427,7 +431,7 @@ def render_issue_management(
     else:
         text = "⚠️ no closing keyword found (Closes/Fixes/Resolves #N on its own line)"
     if not pr_body_checked:
-        text += " — commit messages only, PR body not yet available"
+        text += " — commit messages only; the PR body was not searched"
     return text
 
 

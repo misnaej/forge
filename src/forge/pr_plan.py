@@ -249,32 +249,32 @@ def _line_count(root: Path, diff_range: str, pathspec: list[str] | None = None) 
     return total
 
 
-def gh_pr_view(
-    pr_number: int, json_fields: str, *, jq: str | None = None
-) -> str | None:
-    """Run ``gh pr view N --json <fields>`` and return its stdout, or ``None``.
+def gh_pr_view(pr_number: int, json_fields: str) -> dict[str, object] | None:
+    """Return ``gh pr view N --json <fields>`` decoded, or ``None``.
 
     The one ``gh`` seam this module owns. Every failure — missing binary,
-    no auth, unknown PR — collapses to ``None`` after a warning so callers
-    degrade (full mode, ``fresh: null``) instead of crashing.
+    no auth, unknown PR (each after a warning), or output that is not a
+    JSON object — collapses to ``None`` so callers degrade (full mode,
+    ``fresh: null``) instead of crashing.
 
     Args:
         pr_number: The existing PR to read.
         json_fields: Comma-separated ``--json`` field list.
-        jq: Optional ``--jq`` filter applied by ``gh``.
 
     Returns:
-        Raw stdout on success, ``None`` on any ``gh`` failure.
+        The decoded object, or ``None`` on any failure.
     """
     cmd = ["gh", "pr", "view", str(pr_number), "--json", json_fields]
-    if jq is not None:
-        cmd += ["--jq", jq]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         logger.warning("pr-plan: could not read PR #%s (%s)", pr_number, exc)
         return None
-    return proc.stdout
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _newest_header_sha(comments: list[dict[str, object]]) -> str | None:
@@ -316,14 +316,11 @@ def _latest_verified_sha(pr_number: int) -> str | None:
         The newest comment's header SHA per :func:`_newest_header_sha`, or
         ``None`` when unavailable.
     """
-    out = gh_pr_view(pr_number, "comments")
-    if out is None:
+    data = gh_pr_view(pr_number, "comments")
+    if data is None:
         return None
-    try:
-        data = json.loads(out)
-    except json.JSONDecodeError:
-        return None
-    return _newest_header_sha(data.get("comments", []))
+    comments = data.get("comments")
+    return _newest_header_sha(comments if isinstance(comments, list) else [])
 
 
 def wrapup_freshness(pr_number: int) -> WrapupFreshness:
@@ -346,21 +343,18 @@ def wrapup_freshness(pr_number: int) -> WrapupFreshness:
         carries a ``verified-at:`` line — an unknown head can never be
         reported stale, since a false alert costs a needless refresh.
     """
-    out = gh_pr_view(pr_number, "headRefOid,comments")
-    if out is None:
-        return WrapupFreshness(fresh=None, reason="gh pr view failed; skip")
-    try:
-        data = json.loads(out)
-    except json.JSONDecodeError:
+    data = gh_pr_view(pr_number, "headRefOid,comments")
+    if data is None:
         return WrapupFreshness(
-            fresh=None, reason="gh pr view returned invalid JSON; skip"
+            fresh=None, reason="gh pr view failed or returned no JSON object; skip"
         )
     head = str(data.get("headRefOid", ""))
     if not head:
         return WrapupFreshness(
             fresh=None, reason="gh pr view returned no headRefOid; skip"
         )
-    latest = _newest_header_sha(data.get("comments", []))
+    comments = data.get("comments")
+    latest = _newest_header_sha(comments if isinstance(comments, list) else [])
     if latest is None:
         return WrapupFreshness(
             fresh=None,

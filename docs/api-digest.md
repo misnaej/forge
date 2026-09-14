@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_73 modules, 1009 symbols._
+_73 modules, 1012 symbols._
 
 ## `forge`
 
@@ -842,6 +842,7 @@ _73 modules, 1009 symbols._
 > _pr_delta — thresholds and helpers for pr-manager finalization short-circuits._
 
 - `extract_verified_shas(text: str) -> list[str]` — Return every ``verified-at:`` SHA referenced in *text*.
+- `fenced_line_indexes(lines: list[str]) -> set[int]` — Return the indexes of *lines* inside fenced code blocks, delimiters included.
 - `strip_fences(lines: list[str]) -> list[str]` — Return *lines* without fenced code blocks (fence lines included).
 - `find_closing_refs(text: str) -> list[int]` — Return the issue numbers a PR body or commit message would close.
 - `touches_high_blast_radius(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`HIGH_BLAST_RADIUS_PATHS`.
@@ -864,7 +865,7 @@ _73 modules, 1009 symbols._
 - `_changed_paths(root: Path, diff_range: str, pathspec: list[str] | None = None) -> list[str]` _(internal)_ — Return the repo-relative paths changed across *diff_range*.
 - `added_paths(root: Path, diff_range: str) -> list[str]` — Return the new paths across *diff_range* (``--diff-filter=ACR``).
 - `_line_count(root: Path, diff_range: str, pathspec: list[str] | None = None) -> int` _(internal)_ — Return insertions + deletions across *diff_range*.
-- `gh_pr_view(pr_number: int, json_fields: str, *, jq: str | None = None) -> str | None` — Run ``gh pr view N --json <fields>`` and return its stdout, or ``None``.
+- `gh_pr_view(pr_number: int, json_fields: str) -> dict[str, object] | None` — Return ``gh pr view N --json <fields>`` decoded, or ``None``.
 - `_newest_header_sha(comments: list[dict[str, object]]) -> str | None` _(internal)_ — Return the header ``verified-at:`` SHA of the newest comment carrying one.
 - `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.
 - `wrapup_freshness(pr_number: int) -> WrapupFreshness` — Compare the PR's newest ``verified-at:`` SHA against its current head.
@@ -892,7 +893,7 @@ _73 modules, 1009 symbols._
 
 ## `forge.pr_wrapup`
 
-> _forge-pr-wrapup — validate and post the PR wrap-up comment, retiring older ones._
+> _forge-pr-wrapup — compose, validate and post the PR wrap-up, retiring older ones._
 
 - `_split(text: str) -> tuple[list[str], list[tuple[str, list[str]]]]` _(internal)_ — Split the body into its head and its ``## `` sections, in order.
 - `_prior_art_block(head: list[str]) -> set[int]` _(internal)_ — Return the indexes of the ``prior-art-searched:`` block within *head*.
@@ -911,10 +912,11 @@ _73 modules, 1009 symbols._
 - `_read_optional(path: Path | None) -> str | None` _(internal)_ — Read *path* when given.
 - `_load_plan(root: Path, args: argparse.Namespace) -> tuple[str, tuple[str, ...], tuple[str, ...]]` _(internal)_ — Return the plan's ``(mode, reporters, reasons)``.
 - `_code_quality(root: Path) -> str` _(internal)_ — Render Code Quality from the timing log and each log's freshness.
-- `_pr_view(pr_number: int, fields: str) -> dict[str, object] | None` _(internal)_ — Return parsed ``gh pr view`` JSON, or ``None`` when unavailable.
+- `_ci_status(pr_number: int | None, view: Mapping[str, object] | None) -> str` _(internal)_ — Return the CI Status line for the PR as *view* shows it.
 - `_branch_messages(root: Path, base_ref: str) -> str` _(internal)_ — Return the commit messages on HEAD since *base_ref*.
 - `_gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs` _(internal)_ — Collect everything ``compose`` renders from.
 - `_cmd_compose(args: argparse.Namespace) -> int` _(internal)_ — Write ``code_health/pr_wrapup.md`` with slots for the author to fill.
+- `_is_emergency_post(root: Path, text: str, pr: int) -> bool` _(internal)_ — Return whether *text* is the recorded emergency PR's own wrap-up.
 - `_cmd_post(args: argparse.Namespace, text: str, path: Path) -> int` _(internal)_ — Gate, refresh, post and record a validated wrap-up.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the ``forge-pr-wrapup`` argument parser.
 - `main(argv: list[str] | None = None) -> int` — Run ``compose``, ``validate`` or ``post``.
@@ -1014,6 +1016,7 @@ _73 modules, 1009 symbols._
 - `_capped(output: str) -> str` _(internal)_ — Return *output* trimmed to the shared evidence cap.
 - `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult]) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
 - `_forced_steps(only: list[str]) -> Iterator[None]` _(internal)_ — Force explicitly named steps to run, then restore the environment.
+- `freshness_verdicts(root: Path) -> dict[str, str]` — Return each ``code_health/`` log's freshness verdict against the working tree.
 - `_report_freshness(only: list[str], *, as_json: bool) -> int` _(internal)_ — Report each ``code_health/`` log's freshness against the working tree.
 - `main() -> int` — CLI entry point.
 

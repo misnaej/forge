@@ -437,8 +437,9 @@ advisories with the suggested pin; they never edit pins.
   not follow-ups — and the changelog version heading settles before the
   branch is published. Order: verify locally → fix → commit → **compose and
   fill the wrap-up, author the squash message** → push → open PR → post
-  them (`forge-pr-wrapup post` refuses a wrap-up that no longer names the PR
-  head, or a branch that conflicts with or is behind its base). The
+  them (`forge-pr-wrapup post` refuses a PR it cannot read, a wrap-up that
+  no longer names the PR head, or a branch that conflicts with or is
+  behind its base). The
   `block_unverified_pr_create` hook blocks `gh pr create` until the authored
   wrap-up names the current `HEAD` — and, when the wrap-up declares
   `wrapup-mode: light`, additionally re-runs the `forge-pr-plan`

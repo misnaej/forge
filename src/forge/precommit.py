@@ -3001,6 +3001,32 @@ def _forced_steps(only: list[str]) -> Iterator[None]:
 _HISTORY_LOG_SUFFIX = "_history.log"
 
 
+def freshness_verdicts(root: Path) -> dict[str, str]:
+    """Return each ``code_health/`` log's freshness verdict against the working tree.
+
+    A log of a step that checks the environment rather than files reports
+    ``n/a`` — its stamp says nothing about its result. Append-only history
+    logs are left out: they describe no single tree.
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        Log name (without ``.log``) → ``fresh``, ``stale``, ``unstamped``,
+        ``unknown`` or ``n/a``, in name order.
+    """
+    log_dir = root / "code_health"
+    current = working_tree_sha(root)
+    environment_steps = {step.name for step in _STEP_REGISTRY if not step.checks_files}
+    return {
+        path.stem: (
+            "n/a" if path.stem in environment_steps else log_freshness(path, current)
+        )
+        for path in sorted(log_dir.glob("*.log"))
+        if not path.name.endswith(_HISTORY_LOG_SUFFIX)
+    }
+
+
 def _report_freshness(only: list[str], *, as_json: bool) -> int:
     """Report each ``code_health/`` log's freshness against the working tree.
 
@@ -3022,15 +3048,11 @@ def _report_freshness(only: list[str], *, as_json: bool) -> int:
     """
     root = get_repo_root()
     log_dir = root / "code_health"
-    current = working_tree_sha(root)
-    environment_steps = {step.name for step in _STEP_REGISTRY if not step.checks_files}
-    verdicts: dict[str, str] = {}
-    for path in sorted(log_dir.glob("*.log")):
-        if path.name.endswith(_HISTORY_LOG_SUFFIX) or (only and path.stem not in only):
-            continue
-        verdicts[path.stem] = (
-            "n/a" if path.stem in environment_steps else log_freshness(path, current)
-        )
+    verdicts = {
+        name: verdict
+        for name, verdict in freshness_verdicts(root).items()
+        if not only or name in only
+    }
     for name in only:
         if name not in verdicts:
             verdicts[name] = (

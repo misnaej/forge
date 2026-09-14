@@ -139,7 +139,7 @@ do not re-derive the classification in prose.
 | `light-docs` | `docs-types-checker` only | `forge-precommit --only <precommit_scope>` (changelog + doc gates; add other path-relevant steps as applicable) | Whole diff is doc-shaped, nothing high-blast-radius. Steps 3–4 run as normal; `compose` marks the skipped reporters `SKIPPED (light-docs)`. Residuals documented in `pr_delta.docs_only_diff`: path-string classification only — docs-types-checker + human review stay reviewers of record. |
 | `light-regen` | none — **after earning it** | The provenance gates in `precommit_scope` | **Eligibility only** (resync PRs: every path in `pr_delta.MANAGED_REGEN_PATHS`). **Earn** the escape: `forge-precommit --only foundation_md_check,cli_reference_check,api_digest_check`. Every gate passes (absent-file skips fine) → skip all three reporters; `compose` re-runs the gates and embeds their output verbatim as evidence (it refuses when a gate fails). **Any gate FAILS → full round, no exceptions** (covers the editable-install self-reference case and hand-edits to managed files — the byte check exists to catch exactly that). Steps 3–4 run as normal. |
 | `light-code` | none | Strict whole-tree battery (empty `precommit_scope`) | Small code diff (`pr_delta.light_wrapup_decision`: under `LIGHT_WRAPUP_LINE_THRESHOLD`, **no added files bar `changelog.d/` fragments** — the prior-art gate stays independent, and a fragment poses it no question while another gate compels it — no `src/` path, nothing high-blast-radius). Reporters skipped; Step 3.92's `compose` writes the light wrap-up (`wrapup-mode: light`, reporter sections `SKIPPED (light-code)`, the classifier's reasons as the Recommendation; squash message still mandatory). Never agent discretion: `block_unverified_pr_create` re-runs `forge-pr-plan` at `gh pr create` and blocks unless it agrees — classifier missing/erroring/disagreeing → full wrap-up applies. Skip the `/code-review` offer (no reporter round to overlap); say so in the wrap-up. |
-| `delta` | none | none | An existing PR's prior wrap-up carries a `verified-at:` SHA and the diff since it is small and out of high-blast-radius paths — **skip Step 1 entirely**, jump to Step 3.92 with `compose --pr <PR#>` (it renders the delta wrap-up), then Step 4 posts it and a refreshed squash comment. |
+| `delta` | none | none | An existing PR's prior wrap-up carries a `verified-at:` SHA and the diff since it is small and out of high-blast-radius paths — **skip Step 1 entirely**, jump to Step 3.92 with `compose --base origin/<base> --pr <PR#>` (it renders the delta wrap-up), then Step 4 posts it and a refreshed squash comment. |
 | `full` | all three below | Strict whole-tree battery (empty `precommit_scope`) | The default round. |
 
 On `mode: full` (and after a failed `light-regen` earn), run the three
@@ -278,11 +278,12 @@ text reaches the terminal. Before delegating to `pr-manager`, print a
 - Anything deliberately deferred, with its tracking issue number.
 
 This is "what happened during this run" — NOT a restatement of the PR
-description or the wrap-up comment (both owned by `pr-manager`). It
+description (`pr-manager`'s) or the wrap-up comment (`compose`'s
+sections plus `pr-manager`'s filled slots). It
 runs **before** delegation because that is the last point where the
 user can redirect finalization cheaply, and it is the context they
 need to judge the wrap-up that follows. (On the delta-mode
-short-circuit — Step 1 straight to Step 4 — this step is skipped with
+short-circuit — Step 1 straight to Step 3.92 — this step is skipped with
 the rest of Steps 2–3.5; summarize the delta decision instead.)
 
 ## Step 3.92: Author the wrap-up BEFORE the PR exists (MANDATORY)
@@ -365,8 +366,9 @@ Verification is done, fixes are committed, and the wrap-up is authored
     ```
 
     `forge-pr-wrapup post` validates the wrap-up and **refuses (exit 3)**
-    when its `verified-at:` is not the PR head, or the branch conflicts
-    with or is behind its base (an emergency wrap-up may be behind) — it
+    when it cannot read the PR, its `verified-at:` is not the PR head, or
+    the branch conflicts with or is behind its base (only the emergency PR
+    `forge-emergency record-pr` recorded may be behind) — it
     names the fix (merge the base, re-verify with `/pr <PR#>`) and never
     merges. Otherwise it refreshes CI Status (never waiting for CI) and
     Issue Management from GitHub, posts, collapses superseded wrap-ups,

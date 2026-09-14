@@ -537,6 +537,30 @@ def test_classify_delta_after_base_merge_still_sees_branch_changes(
     assert any("full re-check required" in r for r in plan.reasons)
 
 
+# --- gh_pr_view() -----------------------------------------------------------
+# Syntactically-invalid JSON is already pinned indirectly, elsewhere in
+# this file, by test_latest_verified_sha_returns_none_on_invalid_json and
+# test_wrapup_freshness_returns_none_on_invalid_json (same
+# json.JSONDecodeError branch `gh_pr_view` now owns) — not duplicated here.
+
+
+def test_gh_pr_view_returns_none_for_valid_json_that_is_not_an_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Syntactically valid JSON that decodes to a non-object also degrades to `None`.
+
+    SCENARIO: ``gh pr view --json`` prints a JSON array — a shape no
+    caller here expects, but one ``json.loads`` accepts without raising.
+    MOCK SETUP: ``pr_plan.subprocess.run`` is replaced with ``make_fake_run``
+    returning that array as stdout.
+    EXPECTED BEHAVIOR: ``gh_pr_view`` returns ``None`` rather than raising
+    or handing the array back as if it were a mapping.
+    """
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout="[]"))
+
+    assert pr_plan.gh_pr_view(42, "comments") is None
+
+
 # --- _latest_verified_sha(): happy path -----------------------------------
 
 
