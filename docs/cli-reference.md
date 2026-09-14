@@ -360,8 +360,7 @@ positional arguments:
   {start,status,consume,record-pr,end}
     start               arm one bypass (files the ledger first)
     status              print armed/spent/expired state
-    consume             spend the armed bypass (called by the wrap-up gate
-                        hook)
+    consume             spend the armed bypass (called by forge-pr-create)
     record-pr           record the published emergency PR number in the
                         sentinel
     end                 close the ledger once the debt is repaid

@@ -80,7 +80,6 @@ def _stub_gh(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     publication when a test expected it to refuse first.
 
     Args:
-        monkeypatch: Pytest's monkeypatch fixture, used to scope the patch
             to the calling test.
 
     Returns:

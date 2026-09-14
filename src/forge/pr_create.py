@@ -360,7 +360,18 @@ def main() -> int:
         *extra,
     ]
     logger.info("publishing '%s' — verified against %s", branch, root / WRAPUP_PATH)
-    proc = subprocess.run(cmd, check=False)
+    try:
+        proc = subprocess.run(cmd, check=False)
+    except OSError:
+        # Most often gh missing from PATH. FOUNDATION §2: a forge tool
+        # depending on a CLI fails loudly and points at the remedy, never
+        # crashes with a traceback that reads like a forge bug — and this
+        # function's own contract promises 2, not an exception.
+        logger.exception(
+            "REFUSED: could not run gh. Install the GitHub CLI, or "
+            "publish by hand now that the wrap-up verifies."
+        )
+        return 2
     return 0 if proc.returncode == 0 else 2
 
 

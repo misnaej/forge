@@ -419,7 +419,7 @@ _75 modules, 1051 symbols._
 - `_create_ledger_issue(reason: str, expires_at: str) -> int | None` _(internal)_ — File the public ledger issue; return its number, or ``None`` on failure.
 - `_cmd_start(root: Path, reason: str, ttl_hours: float) -> int` _(internal)_ — Arm the one-shot bypass: ledger issue first, then the sentinel.
 - `_cmd_status(root: Path) -> int` _(internal)_ — Print the sentinel state.
-- `consume(root: Path) -> int` — Spend the armed bypass (called by the wrap-up gate hook).
+- `consume(root: Path) -> int` — Spend the armed bypass (called by forge-pr-create).
 - `_cmd_record_pr(root: Path, pr_number: int) -> int` _(internal)_ — Record the emergency PR number structurally in the sentinel.
 - `_repayment_evidence(state: EmergencyState) -> tuple[int | None, bool]` _(internal)_ — Return ``(pr_number, repaid)`` for the sentinel's recorded PR.
 - `_cmd_end(root: Path) -> int` _(internal)_ — Close the ledger when the emergency PR's verification debt is repaid.

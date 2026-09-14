@@ -28,7 +28,7 @@ If `$ARGUMENTS` contains a PR number, use that instead of auto-detecting. Then:
   heading settles before the branch is published. The PR is created in
   Step 3.95.
 - **Draft escape hatch** — the user wants the PR visible now → create it as a
-  draft (`gh pr create --draft`, body per the Step 3.95 template) and mark it
+  draft (`forge-pr-create --draft`, body per the Step 3.95 template) and mark it
   ready in Step 3.95. Drafts do not consume CI: the shipped workflow
   ([`forge-docs/ci-recipe.md`](../../forge-docs/ci-recipe.md)) skips draft PRs and runs
   on `ready_for_review`.
@@ -108,7 +108,7 @@ auditable authorization; an agent never arms it on its own judgment),
 skip Steps 1–3.9 entirely: run `forge-pr-wrapup compose --base
 origin/<base>` — with emergency armed it renders `wrapup-mode: emergency`
 and the ledger issue in place of the reporter sections — fill its summary
-slot with what ships, then push, `gh pr create` (the gate consumes
+slot with what ships, then push, `forge-pr-create` (it consumes
 the one-shot sentinel), run `forge-emergency record-pr <N>` (the
 structural record repayment trusts — never a free-text ledger
 comment), post the wrap-up (`forge-pr-wrapup post --pr <N>`) and a
@@ -138,7 +138,7 @@ do not re-derive the classification in prose.
 |---|---|---|---|
 | `light-docs` | `docs-types-checker` only | `forge-precommit --only <precommit_scope>` (changelog + doc gates; add other path-relevant steps as applicable) | Whole diff is doc-shaped, nothing high-blast-radius. Steps 3–4 run as normal; `compose` marks the skipped reporters `SKIPPED (light-docs)`. Residuals documented in `pr_delta.docs_only_diff`: path-string classification only — docs-types-checker + human review stay reviewers of record. |
 | `light-regen` | none — **after earning it** | The provenance gates in `precommit_scope` | **Eligibility only** (resync PRs: every path in `pr_delta.MANAGED_REGEN_PATHS`). **Earn** the escape: `forge-precommit --only foundation_md_check,cli_reference_check,api_digest_check`. Every gate passes (absent-file skips fine) → skip all three reporters; `compose` re-runs the gates and embeds their output verbatim as evidence (it refuses when a gate fails). **Any gate FAILS → full round, no exceptions** (covers the editable-install self-reference case and hand-edits to managed files — the byte check exists to catch exactly that). Steps 3–4 run as normal. |
-| `light-code` | none | Strict whole-tree battery (empty `precommit_scope`) | Small code diff (`pr_delta.light_wrapup_decision`: under `LIGHT_WRAPUP_LINE_THRESHOLD`, **no added files bar `changelog.d/` fragments** — the prior-art gate stays independent, and a fragment poses it no question while another gate compels it — no `src/` path, nothing high-blast-radius). Reporters skipped; Step 3.92's `compose` writes the light wrap-up (`wrapup-mode: light`, reporter sections `SKIPPED (light-code)`, the classifier's reasons as the Recommendation; squash message still mandatory). Never agent discretion: `block_unverified_pr_create` re-runs `forge-pr-plan` at `gh pr create` and blocks unless it agrees — classifier missing/erroring/disagreeing → full wrap-up applies. Skip the `/code-review` offer (no reporter round to overlap); say so in the wrap-up. |
+| `light-code` | none | Strict whole-tree battery (empty `precommit_scope`) | Small code diff (`pr_delta.light_wrapup_decision`: under `LIGHT_WRAPUP_LINE_THRESHOLD`, **no added files bar `changelog.d/` fragments** — the prior-art gate stays independent, and a fragment poses it no question while another gate compels it — no `src/` path, nothing high-blast-radius). Reporters skipped; Step 3.92's `compose` writes the light wrap-up (`wrapup-mode: light`, reporter sections `SKIPPED (light-code)`, the classifier's reasons as the Recommendation; squash message still mandatory). Never agent discretion: `forge-pr-create` re-runs `forge-pr-plan` before publishing and refuses unless it agrees — classifier missing/erroring/disagreeing → full wrap-up applies. Skip the `/code-review` offer (no reporter round to overlap); say so in the wrap-up. |
 | `delta` | none | none | An existing PR's prior wrap-up carries a `verified-at:` SHA and the diff since it is small and out of high-blast-radius paths — **skip Step 1 entirely**, jump to Step 3.92 with `compose --base origin/<base> --pr <PR#>` (it renders the delta wrap-up), then Step 4 posts it and a refreshed squash comment. |
 | `full` | all three below | Strict whole-tree battery (empty `precommit_scope`) | The default round. |
 
@@ -330,11 +330,12 @@ wrap-up slots" task) together with the squash-merge message, which it
 returns and never embeds in the wrap-up. `forge-pr-wrapup validate`
 refuses any unfilled slot.
 
-The `block_unverified_pr_create` hook enforces this: `gh pr create` is
-blocked unless `code_health/pr_wrapup.md` names the current `HEAD` —
-authoring at one SHA and publishing another re-runs this step. On
-`mode: light-code` `compose` writes `wrapup-mode: light`, and the hook
-re-runs `forge-pr-plan` fail-closed before letting the create through. When the
+`forge-pr-create` enforces this: it refuses unless the wrap-up in the
+checkout it publishes names that checkout's `HEAD` — authoring at one
+SHA and publishing another re-runs this step. On `mode: light-code`
+`compose` writes `wrapup-mode: light`, and the command re-runs
+`forge-pr-plan` fail-closed before publishing. The hook now refuses the
+raw form outright, so the command is the only way through. When the
 user explicitly asks to skip the gate, prefix the create command with
 `FORGE_SKIP_WRAPUP_GATE=1` — never on the agent's own judgment.
 Promotion PRs self-exempt only with provenance: the `release/vX.Y.Z`

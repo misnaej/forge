@@ -460,12 +460,14 @@ advisories with the suggested pin; they never edit pins.
   them (`forge-pr-wrapup post` refuses a PR it cannot read, a wrap-up that
   no longer names the PR head, or a branch that conflicts with or is
   behind its base). The
-  `block_unverified_pr_create` hook blocks `gh pr create` until the authored
-  wrap-up names the current `HEAD` — and, when the wrap-up declares
-  `wrapup-mode: light`, additionally re-runs the `forge-pr-plan`
-  classifier fail-closed, blocking unless it agrees the diff is
-  light-code (`FORGE_SKIP_WRAPUP_GATE=1` on explicit
-  user request only). A **draft PR** is
+  `block_unverified_pr_create` hook refuses a raw create outright and
+  names `forge-pr-create`, which publishes. That command runs in the
+  checkout it publishes, so the branch is where it stands rather than
+  something inferred from command text, and it refuses unless that
+  checkout's wrap-up names that checkout's `HEAD`. A `wrapup-mode:
+  light` wrap-up additionally re-runs the `forge-pr-plan` classifier
+  fail-closed, refusing unless it agrees the diff is light-code
+  (`FORGE_SKIP_WRAPUP_GATE=1` on explicit user request only). A **draft PR** is
   the escape hatch when the PR should be visible earlier. A genuine
   emergency uses **`forge-emergency`** — one human-armed, ledger-backed
   `wrapup-mode: emergency` publication that defers only the verification
