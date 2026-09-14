@@ -179,6 +179,28 @@ Specific errors from logs:
 - Review code quality → **`forge:design-checker`**
 - Review security → **`forge:security-checker`**
 
+## Report who wrote what (before you commit)
+
+```bash
+forge-agent-profile --edits
+```
+
+Run this before staging and put its output in the hand-back verbatim.
+Once an edit is in the tree it is indistinguishable from the caller's
+own, so the caller commits another agent's work as theirs without ever
+being told. This reads the hook ledger and says which uncommitted files
+a subagent wrote — a derived fact, not an agent's self-report, which is
+the point: nothing here depends on the agent that made the edit choosing
+to mention it.
+
+Never paraphrase the verdict, and never convert `UNKNOWN` into "none".
+They are different claims: `UNKNOWN` means the ledger could not be read
+(a fresh clone, `FORGE_NO_AGENT_TIMING=1`, no `jq`), and reporting that
+as a clean tree is exactly the absence-of-evidence error the line
+carries a warning about. It also sees tool-based writes only — anything
+written through a shell command has no recorded path — so it is
+evidence, never an audit. Say so if the caller treats it as one.
+
 ## Output
 
 ```
@@ -186,6 +208,7 @@ GIT-COMMIT-PUSH COMPLETE
 
 Commit: <short-hash> <subject>
 Files staged: <paths, or "all (-A)">
+Authorship: <the `forge-agent-profile --edits` output, verbatim>
 Pre-commit: passed
 Pushed: <branch> → origin/<branch> (tracking set, if -u)
 CONTINUATION: appended

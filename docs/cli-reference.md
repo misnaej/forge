@@ -28,7 +28,8 @@ options:
 usage: forge-agent-profile [-h] [--ledger LEDGER] [--transcripts TRANSCRIPTS]
                            [--agent-type AGENT_TYPE] [--since SINCE]
                            [--last LAST] [--top TOP] [--label LABEL] [--json]
-                           [--history] [--no-history]
+                           [--history] [--edits] [--session SESSION]
+                           [--no-history]
 
 Report where agent and subagent time goes (read-only, always exits 0).
 
@@ -48,6 +49,10 @@ options:
   --label LABEL         Label for the history line.
   --json                Emit JSON instead of the text report.
   --history             Render the append-only history ledger.
+  --edits               Report which uncommitted files a subagent wrote, not
+                        the caller.
+  --session SESSION     Restrict --edits to one session id (the ledger is
+                        shared per clone).
   --no-history          Do not append to the history ledger.
 ```
 

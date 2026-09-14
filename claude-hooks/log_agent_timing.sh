@@ -9,7 +9,12 @@
 # takes, whether forge:precommit-fixer honours its three-run cap, or
 # whether a subagent is re-running the same command. The hook payloads
 # are the documented, stable source for that: agent_id / agent_type on
-# the subagent events, tool_name / duration_ms on PostToolUse. The
+# the subagent events, tool_name / duration_ms / file_path on
+# PostToolUse. `file_path` is what makes the ledger answer *which* files
+# a subagent wrote, not merely that it wrote: an edit is indistinguishable
+# from the caller's own once it is in the tree. Only tool-based writes
+# carry a path — anything written through a shell command has none, so a
+# reader must treat this as partial evidence, never as an audit. The
 # ledger is append-only and per-workspace (code_health/ is gitignored);
 # the CLI does the pairing and the statistics — this hook only records.
 #
@@ -40,7 +45,8 @@ OUT=$(printf '%s' "$INPUT" | jq -r '(.cwd // "."), ({
     transcript_path,
     tool_name,
     tool_use_id,
-    duration_ms
+    duration_ms,
+    file_path: (.tool_input.file_path // .tool_input.notebook_path // null)
 } | tojson)' 2>/dev/null) || exit 0
 CWD=${OUT%%$'\n'*}
 LINE=${OUT#*$'\n'}

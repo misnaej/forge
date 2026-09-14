@@ -53,7 +53,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from forge.git_utils import configure_cli_logging, repo_root
+from forge.git_utils import configure_cli_logging, repo_root, run_git
 from forge.ledger import append_ledger_line, parse_ledger
 
 
@@ -208,6 +208,131 @@ def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
                     yield obj
     except OSError:
         return
+
+
+MUTATING_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "MultiEdit"})
+
+
+@dataclass(frozen=True)
+class EditReceipt:
+    """Which working-tree files a subagent wrote, rather than the caller.
+
+    An edit is indistinguishable from the caller's own once it is in the
+    tree, so the caller commits it as theirs. This answers that from the
+    hook ledger instead of from an agent's self-report.
+
+    ``known`` is the load-bearing field. An absent or empty ledger means
+    the evidence is missing, NOT that no subagent wrote anything — a
+    fresh clone, ``FORGE_NO_AGENT_TIMING=1`` and a machine without
+    ``jq`` all produce one, and reading that as "clean" is the
+    absence-of-evidence error this receipt exists to prevent.
+
+    Attributes:
+        known: Whether the ledger could be read at all.
+        reason: Why it could not, when ``known`` is false.
+        by_file: Repo-relative path → the agent types that wrote it.
+    """
+
+    known: bool
+    reason: str = ""
+    by_file: dict[str, set[str]] = field(default_factory=dict)
+
+
+def subagent_edits(
+    root: Path,
+    *,
+    since: datetime | None = None,
+    session_id: str | None = None,
+    paths: Iterable[str] | None = None,
+) -> EditReceipt:
+    """Read the hook ledger for files a subagent wrote.
+
+    Rows with no ``agent_type`` are the main session's own work and are
+    excluded — the question is what someone else changed. Only
+    tool-based writes carry a path, so anything an agent writes through
+    a shell command is invisible here; the result is partial evidence by
+    construction and callers must not present it as an audit.
+
+    Args:
+        root: Repository root.
+        since: Ignore rows older than this instant (typically the last
+            commit — earlier edits are already committed).
+        session_id: Restrict to one session. The ledger is shared across
+            sessions and worktrees in a clone, so without this a
+            parallel run's edits read as this one's.
+        paths: Restrict to these repo-relative paths, e.g. the files
+            about to be committed.
+
+    Returns:
+        The receipt. Check ``known`` before reading ``by_file``.
+    """
+    ledger = root / LEDGER_RELPATH
+    if not ledger.is_file():
+        return EditReceipt(known=False, reason=f"no ledger at {LEDGER_RELPATH}")
+    wanted = set(paths) if paths is not None else None
+    by_file: dict[str, set[str]] = defaultdict(set)
+    seen_any = False
+    for event in _iter_jsonl(ledger):
+        seen_any = True
+        agent = (event.get("agent_type") or "").strip()
+        if not agent or event.get("tool_name") not in MUTATING_TOOLS:
+            continue
+        if session_id and event.get("session_id") != session_id:
+            continue
+        raw = event.get("file_path")
+        if not isinstance(raw, str) or not raw:
+            continue
+        when = _parse_ts(event.get("ts"))
+        if since is not None and when is not None and when < since:
+            continue
+        rel = _relative_to_root(raw, root)
+        if wanted is not None and rel not in wanted:
+            continue
+        by_file[rel].add(agent)
+    if not seen_any:
+        return EditReceipt(known=False, reason="ledger is empty")
+    return EditReceipt(known=True, by_file=dict(by_file))
+
+
+def _relative_to_root(raw: str, root: Path) -> str:
+    """Return *raw* relative to *root*, or unchanged when it is outside.
+
+    Args:
+        raw: Path as the hook recorded it, usually absolute.
+        root: Repository root.
+
+    Returns:
+        The repo-relative form, else the original string.
+    """
+    try:
+        return str(Path(raw).resolve().relative_to(root.resolve()))
+    except (ValueError, OSError):
+        return raw
+
+
+def render_edit_receipt(receipt: EditReceipt) -> str:
+    """Render the receipt as the line an agent hands back.
+
+    Args:
+        receipt: The receipt to render.
+
+    Returns:
+        One line when nothing qualifies, else a line per file.
+    """
+    if not receipt.known:
+        return (
+            f"subagent edits: UNKNOWN ({receipt.reason}) — "
+            "absent evidence is not evidence of absence; "
+            "check by hand before committing."
+        )
+    if not receipt.by_file:
+        return "subagent edits: none recorded (tool-based writes only)."
+    lines = ["subagent edits (tool-based writes only — shell writes are invisible):"]
+    lines.extend(
+        f"  {path} — {', '.join(sorted(agents))}"
+        for path, agents in sorted(receipt.by_file.items())
+    )
+    return "\n".join(lines)
 
 
 def _parse_ts(value: object) -> datetime | None:
@@ -1016,9 +1141,53 @@ def _build_parser() -> argparse.ArgumentParser:
         "--history", action="store_true", help="Render the append-only history ledger."
     )
     parser.add_argument(
+        "--edits",
+        action="store_true",
+        help="Report which uncommitted files a subagent wrote, not the caller.",
+    )
+    parser.add_argument(
+        "--session",
+        help="Restrict --edits to one session id (the ledger is shared per clone).",
+    )
+    parser.add_argument(
         "--no-history", action="store_true", help="Do not append to the history ledger."
     )
     return parser
+
+
+def _render_edits(root: Path, *, session_id: str | None = None) -> int:
+    """Print the subagent-edit receipt for the uncommitted change set.
+
+    Scoped to files that actually differ from ``HEAD``, since an edit
+    already committed is no longer the caller's to vouch for, and to
+    rows newer than the last commit for the same reason.
+
+    Args:
+        root: Repository root.
+        session_id: Restrict to one session id.
+
+    Returns:
+        ``0`` always — a reporter never gates.
+    """
+    changed = (
+        run_git("diff", "HEAD", "--name-only", cwd=root, check=False).split()
+        + run_git(
+            "ls-files", "--others", "--exclude-standard", cwd=root, check=False
+        ).split()
+    )
+    stamp = run_git("log", "-1", "--format=%cI", cwd=root, check=False).strip()
+    logger.info(
+        "%s",
+        render_edit_receipt(
+            subagent_edits(
+                root,
+                since=_parse_ts(stamp) if stamp else None,
+                session_id=session_id,
+                paths=set(changed),
+            )
+        ),
+    )
+    return 0
 
 
 def main() -> int:
@@ -1030,6 +1199,8 @@ def main() -> int:
     """
     args = _build_parser().parse_args()
     root = repo_root()
+    if args.edits:
+        return _render_edits(root, session_id=args.session)
     if args.history:
         return _render_history(root)
     since = _parse_ts(args.since) if args.since else None
