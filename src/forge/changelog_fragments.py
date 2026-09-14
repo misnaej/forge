@@ -1039,7 +1039,7 @@ syncs `.claude-plugin/plugin.json` (when present).
 **Merging this PR is the release act for the changelog**: the fragments
 are consumed. {tagging} Merge stays a human decision.
 
-Opened by `forge-changelog release-pr` (assemble-release workflow).
+Opened by `forge-changelog release-pr`.
 """
 
 # The tagging sentence must match the repo's version source: a manifest

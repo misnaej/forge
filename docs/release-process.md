@@ -107,11 +107,14 @@ Forge runs `[tool.forge.changelog].mode = "fragments"`:
     explicit-version core for flows that supply their own version.
 - `forge-next-prep` logs a pending-fragment advisory (count + the
   release command) so accumulating fragments prompt a release.
-- **The assembly PR opens itself**: the `assemble-release` workflow
-  (weekly cron + manual dispatch) runs `forge-changelog release-pr` —
-  guard, branch `chore/assemble-vX.Y.Z`, stage, commit, push, PR with
-  in-body gate evidence. Idempotent (open assembly PR or nothing
-  pending → quiet no-op); merging stays human.
+- **The assembly PR is opened by hand**: run `forge-changelog
+  release-pr` when you want a release — guard, branch
+  `chore/assemble-vX.Y.Z`, stage, commit, push, PR with in-body gate
+  evidence. Idempotent (open assembly PR or nothing pending → quiet
+  no-op); merging stays human. Forge runs no schedule for this: a
+  release is reviewed and tested before it ships, and a cron that
+  assembles unattended takes that decision away. Tagging stays
+  automatic (§1); assembling does not.
 
 ## 4. Invariants the code MUST satisfy → enforcing tests
 
