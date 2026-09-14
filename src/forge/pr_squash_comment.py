@@ -22,7 +22,8 @@ Usage:
         # older squash comments
 
     forge-pr-squash-comment --dry-run --title ... --bullet ...
-        # prints the wrapped body to stdout, no gh call
+        # prints the wrapped body to stdout and the per-part word
+        # counts to stderr, no gh call
 
     forge-pr-squash-comment --pr 61
         # no bullets: re-posts the existing squash comment verbatim at
@@ -36,6 +37,9 @@ Rules (FOUNDATION §6 "Squash-merge messages"):
 - 3-5 ``--bullet`` entries
 - total whitespace-split word count (title + bullets) ≤ 50
 - no Claude / AI attribution patterns
+
+A failing run names every broken rule at once; a word-cap violation
+also lists each part's word count and how many words to cut.
 
 Output: the body posted to GitHub is the literal text below (the inner
 fences are real ``` blocks, not escapes):
@@ -111,6 +115,8 @@ TITLE_RE: Final[re.Pattern[str]] = re.compile(
 MIN_BULLETS: Final[int] = 3
 MAX_BULLETS: Final[int] = 5
 MAX_WORDS: Final[int] = 50
+# A breakdown line only has to identify the part to shorten, not show it.
+PREVIEW_CHARS: Final[int] = 40
 
 # Invisible in rendered markdown, greppable in the raw body: how a later
 # run recognizes the squash comments it must supersede. Same convention
@@ -118,81 +124,148 @@ MAX_WORDS: Final[int] = 50
 SQUASH_MARKER: Final[str] = "<!-- forge:squash-merge-message -->"
 
 
-def _validate_title(title: str) -> None:
-    """Reject titles outside the conventional-commit format.
+def _check_title(title: str) -> list[str]:
+    """Return the conventional-commit problems with *title*.
 
     Args:
         title: Raw title string.
 
-    Raises:
-        ValidationError: When the title is empty, longer than one line,
-            or does not match :data:`TITLE_RE`.
+    Returns:
+        One message when the title is empty, longer than one line, or
+        does not match :data:`TITLE_RE`; an empty list otherwise.
     """
     if not title.strip():
-        msg = "title is empty"
-        raise ValidationError(msg)
+        return ["title is empty"]
     if "\n" in title:
-        msg = "title must be a single line"
-        raise ValidationError(msg)
+        return ["title must be a single line"]
     if not TITLE_RE.match(title):
-        msg = (
-            f"title {title!r} is not conventional-commit format. "
-            f"Expected '<type>(<scope>)?: <subject>' where type is one of: "
-            f"{', '.join(CONVENTIONAL_COMMIT_TYPES)}"
-        )
-        raise ValidationError(msg)
+        return [
+            (
+                f"title {title!r} is not conventional-commit format. "
+                f"Expected '<type>(<scope>)?: <subject>' where type is one of: "
+                f"{', '.join(CONVENTIONAL_COMMIT_TYPES)}"
+            )
+        ]
+    return []
 
 
-def _validate_bullets(bullets: list[str]) -> None:
-    """Enforce bullet count + non-empty content.
+def _check_bullets(bullets: list[str]) -> list[str]:
+    """Return the bullet-count problem and one problem per empty bullet.
 
     Args:
         bullets: List of ``--bullet`` strings as passed by the caller.
 
-    Raises:
-        ValidationError: When the count is outside ``[MIN_BULLETS,
-            MAX_BULLETS]`` or any bullet is whitespace-only.
+    Returns:
+        A message when the count is outside ``[MIN_BULLETS, MAX_BULLETS]``,
+        followed by one message per whitespace-only bullet.
     """
+    problems: list[str] = []
     n = len(bullets)
     if not MIN_BULLETS <= n <= MAX_BULLETS:
-        msg = f"got {n} bullet(s); FOUNDATION §6 requires {MIN_BULLETS}-{MAX_BULLETS}"
-        raise ValidationError(msg)
-    for i, b in enumerate(bullets, start=1):
-        if not b.strip():
-            msg = f"bullet {i} is empty"
-            raise ValidationError(msg)
-
-
-def _validate_word_count(title: str, bullets: list[str]) -> None:
-    """Enforce the ≤ ``MAX_WORDS`` cap on title + bullets combined.
-
-    Args:
-        title: Squash title.
-        bullets: Bullet strings.
-
-    Raises:
-        ValidationError: When the total whitespace-split word count
-            exceeds :data:`MAX_WORDS`.
-    """
-    total = len(title.split()) + sum(len(b.split()) for b in bullets)
-    if total > MAX_WORDS:
-        msg = (
-            f"squash-merge message is {total} words; FOUNDATION §6 caps at {MAX_WORDS}"
+        problems.append(
+            f"got {n} bullet(s); FOUNDATION §6 requires {MIN_BULLETS}-{MAX_BULLETS}"
         )
-        raise ValidationError(msg)
+    problems.extend(
+        f"bullet {i} is empty" for i, b in enumerate(bullets, start=1) if not b.strip()
+    )
+    return problems
 
 
-def _validate_no_ai_attribution(title: str, bullets: list[str]) -> None:
-    """Reject Claude / AI attribution per FOUNDATION §2 (shared gate).
+def _word_total(title: str, bullets: list[str]) -> int:
+    """Count whitespace-split words across the title and every bullet.
 
     Args:
         title: Squash title.
         bullets: Bullet strings.
 
-    Raises:
-        ValidationError: From :func:`forge.gh_comments.validate_no_ai_attribution`.
+    Returns:
+        The combined word count :data:`MAX_WORDS` caps.
     """
-    validate_no_ai_attribution("\n".join([title, *bullets]))
+    return len(title.split()) + sum(len(b.split()) for b in bullets)
+
+
+def _preview(text: str) -> str:
+    """Shorten one message part to a printable first line for the breakdown.
+
+    The preview is written raw to the terminal, so non-printable characters
+    are dropped: a title or bullet cannot carry an escape sequence onto
+    stderr.
+
+    Args:
+        text: A title or bullet.
+
+    Returns:
+        The first line with non-printable characters removed, cut to
+        :data:`PREVIEW_CHARS` characters plus ``…`` when longer;
+        ``(empty)`` when nothing printable remains.
+    """
+    lines = text.strip().splitlines()
+    first = "".join(ch for ch in lines[0] if ch.isprintable()) if lines else ""
+    if not first.strip():
+        return "(empty)"
+    if len(first) <= PREVIEW_CHARS:
+        return first
+    return first[:PREVIEW_CHARS].rstrip() + "…"
+
+
+def _word_breakdown(title: str, bullets: list[str]) -> list[str]:
+    """Render one indented line per message part: label, word count, preview.
+
+    Shared by the over-cap problem and the ``--dry-run`` report, so an
+    author sees which part to shorten in the same shape either way.
+
+    Args:
+        title: Squash title.
+        bullets: Bullet strings.
+
+    Returns:
+        One line for the title, then one per bullet.
+    """
+    parts = [("title", title)]
+    parts.extend((f"bullet {i}", b) for i, b in enumerate(bullets, start=1))
+    return [
+        f"  {label:<9}{len(text.split()):>3}  {_preview(text)}" for label, text in parts
+    ]
+
+
+def _check_word_count(title: str, bullets: list[str]) -> list[str]:
+    """Return the ≤ ``MAX_WORDS`` cap problem, with a per-part breakdown.
+
+    Args:
+        title: Squash title.
+        bullets: Bullet strings.
+
+    Returns:
+        An empty list at or under the cap. Over it, one problem whose
+        first line names the total and how many words to cut, followed
+        by the :func:`_word_breakdown` lines.
+    """
+    total = _word_total(title, bullets)
+    if total <= MAX_WORDS:
+        return []
+    header = (
+        f"squash-merge message is {total} words; FOUNDATION §6 caps at "
+        f"{MAX_WORDS} (cut {total - MAX_WORDS})"
+    )
+    return ["\n".join([header, *_word_breakdown(title, bullets)])]
+
+
+def _check_attribution(title: str, bullets: list[str]) -> list[str]:
+    """Return the Claude / AI attribution problem per FOUNDATION §2 (shared gate).
+
+    Args:
+        title: Squash title.
+        bullets: Bullet strings.
+
+    Returns:
+        The message :func:`forge.gh_comments.validate_no_ai_attribution`
+        raises, or an empty list when the text is clean.
+    """
+    try:
+        validate_no_ai_attribution("\n".join([title, *bullets]))
+    except ValidationError as exc:
+        return [str(exc)]
+    return []
 
 
 def build_body(title: str, bullets: list[str]) -> str:
@@ -226,22 +299,26 @@ def build_body(title: str, bullets: list[str]) -> str:
     )
 
 
-def validate(title: str, bullets: list[str]) -> None:
-    """Run every FOUNDATION §6 check in order.
+def validate(title: str, bullets: list[str]) -> list[str]:
+    """Return every FOUNDATION §6 rule the message breaks.
+
+    Every rule runs, so one failing run names all problems and the author
+    fixes them in a single retry instead of one rule per round trip.
 
     Args:
         title: Squash title.
         bullets: Bullet strings.
 
-    Raises:
-        ValidationError: At the first failing rule. The exception
-            message names the rule and (when applicable) the observed
-            vs. allowed values.
+    Returns:
+        Problem messages in rule order (title, bullets, word count,
+        attribution); empty when the message is valid.
     """
-    _validate_title(title)
-    _validate_bullets(bullets)
-    _validate_word_count(title, bullets)
-    _validate_no_ai_attribution(title, bullets)
+    return (
+        _check_title(title)
+        + _check_bullets(bullets)
+        + _check_word_count(title, bullets)
+        + _check_attribution(title, bullets)
+    )
 
 
 def _list_squash_comments(pr_number: int) -> list[dict[str, object]] | None:
@@ -426,8 +503,8 @@ def main() -> int:
     """Validate the body, post it (or print it), and keep it last.
 
     Returns:
-        ``0`` on success. ``1`` on validation failure (with the
-        offending rule named on stderr) or non-zero ``gh`` exit.
+        ``0`` on success. ``1`` on validation failure (every broken
+        rule named on stderr) or non-zero ``gh`` exit.
     """
     parser = argparse.ArgumentParser(
         prog="forge-pr-squash-comment",
@@ -450,7 +527,10 @@ def main() -> int:
     target.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the wrapped body to stdout; do not call gh.",
+        help=(
+            "Print the wrapped body to stdout and the per-part word counts "
+            "to stderr; do not call gh."
+        ),
     )
     parser.add_argument(
         "--title",
@@ -474,16 +554,22 @@ def main() -> int:
     if args.pr is not None and not args.bullet:
         return ensure_last(args.pr)
 
-    try:
-        validate(args.title, args.bullet)
-    except ValidationError as exc:
-        sys.stderr.write(f"forge-pr-squash-comment: {exc}\n")
+    problems = validate(args.title, args.bullet)
+    if problems:
+        # A multi-line problem (the word-cap breakdown) keeps the prefix on
+        # its first line only, so the breakdown reads as one indented block.
+        for problem in problems:
+            sys.stderr.write(f"forge-pr-squash-comment: {problem}\n")
         return 1
 
     body = build_body(args.title, args.bullet)
 
     if args.dry_run:
+        # stdout stays exactly the body; the counts go to stderr beside it.
         sys.stdout.write(body)
+        breakdown = "\n".join(_word_breakdown(args.title, args.bullet))
+        total = _word_total(args.title, args.bullet)
+        sys.stderr.write(f"{total}/{MAX_WORDS} words\n{breakdown}\n")
         return 0
 
     title_synced = sync_pr_title(args.pr, args.title)
