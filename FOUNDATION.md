@@ -953,11 +953,24 @@ never past it (merging stays the user's; all §2 guards hold). Screening is
 mechanical and repeatable; planning judgment is validated once, up front —
 that is what makes unattended execution safe.
 
+**Only a contributor's issue is plannable.** An issue enters the
+pipeline at all only when its author has write access to the repo, or
+a write-access author has explicitly endorsed it in a comment. Anyone
+can open an issue, and a plan is the one artifact that turns issue
+text into work an executor later performs unattended — so the
+eligibility check is the same `collaborators/<login>/permission` call
+that authenticates the markers below, applied one stage earlier. An
+outside issue is not thereby ignored: it is triaged, labelled and
+answered like any other, and a contributor who judges it sound
+endorses it, which is what makes it plannable. Nothing is ever planned
+on the strength of its own contents.
+
 Draining a screened queue one interactive session at a time is the
 bottleneck in that chain, and the serialised work — investigation —
 mutates nothing. `/plan-batch` is the optional coordinator between
 screening and the human gate: it drafts several issues concurrently
-through read-only agents and relays each draft for validation, leaving
+through agents forbidden to mutate anything, and relays each draft for
+validation, leaving
 the gate itself, and the one-at-a-time execution rule `/sentinel`
 sets, untouched.
 
@@ -977,15 +990,19 @@ and for any second sentinel. Like the execution payload, the marker is
 trusted only from a write-access author — a stranger's comment can never
 veto a pickup.
 
-**Those three signals *are* the sign-off, and the recorder writes no
+**Those three are what is checkable, and the recorder writes no
 fourth.** A human attribution or sign-off claim — "validated by
 <name>" — must never appear in a `plan-validated:` payload. It is the
 only claim in a comment an autonomous executor treats as authorization
 that nothing can corroborate: the agent posting it cannot establish who
 validated the plan, or that anyone did, yet it sits in the same blob the
 executor parses and reads to a human reviewer as provenance. The prefix,
-the label and write-access authorship are each checkable; an attribution
-line is decoration over the ones that count. The recorder strips it.
+the label and write-access authorship can each be verified against the
+repo; an attribution line cannot be verified against anything. Note
+what the three do and do not attest: that the payload came from a
+credential with write access, never that a particular human read it.
+Adding an unverifiable fourth claim does not close that gap — it
+disguises it. The recorder strips it.
 
 ---
 

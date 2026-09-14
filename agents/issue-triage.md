@@ -180,6 +180,10 @@ release), **non-colliding** (no overlap with another open issue or
 PR), **aligned** (consistent with current direction), **unblocked**
 (no open `Requires:`, not awaiting a merge).
 
+**Eligibility precedes the four points**: unless the author has write
+access or a write-access author endorsed the issue in a comment, it is
+not a candidate (FOUNDATION §14; same permission call as above).
+
 All four true and no validated plan → a **needs-plan candidate**.
 Never auto-plan: planning is human-validated via `/plan-issue`
 (FOUNDATION §14). The first run sweeps the whole backlog and comments
@@ -202,7 +206,10 @@ from a plan handed to you carrying it. What makes this comment
 trustworthy is enumerated in FOUNDATION §14 "Decision trail", and none
 of it is text you write. That is the only edit you make to a payload.
 
-Regenerate the Backlog Index.
+Regenerate the Backlog Index — **except in `advisory` mode**, which a
+caller names: return verdicts and candidates, skip every mutation
+above (Index, baseline comment, labels). An advisory run arms no
+baseline, so the next normal run still sweeps the whole backlog.
 
 ## Backlog Index regeneration
 

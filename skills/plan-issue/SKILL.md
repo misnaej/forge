@@ -1,6 +1,6 @@
 ---
 name: plan-issue
-description: Human-in-the-loop planning for one backlog issue - investigate read-only, confirm scope and approach with the user, then record the validated plan as a plan-ready execution spec. Use when an issue surfaced as a needs-plan candidate, or the user names an issue to plan.
+description: Human-in-the-loop planning for one backlog issue - investigate read-only, confirm scope and approach with the user, then record the validated plan as a plan-ready execution spec; a draft-only mode stops short of the human gate for batch callers. Use when an issue surfaced as a needs-plan candidate, the user names an issue to plan, or a coordinator needs one issue drafted.
 user-invocable: true
 ---
 
@@ -20,8 +20,12 @@ gh issue view <N> --json title,body,labels,state,comments
 ```
 
 Confirm the issue is open, unblocked (its `Requires:` line names
-nothing open), and non-colliding with open issues / PRs. Not ready →
-report why and stop. Already `plan-ready` → surface the existing
+nothing open), non-colliding with open issues / PRs, and **plannable
+at all**: its author has write access, or a write-access author has
+endorsed it in a comment (FOUNDATION §14 — check with `gh api
+repos/{owner}/{repo}/collaborators/<login>/permission`). An
+unendorsed outside issue is reported as needing endorsement, never
+planned. Not ready → report why and stop. Already `plan-ready` → surface the existing
 `plan-validated` comment and ask whether to re-plan.
 
 ## Step 2: Investigate read-only
@@ -100,8 +104,14 @@ session.
 ## Draft-only mode
 
 Invoked as `/plan-issue <N> --draft-only`, and by `/plan-batch` when it
-fans several issues out at once. **Run Steps 1 and 2, then stop before
-Step 3.** In place of the interactive gate, return:
+fans several issues out at once. **Run Steps 1 and 2, and Step 3's
+authoring — then stop at Step 3's first question.** The cut is at the
+gate, not before the thinking: the decisions still have to be worked
+out, they are just not put to anyone here. Step 1's already-`plan-ready`
+branch has no user to ask, so in this mode it returns the existing
+`plan-validated` comment as the finding and stops.
+
+In place of the interactive gate, return:
 
 - the plain-English problem statement Step 3 would open with,
 - the drafted plan (files, order, side effects, bump class),
@@ -111,5 +121,6 @@ Step 3.** In place of the interactive gate, return:
 Nothing else changes and nothing is recorded: the mode ends where the
 human gate begins. It opens no branch, edits no file, applies no label,
 and posts no comment — Steps 4 and 5 belong to whoever holds the
-conversation with the user. A draft is not a validated plan, and only a
-validated plan reaches `issue-triage`.
+conversation with the user. **A draft is not a validated plan**, and
+only a validated plan reaches `issue-triage`; this is the sentence the
+rest of the pipeline points at.

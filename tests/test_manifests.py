@@ -214,12 +214,11 @@ def test_plan_batch_skill_self_skips_when_non_interactive() -> None:
     from the skill, and a `run_context` rename leaving the skill pointing
     at a function that no longer exists.
 
-    EXPECTED BEHAVIOR: the shipped skill names the guard, and the guard
-    is a real callable on `forge.run_context` under that same name.
+    EXPECTED BEHAVIOR: the shipped skill names the guard under the name
+    `forge.run_context` actually exports — the attribute access below
+    is itself the rename check, raising before the assertion runs.
     """
     guard = run_context.is_non_interactive
-    assert callable(guard), "forge.run_context.is_non_interactive must be callable"
-
     skill = (REPO_ROOT / "skills" / "plan-batch" / "SKILL.md").read_text()
     assert guard.__name__ in skill, (
         f"plan-batch must self-skip on `{guard.__name__}()` (FOUNDATION §15)"
