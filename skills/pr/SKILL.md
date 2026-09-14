@@ -362,7 +362,18 @@ Verification is done, fixes are committed, and the wrap-up is authored
    `git log origin/<base>..HEAD --oneline`), then create the PR
    (description rules: FOUNDATION §6 "PR descriptions"):
    ```bash
-   gh pr create --title "<type>: <description>" --body "## Summary
+   forge-pr-create --base <base> --title "<type>: <description>" --body-file <file>
+   ```
+   It runs in the checkout it publishes, so it verifies THAT branch's
+   wrap-up against THAT branch's HEAD, and earns the light and emergency
+   escapes there too. The raw form is refused: it forces a guard to infer
+   the branch from command text, which carries free-form title and body
+   prose and can be steered.
+
+   The body file holds the description (rules: FOUNDATION §6 "PR
+   descriptions"):
+   ```markdown
+   ## Summary
    <2–4 plain-English sentences per FOUNDATION §6 \"PR descriptions\">
 
    ## Changes
@@ -372,7 +383,7 @@ Verification is done, fixes are committed, and the wrap-up is authored
    - [ ] Design checker passes
    - [ ] Security checker passes
    - [ ] Documentation checker passes
-   - [ ] Tests pass"
+   - [ ] Tests pass
    ```
 3. **Draft opened in Step 0** → `gh pr ready <PR#>` — unless the user asked
    to keep it draft.

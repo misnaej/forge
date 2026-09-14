@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_74 modules, 1043 symbols._
+_75 modules, 1049 symbols._
 
 ## `forge`
 
@@ -419,7 +419,7 @@ _74 modules, 1043 symbols._
 - `_create_ledger_issue(reason: str, expires_at: str) -> int | None` _(internal)_ — File the public ledger issue; return its number, or ``None`` on failure.
 - `_cmd_start(root: Path, reason: str, ttl_hours: float) -> int` _(internal)_ — Arm the one-shot bypass: ledger issue first, then the sentinel.
 - `_cmd_status(root: Path) -> int` _(internal)_ — Print the sentinel state.
-- `_cmd_consume(root: Path) -> int` _(internal)_ — Spend the armed bypass (called by the wrap-up gate hook).
+- `consume(root: Path) -> int` — Spend the armed bypass (called by the wrap-up gate hook).
 - `_cmd_record_pr(root: Path, pr_number: int) -> int` _(internal)_ — Record the emergency PR number structurally in the sentinel.
 - `_repayment_evidence(state: EmergencyState) -> tuple[int | None, bool]` _(internal)_ — Return ``(pr_number, repaid)`` for the sentinel's recorded PR.
 - `_cmd_end(root: Path) -> int` _(internal)_ — Close the ledger when the emergency PR's verification debt is repaid.
@@ -843,6 +843,17 @@ _74 modules, 1043 symbols._
 > _forge-post-merge — runs forge's managed post-merge git-hook logic._
 
 - `main(argv: list[str] | None = None) -> int` — Run the forge-managed post-merge actions. Return an exit code.
+
+## `forge.pr_create`
+
+> _forge-pr-create — publish a pull request from the branch being published._
+
+- `_verified(wrapup_text: str, head_sha: str) -> bool` _(internal)_ — Whether the wrap-up names *head_sha* in a ``verified-at:`` header.
+- `_earn_light(root: Path, base: str) -> str | None` _(internal)_ — Re-run the classifier so a light wrap-up is earned, not asserted.
+- `_spend_emergency(root: Path) -> str | None` _(internal)_ — Consume the armed emergency sentinel, or refuse.
+- `_gate(root: Path, branch: str, base: str) -> str | None` _(internal)_ — Return why publication is refused, or ``None`` to allow it.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the argument parser.
+- `main() -> int` — Entry point for ``forge-pr-create``.
 
 ## `forge.pr_delta`
 
