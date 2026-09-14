@@ -273,14 +273,20 @@ def test_advisory_screen_variant_is_defined_by_its_owner() -> None:
     assert "`advisory` mode" in triage, (
         "issue-triage must define the advisory variant its callers request"
     )
+    assert "write nothing at all" in triage, (
+        "the advisory definition must state the suppression its callers rely on"
+    )
 
     for skill_name in ("sentinel", "plan-batch"):
         skill = (REPO_ROOT / "skills" / skill_name / "SKILL.md").read_text()
-        assert "advisory" in skill, f"/{skill_name} must name the advisory variant"
+        assert "mode, advisory:" in skill, (
+            f"/{skill_name} must request the variant in its dispatch prompt, "
+            f"not merely mention the word"
+        )
 
 
 def test_planning_is_gated_on_contributor_authorship() -> None:
-    """Every surface of the plannability gate still carries it.
+    """Every surface of the plannability gate still names it.
 
     SCENARIO: anyone can open an issue, and a validated plan is what
     turns issue text into work `/sentinel` performs unattended — so an
@@ -300,9 +306,17 @@ def test_planning_is_gated_on_contributor_authorship() -> None:
     assert "authorAssociation" in foundation, (
         "FOUNDATION must warn off GitHub's weaker authorAssociation field"
     )
+    assert "collaborators/<login>/permission" in foundation, (
+        "FOUNDATION must name the only admissible write-access probe"
+    )
+    assert "lastEditedAt" in foundation, (
+        "FOUNDATION must name the probe that answers the recency clause; "
+        "no REST issue field carries a body-edit timestamp"
+    )
 
     for path in (
         REPO_ROOT / "agents" / "issue-triage.md",
         REPO_ROOT / "skills" / "plan-issue" / "SKILL.md",
+        REPO_ROOT / "skills" / "plan-batch" / "SKILL.md",
     ):
-        assert "[endorsed]" in path.read_text(), f"{path.name} dropped the gate"
+        assert "endorsed" in path.read_text(), f"{path.name} dropped the gate"

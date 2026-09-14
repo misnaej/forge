@@ -42,7 +42,7 @@ heuristic inline:
 
 ```
 Agent(subagent_type="forge:issue-triage", prompt="Run plan-readiness
-mode as an ADVISORY screen: return (1) open issues carrying an
+mode, advisory: return (1) open issues carrying an
 `[issue-triage] plan-validated:` comment but MISSING the plan-ready
 label — name these first, they are one validation away from
 executable — then (2) the top needs-plan candidates per the standard

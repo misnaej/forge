@@ -180,11 +180,11 @@ release), **non-colliding** (no overlap with another open issue or
 PR), **aligned** (consistent with current direction), **unblocked**
 (no open `Requires:`, not awaiting a merge).
 
-**Eligibility precedes the four points** (FOUNDATION §14 owns it):
-`author` is a collaborator, or a collaborator's comment opens
-`[endorsed]` after the body's last edit — both mechanical. Ineligible
-is not invisible: comment `[issue-triage] needs endorsement:` once;
-list it in that Index lane.
+**Eligibility precedes the four points** (FOUNDATION §14 owns the
+rule and names both probes): `author` is a collaborator, or a
+collaborator's comment opens `[endorsed]` after the body's last edit.
+Ineligible is not invisible: apply `needs-endorsement` with the usual
+comment trail; the Index lane renders from that label.
 
 All four true and no validated plan → a **needs-plan candidate**.
 Never auto-plan: planning is human-validated via `/plan-issue`
@@ -204,12 +204,12 @@ spec) and apply `plan-ready`. The issue body is never edited.
 
 **Verbatim minus one thing**: never write a human attribution or
 sign-off claim ("validated by <name>") into the payload, and strip one
-from a plan handed to you carrying it. FOUNDATION §14 "Decision trail"
-enumerates what makes this comment trustworthy; none of it is text you
-write. That is the only edit you make to a payload.
+you are handed. FOUNDATION §14 "Decision trail" enumerates what makes
+this comment trustworthy; none of it is text you write. That is the
+only edit you make.
 
-Regenerate the Backlog Index — **except in `advisory` mode**, which a
-caller names: return verdicts and candidates, write nothing at all —
+Regenerate the Backlog Index — **except in `advisory` mode**, named by the
+caller: return verdicts and candidates, write nothing at all —
 no Index, baseline, label or comment. It arms no baseline, so the next
 normal run still sweeps the backlog.
 
@@ -250,7 +250,7 @@ Template:
 - #NNN — Title — _validated: YYYY-MM-DD_
 
 ## 🤝 Needs Endorsement (N)
-- #NNN — Title — _opened by @author_
+- #NNN — Title
 
 ## 🚫 Blocked / Waiting (N)
 - #NNN — Title — _blocker: <issue or external>_
@@ -272,9 +272,11 @@ Every agent-driven label change leaves a comment prefixed
 
 ### I WILL
 
+(Nothing here in `advisory` mode.)
+
 - Apply / remove tier and `stale` labels
 - Comment rationales prefixed `[issue-triage]`
-- Regenerate the Backlog Index body deterministically (non-advisory runs)
+- Regenerate the Backlog Index body deterministically
 - Recommend top issues based on live tiers + signals
 - Migrate a legacy `docs/development/issue_backlog.md` (bootstrap)
 - Propose umbrella issues and, after explicit user approval, create
@@ -301,7 +303,8 @@ Every agent-driven label change leaves a comment prefixed
 
 Mode-dependent — see each mode's last step. Every mode ends with a
 report line naming the mode and the counts ("N triaged, M respected,
-Backlog Index updated"; an `advisory` run reports no Index update). `deep-review` additionally returns umbrella
+Backlog Index updated"; an `advisory` run reports no Index
+update). `deep-review` additionally returns umbrella
 proposals/decisions and, per approved umbrella, full goal-file
 content for the caller to persist. `plan-readiness` returns the
 per-issue verdicts plus the needs-plan candidate list.
