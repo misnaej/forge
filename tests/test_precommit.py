@@ -2857,7 +2857,7 @@ def test_declared_scripts_returns_none_when_scripts_empty(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
-# step_env_sync (integration — all patch is_non_interactive)
+# step_env_sync (integration — all patch is_ci)
 # ---------------------------------------------------------------------------
 
 
@@ -2867,16 +2867,48 @@ def test_step_env_sync_skips_in_ci_non_interactive(
 ) -> None:
     """step_env_sync skips in CI without touching distribution metadata.
 
-    SCENARIO: is_non_interactive returns True — the step must short-circuit
+    SCENARIO: is_ci returns True — the step must short-circuit
     immediately without inspecting pyproject.toml or importlib.metadata.
-    MOCK SETUP: is_non_interactive stubbed to True.
-    EXPECTED BEHAVIOR: passed True, skipped True, "non-interactive" in output.
+    MOCK SETUP: is_ci stubbed to True.
+    EXPECTED BEHAVIOR: passed True, skipped True, "CI" in output.
     """
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+    result = precommit.step_env_sync(tmp_path)
+    assert result.passed
+    assert result.skipped
+    assert "CI" in result.output
+
+
+def test_step_env_sync_does_not_skip_when_non_interactive_but_not_ci(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An agent session (non-interactive, not CI) is not the CI self-skip.
+
+    A Claude Code agent session has no controlling terminal, so
+    ``is_non_interactive()`` is unconditionally True there, but it is
+    not CI. Gating on the tty-inclusive predicate would skip this step
+    on every agent-driven commit — the exact environment the
+    entry-point check most needs to cover. This predicate confusion
+    recurs elsewhere in this codebase, so the case is pinned directly
+    rather than left to follow only from the CI-skip tests above.
+
+    SCENARIO: is_non_interactive→True (simulating an agent session's
+    absent tty) but is_ci→False — the precheck must not treat this as CI.
+    MOCK SETUP: is_ci stubbed to False; is_non_interactive stubbed to
+    True; no pyproject written, so the step falls through to the
+    "no declared scripts" skip rather than the CI skip.
+    EXPECTED BEHAVIOR: the step proceeds past the CI precheck — its
+    output is not the "(CI — skipped)" text, even though it still skips
+    for the unrelated reason of having no [project.scripts] to check.
+    """
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
     result = precommit.step_env_sync(tmp_path)
     assert result.passed
     assert result.skipped
-    assert "non-interactive" in result.output
+    assert "(CI — skipped)" not in result.output
+    assert "[project.scripts]" in result.output
 
 
 def test_step_env_sync_skips_when_no_declared_scripts(
@@ -2886,10 +2918,10 @@ def test_step_env_sync_skips_when_no_declared_scripts(
     """step_env_sync skips when pyproject has no usable [project.scripts].
 
     SCENARIO: no pyproject.toml in tmp_path — _declared_scripts returns None.
-    MOCK SETUP: is_non_interactive stubbed to False; no pyproject written.
+    MOCK SETUP: is_ci stubbed to False; no pyproject written.
     EXPECTED BEHAVIOR: passed True, skipped True, "[project.scripts]" in output.
     """
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     result = precommit.step_env_sync(tmp_path)
     assert result.passed
     assert result.skipped
@@ -2904,11 +2936,11 @@ def test_step_env_sync_skips_when_package_not_installed(
 
     SCENARIO: pyproject declares mypkg with one script, but distribution
     raises PackageNotFoundError — nothing to compare against.
-    MOCK SETUP: is_non_interactive→False; pyproject written; distribution
+    MOCK SETUP: is_ci→False; pyproject written; distribution
     stubbed to raise PackageNotFoundError.
     EXPECTED BEHAVIOR: passed True, skipped True, "not installed" in output.
     """
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": ""})
 
     def _raise(_name: str) -> object:
@@ -2929,12 +2961,12 @@ def test_step_env_sync_passes_when_all_scripts_registered(
 
     SCENARIO: pyproject declares {mycli, helper}; distribution reports both
     as console_scripts — no gap between declared and installed.
-    MOCK SETUP: is_non_interactive→False; pyproject written; distribution→
+    MOCK SETUP: is_ci→False; pyproject written; distribution→
     FakeDist([FakeEP("mycli","console_scripts"), FakeEP("helper","console_scripts")]).
     EXPECTED BEHAVIOR: passed True, skipped False, "installed" in output,
     non_blocking False.
     """
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": "", "helper": ""})
     eps = [FakeEP("mycli", "console_scripts"), FakeEP("helper", "console_scripts")]
     monkeypatch.setattr(
@@ -2955,12 +2987,12 @@ def test_step_env_sync_blocks_by_default_when_script_missing(
 
     SCENARIO: pyproject declares {mycli, new-cli}; distribution has only mycli;
     no [tool.forge.env_sync] written — blocking defaults to True.
-    MOCK SETUP: is_non_interactive→False; pyproject written without env_sync config;
+    MOCK SETUP: is_ci→False; pyproject written without env_sync config;
     distribution→FakeDist([FakeEP("mycli","console_scripts")]).
     EXPECTED BEHAVIOR: passed False, skipped False, non_blocking False,
     "new-cli" in output, "setup.sh" in output.
     """
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": "", "new-cli": ""})
     eps = [FakeEP("mycli", "console_scripts")]
     monkeypatch.setattr(
@@ -2982,12 +3014,12 @@ def test_step_env_sync_warns_not_blocks_when_blocking_false(
 
     SCENARIO: same missing-script situation as blocks_by_default, but
     [tool.forge.env_sync] blocking=false downgrades the result to WARN.
-    MOCK SETUP: is_non_interactive→False; pyproject written with blocking=false;
+    MOCK SETUP: is_ci→False; pyproject written with blocking=false;
     distribution→FakeDist([FakeEP("mycli","console_scripts")]).
     EXPECTED BEHAVIOR: passed False, skipped False, non_blocking True,
     "new-cli" in output.
     """
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     _write_project_scripts_pyproject(
         tmp_path, "mypkg", {"mycli": "", "new-cli": ""}, env_sync_blocking=False
     )
@@ -3028,10 +3060,10 @@ def test_step_env_sync_warns_on_forge_scripts_pin_drift(
     """A forge-scripts == pin ahead of the install produces a non-blocking WARN.
 
     SCENARIO: repo pins forge-scripts==2.9.0; installed is 2.8.0.
-    MOCK SETUP: is_non_interactive→False; importlib.metadata.version→"2.8.0".
+    MOCK SETUP: is_ci→False; importlib.metadata.version→"2.8.0".
     EXPECTED BEHAVIOR: passed False, non_blocking True, names the pin.
     """
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     _write_deps_pyproject(tmp_path, ["forge-scripts==2.9.0"])
     monkeypatch.setattr(precommit.importlib.metadata, "version", lambda _n: "2.8.0")
     result = precommit.step_env_sync(tmp_path)
@@ -3045,7 +3077,7 @@ def test_step_env_sync_no_warn_when_pin_satisfied(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No WARN when the installed forge-scripts meets or exceeds the pin."""
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     _write_deps_pyproject(tmp_path, ["forge-scripts==2.8.0"])
     monkeypatch.setattr(precommit.importlib.metadata, "version", lambda _n: "2.9.0")
     result = precommit.step_env_sync(tmp_path)
@@ -3058,7 +3090,7 @@ def test_step_env_sync_no_warn_on_non_exact_pin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A non-``==`` specifier (range / channel) is not treated as a pin."""
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     _write_deps_pyproject(tmp_path, ["forge-scripts>=2.8.0"])
     monkeypatch.setattr(precommit.importlib.metadata, "version", lambda _n: "2.0.0")
     result = precommit.step_env_sync(tmp_path)
@@ -3071,7 +3103,7 @@ def test_step_env_sync_no_warn_on_editable_install(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An editable / setuptools-scm dev build is not compared against the pin."""
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     _write_deps_pyproject(tmp_path, ["forge-scripts==2.9.0"])
     monkeypatch.setattr(
         precommit.importlib.metadata, "version", lambda _n: "2.8.0.dev1+gabc1234"
@@ -3090,13 +3122,13 @@ def test_step_env_sync_missing_script_beats_pin_drift(
     SCENARIO: the repo both has a missing declared script AND pins
     forge-scripts ahead of the install. The blocking entry-point failure
     must take priority over the non-blocking pin advisory.
-    MOCK SETUP: is_non_interactive→False; pyproject declares mypkg with two
+    MOCK SETUP: is_ci→False; pyproject declares mypkg with two
     scripts + forge-scripts==2.9.0; only one script installed; forge-scripts
     version→2.8.0.
     EXPECTED BEHAVIOR: passed False, blocking (non_blocking False), the
     ⛔ stale-install message — NOT the pin WARN.
     """
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "mypkg"\ndependencies = ["forge-scripts==2.9.0"]\n'
         '\n[project.scripts]\nmycli = "pkg:main"\nnew-cli = "pkg:main"\n',
@@ -3204,6 +3236,44 @@ def test_check_clone_identity_blocks_on_mismatch(
     assert str(tmp_path.resolve()) in result.output
 
 
+def test_check_clone_identity_redacts_home_when_both_clones_under_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that clone mismatch message redacts home paths for privacy.
+
+    SCENARIO: the editable-install origin and this repo both sit under
+    the user's home directory when a clone mismatch fires.
+
+    MOCK SETUP: _declared_scripts→(DIST_NAME, ...); editable_install_origin
+    stubbed to a sibling clone; Path.home patched to a tmp_path-based fake
+    home containing both clones.
+
+    EXPECTED BEHAVIOR: the block message renders both paths as ``~/<rest>``
+    and never leaks the fake home's raw absolute string — the redaction
+    that keeps an account name out of code_health/env_sync.log and any
+    public issue a contributor pastes the block into.
+    """
+    fake_home = (tmp_path / "home").resolve()
+    fake_home.mkdir()
+    other_clone = fake_home / "dev-1"
+    this_clone = fake_home / "dev-0"
+    other_clone.mkdir()
+    this_clone.mkdir()
+    monkeypatch.setattr(precommit.Path, "home", staticmethod(lambda: fake_home))
+    monkeypatch.setattr(
+        precommit, "_declared_scripts", lambda _root: (precommit.DIST_NAME, {"x"})
+    )
+    monkeypatch.setattr(precommit, "editable_install_origin", lambda: other_clone)
+
+    result = precommit._check_clone_identity(this_clone)
+
+    assert result is not None
+    assert not result.passed
+    assert "~/" in result.output
+    assert str(fake_home) not in result.output
+
+
 # ---------------------------------------------------------------------------
 # _check_hook_sidecar — env_sync's stale-hooks guard
 # ---------------------------------------------------------------------------
@@ -3275,13 +3345,13 @@ def test_step_env_sync_returns_precheck_block_without_reading_declared_scripts(
     """A blocking precheck result short-circuits before the entry-point lookup.
 
     SCENARIO: _check_clone_identity finds a mismatch.
-    MOCK SETUP: is_non_interactive→False; _check_clone_identity stubbed to
+    MOCK SETUP: is_ci→False; _check_clone_identity stubbed to
     return a sentinel StepResult; _declared_scripts spied to fail the test
     if invoked — the normal entry-point/pin logic must never run once the
     precheck already decided the outcome.
     EXPECTED BEHAVIOR: step_env_sync returns exactly the sentinel result.
     """
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     sentinel = precommit.StepResult(name="env_sync", passed=False, output="⛔ sentinel")
     monkeypatch.setattr(precommit, "_check_clone_identity", lambda _root: sentinel)
 
@@ -3331,13 +3401,50 @@ def test_step_plugin_sync_skips_non_interactive(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """CI / non-interactive contexts self-skip (FOUNDATION §15)."""
+    """CI contexts self-skip (FOUNDATION §15)."""
     _write_plugin_manifest(tmp_path, "2.9.0")
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
     result = precommit.step_plugin_sync(tmp_path)
     assert result.passed
     assert result.skipped
-    assert "non-interactive" in result.output
+    assert "CI" in result.output
+
+
+def test_step_plugin_sync_does_not_skip_when_non_interactive_but_not_ci(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An agent session (non-interactive, not CI) is not the CI self-skip.
+
+    Sibling of the same-named ``step_env_sync`` test: the CI-vs-non-
+    interactive distinction applies here too. A Claude Code agent
+    session has no controlling terminal, so ``is_non_interactive()``
+    reads True unconditionally there even though it is not CI — the
+    case the cache-freshness check most needs to run in, since the
+    cache it guards is what the agent session itself reads.
+
+    SCENARIO: is_non_interactive→True (simulating an agent session's
+    absent tty) but is_ci→False, with no cached plugin install — the
+    precheck must not treat this as CI.
+    MOCK SETUP: is_ci stubbed to False; is_non_interactive stubbed to
+    True; a plugin manifest is written so the "no plugin shipped" skip
+    doesn't fire first; find_plugin_cache/plugin_cache_version stubbed to
+    None so the step falls through to the "not cached" skip rather than
+    the CI skip.
+    EXPECTED BEHAVIOR: the step proceeds past the CI precheck — its
+    output is not the "(CI — skipped)" text, even though it still skips
+    for the unrelated reason of no cached install.
+    """
+    _write_plugin_manifest(tmp_path, "2.9.0")
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: None)
+    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: None)
+    result = precommit.step_plugin_sync(tmp_path)
+    assert result.passed
+    assert result.skipped
+    assert "(CI — skipped)" not in result.output
+    assert "not installed" in result.output
 
 
 def test_step_plugin_sync_skips_when_not_cached(
@@ -3346,7 +3453,7 @@ def test_step_plugin_sync_skips_when_not_cached(
 ) -> None:
     """No cached install of the plugin → skip mentioning it isn't installed."""
     _write_plugin_manifest(tmp_path, "2.9.0")
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: None)
     monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: None)
     result = precommit.step_plugin_sync(tmp_path)
@@ -3361,7 +3468,7 @@ def test_step_plugin_sync_passes_when_cache_matches_manifest(
 ) -> None:
     """A cache version equal to the manifest's is current — no failure."""
     _write_plugin_manifest(tmp_path, "2.9.0")
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
     monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.9.0")
     result = precommit.step_plugin_sync(tmp_path)
@@ -3376,7 +3483,7 @@ def test_step_plugin_sync_passes_when_cache_ahead_of_manifest(
 ) -> None:
     """A cache version ahead of the manifest is also current — no failure."""
     _write_plugin_manifest(tmp_path, "2.9.0")
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
     monkeypatch.setattr(
         version_surfaces, "plugin_cache_version", lambda _root: "2.10.0"
@@ -3391,7 +3498,7 @@ def test_step_plugin_sync_warns_when_behind_and_unconfigured(
 ) -> None:
     """Lagging cache with no [tool.forge.plugin_sync] config is WARN, not block."""
     _write_plugin_manifest(tmp_path, "2.9.0")
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
     monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.8.0")
     result = precommit.step_plugin_sync(tmp_path)
@@ -3407,7 +3514,7 @@ def test_step_plugin_sync_blocks_when_behind_and_configured_blocking(
     """[tool.forge.plugin_sync].blocking = true escalates a lagging cache to a block."""
     _write_plugin_manifest(tmp_path, "2.9.0")
     _write_pyproject(tmp_path, "[tool.forge.plugin_sync]\nblocking = true\n")
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: False)
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
     monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
     monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.8.0")
     result = precommit.step_plugin_sync(tmp_path)

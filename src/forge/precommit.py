@@ -74,6 +74,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from importlib import resources
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from forge import config, pip_audit_json
@@ -125,7 +126,6 @@ from forge.version_surfaces import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
-    from pathlib import Path
 
     StepFn = Callable[[Path], "StepResult"]
 
@@ -392,6 +392,15 @@ def step_auto_rebuild(repo_root: Path) -> StepResult:
     rebuild warns rather than blocking — ``env_sync`` still renders the
     actionable block.
 
+    This step keeps ``is_non_interactive()`` while its siblings
+    ``env_sync`` and ``plugin_sync`` moved to ``is_ci()``, and the
+    difference is deliberate rather than an oversight: those two
+    *report*, this one *acts*. Running a configured rebuild command
+    inside an agent's commit would change the contributor's environment
+    without them asking — the side effect FOUNDATION §2 guards. A
+    skipped report is a missed warning; a skipped action is nothing
+    happening, which is the safe direction for this one.
+
     Args:
         repo_root: Git repo root.
 
@@ -453,6 +462,17 @@ def _check_clone_identity(repo_root: Path) -> StepResult | None:
     install's name) and the install is editable; consumer repos and
     git/index installs have no clone to compare against and skip.
 
+    A ``git worktree`` trips this too, and that is the intended answer
+    rather than a false positive: an editable install records the
+    original clone's path, so the worktree genuinely executes the other
+    checkout's code. It went unobserved until this step began running on
+    agent-driven commits.
+
+    Paths are rendered relative to ``~`` because this message reaches
+    ``code_health/env_sync.log`` and, when a contributor quotes a block
+    they hit, potentially a public issue — an absolute path carries the
+    account name (FOUNDATION §2).
+
     Args:
         repo_root: Git repo root.
 
@@ -464,14 +484,22 @@ def _check_clone_identity(repo_root: Path) -> StepResult | None:
     if declared is None or declared[0] != DIST_NAME:
         return None  # not forge-scripts' own source tree — nothing to compare
     origin = editable_install_origin()
-    if origin is None or origin == repo_root.resolve():
+    here = repo_root.resolve()
+    if origin is None or origin == here:
         return None
+    home = Path.home()
+    shown = []
+    for path in (origin, here):
+        try:
+            shown.append(f"~/{path.relative_to(home)}")
+        except ValueError:
+            shown.append(str(path))
     return StepResult(
         name="env_sync",
         passed=False,
         output=(
-            f"⛔ The active forge-scripts install is editable from {origin}, not "
-            f"this clone ({repo_root.resolve()}). Every gate would run the other "
+            f"⛔ The active forge-scripts install is editable from {shown[0]}, not "
+            f"this clone ({shown[1]}). Every gate would run the other "
             "checkout's code. Activate this clone's env or re-run `./dev/setup.sh` "
             "here."
         ),
@@ -516,9 +544,16 @@ def _check_hook_sidecar(repo_root: Path) -> StepResult | None:
 def _env_sync_precheck(repo_root: Path) -> StepResult | None:
     """Return the result that ends ``env_sync`` early, or ``None`` to continue.
 
-    The non-interactive self-skip (FOUNDATION §15) first, then the two
-    blocking install-surface checks — each a complete ``StepResult`` so
-    the step body stays a linear sequence.
+    The CI self-skip (FOUNDATION §15) first, then the two blocking
+    install-surface checks — each a complete ``StepResult`` so the step
+    body stays a linear sequence.
+
+    ``is_ci()``, never ``is_non_interactive()``: a stale local install is
+    a workstation condition, and agent-driven commits are the standard
+    path (FOUNDATION §3 routes commits through an agent). Gating on the
+    tty-inclusive predicate skipped this step on every one of them, so
+    the check that exists to catch a stale environment never ran where
+    environments actually go stale.
 
     Args:
         repo_root: Git repo root.
@@ -527,11 +562,11 @@ def _env_sync_precheck(repo_root: Path) -> StepResult | None:
         A skip or block result, or ``None`` when the entry-point and pin
         checks should run.
     """
-    if is_non_interactive():
+    if is_ci():
         return StepResult(
             name="env_sync",
             passed=True,
-            output="(CI / non-interactive — skipped)",
+            output="(CI — skipped)",
             skipped=True,
         )
     for check in (_check_clone_identity, _check_hook_sidecar):
@@ -574,7 +609,7 @@ def step_env_sync(repo_root: Path) -> StepResult:
       failure takes priority over this advisory.
 
     Self-skips when there is nothing to verify (no ``[project.scripts]`` and
-    no pin, package not installed at all) or in CI / non-interactive contexts
+    no pin, package not installed at all) or in CI
     (FOUNDATION §15 — a fresh runner checkout legitimately predates install).
 
     Args:
@@ -667,8 +702,13 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
     the gate names it and, for forge itself, refuses to commit until it
     happened (``[tool.forge.plugin_sync].blocking = true``); consumers get
     an advisory unless they opt in. Self-skips when the repo ships no
-    plugin, when the plugin is not installed locally, and in
-    non-interactive contexts (FOUNDATION §15).
+    plugin, when the plugin is not installed locally, and in CI
+    (FOUNDATION §15).
+
+    ``is_ci()``, never ``is_non_interactive()``: the cache this gate
+    guards is read by Claude Code sessions, so an agent-driven commit is
+    the case it most needs to cover. The tty-inclusive predicate is true
+    in every such session, which left the gate skipped exactly there.
 
     Args:
         repo_root: Git repo root.
@@ -685,11 +725,11 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
             output="(no plugin shipped — skipped)",
             skipped=True,
         )
-    if is_non_interactive():
+    if is_ci():
         return StepResult(
             name="plugin_sync",
             passed=True,
-            output="(CI / non-interactive — skipped)",
+            output="(CI — skipped)",
             skipped=True,
         )
     status = plugin_cache_status(repo_root)
