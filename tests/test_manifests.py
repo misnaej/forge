@@ -202,27 +202,65 @@ def test_issue_triage_agent_never_signs_off_a_validated_plan() -> None:
     )
 
 
-def test_plan_batch_skill_self_skips_when_non_interactive() -> None:
-    """`/plan-batch` gates its fan-out on the real run-context probe.
+def test_plan_batch_skill_self_skips_on_is_ci_not_is_non_interactive() -> None:
+    """`/plan-batch` gates its fan-out on presence (`is_ci`), not on tty-ness.
 
     SCENARIO: the skill fans out up to three billed drafting agents whose
     entire output requires a human to validate before anything acts on
     it, so firing that from automation bills for drafts nobody is present
-    to accept. FOUNDATION §15 makes that a run-context decision rather
-    than a default, which is why the probe has to be named.
-    Asserting the imported symbol rather than a prose sentence catches
-    two regressions with one pair: the self-skip clause being dropped
-    from the skill, and a `run_context` rename leaving the skill pointing
-    at a function that no longer exists.
+    to accept. FOUNDATION §15's `is_non_interactive()` is unconditionally
+    true in every agent session (agent commands are subprocesses with no
+    tty), which would self-skip the fan-out exactly where a human is
+    waiting on it; `is_ci()` — "is anyone there to receive this?" — is the
+    predicate that actually answers presence. Asserting the literal gating
+    phrase built from the imported symbol, rather than a bare
+    `guard.__name__ in skill` containment check, catches three
+    regressions: the self-skip clause being dropped, the skill reverting
+    to `is_non_interactive()` (whose name would otherwise still be found
+    as a substring inside the file's own contrastive explanation of why
+    that predicate is wrong), and a `run_context` rename leaving the
+    skill pointing at a function that no longer exists.
 
-    EXPECTED BEHAVIOR: the shipped skill names the guard under the name
-    `forge.run_context` actually exports — the attribute access below
-    is itself the rename check, raising before the assertion runs.
+    EXPECTED BEHAVIOR: the shipped skill's self-skip lead-in names the
+    guard under the name `forge.run_context` actually exports — the
+    attribute access below is itself the rename check, raising before the
+    assertion runs.
     """
-    guard = run_context.is_non_interactive
+    guard = run_context.is_ci
     skill = (REPO_ROOT / "skills" / "plan-batch" / "SKILL.md").read_text()
-    assert guard.__name__ in skill, (
+    gate = f"Self-skip the whole skill when `forge.run_context.{guard.__name__}()`"
+    assert gate in skill, (
         f"plan-batch must self-skip on `{guard.__name__}()` (FOUNDATION §15)"
+    )
+
+
+def test_pr_skill_code_review_offer_self_skips_on_is_ci() -> None:
+    """`/pr`'s `/code-review` offer gates on presence (`is_ci`), not tty-ness.
+
+    SCENARIO: the offer is a billed, user-triggered fan-out — printing the
+    exact `/code-review` command and waiting for the user to run it or
+    decline — so making it from automation is waste nobody can answer.
+    FOUNDATION §15's `is_ci()` is the "is anyone there to receive this?"
+    predicate; `is_non_interactive()` is unconditionally true in every
+    agent session and would wrongly self-skip the offer exactly where a
+    human is present to answer it. Nothing else in the suite reads this
+    file, so this is the only gate against the clause reverting to
+    `is_non_interactive()` or the guard going stale on a future
+    `run_context` rename.
+
+    EXPECTED BEHAVIOR: the shipped skill's self-skip lead-in names the
+    guard under the name `forge.run_context` actually exports — the
+    attribute access below is itself the rename check, raising before the
+    assertion runs.
+    """
+    guard = run_context.is_ci
+    skill = " ".join((REPO_ROOT / "skills" / "pr" / "SKILL.md").read_text().split())
+    assert (
+        f"Self-skip the offer entirely when `forge.run_context.{guard.__name__}()`"
+        in skill
+    ), (
+        f"pr's /code-review offer must self-skip on `{guard.__name__}()` "
+        "(FOUNDATION §15)"
     )
 
 
