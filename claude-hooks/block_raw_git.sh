@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
-# Block raw `git commit` / `git push` invocations from Bash.
+# Block raw commit-creating and push invocations from Bash.
+#
+# `revert` and `cherry-pick` are here because they create commits through
+# git's sequencer, which runs no pre-commit hook at all — so they were a
+# way to land an unchecked commit on any branch, including the protected
+# base, past every guard in this family. The forms that end the operation
+# (`--abort` / `--quit` / `--skip`) or stage without committing
+# (`--no-commit` / `-n`) create nothing and stay allowed: they are how an
+# agent gets out of a conflicted sequencer state.
 # FOUNDATION §3 mandatory-delegation — use the forge:git-commit-push agent.
 #
 # Bypass: the forge:git-commit-push agent itself must call these. The
@@ -29,5 +37,14 @@ fi
 source "$ANCHOR_LIB"
 if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}(commit|push)\b"; then
     echo "BLOCKED: raw 'git commit' / 'git push' from Bash is forbidden by FOUNDATION §3 mandatory-delegation. Use the forge:git-commit-push agent — it runs pre-commit, signs the commit per the convention, and pushes with the right tracking flags." >&2
+    exit 2
+fi
+
+# Commit-creating sequencer verbs. The exempt forms create no commit.
+SEQUENCER_RE="${GIT_ANCHOR}(revert|cherry-pick)\b"
+SEQUENCER_EXEMPT_RE="${SEQUENCER_RE}[^;&|)]*(--(abort|quit|skip|no-commit)|[[:space:]]-n)\b"
+if echo "$COMMAND" | grep -qE "$SEQUENCER_RE" \
+    && ! echo "$COMMAND" | grep -qE "$SEQUENCER_EXEMPT_RE"; then
+    echo "BLOCKED: 'git revert' / 'git cherry-pick' create a commit through git's sequencer, which runs NO pre-commit hook — forbidden by FOUNDATION §3 for the same reason as raw 'git commit'. To undo a change, make a new commit through the normal flow. To leave a conflicted sequencer state, '--abort' / '--quit' / '--skip' stay allowed, as does '--no-commit'. If a human truly needs this, run it yourself with: ! $COMMAND" >&2
     exit 2
 fi
