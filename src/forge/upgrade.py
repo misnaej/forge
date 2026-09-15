@@ -24,6 +24,10 @@ shortcut via ``--apply``.
 ``forge-upgrade --check`` reports current vs latest without writing
 anything.
 
+Phase 2 and ``--apply`` both refuse a pin naming a release tag the
+shipped changelog doesn't document (exit ``2``) — see
+:func:`_undocumented_release_refusal`.
+
 Pin detection scope: searches for a ``forge-scripts @ git+...`` line
 in, in order, the consumer's ``pyproject.toml`` (primary),
 ``requirements*.txt``, and the ``pip:`` section of a conda
@@ -48,7 +52,7 @@ from dataclasses import dataclass
 from importlib import metadata, resources
 from pathlib import Path
 
-from forge.changelog import action_items
+from forge.changelog import action_items, top_release_heading
 from forge.git_utils import (
     _FORGE_GITHUB_REPO,
     configure_cli_logging,
@@ -662,6 +666,55 @@ def _pending_action_count(changelog_text: str) -> int:
     return count
 
 
+# A release-tag pin is exactly ``vX.Y.Z``. A branch or commit pin is an
+# explicit choice to track undocumented code, so it is never gated.
+_RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+
+
+def _undocumented_release_refusal(
+    target_ref: str, changelog_text: str | None
+) -> str | None:
+    """Return why *target_ref* must not be adopted, or ``None`` to proceed.
+
+    Tag-on-merge vs. an unscheduled assembly (``docs/release-process.md``
+    §2 "Tag-on-merge") means a tag can ship with a changelog that never
+    mentions it — and the upgrade notes printed from that changelog stop
+    short without saying so, which is the defect this refuses. A version
+    no release documents is not adoptable; the remedy is an assembly run
+    covering it, not a quieter warning.
+
+    Every unknowable input proceeds rather than blocks, per §1: a
+    non-tag ref, an absent changelog (partial install), a changelog with
+    no release heading, or either side failing to parse. The gate fires
+    only on a provable mismatch between two parsed versions.
+
+    Args:
+        target_ref: The ref being adopted — gated only when it is a
+            release tag.
+        changelog_text: The packaged changelog shipped *by that ref*, or
+            ``None`` when it could not be read.
+
+    Returns:
+        A refusal message naming both versions, or ``None`` when the
+        adoption may proceed.
+    """
+    if not _RELEASE_TAG_RE.match(target_ref) or changelog_text is None:
+        return None
+    documented = top_release_heading(changelog_text)
+    if documented is None:
+        return None
+    wanted, newest = parse_semver(target_ref), parse_semver(documented)
+    if wanted is None or newest is None or wanted <= newest:
+        return None
+    return (
+        f"{target_ref} is not documented: the changelog it ships stops at "
+        f"{documented}, so every change between them — including any action "
+        "you are expected to take — is invisible in the upgrade notes. "
+        f"Adopt {documented}, or ask for an assembly run covering "
+        f"{target_ref}."
+    )
+
+
 def _print_upgrade_notes() -> None:
     """Surface consumer-action upgrade notes after a successful upgrade.
 
@@ -702,25 +755,28 @@ def _print_upgrade_notes() -> None:
 def _run_phase2(root: Path) -> int:
     """Phase 2 — verify the install matches the pin, then re-sync artifacts.
 
-    Refuses to run ``install-forge-bootstrap`` when the installed
-    build's git revision provably differs from the pin: regenerating
-    managed artifacts from a stale build is the silent-downgrade case —
-    the next commit would land older content while the pin claims
-    otherwise. The gate stays silent when either side is unknowable (no
-    pin, or a non-git install). Wrapped in
-    :func:`forge.run_context.progress_logger` so the substep boundary +
-    total elapsed time appears in CI logs even though
-    ``install-forge-bootstrap`` already emits its own per-step
+    Two refusal gates run before ``install-forge-bootstrap``. First,
+    when the installed build's git revision provably differs from the
+    pin: regenerating managed artifacts from a stale build is the
+    silent-downgrade case — the next commit would land older content
+    while the pin claims otherwise. That gate stays silent when either
+    side is unknowable (no pin, or a non-git install). Second, when the
+    pin names a release tag :func:`_undocumented_release_refusal` finds
+    the shipped changelog doesn't document — see that function's
+    docstring for why. Wrapped in :func:`forge.run_context.progress_logger`
+    so the substep boundary + total elapsed time appears in CI logs even
+    though ``install-forge-bootstrap`` already emits its own per-step
     ``→ <slug>`` lines.
 
     Args:
-        root: Consumer repo root (pin discovery for the verify gate).
+        root: Consumer repo root (pin discovery for both gates).
 
     Returns:
         Exit code from ``install-forge-bootstrap``; ``1`` when the
         installed revision mismatches the pin (with the exact pip
-        command to fix it). ``0`` plus a plugin-update reminder when
-        bootstrap succeeds.
+        command to fix it); ``2`` when the pin names an undocumented
+        release. ``0`` plus a plugin-update reminder when bootstrap
+        succeeds.
     """
     mismatch = pin_revision_mismatch(root)
     if mismatch is not None:
@@ -734,6 +790,19 @@ def _run_phase2(root: Path) -> int:
             pip_command(pinned_ref),
         )
         return 1
+
+    pin = find_pin(root)
+    if pin is not None:
+        refusal = _undocumented_release_refusal(pin.ref, _read_changelog())
+        if refusal is not None:
+            logger.error("REFUSED: %s", refusal)
+            logger.error(
+                "Managed artifacts were not re-synced. Point the pin at a "
+                "documented release and re-run, or ask for an assembly run "
+                "covering %s.",
+                pin.ref,
+            )
+            return 2
     with progress_logger("bootstrap") as note:
         note("install-forge-bootstrap")
         rc = _bootstrap_run()
@@ -881,6 +950,18 @@ def _run_apply(args: argparse.Namespace, root: Path) -> int:
             installed,
             target_ref,
         )
+
+    refusal = _undocumented_release_refusal(target_ref, _read_changelog())
+    if refusal is not None:
+        logger.error("REFUSED: %s", refusal)
+        logger.error(
+            "Managed artifacts were not re-synced, but your pin now names "
+            "%s and the matching package is installed. Point the pin at a "
+            "documented release, or ask for an assembly run covering %s.",
+            target_ref,
+            target_ref,
+        )
+        return 2
 
     logger.info("")
     logger.info("Re-syncing managed artifacts...")

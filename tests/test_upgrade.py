@@ -480,6 +480,39 @@ def test_phase2_gate_silent_when_installed_revision_none(
     assert calls["n"] == 1
 
 
+def test_phase2_gate_refuses_undocumented_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pin names a release tag the changelog it ships never documents.
+
+    SCENARIO: pin resolves to v8.4.1, but the packaged changelog's newest
+        heading is v8.2.0 — the two-phase `--continue` flow is the only
+        upgrade path available to an agent (the one-shot `--apply` flow
+        is off-limits per FOUNDATION §2), so this gate must fire here too,
+        not just on that other call site.
+    MOCK SETUP: `_installed_revision` -> "v8.4.1" (matches the pin ref, so
+        `pin_revision_mismatch` returns None and can't mask this gate);
+        `_read_changelog` -> `_TWO_RELEASE_CHANGELOG` (reused from the
+        `_undocumented_release_refusal` unit tests); `_bootstrap_run`
+        replaced with a spy that fails the test if it is ever called.
+    EXPECTED BEHAVIOR: rc 2, and bootstrap never runs.
+    """
+    pyproject = _BASE_PYPROJECT.replace("v1.2.0", "v8.4.1")
+    (tmp_path / "pyproject.toml").write_text(pyproject)
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: "v8.4.1")
+    monkeypatch.setattr(upgrade, "_read_changelog", lambda: _TWO_RELEASE_CHANGELOG)
+
+    def _fail_if_called() -> int:
+        msg = "_bootstrap_run must not be called when the gate refuses"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(upgrade, "_bootstrap_run", _fail_if_called)
+
+    rc = upgrade._run_phase2(tmp_path)
+    assert rc == 2
+
+
 def test_check_with_no_pin_and_no_target_reports_gracefully(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1480,3 +1513,55 @@ def test_print_upgrade_notes_omits_action_section_when_none(
     msgs = " ".join(r.getMessage() for r in caplog.records)
     assert "do X" in msgs
     assert "Action required" not in msgs
+
+
+_TWO_RELEASE_CHANGELOG = """# Changelog
+
+## v8.2.0 — 2026-01-01
+
+- Some change.
+
+## v8.1.0 — 2025-12-01
+
+- An older change.
+"""
+
+
+def test_undocumented_release_refusal_refuses_undocumented_tag() -> None:
+    """A tag newer than the changelog's top heading is refused, naming both versions."""
+    refusal = upgrade._undocumented_release_refusal("v8.4.1", _TWO_RELEASE_CHANGELOG)
+    assert refusal is not None
+    assert "v8.4.1" in refusal
+    assert "v8.2.0" in refusal
+
+
+def test_undocumented_release_refusal_none_when_documented_or_older() -> None:
+    """A tag at or behind the changelog's top heading proceeds."""
+    assert (
+        upgrade._undocumented_release_refusal("v8.2.0", _TWO_RELEASE_CHANGELOG) is None
+    )
+    assert (
+        upgrade._undocumented_release_refusal("v8.1.0", _TWO_RELEASE_CHANGELOG) is None
+    )
+
+
+def test_undocumented_release_refusal_none_for_non_tag_ref() -> None:
+    """A branch or commit-SHA pin is a deliberate choice to track undocumented code."""
+    assert upgrade._undocumented_release_refusal("main", _TWO_RELEASE_CHANGELOG) is None
+    assert (
+        upgrade._undocumented_release_refusal(
+            "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", _TWO_RELEASE_CHANGELOG
+        )
+        is None
+    )
+
+
+def test_undocumented_release_refusal_none_when_changelog_absent() -> None:
+    """No changelog (partial install) -> the check cannot assert what it can't know."""
+    assert upgrade._undocumented_release_refusal("v8.4.1", None) is None
+
+
+def test_undocumented_release_refusal_none_when_no_release_heading() -> None:
+    """A changelog with no recognized release heading -> proceed."""
+    text = "# Changelog\n\n## Unreleased\n\n- Some change pending release.\n"
+    assert upgrade._undocumented_release_refusal("v8.4.1", text) is None
