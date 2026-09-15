@@ -291,8 +291,8 @@ def _cmd_status(root: Path) -> int:
     return 0 if armed else 1
 
 
-def _cmd_consume(root: Path) -> int:
-    """Spend the armed bypass (called by the wrap-up gate hook).
+def consume(root: Path) -> int:
+    """Spend the armed bypass (called by forge-pr-create).
 
     Marks the sentinel spent and records the consumption on the ledger
     issue with the current head SHA. Refuses when nothing is armed.
@@ -492,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("status", help="print armed/spent/expired state")
     sub.add_parser(
         "consume",
-        help="spend the armed bypass (called by the wrap-up gate hook)",
+        help="spend the armed bypass (called by forge-pr-create)",
     )
     record = sub.add_parser(
         "record-pr",
@@ -507,7 +507,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status":
         return _cmd_status(root)
     if args.command == "consume":
-        return _cmd_consume(root)
+        return consume(root)
     if args.command == "record-pr":
         return _cmd_record_pr(root, args.pr_number)
     return _cmd_end(root)

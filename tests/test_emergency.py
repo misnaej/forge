@@ -6,7 +6,7 @@
 # ``unittest.mock.Mock``, since the surface under test IS the sequencing
 # and parsing of successive ``gh`` calls (comment-then-close ordering,
 # "no re-comment on refusal", etc.), not a single canned return value.
-# ``_cmd_consume``'s bare ``git rev-parse HEAD`` shells out directly (not
+# ``consume``'s bare ``git rev-parse HEAD`` shells out directly (not
 # through ``_gh``), so that one case runs against a real ephemeral repo
 # built by ``tests.conftest.init_git_repo`` instead of being faked. The
 # ``O_CREAT|O_EXCL`` consume lock is likewise real filesystem state (a
@@ -408,7 +408,7 @@ def test_fresh_start_clears_stale_lock_from_prior_event(
     monkeypatch.setattr(emergency, "_gh", fake)
 
     assert emergency._cmd_start(tmp_path, "event A", 4.0) == 0
-    assert emergency._cmd_consume(tmp_path) == 0
+    assert emergency.consume(tmp_path) == 0
     assert emergency._cmd_end(tmp_path) == 1  # debt outstanding, files kept
     assert (tmp_path / emergency._CONSUME_LOCK).exists()
 
@@ -416,7 +416,7 @@ def test_fresh_start_clears_stale_lock_from_prior_event(
     # must clear the stale lock on its way in.
     assert emergency._cmd_start(tmp_path, "event B", 4.0) == 0
     assert not (tmp_path / emergency._CONSUME_LOCK).exists()
-    assert emergency._cmd_consume(tmp_path) == 0
+    assert emergency.consume(tmp_path) == 0
     state = emergency.read_state(tmp_path)
     assert state is not None
     assert state.ledger_issue == 2
@@ -494,16 +494,16 @@ def test_cmd_status_reports_verdict_and_exit_code(
     assert expected_verdict in capsys.readouterr().out
 
 
-# --- _cmd_consume ------------------------------------------------------
+# --- consume ------------------------------------------------------
 
 
-def test_cmd_consume_spends_armed_state_and_comments_head_sha(
+def test_consume_spends_armed_state_and_comments_head_sha(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Consuming an armed sentinel marks it spent and comments the ledger with HEAD.
 
     Uses a real ephemeral repo (`init_git_repo`) for the bare
-    `git rev-parse HEAD` shelled out directly inside `_cmd_consume` — that
+    `git rev-parse HEAD` shelled out directly inside `consume` — that
     call bypasses the `_gh` seam entirely, so a fake `gh` alone can't cover
     it.
     """
@@ -523,7 +523,7 @@ def test_cmd_consume_spends_armed_state_and_comments_head_sha(
     fake, calls = _fake_gh([FakeProc()])
     monkeypatch.setattr(emergency, "_gh", fake)
 
-    rc = emergency._cmd_consume(tmp_path)
+    rc = emergency.consume(tmp_path)
 
     assert rc == 0
     state = emergency.read_state(tmp_path)
@@ -534,7 +534,7 @@ def test_cmd_consume_spends_armed_state_and_comments_head_sha(
     assert (tmp_path / emergency._CONSUME_LOCK).is_file()
 
 
-def test_cmd_consume_refuses_lock_contention_leaves_sentinel_unspent(
+def test_consume_refuses_lock_contention_leaves_sentinel_unspent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -552,7 +552,7 @@ def test_cmd_consume_refuses_lock_contention_leaves_sentinel_unspent(
     fake, calls = _fake_gh([])
     monkeypatch.setattr(emergency, "_gh", fake)
 
-    rc = emergency._cmd_consume(tmp_path)
+    rc = emergency.consume(tmp_path)
 
     assert rc == 1
     assert "already being consumed" in capsys.readouterr().out
@@ -560,7 +560,7 @@ def test_cmd_consume_refuses_lock_contention_leaves_sentinel_unspent(
     assert emergency.read_state(tmp_path) == state
 
 
-def test_cmd_consume_still_spends_and_warns_on_ledger_comment_failure(
+def test_consume_still_spends_and_warns_on_ledger_comment_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -580,7 +580,7 @@ def test_cmd_consume_still_spends_and_warns_on_ledger_comment_failure(
     fake, _calls = _fake_gh([FakeProc(returncode=1)])
     monkeypatch.setattr(emergency, "_gh", fake)
 
-    rc = emergency._cmd_consume(tmp_path)
+    rc = emergency.consume(tmp_path)
 
     assert rc == 0
     state = emergency.read_state(tmp_path)
@@ -591,20 +591,20 @@ def test_cmd_consume_still_spends_and_warns_on_ledger_comment_failure(
     assert "unrecorded" in out
 
 
-def test_cmd_consume_refuses_when_nothing_armed(
+def test_consume_refuses_when_nothing_armed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No sentinel at all refuses `consume` without touching `gh`."""
     fake, calls = _fake_gh([])
     monkeypatch.setattr(emergency, "_gh", fake)
 
-    rc = emergency._cmd_consume(tmp_path)
+    rc = emergency.consume(tmp_path)
 
     assert rc == 1
     assert calls == []
 
 
-def test_cmd_consume_refuses_expired_leaves_sentinel_untouched(
+def test_consume_refuses_expired_leaves_sentinel_untouched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An expired sentinel refuses `consume` and is not rewritten."""
@@ -613,14 +613,14 @@ def test_cmd_consume_refuses_expired_leaves_sentinel_untouched(
     fake, calls = _fake_gh([])
     monkeypatch.setattr(emergency, "_gh", fake)
 
-    rc = emergency._cmd_consume(tmp_path)
+    rc = emergency.consume(tmp_path)
 
     assert rc == 1
     assert calls == []
     assert emergency.read_state(tmp_path) == state
 
 
-def test_cmd_consume_refuses_already_spent_without_recommenting(
+def test_consume_refuses_already_spent_without_recommenting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An already-spent sentinel refuses `consume` — no second ledger comment."""
@@ -631,7 +631,7 @@ def test_cmd_consume_refuses_already_spent_without_recommenting(
     fake, calls = _fake_gh([])
     monkeypatch.setattr(emergency, "_gh", fake)
 
-    rc = emergency._cmd_consume(tmp_path)
+    rc = emergency.consume(tmp_path)
 
     assert rc == 1
     assert calls == []
