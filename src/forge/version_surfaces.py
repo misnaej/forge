@@ -421,15 +421,7 @@ def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
     data, _err = read_json(manifest)
     plugin_name = str(data.get("name") or repo_root.name)
     declared = str(data["version"]) if data.get("version") else None
-    cache_root = find_plugin_cache(plugin_name)
-    install_dir = find_install_dir(cache_root) if cache_root is not None else None
-    if install_dir is None:
-        return PluginCacheStatus("uncached", plugin_name, None, declared)
-    cached = install_version(install_dir)
-    missing = tuple(sorted(_hook_names(repo_root) - _hook_names(install_dir)))
-    if not missing:
-        return PluginCacheStatus("current", plugin_name, cached, declared)
-    return PluginCacheStatus("stale-content", plugin_name, cached, declared, missing)
+    return _status_against(repo_root, plugin_name=plugin_name, declared=declared)
 
 
 def _consumer_cache_status(repo_root: Path) -> PluginCacheStatus:
@@ -463,12 +455,33 @@ def _consumer_cache_status(repo_root: Path) -> PluginCacheStatus:
         return PluginCacheStatus("no-manifest", repo_root.name, None, None)
     data, _err = read_json(source_dir / ".claude-plugin" / "plugin.json")
     plugin_name = str(data.get("name") or repo_root.name)
+    return _status_against(source_dir, plugin_name=plugin_name, declared=pin.ref)
+
+
+def _status_against(
+    source_dir: Path, *, plugin_name: str, declared: str | None
+) -> PluginCacheStatus:
+    """Judge the loaded cache slot against the hooks *source_dir* ships.
+
+    The two branches differ only in what counts as the source — a repo's
+    own tree, or the marketplace clone a consumer pinned — so the
+    resolve-slot-and-diff-hooks sequence lives here once.
+
+    Args:
+        source_dir: Tree whose ``claude-hooks/`` is the reference.
+        plugin_name: Name the cache slot is filed under.
+        declared: Version or pin to report; never compared.
+
+    Returns:
+        ``"uncached"``, ``"current"``, or ``"stale-content"`` with the
+        hook names the slot lacks.
+    """
     cache_root = find_plugin_cache(plugin_name)
     install_dir = find_install_dir(cache_root) if cache_root is not None else None
     if install_dir is None:
-        return PluginCacheStatus("uncached", plugin_name, None, pin.ref)
+        return PluginCacheStatus("uncached", plugin_name, None, declared)
     cached = install_version(install_dir)
     missing = tuple(sorted(_hook_names(source_dir) - _hook_names(install_dir)))
     if not missing:
-        return PluginCacheStatus("current", plugin_name, cached, pin.ref)
-    return PluginCacheStatus("stale-content", plugin_name, cached, pin.ref, missing)
+        return PluginCacheStatus("current", plugin_name, cached, declared)
+    return PluginCacheStatus("stale-content", plugin_name, cached, declared, missing)

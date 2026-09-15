@@ -12,6 +12,34 @@
 
 ## Forge-specific rules
 
+> ### ⚠️ Read first: forge is not adoptable until the release is assembled
+>
+> **Merging changes nothing for anyone.** `/plugin update forge@forge`
+> reads `.claude-plugin/plugin.json`, and that file has exactly one
+> writer — `forge-changelog release`. Until it runs, every consumer and
+> every forge dev session keeps loading the previous plugin: the old
+> agents, the old hooks, the old skills. `CHANGELOG.md` documents none
+> of the merged work either.
+>
+> **`/plugin update` will say "already at the latest version" and install
+> nothing.** That line is what being unreleased looks like — never read
+> it as confirmation, and never report merged work as live or shipped
+> (FOUNDATION §6, "a merge is not a release").
+>
+> **This is not a chore owed after every merge.** Fragments exist so
+> releases batch; one assembly covering several merges is the normal
+> shape. What prompts one is somebody needing to *use* the work — an
+> adoption, an upgrade, a dev session running stale agents. Then run
+> `forge-changelog next-version`; if it names unreleased fragments, the
+> release PR is the next task.
+>
+> **Bump the manifest last** — writing that field unbinds this session's
+> plugin agents (#646), so a release PR can strand the very agents it
+> needs. Assemble, verify, then bump immediately before committing.
+>
+> Mechanics live in [`docs/release-process.md`](docs/release-process.md);
+> this block is the obligation only.
+
 - **Changelog fragments (dogfood, since #229)**: forge uses `[tool.forge.changelog].mode = "fragments"` conventions — a PR's changelog entry is a `changelog.d/<slug>.<type>.md` file (first line `bump: patch|minor|major`, level ONLY — never a version number), NOT a `CHANGELOG.md` edit. CHANGELOG.md is assembled at release (`forge-changelog assemble`); nothing reads it as a version signal. Versions are assembler-owned: PRs never bump `plugin.json` (it parks at the latest tag; the guard accepts that with valid pending fragments) — a release PR runs `forge-changelog release`, which assembles fragments already released by a tag under that tag's heading, mints a version only from the unreleased ones, and is the manifest's single writer.
 
 - **Version derivation**: pip package version comes from the latest git tag via setuptools-scm. There is no manual `version = "x.y.z"` in `pyproject.toml`. Release flow: `git tag vX.Y.Z && git push origin vX.Y.Z`.
