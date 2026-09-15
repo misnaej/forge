@@ -69,12 +69,16 @@ def _own_login(monkeypatch: pytest.MonkeyPatch) -> None:
         "refactor(audit): named scope",
         "docs: lowercase subject is fine",
         "chore(#99): bump",
+        "feat!: breaking change, no scope",
+        "fix(scope)!: breaking change, scoped",
     ],
 )
 def test_check_title_accepts_conventional_forms(title: str) -> None:
     """Conventional-commit titles in known shapes report no problems.
 
-    Pins the accepted title shapes FOUNDATION §6 names.
+    Pins the accepted title shapes FOUNDATION §6 names, including the
+    `!` breaking-change marker immediately before the colon (with or
+    without a scope).
 
     Args:
         title: A conventional-commit format title string.
@@ -92,12 +96,16 @@ def test_check_title_accepts_conventional_forms(title: str) -> None:
         "feat add subject without colon",
         "wip: not a conventional type",
         "feat: line one\nfeat: line two",
+        "feat !: space before the breaking marker",
+        "!feat: breaking marker before the type",
     ],
 )
 def test_check_title_rejects_bad_forms(title: str) -> None:
     """Empty, multi-line, or non-conventional titles report a problem.
 
-    Pins which malformed shapes are rejected.
+    Pins which malformed shapes are rejected, including a `!` breaking
+    marker in the wrong position (a space before it, or before the type
+    instead of before the colon).
 
     Args:
         title: A malformed title string (empty, multi-line, or non-conventional).

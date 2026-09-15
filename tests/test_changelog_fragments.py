@@ -33,6 +33,7 @@ from tests.conftest import (
     commit_all,
     init_git_repo,
     init_single_track_repo,
+    make_fake_push_branch,
 )
 
 
@@ -1984,14 +1985,20 @@ def test_gate_evidence_invokes_precommit_with_exact_argv_and_cwd(
 def test_push_and_open_pr_push_race_defers_to_open_pr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A `git push` rejection explained by a racing PR defers with exit 0."""
+    """A push rejection explained by a racing PR defers with exit 0.
+
+    MOCK SETUP: `push_branch` replaced with a fake returning
+    `PushResult(ok=False, stderr="rejected")` — `gh pr create`'s own
+    `subprocess.run` seam is never reached on this path, so nothing else
+    needs faking.
+    """
     monkeypatch.setattr(
         changelog_fragments, "_gate_evidence", lambda _root: (True, "e")
     )
     monkeypatch.setattr(
-        changelog_fragments.subprocess,
-        "run",
-        lambda *_a, **_kw: FakeProc(1, stderr="rejected"),
+        changelog_fragments,
+        "push_branch",
+        make_fake_push_branch(ok=False, stderr="rejected"),
     )
     url = "https://github.com/x/y/pull/9"
     monkeypatch.setattr(
@@ -2012,14 +2019,18 @@ def test_push_and_open_pr_push_race_defers_to_open_pr(
 def test_push_and_open_pr_push_failure_without_race_exits_two(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A `git push` failure with no racing PR to explain it exits 2."""
+    """A push failure with no racing PR to explain it exits 2.
+
+    MOCK SETUP: `push_branch` replaced with a fake returning
+    `PushResult(ok=False, stderr="rejected")`.
+    """
     monkeypatch.setattr(
         changelog_fragments, "_gate_evidence", lambda _root: (True, "e")
     )
     monkeypatch.setattr(
-        changelog_fragments.subprocess,
-        "run",
-        lambda *_a, **_kw: FakeProc(1, stderr="rejected"),
+        changelog_fragments,
+        "push_branch",
+        make_fake_push_branch(ok=False, stderr="rejected"),
     )
     monkeypatch.setattr(
         changelog_fragments, "find_open_pr_by_head_prefix", lambda *_a, **_kw: None
@@ -2039,17 +2050,24 @@ def test_push_and_open_pr_push_failure_without_race_exits_two(
 def test_push_and_open_pr_create_race_defers_to_open_pr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A `gh pr create` failure (e.g. 422 duplicate) explained by a racing PR defers."""
+    """A `gh pr create` failure (e.g. 422 duplicate) explained by a racing PR defers.
+
+    MOCK SETUP: `push_branch` replaced with a fake returning
+    `PushResult(ok=True, ...)`, so the failure below is isolated to
+    `gh pr create`; `subprocess.run` (gh only, now that the push no
+    longer shells through it) returns `FakeProc(1, stderr="422")`.
+    """
     monkeypatch.setattr(
         changelog_fragments, "_gate_evidence", lambda _root: (True, "e")
     )
-
-    def _dispatch(cmd: list[str], *_a: object, **_kw: object) -> FakeProc:
-        if cmd[0] == "git":
-            return FakeProc(0)
-        return FakeProc(1, stderr="422")
-
-    monkeypatch.setattr(changelog_fragments.subprocess, "run", _dispatch)
+    monkeypatch.setattr(
+        changelog_fragments, "push_branch", make_fake_push_branch(ok=True)
+    )
+    monkeypatch.setattr(
+        changelog_fragments.subprocess,
+        "run",
+        lambda *_a, **_kw: FakeProc(1, stderr="422"),
+    )
     url = "https://github.com/x/y/pull/9"
     monkeypatch.setattr(
         changelog_fragments, "find_open_pr_by_head_prefix", lambda *_a, **_kw: url
@@ -2069,17 +2087,23 @@ def test_push_and_open_pr_create_race_defers_to_open_pr(
 def test_push_and_open_pr_create_failure_without_race_exits_two(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A `gh pr create` failure with no racing PR to explain it exits 2."""
+    """A `gh pr create` failure with no racing PR to explain it exits 2.
+
+    MOCK SETUP: `push_branch` replaced with a fake returning
+    `PushResult(ok=True, ...)`; `subprocess.run` (gh only) returns
+    `FakeProc(1, stderr="422")`.
+    """
     monkeypatch.setattr(
         changelog_fragments, "_gate_evidence", lambda _root: (True, "e")
     )
-
-    def _dispatch(cmd: list[str], *_a: object, **_kw: object) -> FakeProc:
-        if cmd[0] == "git":
-            return FakeProc(0)
-        return FakeProc(1, stderr="422")
-
-    monkeypatch.setattr(changelog_fragments.subprocess, "run", _dispatch)
+    monkeypatch.setattr(
+        changelog_fragments, "push_branch", make_fake_push_branch(ok=True)
+    )
+    monkeypatch.setattr(
+        changelog_fragments.subprocess,
+        "run",
+        lambda *_a, **_kw: FakeProc(1, stderr="422"),
+    )
     monkeypatch.setattr(
         changelog_fragments, "find_open_pr_by_head_prefix", lambda *_a, **_kw: None
     )
