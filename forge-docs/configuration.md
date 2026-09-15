@@ -413,8 +413,8 @@ adds a CLI, a contributor who hasn't reinstalled is silently missing it and
 the gate runs old code. This catches that up front with the exact reinstall
 command — it never installs anything itself (FOUNDATION §2). Self-skips when
 there is no `[project.scripts]` table, the package isn't installed at all, or
-the run is non-interactive / CI (a fresh runner checkout legitimately
-predates install — FOUNDATION §15).
+the run is CI (a fresh runner checkout legitimately predates install —
+FOUNDATION §15).
 
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
@@ -460,7 +460,8 @@ release merges, every session keeps the old cache until someone runs
 hook can run. The `plugin_sync` step compares the cached plugin's version with
 the manifest's and names those commands when the cache lags. It self-skips when
 the repo ships no plugin, when the plugin is not installed locally, and in
-non-interactive contexts (FOUNDATION §15).
+CI (FOUNDATION §15) — deliberately not any non-interactive run, since an
+agent-driven session is exactly the context that reads this cache.
 
 | Key | Default | Meaning | Set it when |
 |---|---|---|---|
