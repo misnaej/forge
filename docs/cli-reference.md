@@ -500,6 +500,27 @@ options:
   -h, --help   show this help message and exit
 ```
 
+## forge-pr-create
+
+```text
+usage: forge-pr-create [-h] --base BASE --title TITLE --body-file BODY_FILE
+                       [--draft]
+                       ...
+
+Verify the branch being published, then create its pull request.
+
+positional arguments:
+  passthrough           Extra gh flags after `--`, passed through untouched.
+
+options:
+  -h, --help            show this help message and exit
+  --base BASE           Base branch for the PR.
+  --title TITLE         PR title.
+  --body-file BODY_FILE
+                        File holding the PR body.
+  --draft               Open it as a draft.
+```
+
 ## forge-pr-plan
 
 ```text
