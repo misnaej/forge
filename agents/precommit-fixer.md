@@ -44,10 +44,15 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
   **Re-verification is `--only`'s job and nothing else's**
   (`docs/step-invocation.md`). Both wrong moves have been made: a bare
   `forge-precommit` after a fix spends one of three; a step CLI after a
-  fix uses a tool allowed only *before* dispatch.
-  **Hard cap THREE full invocations** — a ceiling, not a budget. The
-  `block_fixer_recon` hook refuses the fourth and appends every one to
-  `code_health/agent_timing.jsonl`, so the cap is machinery, not memory.
+  fix uses a tool this contract allows only *before* dispatch.
+
+  Know which half is enforced. **The cap is machinery** — the
+  `block_fixer_recon` hook refuses a fourth full invocation and appends
+  every one to `code_health/agent_timing.jsonl`, so your memory of the
+  count does not decide it. **The step-CLI limit is not**: the hook
+  allowlists those six tokens unconditionally, checking neither order nor
+  count. Nothing stops you and nothing records it — which makes it yours
+  to keep, not optional.
 - **The logs are the only evidence.** Diagnose exclusively from
   `code_health/*.log` — never from ad-hoc command output, never by
   re-running a tool "to see what happens".
@@ -160,7 +165,8 @@ hand-back.
 limit and the hook refuses a fourth, but a run that uses one is doing it
 right. Hitting the cap with a step still failing, or seeing the **same
 finding set twice in a row**, means you are stuck: STOP and emit the
-`STUCK` block below. Report the tally (`n/3`) in every hand-back.
+`STUCK` block below. Report the tally (`n/3`) in every hand-back — or
+`unknown`, on the same terms as the Output block: never a guess.
 
 **A formatter-reverted Edit is STUCK after ONE occurrence — not three.**
 A re-run that shows your Edit undone by ruff format means the finding is

@@ -515,6 +515,22 @@ advisories with the suggested pin; they never edit pins.
   *waiting*, not obligation: it never licenses stopping short of work
   another rule requires be finished — §4's "fix ALL violations" and §1's
   "every failure requires investigation" outrank it.
+- **Before commissioning verification, establish what is already
+  verified.** The bullet above binds the agent *handed* evidence; this
+  one binds the agent about to *ask* for it. Re-running a reporter is
+  the expensive default and it feels like diligence, so it gets chosen
+  without a decision ever being made — most reliably right after
+  something changed, when "the tree moved, so re-verify" arrives as a
+  reflex. Determine first whether existing evidence covers the diff at
+  hand: whether this PR carries a prior `verified-at:`, and whether what
+  changed since falls inside what that evidence still speaks for. That
+  determination is **a CLI call, never prose** — `forge-pr-plan`, run
+  and followed, never re-derived by reasoning. Then **state the verdict
+  in one line before any reporter starts**. Deciding to
+  re-run is often correct; arriving at one without asking is not, and
+  afterwards the two are indistinguishable. This bullet is the
+  obligation; the thresholds, blast-radius paths and modes live in the
+  `/pr` skill and `forge.pr_delta`.
 - Why: a wrap-up posted at one SHA and read at another describes a tree that
   no longer exists — the `verified-at:` header (reporter contract,
   `agents/_TEMPLATE.md`) makes that drift detectable.
