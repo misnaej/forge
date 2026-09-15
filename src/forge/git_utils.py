@@ -486,8 +486,10 @@ def require_cli(
 # garbage around the very number a reader is checking. Tools colour their
 # output whenever `FORCE_COLOR` is set, which exists precisely to defeat
 # the "not a terminal" detection that redirecting to a file would
-# otherwise rely on — so the strip happens here, at the one point every
-# step's log is written, rather than at each producer's call site.
+# otherwise rely on — so the strip happens here, where every pre-commit
+# step's log is written, rather than at each producer's call site. The
+# `audit_<name>.log` family writes through
+# :func:`forge.audit.common.write_log` instead and does not pass here.
 #
 # Scope is CSI sequences, which is what colouring emits. It is not a
 # general defence against escape injection: OSC (hyperlink and clipboard
