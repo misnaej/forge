@@ -334,8 +334,12 @@ Foundation agents resolve as `forge:<name>`; a bare name fails with
 | Issue triage | `forge:issue-triage` | Backlog management |
 | Grounded knowledge retrieval | `forge:knowledge-search` | When summarizing from sources |
 
-**Forbidden — do NOT handle directly:** running `git commit` / `git push`
-(→ `forge:git-commit-push`); invoking `ruff` or `fix-forge-ruff` from
+**Forbidden — do NOT handle directly:** running `git commit` / `git push`,
+or the commit-creating forms of `git revert` / `git cherry-pick` — the
+sequencer creates those commits without ever invoking the pre-commit
+hook, so they are the same act by another route (→
+`forge:git-commit-push`; `--abort` / `--quit` / `--skip` / `--no-commit`
+create nothing and stay allowed); invoking `ruff` or `fix-forge-ruff` from
 an agent (→ `forge:precommit-fixer`, which reads `code_health/` — only the
 pre-commit hook runs ruff); hand-curating a file list for `forge:precommit-fixer` (it
 scopes itself off the report); writing PR descriptions or squash messages

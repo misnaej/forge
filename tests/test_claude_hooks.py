@@ -1296,6 +1296,91 @@ def test_raw_git_env_prefix_still_bypassable_slips_agent_bypass() -> None:
     )
 
 
+# --- sequencer verbs (revert/cherry-pick) close the same hole as raw
+# commit/push (#348 family) -------------------------------------------------
+# `git revert` / `git cherry-pick` create a commit through git's sequencer,
+# which runs NO pre-commit hook at all — so, unblocked, they were a way to
+# land an unchecked commit on any branch, including the protected base,
+# past every other guard in this family. The forms that only end a
+# conflicted sequencer state (`--abort` / `--quit` / `--skip`) or stage
+# without committing (`--no-commit` / `-n`) create no commit and must stay
+# allowed, or an agent that hits a conflict is stranded with no way out.
+
+_SEQUENCER_CASES = {
+    "git revert HEAD": 2,
+    "git revert --no-edit HEAD": 2,
+    "git cherry-pick abc123": 2,
+    "git revert --continue": 2,
+    "git cherry-pick --continue": 2,
+    "  git   revert HEAD": 2,
+    "true; git revert HEAD": 2,
+    "git revert --abort": 0,
+    "git cherry-pick --abort": 0,
+    "git revert --quit": 0,
+    "git cherry-pick --skip": 0,
+    "git revert --no-commit HEAD": 0,
+    "git cherry-pick -n abc123": 0,
+    "git status": 0,
+    "git log --oneline": 0,
+    "git revert HEAD; git cherry-pick --abort": 2,
+    "git cherry-pick abc123 && git revert --abort": 2,
+    "git revert HEAD #--abort": 2,
+    "git revert HEAD -- --no-commit": 2,
+    "git revert --no-commit HEAD -- src/x.py": 0,
+    "git revert --abort; git revert HEAD": 2,
+    "git cherry-pick --abort && git cherry-pick abc": 2,
+    "git revert --quit | git revert HEAD": 2,
+}
+
+
+@pytest.mark.parametrize(("command", "expected_exit"), _SEQUENCER_CASES.items())
+def test_raw_git_blocks_commit_creating_sequencer_verbs(
+    command: str, expected_exit: int
+) -> None:
+    """SCENARIO: an agent runs `git revert` / `git cherry-pick` from Bash.
+
+    Both verbs create a commit through git's sequencer, which runs no
+    pre-commit hook — a hole raw `git commit` closed but these verbs left
+    open, letting an unchecked commit land on any branch, including a
+    protected one. A future reader must not "simplify" the exempt list:
+    the `--abort` / `--quit` / `--skip` / `--no-commit` / `-n` forms create
+    no commit and are how an agent leaves a conflicted sequencer state —
+    blocking them would strand it there with no way out.
+
+    EXPECTED BEHAVIOR: a commit-creating invocation (plain, with an
+    edit-message or --continue flag, under leading/inner whitespace, or
+    chained after a `;` separator) blocks with exit 2; an
+    abort/quit/skip/no-commit/dry-stage form, and an unrelated read-only
+    git command, is allowed with exit 0.
+
+    The exempt check is PER INVOCATION, never over the whole command
+    line — a single global match would let an exempt flag anywhere in
+    the command exempt an unrelated, earlier commit-creating
+    invocation. Two vectors made that necessary: an exempt flag on a
+    *sibling* invocation chained with `;` / `&&` (the exempt verb never
+    runs, or runs a different invocation than the one being judged),
+    and a shell comment (`#--abort`) that bash never executes but a
+    naive grep would still see. A reader who "simplifies" this back to
+    one global `grep -qE "$SEQUENCER_EXEMPT_RE"` over the whole line
+    reopens exactly this hole — the cases below pin per-invocation
+    extraction (terminated by `;`, `&`, `|`, `)`, or `#`) and the
+    standalone-`--` pathspec cutoff so it cannot come back unnoticed.
+    The exempt check is also order-independent: an exempt invocation
+    placed before a real one (not just after, as in the sibling cases
+    above) never exempts that real invocation either — each invocation
+    is judged on its own, wherever it sits in the chain.
+
+    Args:
+        command: A `git revert` / `git cherry-pick` invocation (or an
+            unrelated git command), covering both the blocked and the
+            allowed forms plus the whitespace/separator/sibling-flag/
+            comment/pathspec bypass vectors.
+        expected_exit: `2` for the commit-creating forms, `0` for the
+            sequencer-exit / no-commit / unrelated forms.
+    """
+    assert _run_hook(_RAW_GIT, command) == expected_exit
+
+
 def test_rebase_blocks_env_var_prefix() -> None:
     """`GIT_DIR=x git rebase main` (inline env assignment) is blocked."""
     assert _run_hook(_REBASE, "GIT_DIR=/tmp/x git rebase main") == 2
