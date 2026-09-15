@@ -18,6 +18,7 @@ from forge.pr_wrapup_compose import (
     REPORTER_SECTIONS,
     ComposeError,
     ComposeInputs,
+    _report_line,
     evidence_fence,
     pytest_summary_line,
     render_code_quality,
@@ -335,6 +336,15 @@ def test_reporter_pass_line_has_no_suffix_when_the_report_sha_prefixes_head() ->
     text = render_wrapup(inputs)
     assert "(verified-at" not in text
     assert text.count("PASS — no issues found.") == 3
+
+
+def test_report_line_with_a_finding_after_pass_returns_none() -> None:
+    """A PASS-opening report with a further finding line is not compressed to it."""
+    report = (
+        "PASS — no vulnerabilities found.\n"
+        "LOW: hardcoded example token in fixtures/demo.py\n"
+    )
+    assert _report_line(report, "abc1234") is None
 
 
 # ---------------------------------------------------------------------------

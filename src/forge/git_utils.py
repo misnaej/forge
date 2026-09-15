@@ -481,6 +481,31 @@ def require_cli(
     _abort_missing_cli(name, caller=caller, line=line, where="not on PATH")
 
 
+# A `code_health/` log is read back as evidence and quoted verbatim into
+# wrap-ups and PR comments, where a colour code renders as literal
+# garbage around the very number a reader is checking. Tools colour their
+# output whenever `FORCE_COLOR` is set, which exists precisely to defeat
+# the "not a terminal" detection that redirecting to a file would
+# otherwise rely on — so the strip happens here, where every pre-commit
+# step's log is written, rather than at each producer's call site. The
+# `audit_<name>.log` family writes through
+# :func:`forge.audit.common.write_log` instead and does not pass here.
+#
+# Scope is CSI sequences, which is what colouring emits. It is not a
+# general defence against escape injection: OSC (hyperlink and clipboard
+# forms) and bare `\r` survive, and either can make a rendered log read
+# differently from what was recorded. Widening it is its own change.
+#
+# Distinct from :func:`forge.audit.common.sanitize_log_text`, and the
+# difference is deliberate rather than an oversight. That one escapes
+# non-printables to ``repr`` form so an untrusted value — a filename, a
+# config-supplied layer name — cannot forge a log line; it keeps the
+# evidence visible. This one removes colouring the tool itself added, so
+# captured output reads cleanly. Escape where the text is suspect,
+# strip where it is merely decorated.
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
 def write_step_log(repo_root: Path, name: str, output: str) -> Path:
     """Write *output* to ``code_health/<name>.log`` under *repo_root*.
 
@@ -496,7 +521,8 @@ def write_step_log(repo_root: Path, name: str, output: str) -> Path:
             defensively so a slug like ``"../etc"`` cannot escape the
             ``code_health/`` directory — even though every current
             caller passes a hard-coded literal.
-        output: Log content. A trailing newline is added if missing.
+        output: Log content. ANSI colour escapes are stripped and a
+            trailing newline is added if missing.
 
     Returns:
         The full path to the written log file, whose first line is the
@@ -505,7 +531,8 @@ def write_step_log(repo_root: Path, name: str, output: str) -> Path:
     safe_name = Path(name).name
     log_path = repo_root / "code_health" / f"{safe_name}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    text = output if output.endswith("\n") else output + "\n"
+    text = _ANSI_ESCAPE_RE.sub("", output)
+    text = text if text.endswith("\n") else text + "\n"
     log_path.write_text(f"{produced_at_stamp(repo_root)}\n{text}")
     return log_path
 

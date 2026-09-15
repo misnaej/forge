@@ -122,6 +122,14 @@ def _report_line(report_text: str, head_sha: str) -> str | None:
         lines = lines[1:]
     if not lines or not lines[0].lower().startswith("pass"):
         return None
+    # "PASS" is how a report opens, not a promise about what follows: a
+    # reviewer routinely writes "PASS — nothing blocking" and then lists
+    # what it found. Compressing to the first line would keep the
+    # reassuring half and silently drop the findings, in the one document
+    # whose purpose is recording them. Anything after the PASS line means
+    # there is content to carry, so fall through to a fill slot.
+    if len(lines) > 1:
+        return None
     if report_sha and not (
         head_sha.startswith(report_sha) or report_sha.startswith(head_sha)
     ):

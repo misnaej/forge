@@ -4202,6 +4202,21 @@ def test_capturing_to_step_log_stamps_line_one(tmp_path: Path) -> None:
     assert rest == "captured line\n"
 
 
+def test_write_step_log_strips_ansi_colour_escapes(tmp_path: Path) -> None:
+    """A tool's colour codes (e.g. via ``FORCE_COLOR``) never reach the log body.
+
+    Logs are quoted verbatim into wrap-ups and PR comments, so a raw
+    escape sequence would land in that document unreadably.
+    """
+    coloured = "\x1b[32m\x1b[1m33 passed\x1b[0m in 0.09s\x1b[0m"
+
+    log_path = git_utils.write_step_log(tmp_path, "demo3", coloured)
+
+    body = log_path.read_text(encoding="utf-8")
+    assert "\x1b" not in body
+    assert "33 passed in 0.09s" in body
+
+
 # ---------------------------------------------------------------------------
 # produced_at_stamp — tracked code_health/ regression (#538)
 # ---------------------------------------------------------------------------
