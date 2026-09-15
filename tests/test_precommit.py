@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 import pytest
 
-from forge import config, git_utils, precommit, version_surfaces
+from forge import config, emergency, git_utils, precommit, version_surfaces
 from forge.pip_audit_json import AuditRun
 from forge.smart_test import lifecycle as _lifecycle
 from tests.conftest import (
@@ -3521,6 +3521,107 @@ def test_step_plugin_sync_blocks_when_behind_and_configured_blocking(
     assert not result.passed
     assert not result.non_blocking
     assert "⛔" in result.output
+
+
+# ---------------------------------------------------------------------------
+# _emergency_skip — env_sync / plugin_sync stand down while a sentinel is armed
+# ---------------------------------------------------------------------------
+
+
+def _write_emergency_sentinel(repo_root: Path, *, hours: float) -> None:
+    """Write a real ``.forge-emergency`` sentinel via ``emergency.write_state``.
+
+    Reuses the CLI's own writer (as ``tests/test_emergency.py`` does)
+    instead of hand-rolling the sentinel JSON, so these tests exercise
+    the real ``armed_state`` read path, not a mocked stand-in for it.
+
+    Args:
+        repo_root: Directory to write the sentinel under.
+        hours: Offset from now for ``expires_at`` — negative writes an
+            already-expired sentinel.
+    """
+    expires_at = (_dt.datetime.now(tz=_dt.UTC) + _dt.timedelta(hours=hours)).isoformat()
+    emergency.write_state(
+        repo_root,
+        emergency.EmergencyState(
+            ledger_issue=99, reason="prod is down", expires_at=expires_at
+        ),
+    )
+
+
+def test_step_env_sync_skips_when_emergency_armed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An armed emergency sentinel skips env_sync where it would otherwise block.
+
+    SCENARIO: the same missing-script setup as
+    ``test_step_env_sync_blocks_by_default_when_script_missing`` (blocking
+    defaults to True), plus a freshly armed sentinel — proving the skip
+    fires on the gate that would otherwise fail, not one that already
+    passes.
+    MOCK SETUP: is_ci→False; pyproject declares {mycli, new-cli};
+    distribution→FakeDist with only mycli installed; a real armed
+    sentinel written via ``emergency.write_state``.
+    EXPECTED BEHAVIOR: passed True, skipped True, ledger number in output.
+    """
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": "", "new-cli": ""})
+    eps = [FakeEP("mycli", "console_scripts")]
+    monkeypatch.setattr(
+        precommit.importlib.metadata, "distribution", lambda _n: FakeDist(eps)
+    )
+    _write_emergency_sentinel(tmp_path, hours=1)
+
+    result = precommit.step_env_sync(tmp_path)
+
+    assert result.passed
+    assert result.skipped
+    assert "#99" in result.output
+
+
+def test_step_plugin_sync_skips_when_emergency_armed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An armed emergency sentinel skips plugin_sync where it would otherwise block.
+
+    SCENARIO: the same lagging-cache-plus-blocking setup as
+    ``test_step_plugin_sync_blocks_when_behind_and_configured_blocking``,
+    plus a freshly armed sentinel — proving the skip fires on the gate
+    that would otherwise hard-fail, not one that already passes.
+    MOCK SETUP: is_ci→False; manifest at 2.9.0; [tool.forge.plugin_sync]
+    blocking=true; cache reports 2.8.0 (behind); a real armed sentinel
+    written via ``emergency.write_state``.
+    EXPECTED BEHAVIOR: passed True, skipped True, ledger number in output.
+    """
+    _write_plugin_manifest(tmp_path, "2.9.0")
+    _write_pyproject(tmp_path, "[tool.forge.plugin_sync]\nblocking = true\n")
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
+    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.8.0")
+    _write_emergency_sentinel(tmp_path, hours=1)
+
+    result = precommit.step_plugin_sync(tmp_path)
+
+    assert result.passed
+    assert result.skipped
+    assert "#99" in result.output
+
+
+def test_emergency_skip_returns_none_when_sentinel_expired(tmp_path: Path) -> None:
+    """An expired sentinel does not stand the gate down — fails closed.
+
+    Pins the discipline `forge-emergency` is built on: a bypass that
+    could be revived by a stale sentinel would not be one-shot. Exercises
+    the shared ``_emergency_skip`` helper directly since both
+    ``step_env_sync`` and ``step_plugin_sync`` delegate to it
+    unconditionally — the positive (armed) path is already pinned per
+    step above, so this covers the negative path once rather than twice.
+    """
+    _write_emergency_sentinel(tmp_path, hours=-1)
+
+    assert precommit._emergency_skip(tmp_path, "env_sync") is None
 
 
 # ---------------------------------------------------------------------------

@@ -44,10 +44,16 @@ import logging
 import os
 import subprocess
 import sys
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from forge.emergency_state import (
+    SENTINEL_RELPATH,
+    EmergencyState,
+    armed_state,
+    read_state,
+)
 from forge.git_utils import configure_cli_logging, emit, repo_root
 from forge.pr_plan import wrapup_freshness
 
@@ -55,8 +61,6 @@ from forge.pr_plan import wrapup_freshness
 configure_cli_logging()
 logger = logging.getLogger(__name__)
 
-
-SENTINEL_RELPATH = Path(".forge-emergency")
 
 # Consume-time mutex sibling — created O_EXCL so "exactly one" holds
 # under concurrent gate invocations; removed together with the sentinel.
@@ -66,56 +70,6 @@ _DEFAULT_TTL_HOURS = 4.0
 _MAX_TTL_HOURS = 24.0
 
 _LEDGER_LABEL = "emergency-mode"
-
-
-@dataclass(frozen=True)
-class EmergencyState:
-    """The armed (or spent) one-shot bypass recorded in the sentinel file.
-
-    Attributes:
-        ledger_issue: Number of the public ledger issue for this event.
-        reason: The human-stated justification given at ``start``.
-        expires_at: ISO-8601 UTC instant after which the arm is void.
-        spent: ``True`` once the single allowed bypass was consumed.
-        pr_number: The emergency PR, recorded structurally by
-            ``record-pr`` after publication — repayment never trusts
-            free-text ledger comments (anyone can comment on a public
-            issue).
-    """
-
-    ledger_issue: int
-    reason: str
-    expires_at: str
-    spent: bool = False
-    pr_number: int | None = None
-
-
-def read_state(root: Path) -> EmergencyState | None:
-    """Return the sentinel state, or ``None`` when absent or unreadable.
-
-    Corrupt sentinel content degrades to ``None`` (disarmed) — the mode
-    fails closed, never open.
-
-    Args:
-        root: Repo root.
-
-    Returns:
-        The recorded state, or ``None``.
-    """
-    path = root / SENTINEL_RELPATH
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return EmergencyState(
-            ledger_issue=int(data["ledger_issue"]),
-            reason=str(data["reason"]),
-            expires_at=str(data["expires_at"]),
-            spent=bool(data.get("spent", False)),
-            pr_number=(
-                int(data["pr_number"]) if data.get("pr_number") is not None else None
-            ),
-        )
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
 
 
 def write_state(root: Path, state: EmergencyState) -> None:
@@ -148,30 +102,6 @@ def _ensure_gitignored(root: Path, name: str) -> None:
         return
     with gitignore.open("a", encoding="utf-8") as fh:
         fh.write(f"{name}\n")
-
-
-def armed_state(root: Path) -> EmergencyState | None:
-    """Return the state only when the bypass is currently usable.
-
-    Usable means: sentinel present and parseable, not yet spent, and not
-    expired.
-
-    Args:
-        root: Repo root.
-
-    Returns:
-        The armed state, or ``None``.
-    """
-    state = read_state(root)
-    if state is None or state.spent:
-        return None
-    try:
-        expires = datetime.fromisoformat(state.expires_at)
-    except ValueError:
-        return None
-    if datetime.now(UTC) >= expires:
-        return None
-    return state
 
 
 def _gh(*args: str) -> subprocess.CompletedProcess[str]:

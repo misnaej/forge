@@ -1,0 +1,2 @@
+bump: patch
+- **A release can be committed again.** The check that warns when the editor's cached copy of forge is older than the project compares it against the version file — and writing that file is exactly what a release does. So every release was refused as stale, and the suggested remedy could not help: it re-reads the same version, which nothing has published yet, and reports no change. The check now warns instead of refusing. A genuinely cold cache is still called out; it just no longer blocks the one commit that would fix it.
