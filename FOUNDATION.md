@@ -105,9 +105,10 @@ not been re-verified.
 ### Plan before executing
 
 For any task touching more than one or two files, or that mutates remote
-state, write a plan FIRST (context, then files, order, side effects) and
-wait for explicit go-ahead. Skip only for genuine one-shots — a typo, a
-single-line config, or follow-on edits in a review loop the user drives.
+state, write a plan FIRST (context, then files, order, side effects, and
+which steps are mechanical or judgment per §7) and wait for explicit
+go-ahead. Skip only for genuine one-shots — a typo, a single-line config,
+or follow-on edits in a review loop the user drives.
 
 **A plan opens with context, not with a change list.** Before the first
 file or option, state in plain English what problem this solves, what
@@ -620,6 +621,18 @@ third-party or published contract, or §16's shipped-plugin case. (Not a
 reversal of OCP: OCP adds genuinely new capability without touching stable
 code; this rule covers compensating for an interface you control that is
 wrong.)
+
+**Mechanical first.** Classify each step of new work — an agent, a skill
+step, a CLI — as mechanical or judgment. A step whose output depends only
+on the working tree, GitHub state and text the caller supplies is
+mechanical: make it a CLI, or better a subcommand of an existing one
+(§16's Pattern C), run it once per tree and hand its output on. Only
+judgment — reading intent, weighing trade-offs, writing for people —
+goes to an agent, which takes that output as evidence (§6). A CLI that
+performs a §2-guarded effect enforces that guard in its own code: hooks
+see only the command an agent types, never the CLI's own calls. Every
+agent step costs a model round trip; a program costs one call and
+returns the same result each run.
 
 **KISS.** The right complexity is what the task requires — no more. Three
 similar lines beat a premature abstraction. No configurability / plugins /

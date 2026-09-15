@@ -86,6 +86,8 @@ return to the caller, which owns remediation and posting.
 | Delegated workhorse, match parent context | `inherit` |
 | Above `opus` (user-approved only) | `fable` |
 
+Whether a step needs an agent at all is decided first ([FOUNDATION §7](../FOUNDATION.md#7-design-principles)
+"Mechanical first"); this table tiers the agents that remain.
 Tier on **frequency × judgment-load**, not judgment alone. `haiku`
 pays off only where an agent is **both** high-frequency **and**
 low-judgment (dispatch / transcription off structured input) —
