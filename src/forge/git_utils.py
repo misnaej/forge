@@ -17,6 +17,7 @@ import sys
 import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from importlib import metadata
@@ -893,6 +894,11 @@ def create_commit(repo_root: Path, message: str) -> None:
     only when git has none (see :func:`_fallback_identity_args`); a
     commit requires one, and a fresh CI runner configures none.
 
+    The commit runs with git's per-process environment overrides removed
+    (:func:`git_env_overrides_removed`): a ``core.hooksPath`` injected
+    through ``GIT_CONFIG_*`` would otherwise silently skip the pre-commit
+    hook this commit is meant to run through.
+
     Args:
         repo_root: Repo root.
         message: Commit message.
@@ -904,7 +910,10 @@ def create_commit(repo_root: Path, message: str) -> None:
     # No `--` pin needed (unlike create_annotated_tag's positionals):
     # `-m` consumes the next argv element as its value unconditionally,
     # so a `-`-prefixed message can never parse as a separate option.
-    run_git(*_fallback_identity_args(repo_root), "commit", "-m", message, cwd=repo_root)
+    with git_env_overrides_removed():
+        run_git(
+            *_fallback_identity_args(repo_root), "commit", "-m", message, cwd=repo_root
+        )
 
 
 def resolve_current_branch(repo_root: Path) -> tuple[str, str] | None:
@@ -1035,6 +1044,242 @@ def fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool:
     except (OSError, subprocess.CalledProcessError):
         return False
     return True
+
+
+# A push crosses the network; a credential prompt nobody can answer, or a
+# stalled remote, must end instead of hanging the caller (FOUNDATION §15).
+PUSH_TIMEOUT_S = 120
+
+# Environment variables that reconfigure git for one process — a
+# `core.hooksPath` set this way silently skips the pre-commit hook — or
+# point it at another repository, index or object store. A caller's
+# environment is not the repository's configuration, so commit and push
+# paths drop these and the repository's own hooks and config apply.
+_GIT_ENV_OVERRIDES = frozenset(
+    {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_DIR",
+        "GIT_EXEC_PATH",
+        "GIT_INDEX_FILE",
+        "GIT_NAMESPACE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_WORK_TREE",
+    }
+)
+_GIT_ENV_OVERRIDE_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+
+
+def _is_git_env_override(name: str) -> bool:
+    """Return whether *name* overrides git's config or repository per process.
+
+    Args:
+        name: Environment variable name.
+
+    Returns:
+        ``True`` for the variables in :data:`_GIT_ENV_OVERRIDES` and the
+        numbered ``GIT_CONFIG_KEY_*`` / ``GIT_CONFIG_VALUE_*`` pairs.
+    """
+    return name in _GIT_ENV_OVERRIDES or name.startswith(_GIT_ENV_OVERRIDE_PREFIXES)
+
+
+@contextmanager
+def git_env_overrides_removed() -> Iterator[None]:
+    """Run the body with git's per-process environment overrides removed.
+
+    Guards that a CLI enforces in its own git calls must not be undone by
+    the environment it was started in: ``GIT_CONFIG_COUNT`` with
+    ``core.hooksPath`` would skip the pre-commit hook, ``GIT_DIR`` would
+    commit into another repository. The variables are restored on exit, so
+    an in-process caller leaves the environment as it found it.
+    ``GIT_CONFIG_GLOBAL`` / ``GIT_CONFIG_SYSTEM`` stay. A hooks path set in
+    repository-local config — where ``install-forge-githooks`` puts it —
+    outranks both; a repository without a local ``core.hooksPath`` is not
+    protected from them, and neither is a hooks path changed with
+    ``git config``: this scrub removes per-process overrides, not
+    configuration.
+
+    Yields:
+        Nothing; the environment is restored when the body exits.
+    """
+    removed = {
+        name: os.environ.pop(name)
+        for name in list(os.environ)
+        if _is_git_env_override(name)
+    }
+    try:
+        yield
+    finally:
+        os.environ.update(removed)
+
+
+@dataclass(frozen=True)
+class PushResult:
+    """The outcome of :func:`push_branch` or :func:`push_tag`.
+
+    Attributes:
+        ok: Whether the push succeeded.
+        returncode: Git's exit code, or ``None`` when git did not finish
+            (timed out, could not start, or the arguments were refused).
+        stderr: Git's error output, or why the push never ran.
+    """
+
+    ok: bool
+    returncode: int | None
+    stderr: str
+
+
+def _refuse_dash_or_plus(remote: str, ref: str, kind: str) -> PushResult | None:
+    """Return a refusal when *remote* or *ref* could parse as more than a name.
+
+    Args:
+        remote: Remote name to check.
+        ref: Branch or tag name to check.
+        kind: What *ref* is, for the message (``"branch"`` / ``"tag"``).
+
+    Returns:
+        A failed :class:`PushResult` when either starts with ``-`` (option
+        injection) or ``+`` (git's force-refspec prefix), else ``None``.
+    """
+    if remote.startswith(("-", "+")) or ref.startswith(("-", "+")):
+        return PushResult(
+            ok=False,
+            returncode=None,
+            stderr=(
+                f"refused a remote or {kind} starting with '-' or '+': "
+                f"{remote!r} {ref!r}"
+            ),
+        )
+    return None
+
+
+def _push_refspec(
+    repo_root: Path, remote: str, refspec: str, *, set_upstream: bool = False
+) -> PushResult:
+    """Push one fully qualified *refspec* without ever prompting or hanging.
+
+    The single push execution path behind :func:`push_branch` and
+    :func:`push_tag`: one set of guards, so a ref kind added later cannot
+    acquire a weaker one. It runs with ``GIT_TERMINAL_PROMPT=0`` and a
+    bounded timeout, and returns failure instead of raising so each caller
+    decides what a failed push means. Git's per-process config and
+    repository overrides are dropped from the push's environment (see
+    :func:`git_env_overrides_removed`); the caller is responsible for
+    refusing names that could parse as options or force refspecs, before
+    they are built into *refspec*.
+
+    Args:
+        repo_root: Git repo root.
+        remote: Remote name.
+        refspec: The ``<src>:<dst>`` refspec to push.
+        set_upstream: Pass ``-u`` so the pushed ref is tracked.
+
+    Returns:
+        The outcome.
+    """
+    argv = ["git", "push", *(["-u"] if set_upstream else []), remote, refspec]
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if not _is_git_env_override(name)
+    }
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=PUSH_TIMEOUT_S,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return PushResult(
+            ok=False,
+            returncode=None,
+            stderr=f"git push timed out after {PUSH_TIMEOUT_S}s",
+        )
+    except OSError as exc:
+        return PushResult(ok=False, returncode=None, stderr=str(exc))
+    return PushResult(
+        ok=proc.returncode == 0, returncode=proc.returncode, stderr=proc.stderr.strip()
+    )
+
+
+def push_branch(
+    repo_root: Path, branch: str, *, set_upstream: bool = False, remote: str = "origin"
+) -> PushResult:
+    """Push *branch* to *remote* without ever prompting or hanging.
+
+    The one push seam for forge CLIs that publish a branch. It runs with
+    ``GIT_TERMINAL_PROMPT=0`` and a bounded timeout, returns failure
+    instead of raising so each caller decides what a failed push means,
+    and has no force option: a forge CLI never rewrites a remote branch.
+
+    The branch is pushed as the fully qualified same-name refspec
+    ``refs/heads/<branch>:refs/heads/<branch>``. A bare name is itself a
+    refspec — a leading ``+`` would mean force (``+main`` force-pushes
+    ``main``), and a ``remote.<name>.push`` mapping could send it to
+    another branch. Git's per-process config and repository overrides are
+    dropped from the push's environment (see
+    :func:`git_env_overrides_removed`).
+
+    Args:
+        repo_root: Git repo root.
+        branch: Branch to push.
+        set_upstream: Pass ``-u`` so the branch tracks *remote*.
+        remote: Remote name.
+
+    Returns:
+        The outcome. A *branch* or *remote* starting with ``-`` or ``+`` is
+        refused without running git, so it can never parse as an option or
+        a force refspec.
+    """
+    refusal = _refuse_dash_or_plus(remote, branch, "branch")
+    if refusal is not None:
+        return refusal
+    return _push_refspec(
+        repo_root,
+        remote,
+        f"refs/heads/{branch}:refs/heads/{branch}",
+        set_upstream=set_upstream,
+    )
+
+
+def push_tag(repo_root: Path, tag: str, *, remote: str = "origin") -> PushResult:
+    """Push *tag* to *remote* without ever prompting or hanging.
+
+    The one push seam for forge CLIs that publish a tag — release
+    tag-cutting runs unattended in CI, where a credential prompt nobody
+    can answer would hang the job forever. It shares every guard
+    :func:`push_branch` has: ``GIT_TERMINAL_PROMPT=0``, a bounded timeout,
+    a scrubbed environment, and failure returned rather than raised.
+
+    The tag is pushed as the fully qualified same-name refspec
+    ``refs/tags/<tag>:refs/tags/<tag>``, for the reason a branch is: a
+    bare name is itself a refspec, so a leading ``+`` would mean force and
+    a ``remote.<name>.push`` mapping could redirect it. Without that ``+``
+    git refuses to move a tag that already exists on the remote, so this
+    never force-updates one — a concurrent runner's tag survives, and the
+    caller sees the rejection.
+
+    Args:
+        repo_root: Git repo root.
+        tag: Tag name to push (e.g. ``v1.2.3``).
+        remote: Remote name.
+
+    Returns:
+        The outcome. A *tag* or *remote* starting with ``-`` or ``+`` is
+        refused without running git, so it can never parse as an option or
+        a force refspec.
+    """
+    refusal = _refuse_dash_or_plus(remote, tag, "tag")
+    if refusal is not None:
+        return refusal
+    return _push_refspec(repo_root, remote, f"refs/tags/{tag}:refs/tags/{tag}")
 
 
 def behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None:

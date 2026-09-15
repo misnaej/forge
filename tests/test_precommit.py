@@ -6232,7 +6232,7 @@ def test_step_changelog_updated_fragments_mode_message_names_fragment_owner(
     result = precommit.step_changelog_updated(tmp_path)
     assert not result.passed
     assert "the PR author's to write" in result.output
-    assert "reports and stops instead of authoring one" in result.output
+    assert "reports this gate and stops instead of authoring one" in result.output
 
 
 def test_step_changelog_updated_fragments_mode_trigger_with_valid_fragment_passes(

@@ -5,12 +5,14 @@ real-git helpers ``GIT_ENV``, ``init_git_repo`` and ``init_single_track_repo``
 (ephemeral repos for the git-touching suites), the subprocess fakes
 ``FakeProc``, ``CapturedCalls`` and the ``make_fake_run`` factory — used by
 tests that monkeypatch ``subprocess.run`` in any of the forge CLIs —
-``page_json``, one ``gh api --paginate`` page renderer shared by every
-suite that fakes ``gh_comments.gh_api``, the ``# produced-at:``
-provenance-stamp helpers (``PRODUCED_AT_RE``, ``log_body``) shared by every
-suite asserting on a ``code_health/*.log`` writer (FOUNDATION §13), and
-``timing_log``, the ``precommit_timing.log`` body builder shared by the
-wrap-up-compose and evidence-pack suites.
+``make_fake_push_branch`` and ``make_fake_push_tag``, the analogous
+factories for a module's imported ``git_utils.push_branch`` /
+``git_utils.push_tag`` names, ``page_json``, one ``gh api --paginate``
+page renderer shared by every suite that fakes ``gh_comments.gh_api``, the
+``# produced-at:`` provenance-stamp helpers (``PRODUCED_AT_RE``,
+``log_body``) shared by every suite asserting on a ``code_health/*.log``
+writer (FOUNDATION §13), and ``timing_log``, the ``precommit_timing.log``
+body builder shared by the wrap-up-compose and evidence-pack suites.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import pytest
+
+from forge.git_utils import PushResult
 
 
 if TYPE_CHECKING:
@@ -336,3 +340,64 @@ def make_fake_run(
         return FakeProc(returncode=returncode, stdout=stdout)
 
     return _fake_run
+
+
+def make_fake_push_branch(
+    *,
+    ok: bool = True,
+    stderr: str = "",
+    calls: list[tuple[object, object, dict[str, object]]] | None = None,
+) -> Callable[..., PushResult]:
+    """Return a ``git_utils.push_branch``-shaped fake recording its call args.
+
+    Shared by every suite that monkeypatches a module's imported
+    ``push_branch`` name directly (``resync``, ``changelog_fragments``)
+    instead of faking the ``subprocess.run`` call underneath it.
+    ``PushResult`` is already a plain data object — ``git_utils``'s own
+    Null-result shape — so this only wraps it in a recorder, never
+    reimplements it.
+
+    Args:
+        ok: Simulated push success.
+        stderr: Simulated git stderr (only meaningful when ``ok=False``).
+        calls: Optional list to append each ``(root, branch, kwargs)``
+            call into; omit when a test doesn't need to inspect the call.
+
+    Returns:
+        A callable matching ``push_branch``'s ``(root, branch, **kwargs)``
+        call shape.
+    """
+
+    def _fake_push_branch(root: object, branch: object, **kwargs: object) -> PushResult:
+        if calls is not None:
+            calls.append((root, branch, kwargs))
+        return PushResult(ok=ok, returncode=0 if ok else 1, stderr=stderr)
+
+    return _fake_push_branch
+
+
+def make_fake_push_tag(
+    *,
+    ok: bool = True,
+    stderr: str = "",
+    calls: list[tuple[object, object, dict[str, object]]] | None = None,
+) -> Callable[..., PushResult]:
+    """Return a ``git_utils.push_tag``-shaped fake recording its call args.
+
+    The tag sibling of :func:`make_fake_push_branch`, for suites that
+    monkeypatch a module's imported ``push_tag`` name. Both seams take
+    ``(root, ref, **kwargs)`` and return the same ``PushResult``, so this
+    delegates rather than restating the recorder — only the name the test
+    reads differs.
+
+    Args:
+        ok: Simulated push success.
+        stderr: Simulated git stderr (only meaningful when ``ok=False``).
+        calls: Optional list to append each ``(root, tag, kwargs)`` call
+            into; omit when a test doesn't need to inspect the call.
+
+    Returns:
+        A callable matching ``push_tag``'s ``(root, tag, **kwargs)`` call
+        shape.
+    """
+    return make_fake_push_branch(ok=ok, stderr=stderr, calls=calls)
