@@ -264,6 +264,33 @@ def test_pr_skill_code_review_offer_self_skips_on_is_ci() -> None:
     )
 
 
+def test_report_to_forge_skill_records_running_slot_as_undetermined() -> None:
+    """`/report-to-forge` no longer claims the skew section proves alignment.
+
+    SCENARIO: Step 2 used to point at `forge-doctor`'s skew section as the
+    "source of truth" for a version mismatch, but that section compares
+    only the pip package against the git hooks and excludes the plugin by
+    design — an agent following the old wording could file an upstream
+    report asserting whole-install alignment that did not exist. Step 2
+    now instead requires the report to state that the plugin slot the
+    running session actually loaded cannot be determined.
+
+    EXPECTED BEHAVIOR: the shipped skill's text contains the corrected
+    claim and no longer contains the disproven one.
+    """
+    skill = " ".join(
+        (REPO_ROOT / "skills" / "report-to-forge" / "SKILL.md").read_text().split()
+    )
+    assert "skew section is the source of truth" not in skill, (
+        "report-to-forge must not claim the skew section proves whole-install "
+        "alignment — it excludes the plugin by design"
+    )
+    assert "running slot is undetermined" in skill, (
+        "report-to-forge must require the report to record that the running "
+        "plugin slot cannot be determined"
+    )
+
+
 def test_plan_batch_delegation_target_exists() -> None:
     """The section `/plan-batch` delegates into is still present.
 

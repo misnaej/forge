@@ -327,7 +327,10 @@ def _check_version_skew(repo_root: Path) -> list[CheckResult]:
             CheckResult(
                 name="version_skew",
                 passed=True,
-                detail=f"aligned at v{cur} ({aligned})",
+                detail=(
+                    f"aligned at v{cur} across {aligned} — "
+                    "plugin not compared, see version_skew:plugin_cache"
+                ),
             )
         ]
 
