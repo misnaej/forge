@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import patch
 
 import pytest
@@ -21,6 +21,13 @@ from tests.conftest import make_fake_run
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+class _PluginTreeSpec(NamedTuple):
+    """Plugin manifest version and hook file names for a tree."""
+
+    version: str
+    hooks: tuple[str, ...]
 
 
 def test_check_clis_returns_one_result_per_expected_cli() -> None:
@@ -393,69 +400,100 @@ def test_version_skew_drops_unparseable_surface(
 # --- _check_plugin_cache_skew() ---------------------------------------------
 
 
-def test_plugin_cache_skew_flags_lagging_cache(
+def _write_cached_plugin(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A cached plugin behind the repo's own manifest produces one advisory.
+    *,
+    repo_tree: _PluginTreeSpec,
+    cache_tree: _PluginTreeSpec,
+) -> Path:
+    """Build a repo manifest plus a cached install, and point the readers at them.
 
-    MOCK SETUP: this repo's ``.claude-plugin/plugin.json`` declares
-    v2.23.1; the cached plugin install reports the older v2.22.0.
+    Args:
+        tmp_path: Directory to build both trees in.
+        monkeypatch: Fixture used to redirect the cache lookups.
+        repo_tree: Repo's plugin version and hook file names.
+        cache_tree: Cached install's plugin version and hook file names.
+
+    Returns:
+        The repo root the checks should be run against.
     """
-    plugin_dir = tmp_path / ".claude-plugin"
-    plugin_dir.mkdir()
-    (plugin_dir / "plugin.json").write_text(
-        json.dumps({"name": "forge", "version": "2.23.1"}), encoding="utf-8"
-    )
+    for root, version, hooks in (
+        (tmp_path, repo_tree.version, repo_tree.hooks),
+        (
+            tmp_path / "plugin" / cache_tree.version,
+            cache_tree.version,
+            cache_tree.hooks,
+        ),
+    ):
+        (root / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+        (root / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "forge", "version": version}), encoding="utf-8"
+        )
+        (root / "claude-hooks").mkdir(exist_ok=True)
+        for hook in hooks:
+            (root / "claude-hooks" / hook).write_text("#!/bin/sh\n", encoding="utf-8")
+    install_dir = tmp_path / "plugin" / cache_tree.version
     monkeypatch.setattr(
         version_surfaces,
         "find_plugin_cache",
         lambda _name: tmp_path / "cache" / "forge",
     )
-    install_dir = tmp_path / "plugin" / "2.22.0"
-    (install_dir / ".claude-plugin").mkdir(parents=True)
-    (install_dir / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"version": "2.22.0"}), encoding="utf-8"
-    )
     monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
+    return tmp_path
 
-    results = doctor._check_plugin_cache_skew(tmp_path)
+
+def test_plugin_cache_skew_silent_when_older_slot_ships_every_hook(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An older-numbered install holding every hook draws no advisory.
+
+    MOCK SETUP: repo manifest v2.23.1, cached install v2.22.0, both
+    carrying the same two hooks.
+    EXPECTED BEHAVIOR: no results. Under rolling-next the manifest is
+    bumped inside the release PR, so a healthy install is routinely
+    numbered lower; advising an update here names a remedy that reads
+    the same frozen number and cannot converge.
+    """
+    hooks = ("block_raw_git.sh", "block_pr_merge.sh")
+    repo = _write_cached_plugin(
+        tmp_path,
+        monkeypatch,
+        repo_tree=_PluginTreeSpec(version="2.23.1", hooks=hooks),
+        cache_tree=_PluginTreeSpec(version="2.22.0", hooks=hooks),
+    )
+
+    assert doctor._check_plugin_cache_skew(repo) == []
+
+
+def test_plugin_cache_skew_flags_install_missing_a_shipped_hook(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An install lacking a shipped hook draws one advisory naming it.
+
+    MOCK SETUP: repo manifest v2.22.0 shipping two hooks; cached install
+    numbered *higher* at v2.23.1 but carrying only one.
+    EXPECTED BEHAVIOR: one advisory naming the absent hook — a version
+    comparison would have called this install current while the session
+    ran without that guard.
+    """
+    repo = _write_cached_plugin(
+        tmp_path,
+        monkeypatch,
+        repo_tree=_PluginTreeSpec(
+            version="2.22.0", hooks=("block_raw_git.sh", "block_pr_merge.sh")
+        ),
+        cache_tree=_PluginTreeSpec(version="2.23.1", hooks=("block_raw_git.sh",)),
+    )
+
+    results = doctor._check_plugin_cache_skew(repo)
 
     assert len(results) == 1
-    assert results[0].name == "version_skew:plugin_cache"
     assert not results[0].passed
     assert results[0].info  # advisory only — never sways the exit code
-    assert "2.22.0" in results[0].detail
-    assert "2.23.1" in results[0].detail
-    assert "/plugin update forge@forge" in results[0].detail
-
-
-def test_plugin_cache_skew_empty_when_not_behind(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A cache at the same version as the manifest is not "behind" (>= boundary).
-
-    MOCK SETUP: both the manifest and the cached install report v2.23.1.
-    """
-    plugin_dir = tmp_path / ".claude-plugin"
-    plugin_dir.mkdir()
-    (plugin_dir / "plugin.json").write_text(
-        json.dumps({"name": "forge", "version": "2.23.1"}), encoding="utf-8"
-    )
-    monkeypatch.setattr(
-        version_surfaces,
-        "find_plugin_cache",
-        lambda _name: tmp_path / "cache" / "forge",
-    )
-    install_dir = tmp_path / "plugin" / "2.23.1"
-    (install_dir / ".claude-plugin").mkdir(parents=True)
-    (install_dir / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"version": "2.23.1"}), encoding="utf-8"
-    )
-    monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
-
-    assert doctor._check_plugin_cache_skew(tmp_path) == []
+    assert "block_pr_merge.sh" in results[0].detail
 
 
 def test_plugin_cache_skew_empty_when_uncached(

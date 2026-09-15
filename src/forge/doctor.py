@@ -210,11 +210,13 @@ def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
     ``plugin_sync`` pre-commit step so both name the same remediation for
     the same condition; this wraps it as an advisory.
 
-    Two findings, two remediations, because the causes differ. A repo that
-    ships the plugin can be ``"behind"`` — its cache declares an older
-    version, which ``/plugin update`` moves. A consumer gets
-    ``"stale-content"``: the declared version has not moved and cannot, so
-    the only advice that can succeed is discarding the slot.
+    One finding, on content. Whether or not the repo ships the plugin,
+    the declared version cannot answer this: under rolling-next no
+    tagged tree's manifest equals its own tag, so a healthy slot is
+    routinely numbered below the manifest. The verdict is
+    ``"stale-content"`` — hooks the loaded slot lacks — and the only
+    advice that can succeed is discarding the slot, since
+    ``/plugin update`` re-reads the same frozen number.
 
     Args:
         repo_root: Repo whose manifest ships the plugin, or a consumer
@@ -226,21 +228,9 @@ def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
         "nothing to say", not findings.
     """
     status = plugin_cache_status(repo_root)
-    if status.state == "stale-content":
-        return [_stale_cache_advisory(status)]
-    if status.state != "behind":
+    if status.state != "stale-content":
         return []
-    return [
-        CheckResult(
-            name="version_skew:plugin_cache",
-            passed=False,
-            info=True,
-            detail=(
-                f"plugin cache at v{status.cached}, behind this repo's manifest "
-                f"v{status.declared} — run `{SKEW_REMEDIATION['plugin cache']}`"
-            ),
-        )
-    ]
+    return [_stale_cache_advisory(status)]
 
 
 def _stale_cache_advisory(status: PluginCacheStatus) -> CheckResult:

@@ -426,26 +426,63 @@ def test_plugin_cache_status_current_when_cache_matches_manifest(
     assert status.missing_hooks == ()
 
 
-def test_plugin_cache_status_behind_when_cache_lags_manifest(
+def test_plugin_cache_status_current_when_older_slot_ships_every_hook(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A cache slot older than the repo's manifest is still ``"behind"``.
+    """An older-numbered slot holding every hook is current, not behind.
 
-    MOCK SETUP: repo manifest at 2.23.1, cache slot at 2.22.0.
-    EXPECTED BEHAVIOR: ``"behind"`` — the version-string verdict the
-    ``plugin_sync`` pre-commit step blocks on.
+    MOCK SETUP: repo manifest at 2.23.1, cache slot at 2.22.0, both
+    carrying the same two hooks.
+    EXPECTED BEHAVIOR: ``"current"``. The declared version is not the
+    adoption signal — under rolling-next the manifest is bumped inside
+    the release PR, so a healthy slot is routinely numbered lower.
+    Judging by version blocked the release commit on an update that
+    reads the same frozen number and can never converge.
     """
-    _write_plugin_tree(tmp_path / "repo", version="2.23.1")
+    hooks = ("block_raw_git.sh", "block_pr_merge.sh")
+    _write_plugin_tree(tmp_path / "repo", version="2.23.1", hooks=hooks)
     cache_root = _write_plugin_tree(
-        tmp_path / "cache" / "forge" / "forge" / "2.22.0", version="2.22.0"
+        tmp_path / "cache" / "forge" / "forge" / "2.22.0",
+        version="2.22.0",
+        hooks=hooks,
     ).parent.parent
     monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _n: cache_root)
 
     status = version_surfaces.plugin_cache_status(tmp_path / "repo")
 
-    assert status.state == "behind"
-    assert (status.cached, status.declared) == ("2.22.0", "2.23.1")
+    assert status.state == "current"
+    assert status.missing_hooks == ()
+
+
+def test_plugin_cache_status_stale_when_newer_slot_lacks_a_hook(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A slot missing a shipped hook is stale however it is numbered.
+
+    MOCK SETUP: repo manifest at 2.22.0 shipping two hooks; cache slot
+    numbered *higher* at 2.23.1 but carrying only one of them.
+    EXPECTED BEHAVIOR: ``"stale-content"`` naming the absent hook — the
+    version comparison would have called this slot current, and the
+    session would silently run without that guard.
+    """
+    _write_plugin_tree(
+        tmp_path / "repo",
+        version="2.22.0",
+        hooks=("block_raw_git.sh", "block_pr_merge.sh"),
+    )
+    cache_root = _write_plugin_tree(
+        tmp_path / "cache" / "forge" / "forge" / "2.23.1",
+        version="2.23.1",
+        hooks=("block_raw_git.sh",),
+    ).parent.parent
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _n: cache_root)
+
+    status = version_surfaces.plugin_cache_status(tmp_path / "repo")
+
+    assert status.state == "stale-content"
+    assert status.missing_hooks == ("block_pr_merge.sh",)
 
 
 def test_plugin_cache_status_consumer_reports_hooks_the_cache_lacks(

@@ -117,6 +117,7 @@ from forge.smart_test import lifecycle as _lifecycle
 from forge.version_surfaces import (
     DIST_NAME,
     SKEW_REMEDIATION,
+    STALE_CACHE_REMEDIATION,
     editable_install_origin,
     hook_sidecar_version,
     pip_version,
@@ -734,7 +735,6 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
         )
     status = plugin_cache_status(repo_root)
     plugin_name, cached = status.plugin_name, status.cached
-    manifest_version = status.declared
     if status.state == "uncached":
         return StepResult(
             name="plugin_sync",
@@ -742,20 +742,21 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
             output=f"({plugin_name} plugin not installed in Claude Code — skipped)",
             skipped=True,
         )
-    if status.state != "behind":
+    if status.state != "stale-content":
         return StepResult(
             name="plugin_sync",
             passed=True,
-            output=f"plugin cache {cached} is current (manifest {manifest_version}).",
+            output=f"plugin cache {cached} loads every hook this repo ships.",
         )
     blocking = bool(_forge_step_config(repo_root, "plugin_sync").get("blocking", False))
+    missing = ", ".join(status.missing_hooks)
     return StepResult(
         name="plugin_sync",
         passed=False,
         output=(
-            f"{'⛔' if blocking else '⚠️ '} Cached {plugin_name} plugin is {cached}; "
-            f"this repo's manifest says {manifest_version}. Your session runs "
-            f"stale agents and hooks — run `{SKEW_REMEDIATION['plugin cache']}`."
+            f"{'⛔' if blocking else '⚠️ '} Cached {plugin_name} plugin is missing "
+            f"hooks this repo ships: {missing}. Your session does not load them — "
+            f"{STALE_CACHE_REMEDIATION.format(plugin=plugin_name)}."
         ),
         non_blocking=not blocking,
     )

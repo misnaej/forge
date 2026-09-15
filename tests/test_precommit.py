@@ -3462,62 +3462,91 @@ def test_step_plugin_sync_skips_when_not_cached(
     assert "not installed" in result.output
 
 
-def test_step_plugin_sync_passes_when_cache_matches_manifest(
+def _write_cache_slot(
+    root: Path,
+    version: str,
+    hooks: tuple[str, ...],
+) -> Path:
+    """Materialize a cached plugin install carrying *hooks*.
+
+    Args:
+        root: Directory to build the install under.
+        version: Value for the install manifest's ``version`` field.
+        hooks: Hook file names present in the install.
+
+    Returns:
+        *root*, so callers can pass it straight to the cache stub.
+    """
+    _write_plugin_manifest(root, version)
+    (root / "claude-hooks").mkdir(parents=True, exist_ok=True)
+    for hook in hooks:
+        (root / "claude-hooks" / hook).write_text("#!/bin/sh\n", encoding="utf-8")
+    return root
+
+
+def test_step_plugin_sync_passes_when_older_slot_ships_every_hook(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A cache version equal to the manifest's is current — no failure."""
-    _write_plugin_manifest(tmp_path, "2.9.0")
+    """A lower-numbered slot holding every hook passes — version is not the signal.
+
+    SCENARIO: the release PR's own commit, where the manifest has just
+    been bumped ahead of every published tag and the cache still holds
+    the last released content.
+    MOCK SETUP: repo manifest 2.9.0 shipping two hooks; cache slot
+    numbered 2.8.0 carrying the same two.
+    EXPECTED BEHAVIOR: passes. Blocking here demanded an update that
+    re-reads the same frozen number, so it could never be satisfied —
+    it stopped the commit that would have published the version.
+    """
+    hooks = ("block_raw_git.sh", "block_pr_merge.sh")
+    _write_cache_slot(tmp_path, "2.9.0", hooks)
+    cache = _write_cache_slot(tmp_path / "cache", "2.8.0", hooks)
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.9.0")
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: cache)
+
     result = precommit.step_plugin_sync(tmp_path)
+
     assert result.passed
     assert not result.skipped
-    assert "current" in result.output
 
 
-def test_step_plugin_sync_passes_when_cache_ahead_of_manifest(
+def test_step_plugin_sync_warns_when_slot_lacks_a_hook_and_unconfigured(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A cache version ahead of the manifest is also current — no failure."""
-    _write_plugin_manifest(tmp_path, "2.9.0")
-    monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(
-        version_surfaces, "plugin_cache_version", lambda _root: "2.10.0"
-    )
-    result = precommit.step_plugin_sync(tmp_path)
-    assert result.passed
+    """A slot missing a shipped hook is WARN without opt-in config.
 
-
-def test_step_plugin_sync_warns_when_behind_and_unconfigured(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Lagging cache with no [tool.forge.plugin_sync] config is WARN, not block."""
-    _write_plugin_manifest(tmp_path, "2.9.0")
+    MOCK SETUP: repo ships two hooks; cache slot is numbered *higher*
+    but carries only one, so no version comparison would catch it.
+    EXPECTED BEHAVIOR: non-blocking WARN naming the absent hook.
+    """
+    _write_cache_slot(tmp_path, "2.9.0", ("block_raw_git.sh", "block_pr_merge.sh"))
+    cache = _write_cache_slot(tmp_path / "cache", "2.10.0", ("block_raw_git.sh",))
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.8.0")
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: cache)
+
     result = precommit.step_plugin_sync(tmp_path)
+
     assert not result.passed
     assert result.non_blocking
     assert "⚠️" in result.output
+    assert "block_pr_merge.sh" in result.output
 
 
-def test_step_plugin_sync_blocks_when_behind_and_configured_blocking(
+def test_step_plugin_sync_blocks_when_slot_lacks_a_hook_and_configured_blocking(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """[tool.forge.plugin_sync].blocking = true escalates a lagging cache to a block."""
-    _write_plugin_manifest(tmp_path, "2.9.0")
+    """``[tool.forge.plugin_sync].blocking = true`` escalates a missing hook."""
+    _write_cache_slot(tmp_path, "2.9.0", ("block_raw_git.sh", "block_pr_merge.sh"))
     _write_pyproject(tmp_path, "[tool.forge.plugin_sync]\nblocking = true\n")
+    cache = _write_cache_slot(tmp_path / "cache", "2.10.0", ("block_raw_git.sh",))
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.8.0")
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: cache)
+
     result = precommit.step_plugin_sync(tmp_path)
+
     assert not result.passed
     assert not result.non_blocking
     assert "⛔" in result.output

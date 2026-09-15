@@ -10,11 +10,13 @@ in the cache. ``forge-doctor`` reports the skew as an advisory and
 the readers live here once and both consumers see the same numbers and
 name the same remediation.
 
-A consumer repo ships no manifest, so it has no declared version to
-compare — the module also reads Claude Code's
-``known_marketplaces.json`` registry to resolve the marketplace clone a
-consumer's pin points at, and judges the cache slot by comparing that
-clone's content against what is loaded instead.
+The cache slot is judged on **content**, never on a declared version:
+under rolling-next no tagged tree's manifest equals its own tag, so a
+healthy slot is routinely numbered below the source it was filled from.
+A repo that ships the plugin is compared against its own tree; a
+consumer, which ships no manifest, against the marketplace clone its
+pin resolves to — read via Claude Code's ``known_marketplaces.json``.
+Either way the finding is the concrete harm: hooks that are not loaded.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Final, NamedTuple
 
-from forge.git_utils import FORGE_DIST_NAME, parse_semver
+from forge.git_utils import FORGE_DIST_NAME
 from forge.install_githooks import SIDECAR_NAME as HOOK_VERSION_SIDECAR
 from forge.upgrade import find_pin
 
@@ -358,16 +360,26 @@ def _hook_names(plugin_dir: Path) -> frozenset[str]:
 class PluginCacheStatus(NamedTuple):
     """What the Claude Code plugin cache says relative to what ships it.
 
+    The declared manifest **version** is the adoption signal nowhere.
+    Each branch has its own authority, and neither is that number. For a
+    repo shipping the plugin it is the newest **tag**: a cache can only
+    hold what a release published, while under rolling-next the manifest
+    is bumped inside the release PR and leads every tag between
+    assemblies — judging against it reports a healthy cache as behind and
+    demands an update no command can perform. For a consumer it is the
+    **pin**, which is what that repo asked for; the content comparison
+    there exists to detect a slot that no longer matches what the pin
+    resolves to, the declared version being unable to say.
+
     Attributes:
         state: ``"no-manifest"``, ``"uncached"``, ``"unparsed"``,
-            ``"current"``, ``"behind"``, or ``"stale-content"`` — the
-            consumer verdict, where the slot's declared version is not
-            behind but its content is.
+            ``"current"`` or ``"stale-content"`` — the slot is
+            missing hooks the source ships.
         plugin_name: Name the manifest declares, falling back to the repo
             directory's own name.
         cached: Version in the cache, when there is one.
         declared: Version the manifest declares — or, on the consumer
-            branch, the ref the repo pins.
+            branch, the ref the repo pins. Reported, never compared.
         missing_hooks: Hooks the pinned content ships that the cache slot
             does not; populated only for ``"stale-content"``.
     """
@@ -401,8 +413,7 @@ def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
         repo_root: Repo whose ``.claude-plugin/plugin.json`` ships the plugin.
 
     Returns:
-        A :class:`PluginCacheStatus`; ``"behind"`` and ``"stale-content"``
-        are the findings.
+        A :class:`PluginCacheStatus`; ``"stale-content"`` is the finding.
     """
     manifest = repo_root / ".claude-plugin" / "plugin.json"
     if not manifest.is_file():
@@ -410,15 +421,15 @@ def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
     data, _err = read_json(manifest)
     plugin_name = str(data.get("name") or repo_root.name)
     declared = str(data["version"]) if data.get("version") else None
-    cached = plugin_cache_version(find_plugin_cache(plugin_name))
-    if cached is None:
+    cache_root = find_plugin_cache(plugin_name)
+    install_dir = find_install_dir(cache_root) if cache_root is not None else None
+    if install_dir is None:
         return PluginCacheStatus("uncached", plugin_name, None, declared)
-    cached_t = parse_semver(cached)
-    declared_t = parse_semver(declared or "")
-    if cached_t is None or declared_t is None:
-        return PluginCacheStatus("unparsed", plugin_name, cached, declared)
-    state = "current" if cached_t >= declared_t else "behind"
-    return PluginCacheStatus(state, plugin_name, cached, declared)
+    cached = install_version(install_dir)
+    missing = tuple(sorted(_hook_names(repo_root) - _hook_names(install_dir)))
+    if not missing:
+        return PluginCacheStatus("current", plugin_name, cached, declared)
+    return PluginCacheStatus("stale-content", plugin_name, cached, declared, missing)
 
 
 def _consumer_cache_status(repo_root: Path) -> PluginCacheStatus:

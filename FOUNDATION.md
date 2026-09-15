@@ -585,6 +585,27 @@ advisories with the suggested pin; they never edit pins.
   is whether anyone is there to receive an alert, and an agent session
   has a human in it who is simply not on the subprocess's stdin.
 
+- **A merge is not a release.** Merged work sits on `base_branch` and
+  reaches no consumer until the repo's release step runs — under
+  changelog fragments the version surface has a single writer, and
+  merging never touches it. **This is not a per-merge chore**: fragments
+  exist precisely so releases batch, and one assembly covering several
+  merges is the normal shape, not a backlog. What triggers it is someone
+  needing to *consume* the work — an upgrade, an adoption, a dependent
+  repo — not a PR landing. The mechanics and the cadence belong to the
+  repo's release doc, named from its `CLAUDE.md`, and are not restated
+  here.
+
+  What this rule governs is the **claim**. Never report merged work as
+  "live", "shipped", or "available" — it is merged, which is a
+  different and weaker statement, and the gap is invisible to anyone
+  reading a summary. Treat a package-manager or plugin update that
+  reports **"already at the latest version"** as evidence of nothing:
+  where a version surface trails its tags by design, that line is what
+  being behind looks like. §8's "generated text is behavior" applied to
+  the agent's own report — a reader who is told a fix is live stops
+  checking whether it is.
+
 ### Squash-merge messages (mandatory at PR finalization)
 
 `forge:pr-manager` enforces: max 50 words; 3–5 bullets; conventional-commit
