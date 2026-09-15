@@ -308,6 +308,7 @@ def test_version_skew_aligned_normalizes_dev_suffix(
     assert not results[0].info
     assert "aligned at v2.23.1" in results[0].detail
     assert "plugin not compared" in results[0].detail
+    assert "version_skew:plugin_cache" in results[0].detail
 
 
 def test_version_skew_flags_lagging_surface_as_advisory(

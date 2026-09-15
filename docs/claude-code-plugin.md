@@ -111,6 +111,13 @@ by forge (and any other plugin) remain invocable. To confirm skills
 are present, invoke one directly (e.g. `/forge:next`) — if the slash
 command resolves, the skill is loaded.
 
+That answers whether a skill is *present*, not whether it is
+*current*. A skill from a slot several releases old resolves exactly
+the same way, and its content is what the session executes. Nothing
+distinguishes the two from inside the session — see FOUNDATION §11
+"Plugin staleness", which is why a restart, not a reload, is the
+terminal step of a plugin-moving upgrade.
+
 The underlying caching behaviour is an upstream Claude Code issue.
 Forge tracks it in issue #71; this section will be removed when the
 upstream fix ships.

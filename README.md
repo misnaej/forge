@@ -598,11 +598,12 @@ install-forge-bootstrap
 # 3b. RESTART THE SESSION. This is the last required step of any upgrade
 #     that moved the plugin, not a footnote. A session binds its plugin
 #     slot at startup; `/reload-plugins` does not reliably rebind skills
-#     or monitors, and nothing rebinds the skill text already loaded.
+#     or monitors. Observed: a session kept running a skill from a slot
+#     five releases old, invoking a command its own installed hook had
+#     begun refusing, with every version check green throughout.
 #     No check can confirm you did it: forge can see which slot is
-#     installed, never which one your session is running. So a session
-#     that skipped the restart keeps executing the previous release
-#     while every version check reports green.
+#     installed, never which one your session is running.
+#     Full reasoning: FOUNDATION.md §11 "Plugin staleness".
 
 # 4. Review the diff:
 git diff FOUNDATION.md       # foundation content changes

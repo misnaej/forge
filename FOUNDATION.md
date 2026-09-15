@@ -875,8 +875,10 @@ though the agent is on disk — the cache
 (`~/.claude/plugins/cache/forge/forge/<version>/`) is behind. Recovery: `/plugin
 update forge@forge`, then `/reload-plugins` — agents, hooks, and MCP / LSP
 servers reload reliably; **skills and monitors may need a full session
-restart** — trust the command's own output over any fixed rule, and restart
-when a surface stays stale. The
+restart**. That is the recovery for this loud symptom, where a stale
+surface announces itself; it is not the general rule, and "restart once
+something looks stale" is not safe to generalise from — see below, where
+the usual case produces nothing to notice. The
 `check_upstream` warning (`install-forge-claude-md` + the `post-merge` /
 `post-checkout` / `SessionStart` hooks) surfaces the version lag automatically.
 
@@ -889,17 +891,22 @@ and kept invoking the raw form its own installed hook had begun
 refusing, while every version check reported green.
 
 **So restarting is the terminal step of any upgrade that moved the
-plugin, and an agent that moved it stops there.** Report the upgrade,
-say the session is still running the version it replaced, and ask for a
-restart — the same halt owed when a session finds itself outside the
-environment it assumed, and for the same reason: continuing produces
-work attributed to a version that was not the one running.
+plugin, and an agent that moved it stops there** — §2's "On deviation:
+STOP and report", applied to a deviation the agent itself caused.
+Report the upgrade, say the session is still running the version it
+replaced, and ask for a restart. Say also that anything already
+produced in this session ran under the *previous* guard set, so a
+command a newer hook would now refuse may already have succeeded; that
+is worth a look, not a re-audit.
 
 **No check can confirm the restart happened.** Forge can read which
 slot is *installed*; nothing exposes which slot a running session
 *loaded*, so every version check stays green across exactly this
 failure. Treat a green check as evidence about the filesystem, never
-about the session (§1, absence of evidence).
+about the session (§1, absence of evidence). Do not answer this by
+comparing plugin and package version numbers: that check was built,
+shipped and removed once already, because the command it named
+truthfully answered that nothing was out of date.
 
 ### Consumer Claude Code hook path convention
 

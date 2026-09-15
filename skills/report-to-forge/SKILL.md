@@ -48,7 +48,8 @@ describing behaviour from one version while naming another. State
 plainly: which slot is installed, that the running slot is
 undetermined, and whether the session was restarted since the last
 plugin update. A maintainer can work with "unknown"; they cannot work
-with a number that is confidently wrong.
+with a number that is confidently wrong. Why the running slot is
+unknowable: FOUNDATION §11 "Plugin staleness".
 
 ## Step 3: Capture evidence while it still exists
 
