@@ -4,10 +4,16 @@ When something must ship NOW, the expensive part of forge's PR flow is
 the verification ceremony — the reporter round, the fix-adoption cycle,
 the authored wrap-up. This CLI arms exactly ONE bypass of that ceremony:
 the wrap-up gate accepts a ``wrapup-mode: emergency`` wrap-up while the
-sentinel is armed, then the sentinel is spent. Everything else stays
-fully enforced — the entire pre-commit battery (CI runs the same checks,
-so a local bypass would only move the red to CI and block the merge) and
-every FOUNDATION §2 safety hook (none of them read the sentinel).
+sentinel is armed, then the sentinel is spent.
+
+Almost everything else stays enforced. The pre-commit battery holds,
+because CI runs the same checks and a local bypass would only move the
+red to CI and block the merge — with two carve-outs where that reasoning
+does not reach: ``env_sync`` and ``plugin_sync`` self-skip in CI
+(FOUNDATION §15), so there is no downstream run to move anything to, and
+leaving them enforced once refused a release commit over a condition its
+own remedy could not clear until that commit landed. Every FOUNDATION §2
+safety hook stays fully enforced — none of them read the sentinel.
 
 The mode is impossible to use quietly:
 
@@ -407,7 +413,8 @@ def main(argv: list[str] | None = None) -> int:
         description=(
             "One-shot deferred-verification bypass with a public ledger "
             "issue. Arms exactly one `wrapup-mode: emergency` publication; "
-            "pre-commit and every safety hook stay fully enforced."
+            "every safety hook stays fully enforced, and so does pre-commit "
+            "apart from the two environment-sync steps that self-skip in CI."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)

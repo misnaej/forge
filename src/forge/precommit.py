@@ -643,8 +643,9 @@ def step_env_sync(repo_root: Path) -> StepResult:
       failure takes priority over this advisory.
 
     Self-skips when there is nothing to verify (no ``[project.scripts]`` and
-    no pin, package not installed at all) or in CI
-    (FOUNDATION §15 — a fresh runner checkout legitimately predates install).
+    no pin, package not installed at all), in CI (FOUNDATION §15 — a fresh
+    runner checkout legitimately predates install), and while an emergency
+    sentinel is armed (see :func:`_emergency_skip`).
 
     Args:
         repo_root: Git repo root.
@@ -733,11 +734,14 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
     cache, not from the tree — so after a plugin release merges, every
     session keeps the old cache until someone runs the update. Nothing in
     a git hook can do that (``/plugin update`` is a session command), so
-    the gate names it and, for forge itself, refuses to commit until it
-    happened (``[tool.forge.plugin_sync].blocking = true``); consumers get
-    an advisory unless they opt in. Self-skips when the repo ships no
-    plugin, when the plugin is not installed locally, and in CI
-    (FOUNDATION §15).
+    the gate names it. It is advisory by default, and advisory in forge's
+    own repo too: under rolling-next the manifest is bumped before the
+    version it names is published anywhere the update could fetch, so a
+    blocking gate here refused release commits over a condition their own
+    remedy could not clear. ``[tool.forge.plugin_sync].blocking = true``
+    opts back into refusing. Self-skips when the repo ships no plugin,
+    when the plugin is not installed locally, in CI (FOUNDATION §15), and
+    while an emergency sentinel is armed (see :func:`_emergency_skip`).
 
     ``is_ci()``, never ``is_non_interactive()``: the cache this gate
     guards is read by Claude Code sessions, so an agent-driven commit is

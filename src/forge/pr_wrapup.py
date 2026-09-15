@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from forge import continuation_append
-from forge.emergency import armed_state, read_state
+from forge.emergency_state import armed_state, read_state
 from forge.gh_comments import (
     ValidationError,
     list_marker_comments,
