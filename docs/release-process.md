@@ -90,12 +90,6 @@ Forge runs `[tool.forge.changelog].mode = "fragments"`:
   - `forge-changelog next-version` — read-only print of the computed
     next version and its level, or `vX.Y.Z (already tagged — N
     fragment(s) across M tag(s); nothing to mint)`.
-  - **`forge-changelog release-pr` — how a release is cut.** It does
-    the assembly below, then commits, pushes and opens the PR in one
-    call. Being a CLI it performs those steps itself, so it never meets
-    the hooks that gate an agent typing them, and no wrap-up or bypass
-    flag is involved. A release taken through the manual sequence instead
-    costs hours and invites every one of those gates; this is the path.
   - `forge-changelog release` — the staging half of the same work, for
     when you want to inspect the assembly before it becomes a commit. It
     computes the plan, assembles `CHANGELOG.md` (one heading per
@@ -115,8 +109,8 @@ Forge runs `[tool.forge.changelog].mode = "fragments"`:
     explicit-version core for flows that supply their own version.
 - `forge-next-prep` logs a pending-fragment advisory (count + the
   release command) so accumulating fragments prompt a release.
-- **The assembly PR is opened by hand**: run `forge-changelog
-  release-pr` when you want a release — guard, branch
+- **This is how a release is cut**, and it is opened by hand: run
+  `forge-changelog release-pr` when you want one — guard, branch
   `chore/assemble-vX.Y.Z`, stage, commit, push, PR with in-body gate
   evidence. Idempotent (open assembly PR or nothing pending → quiet
   no-op); merging stays human. Forge runs no schedule for this: a

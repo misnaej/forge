@@ -110,7 +110,8 @@ commit) and when `.claude-plugin/plugin.json` is absent.
 **Convention (fragments mode):** a PR never bumps `plugin.json` — it
 adds a `changelog.d/<slug>.<type>.md` fragment carrying a `bump:` level;
 the tag-release workflow computes and cuts the tag on merge, and
-`forge-changelog release` later syncs the manifest at an assembly PR.
+`forge-changelog release-pr` later assembles and opens the assembly PR,
+syncing the manifest as it goes.
 
 ### Release flow (single-track)
 
@@ -120,7 +121,7 @@ the tag-release workflow computes and cuts the tag on merge, and
 2. The `tag-release` workflow tags the merge automatically
    (`forge-changelog auto-tag`): last tag + strongest new fragment
    level. `forge-next-prep --tag` is the manual fallback.
-3. Periodically a release/assembly PR runs `forge-changelog release` to
+3. Periodically `forge-changelog release-pr` opens the assembly PR to
    assemble `CHANGELOG.md` from the accumulated fragments and sync
    `.claude-plugin/plugin.json`.
 
