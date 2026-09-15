@@ -2407,6 +2407,128 @@ def test_continuation_delete_blocks_multiline_command_body() -> None:
     )
 
 
+def test_continuation_delete_allows_semicolon_separated_delete_and_mention() -> None:
+    r"""`;` splits an unrelated delete from a later `.plan` mention (#241).
+
+    Pins `;` in the `tr ';&\\n'` chunk-split charset that scopes the
+    *directory*-target half (`PLAN_DIR_RE`): without it, the whole command
+    is one chunk carrying both the `rm` anchor and the `.plan` token, and
+    the unrelated `ls .plan` after the semicolon would falsely block a
+    delete of an ordinary file. (The whole-command `CONTINUATION.md` check
+    plays no part here — this command never names that file.)
+    """
+    assert _run_hook(_CONTINUATION_DELETE, "rm foo.txt; ls .plan") == 0
+
+
+def test_continuation_delete_blocks_ampersand_separated_continuation_mention() -> None:
+    """CONTINUATION.md in any chunk blocks the command (#241 security review).
+
+    `CONTINUATION_RE` matches the WHOLE command, not the verb's own chunk,
+    because the two costs are asymmetric: a false positive here costs a
+    retry, a miss is unrecoverable. This exact shape — an unrelated `rm`
+    before an `&&`-separated mention of CONTINUATION.md — is harmless, but
+    telling it apart from a real bypass (a separator landing between a
+    delete verb and an indirected target, e.g. `f=.plan/CONTINUATION.md;
+    rm $f`) needs shell parsing this hook family has declined, so both are
+    refused. If this ever starts asserting `0`, `)`/`#`/`;` bypasses like
+    that one have silently reopened.
+    """
+    assert (
+        _run_hook(
+            _CONTINUATION_DELETE,
+            "rm -rf build && echo see .plan/CONTINUATION.md for notes",
+        )
+        == 2
+    )
+
+
+def test_continuation_delete_blocks_close_paren_separated_continuation_mention() -> (
+    None
+):
+    """`)` between verb and target still blocks (#241 security review).
+
+    Narrowing the CONTINUATION.md check to the verb's own chunk (splitting
+    on `)`) is what let `rm $(true).plan/CONTINUATION.md` through: the
+    command-substitution `)` landed between the verb and its target, so
+    neither chunk alone tripped both checks. This case — a harmless
+    `$(rm foo.txt)` ahead of a read-only `ls .plan` — pays for that fix by
+    being refused too; the guard cannot tell them apart without parsing
+    the shell, and a miss is unrecoverable while this is only a retry.
+    """
+    assert _run_hook(_CONTINUATION_DELETE, "$(rm foo.txt) ls .plan") == 2
+
+
+def test_continuation_delete_blocks_hash_separated_continuation_mention() -> None:
+    """`#` between verb and target still blocks (#241 security review).
+
+    Splitting on `#` is what let `rm .plan/CONTINUATION.md # cleanup`-style
+    trailing-comment bypasses through in principle (the comment separates
+    verb from target). This command's `rm` and its CONTINUATION.md mention
+    are genuinely unrelated, but the guard cannot distinguish that from a
+    comment hiding a real target without shell parsing, so it refuses
+    both — a deliberate false positive over an unrecoverable miss.
+    """
+    assert (
+        _run_hook(
+            _CONTINUATION_DELETE,
+            "rm build/output.txt # see .plan/CONTINUATION.md for context",
+        )
+        == 2
+    )
+
+
+def test_continuation_delete_blocks_command_substitution_splicing_target() -> None:
+    """Command substitution splicing target is blocked (#241 security review).
+
+    Verified against the pre-PR hook: this bypassed the `;&)#`-splitting
+    v3 shape (BLOCK there, ALLOW in v3) because the `)` separated the `rm`
+    anchor from its `CONTINUATION.md` target across two chunks. Matching
+    `CONTINUATION_RE` against the whole command (not per-chunk) is the fix;
+    re-adding `)` to any chunk split this check depends on regresses it.
+    """
+    assert _run_hook(_CONTINUATION_DELETE, "rm $(true).plan/CONTINUATION.md") == 2
+
+
+def test_continuation_delete_blocks_variable_indirected_target() -> None:
+    """Variable-indirected target across chunks is blocked (#241 security review).
+
+    Verified against the pre-PR hook (BLOCK there, ALLOW under v3's
+    per-chunk target check): the assignment and the `rm` land in different
+    `;`-split chunks, so a per-chunk `CONTINUATION.md` check never sees
+    both together. The whole-command `CONTINUATION_RE` check catches it
+    regardless of which chunk the literal text sits in.
+    """
+    assert _run_hook(_CONTINUATION_DELETE, "f=.plan/CONTINUATION.md; rm $f") == 2
+
+
+def test_continuation_delete_blocks_trailing_comment_on_direct_target() -> None:
+    """Trailing comment doesn't detach direct target (#241 security review).
+
+    Same vector as the hash-separated case above, aimed at the direct
+    target rather than a decoy: if `#` were ever treated as a chunk
+    separator for the CONTINUATION.md check, the comment would isolate the
+    real delete from view.
+    """
+    assert _run_hook(_CONTINUATION_DELETE, "rm .plan/CONTINUATION.md # cleanup") == 2
+
+
+def test_continuation_delete_allows_named_sibling_beside_readonly_plan_mention() -> (
+    None
+):
+    """Read-only sibling mention doesn't trigger false positive (#241).
+
+    `note.md` is a named, deletable sibling (not CONTINUATION.md, not the
+    directory itself), and the trailing `ls -A .plan/` is read-only. Under
+    a whole-command match for the *directory* target (`PLAN_DIR_RE`) this
+    was wrongly blocked — a read-only `ls` elsewhere in the line supplied
+    the directory shape that paired with the unrelated `rm`. Scoping
+    `PLAN_DIR_RE` to the verb's own `;`/`&`/newline-split chunk (while
+    `CONTINUATION_RE` stays whole-command, per the tests above) is what
+    lets this legitimate command through.
+    """
+    assert _run_hook(_CONTINUATION_DELETE, "rm -f .plan/note.md && ls -A .plan/") == 0
+
+
 _UNVERIFIED_PR_CREATE = "block_unverified_pr_create.sh"
 
 

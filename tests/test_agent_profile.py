@@ -614,9 +614,9 @@ def test_runs_from_transcripts_unlinked_transcript_gets_unknown_type_placeholder
 def test_collect_runs_ledger_run_enriched_by_its_named_transcript(
     tmp_path: Path,
 ) -> None:
-    """A ledger run whose transcript_path resolves gets its stats filled in."""
+    """A ledger run naming its OWN subagent transcript gets its stats filled in."""
     ledger_path = tmp_path / "agent_timing.jsonl"
-    transcript_path = tmp_path / "transcript_a1.jsonl"
+    transcript_path = tmp_path / "s1" / "subagents" / "agent-a1.jsonl"
     _write_jsonl(
         transcript_path,
         [
@@ -650,6 +650,256 @@ def test_collect_runs_ledger_run_enriched_by_its_named_transcript(
     assert run.stats is not None
     assert run.stats.tool_calls == 1
     assert run.stats.output_tokens == 3
+
+
+def test_collect_runs_ignores_ledger_transcript_path_when_it_is_the_main_session_file(
+    tmp_path: Path,
+) -> None:
+    """A ledger `transcript_path` equal to the main session file is not trusted (#572).
+
+    Claude Code records the *parent session's* transcript on a subagent's
+    stop event, not the subagent's own — a flat ``tmp_path/"s1.jsonl"`` is
+    exactly that measured real-world shape, and it exists here with real,
+    parseable content. Trusting it unconditionally would charge the whole
+    main session's turns and tool calls to this one subagent; a regression
+    back to that shows up here as non-``None`` stats.
+    """
+    ledger_path = tmp_path / "agent_timing.jsonl"
+    main_session_path = tmp_path / "s1.jsonl"
+    _write_jsonl(
+        main_session_path,
+        [_assistant(BASE_DT, [_tool_use("t1", "Bash", {"command": "ls"})])],
+    )
+    _write_jsonl(
+        ledger_path,
+        [
+            _event(
+                event="SubagentStart",
+                ts_ms=BASE_MS,
+                agent_id="a1",
+                agent_type="forge:design-checker",
+            ),
+            _event(
+                event="SubagentStop",
+                ts_ms=BASE_MS + 1000,
+                agent_id="a1",
+                agent_type="forge:design-checker",
+                transcript_path=str(main_session_path),
+            ),
+        ],
+    )
+
+    runs = collect_runs(ledger_path, None)
+
+    run = next(r for r in runs if r.agent_id == "a1")
+    assert run.stats is None
+
+
+def test_collect_runs_derives_the_agents_own_subagent_transcript_from_session_id(
+    tmp_path: Path,
+) -> None:
+    """The agent's own transcript is derived from `session_id`.
+
+    Not the ledger's misnamed path (#572).
+
+    Same wrong, but real and readable, ``transcript_path`` as the previous
+    test — but the agent's actual transcript ALSO exists, at the derived
+    ``<session_id>/subagents/agent-<id>.jsonl`` location, with a different
+    tool-call count and output-token count than the main-session file.
+    Stats must come from the derived file, not the main-session one.
+    """
+    ledger_path = tmp_path / "agent_timing.jsonl"
+    main_session_path = tmp_path / "s1.jsonl"
+    _write_jsonl(
+        main_session_path,
+        [
+            _assistant(
+                BASE_DT,
+                [_tool_use("t1", "Bash", {"command": "ls"})],
+                output_tokens=100,
+            )
+        ],
+    )
+    own_transcript = tmp_path / "s1" / "subagents" / "agent-a1.jsonl"
+    _write_jsonl(
+        own_transcript,
+        [
+            _assistant(
+                BASE_DT,
+                [
+                    _tool_use("t1", "Bash", {"command": "ls"}),
+                    _tool_use("t2", "Read", {"file_path": "x"}),
+                ],
+                output_tokens=7,
+            )
+        ],
+    )
+    _write_jsonl(
+        ledger_path,
+        [
+            _event(
+                event="SubagentStart",
+                ts_ms=BASE_MS,
+                agent_id="a1",
+                agent_type="forge:design-checker",
+            ),
+            _event(
+                event="SubagentStop",
+                ts_ms=BASE_MS + 1000,
+                agent_id="a1",
+                agent_type="forge:design-checker",
+                transcript_path=str(main_session_path),
+            ),
+        ],
+    )
+
+    runs = collect_runs(ledger_path, None)
+
+    run = next(r for r in runs if r.agent_id == "a1")
+    assert run.stats is not None
+    assert run.stats.tool_calls == 2
+    assert run.stats.output_tokens == 7
+
+
+def test_collect_runs_backfills_ledger_run_from_transcripts_root_when_unresolvable(
+    tmp_path: Path,
+) -> None:
+    """A ledger run with an unresolvable transcript is backfilled from scan.
+
+    Not duplicated (#572).
+
+    ``collect_runs``'s ``elif known.stats is None:`` branch copies BOTH
+    ``.stats`` and ``.transcript_path`` from a scan-discovered run onto the
+    ledger's existing run for the same agent id — pinning that the merge
+    lands on the SAME run (no duplicate) and that the transcript path
+    travels with the stats, not just the timings.
+    """
+    ledger_path = tmp_path / "agent_timing.jsonl"
+    unresolvable_path = tmp_path / "s1.jsonl"  # no derivable file exists for it
+    _write_jsonl(
+        ledger_path,
+        [
+            _event(
+                event="SubagentStart",
+                ts_ms=BASE_MS,
+                agent_id="a1",
+                agent_type="forge:design-checker",
+            ),
+            _event(
+                event="SubagentStop",
+                ts_ms=BASE_MS + 1000,
+                agent_id="a1",
+                agent_type="forge:design-checker",
+                transcript_path=str(unresolvable_path),
+            ),
+        ],
+    )
+    transcripts_root = tmp_path / "project"
+    scanned_path = transcripts_root / "proj" / "subagents" / "agent-a1.jsonl"
+    _write_jsonl(
+        scanned_path,
+        [_assistant(BASE_DT, [_tool_use("t1", "Bash", {"command": "ls"})])],
+    )
+
+    runs = collect_runs(ledger_path, transcripts_root)
+
+    matching = [r for r in runs if r.agent_id == "a1"]
+    assert len(matching) == 1
+    assert matching[0].stats is not None
+    assert matching[0].transcript_path == str(scanned_path)
+
+
+def test_runs_from_ledger_records_session_id_from_events() -> None:
+    """`runs_from_ledger` records a run's `session_id` from its ledger events.
+
+    No other test asserts on `run.session_id` in isolation, so a break to
+    the `_apply_event` assignment would otherwise surface only indirectly,
+    through the transcript-resolution tests above that depend on it.
+    """
+    events = [
+        _event(event="SubagentStart", ts_ms=BASE_MS, session_id="s1", agent_id="a1")
+    ]
+
+    runs = runs_from_ledger(events)
+
+    assert runs["a1"].session_id == "s1"
+
+
+def test_collect_runs_rejects_path_traversal_via_absolute_or_dotdot_session_id(
+    tmp_path: Path,
+) -> None:
+    """Prevent path traversal via hook-supplied IDs (#572 security review).
+
+    `session_id` and `agent_id` arrive from hook payloads and are spliced
+    into ``given.parent / session_id / "subagents" / f"agent-{agent_id}.jsonl"``;
+    unguarded, an absolute `session_id` discards the recorded directory
+    entirely (``Path("/a") / "/etc"`` is ``/etc``) and `..` climbs out of
+    it. Both scenarios below place a real, parseable transcript at exactly
+    the location the traversal would reach, so the guard — not an absent
+    file — is what keeps `stats` at ``None``.
+    """
+    ledger_path = tmp_path / "agent_timing.jsonl"
+
+    # Absolute session_id: would collapse the join to itself, ignoring
+    # the recorded transcript's own directory.
+    recorded_a1 = tmp_path / "s1.jsonl"
+    evil_root = tmp_path / "evil"
+    reachable_via_absolute = evil_root / "subagents" / "agent-a1.jsonl"
+    _write_jsonl(
+        reachable_via_absolute,
+        [_assistant(BASE_DT, [_tool_use("t1", "Bash", {"command": "ls"})])],
+    )
+
+    # `..` session_id: would climb one level above the recorded directory.
+    recorded_a2 = tmp_path / "sub" / "s2.jsonl"
+    reachable_via_dotdot = tmp_path / "subagents" / "agent-a2.jsonl"
+    _write_jsonl(
+        reachable_via_dotdot,
+        [_assistant(BASE_DT, [_tool_use("t1", "Bash", {"command": "ls"})])],
+    )
+
+    _write_jsonl(
+        ledger_path,
+        [
+            _event(
+                event="SubagentStart",
+                ts_ms=BASE_MS,
+                session_id=str(evil_root),
+                agent_id="a1",
+                agent_type="forge:design-checker",
+            ),
+            _event(
+                event="SubagentStop",
+                ts_ms=BASE_MS + 1000,
+                session_id=str(evil_root),
+                agent_id="a1",
+                agent_type="forge:design-checker",
+                transcript_path=str(recorded_a1),
+            ),
+            _event(
+                event="SubagentStart",
+                ts_ms=BASE_MS,
+                session_id="..",
+                agent_id="a2",
+                agent_type="forge:design-checker",
+            ),
+            _event(
+                event="SubagentStop",
+                ts_ms=BASE_MS + 1000,
+                session_id="..",
+                agent_id="a2",
+                agent_type="forge:design-checker",
+                transcript_path=str(recorded_a2),
+            ),
+        ],
+    )
+
+    runs = collect_runs(ledger_path, None)
+
+    run_a1 = next(r for r in runs if r.agent_id == "a1")
+    run_a2 = next(r for r in runs if r.agent_id == "a2")
+    assert run_a1.stats is None
+    assert run_a2.stats is None
 
 
 def test_collect_runs_transcript_only_run_backfills_when_absent_from_ledger(

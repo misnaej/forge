@@ -197,7 +197,14 @@ The report answers four questions:
 | Is anything stuck? | **Loop suspects** — one identical tool call (name + input) repeated four or more times inside a single prompt — and **`forge:precommit-fixer` runs past its three-run cap** |
 
 Turn counts, repeated-call detection and precommit-run counts come from
-the subagent transcripts the ledger names (`…/subagents/agent-<id>.jsonl`).
+each agent's own subagent transcript
+(`…/<session>/subagents/agent-<id>.jsonl`), located from the session and
+agent the ledger records. The path the ledger carries is the *parent
+session's* transcript, not the subagent's, so a transcript is read only
+when its filename names that agent — reading the recorded path as given
+would charge one session's turns and repeated calls to every agent that
+ran beneath it. A run whose transcript no longer exists reports no turn
+count rather than a borrowed one.
 Claude Code documents that format as internal and subject to change, so
 it is read tolerantly — an unrecognised line is skipped, never an error
 — and only ever enriches a run; `--transcripts <dir>` scans a project
