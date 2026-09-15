@@ -20,9 +20,13 @@ and the wrapper's extras.
 
 ## Source of truth
 
-[FOUNDATION.md](../FOUNDATION.md) owns principles, complexity limits,
-docstring rules. Consumer `CLAUDE.md` may override; on conflict
-**consumer wins**.
+[FOUNDATION.md](../FOUNDATION.md) owns principles
+([§7](../FOUNDATION.md#7-design-principles)), complexity limits
+([§5](../FOUNDATION.md#5-ruff-configuration)) and docstring rules
+([§8](../FOUNDATION.md#8-documentation-standards)) — calibrate severity
+against them, never re-define them. Consumer `CLAUDE.md` may override; on conflict
+**consumer wins**, and the stricter of foundation default and the
+consumer's `ruff.toml` applies.
 
 ## Why investigation recipes
 
@@ -194,6 +198,15 @@ an `__all__` name that only forwards. On a hit, require the author to
 state why the wrapped interface cannot change, or what the layer adds
 beyond adaptation. §16 shipped-plugin wrappers are exempt.
 
+### Mechanical-first lens (judgment check, no CLI)
+
+When a diff adds or changes an agent, a skill or a skill step, put
+FOUNDATION §7's mechanical-first question to each step. Signals: numbered
+steps that only run commands and copy their output; an agent re-deriving
+what a CLI already prints; prose rules a script could check. On a hit,
+require the author to move the step into a CLI or subcommand, or to name
+the judgment it needs.
+
 ## Repo-specific extras
 
 A per-repo wrapper's prompt may add rules to apply, e.g.:
@@ -237,6 +250,11 @@ verified-at: <sha>   (PR #<num>, branch <branch>)
  tests, the before/after number asked for on a hot-path diff, or
  "None — no cost-relevant diff">
 
+### Mechanical-first lens
+<per FOUNDATION §7: agent or skill steps that only run fixed commands,
+ with the CLI or subcommand each belongs in — or "None — no agent or
+ skill step changed">
+
 ### Repo-specific rules
 <findings against extras passed by the wrapper, if any>
 
@@ -245,17 +263,7 @@ verified-at: <sha>   (PR #<num>, branch <branch>)
 2. ...
 ```
 
-Clean result → compact PASS report per _TEMPLATE.md's report-by-exception rule: one PASS line after the header; prose only for findings.
-
-## Principles + complexity limits
-
-Principles (SOLID, DRY, KISS, YAGNI, Martin package principles, docs-as-
-current-state) and the foundation complexity limit numbers are owned by
-[FOUNDATION §5](../FOUNDATION.md#5-ruff-configuration) (limits) and
-[FOUNDATION §7](../FOUNDATION.md#7-design-principles) (principles).
-Calibrate severity against those; do not re-define them here. Always
-read the consumer's `ruff.toml` and enforce the stricter of foundation
-default vs consumer override.
+Clean result → one PASS line after the header (_TEMPLATE.md report-by-exception).
 
 ## Scope Boundaries
 
@@ -283,7 +291,7 @@ The report templates sit under each mode above.
 - Prioritize — distinguish CRITICAL / HIGH / MEDIUM / LOW
 - If a recipe surfaced zero findings, state that explicitly in the report
 - Never silently drop the claim-verification stage, the
-  wrapper-justification check, or the cost lens
+  wrapper-justification check, the cost lens, or the mechanical-first lens
 - **Verify before calling a name "stale" / "old" / "leftover"**: `grep`
   first — a name resolving to a real, distinct symbol is current even
   when a similar name also exists; flagging a live symbol is a false

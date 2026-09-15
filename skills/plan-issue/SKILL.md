@@ -75,9 +75,9 @@ below:
 ## Step 4: Explicit validation
 
 Present the complete plan: the plain-English statement from Step 3
-first, then files, order, side effects and bump class, and close with
-the one-line statement of what will be done (FOUNDATION §1 owns all
-three; do not restate the rules here).
+first, then files, order, side effects, which steps are mechanical or
+judgment, and bump class, and close with the one-line statement of what
+will be done (FOUNDATION §1 owns these; do not restate the rules here).
 Proceed only on the user's explicit validation — silence, partial
 answers, or "looks fine so far" are not validation.
 
@@ -122,7 +122,8 @@ branch has no user to ask, so in this mode it returns the existing
 In place of the interactive gate, return:
 
 - the plain-English problem statement Step 3 would open with,
-- the drafted plan (files, order, side effects, bump class),
+- the drafted plan (files, order, side effects, which steps are
+  mechanical or judgment, bump class),
 - an explicit **decisions to validate** list — each one shaped by the
   §1 rule Step 3 points at, so the caller can relay it unedited.
 
