@@ -90,12 +90,20 @@ Forge runs `[tool.forge.changelog].mode = "fragments"`:
   - `forge-changelog next-version` — read-only print of the computed
     next version and its level, or `vX.Y.Z (already tagged — N
     fragment(s) across M tag(s); nothing to mint)`.
-  - `forge-changelog release` — computes the plan, assembles
-    `CHANGELOG.md` (one heading per already-cut tag, then the minted
-    heading on top), writes `plugin.json` to the plan's version (the
-    manifest's single writer; skipped in manifest-less tag-versioned
-    repos), and stages everything. It never commits: branch → run it → ordinary PR
-    → merge → tag-on-merge cuts the tag. Racing release PRs collapse
+  - **`forge-changelog release-pr` — how a release is cut.** It does
+    the assembly below, then commits, pushes and opens the PR in one
+    call. Being a CLI it performs those steps itself, so it never meets
+    the hooks that gate an agent typing them, and no wrap-up or bypass
+    flag is involved. A release taken through the manual sequence instead
+    costs hours and invites every one of those gates; this is the path.
+  - `forge-changelog release` — the staging half of the same work, for
+    when you want to inspect the assembly before it becomes a commit. It
+    computes the plan, assembles `CHANGELOG.md` (one heading per
+    already-cut tag, then the minted heading on top), writes
+    `plugin.json` to the plan's version (the manifest's single writer;
+    skipped in manifest-less tag-versioned repos), and stages everything.
+    It never commits: branch → run it → ordinary PR → merge →
+    tag-on-merge cuts the tag. Racing release PRs collapse
     into an ordinary PR conflict; the loser recovers by taking the
     BASE side of `CHANGELOG.md` and `plugin.json`, restoring its
     consumed fragments from the merge base
