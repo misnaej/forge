@@ -376,8 +376,7 @@ def _tag_and_report(repo_root: Path, args: argparse.Namespace) -> int:
         if pending_fragments:
             logger.info(
                 "%d pending changelog fragment(s) — release when ready: "
-                "forge-changelog release-pr (assembles, commits, pushes and "
-                "opens the PR; `release` only stages and stops)",
+                "forge-changelog release-pr",
                 pending_fragments,
             )
 

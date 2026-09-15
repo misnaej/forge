@@ -12,29 +12,19 @@
 
 ## Forge-specific rules
 
-- **A fix lands in the repo or it did not happen.** When work turns up a
-  defect — a gate that refuses what it should allow, a command nobody
-  could find, advice that sends the reader the wrong way — the correction
-  belongs in something the next session reads without being told: the
-  emitted string, the rule, the skill step, the doc, the code. Saying it
-  in conversation does not count; the conversation ends. Agent memory
-  does not count either — it is private and ships to nobody (FOUNDATION
-  §12). **An issue is not a fix**: it records work owed, and is right for
-  a change too large to make now, but filing one and moving on leaves the
-  next person to rediscover the same thing.
-  - Prefer the surface closest to the mistake. If a tool's own output
-    misled somebody, fix the output first — that is where the next
-    reader meets it, and prose a tool emits is behavior (FOUNDATION §8).
-    A rule nobody reads at the moment of the decision is weaker than one
-    sentence in the thing they already ran.
-  - The test is simple: **would this have prevented it, without anyone
-    remembering?** If the answer needs a person to recall the lesson, it
-    is not yet fixed.
-  - Cost of skipping this, measured once: a release that takes four
-    seconds through the right command took most of a day, because the
-    advisory printed on every `/next` named a command that only does
-    half the job. Two branches were abandoned reimplementing what
-    already existed.
+- **A fix lands in the repo or it did not happen.** FOUNDATION §12 says
+  process feedback ships into the rule surface; this is what that means in
+  practice when the feedback is a defect you found rather than a
+  correction you were given. Three additions:
+  - **Prefer the surface closest to the mistake.** If a tool's own output
+    misled somebody, fix the output first — prose a tool emits is
+    behavior (§8), and one sentence in the thing they already ran beats a
+    rule they would have to remember to consult.
+  - **An issue is not a fix.** It records work owed, which is right for a
+    change too large to make now; on its own it leaves the next person to
+    rediscover the problem.
+  - **The test:** would this have prevented it, with nobody remembering?
+    If the answer needs a person to recall the lesson, it is not fixed.
 
 - **Changelog fragments (dogfood, since #229)**: forge uses `[tool.forge.changelog].mode = "fragments"` conventions — a PR's changelog entry is a `changelog.d/<slug>.<type>.md` file (first line `bump: patch|minor|major`, level ONLY — never a version number), NOT a `CHANGELOG.md` edit. CHANGELOG.md is assembled at release (`forge-changelog assemble`); nothing reads it as a version signal. Versions are assembler-owned: PRs never bump `plugin.json` (it parks at the latest tag; the guard accepts that with valid pending fragments) — **cut a release with `forge-changelog release-pr`**: it assembles, commits, pushes and opens the PR in one call, and being a CLI it never meets the hooks that gate an agent typing those steps. `forge-changelog release` is the staging half of the same work and stops before committing — reach for it only to inspect the assembly first. Either way the assembly files fragments already released by a tag under that tag's heading, mints a version only from the unreleased ones, and is the manifest's single writer.
 

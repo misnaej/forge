@@ -231,6 +231,10 @@ the per-tag headings and syncs the manifest to the latest tag.
   tag(s)` when a backfill rides along, or `v1.2.0 (already tagged — …;
   nothing to mint)`); exit 2 when there is no tag, nothing pending, or
   an invalid fragment.
+- `forge-changelog release-pr` is how a release is normally cut — it
+  does everything below and then commits, pushes and opens the PR.
+  Reach for the staging-only command under it when you want to inspect
+  the assembly before it becomes a commit.
 - `forge-changelog release` computes the plan, assembles `CHANGELOG.md`
   (one heading per already-cut tag, then the minted heading on top), and
   stages the result (fragment deletions included). Plugin repos: it also
