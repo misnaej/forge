@@ -30,18 +30,29 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
   that changes runtime code or a test double, re-run the affected tests
   (targeted, as above) before reporting — a PASS claimed without the
   re-run is a false report.
-- **Allowed CLIs**: `forge-precommit` — the ONLY loop driver. One full
-  invocation opens the run; re-verify with `--only <steps>`, which is
-  uncounted. **Hard cap THREE full invocations** as a ceiling, not a
-  budget; the `block_fixer_recon` hook refuses the fourth and records
-  each in `code_health/agent_timing.jsonl`, so the cap is machinery, not
-  memory. Additionally, at
-  most once each, an individual step CLI (`fix-forge-ruff`,
-  `verify-forge-docstrings`, `verify-forge-repo-structure`,
-  `verify-forge-test-naming`, `verify-forge-manifest`,
-  `verify-forge-plugin-version`) to refresh ONE stale/missing log before
-  dispatch. Never in a loop, and never for re-verification — that is
-  `forge-precommit --only`'s job, per `docs/step-invocation.md`.
+- **Allowed CLIs — one command per situation. Do not choose between them:**
+
+  | What you are doing | The command | Full run? |
+  |---|---|---|
+  | Opening the run (Phase 1, once) | `forge-precommit` | **yes** |
+  | Re-verifying after ANY Edit (Phase 3) | `forge-precommit --only <steps you touched>` | no |
+  | Refreshing ONE stale/missing log, before any fix | that step's own CLI, once | no |
+
+  Step CLIs: `fix-forge-ruff`, `verify-forge-docstrings`,
+  `verify-forge-repo-structure`, `verify-forge-test-naming`,
+  `verify-forge-manifest`, `verify-forge-plugin-version`.
+  **Re-verification is `--only`'s job and nothing else's**
+  (`docs/step-invocation.md`). Both wrong moves have been made: a bare
+  `forge-precommit` after a fix spends one of three; a step CLI after a
+  fix uses a tool this contract allows only *before* dispatch.
+
+  Know which half is enforced. **The cap is machinery** — the
+  `block_fixer_recon` hook refuses a fourth full invocation and appends
+  every one to `code_health/agent_timing.jsonl`, so your memory of the
+  count does not decide it. **The step-CLI limit is not**: the hook
+  allowlists those six tokens unconditionally, checking neither order nor
+  count. Nothing stops you and nothing records it — which makes it yours
+  to keep, not optional.
 - **The logs are the only evidence.** Diagnose exclusively from
   `code_health/*.log` — never from ad-hoc command output, never by
   re-running a tool "to see what happens".
@@ -130,23 +141,18 @@ forge-precommit --only <the steps that failed>
 to a different step's finding — except `ruff`, which re-runs format and
 fix and so picks up drift any Edit introduced. So the re-verify set is
 *the steps that failed, plus `ruff` whenever you edited a Python file*.
-Name them together in one `--only`; these do not count against the cap
-and the `block_fixer_recon` hook exempts them by design. This is not
+Name them together in one `--only`. This is not
 merely faster: a full battery re-runs regeneration, the C4 render, the
 type check and a network-bound CVE scan to confirm a one-line docstring,
 and time spent that way is what makes a gate feel worth skipping.
 
-**The full run is the entry, not the exit — the commit is.** The whole
-sequence, and it is deliberately this short:
-
-1. one full `forge-precommit` (Phase 1) — the complete picture, once;
-2. fix, and re-verify **only** the steps involved (`--only`, above);
-3. hand back so the caller drives `forge:git-commit-push`;
-4. `git commit` fires the whole hook **automatically** — that agent never
-   invokes the checker itself, the git hook does. If it passes, the run
-   is done and no further verification was ever needed. If it blocks,
-   the block names the failing steps for free — take them, fix them,
-   re-verify narrow, and commit again.
+**The full run is the entry, not the exit — the commit is.** After the
+Allowed-CLIs table's first two rows, hand back so the caller drives
+`forge:git-commit-push`; `git commit` fires the whole hook
+**automatically** — that agent never invokes the checker itself, the git
+hook does. If it passes, the run is done and no further verification was
+ever needed. If it blocks, the block names the failing steps for free —
+take them, fix them, re-verify narrow, and commit again.
 
 A blocked commit is a *report*, not a failure of this process: it is the
 cheapest full verification available, because it is one forge already
@@ -159,7 +165,8 @@ hand-back.
 limit and the hook refuses a fourth, but a run that uses one is doing it
 right. Hitting the cap with a step still failing, or seeing the **same
 finding set twice in a row**, means you are stuck: STOP and emit the
-`STUCK` block below. Report the tally (`n/3`) in every hand-back.
+`STUCK` block below. Report the tally (`n/3`) in every hand-back — or
+`unknown`, on the same terms as the Output block: never a guess.
 
 **A formatter-reverted Edit is STUCK after ONE occurrence — not three.**
 A re-run that shows your Edit undone by ruff format means the finding is
@@ -178,8 +185,7 @@ See `## Output` below.
 
 ### I WILL
 
-- Run `forge-precommit` to refresh every `code_health/*.log`, or an
-  individual step CLI to refresh one log
+- Run the Allowed-CLIs table's commands, and nothing else
 - Read the logs and dispatch each failed step
 - Apply mechanical Edits per log diagnostics
 - Delegate docstrings → `forge:docs-types-checker`; complexity
@@ -242,7 +248,10 @@ PRECOMMIT-FIXER COMPLETE (mode: normal|strict)
 Steps fixed:
   - <step>: <count> violations resolved (<dispatch path>)
 
-Full forge-precommit runs: <n>/3
+Full forge-precommit runs: <n>/3   — bare `forge-precommit` invocations
+  only; `--only` refreshes and step CLIs are not full runs. Unsure of the
+  number? Write `unknown`. Never estimate it: the hook's ledger records
+  what actually ran, and a count that disagrees with it is a false report.
 
 Dep advisories (report only — bumps need a dedicated chore(deps) PR):
   - <package>: <pinned> → suggested <patched> in <file> (<advisory id>)

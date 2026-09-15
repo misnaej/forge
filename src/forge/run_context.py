@@ -31,6 +31,32 @@ The detection logic is conservative: when in doubt, prefer reporting
 **non-interactive** (the safer default — over-suppressing dev-loop
 aids is a smaller mistake than hard-failing on an absent gh CLI in
 GitHub Actions).
+
+Choosing between :func:`is_ci` and :func:`is_non_interactive`
+-------------------------------------------------------------
+
+They answer different questions, and reaching for the wrong one has
+misfired repeatedly. Ask which question the caller is really asking:
+
+- **"Can this process prompt, or recommend a manual step it can wait
+  on?"** → :func:`is_non_interactive`. It guards work that would hang
+  or spam where no terminal can answer it.
+- **"Is anyone there to receive this?"** → :func:`is_ci`. It guards
+  anything whose only purpose is to reach a human — a notification, a
+  background monitor, an offer, echoed diagnostic output.
+
+An agent session satisfies both descriptions at once, which is what
+makes the mistake easy: its commands run as subprocesses with no
+controlling terminal, so a prompt really would hang — and a human
+really is sitting in front of it, one layer up. Absence of a tty is
+evidence about the subprocess, never about whether a person is there.
+So a human-facing behaviour gated on :func:`is_non_interactive` is not
+merely conservative; it is off in *every* agent session, which is
+precisely where it was meant to run, and it fails silently because a
+skipped notification looks identical to nothing having happened.
+
+FOUNDATION §15 "Choosing between the two predicates" carries this rule
+for consumers; this docstring is its canonical explanation.
 """
 
 from __future__ import annotations
@@ -105,6 +131,12 @@ def is_ci() -> bool:
     :func:`is_non_interactive` — to suppress behavior only in genuine CI
     while still running it in any local context where a human is present.
 
+    An agent session is such a local context, and the one most often
+    got wrong: every command it runs is a subprocess with no
+    controlling terminal, so :func:`is_non_interactive` is
+    unconditionally true there while a human waits one layer up. Any
+    behaviour that exists to reach that human gates on this function.
+
     Returns:
         ``True`` only when running under a recognized CI / automation runner.
     """
@@ -119,6 +151,14 @@ def is_non_interactive() -> bool:
     - :func:`is_ci` is True (a :data:`_CI_MARKERS` env var is set).
     - ``sys.stdin.isatty()`` is False (e.g. piped invocation, no TTY
       attached).
+
+    The name describes the *process*, not the situation: "without a
+    human at the terminal" means this process has no terminal to reach
+    one through, which is not the same as nobody being there. In an
+    agent session the second half is always true and the first is
+    false, so this returns ``True`` with a human present. Gate a
+    prompt or a hard fail on it; gate a notification on :func:`is_ci`
+    instead, or the notification is off wherever an agent runs.
 
     Returns:
         ``True`` when the process is plausibly non-interactive.

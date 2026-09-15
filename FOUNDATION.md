@@ -515,6 +515,22 @@ advisories with the suggested pin; they never edit pins.
   *waiting*, not obligation: it never licenses stopping short of work
   another rule requires be finished — §4's "fix ALL violations" and §1's
   "every failure requires investigation" outrank it.
+- **Before commissioning verification, establish what is already
+  verified.** The bullet above binds the agent *handed* evidence; this
+  one binds the agent about to *ask* for it. Re-running a reporter is
+  the expensive default and it feels like diligence, so it gets chosen
+  without a decision ever being made — most reliably right after
+  something changed, when "the tree moved, so re-verify" arrives as a
+  reflex. Determine first whether existing evidence covers the diff at
+  hand: whether this PR carries a prior `verified-at:`, and whether what
+  changed since falls inside what that evidence still speaks for. That
+  determination is **a CLI call, never prose** — `forge-pr-plan`, run
+  and followed, never re-derived by reasoning. Then **state the verdict
+  in one line before any reporter starts**. Deciding to
+  re-run is often correct; arriving at one without asking is not, and
+  afterwards the two are indistinguishable. This bullet is the
+  obligation; the thresholds, blast-radius paths and modes live in the
+  `/pr` skill and `forge.pr_delta`.
 - Why: a wrap-up posted at one SHA and read at another describes a tree that
   no longer exists — the `verified-at:` header (reporter contract,
   `agents/_TEMPLATE.md`) makes that drift detectable.
@@ -564,8 +580,10 @@ advisories with the suggested pin; they never edit pins.
   the merge.
 
   The main session stays free for the next task. Skip only on explicit
-  user request or when `forge.run_context.is_non_interactive()` — except
-  `/sentinel`, whose monitors always run (they are its only alert path).
+  user request or when `forge.run_context.is_ci()`. The predicate is
+  `is_ci()`, never `is_non_interactive()` (§15): the monitor's question
+  is whether anyone is there to receive an alert, and an agent session
+  has a human in it who is simply not on the subprocess's stdin.
 
 ### Squash-merge messages (mandatory at PR finalization)
 
@@ -1073,6 +1091,7 @@ non-interactive behavior **MUST** consult
 [`forge.run_context`](src/forge/run_context.py) instead of inlining its own
 `$CI`-style check. The module owns detection for the whole repo:
 
+- `is_ci()` — true only when a `_CI_MARKERS` environment variable is set.
 - `is_non_interactive()` — true when running without a human at the terminal
   (any of `_CI_MARKERS`, or `sys.stdin.isatty()` false). Conservative: when in
   doubt returns true (over-suppressing dev-loop aids beats hard-failing in CI).
@@ -1081,6 +1100,24 @@ non-interactive behavior **MUST** consult
   runner can authenticate against instead of blocking on a credential prompt.
 - `progress_logger(step_name)` — start / done banners with elapsed time around
   long-running substeps, so CI logs show boundaries and hangs stay visible.
+
+### Choosing between the two predicates
+
+They answer different questions, and reaching for the wrong one is a
+recurring bug. The decision rule:
+
+- **"Can this process prompt, or recommend a manual step it can wait
+  on?"** → `is_non_interactive()`. Suppresses dev-loop aids that would
+  hang or spam where no terminal can answer them.
+- **"Is anyone there to receive this?"** → `is_ci()`. Use it for
+  anything whose only purpose is to reach a human — a notification, a
+  monitor, an offer, echoed output. An agent session is such a
+  context, and the one most often got wrong.
+
+Why an agent session fools the other predicate, and why that failure
+is silent, is explained in
+[`forge.run_context`](src/forge/run_context.py)'s module docstring —
+the canonical home. This is the decision rule only.
 
 "Divergent behavior" means any of: prompting or recommending manual action;
 hard-failing on a prerequisite expected-missing in CI; running inside a
