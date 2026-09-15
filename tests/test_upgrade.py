@@ -1480,3 +1480,55 @@ def test_print_upgrade_notes_omits_action_section_when_none(
     msgs = " ".join(r.getMessage() for r in caplog.records)
     assert "do X" in msgs
     assert "Action required" not in msgs
+
+
+_TWO_RELEASE_CHANGELOG = """# Changelog
+
+## v8.2.0 — 2026-01-01
+
+- Some change.
+
+## v8.1.0 — 2025-12-01
+
+- An older change.
+"""
+
+
+def test_undocumented_release_refusal_refuses_undocumented_tag() -> None:
+    """A tag newer than the changelog's top heading is refused, naming both versions."""
+    refusal = upgrade.undocumented_release_refusal("v8.4.1", _TWO_RELEASE_CHANGELOG)
+    assert refusal is not None
+    assert "v8.4.1" in refusal
+    assert "v8.2.0" in refusal
+
+
+def test_undocumented_release_refusal_none_when_documented_or_older() -> None:
+    """A tag at or behind the changelog's top heading proceeds."""
+    assert (
+        upgrade.undocumented_release_refusal("v8.2.0", _TWO_RELEASE_CHANGELOG) is None
+    )
+    assert (
+        upgrade.undocumented_release_refusal("v8.1.0", _TWO_RELEASE_CHANGELOG) is None
+    )
+
+
+def test_undocumented_release_refusal_none_for_non_tag_ref() -> None:
+    """A branch or commit-SHA pin is a deliberate choice to track undocumented code."""
+    assert upgrade.undocumented_release_refusal("main", _TWO_RELEASE_CHANGELOG) is None
+    assert (
+        upgrade.undocumented_release_refusal(
+            "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", _TWO_RELEASE_CHANGELOG
+        )
+        is None
+    )
+
+
+def test_undocumented_release_refusal_none_when_changelog_absent() -> None:
+    """No changelog (partial install) -> the check cannot assert what it can't know."""
+    assert upgrade.undocumented_release_refusal("v8.4.1", None) is None
+
+
+def test_undocumented_release_refusal_none_when_no_release_heading() -> None:
+    """A changelog with no recognized release heading -> proceed."""
+    text = "# Changelog\n\n## Unreleased\n\n- Some change pending release.\n"
+    assert upgrade.undocumented_release_refusal("v8.4.1", text) is None

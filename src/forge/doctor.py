@@ -260,8 +260,8 @@ def _stale_cache_advisory(status: PluginCacheStatus) -> CheckResult:
         passed=False,
         info=True,
         detail=(
-            f"plugin cache slot v{status.cached} does not carry the content "
-            f"pinned at {status.declared} — "
+            f"STALE PLUGIN: cache slot v{status.cached} does not carry the "
+            f"content pinned at {status.declared} — "
             f"{len(status.missing_hooks)} hook(s) never load: {missing}. "
             f"{STALE_CACHE_REMEDIATION.format(plugin=status.plugin_name)}"
         ),

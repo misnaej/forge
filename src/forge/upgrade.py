@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from importlib import metadata, resources
 from pathlib import Path
 
-from forge.changelog import action_items
+from forge.changelog import action_items, top_release_heading
 from forge.git_utils import (
     _FORGE_GITHUB_REPO,
     configure_cli_logging,
@@ -662,6 +662,56 @@ def _pending_action_count(changelog_text: str) -> int:
     return count
 
 
+# A release-tag pin is exactly ``vX.Y.Z``. A branch or commit pin is an
+# explicit choice to track undocumented code, so it is never gated.
+_RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+
+
+def undocumented_release_refusal(
+    target_ref: str, changelog_text: str | None
+) -> str | None:
+    """Return why *target_ref* must not be adopted, or ``None`` to proceed.
+
+    A tag is cut on every merge; the changelog is written later, by an
+    assembly run. A tag cut between two assemblies therefore ships a
+    changelog that never mentions it — and the upgrade notes printed
+    from that changelog stop short without saying so, which is the
+    defect this refuses. A version no release documents is not
+    adoptable; the remedy is an assembly run covering it, not a quieter
+    warning.
+
+    Every unknowable input proceeds rather than blocks, per §1: a
+    non-tag ref, an absent changelog (partial install), a changelog with
+    no release heading, or either side failing to parse. The gate fires
+    only on a provable mismatch between two parsed versions.
+
+    Args:
+        target_ref: The ref being adopted — gated only when it is a
+            release tag.
+        changelog_text: The packaged changelog shipped *by that ref*, or
+            ``None`` when it could not be read.
+
+    Returns:
+        A refusal message naming both versions, or ``None`` when the
+        adoption may proceed.
+    """
+    if not _RELEASE_TAG_RE.match(target_ref) or changelog_text is None:
+        return None
+    documented = top_release_heading(changelog_text)
+    if documented is None:
+        return None
+    wanted, newest = parse_semver(target_ref), parse_semver(documented)
+    if wanted is None or newest is None or wanted <= newest:
+        return None
+    return (
+        f"{target_ref} is not documented: the changelog it ships stops at "
+        f"{documented}, so every change between them — including any action "
+        "you are expected to take — is invisible in the upgrade notes. "
+        f"Adopt {documented}, or ask for an assembly run covering "
+        f"{target_ref}."
+    )
+
+
 def _print_upgrade_notes() -> None:
     """Surface consumer-action upgrade notes after a successful upgrade.
 
@@ -881,6 +931,15 @@ def _run_apply(args: argparse.Namespace, root: Path) -> int:
             installed,
             target_ref,
         )
+
+    refusal = undocumented_release_refusal(target_ref, _read_changelog())
+    if refusal is not None:
+        logger.error("REFUSED: %s", refusal)
+        logger.error(
+            "The package is installed; nothing was written into this repo. "
+            "Re-run against a documented version to finish."
+        )
+        return 2
 
     logger.info("")
     logger.info("Re-syncing managed artifacts...")
