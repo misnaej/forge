@@ -880,6 +880,27 @@ when a surface stays stale. The
 `check_upstream` warning (`install-forge-claude-md` + the `post-merge` /
 `post-checkout` / `SessionStart` hooks) surfaces the version lag automatically.
 
+**A missing agent is the loud symptom; the quiet one is worse and far
+more common.** A stale slot usually holds a skill or agent that still
+works — it just encodes an older contract, so the session follows
+instructions that were correct a release ago. Nothing errors. The
+observed case: a session ran a `/pr` skill predating a command rename
+and kept invoking the raw form its own installed hook had begun
+refusing, while every version check reported green.
+
+**So restarting is the terminal step of any upgrade that moved the
+plugin, and an agent that moved it stops there.** Report the upgrade,
+say the session is still running the version it replaced, and ask for a
+restart — the same halt owed when a session finds itself outside the
+environment it assumed, and for the same reason: continuing produces
+work attributed to a version that was not the one running.
+
+**No check can confirm the restart happened.** Forge can read which
+slot is *installed*; nothing exposes which slot a running session
+*loaded*, so every version check stays green across exactly this
+failure. Treat a green check as evidence about the filesystem, never
+about the session (§1, absence of evidence).
+
 ### Consumer Claude Code hook path convention
 
 Consumer hooks live under `.claude/hooks/`, registered in

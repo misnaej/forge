@@ -29,10 +29,26 @@ grep -n "forge" pyproject.toml | grep -i "git+\|forge-scripts"   # the pin
 ```
 
 Record: the installed `forge-scripts` version, the `pyproject.toml`
-pin, and the active plugin version — and **flag any mismatch between
-them explicitly**; skew is itself often the bug. `forge-doctor`'s skew
-section is the source of truth (FOUNDATION §2: the forge CLI, never a
-hand-rolled fallback).
+pin, and the plugin slot `forge-doctor` reports — and **flag any
+mismatch explicitly**; skew is itself often the bug. Use the CLI's
+output, never a hand-rolled probe (FOUNDATION §2).
+
+**Write down what each number is evidence of, because they are not all
+evidence of the same thing.** `version_skew` compares the pip package
+against the git hooks and says so; it excludes the plugin by design, so
+it can report alignment while the plugin differs — it is not a
+whole-install verdict and must not be quoted as one. The plugin row
+names the slot that is *installed*.
+
+**The version the session is actually running is not knowable, and the
+report says so rather than implying otherwise.** A session binds its
+plugin slot at startup and nothing exposes which one; a stale slot runs
+an older agent or skill that still works, which is how a report ends up
+describing behaviour from one version while naming another. State
+plainly: which slot is installed, that the running slot is
+undetermined, and whether the session was restarted since the last
+plugin update. A maintainer can work with "unknown"; they cannot work
+with a number that is confidently wrong.
 
 ## Step 3: Capture evidence while it still exists
 

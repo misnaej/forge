@@ -592,9 +592,17 @@ install-forge-bootstrap
 # 3. (If you use Claude Code) bump the plugin pin:
 #    ~/.claude/installed_plugins.json → { "forge@forge": { "version": "v1.3.0" } }
 #    Then: /plugin update forge@forge
-#          /reload-plugins      # required: makes the new agents / hooks /
-#                               # skills / MCP+LSP visible in this session
-#    Note: monitor changes still need a full session restart.
+#          /reload-plugins      # rebinds agents, hooks and MCP/LSP servers
+#                               # in this session
+#
+# 3b. RESTART THE SESSION. This is the last required step of any upgrade
+#     that moved the plugin, not a footnote. A session binds its plugin
+#     slot at startup; `/reload-plugins` does not reliably rebind skills
+#     or monitors, and nothing rebinds the skill text already loaded.
+#     No check can confirm you did it: forge can see which slot is
+#     installed, never which one your session is running. So a session
+#     that skipped the restart keeps executing the previous release
+#     while every version check reports green.
 
 # 4. Review the diff:
 git diff FOUNDATION.md       # foundation content changes
