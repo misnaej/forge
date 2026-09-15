@@ -481,6 +481,16 @@ def require_cli(
     _abort_missing_cli(name, caller=caller, line=line, where="not on PATH")
 
 
+# A `code_health/` log is read back as evidence and quoted verbatim into
+# wrap-ups and PR comments, where an escape sequence renders as literal
+# garbage around the very number a reader is checking. Tools colour their
+# output whenever `FORCE_COLOR` is set, which exists precisely to defeat
+# the "not a terminal" detection that redirecting to a file would
+# otherwise rely on — so the strip happens here, at the one point every
+# step's log is written, rather than at each producer's call site.
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
 def write_step_log(repo_root: Path, name: str, output: str) -> Path:
     """Write *output* to ``code_health/<name>.log`` under *repo_root*.
 
@@ -496,7 +506,8 @@ def write_step_log(repo_root: Path, name: str, output: str) -> Path:
             defensively so a slug like ``"../etc"`` cannot escape the
             ``code_health/`` directory — even though every current
             caller passes a hard-coded literal.
-        output: Log content. A trailing newline is added if missing.
+        output: Log content. ANSI colour escapes are stripped and a
+            trailing newline is added if missing.
 
     Returns:
         The full path to the written log file, whose first line is the
@@ -505,7 +516,8 @@ def write_step_log(repo_root: Path, name: str, output: str) -> Path:
     safe_name = Path(name).name
     log_path = repo_root / "code_health" / f"{safe_name}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    text = output if output.endswith("\n") else output + "\n"
+    text = _ANSI_ESCAPE_RE.sub("", output)
+    text = text if text.endswith("\n") else text + "\n"
     log_path.write_text(f"{produced_at_stamp(repo_root)}\n{text}")
     return log_path
 
