@@ -20,6 +20,26 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v8.2.0 — 2026-09-15
+
+### Fixes
+- **Undoing a commit with `git revert` no longer skips every check.** Forge blocks agents from committing directly so that each commit runs the pre-commit checks first. `git revert` and `git cherry-pick` were not covered, and they create a commit a different way — through git's sequencer, which runs no pre-commit hook at all. An agent could therefore land a commit that nothing had checked, on any branch including the one forge protects, without doing anything that looked like committing. Both are now blocked for agents, like committing itself. The forms that create nothing still work, because they are how an agent gets out of trouble: `--abort`, `--quit` and `--skip` end a conflicted operation, and `--no-commit` stages a change without committing it. **If you have a workflow that calls `git revert` or `git cherry-pick` from an agent, it will now stop; run it yourself with `! git revert …`, or make a new commit through the normal flow instead.** The commit agent keeps its existing exemption, so the standard commit path is unaffected.
+
+## v8.1.0 — 2026-09-15
+
+### Features
+- **FOUNDATION §7 "Mechanical first"** — a design principle every consumer inherits: each step of new work is classified as mechanical or judgment, and a mechanical step becomes a CLI (preferably a subcommand of an existing one) instead of agent instructions. A CLI that performs a guarded effect must enforce that guard itself, because hooks never see its internal calls.
+- **Plans name the classification**: FOUNDATION §1's plan contract and `/plan-issue` (interactive and draft-only) now list which planned steps are mechanical and which need judgment.
+- **Review lens, never a gate**: `forge:design-checker` gains a mechanical-first lens for diffs that add or change agents, skills or skill steps.
+
+## v8.0.0 — 2026-09-15
+
+### Changes
+- **Pull requests are published with `forge-pr-create`; the raw create command is refused.** The check that stops unreviewed code being published could not see what was being published. It was handed the text of the command and had to work out the branch from it, but that text also carries the title and description, which are free writing and can contain anything that looks like a branch. It also read whichever folder the session sat in, which need not be the one holding the code. So it refused work that had been reviewed, and approved work that had not. Review demonstrated two ways to make it approve an unreviewed branch.
+- **The command knows the branch because it is standing on it.** It runs in the checkout it publishes, verifies that checkout's own record against that checkout's own commit, and earns the short-form and emergency exceptions in the same place. Nothing is inferred from typed text, so nothing can be steered by prose.
+- **Extra flags passed to the underlying tool are allowed by name, not refused by name.** The reverse was tried first and is the wrong way round: it forwards to a tool whose flag set keeps growing, so it stops covering the ground the day that tool gains a flag doing the same job under a new name. It had already missed one — the flag that fills the title and description from commit messages, which would have overwritten values this command sets itself. Labels, reviewers, assignees, milestones and projects still pass through.
+- **Breaking:** instructions that publish the raw way must switch to `forge-pr-create --base <base> --title <title> --body-file <file>`, adding `--draft` for a draft. The refusal names the replacement. A human publishing directly, and the explicit skip switch, are unchanged.
+
 ## v7.5.0 — 2026-09-14
 
 ### Features
