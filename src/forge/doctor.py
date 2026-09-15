@@ -43,6 +43,7 @@ from forge.git_utils import FORGE_DIST_NAME, emit, pad_semver, parse_semver
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
+    STALE_CACHE_CLONE_NOTE,
     STALE_CACHE_REMEDIATION,
     PluginCacheStatus,
     find_install_dir,
@@ -230,30 +231,39 @@ def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
     status = plugin_cache_status(repo_root)
     if status.state != "stale-content":
         return []
-    return [_stale_cache_advisory(status)]
+    pinned = not (repo_root / ".claude-plugin" / "plugin.json").is_file()
+    return [_stale_cache_advisory(status, pinned=pinned)]
 
 
-def _stale_cache_advisory(status: PluginCacheStatus) -> CheckResult:
+def _stale_cache_advisory(status: PluginCacheStatus, *, pinned: bool) -> CheckResult:
     """Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
 
     Args:
         status: The ``"stale-content"`` verdict, carrying the hooks the
             slot is missing.
+        pinned: Whether the source is a pinned marketplace clone (a
+            consumer) rather than the repo's own manifest.
 
     Returns:
         An advisory ``CheckResult`` listing the missing hooks — the
         concrete thing not running — and a remediation that can converge.
     """
     missing = ", ".join(status.missing_hooks)
+    # A consumer pins a ref; a repo shipping its own plugin declares a
+    # version. Same verdict, two different things to name (§8).
+    source = "pinned at" if pinned else "declared as"
+    remedy = STALE_CACHE_REMEDIATION.format(plugin=status.plugin_name)
+    if pinned:
+        remedy += STALE_CACHE_CLONE_NOTE
     return CheckResult(
         name="version_skew:plugin_cache",
         passed=False,
         info=True,
         detail=(
             f"plugin cache slot v{status.cached} does not carry the content "
-            f"pinned at {status.declared} — "
+            f"{source} {status.declared} — "
             f"{len(status.missing_hooks)} hook(s) never load: {missing}. "
-            f"{STALE_CACHE_REMEDIATION.format(plugin=status.plugin_name)}"
+            f"{remedy}"
         ),
     )
 

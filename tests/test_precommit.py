@@ -3428,9 +3428,8 @@ def test_step_plugin_sync_does_not_skip_when_non_interactive_but_not_ci(
     precheck must not treat this as CI.
     MOCK SETUP: is_ci stubbed to False; is_non_interactive stubbed to
     True; a plugin manifest is written so the "no plugin shipped" skip
-    doesn't fire first; find_plugin_cache/plugin_cache_version stubbed to
-    None so the step falls through to the "not cached" skip rather than
-    the CI skip.
+    doesn't fire first; find_plugin_cache stubbed to None so the step
+    falls through to the "not cached" skip rather than the CI skip.
     EXPECTED BEHAVIOR: the step proceeds past the CI precheck — its
     output is not the "(CI — skipped)" text, even though it still skips
     for the unrelated reason of no cached install.
@@ -3439,7 +3438,6 @@ def test_step_plugin_sync_does_not_skip_when_non_interactive_but_not_ci(
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
     monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
     monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: None)
-    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: None)
     result = precommit.step_plugin_sync(tmp_path)
     assert result.passed
     assert result.skipped
@@ -3455,7 +3453,6 @@ def test_step_plugin_sync_skips_when_not_cached(
     _write_plugin_manifest(tmp_path, "2.9.0")
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
     monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: None)
-    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: None)
     result = precommit.step_plugin_sync(tmp_path)
     assert result.passed
     assert result.skipped

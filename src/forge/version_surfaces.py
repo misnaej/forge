@@ -57,9 +57,16 @@ SKEW_REMEDIATION: Final[dict[str, str]] = {
 # filled with. Only discarding the slot (or moving the clone it is filled
 # from) converges.
 STALE_CACHE_REMEDIATION: Final[str] = (
-    "delete ~/.claude/plugins/cache/{plugin}/ and restart the session "
-    "(move the marketplace ref first if the clone is behind too) — "
+    "delete ~/.claude/plugins/cache/{plugin}/ and restart the session — "
     "`/plugin update` compares declared versions and reports no change"
+)
+
+# The consumer half of that advice: a slot refilled from a clone that is
+# itself behind converges on the same stale content, so the ref moves
+# first. Meaningless for a repo shipping its own plugin — there is no
+# clone in between — so it is appended only on that branch.
+STALE_CACHE_CLONE_NOTE: Final[str] = (
+    " (move the marketplace ref first if the clone is behind too)"
 )
 
 
@@ -189,26 +196,6 @@ def hook_sidecar_version(repo_root: Path) -> str | None:
     if not sidecar.is_file():
         return None
     return sidecar.read_text(encoding="utf-8").strip() or None
-
-
-def plugin_cache_version(plugin_root: Path | None) -> str | None:
-    """Version of the cached Claude Code plugin install, or None when absent.
-
-    Prefers the ``version`` field of the installed ``plugin.json`` (robust to
-    a flattened cache layout) and falls back to the cache directory name.
-
-    Args:
-        plugin_root: Cache slot for the plugin, or None when uncached.
-
-    Returns:
-        The cached plugin's version string, or None when no install is found.
-    """
-    if plugin_root is None:
-        return None
-    install_dir = find_install_dir(plugin_root)
-    if install_dir is None:
-        return None
-    return install_version(install_dir)
 
 
 def install_version(install_dir: Path) -> str:

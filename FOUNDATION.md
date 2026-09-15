@@ -587,7 +587,8 @@ advisories with the suggested pin; they never edit pins.
 
 - **A merge is not a release.** Merged work sits on `base_branch` and
   reaches no consumer until the repo's release step runs — under
-  changelog fragments the version surface has a single writer, and
+  a single-writer release model (changelog fragments, for
+  instance) the version surface is written only by the release, and
   merging never touches it. **This is not a per-merge chore**: fragments
   exist precisely so releases batch, and one assembly covering several
   merges is the normal shape, not a backlog. What triggers it is someone

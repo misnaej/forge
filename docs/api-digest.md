@@ -396,7 +396,7 @@ _75 modules, 1060 symbols._
 - `_validate_plugin_name(name: str) -> str` _(internal)_ — Argparse ``type`` for ``--plugin-name`` — reject a cache-escaping value.
 - `_check_plugin_install(plugin_name: str) -> CheckResult` _(internal)_ — Verify Claude Code has installed the named plugin locally.
 - `_check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report a Claude Code plugin cache lagging what should be loaded.
-- `_stale_cache_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
+- `_stale_cache_advisory(status: PluginCacheStatus, *, pinned: bool) -> CheckResult` _(internal)_ — Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
 - `_check_version_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
 - `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
 - `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
@@ -1446,7 +1446,6 @@ _75 modules, 1060 symbols._
 - `find_install_dir(plugin_root: Path) -> Path | None` — Walk the Claude Code cache layout to find the active plugin install.
 - `pip_version() -> str | None` — Version of the installed ``forge-scripts`` package, or None if absent.
 - `hook_sidecar_version(repo_root: Path) -> str | None` — Forge version recorded in the git-hook sidecar, or None when absent.
-- `plugin_cache_version(plugin_root: Path | None) -> str | None` — Version of the cached Claude Code plugin install, or None when absent.
 - `install_version(install_dir: Path) -> str` — Version a plugin install directory reports.
 - `editable_install_origin() -> Path | None` — Return the checkout an editable ``forge-scripts`` install points at.
 - `_direct_url() -> dict[str, object] | None` _(internal)_ — Return the distribution's parsed ``direct_url.json``, or ``None``.
@@ -1456,3 +1455,4 @@ _75 modules, 1060 symbols._
 - `class PluginCacheStatus` — What the Claude Code plugin cache says relative to what ships it.
 - `plugin_cache_status(repo_root: Path) -> PluginCacheStatus` — Compare the cached plugin against the manifest that ships it.
 - `_consumer_cache_status(repo_root: Path) -> PluginCacheStatus` _(internal)_ — Compare a consumer's active cache slot against the ref it pinned.
+- `_status_against(source_dir: Path, *, plugin_name: str, declared: str | None) -> PluginCacheStatus` _(internal)_ — Judge the loaded cache slot against the hooks *source_dir* ships.

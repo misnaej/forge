@@ -4,8 +4,7 @@
 # importlib.metadata; metadata calls are stubbed so no real distribution
 # needs to be installed.
 #   - version_surfaces.metadata.version / .distribution: stubbed per test.
-#   - version_surfaces.find_install_dir: stubbed for plugin_cache_version
-#     tests that don't need a real two-level cache layout on disk.
+#   - version_surfaces.find_plugin_cache: stubbed at a tmp_path cache slot.
 
 from __future__ import annotations
 
@@ -105,51 +104,7 @@ def test_hook_sidecar_version_none_when_sidecar_empty(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# plugin_cache_version
-# ---------------------------------------------------------------------------
-
-
-def test_plugin_cache_version_none_when_plugin_root_none() -> None:
-    """No cached plugin install → None, short-circuiting before any lookup."""
-    assert version_surfaces.plugin_cache_version(None) is None
-
-
-def test_plugin_cache_version_reads_plugin_json(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Prefers the plugin.json "version" field over the install dir name."""
-    install_dir = tmp_path / "forge" / "2.23.1"
-    (install_dir / ".claude-plugin").mkdir(parents=True)
-    (install_dir / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"version": "2.23.1"}), encoding="utf-8"
-    )
-    monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
-    assert version_surfaces.plugin_cache_version(tmp_path) == "2.23.1"
-
-
-def test_plugin_cache_version_falls_back_to_dir_name(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When plugin.json is missing/unversioned, the install dir name is used."""
-    install_dir = tmp_path / "forge" / "2.23.1"
-    install_dir.mkdir(parents=True)
-    monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
-    assert version_surfaces.plugin_cache_version(tmp_path) == "2.23.1"
-
-
-def test_plugin_cache_version_none_when_no_install_found(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """No recognisable install layout under plugin_root → None."""
-    monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: None)
-    assert version_surfaces.plugin_cache_version(tmp_path) is None
-
-
-# ---------------------------------------------------------------------------
-# find_install_dir / find_plugin_cache — cheap wins beyond plugin_cache_version
+# find_install_dir / find_plugin_cache
 # ---------------------------------------------------------------------------
 
 
@@ -401,20 +356,26 @@ def _write_registry(path: Path, install_location: Path | str) -> None:
     )
 
 
-def test_plugin_cache_status_current_when_cache_matches_manifest(
+def test_plugin_cache_status_current_when_slot_carries_the_shipped_hooks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A repo shipping a manifest still compares declared versions.
+    """A slot carrying every shipped hook is current, matching versions aside.
 
-    SCENARIO: the pre-existing manifest branch — the one ``plugin_sync``
-    depends on — must be untouched by the consumer branch.
-    MOCK SETUP: repo manifest at 2.23.1, cache slot at 2.23.1.
-    EXPECTED BEHAVIOR: ``"current"``, with no hook comparison involved.
+    SCENARIO: the manifest branch — the one ``plugin_sync`` depends on —
+    with nothing to report.
+    MOCK SETUP: repo manifest at 2.23.1 shipping two hooks; cache slot at
+    2.23.1 carrying both.
+    EXPECTED BEHAVIOR: ``"current"``. The equal version strings are
+    incidental — the verdict comes from the hook sets matching, which is
+    why the fixture gives both sides real hooks rather than none.
     """
-    _write_plugin_tree(tmp_path / "repo", version="2.23.1")
+    hooks = ("block_raw_git.sh", "block_pr_merge.sh")
+    _write_plugin_tree(tmp_path / "repo", version="2.23.1", hooks=hooks)
     cache_root = _write_plugin_tree(
-        tmp_path / "cache" / "forge" / "forge" / "2.23.1", version="2.23.1"
+        tmp_path / "cache" / "forge" / "forge" / "2.23.1",
+        version="2.23.1",
+        hooks=hooks,
     ).parent.parent
     monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _n: cache_root)
 
