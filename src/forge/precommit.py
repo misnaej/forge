@@ -87,6 +87,7 @@ from forge.changelog import (
 from forge.changelog_fragments import FRAGMENTS_DIR, branch_added_fragments
 from forge.changelog_fragments import check_pending as check_pending_fragments
 from forge.config import installed_console_scripts, resolve_model_section
+from forge.emergency_state import armed_state
 from forge.git_utils import (
     EVIDENCE_OUTPUT_CAP,
     SCOPE_ALL,
@@ -569,11 +570,44 @@ def _env_sync_precheck(repo_root: Path) -> StepResult | None:
             output="(CI — skipped)",
             skipped=True,
         )
+    armed = _emergency_skip(repo_root, "env_sync")
+    if armed is not None:
+        return armed
     for check in (_check_clone_identity, _check_hook_sidecar):
         blocked = check(repo_root)
         if blocked is not None:
             return blocked
     return None
+
+
+def _emergency_skip(repo_root: Path, step_name: str) -> StepResult | None:
+    """Stand this step down while an emergency sentinel is armed.
+
+    ``forge-emergency`` deliberately leaves the pre-commit battery
+    enforced, on the reasoning that CI runs the same checks so a local
+    bypass would only move the red downstream. That reasoning does not
+    reach the two environment-sync steps: both self-skip in CI
+    (FOUNDATION §15), so there is no downstream run to move anything to.
+    Excluding them bought nothing and cost the one thing an emergency is
+    for — a release commit was refused by a gate whose remedy could not
+    be performed until that commit landed.
+
+    Args:
+        repo_root: Git repo root.
+        step_name: Step asking, used in the skip message.
+
+    Returns:
+        A skip result while armed, otherwise ``None``.
+    """
+    state = armed_state(repo_root)
+    if state is None:
+        return None
+    return StepResult(
+        name=step_name,
+        passed=True,
+        output=f"(emergency mode armed — ledger #{state.ledger_issue} — skipped)",
+        skipped=True,
+    )
 
 
 def step_env_sync(repo_root: Path) -> StepResult:
@@ -609,8 +643,9 @@ def step_env_sync(repo_root: Path) -> StepResult:
       failure takes priority over this advisory.
 
     Self-skips when there is nothing to verify (no ``[project.scripts]`` and
-    no pin, package not installed at all) or in CI
-    (FOUNDATION §15 — a fresh runner checkout legitimately predates install).
+    no pin, package not installed at all), in CI (FOUNDATION §15 — a fresh
+    runner checkout legitimately predates install), and while an emergency
+    sentinel is armed (see :func:`_emergency_skip`).
 
     Args:
         repo_root: Git repo root.
@@ -699,11 +734,14 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
     cache, not from the tree — so after a plugin release merges, every
     session keeps the old cache until someone runs the update. Nothing in
     a git hook can do that (``/plugin update`` is a session command), so
-    the gate names it and, for forge itself, refuses to commit until it
-    happened (``[tool.forge.plugin_sync].blocking = true``); consumers get
-    an advisory unless they opt in. Self-skips when the repo ships no
-    plugin, when the plugin is not installed locally, and in CI
-    (FOUNDATION §15).
+    the gate names it. It is advisory by default, and advisory in forge's
+    own repo too: under rolling-next the manifest is bumped before the
+    version it names is published anywhere the update could fetch, so a
+    blocking gate here refused release commits over a condition their own
+    remedy could not clear. ``[tool.forge.plugin_sync].blocking = true``
+    opts back into refusing. Self-skips when the repo ships no plugin,
+    when the plugin is not installed locally, in CI (FOUNDATION §15), and
+    while an emergency sentinel is armed (see :func:`_emergency_skip`).
 
     ``is_ci()``, never ``is_non_interactive()``: the cache this gate
     guards is read by Claude Code sessions, so an agent-driven commit is
@@ -732,6 +770,9 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
             output="(CI — skipped)",
             skipped=True,
         )
+    armed = _emergency_skip(repo_root, "plugin_sync")
+    if armed is not None:
+        return armed
     status = plugin_cache_status(repo_root)
     plugin_name, cached = status.plugin_name, status.cached
     manifest_version = status.declared

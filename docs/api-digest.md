@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_75 modules, 1061 symbols._
+_76 modules, 1062 symbols._
 
 ## `forge`
 
@@ -412,11 +412,8 @@ _75 modules, 1061 symbols._
 
 > _forge-emergency — one-shot deferred-verification bypass with a public ledger._
 
-- `class EmergencyState` — The armed (or spent) one-shot bypass recorded in the sentinel file.
-- `read_state(root: Path) -> EmergencyState | None` — Return the sentinel state, or ``None`` when absent or unreadable.
 - `write_state(root: Path, state: EmergencyState) -> None` — Write the sentinel file and make sure it stays out of version control.
 - `_ensure_gitignored(root: Path, name: str) -> None` _(internal)_ — Append *name* to the root ``.gitignore`` when not already covered.
-- `armed_state(root: Path) -> EmergencyState | None` — Return the state only when the bypass is currently usable.
 - `_gh(*args: str) -> subprocess.CompletedProcess[str]` _(internal)_ — Run a ``gh`` command, captured, never raising on non-zero exit.
 - `_create_ledger_issue(reason: str, expires_at: str) -> int | None` _(internal)_ — File the public ledger issue; return its number, or ``None`` on failure.
 - `_cmd_start(root: Path, reason: str, ttl_hours: float) -> int` _(internal)_ — Arm the one-shot bypass: ledger issue first, then the sentinel.
@@ -426,6 +423,14 @@ _75 modules, 1061 symbols._
 - `_repayment_evidence(state: EmergencyState) -> tuple[int | None, bool]` _(internal)_ — Return ``(pr_number, repaid)`` for the sentinel's recorded PR.
 - `_cmd_end(root: Path) -> int` _(internal)_ — Close the ledger when the emergency PR's verification debt is repaid.
 - `main(argv: list[str] | None = None) -> int` — Run the ``forge-emergency`` CLI.
+
+## `forge.emergency_state`
+
+> _Reading the ``forge-emergency`` sentinel — the half with no dependencies._
+
+- `class EmergencyState` — The armed (or spent) one-shot bypass recorded in the sentinel file.
+- `read_state(root: Path) -> EmergencyState | None` — Return the sentinel state, or ``None`` when absent or unreadable.
+- `armed_state(root: Path) -> EmergencyState | None` — Return the state only when the bypass is currently usable.
 
 ## `forge.fix_ruff`
 
@@ -1017,6 +1022,7 @@ _75 modules, 1061 symbols._
 - `_check_clone_identity(repo_root: Path) -> StepResult | None` _(internal)_ — Block when the editable install on ``PATH`` was built from another clone.
 - `_check_hook_sidecar(repo_root: Path) -> StepResult | None` _(internal)_ — Block when the git hooks were last written by an older forge than the install.
 - `_env_sync_precheck(repo_root: Path) -> StepResult | None` _(internal)_ — Return the result that ends ``env_sync`` early, or ``None`` to continue.
+- `_emergency_skip(repo_root: Path, step_name: str) -> StepResult | None` _(internal)_ — Stand this step down while an emergency sentinel is armed.
 - `step_env_sync(repo_root: Path) -> StepResult` — Fail fast when the local install is stale vs the repo's declared CLIs.
 - `step_plugin_sync(repo_root: Path) -> StepResult` — Block when the cached Claude Code plugin is older than the repo's manifest.
 - `step_ruff(repo_root: Path) -> StepResult` — Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.

@@ -353,8 +353,9 @@ options:
 usage: forge-emergency [-h] {start,status,consume,record-pr,end} ...
 
 One-shot deferred-verification bypass with a public ledger issue. Arms exactly
-one `wrapup-mode: emergency` publication; pre-commit and every safety hook
-stay fully enforced.
+one `wrapup-mode: emergency` publication; every safety hook stays fully
+enforced, and so does pre-commit apart from the two environment-sync steps
+that self-skip in CI.
 
 positional arguments:
   {start,status,consume,record-pr,end}

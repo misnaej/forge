@@ -207,9 +207,14 @@ precommit_depth = "2"
 rebuild_command = "./dev/setup.sh"
 
 [tool.forge.plugin_sync]
-# forge ships the plugin it runs: a stale cache means this session's agents
-# and hooks are older than the tree. Consumers default to advisory.
-blocking = true
+# Advisory here, despite forge shipping the plugin it runs. The step
+# compares the cache against `plugin.json`, and a release PR's whole job
+# is to bump that field — so every release commit looked stale and was
+# refused, with a remedy (`/plugin update`) that re-reads the same
+# unpublished number and can never converge. The gate blocked the only
+# commit that could satisfy it. A warning still names a genuinely cold
+# cache; blocking made the release unlandable.
+blocking = false
 
 [tool.forge.typecheck]
 # Forge runs pyrefly as a BLOCKING gate: type errors are forge's own code,
