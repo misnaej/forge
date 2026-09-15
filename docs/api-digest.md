@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_75 modules, 1058 symbols._
+_75 modules, 1060 symbols._
 
 ## `forge`
 
@@ -22,6 +22,8 @@ _75 modules, 1058 symbols._
 
 > _forge-agent-profile — where the agents' time goes, and what they wrote._
 
+- `_resolve_subagent_transcript(path: str | None, *, session_id: str | None, agent_id: str) -> Path | None` _(internal)_ — The transcript belonging to *agent_id*, or ``None`` when none is readable.
+- `_is_path_component(value: str | None) -> TypeGuard[str]` _(internal)_ — Whether *value* is safe to splice into a path as one segment.
 - `class TranscriptStats` — What a subagent transcript adds to a run's ledger record.
 - `class AgentRun` — One agent invocation, assembled from the ledger and its transcript.
   - `wall_s(self) -> float` — Seconds from first to last known record, or ``0`` when unbounded.

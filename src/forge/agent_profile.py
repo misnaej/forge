@@ -52,7 +52,7 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from forge.git_utils import configure_cli_logging, repo_root, run_git
 from forge.ledger import append_ledger_line, parse_ledger
@@ -84,6 +84,54 @@ _PRECOMMIT_FULL_RUN_RE = re.compile(r"\bforge-precommit\b(?![^\n]*--only)")
 _SUBAGENT_GLOB = "*/subagents/agent-*.jsonl"
 
 
+def _resolve_subagent_transcript(
+    path: str | None, *, session_id: str | None, agent_id: str
+) -> Path | None:
+    """The transcript belonging to *agent_id*, or ``None`` when none is readable.
+
+    Claude Code records the *parent session's* transcript on a subagent's
+    stop event rather than the subagent's own, so a ledger path says where
+    the session wrote — never whose turns the file holds. Reading it
+    unchecked charges one session's turns, tool calls and repeated commands
+    to every agent that ran beneath it, which is why the name is required
+    to carry the agent's own id before the file is trusted.
+
+    Both ids arrive from hook payloads and are spliced into a path, so
+    each must be a single path component: an absolute *session_id* would
+    discard the recorded directory entirely (``Path("/a") / "/etc"`` is
+    ``/etc``), and either id could climb out with ``..``.
+
+    Args:
+        path: The ``transcript_path`` the ledger recorded.
+        session_id: The run's session, naming the subagent directory.
+        agent_id: The agent whose transcript is wanted.
+
+    Returns:
+        A readable transcript belonging to *agent_id*, or ``None``.
+    """
+    if not path or not _is_path_component(agent_id):
+        return None
+    given = Path(path)
+    if given.name == f"agent-{agent_id}.jsonl" and given.parent.name == "subagents":
+        return given if given.is_file() else None
+    if not _is_path_component(session_id):
+        return None
+    derived = given.parent / session_id / "subagents" / f"agent-{agent_id}.jsonl"
+    return derived if derived.is_file() else None
+
+
+def _is_path_component(value: str | None) -> TypeGuard[str]:
+    """Whether *value* is safe to splice into a path as one segment.
+
+    Args:
+        value: The candidate segment.
+
+    Returns:
+        ``True`` when *value* names exactly one ordinary path segment.
+    """
+    return bool(value) and value not in {".", ".."} and not set(value) & {"/", "\\"}
+
+
 @dataclass
 class TranscriptStats:
     """What a subagent transcript adds to a run's ledger record."""
@@ -105,6 +153,7 @@ class AgentRun:
 
     agent_id: str
     agent_type: str
+    session_id: str | None = None
     started: datetime | None = None
     ended: datetime | None = None
     transcript_path: str | None = None
@@ -482,6 +531,9 @@ def _apply_event(runs: dict[str, AgentRun], event: dict[str, Any]) -> None:
     run = runs.setdefault(agent_id, AgentRun(agent_id=agent_id, agent_type=agent_type))
     if agent_type and not run.agent_type:
         run.agent_type = agent_type
+    session_id = event.get("session_id")
+    if isinstance(session_id, str) and session_id and not run.session_id:
+        run.session_id = session_id
     run.ledger_active_s += _clipped_gap(run.last_event, ts)
     run.last_event = ts
     if run.started is None:
@@ -801,12 +853,21 @@ def collect_runs(ledger_path: Path, transcripts_root: Path | None) -> list[Agent
     """
     runs = runs_from_ledger(_iter_jsonl(ledger_path)) if ledger_path.is_file() else {}
     for run in runs.values():
-        if run.transcript_path and Path(run.transcript_path).is_file():
-            run.stats = parse_transcript(Path(run.transcript_path))
+        transcript = _resolve_subagent_transcript(
+            run.transcript_path, session_id=run.session_id, agent_id=run.agent_id
+        )
+        if transcript is not None:
+            run.stats = parse_transcript(transcript)
     if transcripts_root is not None:
-        for agent_id, run in runs_from_transcripts(transcripts_root).items():
-            if agent_id not in runs:
-                runs[agent_id] = run
+        for agent_id, scanned in runs_from_transcripts(transcripts_root).items():
+            known = runs.get(agent_id)
+            if known is None:
+                runs[agent_id] = scanned
+            elif known.stats is None:
+                # A ledger run whose transcript the ledger misnamed keeps its
+                # timings; only the transcript half was missing.
+                known.stats = scanned.stats
+                known.transcript_path = scanned.transcript_path
     return sorted(runs.values(), key=_start_of)
 
 
