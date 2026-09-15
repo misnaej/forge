@@ -79,6 +79,7 @@ from forge.git_utils import (
     merge_base_with_head,
     next_version,
     push_branch,
+    push_tag,
     render_plugin_version,
     repo_root,
     require_cli,
@@ -930,6 +931,9 @@ def _create_and_push_tag(root: Path, version: str, level: str, n_fragments: int)
     a lost race (another runner's push arrived first) from a genuine push
     failure. Two race checkpoints exist because two runners may both pass
     the "new fragments" gate and reach tag-creation before either pushes.
+    The push goes through :func:`~forge.git_utils.push_tag`, so it is
+    bounded and never prompts: this runs unattended in CI, where a
+    credential prompt would hang the job instead of failing it.
 
     Args:
         root: Repository root directory.
@@ -946,14 +950,8 @@ def _create_and_push_tag(root: Path, version: str, level: str, n_fragments: int)
         emit(f"auto-tag: {version} already exists — another runner won.")
         return 0
     create_annotated_tag(root, version)
-    push = subprocess.run(
-        ["git", "push", "origin", version],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if push.returncode != 0:
+    push = push_tag(root, version)
+    if not push.ok:
         # Local _tag_exists is useless here — this function just created
         # that ref; only the remote can attest a concurrent winner.
         remote_tag = run_git(
@@ -968,8 +966,8 @@ def _create_and_push_tag(root: Path, version: str, level: str, n_fragments: int)
             emit(f"auto-tag: {version} appeared remotely — another runner won.")
             return 0
         emit(
-            f"auto-tag: pushing {version} FAILED and no concurrent winner "
-            f"explains it: {push.stderr.strip()}"
+            f"auto-tag: pushing {version} FAILED (exit {push.returncode}) and "
+            f"no concurrent winner explains it: {push.stderr}"
         )
         return 2
     emit(

@@ -2447,6 +2447,227 @@ def test_push_branch_local_plus_main_branch_cannot_force_move_origin_main(
 
 
 # ---------------------------------------------------------------------------
+# push_tag
+# ---------------------------------------------------------------------------
+
+
+def test_push_tag_real_push_to_bare_lands_on_remote(tmp_path: Path) -> None:
+    """Real annotated-tag push to a bare remote lands the tag at HEAD."""
+    work, bare = _init_single_track_repo(tmp_path)
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "v1.2.3"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+
+    result = git_utils.push_tag(work, "v1.2.3")
+
+    assert result.ok is True
+    assert result.returncode == 0
+    remote_tag = subprocess.run(
+        ["git", "rev-parse", "refs/tags/v1.2.3"],
+        cwd=bare,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    local_tag = subprocess.run(
+        ["git", "rev-parse", "refs/tags/v1.2.3"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert remote_tag == local_tag
+
+
+def test_push_tag_argv_uses_fully_qualified_same_name_refspec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pushed refspec is ``refs/tags/<tag>:refs/tags/<tag>``, never a bare name.
+
+    Same reason as the branch case: a bare name is itself a refspec, so a
+    ``remote.<name>.push`` mapping could redirect it and a leading ``+``
+    would mean force.
+    """
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+
+    git_utils.push_tag(tmp_path, "v1.2.3")
+
+    assert calls == [["git", "push", "origin", "refs/tags/v1.2.3:refs/tags/v1.2.3"]]
+
+
+def test_push_tag_unreachable_remote_fails_bounded_with_no_credential_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tag push to a nonexistent remote fails cleanly, bounded and unprompted.
+
+    The auto-tag seam runs unattended in CI, so this is the failure that
+    must not hang: ``GIT_TERMINAL_PROMPT=0`` and ``PUSH_TIMEOUT_S`` reach
+    the real subprocess, which genuinely fails.
+    """
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(tmp_path / "does-not-exist.git")],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "v1.2.3"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    real_run = subprocess.run
+    captured: dict[str, object] = {}
+
+    def _wrapped_run(
+        cmd: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs)
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _wrapped_run)
+
+    result = git_utils.push_tag(tmp_path, "v1.2.3")
+
+    assert result.ok is False
+    assert result.stderr
+    assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert captured["timeout"] == git_utils.PUSH_TIMEOUT_S
+
+
+@pytest.mark.parametrize(
+    ("remote", "tag"),
+    [
+        pytest.param("-evil", "v1.2.3", id="dash-remote"),
+        pytest.param("origin", "-evil", id="dash-tag"),
+        pytest.param("+evil", "v1.2.3", id="plus-remote"),
+        pytest.param("origin", "+v1.2.3", id="plus-tag"),
+    ],
+)
+def test_push_tag_refuses_dash_or_plus_prefixed_remote_or_tag_without_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remote: str, tag: str
+) -> None:
+    """``-`` or ``+`` prefix injection is rejected, no subprocess call.
+
+    ``push_tag`` has no force option, and a ``+``-prefixed refspec is how
+    git force-*moves* an existing tag — the one thing the concurrent-runner
+    race must never do, since it would overwrite a winner's release tag.
+
+    Args:
+        remote: The ``remote`` argument to pass.
+        tag: The ``tag`` argument to pass.
+    """
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+
+    result = git_utils.push_tag(tmp_path, tag, remote=remote)
+
+    assert result.ok is False
+    assert result.returncode is None
+    assert "refused a remote or tag starting with '-' or '+'" in result.stderr
+    assert calls == []
+
+
+def test_push_tag_env_drops_git_config_overrides_keeps_other_vars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tag push's env drops ``GIT_CONFIG_*``/``GIT_DIR`` but keeps the rest.
+
+    A ``GIT_DIR`` inherited from the environment would read the tag out of
+    another repository entirely; the scrub is the same one the branch push
+    gets, which is the point of the shared push body.
+    """
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "/elsewhere/empty-hooks")
+    monkeypatch.setenv("GIT_DIR", "/elsewhere/other-repo/.git")
+    captured: dict[str, object] = {}
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> object:
+        captured.update(kwargs)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+
+    git_utils.push_tag(tmp_path, "v1.2.3")
+
+    env = captured["env"]
+    assert "GIT_CONFIG_COUNT" not in env
+    assert "GIT_CONFIG_KEY_0" not in env
+    assert "GIT_CONFIG_VALUE_0" not in env
+    assert "GIT_DIR" not in env
+    assert env["PATH"] == os.environ["PATH"]
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_push_tag_does_not_force_move_a_tag_already_on_the_remote(
+    tmp_path: Path,
+) -> None:
+    """A diverged local tag of the same name cannot overwrite the remote's.
+
+    The concurrent-runner race in ``forge-changelog auto-tag`` is exactly
+    this: two runners cut ``v1.2.3`` at different commits. Without the
+    ``+`` the winner's tag survives and the loser's push is rejected —
+    verified against real git, not just the argv shape.
+    """
+    work, bare = _init_single_track_repo(tmp_path)
+    winner_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "winner"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.push_tag(work, "v1.2.3").ok is True
+    # The loser: same tag name, different commit.
+    (work / "loser.txt").write_text("loser\n")
+    commit_all(work, "feat: loser commit")
+    subprocess.run(
+        ["git", "tag", "-f", "-a", "v1.2.3", "-m", "loser"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+
+    result = git_utils.push_tag(work, "v1.2.3")
+
+    assert result.ok is False
+    remote_tag = subprocess.run(
+        ["git", "rev-parse", "refs/tags/v1.2.3^{commit}"],
+        cwd=bare,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert remote_tag == winner_commit
+
+
+# ---------------------------------------------------------------------------
 # get_tree_sha
 # ---------------------------------------------------------------------------
 

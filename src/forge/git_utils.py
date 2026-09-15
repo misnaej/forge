@@ -1117,7 +1117,7 @@ def git_env_overrides_removed() -> Iterator[None]:
 
 @dataclass(frozen=True)
 class PushResult:
-    """The outcome of :func:`push_branch`.
+    """The outcome of :func:`push_branch` or :func:`push_tag`.
 
     Attributes:
         ok: Whether the push succeeded.
@@ -1129,6 +1129,84 @@ class PushResult:
     ok: bool
     returncode: int | None
     stderr: str
+
+
+def _refuse_dash_or_plus(remote: str, ref: str, kind: str) -> PushResult | None:
+    """Return a refusal when *remote* or *ref* could parse as more than a name.
+
+    Args:
+        remote: Remote name to check.
+        ref: Branch or tag name to check.
+        kind: What *ref* is, for the message (``"branch"`` / ``"tag"``).
+
+    Returns:
+        A failed :class:`PushResult` when either starts with ``-`` (option
+        injection) or ``+`` (git's force-refspec prefix), else ``None``.
+    """
+    if remote.startswith(("-", "+")) or ref.startswith(("-", "+")):
+        return PushResult(
+            ok=False,
+            returncode=None,
+            stderr=(
+                f"refused a remote or {kind} starting with '-' or '+': "
+                f"{remote!r} {ref!r}"
+            ),
+        )
+    return None
+
+
+def _push_refspec(
+    repo_root: Path, remote: str, refspec: str, *, set_upstream: bool = False
+) -> PushResult:
+    """Push one fully qualified *refspec* without ever prompting or hanging.
+
+    The single push execution path behind :func:`push_branch` and
+    :func:`push_tag`: one set of guards, so a ref kind added later cannot
+    acquire a weaker one. It runs with ``GIT_TERMINAL_PROMPT=0`` and a
+    bounded timeout, and returns failure instead of raising so each caller
+    decides what a failed push means. Git's per-process config and
+    repository overrides are dropped from the push's environment (see
+    :func:`git_env_overrides_removed`); the caller is responsible for
+    refusing names that could parse as options or force refspecs, before
+    they are built into *refspec*.
+
+    Args:
+        repo_root: Git repo root.
+        remote: Remote name.
+        refspec: The ``<src>:<dst>`` refspec to push.
+        set_upstream: Pass ``-u`` so the pushed ref is tracked.
+
+    Returns:
+        The outcome.
+    """
+    argv = ["git", "push", *(["-u"] if set_upstream else []), remote, refspec]
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if not _is_git_env_override(name)
+    }
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=PUSH_TIMEOUT_S,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return PushResult(
+            ok=False,
+            returncode=None,
+            stderr=f"git push timed out after {PUSH_TIMEOUT_S}s",
+        )
+    except OSError as exc:
+        return PushResult(ok=False, returncode=None, stderr=str(exc))
+    return PushResult(
+        ok=proc.returncode == 0, returncode=proc.returncode, stderr=proc.stderr.strip()
+    )
 
 
 def push_branch(
@@ -1160,44 +1238,48 @@ def push_branch(
         refused without running git, so it can never parse as an option or
         a force refspec.
     """
-    if remote.startswith(("-", "+")) or branch.startswith(("-", "+")):
-        return PushResult(
-            ok=False,
-            returncode=None,
-            stderr=(
-                "refused a remote or branch starting with '-' or '+': "
-                f"{remote!r} {branch!r}"
-            ),
-        )
-    refspec = f"refs/heads/{branch}:refs/heads/{branch}"
-    argv = ["git", "push", *(["-u"] if set_upstream else []), remote, refspec]
-    env = {
-        name: value
-        for name, value in os.environ.items()
-        if not _is_git_env_override(name)
-    }
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    try:
-        proc = subprocess.run(
-            argv,
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=PUSH_TIMEOUT_S,
-            env=env,
-        )
-    except subprocess.TimeoutExpired:
-        return PushResult(
-            ok=False,
-            returncode=None,
-            stderr=f"git push timed out after {PUSH_TIMEOUT_S}s",
-        )
-    except OSError as exc:
-        return PushResult(ok=False, returncode=None, stderr=str(exc))
-    return PushResult(
-        ok=proc.returncode == 0, returncode=proc.returncode, stderr=proc.stderr.strip()
+    refusal = _refuse_dash_or_plus(remote, branch, "branch")
+    if refusal is not None:
+        return refusal
+    return _push_refspec(
+        repo_root,
+        remote,
+        f"refs/heads/{branch}:refs/heads/{branch}",
+        set_upstream=set_upstream,
     )
+
+
+def push_tag(repo_root: Path, tag: str, *, remote: str = "origin") -> PushResult:
+    """Push *tag* to *remote* without ever prompting or hanging.
+
+    The one push seam for forge CLIs that publish a tag — release
+    tag-cutting runs unattended in CI, where a credential prompt nobody
+    can answer would hang the job forever. It shares every guard
+    :func:`push_branch` has: ``GIT_TERMINAL_PROMPT=0``, a bounded timeout,
+    a scrubbed environment, and failure returned rather than raised.
+
+    The tag is pushed as the fully qualified same-name refspec
+    ``refs/tags/<tag>:refs/tags/<tag>``, for the reason a branch is: a
+    bare name is itself a refspec, so a leading ``+`` would mean force and
+    a ``remote.<name>.push`` mapping could redirect it. Without that ``+``
+    git refuses to move a tag that already exists on the remote, so this
+    never force-updates one — a concurrent runner's tag survives, and the
+    caller sees the rejection.
+
+    Args:
+        repo_root: Git repo root.
+        tag: Tag name to push (e.g. ``v1.2.3``).
+        remote: Remote name.
+
+    Returns:
+        The outcome. A *tag* or *remote* starting with ``-`` or ``+`` is
+        refused without running git, so it can never parse as an option or
+        a force refspec.
+    """
+    refusal = _refuse_dash_or_plus(remote, tag, "tag")
+    if refusal is not None:
+        return refusal
+    return _push_refspec(repo_root, remote, f"refs/tags/{tag}:refs/tags/{tag}")
 
 
 def behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None:

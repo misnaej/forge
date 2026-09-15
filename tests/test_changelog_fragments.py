@@ -34,6 +34,7 @@ from tests.conftest import (
     init_git_repo,
     init_single_track_repo,
     make_fake_push_branch,
+    make_fake_push_tag,
 )
 
 
@@ -1425,6 +1426,35 @@ def test_main_auto_tag_not_fragments_mode_noop(
 
     assert main(["auto-tag"]) == 0
     assert "not a fragments-mode repo" in capsys.readouterr().out
+
+
+def test_main_auto_tag_pushes_the_tag_through_the_bounded_push_seam(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tag reaches the remote via ``push_tag``, never a raw ``git push``.
+
+    SCENARIO: ``auto-tag`` cuts v0.1.0 in a fragments-mode repo.
+    MOCK SETUP: the module's imported `push_tag` name is replaced with a
+    recording fake.
+    EXPECTED BEHAVIOR: it is called once with the repo root and the tag —
+    the seam carrying the timeout, `GIT_TERMINAL_PROMPT=0` and the env
+    scrub. This runs unattended in CI, so a raw push here would hang the
+    job on a credential prompt instead of failing it.
+    """
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_autotag_repo(repo, origin)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(
+        changelog_fragments, "push_tag", make_fake_push_tag(calls=calls)
+    )
+
+    assert main(["auto-tag"]) == 0
+
+    assert calls == [(repo, "v0.1.0", {})]
 
 
 def test_main_auto_tag_push_race_defers_to_remote_winner(
