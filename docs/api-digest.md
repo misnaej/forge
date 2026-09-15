@@ -1282,7 +1282,7 @@ _75 modules, 1061 symbols._
 - `_installed_revision() -> str | None` _(internal)_ — Return the installed forge-scripts build's requested git revision.
 - `pin_revision_mismatch(root: Path) -> tuple[str, str] | None` — Return ``(pinned_ref, installed_ref)`` on a provable pin/install mismatch.
 - `_pending_action_count(changelog_text: str) -> int` _(internal)_ — Count ``**Action:**`` items in versions newer than the installed one.
-- `undocumented_release_refusal(target_ref: str, changelog_text: str | None) -> str | None` — Return why *target_ref* must not be adopted, or ``None`` to proceed.
+- `_undocumented_release_refusal(target_ref: str, changelog_text: str | None) -> str | None` _(internal)_ — Return why *target_ref* must not be adopted, or ``None`` to proceed.
 - `_print_upgrade_notes() -> None` _(internal)_ — Surface consumer-action upgrade notes after a successful upgrade.
 - `_run_phase2(root: Path) -> int` _(internal)_ — Phase 2 — verify the install matches the pin, then re-sync artifacts.
 - `_run_pip_install(ref: str, *, auth_mode: AuthMode, timeout_seconds: int | None) -> int` _(internal)_ — Run the force-reinstall pip command, wrapped in a progress logger.
