@@ -188,8 +188,11 @@ the reporters instead of serializing after them. Confirm-first, never
 silent — if the user declines or does not run it, proceed unchanged
 and have the wrap-up record it was offered and skipped. It must never
 become a soft blocker. Self-skip the offer entirely when
-`forge.run_context.is_non_interactive()` — a billed fan-out triggered
-from automation is what FOUNDATION §15 exists to prevent. On a
+`forge.run_context.is_ci()` — a billed fan-out triggered from
+automation is what FOUNDATION §15 exists to prevent, and presence is
+what decides it: an offer nobody can answer is waste, but an agent
+session has someone to answer it (§15 "Choosing between the two
+predicates"). On a
 delta-mode run, skip the offer too (its output carries no
 `verified-at:` header, so there is no prior result to reuse — say so
 in the wrap-up rather than implying a second opinion was obtained).

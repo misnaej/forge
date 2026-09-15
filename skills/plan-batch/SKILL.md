@@ -26,11 +26,17 @@ draft, and `/plan-issue`'s draft-only mode says what that is not. Only
 the user's explicit validation turns one into a plan, and only then is
 anything recorded.
 
-**Self-skip when `forge.run_context.is_non_interactive()`**: Steps 3
-and 4 are nothing but prompting for manual action, which FOUNDATION
-§15 makes a run-context decision rather than a default — and here the
-answer is to stop, since every draft would be billed for with nobody
-present to validate it. Report why and stop.
+**Self-skip the whole skill when `forge.run_context.is_ci()`** — not
+one phase of it. The skip has to sit ahead of Step 2, because Step 2
+is where the billed drafting agents are dispatched and Steps 3 and 4
+are nothing but prompting for manual action: skipping only the
+prompting half would pay for every draft and then have nobody to
+validate it, which is the worst of both. FOUNDATION §15 makes this a
+run-context decision rather than a default, and here it turns on
+presence. `is_ci()`, never `is_non_interactive()` (§15 "Choosing
+between the two predicates"): the latter is true in every agent
+session, where a human is in fact waiting on these drafts. Report why
+and stop.
 
 ## Step 1: Get the queue
 
