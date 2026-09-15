@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_75 modules, 1051 symbols._
+_75 modules, 1058 symbols._
 
 ## `forge`
 
@@ -648,6 +648,13 @@ _75 modules, 1051 symbols._
 - `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
 - `unmerged_paths(repo_root: Path) -> list[str]` — Return the repo-relative paths currently in an unmerged index state.
 - `fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool` — Fetch *refspec* from *remote* without ever prompting for credentials.
+- `_is_git_env_override(name: str) -> bool` _(internal)_ — Return whether *name* overrides git's config or repository per process.
+- `git_env_overrides_removed() -> Iterator[None]` — Run the body with git's per-process environment overrides removed.
+- `class PushResult` — The outcome of :func:`push_branch` or :func:`push_tag`.
+- `_refuse_dash_or_plus(remote: str, ref: str, kind: str) -> PushResult | None` _(internal)_ — Return a refusal when *remote* or *ref* could parse as more than a name.
+- `_push_refspec(repo_root: Path, remote: str, refspec: str, *, set_upstream: bool = False) -> PushResult` _(internal)_ — Push one fully qualified *refspec* without ever prompting or hanging.
+- `push_branch(repo_root: Path, branch: str, *, set_upstream: bool = False, remote: str = 'origin') -> PushResult` — Push *branch* to *remote* without ever prompting or hanging.
+- `push_tag(repo_root: Path, tag: str, *, remote: str = 'origin') -> PushResult` — Push *tag* to *remote* without ever prompting or hanging.
 - `behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None` — Return how many commits HEAD is behind and ahead of *base_ref*.
 - `has_conflict_markers(text: str) -> bool` — Return whether *text* contains unresolved git conflict markers.
 - `file_has_conflict_markers(path: Path) -> bool` — Return whether the file at *path* holds unresolved conflict markers.

@@ -1262,6 +1262,64 @@ def test_create_commit_raises_when_nothing_staged(tmp_path: Path) -> None:
         git_utils.create_commit(tmp_path, "chore: nothing to commit")
 
 
+def test_create_commit_scrubs_env_hookspath_so_blocking_hook_still_fires(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller's ``GIT_CONFIG_COUNT``/``core.hooksPath`` override can't skip the hook.
+
+    Security regression for ``create_commit`` wrapping its ``git commit``
+    call in :func:`git_utils.git_env_overrides_removed`: every caller of
+    this commit seam — ``forge-resync``, ``forge-changelog`` — must run
+    the repository's real pre-commit hook even when the process
+    environment reconfigures git's hooks path via ``GIT_CONFIG_*``,
+    exactly what a malicious or misconfigured caller could inject.
+    Before the wrap, this override would point ``core.hooksPath`` at an
+    empty directory with no ``pre-commit`` script, so the real installed
+    hook below — which would otherwise block this commit — would
+    silently never run, and the commit would succeed instead of
+    raising.
+    """
+    _init_git_repo(tmp_path)
+    before = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    hook_path = tmp_path / ".git" / "hooks" / "pre-commit"
+    hook_path.parent.mkdir(parents=True, exist_ok=True)
+    hook_path.write_text("#!/usr/bin/env bash\nexit 1\n")
+    hook_path.chmod(0o755)
+
+    (tmp_path / "file.txt").write_text("content\n", encoding="utf-8")
+    subprocess.run(["git", "add", "file.txt"], cwd=tmp_path, env=_GIT_ENV, check=True)
+
+    empty_hooks_dir = tmp_path / "empty-hooks"
+    empty_hooks_dir.mkdir()
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(empty_hooks_dir))
+
+    with pytest.raises(subprocess.CalledProcessError):
+        git_utils.create_commit(tmp_path, "feat: x")
+
+    after = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert after == before
+    assert os.environ["GIT_CONFIG_COUNT"] == "1"
+    assert os.environ["GIT_CONFIG_KEY_0"] == "core.hooksPath"
+    assert os.environ["GIT_CONFIG_VALUE_0"] == str(empty_hooks_dir)
+
+
 # ---------------------------------------------------------------------------
 # ref_exists
 # ---------------------------------------------------------------------------
@@ -2082,6 +2140,531 @@ def test_behind_ahead_dash_prefixed_ref_returns_none_without_calling_git(
     monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
     assert git_utils.behind_ahead(tmp_path, "--evil") is None
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# git_env_overrides_removed
+# ---------------------------------------------------------------------------
+
+
+def test_git_env_overrides_removed_strips_overrides_keeps_global_restores_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Overrides vanish inside the body, come back after; ``GIT_CONFIG_GLOBAL`` stays.
+
+    Covers both ``_is_git_env_override`` match forms — a fixed name
+    (``GIT_CONFIG_COUNT``, ``GIT_DIR``) and the numbered
+    ``GIT_CONFIG_KEY_0`` / ``GIT_CONFIG_VALUE_0`` pair — and the one
+    variable the docstring says must survive untouched:
+    ``GIT_CONFIG_GLOBAL``, since repository-local config (where forge
+    installs its hooks path) outranks it regardless.
+    """
+    hooks_path = "/elsewhere/empty-hooks"
+    git_dir = "/elsewhere/other-repo/.git"
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", hooks_path)
+    monkeypatch.setenv("GIT_DIR", git_dir)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+
+    with git_utils.git_env_overrides_removed():
+        assert "GIT_CONFIG_COUNT" not in os.environ
+        assert "GIT_CONFIG_KEY_0" not in os.environ
+        assert "GIT_CONFIG_VALUE_0" not in os.environ
+        assert "GIT_DIR" not in os.environ
+        assert os.environ["GIT_CONFIG_GLOBAL"] == os.devnull
+
+    assert os.environ["GIT_CONFIG_COUNT"] == "1"
+    assert os.environ["GIT_CONFIG_KEY_0"] == "core.hooksPath"
+    assert os.environ["GIT_CONFIG_VALUE_0"] == hooks_path
+    assert os.environ["GIT_DIR"] == git_dir
+    assert os.environ["GIT_CONFIG_GLOBAL"] == os.devnull
+
+
+def test_git_env_overrides_removed_restores_even_when_the_body_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The environment is restored on an exception, not only on a clean exit.
+
+    The ``finally`` clause is the point: a caller's exception must not
+    leave the process with git's overrides permanently stripped.
+    """
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    msg = "boom"
+
+    with pytest.raises(ValueError, match="boom"), git_utils.git_env_overrides_removed():
+        raise ValueError(msg)
+
+    assert os.environ["GIT_CONFIG_COUNT"] == "1"
+
+
+# ---------------------------------------------------------------------------
+# push_branch
+# ---------------------------------------------------------------------------
+
+
+def test_push_branch_real_push_to_bare_succeeds(tmp_path: Path) -> None:
+    """Real push to bare remote succeeds and sets upstream."""
+    work, bare = _init_single_track_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=work, env=_GIT_ENV, check=True
+    )
+    (work / "feat.txt").write_text("x\n")
+    commit_all(work, "feat: add feat.txt")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    result = git_utils.push_branch(work, "feat/x", set_upstream=True)
+
+    assert result.ok is True
+    assert result.returncode == 0
+    bare_sha = subprocess.run(
+        ["git", "rev-parse", "refs/heads/feat/x"],
+        cwd=bare,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert bare_sha == head
+    upstream = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "feat/x@{u}"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert upstream == "origin/feat/x"
+
+
+def test_push_branch_argv_uses_fully_qualified_same_name_refspec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pushed refspec is fully qualified, not a bare branch name.
+
+    A bare branch name is itself a refspec a ``remote.<name>.push``
+    mapping could redirect elsewhere; the explicit same-name
+    ``refs/heads/<branch>:refs/heads/<branch>`` form pins both source and
+    destination (see ``push_branch``'s own docstring).
+    """
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+
+    git_utils.push_branch(tmp_path, "feat/x")
+
+    assert calls == [["git", "push", "origin", "refs/heads/feat/x:refs/heads/feat/x"]]
+
+
+def test_push_branch_unreachable_remote_fails_with_git_terminal_prompt_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nonexistent remote fails cleanly without credential prompt.
+
+    Wraps the real ``subprocess.run`` so the push genuinely fails, while
+    capturing the ``env`` kwarg, proving both failure behavior and the
+    credential-prompt guard work correctly.
+    """
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(tmp_path / "does-not-exist.git")],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    real_run = subprocess.run
+    captured: dict[str, object] = {}
+
+    def _wrapped_run(
+        cmd: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs)
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _wrapped_run)
+
+    result = git_utils.push_branch(tmp_path, "main")
+
+    assert result.ok is False
+    assert result.stderr
+    assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert captured["timeout"] == git_utils.PUSH_TIMEOUT_S
+
+
+@pytest.mark.parametrize(
+    ("remote", "branch"),
+    [
+        pytest.param("-evil", "main", id="dash-remote"),
+        pytest.param("origin", "-evil", id="dash-branch"),
+        pytest.param("+evil", "main", id="plus-remote"),
+        pytest.param("origin", "+main", id="plus-branch"),
+    ],
+)
+def test_push_branch_refuses_dash_or_plus_prefixed_remote_or_branch_without_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remote: str, branch: str
+) -> None:
+    """``-`` or ``+`` prefix injection is rejected, no subprocess call.
+
+    ``-`` guards against option injection; ``+`` guards against git's own
+    force-push refspec syntax (a refspec ``+main`` force-pushes ``main``) —
+    ``push_branch`` has no force option, so a caller-supplied
+    ``+``-prefixed remote or branch must never reach git as an implicit
+    force.
+
+    Args:
+        remote: The ``remote`` argument to pass.
+        branch: The ``branch`` argument to pass.
+    """
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+
+    result = git_utils.push_branch(tmp_path, branch, remote=remote)
+
+    assert result.ok is False
+    assert result.returncode is None
+    assert "refused a remote or branch starting with '-' or '+'" in result.stderr
+    assert calls == []
+
+
+def test_push_branch_env_drops_git_config_overrides_keeps_other_vars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The push subprocess's env drops ``GIT_CONFIG_*``/``GIT_DIR`` but keeps the rest.
+
+    The same class of guard ``git_env_overrides_removed`` provides for
+    in-process git calls, applied independently to the push subprocess's
+    own env: a caller's ``GIT_CONFIG_COUNT`` + ``core.hooksPath``
+    override, or a ``GIT_DIR`` pointing elsewhere, must never ride along
+    and silently redirect or unhook the push. ``PATH`` (an ordinary,
+    non-override variable) is checked present to show this is a targeted
+    removal, not ``env={}``.
+    """
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "/elsewhere/empty-hooks")
+    monkeypatch.setenv("GIT_DIR", "/elsewhere/other-repo/.git")
+    captured: dict[str, object] = {}
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> object:
+        captured.update(kwargs)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+
+    git_utils.push_branch(tmp_path, "feat/x")
+
+    env = captured["env"]
+    assert "GIT_CONFIG_COUNT" not in env
+    assert "GIT_CONFIG_KEY_0" not in env
+    assert "GIT_CONFIG_VALUE_0" not in env
+    assert "GIT_DIR" not in env
+    assert env["PATH"] == os.environ["PATH"]
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_push_branch_local_plus_main_branch_cannot_force_move_origin_main(
+    tmp_path: Path,
+) -> None:
+    """A branch literally named ``+main`` can't force-rewind ``origin/main``.
+
+    Real-git regression over the fake-subprocess refusal tested above,
+    proving the remote ``main`` genuinely survives, not just that the
+    function returns ``ok=False``. In a push refspec, a bare ``+main`` is
+    the force flag plus the ref name ``main`` — it names the *local*
+    branch called ``main`` as the source, independent of what branch is
+    literally named ``+main`` or checked out. Passing that bare name to
+    ``git push origin +main`` force-pushes **local ``main``** onto remote
+    ``main`` — so the setup below deliberately rewinds local ``main``
+    behind origin's: only then does a force-push actually move (rewind)
+    the remote, making the "unchanged" assertion below discriminate a real
+    regression from a push that was always going to be a no-op.
+    """
+    work, bare = _init_single_track_repo(tmp_path)
+    origin_c0 = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    (work / "c1.txt").write_text("c1\n")
+    commit_all(work, "feat: c1 on main")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=_GIT_ENV, check=True
+    )
+    origin_main_before = subprocess.run(
+        ["git", "rev-parse", "refs/heads/main"],
+        cwd=bare,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert origin_main_before != origin_c0  # origin is ahead — C1, not C0
+
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "+main"], cwd=work, env=_GIT_ENV, check=True
+    )
+    # Rewind the LOCAL `main` ref behind origin's, now that `+main` (not
+    # `main`) is checked out — a force-push of it as source would rewind
+    # the remote from C1 back to C0.
+    subprocess.run(
+        ["git", "update-ref", "refs/heads/main", origin_c0],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+
+    result = git_utils.push_branch(work, "+main")
+
+    assert result.ok is False
+    origin_main_after = subprocess.run(
+        ["git", "rev-parse", "refs/heads/main"],
+        cwd=bare,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert origin_main_after == origin_main_before
+
+
+# ---------------------------------------------------------------------------
+# push_tag
+# ---------------------------------------------------------------------------
+
+
+def test_push_tag_real_push_to_bare_lands_on_remote(tmp_path: Path) -> None:
+    """Real annotated-tag push to a bare remote lands the tag at HEAD."""
+    work, bare = _init_single_track_repo(tmp_path)
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "v1.2.3"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+
+    result = git_utils.push_tag(work, "v1.2.3")
+
+    assert result.ok is True
+    assert result.returncode == 0
+    remote_tag = subprocess.run(
+        ["git", "rev-parse", "refs/tags/v1.2.3"],
+        cwd=bare,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    local_tag = subprocess.run(
+        ["git", "rev-parse", "refs/tags/v1.2.3"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert remote_tag == local_tag
+
+
+def test_push_tag_argv_uses_fully_qualified_same_name_refspec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pushed refspec is ``refs/tags/<tag>:refs/tags/<tag>``, never a bare name.
+
+    Same reason as the branch case: a bare name is itself a refspec, so a
+    ``remote.<name>.push`` mapping could redirect it and a leading ``+``
+    would mean force.
+    """
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+
+    git_utils.push_tag(tmp_path, "v1.2.3")
+
+    assert calls == [["git", "push", "origin", "refs/tags/v1.2.3:refs/tags/v1.2.3"]]
+
+
+def test_push_tag_unreachable_remote_fails_bounded_with_no_credential_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tag push to a nonexistent remote fails cleanly, bounded and unprompted.
+
+    The auto-tag seam runs unattended in CI, so this is the failure that
+    must not hang: ``GIT_TERMINAL_PROMPT=0`` and ``PUSH_TIMEOUT_S`` reach
+    the real subprocess, which genuinely fails.
+    """
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(tmp_path / "does-not-exist.git")],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "v1.2.3"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    real_run = subprocess.run
+    captured: dict[str, object] = {}
+
+    def _wrapped_run(
+        cmd: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs)
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _wrapped_run)
+
+    result = git_utils.push_tag(tmp_path, "v1.2.3")
+
+    assert result.ok is False
+    assert result.stderr
+    assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert captured["timeout"] == git_utils.PUSH_TIMEOUT_S
+
+
+@pytest.mark.parametrize(
+    ("remote", "tag"),
+    [
+        pytest.param("-evil", "v1.2.3", id="dash-remote"),
+        pytest.param("origin", "-evil", id="dash-tag"),
+        pytest.param("+evil", "v1.2.3", id="plus-remote"),
+        pytest.param("origin", "+v1.2.3", id="plus-tag"),
+    ],
+)
+def test_push_tag_refuses_dash_or_plus_prefixed_remote_or_tag_without_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remote: str, tag: str
+) -> None:
+    """``-`` or ``+`` prefix injection is rejected, no subprocess call.
+
+    ``push_tag`` has no force option, and a ``+``-prefixed refspec is how
+    git force-*moves* an existing tag — the one thing the concurrent-runner
+    race must never do, since it would overwrite a winner's release tag.
+
+    Args:
+        remote: The ``remote`` argument to pass.
+        tag: The ``tag`` argument to pass.
+    """
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+
+    result = git_utils.push_tag(tmp_path, tag, remote=remote)
+
+    assert result.ok is False
+    assert result.returncode is None
+    assert "refused a remote or tag starting with '-' or '+'" in result.stderr
+    assert calls == []
+
+
+def test_push_tag_env_drops_git_config_overrides_keeps_other_vars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tag push's env drops ``GIT_CONFIG_*``/``GIT_DIR`` but keeps the rest.
+
+    A ``GIT_DIR`` inherited from the environment would read the tag out of
+    another repository entirely; the scrub is the same one the branch push
+    gets, which is the point of the shared push body.
+    """
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "/elsewhere/empty-hooks")
+    monkeypatch.setenv("GIT_DIR", "/elsewhere/other-repo/.git")
+    captured: dict[str, object] = {}
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> object:
+        captured.update(kwargs)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+
+    git_utils.push_tag(tmp_path, "v1.2.3")
+
+    env = captured["env"]
+    assert "GIT_CONFIG_COUNT" not in env
+    assert "GIT_CONFIG_KEY_0" not in env
+    assert "GIT_CONFIG_VALUE_0" not in env
+    assert "GIT_DIR" not in env
+    assert env["PATH"] == os.environ["PATH"]
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_push_tag_does_not_force_move_a_tag_already_on_the_remote(
+    tmp_path: Path,
+) -> None:
+    """A diverged local tag of the same name cannot overwrite the remote's.
+
+    The concurrent-runner race in ``forge-changelog auto-tag`` is exactly
+    this: two runners cut ``v1.2.3`` at different commits. Without the
+    ``+`` the winner's tag survives and the loser's push is rejected —
+    verified against real git, not just the argv shape.
+    """
+    work, bare = _init_single_track_repo(tmp_path)
+    winner_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "winner"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.push_tag(work, "v1.2.3").ok is True
+    # The loser: same tag name, different commit.
+    (work / "loser.txt").write_text("loser\n")
+    commit_all(work, "feat: loser commit")
+    subprocess.run(
+        ["git", "tag", "-f", "-a", "v1.2.3", "-m", "loser"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+
+    result = git_utils.push_tag(work, "v1.2.3")
+
+    assert result.ok is False
+    remote_tag = subprocess.run(
+        ["git", "rev-parse", "refs/tags/v1.2.3^{commit}"],
+        cwd=bare,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert remote_tag == winner_commit
 
 
 # ---------------------------------------------------------------------------
