@@ -1322,6 +1322,14 @@ _SEQUENCER_CASES = {
     "git cherry-pick -n abc123": 0,
     "git status": 0,
     "git log --oneline": 0,
+    "git revert HEAD; git cherry-pick --abort": 2,
+    "git cherry-pick abc123 && git revert --abort": 2,
+    "git revert HEAD #--abort": 2,
+    "git revert HEAD -- --no-commit": 2,
+    "git revert --no-commit HEAD -- src/x.py": 0,
+    "git revert --abort; git revert HEAD": 2,
+    "git cherry-pick --abort && git cherry-pick abc": 2,
+    "git revert --quit | git revert HEAD": 2,
 }
 
 
@@ -1345,10 +1353,28 @@ def test_raw_git_blocks_commit_creating_sequencer_verbs(
     abort/quit/skip/no-commit/dry-stage form, and an unrelated read-only
     git command, is allowed with exit 0.
 
+    The exempt check is PER INVOCATION, never over the whole command
+    line — a single global match would let an exempt flag anywhere in
+    the command exempt an unrelated, earlier commit-creating
+    invocation. Two vectors made that necessary: an exempt flag on a
+    *sibling* invocation chained with `;` / `&&` (the exempt verb never
+    runs, or runs a different invocation than the one being judged),
+    and a shell comment (`#--abort`) that bash never executes but a
+    naive grep would still see. A reader who "simplifies" this back to
+    one global `grep -qE "$SEQUENCER_EXEMPT_RE"` over the whole line
+    reopens exactly this hole — the cases below pin per-invocation
+    extraction (terminated by `;`, `&`, `|`, `)`, or `#`) and the
+    standalone-`--` pathspec cutoff so it cannot come back unnoticed.
+    The exempt check is also order-independent: an exempt invocation
+    placed before a real one (not just after, as in the sibling cases
+    above) never exempts that real invocation either — each invocation
+    is judged on its own, wherever it sits in the chain.
+
     Args:
         command: A `git revert` / `git cherry-pick` invocation (or an
             unrelated git command), covering both the blocked and the
-            allowed forms plus two bypass vectors (whitespace, separator).
+            allowed forms plus the whitespace/separator/sibling-flag/
+            comment/pathspec bypass vectors.
         expected_exit: `2` for the commit-creating forms, `0` for the
             sequencer-exit / no-commit / unrelated forms.
     """

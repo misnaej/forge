@@ -182,7 +182,7 @@ enforcement:
 - block_amend_pushed_commit.sh: block `git commit --amend` when `HEAD` already exists on a remote-tracking ref — the single-commit form of a rebase; unpushed amends stay allowed (no bypass; live-state check anchored to the payload cwd)
 - git_anchor.sh: NOT a hook — sourced library holding the shared `GIT_ANCHOR`/`SEG_ANCHOR` invocation anchors for the git-guard family (single home; never registered in plugin.json)
 - block_fixer_recon.sh: agent-scoped Bash allowlist for the precommit-fixer (gate CLIs + targeted pytest node-ids only; other agents unaffected)
-- block_raw_git.sh: hard-block raw `git commit` / `git push` from agents (bypass: `git-commit-push` subagent)
+- block_raw_git.sh: hard-block raw `git commit` / `git push` from agents, and the commit-creating `git revert` / `git cherry-pick` forms (the sequencer runs no pre-commit hook); `--abort` / `--quit` / `--skip` / `--no-commit` stay allowed (bypass: `git-commit-push` subagent)
 - block_raw_wrapup_post.sh: block a raw `gh pr comment`/`gh api` post of `code_health/pr_wrapup.md` — the wrap-up is posted only through `forge-pr-wrapup post` (validation, supersede-collapse, squash-last)
 - block_unverified_pr_create.sh: refuse a raw create outright and name `forge-pr-create`, which publishes; the verification it used to attempt here now lives in that command, which runs in the checkout it publishes rather than inferring the branch from command text (FOUNDATION §6)
 - block_raw_ruff.sh: hard-block raw `ruff check` / `ruff format` from agents (no bypass — agents use forge-precommit)
