@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_76 modules, 1062 symbols._
+_76 modules, 1063 symbols._
 
 ## `forge`
 
@@ -430,6 +430,7 @@ _76 modules, 1062 symbols._
 
 - `class EmergencyState` — The armed (or spent) one-shot bypass recorded in the sentinel file.
 - `read_state(root: Path) -> EmergencyState | None` — Return the sentinel state, or ``None`` when absent or unreadable.
+- `active_state(root: Path) -> EmergencyState | None` — Return the state while the emergency is still running, spent or not.
 - `armed_state(root: Path) -> EmergencyState | None` — Return the state only when the bypass is currently usable.
 
 ## `forge.fix_ruff`

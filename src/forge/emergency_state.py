@@ -78,6 +78,41 @@ def read_state(root: Path) -> EmergencyState | None:
         return None
 
 
+def active_state(root: Path) -> EmergencyState | None:
+    """Return the state while the emergency is still running, spent or not.
+
+    Two different questions wear the same word. *Armed* asks whether the
+    one allowed publication is still available, and is answered by
+    :func:`armed_state` — spending it must end that. *Active* asks
+    whether this PR is still being expedited, which does not end at
+    publication: the conflicts, the review fixes and the follow-up
+    commits all come afterwards.
+
+    Reading ``spent`` for the second question is what made the bypass
+    die exactly when it was still needed — a merge conflict surfaced
+    minutes after the PR opened and met the full battery, on a branch
+    whose emergency had not expired. The publication stays one-shot; the
+    commit-time stand-down lasts until the sentinel expires or is
+    closed.
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        The state while unexpired, or ``None``.
+    """
+    state = read_state(root)
+    if state is None:
+        return None
+    try:
+        expires = datetime.fromisoformat(state.expires_at)
+    except ValueError:
+        return None
+    if datetime.now(UTC) >= expires:
+        return None
+    return state
+
+
 def armed_state(root: Path) -> EmergencyState | None:
     """Return the state only when the bypass is currently usable.
 

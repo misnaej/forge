@@ -3528,23 +3528,31 @@ def test_step_plugin_sync_blocks_when_behind_and_configured_blocking(
 # ---------------------------------------------------------------------------
 
 
-def _write_emergency_sentinel(repo_root: Path, *, hours: float) -> None:
+def _write_emergency_sentinel(
+    repo_root: Path, *, hours: float, spent: bool = False
+) -> None:
     """Write a real ``.forge-emergency`` sentinel via ``emergency.write_state``.
 
     Reuses the CLI's own writer (as ``tests/test_emergency.py`` does)
     instead of hand-rolling the sentinel JSON, so these tests exercise
-    the real ``armed_state`` read path, not a mocked stand-in for it.
+    the real ``active_state``/``armed_state`` read path, not a mocked
+    stand-in for it.
 
     Args:
         repo_root: Directory to write the sentinel under.
         hours: Offset from now for ``expires_at`` — negative writes an
             already-expired sentinel.
+        spent: Whether the sentinel's one allowed publication has
+            already been consumed.
     """
     expires_at = (_dt.datetime.now(tz=_dt.UTC) + _dt.timedelta(hours=hours)).isoformat()
     emergency.write_state(
         repo_root,
         emergency.EmergencyState(
-            ledger_issue=99, reason="prod is down", expires_at=expires_at
+            ledger_issue=99,
+            reason="prod is down",
+            expires_at=expires_at,
+            spent=spent,
         ),
     )
 
@@ -3601,6 +3609,40 @@ def test_step_plugin_sync_skips_when_emergency_armed(
     monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
     monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.8.0")
     _write_emergency_sentinel(tmp_path, hours=1)
+
+    result = precommit.step_plugin_sync(tmp_path)
+
+    assert result.passed
+    assert result.skipped
+    assert "#99" in result.output
+
+
+def test_step_plugin_sync_skips_when_emergency_spent_but_unexpired(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A spent-but-unexpired sentinel still stands plugin_sync down.
+
+    SCENARIO: the same lagging-cache-plus-blocking setup as
+    ``test_step_plugin_sync_skips_when_emergency_armed``, but the
+    sentinel's one allowed publication has already been consumed
+    (``spent=True``) while it is still unexpired — the exact shape a
+    real emergency PR is in the moment after ``gh pr create`` runs.
+    Pins the ``armed_state``→``active_state`` split this PR makes:
+    before it, a spent sentinel read as "not armed" and this fixture
+    would fail closed with ⛔, defeating the emergency for the
+    conflicts and follow-up commits that arrive after publication.
+    MOCK SETUP: is_ci→False; manifest at 2.9.0; [tool.forge.plugin_sync]
+    blocking=true; cache reports 2.8.0 (behind); a real spent-but-
+    unexpired sentinel written via ``emergency.write_state``.
+    EXPECTED BEHAVIOR: passed True, skipped True, ledger number in output.
+    """
+    _write_plugin_manifest(tmp_path, "2.9.0")
+    _write_pyproject(tmp_path, "[tool.forge.plugin_sync]\nblocking = true\n")
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
+    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.8.0")
+    _write_emergency_sentinel(tmp_path, hours=1, spent=True)
 
     result = precommit.step_plugin_sync(tmp_path)
 
