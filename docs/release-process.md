@@ -30,8 +30,8 @@ to be released** — never the last-released version.
 **Fragment mode overrides the per-PR bump.** In
 `[tool.forge.changelog].mode = "fragments"` the manifest **parks at the
 latest tag between releases**: bump intent lives only in each PR's
-conflict-free `changelog.d/` fragment, and the release PR — prepared by
-`forge-changelog release` (§3) — is the single writer that advances
+conflict-free `changelog.d/` fragment, and the release PR — opened by
+`forge-changelog release-pr` (§3) — is the single writer that advances
 `plugin.json`. The guard's fragment-mode truth table:
 
 | `plugin.json` vs latest tag | Verdict |
