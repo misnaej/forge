@@ -87,7 +87,7 @@ from forge.changelog import (
 from forge.changelog_fragments import FRAGMENTS_DIR, branch_added_fragments
 from forge.changelog_fragments import check_pending as check_pending_fragments
 from forge.config import installed_console_scripts, resolve_model_section
-from forge.emergency_state import armed_state
+from forge.emergency_state import active_state
 from forge.git_utils import (
     EVIDENCE_OUTPUT_CAP,
     SCOPE_ALL,
@@ -592,14 +592,19 @@ def _emergency_skip(repo_root: Path, step_name: str) -> StepResult | None:
     for — a release commit was refused by a gate whose remedy could not
     be performed until that commit landed.
 
+    Judged on whether the emergency is still running, not on whether
+    its one publication has been spent: the conflicts and follow-up
+    commits an expedited PR attracts all arrive after publication, and a
+    stand-down that ends there ends too early.
+
     Args:
         repo_root: Git repo root.
         step_name: Step asking, used in the skip message.
 
     Returns:
-        A skip result while armed, otherwise ``None``.
+        A skip result while the emergency is live, otherwise ``None``.
     """
-    state = armed_state(repo_root)
+    state = active_state(repo_root)
     if state is None:
         return None
     return StepResult(

@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import emergency
+from forge.emergency_state import active_state
 from forge.pr_plan import WrapupFreshness
 from tests.conftest import GIT_ENV, FakeProc, init_git_repo
 
@@ -195,6 +196,44 @@ def test_armed_state_returns_none_on_unparseable_expiry(tmp_path: Path) -> None:
     )
 
     assert emergency.armed_state(tmp_path) is None
+
+
+# --- active_state ---------------------------------------------------------
+
+
+def test_active_state_returns_state_when_spent_but_unexpired(tmp_path: Path) -> None:
+    """A spent sentinel is still `active` right up to its expiry.
+
+    This is the entire point of the `armed_state`/`active_state` split:
+    spending the one-shot publication must not also end the emergency's
+    commit-time stand-down, since conflicts and follow-up commits an
+    expedited PR attracts all arrive after publication.
+    """
+    emergency.write_state(
+        tmp_path,
+        emergency.EmergencyState(
+            ledger_issue=1, reason="x", expires_at=_iso_in(1), spent=True
+        ),
+    )
+
+    assert active_state(tmp_path) is not None
+
+
+def test_active_state_returns_none_when_expired_even_if_unspent(
+    tmp_path: Path,
+) -> None:
+    """An unspent sentinel past its TTL is not `active` — expiry still bounds it.
+
+    Without this, the split would turn the one-shot bypass into a
+    permanent one: `active_state` must not read as "still running"
+    forever just because it was never spent.
+    """
+    emergency.write_state(
+        tmp_path,
+        emergency.EmergencyState(ledger_issue=1, reason="x", expires_at=_iso_in(-1)),
+    )
+
+    assert active_state(tmp_path) is None
 
 
 # --- write_state / gitignore ----------------------------------------------
