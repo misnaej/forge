@@ -78,6 +78,29 @@ def read_state(root: Path) -> EmergencyState | None:
         return None
 
 
+def _unexpired(state: EmergencyState | None) -> EmergencyState | None:
+    """Return *state* while its expiry is still in the future.
+
+    Both predicates below need this, and a future correction — naive
+    datetimes raise ``TypeError`` on the comparison rather than
+    ``ValueError`` on the parse — should land in one place rather than
+    two that drifted apart.
+
+    Args:
+        state: A read sentinel, or ``None``.
+
+    Returns:
+        *state* while unexpired, otherwise ``None``.
+    """
+    if state is None:
+        return None
+    try:
+        expires = datetime.fromisoformat(state.expires_at)
+    except ValueError:
+        return None
+    return None if datetime.now(UTC) >= expires else state
+
+
 def active_state(root: Path) -> EmergencyState | None:
     """Return the state while the emergency is still running, spent or not.
 
@@ -101,16 +124,7 @@ def active_state(root: Path) -> EmergencyState | None:
     Returns:
         The state while unexpired, or ``None``.
     """
-    state = read_state(root)
-    if state is None:
-        return None
-    try:
-        expires = datetime.fromisoformat(state.expires_at)
-    except ValueError:
-        return None
-    if datetime.now(UTC) >= expires:
-        return None
-    return state
+    return _unexpired(read_state(root))
 
 
 def armed_state(root: Path) -> EmergencyState | None:
@@ -126,12 +140,4 @@ def armed_state(root: Path) -> EmergencyState | None:
         The armed state, or ``None``.
     """
     state = read_state(root)
-    if state is None or state.spent:
-        return None
-    try:
-        expires = datetime.fromisoformat(state.expires_at)
-    except ValueError:
-        return None
-    if datetime.now(UTC) >= expires:
-        return None
-    return state
+    return None if state is None or state.spent else _unexpired(state)
