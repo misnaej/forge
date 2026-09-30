@@ -1533,6 +1533,8 @@ def test_undocumented_release_refusal_refuses_undocumented_tag() -> None:
     assert refusal is not None
     assert "v8.4.1" in refusal
     assert "v8.2.0" in refusal
+    assert "Adopt v8.2.0" not in refusal
+    assert "never document themselves" in refusal
 
 
 def test_undocumented_release_refusal_none_when_documented_or_older() -> None:

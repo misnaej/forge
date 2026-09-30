@@ -38,35 +38,44 @@ conflict-free `changelog.d/` fragment, and the release PR — opened by
 |---|---|
 | `==` tag, every pending fragment valid (zero pending included) | healthy — pass |
 | `>` tag | release window (the release PR) — pass |
-| `<` tag | fragments mode: healthy while every pending fragment is valid (the manifest lags auto-cut tags until the next assembly PR); shared-heading mode: blocks |
+| `<` tag | fragments mode: healthy while every pending fragment is valid (only reachable through tags cut before releases were tagged at the assembly merge, or cut by hand); shared-heading mode: blocks |
 | `==` tag, any invalid pending fragment | blocks loudly (bump no longer derivable) |
 
-## 2. Tag-on-merge
+## 2. Tag at the assembly merge
 
-Every fragment-carrying merge to `main` is a release: the `tag-main`
-job runs `forge-changelog auto-tag`, which reads the last tag, takes
-the strongest semver level among the fragments **new since that tag**
-(tag-tree membership marks a fragment as consumed), bumps, and pushes
-the annotated tag. No commit to `main` is involved — tag refs sit
-outside the branch rulesets. Fragment files persist until an assembly
-PR (`forge-changelog release`) collates the changelog and syncs the
-manifest; between assemblies the manifest lags the tag by design.
+**A release tag is cut only when a release (assembly) PR merges**, and
+it points at that merge: the one commit whose tree names the new
+version in `plugin.json` and documents it in `CHANGELOG.md`. So every
+tag `vX` carries `plugin.json == X` and a changelog whose top heading
+is `vX` — the identity Claude Code keys its plugin cache on, and the
+changelog `forge-upgrade` reads, both describe the tag they ship in.
+
+Ordinary merges are not releases. Their fragments wait in
+`changelog.d/`, untagged, until someone runs `forge-changelog
+release-pr` (§3) — assembly is manual.
 
 - **Primary path**: the `tag-main` job in
   [`.github/workflows/tag-release.yml`](../.github/workflows/tag-release.yml)
   — after CI succeeds on a push to `main`, it checks out the exact
-  CI-validated commit and runs `forge-changelog auto-tag`, then
-  `forge-next-prep --tag` (which covers assembly-PR merges, where the
-  manifest is ahead and no new fragments exist).
-- **Opt-in / warn floor**: `[tool.forge.release].auto = "merge"` enables
-  auto-tagging; without it the job still emits a loud pending-fragments
-  warning — a fragments-mode repo can never accumulate unreleased
-  merges silently.
-- **Manual fallback**: `forge-changelog auto-tag` locally, or
-  `forge-next-prep --tag` after an assembly.
-- All paths are **idempotent and race-tolerant**: an existing or
-  concurrently created tag defers with an "another runner won" no-op;
-  nothing double-tags.
+  CI-validated commit and runs `forge-next-prep --tag`, which tags
+  `v<plugin.json>` when the manifest is strictly ahead of the latest
+  tag (true only on the assembly merge) and otherwise logs why it did
+  not tag. No commit to `main` is involved — tag refs sit outside the
+  branch rulesets.
+- **Why not tag every merge**: a per-merge tag lands on a tree whose
+  `plugin.json` still names the previous release, so consumers pinned
+  to it get a plugin declaring an older version (a reused cache slot)
+  and a changelog that never documents it. `forge-changelog auto-tag`
+  therefore never tags a repo with a plugin manifest: it logs the
+  pending-fragment count and the release command instead, and says
+  that `[tool.forge.release].auto = "merge"` is ignored there.
+  Tag-per-merge stays available to manifest-less repos, whose version
+  comes from the tag alone.
+- **Tags from before this rule** (cut per merge) are left in place and
+  never moved. Their own trees name an older version, so
+  `forge-upgrade` refuses them; adopt a tag cut at an assembly merge.
+- **Manual fallback**: `forge-next-prep --tag` after an assembly merge.
+  Idempotent: an existing tag is never re-cut.
 
 ## 3. Changelog fragments
 
@@ -81,7 +90,8 @@ Forge runs `[tool.forge.changelog].mode = "fragments"`:
   nothing reads `CHANGELOG.md` as a version or bump signal.
 - **The version is assembler-owned too, and tag-aware.** A pending
   fragment already inside a `v*` tag's tree was released by that tag
-  (tag-per-merge counted it) and assembles under that tag's heading,
+  (a tag cut per merge counted it — a manifest-less repo, or a
+  tag from before §2's rule) and assembles under that tag's heading,
   dated when the tag was cut. Only fragments no tag holds mint a new
   version: `latest v* tag + max(bump level over the unreleased
   fragments)`. When every pending fragment is tagged, nothing is minted
@@ -97,7 +107,7 @@ Forge runs `[tool.forge.changelog].mode = "fragments"`:
     `plugin.json` to the plan's version (the manifest's single writer;
     skipped in manifest-less tag-versioned repos), and stages everything.
     It never commits: branch → run it → ordinary PR → merge →
-    tag-on-merge cuts the tag. Racing release PRs collapse
+    the tag job cuts the tag at that merge (§2). Racing release PRs collapse
     into an ordinary PR conflict; the loser recovers by taking the
     BASE side of `CHANGELOG.md` and `plugin.json`, restoring its
     consumed fragments from the merge base
@@ -116,7 +126,7 @@ Forge runs `[tool.forge.changelog].mode = "fragments"`:
   no-op); merging stays human. Forge runs no schedule for this: a
   release is reviewed and tested before it ships, and a cron that
   assembles unattended takes that decision away. Tagging stays
-  automatic (§1); assembling does not.
+  automatic (§2); assembling does not.
 
 ## 4. Invariants the code MUST satisfy → enforcing tests
 
@@ -130,7 +140,8 @@ change that violates an invariant must turn its test red.
 | Rolling-next guard skips when HEAD's tree reproduces **ANY** `v*` tag (not only the latest) | `verify_plugin_version._is_release_commit` | `tests/test_verify_plugin_version.py::test_main_skips_when_head_reproduces_older_tag` |
 | Guard fails when a real content change leaves `plugin.json ≤ latest tag` | `verify_plugin_version.main` | `tests/test_verify_plugin_version.py::test_fail_when_version_not_strictly_greater` |
 | A declared `plugin.json` version must have a matching `## vX.Y.Z` heading in `CHANGELOG.md` — existence only, never currency (a parked manifest keeps its heading and passes; staleness is the scheduled assembly's job). Applied to every healthy exit via `main()`'s `return rc or _declared_version_documented(...)` | `verify_plugin_version._declared_version_documented` | `tests/test_verify_plugin_version.py::test_declared_version_documented_fails_with_missing_heading` / `::test_main_fails_when_declared_version_undocumented_in_fragment_mode` |
-| `forge-next-prep --tag` tags + pushes only when `plugin.json` is strictly newer than the latest tag (idempotent) | `next_prep._maybe_tag_release` | `tests/test_next_prep.py::test_maybe_tag_release_creates_and_pushes_new_tag` |
+| Every release tag `vX` is cut at an assembly merge whose own tree has `plugin.json == X` and a `CHANGELOG.md` whose top heading is `vX`, so `forge-upgrade` accepts it — ordinary merges in a plugin repo are never tagged | `changelog_fragments._cmd_auto_tag` + `next_prep._maybe_tag_release` | `tests/test_release_tag_invariant.py::test_every_tag_matches_manifest_and_changelog` / `tests/test_changelog_fragments.py::test_main_auto_tag_never_tags_a_plugin_manifest_repo` |
+| `forge-next-prep --tag` tags + pushes only when `plugin.json` is strictly newer than the latest tag (idempotent), and states why whenever it does not tag | `next_prep._maybe_tag_release` | `tests/test_next_prep.py::test_maybe_tag_release_creates_and_pushes_new_tag` / `::test_maybe_tag_release_skips_when_version_equals_latest_tag` / `::test_maybe_tag_release_skips_when_version_behind_latest_tag` / `::test_tag_and_report_logs_reason_when_no_tag` |
 | The fragment gate rejects a concrete version number in a fragment's filename or body | `changelog_fragments.validate_fragment` | `tests/test_changelog_fragments.py::test_validate_fragment_version_shaped_filename` / `::test_validate_fragment_version_shaped_body` |
 | An invalid fragment fails the gate (exit 2) | `changelog_fragments.main` | `tests/test_changelog_fragments.py::test_main_check_exit_two_on_invalid_fragment` |
 | `assemble --delete` writes the curated entry into `CHANGELOG.md` and stages the fragment deletions | `changelog_fragments.main` | `tests/test_changelog_fragments.py::test_main_assemble_with_delete_stages_changelog_and_fragment_deletion` |

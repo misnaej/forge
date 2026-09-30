@@ -102,14 +102,16 @@ def test_maybe_tag_release_skips_when_no_plugin_json(
         return ""
 
     monkeypatch.setattr(next_prep, "run_git", _fake_git)
-    assert next_prep._maybe_tag_release(tmp_path) is None
+    decision = next_prep._maybe_tag_release(tmp_path)
+    assert decision.tag is None
+    assert "no .claude-plugin/plugin.json version" in decision.reason
     assert git_calls == []
 
 
 def test_maybe_tag_release_skips_when_version_equals_latest_tag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """plugin.json version equals latest tag → no action."""
+    """plugin.json version equals latest tag → no tag, reason names release-pr."""
     (tmp_path / ".claude-plugin").mkdir()
     (tmp_path / ".claude-plugin" / "plugin.json").write_text(
         json.dumps({"name": "x", "version": "1.0.0"})
@@ -117,7 +119,26 @@ def test_maybe_tag_release_skips_when_version_equals_latest_tag(
 
     monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.0.0")
     monkeypatch.setattr(next_prep, "run_git", lambda *_a, **_kw: "")
-    assert next_prep._maybe_tag_release(tmp_path) is None
+    decision = next_prep._maybe_tag_release(tmp_path)
+    assert decision.tag is None
+    assert "is already tagged as v1.0.0" in decision.reason
+    assert "forge-changelog release-pr" in decision.reason
+
+
+def test_maybe_tag_release_skips_when_version_behind_latest_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """plugin.json version below the latest tag → no tag, reason says behind."""
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "x", "version": "1.0.0"})
+    )
+
+    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.0.1")
+    monkeypatch.setattr(next_prep, "run_git", lambda *_a, **_kw: "")
+    decision = next_prep._maybe_tag_release(tmp_path)
+    assert decision.tag is None
+    assert "is behind the latest tag" in decision.reason
 
 
 def test_maybe_tag_release_creates_and_pushes_new_tag(
@@ -144,7 +165,7 @@ def test_maybe_tag_release_creates_and_pushes_new_tag(
     monkeypatch.setattr(next_prep, "run_git", _fake_git)
     monkeypatch.setattr(next_prep, "create_annotated_tag", _fake_create_annotated_tag)
     result = next_prep._maybe_tag_release(tmp_path)
-    assert result == "v1.2.10"
+    assert result.tag == "v1.2.10"
     assert created == [(tmp_path, "v1.2.10", "HEAD", False)]
     # Push was invoked via run_git.
     assert any(c[:2] == ["push", "origin"] and "v1.2.10" in c for c in invoked)
@@ -339,6 +360,29 @@ def test_tag_and_report_advises_on_pending_fragments(
         assert next_prep._tag_and_report(tmp_path, args) == 0
     assert "1 pending changelog fragment(s)" in caplog.text
     assert "forge-changelog release" in caplog.text
+
+
+def test_tag_and_report_logs_reason_when_no_tag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``--tag`` with no tag decided → ``No release tag: <reason>`` is logged.
+
+    SCENARIO: the tag decision carries a reason; the operator must see it.
+    MOCK SETUP: misuse check and tag decision stubbed; no git needed.
+    EXPECTED BEHAVIOR: the reason text appears in the INFO log.
+    """
+    monkeypatch.setattr(next_prep, "_tag_misuse_warning", lambda _root: None)
+    monkeypatch.setattr(
+        next_prep,
+        "_maybe_tag_release",
+        lambda _root: next_prep.TagDecision(None, "manifest is parked"),
+    )
+    args = argparse.Namespace(tag=True, no_prune_branches=True)
+    with caplog.at_level("INFO"):
+        assert next_prep._tag_and_report(tmp_path, args) == 0
+    assert "No release tag: manifest is parked" in caplog.text
 
 
 @pytest.mark.parametrize(

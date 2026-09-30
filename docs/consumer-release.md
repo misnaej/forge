@@ -256,20 +256,28 @@ the per-tag headings and syncs the manifest to the latest tag.
   --from-changelog` on pushes to the base branch picks the release up
   on merge with **no further change** — do not build a separate
   fragments-aware tagger.
-- **Tag-per-merge is automatic** with `[tool.forge.release].auto =
-  "merge"`: the tag job runs `forge-changelog auto-tag` on every push
-  to the base branch — last tag + strongest level among the fragments
-  merged since it → annotated tag, no base-branch commit. Without the
-  opt-in the job emits a loud pending-fragments warning instead (it is
-  never silent). Changelog assembly and manifest sync happen at the
-  next `forge-changelog release` PR, which may collate several tags.
+- **Tag-per-merge is automatic** in manifest-less repos with
+  `[tool.forge.release].auto = "merge"`: the tag job runs
+  `forge-changelog auto-tag` on every push to the base branch — last
+  tag + strongest level among the fragments merged since it → annotated
+  tag, no base-branch commit. Without the opt-in the job emits a loud
+  pending-fragments warning instead (it is never silent). Changelog
+  assembly happens at the next `forge-changelog release` PR, which may
+  collate several tags.
+- **Plugin repos are never tagged per merge**, whatever `auto` says: a
+  per-merge tag would ship a `plugin.json` naming the previous release,
+  so users pinned to it get the plugin filed under an older version.
+  `auto-tag` logs the pending count and `forge-changelog release-pr`
+  instead, and the release tag is cut when the assembly PR merges
+  (`forge-next-prep --tag` — the manifest is then ahead of the latest
+  tag).
   If you mitigated the pre-fragments gap by guarding your tagger to
   **fail while fragments are pending**, remove that guard when adopting
   fragments — released fragments legitimately persist until assembly.
-- Between assemblies a plugin manifest **parks at or lags the latest
-  tag** (auto-cut tags advance past it): the `plugin_version` guard
-  accepts `manifest <= tag` while every pending fragment is valid, and
-  keeps the strictly-ahead pass for the assembly PR.
+- Between assemblies a plugin manifest **parks at the latest tag**:
+  the `plugin_version` guard accepts `manifest <= tag` while every
+  pending fragment is valid, and keeps the strictly-ahead pass for the
+  assembly PR.
 
 No-version opt-outs (`NO_VERSION=1`, branch token, commit marker) apply
 unchanged.

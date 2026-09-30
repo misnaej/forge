@@ -31,10 +31,12 @@ from tests.conftest import (
     GIT_ENV,
     FakeProc,
     commit_all,
+    init_autotag_repo,
     init_git_repo,
     init_single_track_repo,
     make_fake_push_branch,
     make_fake_push_tag,
+    remote_tags,
 )
 
 
@@ -1222,59 +1224,6 @@ def test_main_restrand_bump_minor_opens_minor_slot(
 # ---------------------------------------------------------------------------
 
 
-def _init_autotag_repo(repo: Path, origin: Path, *, auto: str | None = "merge") -> None:
-    """Init a fragments-mode repo with a bare origin, seeded and pushed.
-
-    Args:
-        repo: Working repo directory.
-        origin: Bare repository path to use as ``origin``.
-        auto: ``[tool.forge.release].auto`` value; ``None`` omits the table.
-    """
-    subprocess.run(
-        ["git", "init", "-q", "--bare", "-b", "main", str(origin)],
-        env=GIT_ENV,
-        check=True,
-    )
-    init_git_repo(repo)
-    subprocess.run(
-        ["git", "remote", "add", "origin", str(origin)],
-        cwd=repo,
-        env=GIT_ENV,
-        check=True,
-    )
-    release = f'\n[tool.forge.release]\nauto = "{auto}"\n' if auto else "\n"
-    (repo / "pyproject.toml").write_text(
-        '[tool.forge]\nbase_branch = "main"\n\n'
-        '[tool.forge.changelog]\nmode = "fragments"\n' + release
-    )
-    (repo / "changelog.d").mkdir()
-    (repo / "changelog.d" / "first.added.md").write_text("bump: minor\n- first\n")
-    commit_all(repo, "seed")
-    subprocess.run(
-        ["git", "push", "-q", "origin", "main"], cwd=repo, env=GIT_ENV, check=True
-    )
-
-
-def _remote_tags(origin: Path) -> list[str]:
-    """Return tag names present on the bare *origin*.
-
-    Args:
-        origin: Bare repository path.
-
-    Returns:
-        Tag names (dereference suffixes dropped), sorted.
-    """
-    out = subprocess.run(
-        ["git", "ls-remote", "--tags", str(origin)],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    return sorted(
-        line.split("refs/tags/")[-1] for line in out.splitlines() if "^{}" not in line
-    )
-
-
 def test_main_auto_tag_cuts_and_pushes_tag_from_merged_fragment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1288,13 +1237,51 @@ def test_main_auto_tag_cuts_and_pushes_tag_from_merged_fragment(
     origin = tmp_path / "origin.git"
     repo = tmp_path / "repo"
     repo.mkdir()
-    _init_autotag_repo(repo, origin)
+    init_autotag_repo(repo, origin)
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
 
     assert main(["auto-tag"]) == 0
 
     assert "cut v0.1.0 (minor)" in capsys.readouterr().out
-    assert _remote_tags(origin) == ["v0.1.0"]
+    assert remote_tags(origin) == ["v0.1.0"]
+
+
+@pytest.mark.parametrize("auto", ["merge", None])
+def test_main_auto_tag_never_tags_a_plugin_manifest_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    auto: str | None,
+) -> None:
+    """A repo with a plugin manifest is tagged only at assembly, never here.
+
+    Args:
+        auto: Either "merge" (ignored with explanation) or None (unset).
+
+    SCENARIO: fragments-mode repo with ``.claude-plugin/plugin.json`` and a
+    pending fragment; ``auto`` is ``"merge"`` (ignored, and says so) or unset.
+    EXPECTED BEHAVIOR: exit 0, no tag on origin, output points at
+    ``forge-changelog release-pr``.
+    """
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_autotag_repo(repo, origin, auto=auto)
+    (repo / ".claude-plugin").mkdir()
+    (repo / ".claude-plugin" / "plugin.json").write_text(
+        '{"name": "x", "version": "0.0.1"}\n'
+    )
+    commit_all(repo, "add manifest")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
+
+    assert main(["auto-tag"]) == 0
+
+    out = capsys.readouterr().out
+    assert "plugin manifest present" in out
+    assert "1 pending fragment(s)" in out
+    assert "forge-changelog release-pr" in out
+    assert ("is ignored in a repo with a plugin manifest" in out) is (auto == "merge")
+    assert remote_tags(origin) == []
 
 
 def test_main_auto_tag_no_new_fragments_is_a_visible_noop(
@@ -1310,7 +1297,7 @@ def test_main_auto_tag_no_new_fragments_is_a_visible_noop(
     origin = tmp_path / "origin.git"
     repo = tmp_path / "repo"
     repo.mkdir()
-    _init_autotag_repo(repo, origin)
+    init_autotag_repo(repo, origin)
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
     assert main(["auto-tag"]) == 0
     capsys.readouterr()
@@ -1318,7 +1305,7 @@ def test_main_auto_tag_no_new_fragments_is_a_visible_noop(
     assert main(["auto-tag"]) == 0
 
     assert "no new fragments since v0.1.0" in capsys.readouterr().out
-    assert _remote_tags(origin) == ["v0.1.0"]
+    assert remote_tags(origin) == ["v0.1.0"]
 
 
 def test_main_auto_tag_takes_strongest_new_level(
@@ -1334,7 +1321,7 @@ def test_main_auto_tag_takes_strongest_new_level(
     origin = tmp_path / "origin.git"
     repo = tmp_path / "repo"
     repo.mkdir()
-    _init_autotag_repo(repo, origin)
+    init_autotag_repo(repo, origin)
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
     assert main(["auto-tag"]) == 0
     (repo / "changelog.d" / "big.added.md").write_text("bump: major\n- breaking\n")
@@ -1344,7 +1331,7 @@ def test_main_auto_tag_takes_strongest_new_level(
     assert main(["auto-tag"]) == 0
 
     assert "cut v1.0.0 (major)" in capsys.readouterr().out
-    assert _remote_tags(origin) == ["v0.1.0", "v1.0.0"]
+    assert remote_tags(origin) == ["v0.1.0", "v1.0.0"]
 
 
 def test_main_auto_tag_invalid_new_fragment_blocks(
@@ -1356,7 +1343,7 @@ def test_main_auto_tag_invalid_new_fragment_blocks(
     origin = tmp_path / "origin.git"
     repo = tmp_path / "repo"
     repo.mkdir()
-    _init_autotag_repo(repo, origin)
+    init_autotag_repo(repo, origin)
     (repo / "changelog.d" / "bad.bogus.md").write_text("bump: minor\n- x\n")
     commit_all(repo, "bad fragment")
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
@@ -1364,7 +1351,7 @@ def test_main_auto_tag_invalid_new_fragment_blocks(
     assert main(["auto-tag"]) == 2
 
     assert "unknown type 'bogus'" in capsys.readouterr().out
-    assert _remote_tags(origin) == []
+    assert remote_tags(origin) == []
 
 
 def test_main_auto_tag_existing_tag_defers_to_winner(
@@ -1380,7 +1367,7 @@ def test_main_auto_tag_existing_tag_defers_to_winner(
     origin = tmp_path / "origin.git"
     repo = tmp_path / "repo"
     repo.mkdir()
-    _init_autotag_repo(repo, origin)
+    init_autotag_repo(repo, origin)
     subprocess.run(["git", "tag", "v0.1.0"], cwd=repo, env=GIT_ENV, check=True)
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
 
@@ -1403,14 +1390,14 @@ def test_main_auto_tag_warn_floor_when_not_opted_in(
     origin = tmp_path / "origin.git"
     repo = tmp_path / "repo"
     repo.mkdir()
-    _init_autotag_repo(repo, origin, auto=None)
+    init_autotag_repo(repo, origin, auto=None)
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
 
     assert main(["auto-tag"]) == 3
 
     out = capsys.readouterr().out
     assert "no tag will be cut" in out
-    assert _remote_tags(origin) == []
+    assert remote_tags(origin) == []
 
 
 def test_main_auto_tag_not_fragments_mode_noop(
@@ -1445,7 +1432,7 @@ def test_main_auto_tag_pushes_the_tag_through_the_bounded_push_seam(
     origin = tmp_path / "origin.git"
     repo = tmp_path / "repo"
     repo.mkdir()
-    _init_autotag_repo(repo, origin)
+    init_autotag_repo(repo, origin)
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
     calls: list[tuple[object, object, dict[str, object]]] = []
     monkeypatch.setattr(
@@ -1474,7 +1461,7 @@ def test_main_auto_tag_push_race_defers_to_remote_winner(
     origin = tmp_path / "origin.git"
     repo = tmp_path / "repo"
     repo.mkdir()
-    _init_autotag_repo(repo, origin)
+    init_autotag_repo(repo, origin)
 
     winner = tmp_path / "winner"
     subprocess.run(
@@ -1504,7 +1491,7 @@ def test_main_auto_tag_push_race_defers_to_remote_winner(
     assert main(["auto-tag"]) == 0
 
     assert "appeared remotely" in capsys.readouterr().out
-    assert _remote_tags(origin) == ["v0.1.0"]
+    assert remote_tags(origin) == ["v0.1.0"]
     remote_commit = subprocess.run(
         ["git", "ls-remote", str(origin), "v0.1.0^{}"],
         capture_output=True,
@@ -1530,7 +1517,7 @@ def test_main_auto_tag_push_failure_without_winner_reports_failure(
     origin = tmp_path / "origin.git"
     repo = tmp_path / "repo"
     repo.mkdir()
-    _init_autotag_repo(repo, origin)
+    init_autotag_repo(repo, origin)
     subprocess.run(
         ["git", "remote", "set-url", "origin", "/nonexistent/xyz.git"],
         cwd=repo,
@@ -2224,7 +2211,7 @@ def test_branch_added_fragments_excludes_fork_point_and_base_side_deletions(
     origin = tmp_path / "origin.git"
     repo = tmp_path / "repo"
     repo.mkdir()
-    _init_autotag_repo(repo, origin)
+    init_autotag_repo(repo, origin)
 
     subprocess.run(
         ["git", "checkout", "-q", "-b", "feat/x"], cwd=repo, env=GIT_ENV, check=True

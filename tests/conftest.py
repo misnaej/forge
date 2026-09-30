@@ -243,6 +243,59 @@ def _detach_head(repo: Path) -> None:
     )
 
 
+def init_autotag_repo(repo: Path, origin: Path, *, auto: str | None = "merge") -> None:
+    """Init a fragments-mode repo with a bare origin, seeded and pushed.
+
+    Args:
+        repo: Working repo directory.
+        origin: Bare repository path to use as ``origin``.
+        auto: ``[tool.forge.release].auto`` value; ``None`` omits the table.
+    """
+    subprocess.run(
+        ["git", "init", "-q", "--bare", "-b", "main", str(origin)],
+        env=GIT_ENV,
+        check=True,
+    )
+    init_git_repo(repo)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(origin)],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+    release = f'\n[tool.forge.release]\nauto = "{auto}"\n' if auto else "\n"
+    (repo / "pyproject.toml").write_text(
+        '[tool.forge]\nbase_branch = "main"\n\n'
+        '[tool.forge.changelog]\nmode = "fragments"\n' + release
+    )
+    (repo / "changelog.d").mkdir()
+    (repo / "changelog.d" / "first.added.md").write_text("bump: minor\n- first\n")
+    commit_all(repo, "seed")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=repo, env=GIT_ENV, check=True
+    )
+
+
+def remote_tags(origin: Path) -> list[str]:
+    """Return tag names present on the bare *origin*.
+
+    Args:
+        origin: Bare repository path.
+
+    Returns:
+        Tag names (dereference suffixes dropped), sorted.
+    """
+    out = subprocess.run(
+        ["git", "ls-remote", "--tags", str(origin)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return sorted(
+        line.split("refs/tags/")[-1] for line in out.splitlines() if "^{}" not in line
+    )
+
+
 def tag_exists(repo: Path, tag: str) -> bool:
     """Return whether *repo* (work tree or bare) carries *tag*.
 

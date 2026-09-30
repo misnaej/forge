@@ -241,7 +241,9 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "tag-release workflow auto-tag every fragment-carrying merge "
         "(forge-changelog auto-tag: last tag + strongest new fragment "
         "level). Any other value downgrades the job to a loud "
-        "pending-fragments warning — never silent.",
+        "pending-fragments warning — never silent. Ignored in a repo "
+        "with .claude-plugin/plugin.json: plugin releases are tagged at "
+        "the assembly merge only.",
     ),
     ConfigKey(
         ("tool", "forge", "changelog", "blocking"),
