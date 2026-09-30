@@ -30,9 +30,10 @@ documentation is still checked — when:
 
 Fragment mode (``[tool.forge.changelog].mode = "fragments"``): the
 manifest parks at or behind the latest tag between assembly PRs — the
-bump lives in ``changelog.d/`` fragments, tag-per-merge (``forge-changelog
-auto-tag``) advances tags past the manifest, and ``forge-changelog
-release`` is the single writer that re-syncs ``plugin.json``.
+bump lives in ``changelog.d/`` fragments, and ``forge-changelog
+release`` is the single writer that advances ``plugin.json`` (tagged at
+the assembly merge). Behind the tag happens only through a tag cut on
+an ordinary merge, whose tree the manifest never named.
 ``plugin.json <= tag`` is therefore healthy, provided every pending
 fragment passes the gate (the next version must stay derivable);
 below-tag stays an error only in shared-heading mode.
@@ -263,11 +264,10 @@ def _not_ahead_verdict(
         otherwise.
     """
     # Parked check first: in fragments mode EVERY ordinary commit sits at
-    # or behind the tag (auto-tag advances tags per merge while the
-    # manifest waits for the next assembly PR), so the fingerprint
-    # fallback (per-tag `git ls-tree` over the whole tag set) must not
-    # run on the common path. A release/assembly commit has zero pending
-    # fragments and passes the parked check anyway.
+    # or behind the tag (the manifest waits for the next assembly PR),
+    # so the fingerprint fallback (per-tag `git ls-tree` over the whole tag
+    # set) must not run on the common path. A release/assembly commit has
+    # zero pending fragments and passes the parked check anyway.
     if is_fragments_mode(repo_root) and plugin_ver <= tag_ver:
         return _fragment_parked_verdict(repo_root, latest_tag)
     if _is_release_commit(repo_root):

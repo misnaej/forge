@@ -19,19 +19,21 @@ version. In fragment mode nothing may read ``CHANGELOG.md`` as a
 version or bump signal — the changelog is an OUTPUT of release, written
 by :func:`assemble_changelog`'s single writer. The version itself is
 assembler-owned too, and tag-aware: pending fragments already inside
-a ``v*`` tag's tree were released by that tag (tag-per-merge) and
-assemble under its heading; only fragments no tag holds mint a new
-version — ``latest v* tag + max(bump level over the unreleased
-fragments)`` (:func:`plan_assembly`), computed at release, never
-carried per-PR. When every pending fragment is tagged, nothing is
-minted: the assembly backfills the per-tag headings and syncs the
-manifest to the latest tag.
+a ``v*`` tag's tree were released by that tag (a per-merge tag in a
+manifest-less repo) and assemble under its heading; only fragments no tag
+holds mint a new version — ``latest v* tag + max(bump level over the
+unreleased fragments)`` (:func:`plan_assembly`), computed at release, never
+carried per-PR. When every pending fragment is tagged, nothing is minted:
+the assembly backfills the per-tag headings and syncs the manifest to the
+latest tag.
 
 Usage:
 
 - ``forge-changelog auto-tag`` — tag-per-merge CI seam: cut and push an
   annotated tag from the fragments merged since the last tag (tag-tree
-  membership marks consumption); never touches the base branch.
+  membership marks consumption); never touches the base branch. Never
+  tags a repo with a plugin manifest — its release tag is cut at the
+  assembly merge (``forge-next-prep --tag``).
 - ``forge-changelog release-pr`` — unattended counterpart of
   ``release``: branch ``chore/assemble-vX.Y.Z``, stage, commit, push,
   and open the assembly PR with in-body gate evidence; idempotent and
@@ -40,8 +42,8 @@ Usage:
   ``CHANGELOG.md`` with a heading per already-tagged group plus any
   minted heading, write ``.claude-plugin/plugin.json`` to the plan's
   version (when a manifest exists — the manifest's single writer), and
-  stage everything (never commits). Merge the resulting PR; tag-on-merge
-  cuts the tag when the plan minted one.
+  stage everything (never commits). Merge the resulting PR; the tag job
+  cuts the tag at that merge when the plan minted one.
 - ``forge-changelog next-version`` — read-only print of the computed
   next version and its bump level.
 - ``forge-changelog assemble --version vX.Y.Z`` — collate every pending
@@ -80,6 +82,7 @@ from forge.git_utils import (
     next_version,
     push_branch,
     push_tag,
+    read_local_plugin_version,
     render_plugin_version,
     repo_root,
     require_cli,
@@ -985,8 +988,15 @@ def _cmd_auto_tag(root: Path) -> int:
     :func:`fragments_new_since_tag`), bump, tag, push the tag. Tag refs
     sit outside branch rulesets, so no commit to the base branch is
     needed; fragment files persist until an assembly PR collates the
-    changelog and syncs the manifest. Never silent: every path emits
-    what happened or why nothing did.
+    changelog. Never silent: every path emits what happened or why
+    nothing did.
+
+    A repo with a plugin manifest is never tagged here, whatever
+    ``[tool.forge.release].auto`` says: the tag would land on a tree
+    whose ``plugin.json`` still names the previous release, and Claude
+    Code files a plugin under that declared version — consumers pinned
+    to the tag would get an older release's cache slot. Its release is
+    tagged at the assembly merge instead, where the manifest is ahead.
 
     Args:
         root: Repository root directory.
@@ -996,10 +1006,14 @@ def _cmd_auto_tag(root: Path) -> int:
         new to tag; ``2`` on invalid fragments or a push failure that no
         concurrent winner explains; ``3`` when ``[tool.forge.release]``
         does not opt in (``auto = "merge"``) but new fragments are
-        pending — the caller surfaces this as a loud warning.
+        pending in a manifest-less repo — the caller surfaces this as a
+        loud warning.
     """
     if not is_fragments_mode(root):
         emit("auto-tag: not a fragments-mode repo — nothing to do.")
+        return 0
+    if read_local_plugin_version(root) is not None:
+        emit(_manifest_tag_policy(root))
         return 0
     latest = latest_v_tag(root)
     new_paths = fragments_new_since_tag(root, latest)
@@ -1024,6 +1038,32 @@ def _cmd_auto_tag(root: Path) -> int:
     level = max_level(fragments)
     version = next_version(latest, level)
     return _create_and_push_tag(root, version, level, len(fragments))
+
+
+def _manifest_tag_policy(root: Path) -> str:
+    """Explain why a plugin-manifest repo is not tagged per merge.
+
+    Args:
+        root: Repository root directory.
+
+    Returns:
+        One line naming the pending-fragment count and the release
+        command, plus a note when ``auto = "merge"`` is being ignored.
+    """
+    pending = len(discover_fragments(root))
+    line = (
+        "auto-tag: plugin manifest present — releases are tagged when the "
+        "release (assembly) PR merges, never per merge: a per-merge tag "
+        "would ship a plugin.json naming an older version. "
+        f"{pending} pending fragment(s); cut a release with "
+        "`forge-changelog release-pr`."
+    )
+    if read_tool_forge_section(root, "release").get("auto") == "merge":
+        line += (
+            ' [tool.forge.release].auto = "merge" is ignored in a repo '
+            "with a plugin manifest."
+        )
+    return line
 
 
 ASSEMBLY_BRANCH_PREFIX = "chore/assemble-"
@@ -1465,7 +1505,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "auto-tag",
         help="tag HEAD from fragments merged since the last tag "
-        "(tag-per-merge CI seam; pushes the tag only)",
+        "(tag-per-merge CI seam; pushes the tag only; never tags a repo "
+        "with a plugin manifest, which is tagged at the assembly merge)",
     )
     relpr = sub.add_parser(
         "release-pr",

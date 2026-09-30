@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_76 modules, 1064 symbols._
+_76 modules, 1066 symbols._
 
 ## `forge`
 
@@ -326,6 +326,7 @@ _76 modules, 1064 symbols._
 - `_validate_auto_tag_fragments(new_paths: list[Path]) -> tuple[list[Fragment], list[str]]` _(internal)_ — Validate fragments and separate valid ones from errors.
 - `_create_and_push_tag(root: Path, version: str, level: str, n_fragments: int) -> int` _(internal)_ — Create and push an annotated tag, handling concurrent-runner races.
 - `_cmd_auto_tag(root: Path) -> int` _(internal)_ — Tag the current commit from its newly merged fragments (CI seam).
+- `_manifest_tag_policy(root: Path) -> str` _(internal)_ — Explain why a plugin-manifest repo is not tagged per merge.
 - `_assembly_pr_body(root: Path, plan: AssemblyPlan) -> str` _(internal)_ — Render the assembly PR body with the repo-correct tagging sentence.
 - `_gate_evidence(root: Path) -> tuple[bool, str]` _(internal)_ — Run the versioning gates and format PR-body evidence.
 - `_computed_next_version(root: Path, cmd: str, *, none_pending_rc: int) -> tuple[int | None, AssemblyPlan | None]` _(internal)_ — Run the shared version-computation guard for a subcommand.
@@ -829,8 +830,9 @@ _76 modules, 1064 symbols._
 
 - `_is_newer(plugin_ver: str, latest_tag: str | None) -> bool` _(internal)_ — Return True when ``v<plugin_ver>`` would sort *after* ``latest_tag``.
 - `tag_staleness_warning(repo_root: Path) -> str | None` — Return a warning when the integration branch owes a rolling-next tag.
-- `_tag_misuse_warning(repo_root: Path) -> str | None` _(internal)_ — Return a warning when ``--tag`` is used outside the rolling-next model.
-- `_maybe_tag_release(repo_root: Path) -> str | None` _(internal)_ — Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
+- `_tag_misuse_warning(repo_root: Path) -> str | None` _(internal)_ — Return a warning when ``--tag`` is used in a repo with no manifest.
+- `class TagDecision` — Outcome of ``--tag``: the tag cut, or why none was.
+- `_maybe_tag_release(repo_root: Path) -> TagDecision` _(internal)_ — Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
 - `_gone_branches(repo_root: Path) -> list[str]` _(internal)_ — Return local branch names whose tracking remote is ``[origin/...: gone]``.
 - `_prune_gone_branches(repo_root: Path) -> tuple[list[str], list[str]]` _(internal)_ — ``git branch -d`` every branch whose remote is gone.
 - `_log_prune_result(repo_root: Path) -> None` _(internal)_ — Prune stale local branches and log the outcome.

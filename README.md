@@ -433,7 +433,7 @@ Three ways to handle this:
 
 | Approach | When |
 |---|---|
-| **Pin to a tag** (`@v1.3.0`) | CI / production — version comparisons are reliable. An upgrade to a tag the changelog does not document is refused (exit `2`), naming the newest documented release; a branch pin is never gated. |
+| **Pin to a tag** (`@v1.3.0`) | CI / production — version comparisons are reliable. An upgrade to a tag whose own changelog does not document it is refused (exit `2`) — only tags cut per merge before releases were tagged at the release merge hit this ([which tags you can adopt](docs/adopting.md#which-tags-you-can-adopt)); a branch pin is never gated. |
 | **`forge-upgrade --apply`** | Setup scripts / Makefile / human-driven upgrades. Wraps the `--force-reinstall --no-deps` pip command + re-sync in one call. |
 | **Two-phase `forge-upgrade` + manual pip** | Claude Code agents — they're blocked from running `pip install`, so the agent rewrites the pin + prints the command; you run it. |
 

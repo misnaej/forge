@@ -14,10 +14,11 @@ Operations (in order, each idempotent):
    then ``git pull --ff-only`` — sync to latest.
 3. **Optional auto-tag** (``--tag``): if ``.claude-plugin/plugin.json``
    has a ``version`` strictly ahead of the latest ``v*`` tag, tag the
-   merge commit and push the tag. Forge's rolling-next workflow. On a
-   single-track repo with no plugin manifest the flag warns and skips
-   (per-merge tagging is a plugin-repo pattern — ``forge-release`` cuts
-   release tags there).
+   merge commit and push the tag — in fragments mode that is the
+   assembly merge, the only commit whose tree names the new version.
+   When it does not tag it logs why. On a repo with no plugin manifest
+   the flag warns and skips: nothing names the version to tag, and
+   ``forge-release`` cuts release tags there.
 4. **Prune stale branches** (``--prune-branches``, default ON): delete
    local branches whose remote shows ``[origin/...: gone]``. Uses
    ``git branch -d`` (safe) — never ``-D``.
@@ -34,6 +35,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from forge.changelog_fragments import discover_fragments
 from forge.config import (
@@ -122,11 +124,10 @@ def tag_staleness_warning(repo_root: Path) -> str | None:
 
 
 def _tag_misuse_warning(repo_root: Path) -> str | None:
-    """Return a warning when ``--tag`` is used outside the rolling-next model.
+    """Return a warning when ``--tag`` is used in a repo with no manifest.
 
-    Per-merge tagging is the plugin-repo pattern: the rolling-next
-    manifest names the version to tag. A single-track repo with no
-    ``.claude-plugin/plugin.json`` releases via ``forge-release``
+    ``--tag`` cuts the version ``.claude-plugin/plugin.json`` names. A
+    repo with no manifest releases via ``forge-release``
     instead, so ``--tag`` there is almost always a command copied from
     forge's own workflow — warn loudly rather than no-op silently.
 
@@ -140,14 +141,29 @@ def _tag_misuse_warning(repo_root: Path) -> str | None:
     if read_local_plugin_version(repo_root) is not None:
         return None
     return (
-        "--tag skipped: no .claude-plugin/plugin.json and a single-track "
-        "branch model — per-merge tagging is the rolling-next plugin-repo "
-        "pattern. Cut release tags with `forge-release` instead "
+        "--tag skipped: no .claude-plugin/plugin.json, so nothing names the "
+        "version to tag. Cut release tags with `forge-release` instead "
         "(docs/consumer-release.md)."
     )
 
 
-def _maybe_tag_release(repo_root: Path) -> str | None:
+class TagDecision(NamedTuple):
+    """Outcome of ``--tag``: the tag cut, or why none was.
+
+    The reason is always set, so the CI log of a merge that cut no tag
+    says which of the no-op cases applied instead of a bare "nothing to
+    do" that reads the same whether or not a release was owed.
+
+    Attributes:
+        tag: The tag created and pushed, or ``None`` when none was.
+        reason: One line explaining the decision.
+    """
+
+    tag: str | None
+    reason: str
+
+
+def _maybe_tag_release(repo_root: Path) -> TagDecision:
     """Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
 
     Idempotent: no-op when plugin.json is missing, the version field is
@@ -157,19 +173,33 @@ def _maybe_tag_release(repo_root: Path) -> str | None:
         repo_root: Repo root.
 
     Returns:
-        The tag name on success (e.g. ``"v1.2.10"``), or ``None`` when
-        no tagging was needed / possible.
+        The decision — ``tag`` set (e.g. ``"v1.2.10"``) on success,
+        ``None`` otherwise, with the reason either way.
     """
     plugin_ver = read_local_plugin_version(repo_root)
     if plugin_ver is None:
-        return None
+        return TagDecision(None, "no .claude-plugin/plugin.json version to tag")
+    if parse_semver(plugin_ver) is None:
+        return TagDecision(None, f"plugin.json version {plugin_ver!r} is not semver")
     latest = latest_v_tag(repo_root)
     if not _is_newer(plugin_ver, latest):
-        return None
+        if latest is not None and parse_semver(plugin_ver) == parse_semver(latest):
+            return TagDecision(
+                None,
+                f"plugin.json {plugin_ver} is already tagged as {latest}; the "
+                "next tag is cut when a release PR (`forge-changelog "
+                "release-pr`) raising plugin.json merges",
+            )
+        return TagDecision(
+            None,
+            f"plugin.json {plugin_ver} is behind the latest tag {latest}; "
+            "nothing to tag until a release PR (`forge-changelog release-pr`) "
+            "raises plugin.json past it",
+        )
     tag = f"v{plugin_ver}"
     create_annotated_tag(repo_root, tag)
     run_git("push", "origin", tag, cwd=repo_root)
-    return tag
+    return TagDecision(tag, f"plugin.json {plugin_ver} is ahead of {latest}")
 
 
 def _gone_branches(repo_root: Path) -> list[str]:
@@ -358,11 +388,11 @@ def _tag_and_report(repo_root: Path, args: argparse.Namespace) -> int:
         if misuse:
             logger.warning(misuse)
         else:
-            tag = _maybe_tag_release(repo_root)
-            if tag:
-                logger.info("Tagged and pushed %s", tag)
+            decision = _maybe_tag_release(repo_root)
+            if decision.tag:
+                logger.info("Tagged and pushed %s (%s)", decision.tag, decision.reason)
             else:
-                logger.info("No release tag needed.")
+                logger.info("No release tag: %s", decision.reason)
 
     if not args.no_prune_branches:
         _log_prune_result(repo_root)

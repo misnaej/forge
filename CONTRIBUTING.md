@@ -6,9 +6,9 @@ modifying forge itself.
 
 ## Branching
 
-Forge ships **single-track**: every PR targets `main`, and every merge
-carrying changelog fragments is tagged automatically on `main`
-(tag-per-merge — see `docs/release-process.md`).
+Forge ships **single-track**: every PR targets `main`, and a release
+tag is cut automatically when a release (assembly) PR merges — see
+`docs/release-process.md`.
 
 Working branches (off `main`):
 
@@ -109,21 +109,21 @@ commit) and when `.claude-plugin/plugin.json` is absent.
 
 **Convention (fragments mode):** a PR never bumps `plugin.json` — it
 adds a `changelog.d/<slug>.<type>.md` fragment carrying a `bump:` level;
-the tag-release workflow computes and cuts the tag on merge, and
-`forge-changelog release-pr` later assembles and opens the assembly PR,
-syncing the manifest as it goes.
+`forge-changelog release-pr` later assembles the fragments and writes
+the new version to the manifest, and the tag-release workflow cuts the
+tag when that assembly PR merges.
 
 ### Release flow (single-track)
 
 1. Feature/fix PR targets `main` with a changelog fragment
    (`changelog.d/<slug>.<type>.md`, first line `bump: patch|minor|major`).
    CI green → user merges.
-2. The `tag-release` workflow tags the merge automatically
-   (`forge-changelog auto-tag`): last tag + strongest new fragment
-   level. `forge-next-prep --tag` is the manual fallback.
-3. Periodically `forge-changelog release-pr` opens the assembly PR to
-   assemble `CHANGELOG.md` from the accumulated fragments and sync
-   `.claude-plugin/plugin.json`.
+2. The merge is not a release: its fragment waits in `changelog.d/`.
+3. When a release is due, `forge-changelog release-pr` opens the
+   assembly PR, which assembles `CHANGELOG.md` from the accumulated
+   fragments and writes the new version to `.claude-plugin/plugin.json`.
+4. When that PR merges, the `tag-release` workflow tags it
+   (`forge-next-prep --tag`, which is also the manual fallback).
 
 For breaking changes, document the migration in the PR description
 and the GitHub release notes before tagging.

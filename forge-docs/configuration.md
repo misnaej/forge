@@ -784,8 +784,8 @@ true` when opting into deferred mode.
 auto = "merge"
 ```
 
-- **`auto`** (string, default unset): `"merge"` enables tag-per-merge —
-  the tag-release workflow runs `forge-changelog auto-tag` on every
+- **`auto`** (string, default unset): in a repo **without** a plugin
+  manifest, `"merge"` enables tag-per-merge — the tag-release workflow runs `forge-changelog auto-tag` on every
   push to the base branch, cutting an annotated tag from the last tag
   plus the strongest semver level among the fragments merged since it
   (tag-tree membership marks fragments consumed). Tag refs sit outside
@@ -794,6 +794,10 @@ auto = "merge"
   fragments-mode repo can never accumulate unreleased merges silently.
   Changelog assembly and manifest sync happen at `forge-changelog
   release` PRs, which may collate several auto-cut tags.
+  **Ignored when `.claude-plugin/plugin.json` exists**: a plugin repo is
+  tagged only when its assembly PR merges, because a per-merge tag
+  would ship a manifest naming the previous release. `auto-tag` says so
+  and logs the pending count instead.
   **Single-track model**: tag-tree membership relies on consecutive
   tags sharing linear ancestry on the base branch — run `auto-tag`
   only from merges to that one branch (the shipped workflow does).

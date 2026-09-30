@@ -676,12 +676,14 @@ def _undocumented_release_refusal(
 ) -> str | None:
     """Return why *target_ref* must not be adopted, or ``None`` to proceed.
 
-    Tag-on-merge vs. an unscheduled assembly (``docs/release-process.md``
-    §2 "Tag-on-merge") means a tag can ship with a changelog that never
-    mentions it — and the upgrade notes printed from that changelog stop
-    short without saying so, which is the defect this refuses. A version
-    no release documents is not adoptable; the remedy is an assembly run
-    covering it, not a quieter warning.
+    Release tags are cut at the assembly merge
+    (``docs/release-process.md`` §2), so a release tag's own changelog
+    opens with its version. A tag cut on an ordinary merge ships a
+    changelog that never mentions it — and the upgrade notes printed
+    from it stop short without saying so, which is the defect this
+    refuses. The message deliberately names no alternative tag: the
+    newest version such a changelog documents may itself be a tag cut
+    on an ordinary merge, refused here too.
 
     Every unknowable input proceeds rather than blocks, per §1: a
     non-tag ref, an absent changelog (partial install), a changelog with
@@ -709,9 +711,11 @@ def _undocumented_release_refusal(
     return (
         f"{target_ref} is not documented: the changelog it ships stops at "
         f"{documented}, so every change between them — including any action "
-        "you are expected to take — is invisible in the upgrade notes. "
-        f"Adopt {documented}, or ask for an assembly run covering "
-        f"{target_ref}."
+        "you are expected to take — is invisible in the upgrade notes. Tags "
+        "cut on an ordinary merge never document themselves; adopt a "
+        "release tag whose own "
+        'CHANGELOG.md opens with its version (docs/adopting.md, "Which '
+        'tags you can adopt").'
     )
 
 

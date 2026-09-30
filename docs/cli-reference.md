@@ -278,7 +278,9 @@ positional arguments:
                         everything — never commits
     assemble            collate fragments into CHANGELOG.md under a version
     auto-tag            tag HEAD from fragments merged since the last tag
-                        (tag-per-merge CI seam; pushes the tag only)
+                        (tag-per-merge CI seam; pushes the tag only; never
+                        tags a repo with a plugin manifest, which is tagged at
+                        the assembly merge)
     release-pr          branch, stage, commit and open the assembly PR for the
                         pending fragments (scheduled CI seam; merge stays
                         human)

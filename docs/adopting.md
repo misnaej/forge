@@ -192,7 +192,7 @@ artifact is **drift-aware**, not blindly overwritten:
 - **`CLAUDE.md` / `FOUNDATION.md`** — managed-block markers; `install-forge-claude-md --check` (run by the post-merge/checkout hooks) reports when the shipped foundation drifts from yours.
 - **`forge-docs/`** — same check reports hand-edits to the mirrored reference pages; the next sync heals them.
 - **`.githooks/*`** — the `body-sha=` marker detects consumer edits so a refresh skips wrappers you changed; the gitignored `.forge-hook-version` sidecar records which forge version last wrote them (keeps the committed wrappers byte-stable).
-- **Upstream-version staleness** — the hooks' preamble + `SessionStart` warn when the installed forge is behind the latest tag (and the cached Claude Code plugin is behind), so you know an upgrade is available.
+- **Upstream-version staleness** — the hooks' preamble + `SessionStart` warn when the installed forge is behind the latest tag (and the cached Claude Code plugin is behind), so you know an upgrade is available. Forge cuts a tag only when a release merges, so the latest tag is an adoptable release (see [Which tags you can adopt](#which-tags-you-can-adopt)).
 - **Generated docs** — `forge-gen-*` write `docs/api-digest.md` / `cli-reference.md`; a pre-commit check fails if they drift from the code.
 
 ## Upgrading
@@ -211,3 +211,40 @@ previous version. Pin choice (`@main` every release vs a frozen
 `@vX.Y.Z` tag) and the full flow:
 [`Upgrading forge`](../README.md#upgrading-forge-in-your-repo). CI
 integration: [`ci-recipe.md`](../forge-docs/ci-recipe.md).
+
+### Which tags you can adopt
+
+A forge release tag `vX.Y.Z` is cut when a release PR merges, on the
+commit whose `.claude-plugin/plugin.json` says `X.Y.Z` and whose
+`CHANGELOG.md` opens with `## vX.Y.Z`. That is what makes it adoptable:
+Claude Code files the plugin under the version `plugin.json` declares,
+and `forge-upgrade` prints upgrade notes from the changelog the tag
+ships.
+
+Older tags were cut on every merge, before the release that wrote their
+version. Their own `plugin.json` names an earlier release and their
+changelog stops short of them, so `forge-upgrade` refuses them (exit
+`2`). They are never moved; pin a newer tag instead. To check a tag
+yourself:
+
+```bash
+git show vX.Y.Z:.claude-plugin/plugin.json | grep '"version"'   # must say X.Y.Z
+git show vX.Y.Z:CHANGELOG.md | grep -m1 '^## v'                 # must say vX.Y.Z
+```
+
+### Clearing a plugin cache slot that holds stale content
+
+If you installed one of those older tags, Claude Code may have filed it
+under an **earlier release's version** — and if that slot already
+existed, kept the earlier release's files. `/plugin update` compares
+version names only, so it reports "already at the latest version" and
+changes nothing, while every version check stays green. `forge-doctor`
+flags the slot when its hooks differ from the pinned release. The fix is
+to discard the slot so it refills from the pin:
+
+1. Move your plugin pin (marketplace ref) to an adoptable tag.
+2. Delete the whole forge cache directory — the stale content sits
+   under a version name that looks current:
+   `rm -rf ~/.claude/plugins/cache/forge/`
+3. Restart the Claude Code session. `/reload-plugins` is not enough: a
+   running session keeps the slot it loaded at startup.

@@ -390,8 +390,11 @@ branch checkout. Only the `push` trigger is safe here — never run a
 
 ### Dual-track plugin repos (manifest-declared version)
 
-Same idea, tagging with the rolling-next version from
-`.claude-plugin/plugin.json`. **The reference implementation is forge's
+Same idea, tagging with the version from `.claude-plugin/plugin.json`
+— in fragments mode that version changes only in the assembly PR, so
+the release tag is cut when that PR merges (`forge-next-prep --tag`),
+never per merge (`forge-changelog auto-tag` refuses to tag a repo with
+a plugin manifest). **The reference implementation is forge's
 own `.github/workflows/tag-release.yml`** — a workflow separate from
 the read-only CI one, gated via `workflow_run` (single-track: one
 tag-on-merge job).

@@ -4,12 +4,14 @@ name: tag-release
 # `ci.yml` never carries write permissions. Single-track: one job —
 #
 # - tag-main: after CI succeeds on a push to main, two steps:
-#   (1) `forge-changelog auto-tag` — tag-per-merge: cut the tag computed
-#       from the fragments merged since the last tag (loud `::warning`
-#       instead when [tool.forge.release].auto != "merge");
-#   (2) `forge-next-prep --tag` — covers assembly-PR merges, where the
-#       manifest is ahead and no new fragments exist.
-#   Both idempotent no-ops when nothing applies.
+#   (1) `forge-changelog auto-tag` — never tags a plugin repo like
+#       forge (docs/release-process.md §2); logs the pending-fragment
+#       count and the release command. Manifest-less repos copying this
+#       job get tag-per-merge here.
+#   (2) `forge-next-prep --tag` — cuts forge's release tag: fires on the
+#       assembly (release PR) merge, the only commit whose plugin.json
+#       is ahead of the latest tag, and logs why on every other merge.
+#   Both idempotent; both state why when they do not tag.
 #
 # Gating uses `workflow_run` because `needs:` cannot cross workflow
 # files: this workflow fires when CI completes, and the job checks the
@@ -59,7 +61,7 @@ jobs:
       - name: Install forge-scripts
         run: pip install -e .
 
-      - name: Auto-tag newly merged fragments (tag-per-merge)
+      - name: Auto-tag newly merged fragments (manifest-less repos only)
         run: |
           set +e
           out=$(forge-changelog auto-tag 2>&1); rc=$?
@@ -71,5 +73,5 @@ jobs:
           fi
           exit $rc
 
-      - name: Tag the rolling-next release when plugin.json is ahead
+      - name: Tag the release when the assembly merge put plugin.json ahead
         run: forge-next-prep --tag --no-sync --no-prune-branches
