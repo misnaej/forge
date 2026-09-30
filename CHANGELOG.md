@@ -20,6 +20,27 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v9.0.0 — 2026-09-30
+
+### Changes
+- **A release tag now contains the version it names.** Until now a tag was cut on every merge, but the plugin's version number and release notes were only written later, when a release was assembled. So every tag carried an *older* release's version number and release notes. Claude Code files a plugin under the version it declares, so installing a tag gave you a plugin calling itself an older version. It could land in a cache slot already holding that version's files, while `/plugin update` said you were current. `forge-upgrade` refused every such tag, because its release notes never mentioned it. Now a repo that ships a Claude Code plugin is tagged only when its release PR merges, on the one commit whose plugin version and release notes both name that tag. Ordinary merges wait, untagged, for the next release.
+- **`forge-next-prep --tag` says why when it does not tag** (already tagged, manifest behind the latest tag, no manifest), instead of a bare "No release tag needed."
+- **Action:** plugin repos (with `.claude-plugin/plugin.json`) that set `[tool.forge.release].auto = "merge"`: `forge-changelog auto-tag` no longer tags your merges; it logs the pending count and `forge-changelog release-pr` instead. Cut releases with `forge-changelog release-pr`; the tag is cut when that PR merges (`forge-next-prep --tag`, already in the shipped tag workflow). Manifest-less repos are unaffected.
+- **Action:** if you pinned forge to a tag cut before this release, your plugin cache slot may hold an earlier release's files under a version name that looks current. Move your pin to this release or newer, delete `~/.claude/plugins/cache/forge/`, and restart the Claude Code session (`/reload-plugins` is not enough). See `docs/adopting.md`, "Clearing a plugin cache slot that holds stale content". Older tags are never moved, and `forge-upgrade` keeps refusing them.
+
+## v8.7.3 — 2026-09-16
+
+### Docs
+- `CLAUDE.md` no longer tells contributors to bump `.claude-plugin/plugin.json`
+  in an ordinary PR. The rolling-next summary now carries the fragment-mode
+  carve-out that `docs/release-process.md` §1 already documented, so its two
+  release bullets agree on which PR writes the manifest.
+- The semver-policy bullet is stated against a PR's fragment `bump:` level —
+  the decision that actually exists in fragment mode — instead of a post-tag
+  manifest bump PR that this repo never opens.
+- `docs/release-process.md` §1 names `forge-changelog release-pr` as what opens
+  the release PR, matching §3.
+
 ## v8.7.2 — 2026-09-16
 
 ### Fixes
