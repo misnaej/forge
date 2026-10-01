@@ -521,7 +521,10 @@ def render_digest(digests: list[ModuleDigest]) -> str:
         The complete markdown content for ``docs/api-digest.md``, ending
         with a single trailing newline.
     """
-    symbol_count = count_symbols(digests)
+    # No whole-tree value (module or symbol totals) belongs in the file:
+    # every branch regenerates it, so such a line changes on every PR that
+    # adds a symbol anywhere and makes unrelated branches conflict. The
+    # totals are printed to stdout at generation time instead.
     lines = [
         "# API Digest",
         "",
@@ -539,8 +542,6 @@ def render_digest(digests: list[ModuleDigest]) -> str:
             "`forge-gen-api-digest`; check for drift with "
             "`forge-gen-api-digest --check`."
         ),
-        "",
-        f"_{len(digests)} modules, {symbol_count} symbols._",
         "",
     ]
     for digest in digests:

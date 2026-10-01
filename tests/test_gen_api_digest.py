@@ -532,3 +532,55 @@ def test_main_check_returns_one_when_doc_missing(
     with caplog.at_level(logging.ERROR):
         assert main() == 1
     assert any("does not exist" in record.getMessage() for record in caplog.records)
+
+
+def _lines_outside_section(rendered: str, dotted: str) -> list[str]:
+    """Return every rendered line except the ``## `<dotted>` `` section.
+
+    Args:
+        rendered: The rendered API digest as a string.
+        dotted: The module name to exclude from the output.
+
+    Returns:
+        A list of lines from rendered, excluding the section for the given module.
+    """
+    kept: list[str] = []
+    inside = False
+    for line in rendered.splitlines():
+        if line.startswith("## `"):
+            inside = line == f"## `{dotted}`"
+        if not inside:
+            kept.append(line)
+    return kept
+
+
+def test_render_digest_adding_symbol_changes_only_its_module_section() -> None:
+    """No line outside a module's own section depends on the rest of the tree.
+
+    Unrelated branches each add symbols to different modules; any value in
+    the file derived from the whole tree (a total count) would make every
+    such pair of branches conflict on that one line.
+    """
+    before = [
+        *_sample_query_digests(),
+        ModuleDigest(dotted="sample.other", summary="Other module.", symbols=()),
+    ]
+    added = Symbol(
+        kind="function",
+        signature="new_helper() -> None",
+        summary="A newly added function.",
+        methods=(),
+        internal=False,
+    )
+    after = [
+        before[0]._replace(symbols=(*before[0].symbols, added)),
+        before[1],
+    ]
+
+    rendered_before = render_digest(before)
+    rendered_after = render_digest(after)
+
+    assert rendered_before != rendered_after
+    assert _lines_outside_section(
+        rendered_before, "sample.thing"
+    ) == _lines_outside_section(rendered_after, "sample.thing")
