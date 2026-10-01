@@ -32,7 +32,7 @@ fi
 # "generated with care" never false-positives. `🤖 generated` catches the
 # robot-emoji signature the harness emits directly. The remaining
 # alternatives mirror the newer credit phrasings in
-# forge.pr_squash_comment.AI_ATTRIBUTION_PATTERNS — when that tuple
+# forge.gh_comments.AI_ATTRIBUTION_PATTERNS — when that tuple
 # gains a phrase, add its vendor-qualified form here by hand (this hook
 # is tuned for raw commit-message noise, so it stays deliberately
 # narrower than the Python list).

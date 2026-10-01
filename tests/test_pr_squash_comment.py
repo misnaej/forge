@@ -324,6 +324,16 @@ def test_check_attribution_reports_known_pattern() -> None:
     assert any("pattern detected" in p for p in problems)
 
 
+def test_check_attribution_stays_strict_on_bare_product_mention() -> None:
+    """A bare product-name mention is still refused in squash text.
+
+    Squash text becomes permanent history, so unlike the wrap-up it gets
+    no fenced-vendor-token exemption.
+    """
+    problems = mod._check_attribution(VALID_TITLE, ["Claude Code keys its cache"])
+    assert problems
+
+
 # ---------------------------------------------------------------------------
 # validate() — combined rule ordering
 # ---------------------------------------------------------------------------
