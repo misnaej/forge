@@ -457,6 +457,17 @@ def test_validate_wrapup_wires_the_shared_attribution_gate() -> None:
     assert any("pattern detected" in p for p in problems)
 
 
+def test_check_attribution_accepts_fenced_bare_product_mention() -> None:
+    """Quoted evidence in a code fence may name the product.
+
+    Pins that the wrap-up gate opts into the fenced-vendor-token
+    exemption; the exemption's own contract lives in
+    ``tests/test_gh_comments.py``.
+    """
+    text = "Evidence:\n```\nClaude Code keys its plugin cache\n```\n"
+    assert mod._check_attribution(text) == []
+
+
 # ---------------------------------------------------------------------------
 # _collapse
 # ---------------------------------------------------------------------------

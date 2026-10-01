@@ -349,6 +349,10 @@ def _check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> lis
 def _check_attribution(text: str) -> list[str]:
     """Wrap the shared FOUNDATION §2 attribution gate as a violation list.
 
+    Fenced evidence blocks are exempt from the bare-vendor backstop: they
+    quote exact bytes (diffs, tool output) that may name the product
+    without crediting it. Credit phrases are still refused inside them.
+
     Args:
         text: The wrap-up markdown to validate.
 
@@ -356,7 +360,7 @@ def _check_attribution(text: str) -> list[str]:
         Violations if AI attribution is detected, empty list otherwise.
     """
     try:
-        validate_no_ai_attribution(text)
+        validate_no_ai_attribution(text, exempt_fenced_vendor_tokens=True)
     except ValidationError as exc:
         return [str(exc)]
     return []

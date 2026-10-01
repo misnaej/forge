@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_76 modules, 1066 symbols._
+_76 modules, 1070 symbols._
 
 ## `forge`
 
@@ -613,7 +613,11 @@ _76 modules, 1066 symbols._
 
 - `class ValidationError` — Raised when PR-comment content fails a FOUNDATION rule.
 - `_cites_repo_file(token: str) -> bool` _(internal)_ — Return whether *token* is shaped like a repo path forge mandates.
-- `validate_no_ai_attribution(text: str) -> None` — Reject Claude / AI attribution per FOUNDATION §2.
+- `_strip_token(raw: str) -> str` _(internal)_ — Shed quotes from both ends and sentence punctuation from the right.
+- `_is_citation(token: str) -> bool` _(internal)_ — Return whether *token* cites a repo file, suffixes allowed.
+- `_phrase_hit(blob: str) -> str | None` _(internal)_ — Return the attribution phrase found in lowercased *blob*, if any.
+- `_vendor_hit(blob: str) -> tuple[str, str] | None` _(internal)_ — Return ``(vendor, token)`` for the first bare vendor mention in *blob*.
+- `validate_no_ai_attribution(text: str, *, exempt_fenced_vendor_tokens: bool = False) -> None` — Reject Claude / AI attribution per FOUNDATION §2.
 - `parse_paged_json(raw: str) -> list[Any]` — Flatten ``gh api --paginate --jq '[...]'`` output into one list.
 - `list_marker_comments(pr_number: int, marker: str) -> list[dict[str, object]] | None` — Return this identity's comments on *pr_number* carrying *marker*, oldest first.
 - `post_new_comment(pr_number: int, body: str) -> int` — Post *body* as a new comment on PR ``pr_number``.
