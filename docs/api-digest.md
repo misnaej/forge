@@ -4,8 +4,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_76 modules, 1073 symbols._
-
 ## `forge`
 
 > _Forge: shared engineering foundation._
