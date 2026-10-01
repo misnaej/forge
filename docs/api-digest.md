@@ -4,7 +4,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > **Generated file — do not edit by hand.** Regenerate with `forge-gen-api-digest`; check for drift with `forge-gen-api-digest --check`.
 
-_76 modules, 1070 symbols._
+_76 modules, 1073 symbols._
 
 ## `forge`
 
@@ -615,7 +615,10 @@ _76 modules, 1070 symbols._
 - `_cites_repo_file(token: str) -> bool` _(internal)_ — Return whether *token* is shaped like a repo path forge mandates.
 - `_strip_token(raw: str) -> str` _(internal)_ — Shed quotes from both ends and sentence punctuation from the right.
 - `_is_citation(token: str) -> bool` _(internal)_ — Return whether *token* cites a repo file, suffixes allowed.
+- `_forge_cli_names() -> frozenset[str]` _(internal)_ — Return the console-script names the installed forge declares.
+- `_names_forge_tool(word: str) -> bool` _(internal)_ — Return whether *word* names forge itself, a forge CLI, or a forge module.
 - `_phrase_hit(blob: str) -> str | None` _(internal)_ — Return the attribution phrase found in lowercased *blob*, if any.
+- `_outside_closed_fences(blob: str) -> str` _(internal)_ — Return *blob* without its CLOSED fenced blocks.
 - `_vendor_hit(blob: str) -> tuple[str, str] | None` _(internal)_ — Return ``(vendor, token)`` for the first bare vendor mention in *blob*.
 - `validate_no_ai_attribution(text: str, *, exempt_fenced_vendor_tokens: bool = False) -> None` — Reject Claude / AI attribution per FOUNDATION §2.
 - `parse_paged_json(raw: str) -> list[Any]` — Flatten ``gh api --paginate --jq '[...]'`` output into one list.
