@@ -1088,12 +1088,6 @@ def step_layering(repo_root: Path) -> StepResult:
     return StepResult(name="layering", passed=passed, output=output)
 
 
-# The api-digest doc path — shared by the non-blocking auto-writer
-# (:data:`_REGEN_DOCS`) and the opt-in blocking drift gate
-# (:func:`step_api_digest_check`) so the two never disagree on which file
-# they operate over.
-
-
 def step_api_digest_check(repo_root: Path) -> StepResult:
     """Run ``forge-gen-api-digest --check`` — api-digest drift guard (opt-in).
 
@@ -1138,10 +1132,6 @@ def step_api_digest_check(repo_root: Path) -> StepResult:
         [*REGEN_COMMANDS["docs/api-digest.md"], "--check"], cwd=repo_root
     )
     return StepResult(name="api_digest_check", passed=passed, output=output)
-
-
-# The cli-reference doc path — shared reference for the opt-in drift gate
-# so future writers and the gate never disagree on which file they cover.
 
 
 def step_cli_reference_check(repo_root: Path) -> StepResult:

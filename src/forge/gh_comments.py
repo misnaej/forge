@@ -79,7 +79,7 @@ _BLANK_LETTERS: Final[frozenset[str]] = frozenset({"\u115f", "\u1160", "\u3164"}
 
 
 def _normalise(text: str) -> str:
-    """Return *text* folded for matching: NFKC, invisibles removed, lowercased.
+    """Return *text* folded for matching: marks and invisibles dropped, lowercased.
 
     Args:
         text: Raw content.
@@ -87,13 +87,16 @@ def _normalise(text: str) -> str:
     Returns:
         The normalised text the phrase and vendor checks read.
     """
-    folded = unicodedata.normalize("NFKC", text)
-    return "".join(
+    # Decompose first so a mark attached to a base letter ("c" + U+0301)
+    # is a separate character the filter can drop, then recompose.
+    decomposed = unicodedata.normalize("NFKD", text)
+    kept = "".join(
         ch
-        for ch in folded
+        for ch in decomposed
         if unicodedata.category(ch) not in _INVISIBLE_CATEGORIES
         and ch not in _BLANK_LETTERS
-    ).lower()
+    )
+    return unicodedata.normalize("NFKC", kept).lower()
 
 
 # Characters shed from both ends of a token (quotes, markdown emphasis,

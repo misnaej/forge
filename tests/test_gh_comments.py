@@ -180,6 +180,7 @@ def test_validate_no_ai_attribution_accepts_honest_text(blob: str) -> None:
         "thanks cla\U000e0041ude",
         "thanks cla\u034fude",
         "thanks cla\u3164ude",
+        "thanks c\u0301laude",
         "generated\u200e by gpt",
         "co-authored\u2060-by: x",
         "\uff47\uff45\uff4e\uff45\uff52\uff41\uff54\uff45\uff44 \uff42\uff59 gpt",

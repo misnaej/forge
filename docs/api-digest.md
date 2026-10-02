@@ -609,7 +609,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Shared GitHub comment plumbing for forge's PR-comment CLIs._
 
-- `_normalise(text: str) -> str` _(internal)_ — Return *text* folded for matching: NFKC, invisibles removed, lowercased.
+- `_normalise(text: str) -> str` _(internal)_ — Return *text* folded for matching: marks and invisibles dropped, lowercased.
 - `class ValidationError` — Raised when PR-comment content fails a FOUNDATION rule.
 - `_cites_repo_file(token: str) -> bool` _(internal)_ — Return whether *token* is shaped like a repo path forge mandates.
 - `_strip_token(raw: str) -> str` _(internal)_ — Shed quotes from both ends and sentence punctuation from the right.

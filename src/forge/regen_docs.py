@@ -1,8 +1,8 @@
 """Decide when the generated docs must be regenerated at commit time.
 
 ``step_regen_docs`` (forge-precommit) keeps ``docs/api-digest.md`` and
-``docs/cli-reference.md`` fresh. Rebuilding them on every commit cost
-seconds even when nothing they are built from had changed — mostly the
+``docs/cli-reference.md`` fresh. A full rebuild takes
+seconds even when nothing they are built from has changed — mostly the
 CLI reference, which captures every forge CLI's ``--help`` and changes
 only when forge itself does. This module answers "does this doc need a
 rebuild?" from a fingerprint of the doc's inputs (index blob shas, the
