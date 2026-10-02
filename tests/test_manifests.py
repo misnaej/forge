@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from forge import precommit, run_context
@@ -385,3 +386,39 @@ def test_planning_is_gated_on_contributor_authorship() -> None:
         REPO_ROOT / "skills" / "plan-batch" / "SKILL.md",
     ):
         assert "endorsed" in path.read_text(), f"{path.name} dropped the gate"
+
+
+def test_precommit_fixer_agent_pins_verdict_and_hand_back_contract() -> None:
+    """The fixer doc carries the verdict command, the RUF00x rule, the git-status line.
+
+    SCENARIO: the SubagentStop gate consults `forge-precommit --verdict`, and
+    the fixer's honest hand-back relies on the doc telling it to run that
+    command, to treat ambiguous-unicode findings as code-point swaps, and to
+    report `git status` as hook-blocked rather than improvise.
+    EXPECTED BEHAVIOR: each phrase appears in the shipped agent body.
+    """
+    body = (REPO_ROOT / "agents" / "precommit-fixer.md").read_text()
+    unwrapped = " ".join(body.split())
+    assert "forge-precommit --verdict" in unwrapped
+    assert "same code point" in unwrapped
+    for rule in ("RUF001", "RUF002", "RUF003"):
+        assert rule in unwrapped
+    assert "git status: not run (hook-blocked)" in body
+
+
+def test_plugin_registers_fixer_verdict_hook_on_subagent_stop() -> None:
+    """`plugin.json` runs require_fixer_verdict.sh on SubagentStop for the fixer."""
+    manifest = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())
+    groups = manifest["hooks"]["SubagentStop"]
+    matching = [
+        group
+        for group in groups
+        if any(
+            "claude-hooks/require_fixer_verdict.sh" in hook["command"]
+            for hook in group["hooks"]
+        )
+    ]
+    assert matching, "require_fixer_verdict.sh must be registered under SubagentStop"
+    matcher = matching[0].get("matcher", "")
+    assert re.search(matcher, "precommit-fixer")
+    assert re.search(matcher, "forge:precommit-fixer")

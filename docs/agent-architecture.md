@@ -110,6 +110,7 @@ graph LR
   hk_block_git_destructive[/"block_git_destructive<br/>hook"/]
   hk_block_amend_pushed_commit[/"block_amend_pushed_commit<br/>hook"/]
   hk_block_fixer_recon[/"block_fixer_recon<br/>hook"/]
+  hk_require_fixer_verdict[/"require_fixer_verdict<br/>hook"/]
   sk_commit(["/commit<br/>skill"])
   design_checker["⚖️ design-checker<br/>AI agent"]
   docs_types_checker["⚖️ docs-types-checker<br/>AI agent"]
@@ -160,6 +161,7 @@ graph LR
   git_commit_push -.->|guarded by| hk_block_git_destructive
   git_commit_push -.->|guarded by| hk_block_amend_pushed_commit
   precommit_fixer -.->|guarded by| hk_block_fixer_recon
+  precommit_fixer -.->|guarded by| hk_require_fixer_verdict
   class human person
   class main_agent orchestrator
   class hk_block_force_push hook
@@ -167,6 +169,7 @@ graph LR
   class hk_block_git_destructive hook
   class hk_block_amend_pushed_commit hook
   class hk_block_fixer_recon hook
+  class hk_require_fixer_verdict hook
   class sk_commit skill
   class design_checker agent
   class design_checker reporter

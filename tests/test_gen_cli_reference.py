@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from typing import TYPE_CHECKING
 
 from forge.gen_cli_reference import (
@@ -162,3 +163,37 @@ def test_main_check_returns_one_when_doc_missing(
     with caplog.at_level(logging.ERROR):
         assert main() == 1
     assert any("does not exist" in record.getMessage() for record in caplog.records)
+
+
+def test_render_reference_captures_concurrently_but_keeps_entry_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Help capture overlaps in time while the rendered order stays the input order.
+
+    SCENARIO: eight CLIs whose capture sleeps longer the earlier the entry
+    sits in the list, so a concurrent run finishes them in reverse order.
+    MOCK SETUP: ``forge.gen_cli_reference.capture_help`` → a sleeping stub
+        returning ``help-of-<name>``.
+    EXPECTED BEHAVIOR: the ``## <name>`` headings appear in input order, each
+        followed by its own help text, and wall time is well under the sum
+        of the sleeps (the captures ran in parallel).
+    """
+    count = 8
+    step = 0.15
+    entries = [CliEntry(name=f"cli-{i}", module=f"mod{i}") for i in range(count)]
+    delays = {e.name: (count - i) * step / count * 2 for i, e in enumerate(entries)}
+
+    def _slow_capture(entry: CliEntry) -> str:
+        time.sleep(delays[entry.name])
+        return f"help-of-{entry.name}"
+
+    monkeypatch.setattr("forge.gen_cli_reference.capture_help", _slow_capture)
+    started = time.monotonic()
+    text = render_reference(entries)
+    elapsed = time.monotonic() - started
+
+    headings = [line for line in text.splitlines() if line.startswith("## ")]
+    assert headings == [f"## {e.name}" for e in entries]
+    for entry in entries:
+        assert f"## {entry.name}\n\n```text\nhelp-of-{entry.name}\n```" in text
+    assert elapsed < sum(delays.values()) * 0.6

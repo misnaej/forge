@@ -256,7 +256,7 @@ The `api_digest_check` step (`forge-gen-api-digest --check`, enabled the
 same way) has no config table — it is the **blocking** drift gate for
 `docs/api-digest.md`, mirroring how `c4` guards the C4 model. The
 default-on `regen_docs` step already regenerates and re-stages the digest
-non-blockingly; enable this when you also want a stale or incomplete digest
+non-blockingly whenever its inputs changed; enable this when you also want a stale or incomplete digest
 **refused** at commit time (e.g. to catch a generator error `regen_docs`
 would only warn on, or to gate the digest in CI). Kept opt-in because the
 digest changes on nearly every code PR, so the gate adds a

@@ -274,7 +274,7 @@ def test_build_pack_snapshots_timing_before_the_gates_rewrite_it(
     def _fake_run_tool(argv: list[str], *, cwd: Path, timeout: object) -> FakeProc:
         del timeout
         if argv[0] == "forge-precommit":
-            (cwd / "code_health" / "precommit_timing.log").write_text(
+            (cwd / "code_health" / "precommit_only_timing.log").write_text(
                 timing_log("ruff FAIL", stamp=git_utils.produced_at_stamp(cwd)),
                 encoding="utf-8",
             )
@@ -290,8 +290,13 @@ def test_build_pack_snapshots_timing_before_the_gates_rewrite_it(
     health_section = pack.split("## Code health")[1].split("## Audits")[0]
     assert "ruff: PASS" in health_section
     assert "FAIL" not in health_section
+    # A `--only` gate run writes its own log; the full-run log is never touched.
     on_disk = precommit.timing_markers(timing_path.read_text(encoding="utf-8"))
-    assert on_disk == {"ruff": "FAIL"}  # the gate really did overwrite it
+    assert on_disk == {"ruff": "PASS"}
+    only_log = repo / "code_health" / "precommit_only_timing.log"
+    assert precommit.timing_markers(only_log.read_text(encoding="utf-8")) == {
+        "ruff": "FAIL"
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -578,7 +583,7 @@ def test_gate_lines_verdict_and_marker(
         assert argv[0] == "forge-precommit"
         log_dir = cwd / "code_health"
         log_dir.mkdir(parents=True, exist_ok=True)
-        (log_dir / "precommit_timing.log").write_text(
+        (log_dir / "precommit_only_timing.log").write_text(
             timing_log(
                 f"api_digest_check {marker}", stamp=git_utils.produced_at_stamp(cwd)
             ),

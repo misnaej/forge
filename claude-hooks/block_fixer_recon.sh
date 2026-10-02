@@ -14,7 +14,8 @@
 # file): the fourth bare `forge-precommit` is refused, `--only` refreshes
 # are free.
 #
-# Allowlist: forge-precommit, the six step CLIs, `cd` (navigation), and
+# Allowlist: forge-precommit, the six step CLIs, `cd` (navigation),
+# `forge-smart-test --depth 0` (the edited files' own tests), and
 # targeted test runs — pytest / python -m pytest with explicit `::`
 # node-id selector(s), one or several (the tests being fixed or just
 # written). Untargeted pytest (bare, file, directory) stays blocked.
@@ -58,7 +59,7 @@ case "$COMMAND" in
 esac
 
 _block() {
-    echo "BLOCKED: precommit-fixer's Bash is limited to forge-precommit, the step CLIs, and targeted pytest node-ids — the code_health/ logs are the only evidence (agents/precommit-fixer.md, FOUNDATION §3). '$1' is outside that set; do not run reconnaissance, read the logs." >&2
+    echo "BLOCKED: precommit-fixer's Bash is limited to forge-precommit, the step CLIs, forge-smart-test --depth 0, and targeted pytest node-ids — the code_health/ logs are the only evidence (agents/precommit-fixer.md, FOUNDATION §3). '$1' is outside that set; do not run reconnaissance, read the logs." >&2
     exit 2
 }
 
@@ -83,14 +84,14 @@ _strip_wrapper_prefix() {
 }
 
 # A full `forge-precommit` run: the bare CLI, not a `--only <step>`
-# refresh and not a `--freshness` report (which runs no steps). Wrapper
+# refresh and not a `--freshness` / `--verdict` report (which run no steps). Wrapper
 # prefixes are stripped first, so `FORGE_X=1 forge-precommit` counts too.
 _is_full_precommit() {
     _strip_wrapper_prefix "$1" || return 1
     [ "${STRIPPED%%[[:space:]]*}" = "forge-precommit" ] || return 1
     # Each flag as its own word (or `--only=<steps>`), never a substring
     # of some future flag or step name.
-    case " $STRIPPED " in *" --only "*|*" --only="*|*" --freshness "*) return 1 ;; esac
+    case " $STRIPPED " in *" --only "*|*" --only="*|*" --freshness "*|*" --verdict "*) return 1 ;; esac
     return 0
 }
 
@@ -102,6 +103,18 @@ _segment_ok() {
     case "$tok" in
         cd|forge-precommit|fix-forge-ruff|verify-forge-docstrings|verify-forge-repo-structure|verify-forge-test-naming|verify-forge-manifest|verify-forge-plugin-version)
             return 0 ;;
+        forge-smart-test)
+            # Exactly `--depth 0` and nothing else: the tests of the files
+            # just edited — the "re-run the tests a code edit touches"
+            # rule made executable. Matching the whole segment (not a
+            # substring) keeps a later `--depth full`, extra flags or a
+            # redirect from widening it into a sweep.
+            norm=$(printf '%s' "$seg" | tr -s '[:space:]' ' ')
+            norm="${norm% }"
+            case "$norm" in
+                "forge-smart-test --depth 0"|"forge-smart-test --depth=0") return 0 ;;
+            esac
+            return 1 ;;
         pytest)
             case "$seg" in *::*) return 0 ;; esac
             return 1 ;;

@@ -590,7 +590,7 @@ options:
 
 ```text
 usage: forge-precommit [-h] [--json] [--skip STEP[,STEP...]]
-                       [--only STEP[,STEP...]] [--freshness]
+                       [--only STEP[,STEP...]] [--freshness] [--verdict]
 
 Run the forge pre-commit check sequence: ruff (format + check, self-healing
 with --unsafe-fixes on failure) + docstring verification (diff vs main) +
@@ -618,6 +618,11 @@ options:
                         than files. A log named in --only reports missing when
                         absent and history when it is an append-only log.
                         Always exits 0.
+  --verdict             Run no steps: print each enabled step's result from
+                        the last full run and exit 1 unless every one passed
+                        (PASS/WARN/SKIP) and that run and the step logs
+                        describe the current tree. Paste its output instead of
+                        summarising pre-commit results.
 ```
 
 ## forge-rebump

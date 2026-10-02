@@ -43,7 +43,9 @@ commit call ``pytest`` directly in ``.githooks/pre-commit``.
 Step outputs are written to ``code_health/<step>.log`` per FOUNDATION §13
 so downstream tooling can read the latest results without re-running.
 Every run also times each step (monotonic clock) and writes the per-step
-report to ``code_health/precommit_timing.log`` — newest run overwrites.
+report to ``code_health/precommit_timing.log`` — newest full run overwrites;
+a ``--only`` run writes ``code_health/precommit_only_timing.log`` instead, so
+a partial run never replaces the full-run evidence a wrap-up reads.
 
 Usage:
 
@@ -113,6 +115,12 @@ from forge.git_utils import (
 from forge.git_utils import repo_root as get_repo_root
 from forge.install_claudemd import foundation_matches_installed
 from forge.pr_delta import REGEN_COMMANDS
+from forge.regen_docs import (
+    API_DIGEST_DOC,
+    CLI_REFERENCE_DOC,
+    record_regenerated,
+    regen_decisions,
+)
 from forge.run_context import is_ci, is_non_interactive
 from forge.smart_test import lifecycle as _lifecycle
 from forge.version_surfaces import (
@@ -1080,13 +1088,6 @@ def step_layering(repo_root: Path) -> StepResult:
     return StepResult(name="layering", passed=passed, output=output)
 
 
-# The api-digest doc path — shared by the non-blocking auto-writer
-# (:data:`_REGEN_DOCS`) and the opt-in blocking drift gate
-# (:func:`step_api_digest_check`) so the two never disagree on which file
-# they operate over.
-_API_DIGEST_DOC = "docs/api-digest.md"
-
-
 def step_api_digest_check(repo_root: Path) -> StepResult:
     """Run ``forge-gen-api-digest --check`` — api-digest drift guard (opt-in).
 
@@ -1119,11 +1120,11 @@ def step_api_digest_check(repo_root: Path) -> StepResult:
     Raises:
         SystemExit: If ``forge-gen-api-digest`` is not on PATH.
     """
-    if not (repo_root / _API_DIGEST_DOC).exists():
+    if not (repo_root / API_DIGEST_DOC).exists():
         return StepResult(
             name="api_digest_check",
             passed=True,
-            output=f"(no {_API_DIGEST_DOC} — skipped)",
+            output=f"(no {API_DIGEST_DOC} — skipped)",
             skipped=True,
         )
     require_cli("forge-gen-api-digest", caller="forge-precommit")
@@ -1131,11 +1132,6 @@ def step_api_digest_check(repo_root: Path) -> StepResult:
         [*REGEN_COMMANDS["docs/api-digest.md"], "--check"], cwd=repo_root
     )
     return StepResult(name="api_digest_check", passed=passed, output=output)
-
-
-# The cli-reference doc path — shared reference for the opt-in drift gate
-# so future writers and the gate never disagree on which file they cover.
-_CLI_REFERENCE_DOC = "docs/cli-reference.md"
 
 
 def step_cli_reference_check(repo_root: Path) -> StepResult:
@@ -1160,11 +1156,11 @@ def step_cli_reference_check(repo_root: Path) -> StepResult:
     Raises:
         SystemExit: If ``forge-gen-cli-reference`` is not on PATH.
     """
-    if not (repo_root / _CLI_REFERENCE_DOC).exists():
+    if not (repo_root / CLI_REFERENCE_DOC).exists():
         return StepResult(
             name="cli_reference_check",
             passed=True,
-            output=f"(no {_CLI_REFERENCE_DOC} — skipped)",
+            output=f"(no {CLI_REFERENCE_DOC} — skipped)",
             skipped=True,
         )
     require_cli("forge-gen-cli-reference", caller="forge-precommit")
@@ -1989,7 +1985,7 @@ def step_doc_consistency(repo_root: Path) -> StepResult:
 # off by default), so it stays here too — the non-blocking auto-write is the
 # always-on baseline, the gate the strict superset a repo can enable.
 _REGEN_DOCS: tuple[tuple[str, str], ...] = tuple(
-    (REGEN_COMMANDS[rel][0], rel) for rel in (_API_DIGEST_DOC, _CLI_REFERENCE_DOC)
+    (REGEN_COMMANDS[rel][0], rel) for rel in (API_DIGEST_DOC, CLI_REFERENCE_DOC)
 )
 
 
@@ -2005,6 +2001,11 @@ def step_regen_docs(repo_root: Path) -> StepResult:
     ``git add`` the result into the commit. Only docs that **already exist**
     are touched (sync, never bootstrap a surprise tracked file in a consumer
     repo). A generator crash warns rather than refusing the commit.
+
+    A doc whose inputs are unchanged since its last successful build is
+    skipped, with one output line per doc saying which and why; the
+    decision and the per-clone record of past builds (under ``.git/``)
+    live in :mod:`forge.regen_docs`.
 
     Args:
         repo_root: Git repo root.
@@ -2047,8 +2048,20 @@ def step_regen_docs(repo_root: Path) -> StepResult:
             ),
             skipped=True,
         )
+    decisions, currents = regen_decisions(repo_root, targets)
+    sections = [
+        f"{d.rel}: {'regenerated' if d.regenerate else 'skipped'} — {d.reason}"
+        for d in decisions
+    ]
+    targets = [(d.cli, d.rel) for d in decisions if d.regenerate]
+    if not targets:
+        return StepResult(
+            name="regen_docs",
+            passed=True,
+            output="\n".join(sections),
+            skipped=True,
+        )
     passed = True
-    sections: list[str] = []
     # Stale-install advisory: forge-gen-cli-reference discovers CLIs from
     # INSTALLED entry points, and the healing steps (auto_rebuild,
     # env_sync) self-skip non-interactively — so a commit adding a
@@ -2069,13 +2082,19 @@ def step_regen_docs(repo_root: Path) -> StepResult:
     # with several forge checkouts the bare name can resolve to another
     # checkout's older generator, which rewrites the doc from stale
     # knowledge while this step reports success.
-    for cli, _rel in targets:
+    built: list[str] = []
+    for cli, rel in targets:
         ok, output = _run(forge_cli_argv(cli, caller="forge-precommit"), cwd=repo_root)
         passed = passed and ok
+        if ok:
+            built.append(rel)
         sections.append(f"$ {cli}\n{output.strip() or '(no output)'}")
     restaged = stage_modified_paths(repo_root, [rel for _, rel in targets])
     if restaged:
         sections.append("Re-staged: " + ", ".join(restaged))
+    # Recorded only after a successful generate + re-stage: a failed or
+    # skipped doc keeps its old entry, so the next commit retries it.
+    record_regenerated(repo_root, built, currents)
     return StepResult(
         name="regen_docs",
         passed=passed,
@@ -2953,7 +2972,10 @@ def run_all(
 
     Each invoked step is wall-clocked (monotonic) into its result's
     ``elapsed_s``, and the run's per-step timing report is (re)written to
-    ``code_health/precommit_timing.log`` before returning.
+    ``code_health/precommit_timing.log`` before returning — or, for an
+    ``only`` run, to ``code_health/precommit_only_timing.log``: a partial
+    run must never replace the full-run record that readers treat as the
+    whole battery's result.
 
     Args:
         repo_root: Override the auto-detected git repo root. Useful in tests.
@@ -2986,7 +3008,8 @@ def run_all(
             _print_step_line(result)
         _write_log(root, result)
         results.append(result)
-    write_step_log(root, "precommit_timing", _format_timing_log(results))
+    timing_log = "precommit_only_timing" if only else "precommit_timing"
+    write_step_log(root, timing_log, _format_timing_log(results))
     return results
 
 
@@ -3139,6 +3162,60 @@ def freshness_verdicts(root: Path) -> dict[str, str]:
     }
 
 
+_PASSING_MARKERS = frozenset({"PASS", "WARN", "SKIP"})
+# Freshness verdicts under which a log is NOT evidence for the current
+# tree. One definition: `verdict()` fails on them and the PR wrap-up marks
+# them unverified, so the two can never disagree about the same log.
+NOT_VERIFIED = frozenset({"stale", "unstamped", "unknown"})
+
+
+def verdict(root: Path) -> tuple[bool, list[str]]:
+    """Return whether every enabled step passed on the current tree.
+
+    The mechanical answer to "did pre-commit pass here?" — read from the
+    full-run timing log and the logs' freshness, never from anyone's
+    summary of them. A step passes only when the last full run recorded
+    PASS, WARN or SKIP for it and neither that run nor the step's own log
+    describes another tree; an enabled step the run never reached fails.
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        ``(passed, lines)`` — one line per finding (``STALE``/``MISSING``/
+        ``FAIL``/the step's marker), ending ``verdict: PASS`` or
+        ``verdict: FAIL``.
+    """
+    verdicts = freshness_verdicts(root)
+    timing = root / "code_health" / "precommit_timing.log"
+    markers = (
+        timing_markers(timing.read_text(encoding="utf-8")) if timing.is_file() else {}
+    )
+    lines: list[str] = []
+    ok = True
+    if verdicts.get("precommit_timing") != "fresh":
+        ok = False
+        lines.append("STALE precommit_timing (last full run describes another tree)")
+    for step in resolve_steps(root):
+        marker = markers.get(step.name)
+        if marker is None:
+            ok = False
+            lines.append(f"MISSING {step.name}")
+            continue
+        if marker not in _PASSING_MARKERS:
+            ok = False
+            lines.append(f"FAIL {step.name}")
+            continue
+        lines.append(f"{marker} {step.name}")
+        # A skipped step checked nothing on this tree, so its log is a
+        # leftover from an earlier run, not evidence that went stale.
+        if marker != "SKIP" and verdicts.get(step.name) in NOT_VERIFIED:
+            ok = False
+            lines.append(f"STALE {step.name}")
+    lines.append(f"verdict: {'PASS' if ok else 'FAIL'}")
+    return ok, lines
+
+
 def _report_freshness(only: list[str], *, as_json: bool) -> int:
     """Report each ``code_health/`` log's freshness against the working tree.
 
@@ -3237,12 +3314,27 @@ def main() -> int:
             "log. Always exits 0."
         ),
     )
+    parser.add_argument(
+        "--verdict",
+        action="store_true",
+        help=(
+            "Run no steps: print each enabled step's result from the last "
+            "full run and exit 1 unless every one passed (PASS/WARN/SKIP) "
+            "and that run and the step logs describe the current tree. "
+            "Paste its output instead of summarising pre-commit results."
+        ),
+    )
     args = parser.parse_args()
 
-    # A read-only report: it must not reach the wip-sync banner or the
+    # Read-only reports: they must not reach the wip-sync banner or the
     # step-forcing environment below.
     if args.freshness:
         return _report_freshness(_split_csv(args.only), as_json=args.json)
+    if args.verdict:
+        passed, lines = verdict(get_repo_root())
+        for line in lines:
+            emit(line)
+        return 0 if passed else 1
 
     if os.environ.get("FORGE_WIP_SYNC") == "1":
         emit(

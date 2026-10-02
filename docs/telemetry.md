@@ -171,7 +171,9 @@ events, tool name and `duration_ms` on the tool events. A second writer,
 the `block_fixer_recon` hook, appends one `precommit_full_run` line per
 full `forge-precommit` it lets `forge:precommit-fixer` run — the
 three-run cap made mechanical, and the profiler's primary source for
-cap breaches. Hook payloads are documented by Claude Code, so the ledger
+cap breaches. A third, `require_fixer_verdict`, appends one
+`verdict_block` line when it refuses a precommit-fixer hand-back whose
+`forge-precommit --verdict` fails — at most once per agent run. Hook payloads are documented by Claude Code, so the ledger
 is the stable source;
 `FORGE_NO_AGENT_TIMING=1` switches the hook off. The hook fires on every
 tool call, so its cost is measured, not assumed: one `jq` pass plus one

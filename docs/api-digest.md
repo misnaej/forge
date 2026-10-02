@@ -609,6 +609,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Shared GitHub comment plumbing for forge's PR-comment CLIs._
 
+- `_normalise(text: str) -> str` _(internal)_ — Return *text* folded for matching: marks and invisibles dropped, lowercased.
 - `class ValidationError` — Raised when PR-comment content fails a FOUNDATION rule.
 - `_cites_repo_file(token: str) -> bool` _(internal)_ — Return whether *token* is shaped like a repo path forge mandates.
 - `_strip_token(raw: str) -> str` _(internal)_ — Shed quotes from both ends and sentence punctuation from the right.
@@ -910,7 +911,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_section(title: str, build: Callable[[], list[str]]) -> list[str]` _(internal)_ — Render one pack section, or its ``unavailable`` line when *build* fails.
 - `_item(label: str, build: Callable[[], list[str]]) -> list[str]` _(internal)_ — Render one bullet item, isolating its failure from its siblings.
 - `_pr_lines(root: Path, base: str, plan: Mapping[str, object], added: Sequence[str]) -> list[str]` _(internal)_ — Render the PR identity: head, base, mode, diff stat, added files.
-- `_timing_snapshot(root: Path) -> dict[str, str]` _(internal)_ — Return the step markers of the newest ``forge-precommit`` run.
+- `_timing_snapshot(root: Path, log_name: str = 'precommit_timing') -> dict[str, str]` _(internal)_ — Return the step markers of a ``forge-precommit`` timing log.
 - `_health_lines(root: Path) -> list[str]` _(internal)_ — Render each log's freshness beside the latest pre-commit step marker.
 - `_audit_result(root: Path, name: str, current: str | None) -> list[str]` _(internal)_ — Run one audit at changed scope and read its findings back.
 - `_reported_audit(root: Path, name: str, current: str | None) -> list[str]` _(internal)_ — Report an audit the pack does not run: its log's freshness and count.
@@ -1090,6 +1091,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult]) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
 - `_forced_steps(only: list[str]) -> Iterator[None]` _(internal)_ — Force explicitly named steps to run, then restore the environment.
 - `freshness_verdicts(root: Path) -> dict[str, str]` — Return each ``code_health/`` log's freshness verdict against the working tree.
+- `verdict(root: Path) -> tuple[bool, list[str]]` — Return whether every enabled step passed on the current tree.
 - `_report_freshness(only: list[str], *, as_json: bool) -> int` _(internal)_ — Report each ``code_health/`` log's freshness against the working tree.
 - `main() -> int` — CLI entry point.
 
@@ -1109,6 +1111,23 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_render_changelog(repo_root: Path, version: str, *, mid_merge: bool) -> tuple[str, str | None]` _(internal)_ — Compute the changelog half of the rebump without touching disk.
 - `rebump(repo_root: Path) -> RebumpOutcome` — Resolve the rolling-next version slot and changelog stack, then stage.
 - `main() -> int` — Run the rebump against the current directory's repo.
+
+## `forge.regen_docs`
+
+> _Decide when the generated docs must be regenerated at commit time._
+
+- `class RegenDecision` — Whether one generated doc is rebuilt this commit, and why.
+- `class RegenSignals` — What :func:`decide_regen` compares for one generated doc.
+- `decide_regen(rel: str, cli: str, signals: RegenSignals) -> RegenDecision` — Decide whether *rel* must be regenerated; the first matching reason wins.
+- `record_path(repo_root: Path) -> Path | None` — Return this checkout's regeneration-record path, ``None`` outside git.
+- `load_record(repo_root: Path) -> dict[str, dict[str, str]]` — Load the regeneration record for the checkout.
+- `save_record(repo_root: Path, record: dict[str, dict[str, str]]) -> None` — Write the regeneration record atomically; a no-op outside git.
+- `index_blobs(repo_root: Path) -> dict[str, str]` — Map every indexed path to its staged blob sha (one ``git ls-files -s``).
+- `is_forge_repo(repo_root: Path) -> bool` — Report whether the repo is forge itself (its CLIs come from this tree).
+- `regen_inputs(repo_root: Path, rel: str, blobs: dict[str, str] | None = None) -> str` — Fingerprint everything *rel* is built from, from the index.
+- `forge_version() -> str` — Return the installed forge version, or ``""`` when unknowable.
+- `regen_decisions(repo_root: Path, targets: list[tuple[str, str]]) -> tuple[list[RegenDecision], dict[str, dict[str, str]]]` — Decide each target doc and return the inputs needed to record a build.
+- `record_regenerated(repo_root: Path, built: list[str], currents: dict[str, dict[str, str]]) -> None` — Record the docs that were just regenerated and re-staged successfully.
 
 ## `forge.release`
 

@@ -91,7 +91,7 @@ edit `.githooks/pre-commit` directly. No plugin system, no config file.
 | **Git hooks** (drop-in, no Claude required) | `.githooks/pre-commit` (dispatcher), `.githooks/post-merge` + `.githooks/post-checkout` (auto-warn on FOUNDATION.md drift) |
 | **Process docs** | `docs/security.md`, `docs/audit-pack.md`, `docs/cli-reference.md` (generated CLI reference), `docs/api-digest.md` (generated index of all top-level functions/classes, public API + internal helpers); foundation engineering principles at `FOUNDATION.md` |
 | **Claude Code plugin** (optional) | Agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, `design-checker`, `docs-types-checker`, `security-checker`, `issue-triage`, `perf-optimizer`, `weekly-summary`, `knowledge-search`, `test-advisor`, `test-writer`); skills (`commit`, `pr`, `pr-comments`, `next`, `triage`, `plan-issue`, `plan-batch`, `sentinel`, `weekly`, `fix`, `test`, `c4`, `memory-audit`, `smart-test`, `report-to-forge`, `perf`); Claude Code hooks (`block_protected_branches`, `block_force_push`, `block_git_rebase`, `block_git_destructive`, `block_amend_pushed_commit`, `block_pr_merge`, `block_branch_deletion`, `block_no_verify`, `block_install_deps`, `block_claude_attribution`, `block_continuation_delete`, `block_protected_files`, `check_commit_format`, `check_foundation_sync`, `keep_squash_comment_last`, `warn_pr_checks`, `warn_stale_wrapup`, `warn_generated_conflicts`, `block_raw_ruff`, `block_raw_git`, `block_raw_wrapup_post`,
-`block_fixer_recon`) |
+`block_fixer_recon`, `require_fixer_verdict`) |
 
 Everything in the first three rows is **Claude-independent** — works
 from any shell, CI, or IDE.
