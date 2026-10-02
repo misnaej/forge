@@ -514,11 +514,11 @@ class DocstringVerifier(ast.NodeVisitor):
         forbidden = set()
 
         # The Args block ends at the first unindented line — the next
-        # section header, whatever it is called. Matching header WORDS
-        # instead cut the block at a parameter named `notes` or `returns`
-        # and missed unlisted sections (`Warning:`, `See Also:`) whose
-        # entries then read as parameters. This relies on the docstring
-        # being dedented first: the only caller passes ast.get_docstring.
+        # section header, whatever it is called — so a parameter named
+        # like a header (`notes`, `returns`) cannot end it, and entries of
+        # any later section (`Warning:`, `See Also:`) are never read as
+        # parameters. This relies on the docstring being dedented first:
+        # the only caller passes ast.get_docstring.
         pattern = r"\n\s*Args?:\s*\n(.*?)(?=\n\S|\Z)"
         args_section = re.search(
             pattern,
