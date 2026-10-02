@@ -30,7 +30,8 @@ Code.
 ## Forge Package (`src/forge/`)
 
 1. **CLI Modules**
-   - precommit.py: `forge-precommit` — pre-commit dispatcher; most steps shell out to their own SRP CLI, a few (env_sync, pip_audit) run in-process for speed / single-invocation sharing; every run wall-clocks each step and writes `code_health/precommit_timing.log` (per-step elapsed + total, `elapsed_s` in `--json`)
+   - precommit.py: `forge-precommit` — pre-commit dispatcher; most steps shell out to their own SRP CLI, a few (env_sync, pip_audit) run in-process for speed / single-invocation sharing; every full run wall-clocks each step and writes `code_health/precommit_timing.log` (per-step elapsed + total, `elapsed_s` in `--json`; a `--only` run writes `precommit_only_timing.log`); `--verdict` reports whether every enabled step passed on the current tree
+   - regen_docs.py: when `regen_docs` must rebuild the generated docs — input fingerprints from index blob shas + the installed forge, compared with a per-clone record under `.git/forge/` of the last successful build
    - next_prep.py: `forge-next-prep` — refresh main, optional rolling-next tag bump, prune stale branches; used by `/next` skill
    - emergency.py: `forge-emergency` — one-shot deferred-verification bypass (start/status/consume/end): ledger issue first, gitignored sentinel, `forge-pr-create` consumes the single allowed `wrapup-mode: emergency` publication, retroactive verification closes the ledger after delivery; pre-commit and §2 hooks never relieved
    - rebump.py: `forge-rebump` — mechanical post-merge version-slot resolver: classifies a feature branch's bump intent from its fork-point manifest delta (merge stages mid-merge, merge-base on a clean tree), takes the next open slot above the latest tag, restacks/retitles the CHANGELOG in shared-heading mode (fragments mode: no-op), stages, never commits; refuses on unrelated conflicts

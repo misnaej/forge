@@ -4385,6 +4385,39 @@ def test_fixer_recon_allows_smart_test_depth_zero() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "command", ["forge-smart-test --depth 0", "forge-smart-test --depth=0"]
+)
+def test_fixer_recon_allows_both_depth_zero_spellings(command: str) -> None:
+    """Both the spaced and `=` spellings of depth 0 are allowed.
+
+    Args:
+        command: A depth-0 smart-test invocation.
+    """
+    options = HookOptions(agent_type="forge:precommit-fixer")
+    assert _run_hook(_FIXER_RECON, command, options=options) == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "forge-smart-test --depth 0 --depth full",
+        "forge-smart-test --depth 2 --depth 0",
+        "forge-smart-test --depth 0 --from-commit-message",
+        "forge-smart-test --depth 0 --coverage-json x.json",
+        "forge-smart-test --depth 0 > src/x.py",
+    ],
+)
+def test_fixer_recon_blocks_depth_zero_widened_by_extras(command: str) -> None:
+    """A later depth, extra flags or a redirect cannot widen the carve-out.
+
+    Args:
+        command: A depth-0 invocation with something extra attached.
+    """
+    options = HookOptions(agent_type="forge:precommit-fixer")
+    assert _run_hook(_FIXER_RECON, command, options=options) == 2
+
+
 def test_fixer_recon_still_blocks_deeper_smart_test_and_git_status() -> None:
     """Only depth 0 is carved out; deeper runs and bare `git status` stay blocked."""
     options = HookOptions(agent_type="forge:precommit-fixer")
@@ -4588,3 +4621,46 @@ def test_verdict_hook_blocks_once_when_forge_precommit_missing(tmp_path: Path) -
     again = _run_verdict_hook(tmp_path, env)
     assert again.returncode == 0
     assert "block" not in again.stdout
+
+
+_TYPECHECK_FAIL_OUTPUT = "PASS ruff\nFAIL typecheck\nverdict: FAIL"
+
+
+def test_verdict_hook_blocks_stuck_that_omits_first_failing_line(
+    tmp_path: Path,
+) -> None:
+    """STUCK plus `verdict: FAIL` is not honest without the first failing line."""
+    init_git_repo(tmp_path)
+    env = _verdict_env(tmp_path, exit_code=1, output=_TYPECHECK_FAIL_OUTPUT)
+    proc = _run_verdict_hook(
+        tmp_path, env, message="STUCK: cannot fix it.\nPASS ruff\nverdict: FAIL"
+    )
+    assert proc.returncode == 0
+    assert json.loads(proc.stdout)["decision"] == "block"
+    assert len(_verdict_blocks(tmp_path, "agent-1")) == 1
+
+
+def test_verdict_hook_allows_stuck_that_quotes_first_failing_line(
+    tmp_path: Path,
+) -> None:
+    """STUCK that pastes the first failing line and `verdict: FAIL` is allowed."""
+    init_git_repo(tmp_path)
+    env = _verdict_env(tmp_path, exit_code=1, output=_TYPECHECK_FAIL_OUTPUT)
+    proc = _run_verdict_hook(
+        tmp_path,
+        env,
+        message="STUCK: cannot fix it.\nFAIL typecheck\nverdict: FAIL",
+    )
+    assert proc.returncode == 0
+    assert "block" not in proc.stdout
+    assert _verdict_blocks(tmp_path, "agent-1") == []
+
+
+def test_verdict_hook_fails_open_when_ledger_unwritable(tmp_path: Path) -> None:
+    """If the block-once mark cannot be written, the stop is allowed, not looped."""
+    init_git_repo(tmp_path)
+    (tmp_path / "code_health").write_text("a file, not a directory\n")
+    env = _verdict_env(tmp_path, exit_code=1, output=_TYPECHECK_FAIL_OUTPUT)
+    proc = _run_verdict_hook(tmp_path, env, message="all done")
+    assert proc.returncode == 0
+    assert "block" not in proc.stdout

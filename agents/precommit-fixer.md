@@ -1,6 +1,6 @@
 ---
 name: precommit-fixer
-description: Read forge-precommit reports in code_health/ and dispatch fixes per failure type. Orchestrates docs-types-checker for docstrings, Edit for mechanical fixes, design-checker for complexity. forge-precommit is the only loop driver — one full run opens it, targeted --only runs re-verify (hard cap three full runs). Use before commit to clear pre-commit failures in one pass.
+description: Read forge-precommit reports in code_health/ and dispatch fixes per failure type. Orchestrates docs-types-checker for docstrings, Edit for mechanical fixes, design-checker for complexity. forge-precommit is the only loop driver — one full run opens it, targeted --only runs re-verify, one full run closes it (hard cap three full runs). Use before commit to clear pre-commit failures in one pass.
 tools:
   - Bash
   - Read
@@ -158,7 +158,9 @@ last Edit run bare `forge-precommit` once (it counts toward the cap),
 then `forge-precommit --verdict`. No Edit since the opening run → the
 opening run already is the closing one.
 
-**The cap is a ceiling, not a budget.** Three full runs remain the hard
+**The cap is a ceiling, not a budget.** The opening and closing runs use
+two of the three, leaving one spare for a fix that genuinely needs a full
+re-check mid-loop. Three full runs remain the hard
 limit and the hook refuses a fourth, but a run that uses one is doing it
 right. Hitting the cap with a step still failing, or seeing the **same
 finding set twice in a row**, means you are stuck: STOP and emit the

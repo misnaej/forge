@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 import pytest
 
-from forge import config, emergency, git_utils, precommit, version_surfaces
+from forge import config, emergency, git_utils, precommit, regen_docs, version_surfaces
 from forge.pip_audit_json import AuditRun
 from forge.smart_test import lifecycle as _lifecycle
 from tests.conftest import (
@@ -4247,7 +4247,7 @@ def _rg_record_bytes(repo: Path) -> bytes | None:
     Returns:
         Raw bytes of the record file, or ``None`` if it doesn't exist.
     """
-    path = precommit._regen_record_path(repo)
+    path = regen_docs.record_path(repo)
     assert path is not None
     return path.read_bytes() if path.exists() else None
 
@@ -4256,7 +4256,7 @@ _RG_CURRENT = {"forge_version": "1.0", "inputs": "aaa"}
 _RG_RECORDED = {"forge_version": "1.0", "inputs": "aaa", "doc_blob": "b1"}
 
 
-def _rg_decide(**overrides: object) -> precommit.RegenDecision:
+def _rg_decide(**overrides: object) -> regen_docs.RegenDecision:
     """Call decide_regen with test defaults and optional overrides.
 
     Args:
@@ -4273,10 +4273,10 @@ def _rg_decide(**overrides: object) -> precommit.RegenDecision:
         "doc_staged": False,
     }
     kwargs.update(overrides)
-    return precommit.decide_regen(
+    return regen_docs.decide_regen(
         _API_DOC,
         "forge-gen-api-digest",
-        precommit.RegenSignals(**kwargs),  # type: ignore[arg-type]
+        regen_docs.RegenSignals(**kwargs),  # type: ignore[arg-type]
     )
 
 
@@ -4335,19 +4335,19 @@ def test_decide_regen_first_match_wins_ordering() -> None:
 def test_regen_inputs_is_stable_sha256_hex(tmp_path: Path) -> None:
     """Inputs are a deterministic sha256 hex digest per doc."""
     repo = _rg_repo(tmp_path)
-    first = precommit._regen_inputs(repo, _API_DOC)
+    first = regen_docs.regen_inputs(repo, _API_DOC)
     assert re.fullmatch(r"[0-9a-f]{64}", first)
-    assert precommit._regen_inputs(repo, _API_DOC) == first
+    assert regen_docs.regen_inputs(repo, _API_DOC) == first
 
 
 def test_regen_inputs_api_digest_ignores_file_outside_roots(tmp_path: Path) -> None:
     """A tracked file the digest would not scan does not move the inputs."""
     repo = _rg_repo(tmp_path)
-    before = precommit._regen_inputs(repo, _API_DOC)
+    before = regen_docs.regen_inputs(repo, _API_DOC)
     (repo / "scripts" / "other.py").write_text("y = 2\n")
     (repo / "README.md").write_text("hi\n")
     _rg_git(repo, "add", "-A")
-    assert precommit._regen_inputs(repo, _API_DOC) == before
+    assert regen_docs.regen_inputs(repo, _API_DOC) == before
 
 
 @pytest.mark.parametrize("change", ["edit", "add", "delete", "rename", "pyproject"])
@@ -4360,7 +4360,7 @@ def test_regen_inputs_api_digest_tracks_root_and_pyproject_changes(
         change: Kind of change applied to the repo.
     """
     repo = _rg_repo(tmp_path)
-    before = precommit._regen_inputs(repo, _API_DOC)
+    before = regen_docs.regen_inputs(repo, _API_DOC)
     src = repo / "src" / "pkg"
     if change == "edit":
         (src / "a.py").write_text('"""A2."""\n')
@@ -4375,7 +4375,7 @@ def test_regen_inputs_api_digest_tracks_root_and_pyproject_changes(
             (repo / "pyproject.toml").read_text() + "\n# touched\n"
         )
     _rg_git(repo, "add", "-A")
-    assert precommit._regen_inputs(repo, _API_DOC) != before
+    assert regen_docs.regen_inputs(repo, _API_DOC) != before
 
 
 def test_regen_inputs_cli_reference_ignores_consumer_sources(tmp_path: Path) -> None:
@@ -4384,14 +4384,14 @@ def test_regen_inputs_cli_reference_ignores_consumer_sources(tmp_path: Path) -> 
     (repo / "src" / "forge").mkdir()
     (repo / "src" / "forge" / "m.py").write_text("a = 1\n")
     _rg_git(repo, "add", "-A")
-    before = precommit._regen_inputs(repo, _CLI_DOC)
+    before = regen_docs.regen_inputs(repo, _CLI_DOC)
     (repo / "src" / "forge" / "m.py").write_text("a = 2\n")
     (repo / "src" / "pkg" / "a.py").write_text("z = 1\n")
     (repo / "pyproject.toml").write_text(
         (repo / "pyproject.toml").read_text() + "\n# touched\n"
     )
     _rg_git(repo, "add", "-A")
-    assert precommit._regen_inputs(repo, _CLI_DOC) == before
+    assert regen_docs.regen_inputs(repo, _CLI_DOC) == before
 
 
 def test_regen_inputs_cli_reference_tracks_src_forge_in_forge_scripts_repo(
@@ -4402,27 +4402,27 @@ def test_regen_inputs_cli_reference_tracks_src_forge_in_forge_scripts_repo(
     (repo / "src" / "forge").mkdir()
     (repo / "src" / "forge" / "m.py").write_text("a = 1\n")
     _rg_git(repo, "add", "-A")
-    before = precommit._regen_inputs(repo, _CLI_DOC)
+    before = regen_docs.regen_inputs(repo, _CLI_DOC)
     (repo / "src" / "forge" / "data").mkdir()
     (repo / "src" / "forge" / "data" / "note.md").write_text("not python\n")
     _rg_git(repo, "add", "-A")
-    assert precommit._regen_inputs(repo, _CLI_DOC) == before
+    assert regen_docs.regen_inputs(repo, _CLI_DOC) == before
     (repo / "src" / "forge" / "m.py").write_text("a = 2\n")
     _rg_git(repo, "add", "-A")
-    after_edit = precommit._regen_inputs(repo, _CLI_DOC)
+    after_edit = regen_docs.regen_inputs(repo, _CLI_DOC)
     assert after_edit != before
     (repo / "pyproject.toml").write_text(
         (repo / "pyproject.toml").read_text() + "\n# touched\n"
     )
     _rg_git(repo, "add", "-A")
-    assert precommit._regen_inputs(repo, _CLI_DOC) != after_edit
+    assert regen_docs.regen_inputs(repo, _CLI_DOC) != after_edit
 
 
 def test_regen_record_path_follows_git_path(tmp_path: Path) -> None:
     """The record lives at `git rev-parse --git-path forge/regen_docs.json`."""
     repo = _rg_repo(tmp_path)
     expected = _rg_git(repo, "rev-parse", "--git-path", "forge/regen_docs.json").strip()
-    path = precommit._regen_record_path(repo)
+    path = regen_docs.record_path(repo)
     assert path is not None
     assert path.resolve() == (repo / expected).resolve()
 
@@ -4431,25 +4431,25 @@ def test_regen_record_path_is_none_outside_git(tmp_path: Path) -> None:
     """No repository → no record path, and saving is a harmless no-op."""
     plain = tmp_path / "plain"
     plain.mkdir()
-    assert precommit._regen_record_path(plain) is None
-    assert precommit._load_regen_record(plain) == {}
-    precommit._save_regen_record(plain, {_API_DOC: {"inputs": "x"}})
-    assert precommit._load_regen_record(plain) == {}
+    assert regen_docs.record_path(plain) is None
+    assert regen_docs.load_record(plain) == {}
+    regen_docs.save_record(plain, {_API_DOC: {"inputs": "x"}})
+    assert regen_docs.load_record(plain) == {}
 
 
 def test_regen_record_round_trips_and_is_per_worktree(tmp_path: Path) -> None:
     """A saved record loads back; a linked worktree has its own, separate record."""
     repo = _rg_repo(tmp_path)
     record = {_API_DOC: {"forge_version": "1", "inputs": "i", "doc_blob": "b"}}
-    precommit._save_regen_record(repo, record)
-    assert precommit._load_regen_record(repo) == record
+    regen_docs.save_record(repo, record)
+    assert regen_docs.load_record(repo) == record
     linked = tmp_path / "linked"
     _rg_git(repo, "worktree", "add", "-q", "-b", "other", str(linked))
-    main_path = precommit._regen_record_path(repo)
-    linked_path = precommit._regen_record_path(linked)
+    main_path = regen_docs.record_path(repo)
+    linked_path = regen_docs.record_path(linked)
     assert linked_path is not None
     assert main_path != linked_path
-    assert precommit._load_regen_record(linked) == {}
+    assert regen_docs.load_record(linked) == {}
 
 
 @pytest.mark.parametrize("content", ["{not json", "[1, 2]", '{"docs/x.md": "str"}'])
@@ -4462,11 +4462,11 @@ def test_load_regen_record_corrupt_or_wrong_schema_is_empty(
         content: Raw text written to the record file.
     """
     repo = _rg_repo(tmp_path)
-    path = precommit._regen_record_path(repo)
+    path = regen_docs.record_path(repo)
     assert path is not None
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
-    assert precommit._load_regen_record(repo) == {}
+    assert regen_docs.load_record(repo) == {}
 
 
 def test_step_regen_docs_first_run_regenerates_both_and_records(
@@ -4599,11 +4599,11 @@ def test_step_regen_docs_forge_version_change_regenerates(
     repo = _rg_repo(tmp_path)
     launched = _rg_stub_generators(monkeypatch)
     precommit.step_regen_docs(repo)
-    record = precommit._load_regen_record(repo)
+    record = regen_docs.load_record(repo)
     assert record
     for entry in record.values():
         entry["forge_version"] = "0.0.0-other"
-    precommit._save_regen_record(repo, record)
+    regen_docs.save_record(repo, record)
     launched.clear()
     precommit.step_regen_docs(repo)
     assert sorted(launched) == [_API_MODULE, _CLI_MODULE]
@@ -4663,7 +4663,7 @@ def test_step_regen_docs_corrupt_record_regenerates(
     repo = _rg_repo(tmp_path)
     launched = _rg_stub_generators(monkeypatch)
     precommit.step_regen_docs(repo)
-    path = precommit._regen_record_path(repo)
+    path = regen_docs.record_path(repo)
     assert path is not None
     path.write_text("{corrupt")
     launched.clear()
@@ -7685,6 +7685,22 @@ def test_verdict_stale_step_log_fails(
     assert lines[-1] == "verdict: FAIL"
 
 
+def test_verdict_unstamped_step_log_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A passing step whose own log has no produced-at stamp is not verified."""
+    init_git_repo(tmp_path)
+    rows = _all_rows(tmp_path)
+    _verdict_repo(tmp_path, monkeypatch, rows=rows)
+    (tmp_path / "code_health" / "ruff.log").write_text("no stamp here\n")
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is False
+    assert "STALE ruff" in lines
+    assert lines[-1] == "verdict: FAIL"
+
+
 def test_verdict_skipped_step_with_old_log_is_not_stale(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -7776,3 +7792,46 @@ def test_run_all_without_only_still_writes_full_log(
 
     assert (tmp_path / "code_health" / "precommit_timing.log").is_file()
     assert not (tmp_path / "code_health" / "precommit_only_timing.log").exists()
+
+
+def _staged_doc_repo(tmp_path: Path, rel: str) -> Path:
+    """Init a repo with *rel* written and staged.
+
+    Args:
+        tmp_path: Repo root to initialise.
+        rel: Repo-relative doc path.
+
+    Returns:
+        The repo root.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / rel).write_text("generated v1\n")
+    subprocess.run(["git", "add", rel], cwd=tmp_path, check=True)
+    return tmp_path
+
+
+def test_record_regenerated_skips_doc_not_restaged(tmp_path: Path) -> None:
+    """A doc whose worktree differs from its index blob is not recorded."""
+    rel = "api.md"
+    repo = _staged_doc_repo(tmp_path, rel)
+    (repo / rel).write_text("generated v2, never staged\n")
+
+    regen_docs.record_regenerated(
+        repo, [rel], {rel: {"forge_version": "1", "inputs": "x"}}
+    )
+
+    assert rel not in regen_docs.load_record(repo)
+
+
+def test_record_regenerated_records_doc_matching_index_blob(tmp_path: Path) -> None:
+    """A doc whose worktree equals its index blob is recorded with that blob."""
+    rel = "api.md"
+    repo = _staged_doc_repo(tmp_path, rel)
+
+    regen_docs.record_regenerated(
+        repo, [rel], {rel: {"forge_version": "1", "inputs": "x"}}
+    )
+
+    entry = regen_docs.load_record(repo)[rel]
+    assert entry["doc_blob"] == regen_docs.index_blobs(repo)[rel]
+    assert entry["inputs"] == "x"

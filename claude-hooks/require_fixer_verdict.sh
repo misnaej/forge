@@ -10,7 +10,8 @@
 #
 #   verdict passes                                  → allow the stop
 #   verdict fails, final message reports STUCK with
-#   the failing verdict pasted ("verdict: FAIL")     → allow (honest hand-back)
+#   the failing verdict pasted ("verdict: FAIL" and
+#   its first failing line)                         → allow (honest hand-back)
 #   verdict fails otherwise, first stop             → block once, the real
 #                                                     verdict as the reason
 #   same agent stops again                          → allow (never loops)
@@ -55,15 +56,32 @@ fi
 [ "$RC" = 0 ] && exit 0
 
 LAST=$(jq -r '.last_assistant_message // ""' <<< "$INPUT" 2>/dev/null) || LAST=""
+# An honest STUCK hand-back carries the real verdict: it must name STUCK,
+# end the pasted verdict with "verdict: FAIL", and contain the first
+# failing line of the verdict computed here — the two words alone are
+# not enough.
+FIRST_BAD=$(printf '%s\n' "$VERDICT" | grep -m1 -E '^(FAIL|MISSING|STALE) ' || true)
 case "$LAST" in
-    *STUCK*"verdict: FAIL"*|*"verdict: FAIL"*STUCK*) exit 0 ;;
+    *STUCK*)
+        case "$LAST" in
+            *"verdict: FAIL"*)
+                if [ -z "$FIRST_BAD" ] || [[ "$LAST" == *"$FIRST_BAD"* ]]; then
+                    exit 0
+                fi
+                ;;
+        esac
+        ;;
 esac
 
-mkdir -p "$ROOT/code_health" 2>/dev/null || true
+# The block-once mark must be on disk BEFORE blocking: a block whose mark
+# cannot be written would recur on every stop and never end, so in that
+# case the stop is allowed instead (fail open, never loop).
+mkdir -p "$ROOT/code_health" 2>/dev/null || exit 0
 LINE=$(jq -cn --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg s "$SESSION_ID" \
     --arg a "$AGENT_ID" --arg t "$AGENT_TYPE" \
     '{ts: $ts, event: "verdict_block", session_id: $s, agent_id: $a, agent_type: $t}' \
-    2>/dev/null) && printf '%s\n' "$LINE" >> "$LEDGER" 2>/dev/null || true
+    2>/dev/null) || exit 0
+printf '%s\n' "$LINE" >> "$LEDGER" 2>/dev/null || exit 0
 
 REASON="The pre-commit verdict does not pass, so this hand-back cannot report success. Fix what it names and re-run forge-precommit, or hand back a STUCK block with this output pasted verbatim:
 $VERDICT"

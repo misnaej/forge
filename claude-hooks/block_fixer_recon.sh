@@ -104,10 +104,16 @@ _segment_ok() {
         cd|forge-precommit|fix-forge-ruff|verify-forge-docstrings|verify-forge-repo-structure|verify-forge-test-naming|verify-forge-manifest|verify-forge-plugin-version)
             return 0 ;;
         forge-smart-test)
-            # Depth 0 only: the tests of the files just edited — the
-            # "re-run the tests a code edit touches" rule made executable,
-            # never a wide sweep.
-            case " $seg " in *" --depth 0 "*|*" --depth=0 "*) return 0 ;; esac
+            # Exactly `--depth 0` and nothing else: the tests of the files
+            # just edited — the "re-run the tests a code edit touches"
+            # rule made executable. Matching the whole segment (not a
+            # substring) keeps a later `--depth full`, extra flags or a
+            # redirect from widening it into a sweep.
+            norm=$(printf '%s' "$seg" | tr -s '[:space:]' ' ')
+            norm="${norm% }"
+            case "$norm" in
+                "forge-smart-test --depth 0"|"forge-smart-test --depth=0") return 0 ;;
+            esac
             return 1 ;;
         pytest)
             case "$seg" in *::*) return 0 ;; esac

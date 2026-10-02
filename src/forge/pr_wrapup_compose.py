@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 from forge.pr_delta import VERIFIED_AT_RE
-from forge.precommit import timing_markers
+from forge.precommit import NOT_VERIFIED, timing_markers
 
 
 if TYPE_CHECKING:
@@ -39,7 +39,6 @@ REPORTER_SECTIONS: Final[tuple[tuple[str, str], ...]] = (
     ("Documentation Check", "docs-types-checker"),
 )
 
-_NOT_VERIFIED: Final[frozenset[str]] = frozenset({"stale", "unstamped", "unknown"})
 _FAILED_CONCLUSIONS: Final[frozenset[str]] = frozenset(
     {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}
 )
@@ -282,7 +281,7 @@ def _code_quality_rows(
             continue
         if marker == "FAIL":
             failed.append(f"❌ {name}")
-        elif verdicts.get(name) in _NOT_VERIFIED:
+        elif verdicts.get(name) in NOT_VERIFIED:
             unverified.append(name)
         elif marker == "WARN":
             warned.append(f"⚠️ {name}")
@@ -308,7 +307,7 @@ def _pytest_part(pytest_line: str | None, pytest_verdict: str | None) -> str:
         return "❔ pytest"
     # A count from another tree says nothing about this one — not even a
     # failure — so it is not shown at all rather than shown with a caveat.
-    if pytest_verdict in _NOT_VERIFIED:
+    if pytest_verdict in NOT_VERIFIED:
         return "❔ pytest (no run at this tree)"
     if "failed" in pytest_line or "error" in pytest_line:
         return f"❌ pytest {pytest_line}"

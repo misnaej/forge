@@ -609,6 +609,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Shared GitHub comment plumbing for forge's PR-comment CLIs._
 
+- `_normalise(text: str) -> str` _(internal)_ — Return *text* folded for matching: NFKC, invisibles removed, lowercased.
 - `class ValidationError` — Raised when PR-comment content fails a FOUNDATION rule.
 - `_cites_repo_file(token: str) -> bool` _(internal)_ — Return whether *token* is shaped like a repo path forge mandates.
 - `_strip_token(raw: str) -> str` _(internal)_ — Shed quotes from both ends and sentence punctuation from the right.
@@ -1064,18 +1065,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the resolved scope (opt-in).
 - `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
-- `class RegenDecision` — Whether one generated doc is rebuilt this commit, and why.
-- `class RegenSignals` — What :func:`decide_regen` compares for one generated doc.
-- `decide_regen(rel: str, cli: str, signals: RegenSignals) -> RegenDecision` — Decide whether *rel* must be regenerated; the first matching reason wins.
-- `_regen_record_path(repo_root: Path) -> Path | None` _(internal)_ — Return this checkout's regeneration-record path, ``None`` outside git.
-- `_load_regen_record(repo_root: Path) -> dict[str, dict[str, str]]` _(internal)_ — Load the regeneration record for the checkout.
-- `_save_regen_record(repo_root: Path, record: dict[str, dict[str, str]]) -> None` _(internal)_ — Write the regeneration record atomically; a no-op outside git.
-- `_index_blobs(repo_root: Path) -> dict[str, str]` _(internal)_ — Map every indexed path to its staged blob sha (one ``git ls-files -s``).
-- `_is_forge_repo(repo_root: Path) -> bool` _(internal)_ — Report whether the repo is forge itself (its CLIs come from this tree).
-- `_regen_inputs(repo_root: Path, rel: str, blobs: dict[str, str] | None = None) -> str` _(internal)_ — Fingerprint everything *rel* is built from, from the index.
-- `_forge_version() -> str` _(internal)_ — Return the installed forge version, or ``""`` when unknowable.
-- `_regen_decisions(repo_root: Path, targets: list[tuple[str, str]]) -> tuple[list[RegenDecision], dict[str, dict[str, str]]]` _(internal)_ — Decide each target doc and return the inputs needed to record a build.
-- `_record_regenerated(repo_root: Path, built: list[str], currents: dict[str, dict[str, str]]) -> None` _(internal)_ — Record the docs that were just regenerated and re-staged successfully.
 - `step_regen_docs(repo_root: Path) -> StepResult` — Regenerate the otherwise-unwired generated docs and re-stage them.
 - `_vendored_documented_hashes(repo_root: Path) -> dict[str, str]` _(internal)_ — Parse ``VENDORED.md`` into a ``{filename: sha256}`` map.
 - `_sha256_file(path: Path) -> str` _(internal)_ — Return *path*'s SHA-256 hex digest, read in 64 KiB chunks.
@@ -1122,6 +1111,23 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_render_changelog(repo_root: Path, version: str, *, mid_merge: bool) -> tuple[str, str | None]` _(internal)_ — Compute the changelog half of the rebump without touching disk.
 - `rebump(repo_root: Path) -> RebumpOutcome` — Resolve the rolling-next version slot and changelog stack, then stage.
 - `main() -> int` — Run the rebump against the current directory's repo.
+
+## `forge.regen_docs`
+
+> _Decide when the generated docs must be regenerated at commit time._
+
+- `class RegenDecision` — Whether one generated doc is rebuilt this commit, and why.
+- `class RegenSignals` — What :func:`decide_regen` compares for one generated doc.
+- `decide_regen(rel: str, cli: str, signals: RegenSignals) -> RegenDecision` — Decide whether *rel* must be regenerated; the first matching reason wins.
+- `record_path(repo_root: Path) -> Path | None` — Return this checkout's regeneration-record path, ``None`` outside git.
+- `load_record(repo_root: Path) -> dict[str, dict[str, str]]` — Load the regeneration record for the checkout.
+- `save_record(repo_root: Path, record: dict[str, dict[str, str]]) -> None` — Write the regeneration record atomically; a no-op outside git.
+- `index_blobs(repo_root: Path) -> dict[str, str]` — Map every indexed path to its staged blob sha (one ``git ls-files -s``).
+- `is_forge_repo(repo_root: Path) -> bool` — Report whether the repo is forge itself (its CLIs come from this tree).
+- `regen_inputs(repo_root: Path, rel: str, blobs: dict[str, str] | None = None) -> str` — Fingerprint everything *rel* is built from, from the index.
+- `forge_version() -> str` — Return the installed forge version, or ``""`` when unknowable.
+- `regen_decisions(repo_root: Path, targets: list[tuple[str, str]]) -> tuple[list[RegenDecision], dict[str, dict[str, str]]]` — Decide each target doc and return the inputs needed to record a build.
+- `record_regenerated(repo_root: Path, built: list[str], currents: dict[str, dict[str, str]]) -> None` — Record the docs that were just regenerated and re-staged successfully.
 
 ## `forge.release`
 
