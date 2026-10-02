@@ -167,13 +167,15 @@ _FENCE_RE: Final[re.Pattern[str]] = re.compile(
 )
 
 # GitHub's closing keywords. Each issue needs its own keyword: in
-# `Closes #1, #2` only #1 is linked, so a bare `#N` never counts.
+# `Closes #1, #2` only #1 is linked, so a bare `#N` never counts. A line
+# may end in a full stop, comma or semicolon after the last number, as
+# GitHub accepts; anything else after it (prose) keeps the line unmatched.
 _CLOSING_KEYWORD: Final[str] = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
 _CLOSING_ITEM_RE: Final[re.Pattern[str]] = re.compile(
     rf"\b{_CLOSING_KEYWORD}\s+#(\d+)\b", re.IGNORECASE
 )
 _CLOSING_LINE_RE: Final[re.Pattern[str]] = re.compile(
-    rf"^{_CLOSING_KEYWORD}\s+#\d+(?:[\s,]+(?:{_CLOSING_KEYWORD}\s+)?#\d+)*$",
+    rf"^{_CLOSING_KEYWORD}\s+#\d+(?:[\s,]+(?:{_CLOSING_KEYWORD}\s+)?#\d+)*[.,;]*$",
     re.IGNORECASE,
 )
 

@@ -1398,6 +1398,90 @@ def test_raw_git_blocks_commit_creating_sequencer_verbs(
     assert _run_hook(_RAW_GIT, command) == expected_exit
 
 
+_COMMIT_AGENTS = ("git-commit-push", "forge:git-commit-push")
+
+
+@pytest.mark.parametrize("agent_type", _COMMIT_AGENTS)
+@pytest.mark.parametrize(("command", "expected_exit"), _SEQUENCER_CASES.items())
+def test_raw_git_commit_agent_gets_sequencer_rule_like_everyone(
+    agent_type: str, command: str, expected_exit: int
+) -> None:
+    """The commit agent's exemption covers commit/push only, not the sequencer.
+
+    revert/cherry-pick create commits without running pre-commit, so the
+    one agent allowed to commit is judged by the same sequencer verdicts as
+    every other caller.
+
+    Args:
+        agent_type: Name the commit agent identifies itself with.
+        command: A sequencer or unrelated git command.
+        expected_exit: The no-agent verdict for the same command.
+    """
+    options = HookOptions(agent_type=agent_type)
+    assert _run_hook(_RAW_GIT, command, options=options) == expected_exit
+
+
+@pytest.mark.parametrize("agent_type", _COMMIT_AGENTS)
+@pytest.mark.parametrize("command", ["git commit -m x", "git push origin feat"])
+def test_raw_git_commit_agent_may_commit_and_push(
+    agent_type: str, command: str
+) -> None:
+    """The commit agent keeps its sanctioned `git commit` / `git push`.
+
+    Args:
+        agent_type: Name the commit agent identifies itself with.
+        command: A plain commit or push.
+    """
+    assert _run_hook(_RAW_GIT, command, options=HookOptions(agent_type=agent_type)) == 0
+
+
+@pytest.mark.parametrize("agent_type", _COMMIT_AGENTS)
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git commit -m x && git revert HEAD",
+        "git push origin feat; git cherry-pick abc",
+    ],
+)
+def test_raw_git_commit_agent_mixed_chain_with_sequencer_blocked(
+    agent_type: str, command: str
+) -> None:
+    """An allowed commit/push does not shelter a chained revert/cherry-pick.
+
+    Args:
+        agent_type: Name the commit agent identifies itself with.
+        command: An allowed verb chained with a commit-creating sequencer verb.
+    """
+    assert _run_hook(_RAW_GIT, command, options=HookOptions(agent_type=agent_type)) == 2
+
+
+@pytest.mark.parametrize("agent_type", _COMMIT_AGENTS)
+def test_raw_git_fails_closed_without_anchor_lib_for_commit_agent(
+    agent_type: str, tmp_path: Path
+) -> None:
+    """A missing `git_anchor.sh` blocks even the commit agent (fail-closed).
+
+    Args:
+        agent_type: Name the commit agent identifies itself with.
+        tmp_path: Isolated directory standing in for a damaged plugin cache.
+    """
+    isolated_hook = tmp_path / _RAW_GIT
+    isolated_hook.write_bytes((_HOOKS_DIR / _RAW_GIT).read_bytes())
+    isolated_hook.chmod(0o755)
+    payload = json.dumps(
+        {"tool_input": {"command": "git commit -m x"}, "agent_type": agent_type}
+    )
+    proc = subprocess.run(
+        ["bash", str(isolated_hook)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 2
+    assert "anchor lib missing" in proc.stderr
+
+
 def test_rebase_blocks_env_var_prefix() -> None:
     """`GIT_DIR=x git rebase main` (inline env assignment) is blocked."""
     assert _run_hook(_REBASE, "GIT_DIR=/tmp/x git rebase main") == 2

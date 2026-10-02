@@ -1555,6 +1555,17 @@ def test_assembly_pr_body_manifest_less_names_post_merge_tagging(
     assert "forge-next-prep --tag" not in body
 
 
+def test_assembly_pr_body_does_not_claim_a_scheduled_run(tmp_path: Path) -> None:
+    """Releases are opened by hand via `forge-changelog release-pr`, never scheduled."""
+    plan = AssemblyPlan(
+        tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
+    )
+
+    body = changelog_fragments._assembly_pr_body(tmp_path, plan)
+
+    assert "Scheduled" not in body
+
+
 def test_assembly_pr_body_with_manifest_says_workflow_tags_merge(
     tmp_path: Path,
 ) -> None:

@@ -115,6 +115,31 @@ class Issue:
     description: str
 
 
+def _has_section(docstring: str, *names: str) -> bool:
+    """Return whether *docstring* has a section header named one of *names*.
+
+    A header must start its line: docstrings reach the verifier dedented
+    (``ast.get_docstring``), so real headers sit at column 0 while
+    parameter entries are indented — a parameter named ``returns`` or
+    ``yields`` is therefore never mistaken for a section. Case-insensitive,
+    so a lowercase ``returns:`` header still counts.
+
+    Args:
+        docstring: A dedented docstring.
+        *names: Accepted header names, e.g. ``"Returns", "Return"``.
+
+    Returns:
+        ``True`` when a matching header line exists.
+    """
+    alternatives = "|".join(re.escape(name) for name in names)
+    return (
+        re.search(
+            rf"^(?:{alternatives}):[ \t]*$", docstring, re.IGNORECASE | re.MULTILINE
+        )
+        is not None
+    )
+
+
 class DocstringVerifier(ast.NodeVisitor):
     """AST visitor to verify docstrings match function signatures.
 
@@ -513,13 +538,13 @@ class DocstringVerifier(ast.NodeVisitor):
         params = []
         forbidden = set()
 
-        # Look for Args: section
-        # Section headers should have minimal indentation (0-4 spaces)
-        pattern = (
-            r"\n\s*Args?:\s*\n(.*?)"
-            r"(?:\n {0,4}(?:Returns?|Yields?|Raises?|"
-            r"Notes?|Examples?|Attributes?):|\Z)"
-        )
+        # The Args block ends at the first unindented line — the next
+        # section header, whatever it is called — so a parameter named
+        # like a header (`notes`, `returns`) cannot end it, and entries of
+        # any later section (`Warning:`, `See Also:`) are never read as
+        # parameters. This relies on the docstring being dedented first:
+        # the only caller passes ast.get_docstring.
+        pattern = r"\n\s*Args?:\s*\n(.*?)(?=\n\S|\Z)"
         args_section = re.search(
             pattern,
             docstring,
@@ -583,9 +608,7 @@ class DocstringVerifier(ast.NodeVisitor):
         has_return_value = self._has_return_value(node)
 
         # Check if docstring has Returns section
-        has_returns_section = bool(
-            re.search(r"\n\s*Returns?:\s*\n", docstring, re.IGNORECASE),
-        )
+        has_returns_section = _has_section(docstring, "Returns", "Return")
 
         # If function returns None explicitly or has no return
         returns_none = self._explicitly_returns_none(node)
@@ -594,7 +617,7 @@ class DocstringVerifier(ast.NodeVisitor):
         # Matches "Returns:\n    None" with any amount of whitespace
         returns_none_documented = bool(
             re.search(
-                r"\n\s*Returns?:\s*\n\s*None\s*$",
+                r"^Returns?:[ \t]*\n\s*None\s*$",
                 docstring,
                 re.IGNORECASE | re.MULTILINE,
             ),
@@ -634,9 +657,7 @@ class DocstringVerifier(ast.NodeVisitor):
 
         if not has_return_value and has_returns_section and not returns_none:
             # This might be a generator with Yields instead
-            has_yields = bool(
-                re.search(r"\n\s*Yields?:\s*\n", docstring, re.IGNORECASE),
-            )
+            has_yields = _has_section(docstring, "Yields", "Yield")
             # Skip this check for abstract methods - they document returns
             # but have no implementation
             if not has_yields and not is_abstractmethod:
@@ -967,7 +988,7 @@ class DocstringVerifier(ast.NodeVisitor):
             is_method=False,
             is_classmethod=False,
         )
-        has_returns = "Returns:" in docstring or "Return:" in docstring
+        has_returns = _has_section(docstring, "Returns", "Return")
         if self._is_simple_test_fixture(node, set(sig_params)) and has_returns:
             func_name = node.name
 
