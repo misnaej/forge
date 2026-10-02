@@ -68,7 +68,7 @@ MUST have run first; you fail if the pre-commit hook finds violations.
    ```bash
    forge-precommit --freshness   # read-only verdict per log; runs no steps
    ```
-   Judge only the steps the latest run executed — the `PASS`, `WARN` and `FAIL` rows of `code_health/precommit_timing.log`; other logs are leftovers from earlier invocations. Stop per **Failure states** if a row reads `FAIL`, or `--freshness` reports that step's log `stale`, `unstamped` or `unknown`. `WARN` (non-blocking) and `n/a` (a step that checks the environment, not files) never stop.
+   Judge only the steps the latest full run executed — the `PASS`, `WARN` and `FAIL` rows of `code_health/precommit_timing.log` (a `--only` run writes `precommit_only_timing.log` instead); other logs are leftovers from earlier invocations. Stop per **Failure states** if a row reads `FAIL`, or `--freshness` reports that step's log `stale`, `unstamped` or `unknown`. `WARN` (non-blocking) and `n/a` (a step that checks the environment, not files) never stop.
 
    **Exception — a live emergency.** When `.forge-emergency` is present and unexpired, a `stale`, `unstamped` or `unknown` log does not stop you: commit and say so in the hand-back. Arming an emergency changes the tree itself, so it staled the very evidence this check demands — refusing there meant the bypass could not reach the commit it was armed for. A `FAIL` row still stops you, armed or not: the emergency defers verification, never a failure someone already found.
 

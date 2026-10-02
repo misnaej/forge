@@ -910,7 +910,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_section(title: str, build: Callable[[], list[str]]) -> list[str]` _(internal)_ — Render one pack section, or its ``unavailable`` line when *build* fails.
 - `_item(label: str, build: Callable[[], list[str]]) -> list[str]` _(internal)_ — Render one bullet item, isolating its failure from its siblings.
 - `_pr_lines(root: Path, base: str, plan: Mapping[str, object], added: Sequence[str]) -> list[str]` _(internal)_ — Render the PR identity: head, base, mode, diff stat, added files.
-- `_timing_snapshot(root: Path) -> dict[str, str]` _(internal)_ — Return the step markers of the newest ``forge-precommit`` run.
+- `_timing_snapshot(root: Path, log_name: str = 'precommit_timing') -> dict[str, str]` _(internal)_ — Return the step markers of a ``forge-precommit`` timing log.
 - `_health_lines(root: Path) -> list[str]` _(internal)_ — Render each log's freshness beside the latest pre-commit step marker.
 - `_audit_result(root: Path, name: str, current: str | None) -> list[str]` _(internal)_ — Run one audit at changed scope and read its findings back.
 - `_reported_audit(root: Path, name: str, current: str | None) -> list[str]` _(internal)_ — Report an audit the pack does not run: its log's freshness and count.
@@ -1064,6 +1064,18 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the resolved scope (opt-in).
 - `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
+- `class RegenDecision` — Whether one generated doc is rebuilt this commit, and why.
+- `class RegenSignals` — What :func:`decide_regen` compares for one generated doc.
+- `decide_regen(rel: str, cli: str, signals: RegenSignals) -> RegenDecision` — Decide whether *rel* must be regenerated; the first matching reason wins.
+- `_regen_record_path(repo_root: Path) -> Path | None` _(internal)_ — Return this checkout's regeneration-record path, ``None`` outside git.
+- `_load_regen_record(repo_root: Path) -> dict[str, dict[str, str]]` _(internal)_ — Load the regeneration record for the checkout.
+- `_save_regen_record(repo_root: Path, record: dict[str, dict[str, str]]) -> None` _(internal)_ — Write the regeneration record atomically; a no-op outside git.
+- `_index_blobs(repo_root: Path) -> dict[str, str]` _(internal)_ — Map every indexed path to its staged blob sha (one ``git ls-files -s``).
+- `_is_forge_repo(repo_root: Path) -> bool` _(internal)_ — Report whether the repo is forge itself (its CLIs come from this tree).
+- `_regen_inputs(repo_root: Path, rel: str, blobs: dict[str, str] | None = None) -> str` _(internal)_ — Fingerprint everything *rel* is built from, from the index.
+- `_forge_version() -> str` _(internal)_ — Return the installed forge version, or ``""`` when unknowable.
+- `_regen_decisions(repo_root: Path, targets: list[tuple[str, str]]) -> tuple[list[RegenDecision], dict[str, dict[str, str]]]` _(internal)_ — Decide each target doc and return the inputs needed to record a build.
+- `_record_regenerated(repo_root: Path, built: list[str], currents: dict[str, dict[str, str]]) -> None` _(internal)_ — Record the docs that were just regenerated and re-staged successfully.
 - `step_regen_docs(repo_root: Path) -> StepResult` — Regenerate the otherwise-unwired generated docs and re-stage them.
 - `_vendored_documented_hashes(repo_root: Path) -> dict[str, str]` _(internal)_ — Parse ``VENDORED.md`` into a ``{filename: sha256}`` map.
 - `_sha256_file(path: Path) -> str` _(internal)_ — Return *path*'s SHA-256 hex digest, read in 64 KiB chunks.
@@ -1090,6 +1102,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult]) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
 - `_forced_steps(only: list[str]) -> Iterator[None]` _(internal)_ — Force explicitly named steps to run, then restore the environment.
 - `freshness_verdicts(root: Path) -> dict[str, str]` — Return each ``code_health/`` log's freshness verdict against the working tree.
+- `verdict(root: Path) -> tuple[bool, list[str]]` — Return whether every enabled step passed on the current tree.
 - `_report_freshness(only: list[str], *, as_json: bool) -> int` _(internal)_ — Report each ``code_health/`` log's freshness against the working tree.
 - `main() -> int` — CLI entry point.
 

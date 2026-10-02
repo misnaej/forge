@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -4367,3 +4368,223 @@ def test_log_agent_timing_hook_wired_for_all_events() -> None:
     assert len(unmatched) == 1
     commands = [hook["command"] for hook in unmatched[0]["hooks"]]
     assert any(_LOG_AGENT_TIMING in cmd for cmd in commands)
+
+
+# --- block_fixer_recon.sh: forge-smart-test --depth 0 ----------------------
+
+
+def test_fixer_recon_allows_smart_test_depth_zero() -> None:
+    """`forge-smart-test --depth 0` is the fixer's cheap check, so it is allowed."""
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "forge-smart-test --depth 0",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
+        )
+        == 0
+    )
+
+
+def test_fixer_recon_still_blocks_deeper_smart_test_and_git_status() -> None:
+    """Only depth 0 is carved out; deeper runs and bare `git status` stay blocked."""
+    options = HookOptions(agent_type="forge:precommit-fixer")
+    assert _run_hook(_FIXER_RECON, "forge-smart-test --depth 2", options=options) == 2
+    assert _run_hook(_FIXER_RECON, "git status", options=options) == 2
+
+
+# --- require_fixer_verdict.sh: SubagentStop verdict gate -------------------
+# MOCKING STRATEGY: a fake `forge-precommit` shell script placed first on
+# PATH prints canned verdict lines and exits with a chosen code; the hook
+# runs for real against a tmp git repo whose code_health/agent_timing.jsonl
+# is the only state it may touch.
+
+_REQUIRE_VERDICT = "require_fixer_verdict.sh"
+_VERDICT_TOOLS = (
+    "bash", "sh", "jq", "git", "cat", "date", "mkdir", "dirname", "grep",
+    "sed", "tr", "head", "tail", "env", "printf", "uname", "basename", "wc",
+)  # fmt: skip
+
+
+def _verdict_env(tmp_path: Path, *, exit_code: int | None, output: str = "") -> dict:
+    """Build an env whose PATH has a fake `forge-precommit` (or none at all).
+
+    Args:
+        tmp_path: Scratch directory for the shim bin dir.
+        exit_code: Exit code of the fake CLI, or ``None`` to leave it off
+            PATH entirely (the PATH then holds only the basic tools).
+        output: Text the fake CLI prints.
+
+    Returns:
+        Environment mapping without ``CLAUDE_PROJECT_DIR``.
+    """
+    bin_dir = tmp_path / "shim-bin"
+    bin_dir.mkdir()
+    for tool in _VERDICT_TOOLS:
+        real = shutil.which(tool)
+        if real and not (bin_dir / tool).exists():
+            (bin_dir / tool).symlink_to(real)
+    if exit_code is not None:
+        fake = bin_dir / "forge-precommit"
+        args_log = tmp_path / "verdict_args.txt"
+        fake.write_text(
+            f"#!/bin/sh\necho \"$@\" > '{args_log}'\ncat <<'EOT'\n{output}\nEOT\n"
+            f"exit {exit_code}\n"
+        )
+        fake.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+    env["PATH"] = str(bin_dir)
+    return env
+
+
+def _run_verdict_hook(
+    repo: Path,
+    env: dict[str, str],
+    *,
+    agent_type: str = "forge:precommit-fixer",
+    agent_id: str = "agent-1",
+    message: str = "done",
+) -> subprocess.CompletedProcess[str]:
+    """Run the SubagentStop verdict hook with a synthesized payload.
+
+    Args:
+        repo: Working directory and payload ``cwd`` for the hook.
+        env: Environment the hook runs under.
+        agent_type: Stopping subagent's type, as in the hook payload.
+        agent_id: Stopping subagent's id, as in the hook payload.
+        message: The subagent's last assistant message.
+
+    Returns:
+        The completed hook process.
+    """
+    payload = {
+        "hook_event_name": "SubagentStop",
+        "agent_type": agent_type,
+        "agent_id": agent_id,
+        "last_assistant_message": message,
+        "cwd": str(repo),
+        "session_id": "s1",
+    }
+    return subprocess.run(
+        [shutil_bash(), str(_HOOKS_DIR / _REQUIRE_VERDICT)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=repo,
+        env=env,
+    )
+
+
+def shutil_bash() -> str:
+    """Absolute path of bash, resolved on the test runner's own PATH."""
+    found = shutil.which("bash")
+    assert found
+    return found
+
+
+def _verdict_blocks(repo: Path, agent_id: str) -> list[dict[str, object]]:
+    """Return precommit blocks recorded for the given agent.
+
+    Args:
+        repo: Repository containing the timing ledger.
+        agent_id: Agent ID to filter blocks for.
+
+    Returns:
+        List of block records from the timing ledger.
+    """
+    ledger = repo / "code_health" / "agent_timing.jsonl"
+    if not ledger.exists():
+        return []
+    rows = [json.loads(line) for line in ledger.read_text().splitlines() if line]
+    return [
+        r
+        for r in rows
+        if r.get("event") == "verdict_block" and r.get("agent_id") == agent_id
+    ]
+
+
+def test_verdict_hook_ignores_other_agents(tmp_path: Path) -> None:
+    """A non-fixer agent stops freely, and the verdict CLI is never consulted."""
+    init_git_repo(tmp_path)
+    env = _verdict_env(tmp_path, exit_code=1, output="verdict: FAIL")
+    proc = _run_verdict_hook(tmp_path, env, agent_type="forge:test-writer")
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+    assert not (tmp_path / "verdict_args.txt").exists()
+
+
+@pytest.mark.parametrize("agent_type", ["forge:precommit-fixer", "precommit-fixer"])
+def test_verdict_hook_passes_when_verdict_clean(
+    tmp_path: Path, agent_type: str
+) -> None:
+    """Verdict exit 0 lets the fixer stop; the CLI is called with --verdict.
+
+    Args:
+        agent_type: Fixer agent name, with or without the plugin prefix.
+    """
+    init_git_repo(tmp_path)
+    env = _verdict_env(tmp_path, exit_code=0, output="verdict: PASS")
+    proc = _run_verdict_hook(tmp_path, env, agent_type=agent_type)
+    assert proc.returncode == 0
+    assert "block" not in proc.stdout
+    assert (tmp_path / "verdict_args.txt").read_text().strip() == "--verdict"
+    assert _verdict_blocks(tmp_path, "agent-1") == []
+
+
+def test_verdict_hook_allows_honest_stuck_handback(tmp_path: Path) -> None:
+    """A failing verdict is fine when the agent says STUCK and quotes verdict: FAIL."""
+    init_git_repo(tmp_path)
+    env = _verdict_env(tmp_path, exit_code=1, output="verdict: FAIL ruff")
+    proc = _run_verdict_hook(
+        tmp_path, env, message="STUCK: cannot clear E501.\nverdict: FAIL"
+    )
+    assert proc.returncode == 0
+    assert "block" not in proc.stdout
+    assert _verdict_blocks(tmp_path, "agent-1") == []
+
+
+@pytest.mark.parametrize(
+    "message", ["all done", "STUCK but no verdict line", "verdict: FAIL only"]
+)
+def test_verdict_hook_blocks_failing_verdict_once(tmp_path: Path, message: str) -> None:
+    """Failing verdict without an honest hand-back blocks, with the verdict output.
+
+    Args:
+        message: Final assistant message that is not an honest hand-back.
+    """
+    init_git_repo(tmp_path)
+    env = _verdict_env(tmp_path, exit_code=1, output="verdict: FAIL ruff E501 x.py")
+    proc = _run_verdict_hook(tmp_path, env, message=message)
+    assert proc.returncode == 0
+    decision = json.loads(proc.stdout)
+    assert decision["decision"] == "block"
+    assert "verdict: FAIL ruff E501 x.py" in decision["reason"]
+    assert len(_verdict_blocks(tmp_path, "agent-1")) == 1
+
+
+def test_verdict_hook_does_not_loop_on_second_stop(tmp_path: Path) -> None:
+    """The same agent id is blocked once; its next stop is allowed, ledger unchanged."""
+    init_git_repo(tmp_path)
+    env = _verdict_env(tmp_path, exit_code=1, output="verdict: FAIL")
+    first = _run_verdict_hook(tmp_path, env)
+    assert json.loads(first.stdout)["decision"] == "block"
+    second = _run_verdict_hook(tmp_path, env)
+    assert second.returncode == 0
+    assert "block" not in second.stdout
+    assert len(_verdict_blocks(tmp_path, "agent-1")) == 1
+    other = _run_verdict_hook(tmp_path, env, agent_id="agent-2")
+    assert json.loads(other.stdout)["decision"] == "block"
+
+
+def test_verdict_hook_blocks_once_when_forge_precommit_missing(tmp_path: Path) -> None:
+    """A missing foundation CLI blocks once and names how to install it (§2)."""
+    init_git_repo(tmp_path)
+    env = _verdict_env(tmp_path, exit_code=None)
+    proc = _run_verdict_hook(tmp_path, env)
+    decision = json.loads(proc.stdout)
+    assert decision["decision"] == "block"
+    assert "forge-precommit" in decision["reason"]
+    assert "install" in decision["reason"].lower()
+    again = _run_verdict_hook(tmp_path, env)
+    assert again.returncode == 0
+    assert "block" not in again.stdout

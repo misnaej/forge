@@ -306,10 +306,12 @@ def _pytest_part(pytest_line: str | None, pytest_verdict: str | None) -> str:
     """
     if pytest_line is None:
         return "❔ pytest"
+    # A count from another tree says nothing about this one — not even a
+    # failure — so it is not shown at all rather than shown with a caveat.
+    if pytest_verdict in _NOT_VERIFIED:
+        return "❔ pytest (no run at this tree)"
     if "failed" in pytest_line or "error" in pytest_line:
         return f"❌ pytest {pytest_line}"
-    if pytest_verdict in _NOT_VERIFIED:
-        return f"⚠️ pytest {pytest_line} (not verified at this tree)"
     return f"✅ pytest {pytest_line}"
 
 

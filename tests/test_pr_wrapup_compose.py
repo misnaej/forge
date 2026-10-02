@@ -442,10 +442,14 @@ def test_render_code_quality_empty_log_and_no_expected_steps_is_unverified() -> 
             "❌ pytest 2 failed, 10 passed in 3.1s",
         ),
         ("3 errors in 1.2s", None, "❌ pytest 3 errors in 1.2s"),
+        ("3161 passed in 22.86s", "fresh", "✅ pytest 3161 passed in 22.86s"),
+        ("3161 passed in 22.86s", "stale", "❔ pytest (no run at this tree)"),
+        ("3161 passed in 22.86s", "unstamped", "❔ pytest (no run at this tree)"),
+        ("3161 passed in 22.86s", "unknown", "❔ pytest (no run at this tree)"),
         (
-            "3161 passed in 22.86s",
+            "2 failed, 10 passed in 3.1s",
             "stale",
-            "⚠️ pytest 3161 passed in 22.86s (not verified at this tree)",
+            "❔ pytest (no run at this tree)",
         ),
     ],
 )

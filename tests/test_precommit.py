@@ -4138,6 +4138,541 @@ def test_step_regen_docs_runs_when_tree_is_clean(
 
 
 # ---------------------------------------------------------------------------
+# Group 2c: regen_docs incremental — decide_regen / _regen_inputs / the
+# per-worktree record / step_regen_docs skip-vs-regenerate behavior.
+# MOCKING STRATEGY: real git repos in tmp_path (inputs and the record are
+# derived from the index and `git rev-parse --git-path`, so a fake git would
+# test nothing); only the generators are stubbed, via precommit._run (the
+# seam the existing regen_docs groups use) — the stub records which
+# generator modules were launched and never writes a doc.
+# ---------------------------------------------------------------------------
+
+_API_DOC = "docs/api-digest.md"
+_CLI_DOC = "docs/cli-reference.md"
+_API_MODULE = "forge.gen_api_digest"
+_CLI_MODULE = "forge.gen_cli_reference"
+
+
+def _rg_git(repo: Path, *args: str) -> str:
+    """Run a real git command in a repo.
+
+    Args:
+        repo: Repository to run in.
+        *args: Arguments passed to ``git``.
+
+    Returns:
+        The command's stdout.
+    """
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def _rg_repo(tmp_path: Path, *, name: str = "consumer", commit: bool = True) -> Path:
+    """Build a repo with a source root, both generated docs and a pyproject.
+
+    Args:
+        tmp_path: Directory to create the repo under.
+        name: Project name written to the pyproject.
+        commit: Whether to commit the files (otherwise only staged).
+
+    Returns:
+        The repo root.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    if commit:
+        init_git_repo(repo)
+    else:
+        for cmd in (
+            ["git", "init", "-q", "-b", "main"],
+            ["git", "config", "user.name", "t"],
+            ["git", "config", "user.email", "t@t"],
+        ):
+            subprocess.run(cmd, cwd=repo, env=GIT_ENV, check=True)
+    (repo / "pyproject.toml").write_text(
+        f'[project]\nname = "{name}"\nversion = "0"\n\n'
+        '[tool.forge]\nsource_dirs = ["src"]\n'
+    )
+    (repo / "src" / "pkg").mkdir(parents=True)
+    (repo / "src" / "pkg" / "a.py").write_text(
+        '"""A."""\n\n\ndef f() -> int:\n    """F."""\n    return 1\n'
+    )
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "tool.py").write_text("x = 1\n")
+    (repo / "docs").mkdir()
+    (repo / _API_DOC).write_text("api\n")
+    (repo / _CLI_DOC).write_text("cli\n")
+    _rg_git(repo, "add", "-A")
+    if commit:
+        _rg_git(repo, "commit", "-q", "-m", "seed")
+    return repo
+
+
+def _rg_stub_generators(
+    monkeypatch: pytest.MonkeyPatch, *, ok: bool = True
+) -> list[str]:
+    """Stub the generators.
+
+    Args:
+        monkeypatch: Fixture used to patch the generator launcher.
+        ok: Whether the stubbed generators succeed.
+
+    Returns:
+        The live list of module names launched.
+    """
+    launched: list[str] = []
+
+    def _fake_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        launched.append(cmd[-1])
+        return ok, "" if ok else "crash"
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", _fake_run)
+    monkeypatch.setattr(precommit, "missing_console_scripts", lambda _root: [])
+    return launched
+
+
+def _rg_record_bytes(repo: Path) -> bytes | None:
+    """Return the raw bytes of the regen record file, or None if absent.
+
+    Args:
+        repo: Repository to read the record from.
+
+    Returns:
+        Raw bytes of the record file, or ``None`` if it doesn't exist.
+    """
+    path = precommit._regen_record_path(repo)
+    assert path is not None
+    return path.read_bytes() if path.exists() else None
+
+
+_RG_CURRENT = {"forge_version": "1.0", "inputs": "aaa"}
+_RG_RECORDED = {"forge_version": "1.0", "inputs": "aaa", "doc_blob": "b1"}
+
+
+def _rg_decide(**overrides: object) -> precommit.RegenDecision:
+    """Call decide_regen with test defaults and optional overrides.
+
+    Args:
+        **overrides: Keyword arguments overriding test defaults.
+
+    Returns:
+        A RegenDecision from the test scenario.
+    """
+    kwargs: dict[str, object] = {
+        "current": _RG_CURRENT,
+        "recorded": _RG_RECORDED,
+        "doc_blob": "b1",
+        "merge": False,
+        "doc_staged": False,
+    }
+    kwargs.update(overrides)
+    return precommit.decide_regen(
+        _API_DOC,
+        "forge-gen-api-digest",
+        precommit.RegenSignals(**kwargs),  # type: ignore[arg-type]
+    )
+
+
+def test_decide_regen_skips_when_everything_matches() -> None:
+    """All signals agree with the record → skip, with the documented reason."""
+    decision = _rg_decide()
+    assert decision.regenerate is False
+    assert decision.reason == "inputs unchanged since last build"
+    assert decision.rel == _API_DOC
+    assert decision.cli == "forge-gen-api-digest"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "fragment"),
+    [
+        ({"recorded": None}, "no record"),
+        ({"merge": True}, "merge in progress"),
+        ({"current": {**_RG_CURRENT, "forge_version": "2.0"}}, "forge"),
+        ({"doc_staged": True}, "doc edited outside generator"),
+        ({"doc_blob": "b2"}, "doc edited outside generator"),
+        ({"current": {**_RG_CURRENT, "inputs": "bbb"}}, "changed"),
+    ],
+)
+def test_decide_regen_each_signal_regenerates(
+    overrides: dict[str, object], fragment: str
+) -> None:
+    """Each single signal, alone, forces a regenerate naming its reason.
+
+    Args:
+        overrides: Decision inputs overriding the unchanged baseline.
+        fragment: Text the decision reason must contain.
+    """
+    decision = _rg_decide(**overrides)
+    assert decision.regenerate is True
+    assert fragment in decision.reason
+
+
+def test_decide_regen_first_match_wins_ordering() -> None:
+    """Signals are checked in order: record, merge, forge, doc edit, inputs."""
+    everything = {
+        "current": {"forge_version": "2.0", "inputs": "bbb"},
+        "doc_staged": True,
+        "merge": True,
+    }
+    assert "no record" in _rg_decide(recorded=None, **everything).reason
+    assert "merge in progress" in _rg_decide(**everything).reason
+    no_merge = {**everything, "merge": False}
+    assert "forge" in _rg_decide(**no_merge).reason
+    same_version = {**no_merge, "current": {"forge_version": "1.0", "inputs": "bbb"}}
+    assert "doc edited outside generator" in _rg_decide(**same_version).reason
+    only_inputs = {**same_version, "doc_staged": False}
+    assert "changed" in _rg_decide(**only_inputs).reason
+    assert "doc edited" not in _rg_decide(**only_inputs).reason
+
+
+def test_regen_inputs_is_stable_sha256_hex(tmp_path: Path) -> None:
+    """Inputs are a deterministic sha256 hex digest per doc."""
+    repo = _rg_repo(tmp_path)
+    first = precommit._regen_inputs(repo, _API_DOC)
+    assert re.fullmatch(r"[0-9a-f]{64}", first)
+    assert precommit._regen_inputs(repo, _API_DOC) == first
+
+
+def test_regen_inputs_api_digest_ignores_file_outside_roots(tmp_path: Path) -> None:
+    """A tracked file the digest would not scan does not move the inputs."""
+    repo = _rg_repo(tmp_path)
+    before = precommit._regen_inputs(repo, _API_DOC)
+    (repo / "scripts" / "other.py").write_text("y = 2\n")
+    (repo / "README.md").write_text("hi\n")
+    _rg_git(repo, "add", "-A")
+    assert precommit._regen_inputs(repo, _API_DOC) == before
+
+
+@pytest.mark.parametrize("change", ["edit", "add", "delete", "rename", "pyproject"])
+def test_regen_inputs_api_digest_tracks_root_and_pyproject_changes(
+    tmp_path: Path, change: str
+) -> None:
+    """Edit / add / delete / rename under the roots, or a pyproject edit, moves it.
+
+    Args:
+        change: Kind of change applied to the repo.
+    """
+    repo = _rg_repo(tmp_path)
+    before = precommit._regen_inputs(repo, _API_DOC)
+    src = repo / "src" / "pkg"
+    if change == "edit":
+        (src / "a.py").write_text('"""A2."""\n')
+    elif change == "add":
+        (src / "b.py").write_text('"""B."""\n')
+    elif change == "delete":
+        _rg_git(repo, "rm", "-q", "-f", "src/pkg/a.py")
+    elif change == "rename":
+        _rg_git(repo, "mv", "src/pkg/a.py", "src/pkg/renamed.py")
+    else:
+        (repo / "pyproject.toml").write_text(
+            (repo / "pyproject.toml").read_text() + "\n# touched\n"
+        )
+    _rg_git(repo, "add", "-A")
+    assert precommit._regen_inputs(repo, _API_DOC) != before
+
+
+def test_regen_inputs_cli_reference_ignores_consumer_sources(tmp_path: Path) -> None:
+    """In a consumer repo the CLI reference depends on installed scripts only."""
+    repo = _rg_repo(tmp_path, name="consumer")
+    (repo / "src" / "forge").mkdir()
+    (repo / "src" / "forge" / "m.py").write_text("a = 1\n")
+    _rg_git(repo, "add", "-A")
+    before = precommit._regen_inputs(repo, _CLI_DOC)
+    (repo / "src" / "forge" / "m.py").write_text("a = 2\n")
+    (repo / "src" / "pkg" / "a.py").write_text("z = 1\n")
+    (repo / "pyproject.toml").write_text(
+        (repo / "pyproject.toml").read_text() + "\n# touched\n"
+    )
+    _rg_git(repo, "add", "-A")
+    assert precommit._regen_inputs(repo, _CLI_DOC) == before
+
+
+def test_regen_inputs_cli_reference_tracks_src_forge_in_forge_scripts_repo(
+    tmp_path: Path,
+) -> None:
+    """Forge's own repo: a src/forge .py (or pyproject) edit moves the inputs."""
+    repo = _rg_repo(tmp_path, name="forge-scripts")
+    (repo / "src" / "forge").mkdir()
+    (repo / "src" / "forge" / "m.py").write_text("a = 1\n")
+    _rg_git(repo, "add", "-A")
+    before = precommit._regen_inputs(repo, _CLI_DOC)
+    (repo / "src" / "forge" / "data").mkdir()
+    (repo / "src" / "forge" / "data" / "note.md").write_text("not python\n")
+    _rg_git(repo, "add", "-A")
+    assert precommit._regen_inputs(repo, _CLI_DOC) == before
+    (repo / "src" / "forge" / "m.py").write_text("a = 2\n")
+    _rg_git(repo, "add", "-A")
+    after_edit = precommit._regen_inputs(repo, _CLI_DOC)
+    assert after_edit != before
+    (repo / "pyproject.toml").write_text(
+        (repo / "pyproject.toml").read_text() + "\n# touched\n"
+    )
+    _rg_git(repo, "add", "-A")
+    assert precommit._regen_inputs(repo, _CLI_DOC) != after_edit
+
+
+def test_regen_record_path_follows_git_path(tmp_path: Path) -> None:
+    """The record lives at `git rev-parse --git-path forge/regen_docs.json`."""
+    repo = _rg_repo(tmp_path)
+    expected = _rg_git(repo, "rev-parse", "--git-path", "forge/regen_docs.json").strip()
+    path = precommit._regen_record_path(repo)
+    assert path is not None
+    assert path.resolve() == (repo / expected).resolve()
+
+
+def test_regen_record_path_is_none_outside_git(tmp_path: Path) -> None:
+    """No repository → no record path, and saving is a harmless no-op."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert precommit._regen_record_path(plain) is None
+    assert precommit._load_regen_record(plain) == {}
+    precommit._save_regen_record(plain, {_API_DOC: {"inputs": "x"}})
+    assert precommit._load_regen_record(plain) == {}
+
+
+def test_regen_record_round_trips_and_is_per_worktree(tmp_path: Path) -> None:
+    """A saved record loads back; a linked worktree has its own, separate record."""
+    repo = _rg_repo(tmp_path)
+    record = {_API_DOC: {"forge_version": "1", "inputs": "i", "doc_blob": "b"}}
+    precommit._save_regen_record(repo, record)
+    assert precommit._load_regen_record(repo) == record
+    linked = tmp_path / "linked"
+    _rg_git(repo, "worktree", "add", "-q", "-b", "other", str(linked))
+    main_path = precommit._regen_record_path(repo)
+    linked_path = precommit._regen_record_path(linked)
+    assert linked_path is not None
+    assert main_path != linked_path
+    assert precommit._load_regen_record(linked) == {}
+
+
+@pytest.mark.parametrize("content", ["{not json", "[1, 2]", '{"docs/x.md": "str"}'])
+def test_load_regen_record_corrupt_or_wrong_schema_is_empty(
+    tmp_path: Path, content: str
+) -> None:
+    """Garbage, a non-mapping, or a mapping of non-records loads as {}.
+
+    Args:
+        content: Raw text written to the record file.
+    """
+    repo = _rg_repo(tmp_path)
+    path = precommit._regen_record_path(repo)
+    assert path is not None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    assert precommit._load_regen_record(repo) == {}
+
+
+def test_step_regen_docs_first_run_regenerates_both_and_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No record yet → both generators run, each line says why, a record lands."""
+    repo = _rg_repo(tmp_path)
+    launched = _rg_stub_generators(monkeypatch)
+    result = precommit.step_regen_docs(repo)
+    assert sorted(launched) == [_API_MODULE, _CLI_MODULE]
+    assert not result.skipped
+    assert result.output.count("regenerated — ") == 2
+    assert "no record" in result.output
+    assert _rg_record_bytes(repo) is not None
+
+
+def test_step_regen_docs_unchanged_second_run_skips_everything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With nothing changed since the first run, no generator launches."""
+    repo = _rg_repo(tmp_path)
+    launched = _rg_stub_generators(monkeypatch)
+    precommit.step_regen_docs(repo)
+    launched.clear()
+    result = precommit.step_regen_docs(repo)
+    assert launched == []
+    assert result.skipped
+    assert result.passed
+    assert result.output.count("skipped — inputs unchanged since last build") == 2
+
+
+def test_step_regen_docs_unrelated_staged_file_skips_both(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Staging a file outside every generator's inputs costs nothing."""
+    repo = _rg_repo(tmp_path)
+    launched = _rg_stub_generators(monkeypatch)
+    precommit.step_regen_docs(repo)
+    launched.clear()
+    (repo / "notes.txt").write_text("hello\n")
+    _rg_git(repo, "add", "notes.txt")
+    result = precommit.step_regen_docs(repo)
+    assert launched == []
+    assert result.skipped
+
+
+def test_step_regen_docs_staged_source_runs_api_digest_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A staged edit under the roots rebuilds the digest, not the CLI reference."""
+    repo = _rg_repo(tmp_path)
+    launched = _rg_stub_generators(monkeypatch)
+    precommit.step_regen_docs(repo)
+    launched.clear()
+    (repo / "src" / "pkg" / "a.py").write_text('"""A2."""\n')
+    _rg_git(repo, "add", "src/pkg/a.py")
+    result = precommit.step_regen_docs(repo)
+    assert launched == [_API_MODULE]
+    assert not result.skipped
+    assert result.output.count("regenerated — ") == 1
+    assert result.output.count("skipped — ") == 1
+
+
+def test_step_regen_docs_unborn_head_regenerates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The very first commit (no HEAD yet) works and regenerates both docs."""
+    repo = _rg_repo(tmp_path, commit=False)
+    launched = _rg_stub_generators(monkeypatch)
+    result = precommit.step_regen_docs(repo)
+    assert sorted(launched) == [_API_MODULE, _CLI_MODULE]
+    assert not result.skipped
+    assert result.passed
+
+
+def test_step_regen_docs_detects_source_committed_bypassing_the_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A change that landed without the step running is caught next time.
+
+    The record names the inputs at the last build, not the last commit, so a
+    commit made with the step disabled still reads as "changed".
+    """
+    repo = _rg_repo(tmp_path)
+    launched = _rg_stub_generators(monkeypatch)
+    precommit.step_regen_docs(repo)
+    launched.clear()
+    (repo / "src" / "pkg" / "a.py").write_text('"""Bypassed."""\n')
+    _rg_git(repo, "add", "-A")
+    _rg_git(repo, "commit", "-q", "-m", "bypass the step")
+    result = precommit.step_regen_docs(repo)
+    assert launched == [_API_MODULE]
+    assert "changed" in result.output
+
+
+def test_step_regen_docs_hand_edited_staged_doc_is_regenerated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A doc edited outside the generator is rebuilt rather than trusted."""
+    repo = _rg_repo(tmp_path)
+    launched = _rg_stub_generators(monkeypatch)
+    precommit.step_regen_docs(repo)
+    launched.clear()
+    (repo / _API_DOC).write_text("hand edited\n")
+    _rg_git(repo, "add", _API_DOC)
+    result = precommit.step_regen_docs(repo)
+    assert launched == [_API_MODULE]
+    assert "doc edited outside generator" in result.output
+
+
+def test_step_regen_docs_merge_in_progress_regenerates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While a merge is in progress nothing is skipped."""
+    repo = _rg_repo(tmp_path)
+    launched = _rg_stub_generators(monkeypatch)
+    precommit.step_regen_docs(repo)
+    launched.clear()
+    merge_head = _rg_git(repo, "rev-parse", "--git-path", "MERGE_HEAD").strip()
+    (repo / merge_head).write_text(_rg_git(repo, "rev-parse", "HEAD"))
+    result = precommit.step_regen_docs(repo)
+    assert sorted(launched) == [_API_MODULE, _CLI_MODULE]
+    assert "merge in progress" in result.output
+
+
+def test_step_regen_docs_forge_version_change_regenerates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A record written by another forge version is not trusted."""
+    repo = _rg_repo(tmp_path)
+    launched = _rg_stub_generators(monkeypatch)
+    precommit.step_regen_docs(repo)
+    record = precommit._load_regen_record(repo)
+    assert record
+    for entry in record.values():
+        entry["forge_version"] = "0.0.0-other"
+    precommit._save_regen_record(repo, record)
+    launched.clear()
+    precommit.step_regen_docs(repo)
+    assert sorted(launched) == [_API_MODULE, _CLI_MODULE]
+
+
+def test_step_regen_docs_generator_failure_leaves_record_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed rebuild must not be recorded as done."""
+    repo = _rg_repo(tmp_path)
+    launched = _rg_stub_generators(monkeypatch, ok=False)
+    first = precommit.step_regen_docs(repo)
+    assert not first.passed
+    assert _rg_record_bytes(repo) is None
+    monkeypatch.undo()
+    _rg_stub_generators(monkeypatch)
+    precommit.step_regen_docs(repo)
+    recorded = _rg_record_bytes(repo)
+    assert recorded is not None
+    (repo / "src" / "pkg" / "a.py").write_text('"""A3."""\n')
+    _rg_git(repo, "add", "src/pkg/a.py")
+    monkeypatch.undo()
+    launched = _rg_stub_generators(monkeypatch, ok=False)
+    result = precommit.step_regen_docs(repo)
+    assert launched == [_API_MODULE]
+    assert not result.passed
+    assert _rg_record_bytes(repo) == recorded
+
+
+def test_step_regen_docs_partial_commit_guard_leaves_record_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Skipping for unstaged changes neither creates nor rewrites the record."""
+    repo = _rg_repo(tmp_path)
+    launched = _rg_stub_generators(monkeypatch)
+    (repo / "scripts" / "tool.py").write_text("x = 2\n")
+    result = precommit.step_regen_docs(repo)
+    assert result.skipped
+    assert launched == []
+    assert _rg_record_bytes(repo) is None
+    (repo / "scripts" / "tool.py").write_text("x = 1\n")
+    precommit.step_regen_docs(repo)
+    recorded = _rg_record_bytes(repo)
+    assert recorded is not None
+    (repo / "scripts" / "tool.py").write_text("x = 3\n")
+    (repo / "src" / "pkg" / "a.py").write_text('"""Dirty."""\n')
+    launched.clear()
+    precommit.step_regen_docs(repo)
+    assert launched == []
+    assert _rg_record_bytes(repo) == recorded
+
+
+def test_step_regen_docs_corrupt_record_regenerates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable record behaves like no record at all."""
+    repo = _rg_repo(tmp_path)
+    launched = _rg_stub_generators(monkeypatch)
+    precommit.step_regen_docs(repo)
+    path = precommit._regen_record_path(repo)
+    assert path is not None
+    path.write_text("{corrupt")
+    launched.clear()
+    result = precommit.step_regen_docs(repo)
+    assert sorted(launched) == [_API_MODULE, _CLI_MODULE]
+    assert "no record" in result.output
+
+
+# ---------------------------------------------------------------------------
 # Group 3: _vendored_documented_hashes + _sha256_file
 # ---------------------------------------------------------------------------
 
@@ -7007,3 +7542,237 @@ def test_main_freshness_only_history_log_reports_history_not_missing(
     assert rc == 0
     assert ("history", "smart_test_history.log") in reported
     assert ("missing", "ghost_step.log") in reported
+
+
+def _verdict_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    rows: dict[str, str],
+    timing_tree: str | None = None,
+) -> list[str]:
+    """Seed a git repo whose timing log carries *rows*; return enabled step names.
+
+    Args:
+        tmp_path: Repo root to initialise.
+        monkeypatch: Points ``get_repo_root`` at *tmp_path*.
+        rows: Step name -> marker written into ``precommit_timing.log``.
+        timing_tree: ``tree=`` stamp for the timing log; defaults to the
+            current tree (fresh).
+
+    Returns:
+        The enabled step names, in registry order.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
+    body = timing_log(*(f"{name} {mark}" for name, mark in rows.items()), stamp=None)
+    _write_log_with_stamp(
+        tmp_path, "precommit_timing", tree=timing_tree or head_tree, body=body
+    )
+    return [d.name for d in precommit.resolve_steps(tmp_path)]
+
+
+def _all_rows(tmp_path: Path, marker: str = "PASS") -> dict[str, str]:
+    """Return a dict of all enabled step names mapped to a status marker.
+
+    Args:
+        tmp_path: Repository to read enabled steps from.
+        marker: Status marker value for each step.
+
+    Returns:
+        Mapping of step name to marker.
+    """
+    return {d.name: marker for d in precommit.resolve_steps(tmp_path)}
+
+
+def test_verdict_all_enabled_steps_pass_is_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every enabled step has a PASS row in a fresh timing log -> PASS."""
+    init_git_repo(tmp_path)
+    rows = _all_rows(tmp_path)
+    _verdict_repo(tmp_path, monkeypatch, rows=rows)
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is True
+    assert lines[-1] == "verdict: PASS"
+    assert all(f"PASS {name}" in lines for name in rows)
+
+
+def test_verdict_fail_row_fails_and_names_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A FAIL marker flips the verdict and emits `FAIL <step>`."""
+    init_git_repo(tmp_path)
+    rows = _all_rows(tmp_path)
+    rows["ruff"] = "FAIL"
+    _verdict_repo(tmp_path, monkeypatch, rows=rows)
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is False
+    assert "FAIL ruff" in lines
+    assert lines[-1] == "verdict: FAIL"
+
+
+def test_verdict_missing_enabled_step_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An enabled step with no timing row is reported `MISSING <step>`."""
+    init_git_repo(tmp_path)
+    rows = _all_rows(tmp_path)
+    del rows["ruff"]
+    _verdict_repo(tmp_path, monkeypatch, rows=rows)
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is False
+    assert "MISSING ruff" in lines
+    assert lines[-1] == "verdict: FAIL"
+
+
+def test_verdict_stale_timing_log_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timing log stamped for another tree fails even with all PASS rows."""
+    init_git_repo(tmp_path)
+    rows = _all_rows(tmp_path)
+    _verdict_repo(tmp_path, monkeypatch, rows=rows, timing_tree="0" * 40)
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is False
+    assert "STALE precommit_timing (last full run describes another tree)" in lines
+    assert lines[-1] == "verdict: FAIL"
+
+
+def test_verdict_warn_and_skip_count_as_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WARN and SKIP rows are echoed as `<MARKER> <step>` and do not fail."""
+    init_git_repo(tmp_path)
+    rows = _all_rows(tmp_path)
+    rows["ruff"] = "WARN"
+    skipped = next(name for name in rows if name != "ruff")
+    rows[skipped] = "SKIP"
+    _verdict_repo(tmp_path, monkeypatch, rows=rows)
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is True
+    assert "WARN ruff" in lines
+    assert f"SKIP {skipped}" in lines
+    assert lines[-1] == "verdict: PASS"
+
+
+def test_verdict_stale_step_log_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A passing step whose own log is stamped for another tree -> `STALE <step>`."""
+    init_git_repo(tmp_path)
+    rows = _all_rows(tmp_path)
+    _verdict_repo(tmp_path, monkeypatch, rows=rows)
+    _write_log_with_stamp(tmp_path, "ruff", tree="0" * 40)
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is False
+    assert "STALE ruff" in lines
+    assert lines[-1] == "verdict: FAIL"
+
+
+def test_verdict_skipped_step_with_old_log_is_not_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A SKIP row never fails on its own old log (partial commit leaves it behind)."""
+    init_git_repo(tmp_path)
+    rows = _all_rows(tmp_path)
+    step = next(iter(rows))
+    rows[step] = "SKIP"
+    _verdict_repo(tmp_path, monkeypatch, rows=rows)
+    _write_log_with_stamp(tmp_path, step, tree="0" * 40)
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is True
+    assert f"SKIP {step}" in lines
+    assert f"STALE {step}" not in lines
+    assert lines[-1] == "verdict: PASS"
+
+
+@pytest.mark.parametrize(("marker", "rc"), [("PASS", 0), ("FAIL", 1)])
+def test_main_verdict_prints_lines_exits_by_verdict_and_runs_no_steps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    marker: str,
+    rc: int,
+) -> None:
+    """`--verdict` prints the verdict lines, exits 0/1, and never calls run_all.
+
+    Args:
+        marker: Verdict marker (PASS or FAIL) on every row.
+        rc: Expected exit code for that marker.
+    """
+    init_git_repo(tmp_path)
+    rows = _all_rows(tmp_path, marker)
+    _verdict_repo(tmp_path, monkeypatch, rows=rows)
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+
+    with patch.object(precommit.sys, "argv", ["forge-precommit", "--verdict"]):
+        got = precommit.main()
+
+    assert got == rc
+    out = capsys.readouterr().out.splitlines()
+    assert out[-1] == f"verdict: {marker if marker == 'PASS' else 'FAIL'}"
+    assert calls == []
+
+
+def test_run_all_only_writes_only_log_and_leaves_full_log_untouched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `--only` run writes `precommit_only_timing.log`, never the full log.
+
+    BEHAVIOR: the full-run log describes the last full run; a partial run
+    must not overwrite it. A run without `only` still writes it.
+    MOCK SETUP: `step_ruff` stubbed to a passing result.
+    """
+
+    def _ruff(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="ruff", passed=True, output="x")
+
+    monkeypatch.setattr(precommit, "step_ruff", _ruff)
+    log_dir = tmp_path / "code_health"
+    log_dir.mkdir()
+    full = log_dir / "precommit_timing.log"
+    full.write_bytes(b"# produced-at: tree=abc head=x\nfull run body\n")
+    before = full.read_bytes()
+
+    precommit.run_all(tmp_path, print_progress=False, only=["ruff"])
+
+    assert (log_dir / "precommit_only_timing.log").is_file()
+    assert full.read_bytes() == before
+
+
+def test_run_all_without_only_still_writes_full_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A full run writes `precommit_timing.log` (and not the only-log)."""
+    _stub_env_sync_skipped(monkeypatch)
+    _stub_docstrings_passing(monkeypatch)
+    _stub_test_naming_passing(monkeypatch)
+    _stub_repo_structure_passing(monkeypatch)
+    _stub_pip_audit_skipped(monkeypatch)
+    _stub_docstring_coverage_skipped(monkeypatch)
+
+    precommit.run_all(repo_root=tmp_path, print_progress=False)
+
+    assert (tmp_path / "code_health" / "precommit_timing.log").is_file()
+    assert not (tmp_path / "code_health" / "precommit_only_timing.log").exists()

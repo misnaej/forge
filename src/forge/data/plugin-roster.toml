@@ -49,6 +49,7 @@ names = [
     "git_anchor",
     "keep_squash_comment_last",
     "log_agent_timing",
+    "require_fixer_verdict",
     "warn_generated_conflicts",
     "warn_pr_checks",
     "warn_stale_wrapup",

@@ -28,14 +28,17 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
   `pytest`, files, directories, or suites.
 - **A code edit is unverified until its tests re-ran.** After any Edit
   that changes runtime code or a test double, re-run the affected tests
-  (targeted, as above) before reporting — a PASS claimed without the
-  re-run is a false report.
+  (targeted, as above, or `forge-smart-test --depth 0`) before reporting
+  — a PASS claimed without the re-run is a false report.
 - **Allowed CLIs — one command per situation. Do not choose between them:**
 
   | What you are doing | The command | Full run? |
   |---|---|---|
   | Opening the run (Phase 1, once) | `forge-precommit` | **yes** |
   | Re-verifying after ANY Edit (Phase 3) | `forge-precommit --only <steps you touched>` | no |
+  | Re-running the edited code's tests | `forge-smart-test --depth 0` | no |
+  | Closing run after your last Edit (Phase 3, once) | `forge-precommit` | **yes** |
+  | The verdict you hand back (Phase 4) | `forge-precommit --verdict` | no |
   | Refreshing ONE stale/missing log, before any fix | that step's own CLI, once | no |
 
   Step CLIs: `fix-forge-ruff`, `verify-forge-docstrings`,
@@ -107,6 +110,7 @@ the install hint. Never fall back to raw `ruff` / `python -m`.
 
 | `code_health/` log | Action |
 |---|---|
+| `ruff.log` — `RUF001` / `RUF002` / `RUF003` (ambiguous character) | Inside a string literal: replace the character with the `\uXXXX` escape of the **same code point** — the value must not change; never substitute a different character (an ASCII `'` for `’` changes behavior). In comments/docstrings, rewording is fine. |
 | `ruff.log` (lint rule residue) | **Edit** per `file:line: CODE message`. No `# noqa`. |
 | `ruff.log` (complexity: `C901`, `PLR0913`, `PLR0912`, `PLR0911`, `PLR0915`) | Delegate to **`design-checker`** for refactor guidance, then **Edit** by hand. |
 | `ruff.log` (formatter syntax error) | Should not happen unless the file has invalid Python. Surface to human. |
@@ -146,20 +150,13 @@ merely faster: a full battery re-runs regeneration, the C4 render, the
 type check and a network-bound CVE scan to confirm a one-line docstring,
 and time spent that way is what makes a gate feel worth skipping.
 
-**The full run is the entry, not the exit — the commit is.** After the
-Allowed-CLIs table's first two rows, hand back so the caller drives
-`forge:git-commit-push`; `git commit` fires the whole hook
-**automatically** — that agent never invokes the checker itself, the git
-hook does. If it passes, the run is done and no further verification was
-ever needed. If it blocks, the block names the failing steps for free —
-take them, fix them, re-verify narrow, and commit again.
-
-A blocked commit is a *report*, not a failure of this process: it is the
-cheapest full verification available, because it is one forge already
-had to run. So never spend a full run here to predict it. Spend one only
-when a fix could plausibly have broken a step you never looked at —
-shared config, a regenerated artifact, a moved file — and say why in the
-hand-back.
+**Close with one full run after your last Edit.** Narrow `--only`
+re-verification is for iterating; the hand-back needs every enabled
+step's evidence to describe the tree you leave, because the commit agent
+refuses stale logs and your verdict is read mechanically. So after the
+last Edit run bare `forge-precommit` once (it counts toward the cap),
+then `forge-precommit --verdict`. No Edit since the opening run → the
+opening run already is the closing one.
 
 **The cap is a ceiling, not a budget.** Three full runs remain the hard
 limit and the hook refuses a fourth, but a run that uses one is doing it
@@ -179,6 +176,11 @@ the `STUCK` block and name the semantic fix for the main agent.
 
 ### Phase 4 — Report
 
+Run `forge-precommit --verdict` and paste its output verbatim at the top
+of the Output block — never summarise it. You report success only when
+it ends `verdict: PASS`; otherwise emit the `STUCK` block with the
+verdict pasted. This is enforced: the `require_fixer_verdict` hook runs
+the verdict itself when you stop and refuses a hand-back it contradicts.
 See `## Output` below.
 
 ## Scope Boundaries
@@ -235,7 +237,7 @@ Re-invoke me without arguments. See FOUNDATION §3.
 
 ## Guard hooks
 
-Agent-scoped: `block_fixer_recon` (source of truth:
+Agent-scoped: `block_fixer_recon` and `require_fixer_verdict` (source of truth:
 `[tool.forge.agent_doc.guarded_by]`). Shared contract — what a block
 means and how to respond (incl. the `ruff.toml` present-diff rule):
 [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
@@ -244,6 +246,11 @@ means and how to respond (incl. the `ruff.toml` present-diff rule):
 
 ```
 PRECOMMIT-FIXER COMPLETE (mode: normal|strict)
+
+Verdict (forge-precommit --verdict, verbatim):
+  <its output, every line, ending `verdict: PASS` or `verdict: FAIL`>
+
+git status: not run (hook-blocked)
 
 Steps fixed:
   - <step>: <count> violations resolved (<dispatch path>)
@@ -268,5 +275,5 @@ NEXT STEP (for the caller — not me): drive git-commit-push to commit.
 
 ## Success Criteria
 
-- `forge-precommit` exits 0; `pip_audit` advisories handled per the Modes table (listed in `normal`, surfaced as blockers in `strict` — never bumped here).
+- `forge-precommit --verdict` ends `verdict: PASS` after your last Edit (or a `STUCK` block carries its failing output); `pip_audit` advisories handled per the Modes table (listed in `normal`, surfaced as blockers in `strict` — never bumped here).
 - All edits saved; nothing committed; no dependency pin touched.

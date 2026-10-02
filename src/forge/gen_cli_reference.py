@@ -34,6 +34,7 @@ import logging
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from typing import NamedTuple
 
 from forge.gen_common import check_doc_drift
@@ -158,8 +159,12 @@ def render_reference(entries: list[CliEntry]) -> str:
         ),
         "",
     ]
-    for entry in entries:
-        help_text = capture_help(entry)
+    # Each capture is an independent `python -m <module> --help` subprocess,
+    # so they run concurrently; ``map`` keeps the results in entry order,
+    # so the document is byte-identical to a sequential run.
+    with ThreadPoolExecutor(max_workers=min(16, len(entries) or 1)) as pool:
+        helps = list(pool.map(capture_help, entries))
+    for entry, help_text in zip(entries, helps, strict=True):
         lines.append(f"## {entry.name}")
         lines.append("")
         lines.append("```text")

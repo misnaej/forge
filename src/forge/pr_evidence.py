@@ -20,9 +20,9 @@ fenced as data.
 
 Gathering runs in a different order from rendering: the audits run first
 (they rewrite their own logs), the code-health snapshot is taken next, and
-the generated-artifact gates run last — ``forge-precommit --only``
-overwrites ``precommit_timing.log``, which the snapshot must read before
-that happens.
+the generated-artifact gates run last. Their ``forge-precommit --only``
+run writes ``precommit_only_timing.log``, so it never disturbs the
+full-run ``precommit_timing.log`` the snapshot reads.
 """
 
 from __future__ import annotations
@@ -222,16 +222,18 @@ def _pr_lines(
     return lines
 
 
-def _timing_snapshot(root: Path) -> dict[str, str]:
-    """Return the step markers of the newest ``forge-precommit`` run.
+def _timing_snapshot(root: Path, log_name: str = "precommit_timing") -> dict[str, str]:
+    """Return the step markers of a ``forge-precommit`` timing log.
 
     Args:
         root: Repo root.
+        log_name: ``precommit_timing`` for the newest full run,
+            ``precommit_only_timing`` for the newest ``--only`` run.
 
     Returns:
-        Step name → marker; empty when no run left a timing log.
+        Step name → marker; empty when no run left that timing log.
     """
-    timing = root / CODE_HEALTH_DIR / "precommit_timing.log"
+    timing = root / CODE_HEALTH_DIR / f"{log_name}.log"
     if not timing.is_file():
         return {}
     return timing_markers(timing.read_text(encoding="utf-8"))
@@ -393,7 +395,10 @@ def _gate_lines(root: Path) -> tuple[list[str], bool]:
             cwd=root,
             timeout=GATE_TIMEOUT_S,
         )
-        digest_checked = _timing_snapshot(root).get(_API_DIGEST_GATE) == "PASS"
+        digest_checked = (
+            _timing_snapshot(root, "precommit_only_timing").get(_API_DIGEST_GATE)
+            == "PASS"
+        )
     except _ITEM_ERRORS as exc:
         logger.warning("pr-evidence: %s unavailable (%s)", title, _reason(exc))
         return [f"## {title}", "", f"unavailable: {_reason(exc)}", ""], False

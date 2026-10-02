@@ -43,7 +43,9 @@ commit call ``pytest`` directly in ``.githooks/pre-commit``.
 Step outputs are written to ``code_health/<step>.log`` per FOUNDATION §13
 so downstream tooling can read the latest results without re-running.
 Every run also times each step (monotonic clock) and writes the per-step
-report to ``code_health/precommit_timing.log`` — newest run overwrites.
+report to ``code_health/precommit_timing.log`` — newest full run overwrites;
+a ``--only`` run writes ``code_health/precommit_only_timing.log`` instead, so
+a partial run never replaces the full-run evidence a wrap-up reads.
 
 Usage:
 
@@ -75,7 +77,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from forge import config, pip_audit_json
 from forge.changelog import (
@@ -90,9 +92,11 @@ from forge.config import installed_console_scripts, resolve_model_section
 from forge.emergency_state import active_state
 from forge.git_utils import (
     EVIDENCE_OUTPUT_CAP,
+    FORGE_DIST_NAME,
     SCOPE_ALL,
     SCOPE_DIFF,
     VALID_SCOPES,
+    console_script_modules,
     emit,
     fetch_tags_best_effort,
     forge_cli_argv,
@@ -1992,6 +1996,295 @@ _REGEN_DOCS: tuple[tuple[str, str], ...] = tuple(
     (REGEN_COMMANDS[rel][0], rel) for rel in (_API_DIGEST_DOC, _CLI_REFERENCE_DOC)
 )
 
+# Per-clone record of the last successful regeneration, resolved through
+# `git rev-parse --git-path` so each worktree keeps its own (it pairs with
+# that worktree's index). Never tracked: it describes this checkout's
+# install and index, not the project.
+_REGEN_RECORD = "forge/regen_docs.json"
+
+# Minimum number of fields expected in git ls-files -s output metadata.
+_MIN_BLOB_FIELDS = 2
+
+
+class RegenDecision(NamedTuple):
+    """Whether one generated doc is rebuilt this commit, and why.
+
+    Attributes:
+        rel: The doc's repo-relative path.
+        cli: The generator CLI that writes it.
+        regenerate: ``True`` to run the generator.
+        reason: One line for the step output — never a silent skip.
+    """
+
+    rel: str
+    cli: str
+    regenerate: bool
+    reason: str
+
+
+class RegenSignals(NamedTuple):
+    """What :func:`decide_regen` compares for one generated doc.
+
+    Attributes:
+        current: ``forge_version`` and ``inputs`` fingerprint now.
+        recorded: The same keys plus ``doc_blob`` from the last build, or
+            ``None`` when there is no usable record.
+        doc_blob: The doc's index blob sha now.
+        merge: A merge is in progress.
+        doc_staged: The doc itself is staged in this commit.
+    """
+
+    current: dict[str, str]
+    recorded: dict[str, str] | None
+    doc_blob: str | None
+    merge: bool
+    doc_staged: bool
+
+
+def decide_regen(rel: str, cli: str, signals: RegenSignals) -> RegenDecision:
+    """Decide whether *rel* must be regenerated; the first matching reason wins.
+
+    A skip needs positive proof that nothing the doc is built from moved
+    since the last successful build: same forge, same inputs, and the
+    committed doc still the bytes that build produced. Anything unknown
+    rebuilds — a wasted second is cheap, a stale committed doc is not.
+
+    Args:
+        rel: The doc's repo-relative path.
+        cli: The generator CLI.
+        signals: The current fingerprint, the record and the commit state.
+
+    Returns:
+        The decision with its reason.
+    """
+    current, recorded, doc_blob, merge, doc_staged = signals
+    if recorded is None:
+        return RegenDecision(
+            rel, cli, regenerate=True, reason="no record of a previous build"
+        )
+    if merge:
+        return RegenDecision(rel, cli, regenerate=True, reason="merge in progress")
+    if recorded.get("forge_version") != current.get("forge_version"):
+        reason_msg = (
+            f"forge {recorded.get('forge_version')} → {current.get('forge_version')}"
+        )
+        return RegenDecision(rel, cli, regenerate=True, reason=reason_msg)
+    if doc_staged or doc_blob != recorded.get("doc_blob"):
+        return RegenDecision(
+            rel, cli, regenerate=True, reason="doc edited outside generator"
+        )
+    if recorded.get("inputs") != current.get("inputs"):
+        what = "console scripts" if rel == _CLI_REFERENCE_DOC else "sources"
+        return RegenDecision(rel, cli, regenerate=True, reason=f"{what} changed")
+    return RegenDecision(
+        rel, cli, regenerate=False, reason="inputs unchanged since last build"
+    )
+
+
+def _regen_record_path(repo_root: Path) -> Path | None:
+    """Return this checkout's regeneration-record path, ``None`` outside git.
+
+    Args:
+        repo_root: Root of the checkout whose git dir holds the record.
+
+    Returns:
+        The record path, or ``None`` when git reports no path.
+    """
+    out = run_git("rev-parse", "--git-path", _REGEN_RECORD, cwd=repo_root, check=False)
+    if not out.strip():
+        return None
+    path = Path(out.strip())
+    return path if path.is_absolute() else repo_root / path
+
+
+def _load_regen_record(repo_root: Path) -> dict[str, dict[str, str]]:
+    """Load the regeneration record for the checkout.
+
+    Args:
+        repo_root: Root of the checkout whose record is read.
+
+    Returns:
+        ``{doc: {forge_version, inputs, doc_blob}}``, or ``{}`` if unusable.
+    """
+    path = _regen_record_path(repo_root)
+    if path is None or not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict) or not all(
+        isinstance(entry, dict) for entry in data.values()
+    ):
+        return {}
+    return data
+
+
+def _save_regen_record(repo_root: Path, record: dict[str, dict[str, str]]) -> None:
+    """Write the regeneration record atomically; a no-op outside git.
+
+    Args:
+        repo_root: Root of the checkout whose record is written.
+        record: Mapping of doc path to its recorded build fingerprint.
+    """
+    path = _regen_record_path(repo_root)
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _index_blobs(repo_root: Path) -> dict[str, str]:
+    """Map every indexed path to its staged blob sha (one ``git ls-files -s``).
+
+    Args:
+        repo_root: Root of the checkout whose index is read.
+
+    Returns:
+        Mapping of repo-relative path to staged blob sha.
+    """
+    blobs: dict[str, str] = {}
+    out = run_git("ls-files", "-s", cwd=repo_root, check=False)
+    for line in out.splitlines():
+        meta, _, path = line.partition("\t")
+        fields = meta.split()
+        if len(fields) >= _MIN_BLOB_FIELDS and path:
+            blobs[path] = fields[1]
+    return blobs
+
+
+def _is_forge_repo(repo_root: Path) -> bool:
+    """Report whether the repo is forge itself (its CLIs come from this tree).
+
+    Args:
+        repo_root: Root of the repo whose ``pyproject.toml`` is inspected.
+
+    Returns:
+        True when the project name is forge's own distribution name.
+    """
+    project = config.read_pyproject_raw(repo_root).get("project") or {}
+    return project.get("name") == FORGE_DIST_NAME
+
+
+def _regen_inputs(
+    repo_root: Path, rel: str, blobs: dict[str, str] | None = None
+) -> str:
+    """Fingerprint everything *rel* is built from, from the index.
+
+    The api-digest reads the tracked sources under its roots; the CLI
+    reference reads forge's installed console scripts — and, in forge's own
+    repo, the ``src/forge`` code those scripts' help text comes from.
+    Fingerprints come from index blob shas, so a change that reached the
+    branch while this step did not run (``--no-verify``, a skipped partial
+    commit, a branch switch) still changes the fingerprint.
+
+    Args:
+        repo_root: Repo root.
+        rel: The generated doc.
+        blobs: Precomputed :func:`_index_blobs`, to read the index once.
+
+    Returns:
+        A sha256 hex digest.
+    """
+    blobs = blobs if blobs is not None else _index_blobs(repo_root)
+    lines: list[str] = []
+    if rel == _CLI_REFERENCE_DOC:
+        scripts = console_script_modules(FORGE_DIST_NAME) or {}
+        lines.extend(f"script\0{name}\0{mod}" for name, mod in sorted(scripts.items()))
+        if _is_forge_repo(repo_root):
+            sources = sorted(
+                p for p in blobs if p.startswith("src/forge/") and p.endswith(".py")
+            )
+            lines.extend(
+                f"{p}\0{blobs[p]}" for p in [*sources, "pyproject.toml"] if p in blobs
+            )
+    else:
+        roots = config.resolve_tool_roots(repo_root, "api_digest")
+        files = sorted(config.tracked_files_under_roots(repo_root, roots))
+        lines.extend(f"{p}\0{blobs.get(p, '')}" for p in files)
+        lines.append(f"pyproject.toml\0{blobs.get('pyproject.toml', '')}")
+    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+
+
+def _forge_version() -> str:
+    """Return the installed forge version, or ``""`` when unknowable."""
+    try:
+        return importlib.metadata.version(FORGE_DIST_NAME)
+    except importlib.metadata.PackageNotFoundError:
+        return ""
+
+
+def _regen_decisions(
+    repo_root: Path, targets: list[tuple[str, str]]
+) -> tuple[list[RegenDecision], dict[str, dict[str, str]]]:
+    """Decide each target doc and return the inputs needed to record a build.
+
+    Args:
+        repo_root: Repo root.
+        targets: ``(cli, rel)`` pairs whose doc exists.
+
+    Returns:
+        The decisions, and per doc the ``current`` fingerprint used.
+    """
+    record_docs = _load_regen_record(repo_root)
+    blobs = _index_blobs(repo_root)
+    staged = set(
+        run_git(
+            "diff", "--cached", "--name-only", cwd=repo_root, check=False
+        ).splitlines()
+    )
+    merge = merge_in_progress(repo_root)
+    version = _forge_version()
+    decisions: list[RegenDecision] = []
+    currents: dict[str, dict[str, str]] = {}
+    for cli, rel in targets:
+        try:
+            current = {
+                "forge_version": version,
+                "inputs": _regen_inputs(repo_root, rel, blobs),
+            }
+            recorded = record_docs.get(rel) if blobs else None
+        except (OSError, ValueError, subprocess.CalledProcessError):
+            current, recorded = {"forge_version": version, "inputs": ""}, None
+        currents[rel] = current
+        decisions.append(
+            decide_regen(
+                rel,
+                cli,
+                RegenSignals(
+                    current=current,
+                    recorded=recorded if isinstance(recorded, dict) else None,
+                    doc_blob=blobs.get(rel),
+                    merge=merge,
+                    doc_staged=rel in staged,
+                ),
+            )
+        )
+    return decisions, currents
+
+
+def _record_regenerated(
+    repo_root: Path,
+    built: list[str],
+    currents: dict[str, dict[str, str]],
+) -> None:
+    """Record the docs that were just regenerated and re-staged successfully.
+
+    Args:
+        repo_root: Repo root.
+        built: Docs whose generator succeeded.
+        currents: The fingerprints their decision used.
+    """
+    if not built:
+        return
+    record = _load_regen_record(repo_root)
+    blobs = _index_blobs(repo_root)
+    for rel in built:
+        record[rel] = {**currents[rel], "doc_blob": blobs.get(rel, "")}
+    _save_regen_record(repo_root, record)
+
 
 def step_regen_docs(repo_root: Path) -> StepResult:
     """Regenerate the otherwise-unwired generated docs and re-stage them.
@@ -2047,8 +2340,20 @@ def step_regen_docs(repo_root: Path) -> StepResult:
             ),
             skipped=True,
         )
+    decisions, currents = _regen_decisions(repo_root, targets)
+    sections = [
+        f"{d.rel}: {'regenerated' if d.regenerate else 'skipped'} — {d.reason}"
+        for d in decisions
+    ]
+    targets = [(d.cli, d.rel) for d in decisions if d.regenerate]
+    if not targets:
+        return StepResult(
+            name="regen_docs",
+            passed=True,
+            output="\n".join(sections),
+            skipped=True,
+        )
     passed = True
-    sections: list[str] = []
     # Stale-install advisory: forge-gen-cli-reference discovers CLIs from
     # INSTALLED entry points, and the healing steps (auto_rebuild,
     # env_sync) self-skip non-interactively — so a commit adding a
@@ -2069,13 +2374,19 @@ def step_regen_docs(repo_root: Path) -> StepResult:
     # with several forge checkouts the bare name can resolve to another
     # checkout's older generator, which rewrites the doc from stale
     # knowledge while this step reports success.
-    for cli, _rel in targets:
+    built: list[str] = []
+    for cli, rel in targets:
         ok, output = _run(forge_cli_argv(cli, caller="forge-precommit"), cwd=repo_root)
         passed = passed and ok
+        if ok:
+            built.append(rel)
         sections.append(f"$ {cli}\n{output.strip() or '(no output)'}")
     restaged = stage_modified_paths(repo_root, [rel for _, rel in targets])
     if restaged:
         sections.append("Re-staged: " + ", ".join(restaged))
+    # Recorded only after a successful generate + re-stage: a failed or
+    # skipped doc keeps its old entry, so the next commit retries it.
+    _record_regenerated(repo_root, built, currents)
     return StepResult(
         name="regen_docs",
         passed=passed,
@@ -2953,7 +3264,10 @@ def run_all(
 
     Each invoked step is wall-clocked (monotonic) into its result's
     ``elapsed_s``, and the run's per-step timing report is (re)written to
-    ``code_health/precommit_timing.log`` before returning.
+    ``code_health/precommit_timing.log`` before returning — or, for an
+    ``only`` run, to ``code_health/precommit_only_timing.log``: a partial
+    run must never replace the full-run record that readers treat as the
+    whole battery's result.
 
     Args:
         repo_root: Override the auto-detected git repo root. Useful in tests.
@@ -2986,7 +3300,8 @@ def run_all(
             _print_step_line(result)
         _write_log(root, result)
         results.append(result)
-    write_step_log(root, "precommit_timing", _format_timing_log(results))
+    timing_log = "precommit_only_timing" if only else "precommit_timing"
+    write_step_log(root, timing_log, _format_timing_log(results))
     return results
 
 
@@ -3139,6 +3454,56 @@ def freshness_verdicts(root: Path) -> dict[str, str]:
     }
 
 
+_PASSING_MARKERS = frozenset({"PASS", "WARN", "SKIP"})
+
+
+def verdict(root: Path) -> tuple[bool, list[str]]:
+    """Return whether every enabled step passed on the current tree.
+
+    The mechanical answer to "did pre-commit pass here?" — read from the
+    full-run timing log and the logs' freshness, never from anyone's
+    summary of them. A step passes only when the last full run recorded
+    PASS, WARN or SKIP for it and neither that run nor the step's own log
+    describes another tree; an enabled step the run never reached fails.
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        ``(passed, lines)`` — one line per finding (``STALE``/``MISSING``/
+        ``FAIL``/the step's marker), ending ``verdict: PASS`` or
+        ``verdict: FAIL``.
+    """
+    verdicts = freshness_verdicts(root)
+    timing = root / "code_health" / "precommit_timing.log"
+    markers = (
+        timing_markers(timing.read_text(encoding="utf-8")) if timing.is_file() else {}
+    )
+    lines: list[str] = []
+    ok = True
+    if verdicts.get("precommit_timing") != "fresh":
+        ok = False
+        lines.append("STALE precommit_timing (last full run describes another tree)")
+    for step in resolve_steps(root):
+        marker = markers.get(step.name)
+        if marker is None:
+            ok = False
+            lines.append(f"MISSING {step.name}")
+            continue
+        if marker not in _PASSING_MARKERS:
+            ok = False
+            lines.append(f"FAIL {step.name}")
+            continue
+        lines.append(f"{marker} {step.name}")
+        # A skipped step checked nothing on this tree, so its log is a
+        # leftover from an earlier run, not evidence that went stale.
+        if marker != "SKIP" and verdicts.get(step.name) == "stale":
+            ok = False
+            lines.append(f"STALE {step.name}")
+    lines.append(f"verdict: {'PASS' if ok else 'FAIL'}")
+    return ok, lines
+
+
 def _report_freshness(only: list[str], *, as_json: bool) -> int:
     """Report each ``code_health/`` log's freshness against the working tree.
 
@@ -3237,12 +3602,27 @@ def main() -> int:
             "log. Always exits 0."
         ),
     )
+    parser.add_argument(
+        "--verdict",
+        action="store_true",
+        help=(
+            "Run no steps: print each enabled step's result from the last "
+            "full run and exit 1 unless every one passed (PASS/WARN/SKIP) "
+            "and that run and the step logs describe the current tree. "
+            "Paste its output instead of summarising pre-commit results."
+        ),
+    )
     args = parser.parse_args()
 
-    # A read-only report: it must not reach the wip-sync banner or the
+    # Read-only reports: they must not reach the wip-sync banner or the
     # step-forcing environment below.
     if args.freshness:
         return _report_freshness(_split_csv(args.only), as_json=args.json)
+    if args.verdict:
+        passed, lines = verdict(get_repo_root())
+        for line in lines:
+            emit(line)
+        return 0 if passed else 1
 
     if os.environ.get("FORGE_WIP_SYNC") == "1":
         emit(
