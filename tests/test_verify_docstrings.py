@@ -18,6 +18,8 @@ import logging
 import sys
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge import config
 from forge.config import ForgeConfig
 from forge.verify_docstrings import main, verify_file
@@ -25,8 +27,6 @@ from forge.verify_docstrings import main, verify_file
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 CLEAN_SOURCE = """\
@@ -86,6 +86,85 @@ def test_verify_file_undocumented_param_is_error(tmp_path: Path) -> None:
     assert issues[0].severity == "error"
     assert issues[0].function == "add"
     assert "not documented: b" in issues[0].description
+
+
+@pytest.mark.parametrize(
+    "name", ["notes", "returns", "example", "raises", "attribute", "yields"]
+)
+def test_verify_file_header_named_param_does_not_end_args_block(
+    name: str, tmp_path: Path
+) -> None:
+    """A parameter named like a section header must not cut off later params.
+
+    Args:
+        name: Parameter name that resembles a docstring section header.
+        tmp_path: Isolated directory for the source file.
+    """
+    source = (
+        "'''Module docstring.'''\n\n\n"
+        f"def f(text: str, {name}: str, other: int) -> None:\n"
+        "    '''Do it.\n\n"
+        "    Args:\n"
+        "        text: The leading one.\n"
+        f"        {name}: The middle one.\n"
+        "        other: The second.\n"
+        "    '''\n"
+    )
+    target = tmp_path / "hdr.py"
+    target.write_text(source)
+    assert verify_file(target) == []
+
+
+@pytest.mark.parametrize("section", ["Warning", "See Also"])
+def test_verify_file_unlisted_section_entries_are_not_phantom_params(
+    section: str, tmp_path: Path
+) -> None:
+    """A `Key: value` entry in a later unlisted section is not a parameter.
+
+    Args:
+        section: Name of a section the checker has no dedicated detector for.
+        tmp_path: Isolated directory for the source file.
+    """
+    source = (
+        "'''Module docstring.'''\n\n\n"
+        "def f(a: int) -> None:\n"
+        "    '''Do it.\n\n"
+        "    Args:\n"
+        "        a: The only one.\n\n"
+        f"    {section}:\n"
+        "        thing: Not a parameter.\n"
+        "    '''\n"
+    )
+    target = tmp_path / "phantom.py"
+    target.write_text(source)
+    assert verify_file(target) == []
+
+
+@pytest.mark.parametrize("section", ["Notes", "Returns"])
+def test_verify_file_missing_param_still_flagged_before_later_section(
+    section: str, tmp_path: Path
+) -> None:
+    """A genuinely undocumented parameter is still an error with a section after Args.
+
+    Args:
+        section: Section following the Args block.
+        tmp_path: Isolated directory for the source file.
+    """
+    source = (
+        "'''Module docstring.'''\n\n\n"
+        "def f(a: int, b: int) -> int:\n"
+        "    '''Do it.\n\n"
+        "    Args:\n"
+        "        a: The only one documented.\n\n"
+        f"    {section}:\n"
+        "        Something.\n"
+        "    '''\n"
+        "    return a + b\n"
+    )
+    target = tmp_path / "missing.py"
+    target.write_text(source)
+    issues = verify_file(target)
+    assert any("not documented: b" in issue.description for issue in issues)
 
 
 def test_verify_file_missing_module_docstring_is_warning(tmp_path: Path) -> None:

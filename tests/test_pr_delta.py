@@ -618,6 +618,43 @@ def test_find_closing_refs_repeated_keyword_counts_every_number() -> None:
     assert find_closing_refs("Closes #1, closes #2\n") == [1, 2]
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Closes #123.\n", [123]),
+        ("Closes #1, closes #2.\n", [1, 2]),
+        ("Closes #1, #2.\n", [1]),
+        ("Closes #7,\n", [7]),
+        ("Closes #7;\n", [7]),
+    ],
+)
+def test_find_closing_refs_tolerates_trailing_punctuation(
+    text: str, expected: list[int]
+) -> None:
+    """A closing line ending in `.` / `,` / `;` still links, so it still counts.
+
+    Args:
+        text: PR body whose closing line ends in trailing punctuation.
+        expected: Issue numbers GitHub would link.
+    """
+    assert find_closing_refs(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["- Closes #1.\n", "Closes #1. Also refactors X\n"],
+)
+def test_find_closing_refs_trailing_punctuation_keeps_whole_line_rule(
+    text: str,
+) -> None:
+    """Punctuation tolerance never loosens the bare-closing-line requirement.
+
+    Args:
+        text: A line that is not a bare closing line.
+    """
+    assert find_closing_refs(text) == []
+
+
 def test_find_closing_refs_addresses_is_not_a_closing_keyword() -> None:
     """``Addresses #N`` is GitHub's non-closing cross-reference — never counted."""
     assert find_closing_refs("Addresses #3\n") == []

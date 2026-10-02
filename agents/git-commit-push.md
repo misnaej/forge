@@ -181,6 +181,7 @@ Specific errors from logs:
 - Modify file content by any means (heredoc, `sed -i`, redirects) → the main agent's
 - Author, edit, or delete anything under `changelog.d/` → the PR author's
 - Run `forge-precommit` or the pre-commit hook myself → **`forge:precommit-fixer`**
+- Create commits with `git revert` / `git cherry-pick` → they run no pre-commit hook; the `block_raw_git` hook refuses them for me too
 - Fix lint, docstring, or any code issues → **`forge:precommit-fixer`**
 - Write tests → **`forge:test-writer`**
 - Review code quality → **`forge:design-checker`**

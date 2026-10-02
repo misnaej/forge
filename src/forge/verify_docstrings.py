@@ -513,13 +513,13 @@ class DocstringVerifier(ast.NodeVisitor):
         params = []
         forbidden = set()
 
-        # Look for Args: section
-        # Section headers should have minimal indentation (0-4 spaces)
-        pattern = (
-            r"\n\s*Args?:\s*\n(.*?)"
-            r"(?:\n {0,4}(?:Returns?|Yields?|Raises?|"
-            r"Notes?|Examples?|Attributes?):|\Z)"
-        )
+        # The Args block ends at the first unindented line — the next
+        # section header, whatever it is called. Matching header WORDS
+        # instead cut the block at a parameter named `notes` or `returns`
+        # and missed unlisted sections (`Warning:`, `See Also:`) whose
+        # entries then read as parameters. This relies on the docstring
+        # being dedented first: the only caller passes ast.get_docstring.
+        pattern = r"\n\s*Args?:\s*\n(.*?)(?=\n\S|\Z)"
         args_section = re.search(
             pattern,
             docstring,

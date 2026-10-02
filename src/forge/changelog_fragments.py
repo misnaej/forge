@@ -1068,10 +1068,10 @@ def _manifest_tag_policy(root: Path) -> str:
 
 ASSEMBLY_BRANCH_PREFIX = "chore/assemble-"
 
-# The assembly PR is opened by unattended automation, so the PR body —
-# not a cron log nobody reads — carries what the merger must know.
+# The PR body carries what the merger must know about the release it
+# cuts — whoever opened it, the body is the record that outlives the run.
 _ASSEMBLY_PR_BODY = """\
-Scheduled changelog assembly ({version}): collates the pending
+Changelog assembly ({version}): collates the pending
 `changelog.d/` fragments into `CHANGELOG.md` {headings} and
 syncs `.claude-plugin/plugin.json` (when present).
 

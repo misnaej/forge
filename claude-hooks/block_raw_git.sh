@@ -10,18 +10,22 @@
 # agent gets out of a conflicted sequencer state.
 # FOUNDATION §3 mandatory-delegation — use the forge:git-commit-push agent.
 #
-# Bypass: the forge:git-commit-push agent itself must call these. The
-# PreToolUse payload includes `agent_type` (the `name:` frontmatter of the
-# calling subagent, per code.claude.com/docs/en/hooks). When that matches
-# `git-commit-push` or `forge:git-commit-push`, allow the call.
+# Bypass: the forge:git-commit-push agent may run `git commit` / `git
+# push` — that is its job. The PreToolUse payload includes `agent_type`
+# (the `name:` frontmatter of the calling subagent, per
+# code.claude.com/docs/en/hooks); when it matches `git-commit-push` or
+# `forge:git-commit-push`, only the commit/push rule is waived. Every other
+# rule here — the fail-closed anchor-lib check and the revert/cherry-pick
+# rule — applies to that agent like to everyone: the sequencer creates
+# commits with no pre-commit hook, which is exactly what that agent exists
+# to prevent. Same scoped-bypass shape as block_protected_branches.sh.
 set -e
 INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
 AGENT_TYPE=$(jq -r '.agent_type // empty' <<< "$INPUT")
-
+IS_COMMIT_AGENT=0
 if [ "$AGENT_TYPE" = "git-commit-push" ] || [ "$AGENT_TYPE" = "forge:git-commit-push" ]; then
-    # The one agent legitimately allowed to drive `git commit` / `git push`.
-    exit 0
+    IS_COMMIT_AGENT=1
 fi
 
 # Anchor + rationale live in the shared lib (one home for the whole
@@ -35,7 +39,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}(commit|push)\b"; then
+if [ "$IS_COMMIT_AGENT" != 1 ] && echo "$COMMAND" | grep -qE "${GIT_ANCHOR}(commit|push)\b"; then
     echo "BLOCKED: raw 'git commit' / 'git push' from Bash is forbidden by FOUNDATION §3 mandatory-delegation. Use the forge:git-commit-push agent — it runs pre-commit, signs the commit per the convention, and pushes with the right tracking flags." >&2
     exit 2
 fi
