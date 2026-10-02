@@ -1404,6 +1404,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _verify-forge-docstrings — verify docstring accuracy against code signatures._
 
 - `class Issue` — Represents a docstring issue found during verification.
+- `_has_section(docstring: str, *names: str) -> bool` _(internal)_ — Return whether *docstring* has a section header named one of *names*.
 - `class DocstringVerifier` — AST visitor to verify docstrings match function signatures.
   - `visit_Module(self, node: ast.Module) -> None` — Check module-level docstring.
   - `visit_ClassDef(self, node: ast.ClassDef) -> None` — Check class docstring.

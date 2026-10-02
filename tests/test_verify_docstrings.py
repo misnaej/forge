@@ -400,3 +400,87 @@ def test_scope_all_passes_repo_root_and_resolved_roots_to_tracked_files_under_ro
 
     assert main() == 0
     assert recorded == [(tmp_path, ["src", "tests"])]
+
+
+def _verify_body(tmp_path: Path, func_source: str) -> list:
+    """Write func_source to a test file and return verify_file issues."""
+    target = tmp_path / "sections.py"
+    target.write_text("'''Module docstring.'''\n\n\n" + func_source)
+    return verify_file(target)
+
+
+def test_verify_file_returns_named_param_does_not_hide_missing_returns(
+    tmp_path: Path,
+) -> None:
+    """A param named `returns` with an indented description is not a section."""
+    issues = _verify_body(
+        tmp_path,
+        "def f(x: int, returns: int) -> int:\n"
+        "    '''Do it.\n\n"
+        "    Args:\n"
+        "        x: First.\n"
+        "        returns:\n"
+        "            What to return.\n"
+        "    '''\n"
+        "    return x + returns\n",
+    )
+    assert any("has no Returns section" in i.description for i in issues)
+
+
+def test_verify_file_yields_named_param_does_not_hide_missing_yields_section(
+    tmp_path: Path,
+) -> None:
+    """A param named `yields` is not a Yields section.
+
+    With a real Returns section on a function that returns nothing, the
+    "Returns section but doesn't return" info is suppressed only when a
+    Yields section exists, so a `yields` param must not suppress it.
+    """
+    issues = _verify_body(
+        tmp_path,
+        "def f(x: int, yields: int):\n"
+        "    '''Do it.\n\n"
+        "    Args:\n"
+        "        x: First.\n"
+        "        yields:\n"
+        "            What to yield.\n\n"
+        "    Returns:\n"
+        "        Nothing real.\n"
+        "    '''\n"
+        "    yield x + yields\n",
+    )
+    assert any("has Returns section but function" in i.description for i in issues)
+
+
+def test_verify_file_lowercase_column_zero_returns_header_is_a_section(
+    tmp_path: Path,
+) -> None:
+    """Section detection stays case-insensitive for real column-0 headers."""
+    issues = _verify_body(
+        tmp_path,
+        "def f(x: int) -> int:\n"
+        "    '''Do it.\n\n"
+        "    Args:\n"
+        "        x: First.\n\n"
+        "    returns:\n"
+        "        The value.\n"
+        "    '''\n"
+        "    return x\n",
+    )
+    assert not any("has no Returns section" in i.description for i in issues)
+
+
+def test_verify_file_returns_named_param_in_void_function_is_not_a_section(
+    tmp_path: Path,
+) -> None:
+    """A void function with a `returns` param gets no spurious Returns info."""
+    issues = _verify_body(
+        tmp_path,
+        "def f(returns: int):\n"
+        "    '''Do it.\n\n"
+        "    Args:\n"
+        "        returns:\n"
+        "            What to return.\n"
+        "    '''\n",
+    )
+    assert not any("has Returns section but function" in i.description for i in issues)
