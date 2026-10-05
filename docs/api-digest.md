@@ -1051,8 +1051,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_pip_audit_scan_age_hours(repo_root: Path) -> float | None` _(internal)_ — Return how long ago the last CVE scan wrote its sidecar.
 - `_reuse_reason_hours(cfg: dict, age: float) -> str | None` _(internal)_ — Return why an hours-cadence scan may be reused, or ``None`` to scan.
 - `_reuse_reason_branch(repo_root: Path) -> str | None` _(internal)_ — Return why a branch-cadence scan may be reused, or ``None`` to scan.
-- `_pip_audit_skip(repo_root: Path) -> StepResult | None` _(internal)_ — Decide whether this commit can reuse the previous CVE scan.
+- `_pip_audit_reuse_reason(repo_root: Path) -> str | None` _(internal)_ — Decide whether this commit can reuse the previous CVE scan.
 - `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.
+- `_reused_pip_audit(repo_root: Path, *, blocking: bool) -> StepResult | None` _(internal)_ — Return the previous scan's result when this commit may reuse it.
+- `_pip_audit_result(data: dict, *, blocking: bool, notice: str = '') -> StepResult` _(internal)_ — Build the pip_audit result from parsed scan data.
+- `_read_audit_sidecar(repo_root: Path) -> dict | None` _(internal)_ — Return the sidecar's parsed scan, or ``None`` when it cannot be trusted.
 - `_write_audit_sidecar(repo_root: Path, data: dict) -> None` _(internal)_ — Persist pip-audit's parsed JSON to the shared sidecar.
 - `step_cve_usage(repo_root: Path) -> StepResult` — Run ``verify-forge-cve-usage`` — the usage-scoped second stage on pip_audit.
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
