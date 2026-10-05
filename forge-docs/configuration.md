@@ -759,7 +759,8 @@ following the [consumer changelog convention](../docs/consumer-release.md)
   (`verify-forge-plugin-version` owns the invariant).
 - **`changelog_updated`** — the per-PR freshness gate: a change set that
   touches a changelog-requiring path without touching `CHANGELOG.md`
-  fails. Self-skips without a `CHANGELOG.md` and on the base branch;
+  fails (in fragments mode: without a `changelog.d/` fragment, staged
+  or not — a gitignored one does not count). Self-skips without a `CHANGELOG.md` and on the base branch;
   genuine no-version changes opt out via env, branch token, or commit
   tag — see the ["No-version opt-out"](../docs/consumer-release.md#enforcement)
   in `docs/consumer-release.md` for all three signals.

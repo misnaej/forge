@@ -2688,7 +2688,7 @@ def _handle_standard_mode(
 
 
 def step_changelog_updated(repo_root: Path) -> StepResult:
-    """Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
+    """Require a changelog entry alongside code changes (opt-in).
 
     The per-PR freshness rule from ``docs/consumer-release.md``: every
     change with a user-facing effect adds its bullet in the same PR, so

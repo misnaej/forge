@@ -251,7 +251,7 @@ means and how to respond (incl. the `ruff.toml` present-diff rule):
 PRECOMMIT-FIXER COMPLETE (mode: normal|strict)
 
 Verdict (forge-precommit --verdict, verbatim):
-  <its output, every line, ending `verdict: PASS` or `verdict: FAIL`>
+  <its output, every line, ending `verdict: PASS` or `verdict: FAIL — <cause>`>
 
 git status: not run (hook-blocked)
 

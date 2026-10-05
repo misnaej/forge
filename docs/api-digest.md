@@ -1077,7 +1077,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_changelog_triggers(files: list[str], require: tuple[str, ...], exempt: tuple[str, ...]) -> list[str]` _(internal)_ — Return changed files that require a changelog entry.
 - `_handle_fragment_mode(repo_root: Path, files: list[str], require: tuple[str, ...], exempt: tuple[str, ...]) -> StepResult` _(internal)_ — Handle fragment-mode changelog validation.
 - `_handle_standard_mode(repo_root: Path, files: list[str], *, enforce: bool, require: tuple[str, ...], exempt: tuple[str, ...]) -> StepResult` _(internal)_ — Handle standard-mode changelog validation.
-- `step_changelog_updated(repo_root: Path) -> StepResult` — Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
+- `step_changelog_updated(repo_root: Path) -> StepResult` — Require a changelog entry alongside code changes (opt-in).
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
 - `_step_marker(result: StepResult) -> str` _(internal)_ — Return *result*'s bare status marker (``SKIP``/``PASS``/``WARN``/``FAIL``).
 - `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
