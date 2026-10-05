@@ -4651,7 +4651,7 @@ def test_verdict_hook_passes_when_verdict_clean(
 def test_verdict_hook_allows_honest_stuck_handback(tmp_path: Path) -> None:
     """A failing verdict is fine when the agent says STUCK and quotes verdict: FAIL."""
     init_git_repo(tmp_path)
-    env = _verdict_env(tmp_path, exit_code=1, output="verdict: FAIL ruff")
+    env = _verdict_env(tmp_path, exit_code=1, output="verdict: FAIL — failing: ruff")
     proc = _run_verdict_hook(
         tmp_path, env, message="STUCK: cannot clear E501.\nverdict: FAIL"
     )

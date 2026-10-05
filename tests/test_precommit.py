@@ -7106,6 +7106,61 @@ def test_fragment_gate_passes_single_branch_added_fragment(tmp_path: Path) -> No
     assert result.passed
 
 
+def _changelog_updated_on_branch_with_source_change(
+    work: Path, monkeypatch: pytest.MonkeyPatch
+) -> precommit.StepResult:
+    """Commit a triggering source change on ``feat/x`` and run the step.
+
+    Args:
+        work: Fragments-mode repo from ``_init_fragments_mode_repo``.
+        monkeypatch: Clears the no-version opt-out environment.
+
+    Returns:
+        The ``changelog_updated`` step result.
+    """
+    for var in ("NO_VERSION", "SKIP_CHANGELOG_CHECK", "GITHUB_HEAD_REF"):
+        monkeypatch.delenv(var, raising=False)
+    (work / "src" / "pkg").mkdir(parents=True)
+    (work / "src" / "pkg" / "mod.py").write_text("X = 1\n")
+    commit_all(work, "feat: source change")
+    return precommit.step_changelog_updated(work)
+
+
+def test_changelog_updated_untracked_valid_fragment_counts_as_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BEHAVIOR: a fragment authored but not yet staged satisfies the gate."""
+    work = _init_fragments_mode_repo(tmp_path)
+    _write_pending_fragment(work, "a.added.md", "bump: minor\n- x\n")
+    result = _changelog_updated_on_branch_with_source_change(work, monkeypatch)
+    assert result.passed
+
+
+def test_changelog_updated_untracked_gitignored_fragment_not_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BEHAVIOR: gitignored fragments are out of scope; gate fails."""
+    work = _init_fragments_mode_repo(tmp_path)
+    (work / ".gitignore").write_text("changelog.d/ignored/\n")
+    commit_all(work, "chore: ignore")
+    (work / "changelog.d" / "ignored").mkdir(parents=True)
+    (work / "changelog.d" / "ignored" / "a.added.md").write_text("bump: minor\n- x\n")
+    result = _changelog_updated_on_branch_with_source_change(work, monkeypatch)
+    assert not result.passed
+    assert "require a changelog fragment" in result.output
+
+
+def test_changelog_updated_untracked_invalid_fragment_still_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BEHAVIOR: presence of an untracked fragment does not waive validation."""
+    work = _init_fragments_mode_repo(tmp_path)
+    _write_pending_fragment(work, "a.bogus.md", "bump: minor\n- x\n")
+    result = _changelog_updated_on_branch_with_source_change(work, monkeypatch)
+    assert not result.passed
+    assert "Invalid changelog.d/" in result.output
+
+
 def test_step_changelog_updated_fragments_mode_trigger_without_fragment_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -7757,7 +7812,8 @@ def test_verdict_fail_row_fails_and_names_step(
 
     assert ok is False
     assert "FAIL ruff" in lines
-    assert lines[-1] == "verdict: FAIL"
+    assert lines[-1].startswith("verdict: FAIL — failing:")
+    assert "ruff" in lines[-1]
 
 
 def test_verdict_missing_enabled_step_fails(
@@ -7773,7 +7829,8 @@ def test_verdict_missing_enabled_step_fails(
 
     assert ok is False
     assert "MISSING ruff" in lines
-    assert lines[-1] == "verdict: FAIL"
+    assert lines[-1].startswith("verdict: FAIL — missing:")
+    assert "ruff" in lines[-1]
 
 
 def test_verdict_stale_timing_log_fails(
@@ -7788,7 +7845,23 @@ def test_verdict_stale_timing_log_fails(
 
     assert ok is False
     assert "STALE precommit_timing (last full run describes another tree)" in lines
-    assert lines[-1] == "verdict: FAIL"
+    assert lines[-1].startswith("verdict: FAIL — evidence describes another tree")
+
+
+def test_verdict_stale_evidence_takes_precedence_over_failing_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BEHAVIOR: a FAIL row from a stale run is not blamed; the re-run advice wins."""
+    init_git_repo(tmp_path)
+    rows = _all_rows(tmp_path)
+    rows["ruff"] = "FAIL"
+    _verdict_repo(tmp_path, monkeypatch, rows=rows, timing_tree="0" * 40)
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is False
+    assert lines[-1].startswith("verdict: FAIL — evidence describes another tree")
+    assert "failing:" not in lines[-1]
 
 
 def test_verdict_warn_and_skip_count_as_pass(
@@ -7823,7 +7896,7 @@ def test_verdict_stale_step_log_fails(
 
     assert ok is False
     assert "STALE ruff" in lines
-    assert lines[-1] == "verdict: FAIL"
+    assert lines[-1].startswith("verdict: FAIL — evidence describes another tree")
 
 
 def test_verdict_unstamped_step_log_fails(
@@ -7839,7 +7912,7 @@ def test_verdict_unstamped_step_log_fails(
 
     assert ok is False
     assert "STALE ruff" in lines
-    assert lines[-1] == "verdict: FAIL"
+    assert lines[-1].startswith("verdict: FAIL — evidence describes another tree")
 
 
 def test_verdict_skipped_step_with_old_log_is_not_stale(
@@ -7886,7 +7959,7 @@ def test_main_verdict_prints_lines_exits_by_verdict_and_runs_no_steps(
 
     assert got == rc
     out = capsys.readouterr().out.splitlines()
-    assert out[-1] == f"verdict: {marker if marker == 'PASS' else 'FAIL'}"
+    assert out[-1].startswith(f"verdict: {marker}")
     assert calls == []
 
 

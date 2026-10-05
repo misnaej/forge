@@ -1080,7 +1080,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_changelog_triggers(files: list[str], require: tuple[str, ...], exempt: tuple[str, ...]) -> list[str]` _(internal)_ — Return changed files that require a changelog entry.
 - `_handle_fragment_mode(repo_root: Path, files: list[str], require: tuple[str, ...], exempt: tuple[str, ...]) -> StepResult` _(internal)_ — Handle fragment-mode changelog validation.
 - `_handle_standard_mode(repo_root: Path, files: list[str], *, enforce: bool, require: tuple[str, ...], exempt: tuple[str, ...]) -> StepResult` _(internal)_ — Handle standard-mode changelog validation.
-- `step_changelog_updated(repo_root: Path) -> StepResult` — Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
+- `step_changelog_updated(repo_root: Path) -> StepResult` — Require a changelog entry alongside code changes (opt-in).
 - `_write_log(repo_root: Path, result: StepResult) -> None` _(internal)_ — Persist *result*'s output to ``code_health/<name>.log``.
 - `_step_marker(result: StepResult) -> str` _(internal)_ — Return *result*'s bare status marker (``SKIP``/``PASS``/``WARN``/``FAIL``).
 - `_print_step_line(result: StepResult) -> None` _(internal)_ — Print a one-line status for *result* (SKIP/PASS/WARN/FAIL).
@@ -1095,6 +1095,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_forced_steps(only: list[str]) -> Iterator[None]` _(internal)_ — Force explicitly named steps to run, then restore the environment.
 - `freshness_verdicts(root: Path) -> dict[str, str]` — Return each ``code_health/`` log's freshness verdict against the working tree.
 - `verdict(root: Path) -> tuple[bool, list[str]]` — Return whether every enabled step passed on the current tree.
+- `_verdict_closing_line(*, stale: bool, failing: list[str], missing: list[str]) -> str` _(internal)_ — Return the verdict's closing line, naming the cause of a FAIL.
 - `_report_freshness(only: list[str], *, as_json: bool) -> int` _(internal)_ — Report each ``code_health/`` log's freshness against the working tree.
 - `main() -> int` — CLI entry point.
 

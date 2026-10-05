@@ -98,6 +98,7 @@ from forge.git_utils import (
     emit,
     fetch_tags_best_effort,
     forge_cli_argv,
+    get_untracked_files,
     is_ancestor,
     latest_v_tag,
     log_freshness,
@@ -2644,7 +2645,15 @@ def _handle_fragment_mode(
     """
     name = "changelog_updated"
     triggers = _changelog_triggers(files, require, exempt)
-    has_fragment = any(p.startswith(f"{FRAGMENTS_DIR}/") for p in files)
+    # The diff leaves untracked files out on purpose, but a fragment is
+    # authored before it is staged: the validator below already reads it
+    # from disk, so presence must too, or a valid fragment fails here until
+    # someone stages it. Gitignored paths stay excluded.
+    has_fragment = any(p.startswith(f"{FRAGMENTS_DIR}/") for p in files) or bool(
+        get_untracked_files(
+            suffix=".md", prefix=f"{FRAGMENTS_DIR}/", repo_root=repo_root
+        )
+    )
     if triggers and not has_fragment:
         blocking = _changelog_blocking(repo_root)
         return StepResult(
@@ -2748,7 +2757,7 @@ def _handle_standard_mode(
 
 
 def step_changelog_updated(repo_root: Path) -> StepResult:
-    """Require a ``CHANGELOG.md`` edit alongside code changes (opt-in).
+    """Require a changelog entry alongside code changes (opt-in).
 
     The per-PR freshness rule from ``docs/consumer-release.md``: every
     change with a user-facing effect adds its bullet in the same PR, so
@@ -3253,7 +3262,7 @@ def verdict(root: Path) -> tuple[bool, list[str]]:
     Returns:
         ``(passed, lines)`` — one line per finding (``STALE``/``MISSING``/
         ``FAIL``/the step's marker), ending ``verdict: PASS`` or
-        ``verdict: FAIL``.
+        ``verdict: FAIL — <cause>``.
     """
     verdicts = freshness_verdicts(root)
     timing = root / "code_health" / "precommit_timing.log"
@@ -3261,28 +3270,65 @@ def verdict(root: Path) -> tuple[bool, list[str]]:
         timing_markers(timing.read_text(encoding="utf-8")) if timing.is_file() else {}
     )
     lines: list[str] = []
-    ok = True
-    if verdicts.get("precommit_timing") != "fresh":
-        ok = False
+    stale = verdicts.get("precommit_timing") != "fresh"
+    if stale:
         lines.append("STALE precommit_timing (last full run describes another tree)")
+    failing: list[str] = []
+    missing: list[str] = []
     for step in resolve_steps(root):
         marker = markers.get(step.name)
         if marker is None:
-            ok = False
+            missing.append(step.name)
             lines.append(f"MISSING {step.name}")
             continue
         if marker not in _PASSING_MARKERS:
-            ok = False
+            failing.append(step.name)
             lines.append(f"FAIL {step.name}")
             continue
         lines.append(f"{marker} {step.name}")
         # A skipped step checked nothing on this tree, so its log is a
         # leftover from an earlier run, not evidence that went stale.
         if marker != "SKIP" and verdicts.get(step.name) in NOT_VERIFIED:
-            ok = False
+            stale = True
             lines.append(f"STALE {step.name}")
-    lines.append(f"verdict: {'PASS' if ok else 'FAIL'}")
+    ok = not (stale or failing or missing)
+    lines.append(_verdict_closing_line(stale=stale, failing=failing, missing=missing))
     return ok, lines
+
+
+def _verdict_closing_line(
+    *, stale: bool, failing: list[str], missing: list[str]
+) -> str:
+    """Return the verdict's closing line, naming the cause of a FAIL.
+
+    The cause sits on the last line because that is the line a reader
+    quotes: listed above it among dozens of PASS rows, a lone STALE or
+    FAIL row is easy to miss and a harmless WARN easy to blame. Stale
+    evidence outranks failing steps — markers from a run that describes
+    another tree say nothing about this one, so the only useful advice is
+    the full re-run that replaces them.
+
+    Args:
+        stale: The full-run timing log, or any step log, describes another tree.
+        failing: Enabled steps the last full run recorded as FAIL.
+        missing: Enabled steps the last full run never reached.
+
+    Returns:
+        ``verdict: PASS``, or ``verdict: FAIL — <cause>``.
+    """
+    if stale:
+        return (
+            "verdict: FAIL — evidence describes another tree; finish all "
+            "edits, then one full forge-precommit run"
+        )
+    causes = []
+    if failing:
+        causes.append(f"failing: {', '.join(failing)}")
+    if missing:
+        causes.append(f"missing: {', '.join(missing)}")
+    if causes:
+        return f"verdict: FAIL — {'; '.join(causes)}"
+    return "verdict: PASS"
 
 
 def _report_freshness(only: list[str], *, as_json: bool) -> int:
