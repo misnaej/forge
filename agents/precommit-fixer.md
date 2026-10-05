@@ -99,14 +99,14 @@ does not reach this one.
 
 `forge-precommit` runs each step CLI (the Allowed-CLIs list) plus an inline `pip_audit` check; each writes its own `code_health/*.log`. When nothing needs fixing, the ruff step is near-instant and silent. Residue (rules without autofix) lands in `code_health/ruff.log` and FAILs the step.
 
-Each log opens with a `# produced-at: tree=…` stamp. `regen_docs` and `ruff` — the steps that change files — run before every file validator, so those logs are stamped after their fixes. `forge-precommit --freshness` (read-only, uncounted) tells you whether a log is `fresh` for the current tree; steps that check the environment report `n/a`.
+Each log opens with a `# produced-at: tree=…` stamp. Your own edits post-date the whole run: any `Edit` after it stales every log, and only a full run restores the verdict's input — so finish all edits, then one full run, then the verdict. `forge-precommit --freshness` (read-only, uncounted) reports each log `fresh` or not.
 
 If `forge-precommit` is not on PATH, hard-fail per FOUNDATION §2 with
 the install hint. Never fall back to raw `ruff` / `python -m`.
 
 ### Phase 2 — Dispatch the residue
 
-`ruff.log` already reflects the post-fix state — anything left is not auto-fixable. (If exactly one log is stale/missing, refresh it with its step CLI — once — instead of a full re-run.) Dispatch by step:
+`ruff.log` already reflects the post-fix state — anything left is not auto-fixable. (A step CLI or `--only` refreshes a log for diagnosis, never the verdict.) Dispatch by step:
 
 | `code_health/` log | Action |
 |---|---|
@@ -181,7 +181,8 @@ the `STUCK` block and name the semantic fix for the main agent.
 Run `forge-precommit --verdict` and paste its output verbatim at the top
 of the Output block — never summarise it. You report success only when
 it ends `verdict: PASS`; otherwise emit the `STUCK` block with the
-verdict pasted. This is enforced: the `require_fixer_verdict` hook runs
+verdict pasted, citing the cause its closing line names (a WARN never
+fails it). This is enforced: the `require_fixer_verdict` hook runs
 the verdict itself when you stop and refuses a hand-back it contradicts.
 See `## Output` below.
 
@@ -250,7 +251,7 @@ means and how to respond (incl. the `ruff.toml` present-diff rule):
 PRECOMMIT-FIXER COMPLETE (mode: normal|strict)
 
 Verdict (forge-precommit --verdict, verbatim):
-  <its output, every line, ending `verdict: PASS` or `verdict: FAIL`>
+  <its output, every line, ending `verdict: PASS` or `verdict: FAIL — <cause>`>
 
 git status: not run (hook-blocked)
 

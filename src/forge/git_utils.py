@@ -2178,9 +2178,10 @@ def get_untracked_files(
 
     The complement to :func:`get_tracked_files`: files present on disk but
     absent from the index and **not** gitignored (``git ls-files --others
-    --exclude-standard``) — the "forgot to ``git add``" set. Sole use is
-    warning when a first-party source file is silently skipped by a
-    tracked-set scan (issue #164). A gitignored file is *deliberately*
+    --exclude-standard``) — the "forgot to ``git add``" set: used to warn
+    when a first-party source file is silently skipped by a tracked-set
+    scan, and to count a changelog fragment that is written but not yet
+    staged. A gitignored file is *deliberately*
     out of scope (issue #161) and is never listed here — that is exactly
     what ``--exclude-standard`` filters out.
 
