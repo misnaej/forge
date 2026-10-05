@@ -1474,7 +1474,7 @@ def test_step_pip_audit_reuse_never_calls_run_json(
     EXPECTED BEHAVIOR: a passing, non-skipped StepResult whose output
     opens with the reuse notice followed by the clean report.
     """
-    _seed_reusable_audit_sidecar(tmp_path, {})
+    _seed_reusable_audit_sidecar(tmp_path, _audit_run(0).data)
     monkeypatch.setattr(precommit.pip_audit_json, "run_json", _boom)
     result = precommit.step_pip_audit(tmp_path)
     assert not result.skipped
@@ -1541,14 +1541,21 @@ def test_step_pip_audit_blocking_reused_findings_rescan(
     assert "reused scan" not in result.output
 
 
-@pytest.mark.parametrize("sidecar_kind", ["malformed", "non-dict", "unreadable"])
+_UNUSABLE_SIDECAR_TEXT = {"malformed": "{not json", "non-dict": "[]", "skeletal": "{}"}
+
+
+@pytest.mark.parametrize(
+    "sidecar_kind", ["malformed", "non-dict", "skeletal", "unreadable"]
+)
 def test_step_pip_audit_unusable_sidecar_scans(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sidecar_kind: str
 ) -> None:
     """A sidecar that cannot be trusted falls back to a real scan.
 
     SCENARIO: the cadence gate says reuse, but the sidecar is malformed
-    JSON, a JSON non-object, or unreadable (a directory at its path).
+    JSON, a JSON non-object, an object with no ``dependencies`` list (a
+    skeletal ``{}`` would otherwise render as a clean scan), or
+    unreadable (a directory at its path).
     MOCK SETUP: _pip_audit_reuse_reason is pinned to a fixed notice so
     the gate's mtime logic is out of play; run_json counts calls and
     returns a clean run.
@@ -1565,9 +1572,7 @@ def test_step_pip_audit_unusable_sidecar_scans(
     if sidecar_kind == "unreadable":
         sidecar.mkdir()
     else:
-        sidecar.write_text(
-            "{not json" if sidecar_kind == "malformed" else "[]", encoding="utf-8"
-        )
+        sidecar.write_text(_UNUSABLE_SIDECAR_TEXT[sidecar_kind], encoding="utf-8")
     monkeypatch.setattr(
         precommit, "_pip_audit_reuse_reason", lambda _root: "(reused scan from 1h)"
     )

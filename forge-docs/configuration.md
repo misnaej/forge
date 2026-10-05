@@ -219,8 +219,9 @@ instead, so a pin bump that fixed them is seen before the commit is
 refused.
 
 Every uncertain case scans: no previous scan, an unreadable one (stamp
-or contents of `code_health/pip_audit.json`), one dated in the future, or a cadence value forge does not recognise. Naming
-the step (`forge-precommit --only pip_audit`) or setting
+or contents of `code_health/pip_audit.json`), one dated in the future,
+or a cadence value forge does not recognise. Naming the step
+(`forge-precommit --only pip_audit`) or setting
 `FORGE_PIP_AUDIT_FORCE=1` also forces it.
 
 | Key | Default | What it does | Set it when |

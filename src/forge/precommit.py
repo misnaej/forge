@@ -1562,9 +1562,10 @@ def _pip_audit_result(data: dict, *, blocking: bool, notice: str = "") -> StepRe
 def _read_audit_sidecar(repo_root: Path) -> dict | None:
     """Return the sidecar's parsed scan, or ``None`` when it cannot be trusted.
 
-    Missing, unreadable, malformed, or not a JSON object all read as
-    ``None`` — the caller then scans, the same safe direction an
-    unreadable timestamp takes.
+    Missing, unreadable, malformed, or not a pip-audit report (a JSON
+    object with a ``dependencies`` list) all read as ``None`` — the
+    caller then scans, the same safe direction an unreadable timestamp
+    takes. A skeletal ``{}`` would otherwise render as a clean scan.
 
     Args:
         repo_root: Git repo root.
@@ -1576,7 +1577,9 @@ def _read_audit_sidecar(repo_root: Path) -> dict | None:
         data = json.loads((repo_root / PIP_AUDIT_SIDECAR).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return data if isinstance(data, dict) else None
+    if isinstance(data, dict) and isinstance(data.get("dependencies"), list):
+        return data
+    return None
 
 
 def _write_audit_sidecar(repo_root: Path, data: dict) -> None:
