@@ -1287,7 +1287,7 @@ def test_pip_audit_scan_age_hours_fresh_stamp_computes_hours(tmp_path: Path) -> 
     assert age == pytest.approx(2.0, abs=0.01)
 
 
-def test_pip_audit_skip_cadence_always_never_skips(tmp_path: Path) -> None:
+def test_pip_audit_reuse_reason_cadence_always_never_skips(tmp_path: Path) -> None:
     """`cadence = "always"` bypasses the reuse gate even with a fresh sidecar."""
     (tmp_path / "pyproject.toml").write_text(
         '[tool.forge.pip_audit]\ncadence = "always"\n'
@@ -1295,7 +1295,7 @@ def test_pip_audit_skip_cadence_always_never_skips(tmp_path: Path) -> None:
     sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
     sidecar.parent.mkdir(parents=True)
     sidecar.write_text("{}", encoding="utf-8")
-    assert precommit._pip_audit_skip(tmp_path) is None
+    assert precommit._pip_audit_reuse_reason(tmp_path) is None
 
 
 @pytest.mark.parametrize(
@@ -1304,8 +1304,8 @@ def test_pip_audit_skip_cadence_always_never_skips(tmp_path: Path) -> None:
         pytest.param(
             "24",
             1.0,
-            "(last scan 1.0h ago, under the 24h cadence — skipped; "
-            "PR finalization forces it, or run "
+            "(reused scan from 1.0h ago, under the 24h cadence — its findings "
+            "follow; PR finalization forces a fresh scan, or run "
             "`forge-precommit --only pip_audit` to scan now)",
             id="fresh",
         ),
@@ -1313,7 +1313,7 @@ def test_pip_audit_skip_cadence_always_never_skips(tmp_path: Path) -> None:
         pytest.param('"bogus"', 1.0, None, id="unparseable"),
     ],
 )
-def test_pip_audit_skip_cadence_hours(
+def test_pip_audit_reuse_reason_cadence_hours(
     tmp_path: Path,
     max_age_hours_cfg: str,
     sidecar_age_hours: float,
@@ -1322,7 +1322,7 @@ def test_pip_audit_skip_cadence_hours(
     """`cadence = "hours"` skips only inside the configured window.
 
     Parametrizes the three branches: a sidecar younger than
-    ``max_age_hours`` (skip, with the exact reuse message asserted), one
+    ``max_age_hours`` (reuse, with the exact notice asserted), one
     older (scan), and a non-numeric ``max_age_hours`` (scan — an
     uncertain case, per the "every uncertain case scans" contract).
 
@@ -1330,7 +1330,7 @@ def test_pip_audit_skip_cadence_hours(
         tmp_path: Temporary directory with pyproject.toml config.
         max_age_hours_cfg: Config value for `max_age_hours` (as string).
         sidecar_age_hours: Age of the pip_audit sidecar in hours.
-        expected_output: Expected skip message, or None to expect a scan.
+        expected_output: Expected reuse notice, or None to expect a scan.
     """
     (tmp_path / "pyproject.toml").write_text(
         f'[tool.forge.pip_audit]\ncadence = "hours"\n'
@@ -1342,13 +1342,11 @@ def test_pip_audit_skip_cadence_hours(
     mtime = time.time() - sidecar_age_hours * 3600
     os.utime(sidecar, (mtime, mtime))
 
-    result = precommit._pip_audit_skip(tmp_path)
+    result = precommit._pip_audit_reuse_reason(tmp_path)
     if expected_output is None:
         assert result is None
     else:
-        assert result is not None
-        assert result.skipped
-        assert result.output == expected_output
+        assert result == expected_output
 
 
 @pytest.mark.parametrize(
@@ -1358,7 +1356,7 @@ def test_pip_audit_skip_cadence_hours(
         pytest.param(3600, True, id="newer-than-fork-skips"),
     ],
 )
-def test_pip_audit_skip_cadence_branch(
+def test_pip_audit_reuse_reason_cadence_branch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -1399,16 +1397,16 @@ def test_pip_audit_skip_cadence_branch(
     sidecar_mtime = fork_committed_at + sidecar_offset_s
     os.utime(sidecar, (sidecar_mtime, sidecar_mtime))
 
-    result = precommit._pip_audit_skip(tmp_path)
+    result = precommit._pip_audit_reuse_reason(tmp_path)
     if expect_skip:
         assert result is not None
-        assert result.skipped
-        assert "already scanned on this branch" in result.output
+        assert "already scanned on this branch" in result
+        assert "its findings follow" in result
     else:
         assert result is None
 
 
-def test_pip_audit_skip_unknown_cadence_scans(tmp_path: Path) -> None:
+def test_pip_audit_reuse_reason_unknown_cadence_scans(tmp_path: Path) -> None:
     """An unrecognised `cadence` value is an uncertain case — it always scans."""
     (tmp_path / "pyproject.toml").write_text(
         '[tool.forge.pip_audit]\ncadence = "fortnightly"\n'
@@ -1416,10 +1414,10 @@ def test_pip_audit_skip_unknown_cadence_scans(tmp_path: Path) -> None:
     sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
     sidecar.parent.mkdir(parents=True)
     sidecar.write_text("{}", encoding="utf-8")
-    assert precommit._pip_audit_skip(tmp_path) is None
+    assert precommit._pip_audit_reuse_reason(tmp_path) is None
 
 
-def test_pip_audit_skip_env_override_forces_scan(
+def test_pip_audit_reuse_reason_env_override_forces_scan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """FORGE_PIP_AUDIT_FORCE=1 always scans, even with a fresh sidecar.
@@ -1432,35 +1430,178 @@ def test_pip_audit_skip_env_override_forces_scan(
     sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
     sidecar.parent.mkdir(parents=True)
     sidecar.write_text("{}", encoding="utf-8")
-    assert precommit._pip_audit_skip(tmp_path) is None
+    assert precommit._pip_audit_reuse_reason(tmp_path) is None
 
 
-def test_step_pip_audit_skips_call_to_run_json_when_reuse(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _seed_reusable_audit_sidecar(
+    tmp_path: Path, data: dict, *, blocking: bool = False
 ) -> None:
-    """The cadence gate precedes the network call — reuse never invokes pip-audit.
+    """Write a fresh sidecar plus an hours-cadence config that reuses it.
 
-    SCENARIO: `cadence = "hours"` with a wide window and a fresh sidecar
-    — the reuse path.
-    MOCK SETUP: precommit.pip_audit_json.run_json raises if called at
-    all, proving the gate short-circuits before reaching it.
-    EXPECTED BEHAVIOR: a skipped, passing StepResult; run_json never runs.
+    Args:
+        tmp_path: Temporary directory path.
+        data: JSON-serializable sidecar data.
+        blocking: Whether pip_audit failures block the step.
     """
     (tmp_path / "pyproject.toml").write_text(
         '[tool.forge.pip_audit]\ncadence = "hours"\nmax_age_hours = 24\n'
+        f"blocking = {str(blocking).lower()}\n"
     )
     sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
     sidecar.parent.mkdir(parents=True)
-    sidecar.write_text("{}", encoding="utf-8")
+    sidecar.write_text(json.dumps(data), encoding="utf-8")
 
-    def _boom(_root: object) -> None:
-        msg = "run_json must not be called when reusing a scan"
-        raise AssertionError(msg)
 
+def _boom(_root: object) -> None:
+    """Raise AssertionError when run_json is unexpectedly called.
+
+    Args:
+        _root: Unused argument passed by the mocked function.
+    """
+    msg = "run_json must not be called when reusing a scan"
+    raise AssertionError(msg)
+
+
+def test_step_pip_audit_reuse_never_calls_run_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reuse short-circuits before the network call and reports the clean scan.
+
+    SCENARIO: `cadence = "hours"` with a wide window and a fresh, clean
+    sidecar — the reuse path.
+    MOCK SETUP: precommit.pip_audit_json.run_json raises if called at
+    all, proving the gate short-circuits before reaching it.
+    EXPECTED BEHAVIOR: a passing, non-skipped StepResult whose output
+    opens with the reuse notice followed by the clean report.
+    """
+    _seed_reusable_audit_sidecar(tmp_path, {})
     monkeypatch.setattr(precommit.pip_audit_json, "run_json", _boom)
     result = precommit.step_pip_audit(tmp_path)
-    assert result.skipped
+    assert not result.skipped
     assert result.passed
+    assert result.output.startswith("(reused scan from")
+    assert "No known vulnerabilities" in result.output
+
+
+@pytest.mark.parametrize(
+    "n_vulns",
+    [2, precommit._PIP_AUDIT_LOUDNESS_THRESHOLD + 5],
+    ids=["few", "over-threshold"],
+)
+def test_step_pip_audit_reused_findings_are_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, n_vulns: int
+) -> None:
+    """A reused scan with findings reports them exactly like a fresh scan.
+
+    SCENARIO: fresh sidecar holding N advisories, non-blocking repo.
+    MOCK SETUP: run_json raises if called (reuse must not rescan).
+    EXPECTED BEHAVIOR: failing non-blocking, non-skipped result; the
+    notice precedes the report, the advisory id is present, and the
+    loudness banner appears only above the threshold.
+
+    Args:
+        tmp_path: Temporary repo root.
+        monkeypatch: Pytest fixture for mocking.
+        n_vulns: Number of advisories in the seeded sidecar.
+    """
+    _seed_reusable_audit_sidecar(tmp_path, _audit_run(n_vulns).data)
+    monkeypatch.setattr(precommit.pip_audit_json, "run_json", _boom)
+    result = precommit.step_pip_audit(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
+    assert not result.skipped
+    assert "PYSEC-2024-0" in result.output
+    assert result.output.index("(reused scan") < result.output.index("PYSEC-2024-0")
+    large = n_vulns > precommit._PIP_AUDIT_LOUDNESS_THRESHOLD
+    assert ("Consider filing a tracking issue" in result.output) is large
+
+
+def test_step_pip_audit_blocking_reused_findings_rescan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A blocking repo never fails a commit on a reused scan with findings.
+
+    SCENARIO: blocking = true, fresh sidecar with a finding.
+    MOCK SETUP: run_json counts calls and returns _audit_run(1).
+    EXPECTED BEHAVIOR: the scan runs; the result is a real blocking
+    failure with no reuse notice.
+    """
+    _seed_reusable_audit_sidecar(tmp_path, _audit_run(1).data, blocking=True)
+    calls: list[object] = []
+
+    def _counting(root: object) -> AuditRun:
+        calls.append(root)
+        return _audit_run(1)
+
+    monkeypatch.setattr(precommit.pip_audit_json, "run_json", _counting)
+    result = precommit.step_pip_audit(tmp_path)
+    assert len(calls) == 1
+    assert not result.passed
+    assert not result.non_blocking
+    assert "reused scan" not in result.output
+
+
+@pytest.mark.parametrize("sidecar_kind", ["malformed", "non-dict", "unreadable"])
+def test_step_pip_audit_unusable_sidecar_scans(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sidecar_kind: str
+) -> None:
+    """A sidecar that cannot be trusted falls back to a real scan.
+
+    SCENARIO: the cadence gate says reuse, but the sidecar is malformed
+    JSON, a JSON non-object, or unreadable (a directory at its path).
+    MOCK SETUP: _pip_audit_reuse_reason is pinned to a fixed notice so
+    the gate's mtime logic is out of play; run_json counts calls and
+    returns a clean run.
+    EXPECTED BEHAVIOR: run_json is called once and no reuse notice
+    appears in the output.
+
+    Args:
+        tmp_path: Temporary repo root.
+        monkeypatch: Pytest fixture for mocking.
+        sidecar_kind: Which kind of unusable sidecar to create.
+    """
+    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
+    sidecar.parent.mkdir(parents=True)
+    if sidecar_kind == "unreadable":
+        sidecar.mkdir()
+    else:
+        sidecar.write_text(
+            "{not json" if sidecar_kind == "malformed" else "[]", encoding="utf-8"
+        )
+    monkeypatch.setattr(
+        precommit, "_pip_audit_reuse_reason", lambda _root: "(reused scan from 1h)"
+    )
+    calls: list[object] = []
+
+    def _counting(root: object) -> AuditRun:
+        calls.append(root)
+        return _audit_run(0)
+
+    monkeypatch.setattr(precommit.pip_audit_json, "run_json", _counting)
+    result = precommit.step_pip_audit(tmp_path)
+    assert len(calls) == 1
+    assert "reused scan" not in result.output
+
+
+def test_run_all_reused_pip_audit_output_carries_advisory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The step result run_all hands to the log writer names the reused advisory.
+
+    SCENARIO: `run_all(only=["pip_audit"])` over a repo with a fresh
+    sidecar holding a finding (run_all itself does not set the force env;
+    only main() does).
+    MOCK SETUP: run_json raises if called.
+    EXPECTED BEHAVIOR: the pip_audit result's output contains the id.
+    """
+    _seed_reusable_audit_sidecar(tmp_path, _audit_run(1).data)
+    monkeypatch.delenv(precommit._PIP_AUDIT_FORCE_ENV, raising=False)
+    monkeypatch.setattr(precommit.pip_audit_json, "run_json", _boom)
+    results = precommit.run_all(
+        repo_root=tmp_path, print_progress=False, only=["pip_audit"]
+    )
+    assert [r.name for r in results] == ["pip_audit"]
+    assert "PYSEC-2024-0" in results[0].output
 
 
 def test_non_blocking_warning_does_not_fail_main(

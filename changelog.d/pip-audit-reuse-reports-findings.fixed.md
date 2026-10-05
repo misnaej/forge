@@ -1,0 +1,3 @@
+bump: patch
+
+- **A reused CVE scan now reports its findings.** After the first scan on a branch, `pip_audit` reuses that scan for later commits, but its log then said only "skipped" — so a branch with unpatched advisories read as having none, the step showed SKIP instead of WARN, and the "more than 10 advisories" banner could never fire. A reused scan now carries the same report, marker and banner as a fresh one, under a notice that it was reused. A missing or unreadable saved scan triggers a rescan, and a repo with `blocking = true` rescans rather than refusing a commit on a reused result that may predate the fix.

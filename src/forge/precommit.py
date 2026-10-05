@@ -1329,7 +1329,7 @@ def _reuse_reason_hours(cfg: dict, age: float) -> str | None:
         age: Age of the previous scan, in hours.
 
     Returns:
-        A phrase for the skip message, or ``None`` — an unreadable
+        A phrase for the reuse notice, or ``None`` — an unreadable
         ``max_age_hours`` scans rather than guessing.
     """
     try:
@@ -1350,7 +1350,7 @@ def _reuse_reason_branch(repo_root: Path) -> str | None:
     The two timestamps come from different clocks — the sidecar's from
     this filesystem, the fork's from whoever authored that commit — so a
     local clock running ahead could date a scan after a fork it actually
-    preceded. ``_pip_audit_skip`` rejects a future-dated sidecar before
+    preceded. ``_pip_audit_reuse_reason`` rejects a future-dated sidecar before
     calling this, which bounds that window; a refactor that drops the
     check there drops it here too.
 
@@ -1358,7 +1358,7 @@ def _reuse_reason_branch(repo_root: Path) -> str | None:
         repo_root: Git repo root.
 
     Returns:
-        A phrase for the skip message, or ``None``.
+        A phrase for the reuse notice, or ``None``.
     """
     fork = merge_base_with_head(repo_root, config.load_config(repo_root).base_branch)
     if not fork:
@@ -1372,7 +1372,7 @@ def _reuse_reason_branch(repo_root: Path) -> str | None:
     return "already scanned on this branch"
 
 
-def _pip_audit_skip(repo_root: Path) -> StepResult | None:
+def _pip_audit_reuse_reason(repo_root: Path) -> str | None:
     """Decide whether this commit can reuse the previous CVE scan.
 
     The scan's inputs are the installed packages and a remote advisory
@@ -1391,8 +1391,8 @@ def _pip_audit_skip(repo_root: Path) -> StepResult | None:
         repo_root: Git repo root.
 
     Returns:
-        A skipped ``StepResult`` when the previous scan still stands,
-        otherwise ``None``.
+        The reuse notice that opens the step's output when the previous
+        scan still stands, otherwise ``None``.
     """
     if os.environ.get(_PIP_AUDIT_FORCE_ENV) == "1":
         return None
@@ -1409,15 +1409,10 @@ def _pip_audit_skip(repo_root: Path) -> StepResult | None:
         detail = None
     if detail is None:
         return None
-    return StepResult(
-        name="pip_audit",
-        passed=True,
-        output=(
-            f"(last scan {age:.1f}h ago, {detail} — skipped; "
-            f"PR finalization forces it, or run "
-            f"`forge-precommit --only pip_audit` to scan now)"
-        ),
-        skipped=True,
+    return (
+        f"(reused scan from {age:.1f}h ago, {detail} — its findings follow; "
+        f"PR finalization forces a fresh scan, or run "
+        f"`forge-precommit --only pip_audit` to scan now)"
     )
 
 
@@ -1453,6 +1448,12 @@ def step_pip_audit(repo_root: Path) -> StepResult:
     non-blocking WARN** — never a silent skip — because a security gate
     that quietly does nothing gives false assurance.
 
+    A reused scan (see :func:`_pip_audit_reuse_reason`) reports exactly
+    what a fresh one with the same findings would — the rendered report,
+    its marker and the loudness banner — under a notice that it was
+    reused. Reuse decides whether the network call is worth making again,
+    never what the log says about the environment.
+
     Args:
         repo_root: Git repo root (used as working directory).
 
@@ -1461,10 +1462,10 @@ def step_pip_audit(repo_root: Path) -> StepResult:
         ``[tool.forge.pip_audit].blocking`` for CVE findings, always
         ``True`` when the binary is missing.
     """
-    reuse = _pip_audit_skip(repo_root)
-    if reuse is not None:
-        return reuse
     blocking = bool(_forge_step_config(repo_root, "pip_audit").get("blocking", False))
+    reused = _reused_pip_audit(repo_root, blocking=blocking)
+    if reused is not None:
+        return reused
     run = pip_audit_json.run_json(repo_root)
     if run is None:
         return StepResult(
@@ -1489,8 +1490,54 @@ def step_pip_audit(repo_root: Path) -> StepResult:
             non_blocking=True,
         )
     _write_audit_sidecar(repo_root, run.data)
-    output = pip_audit_json.render_report(run.data)
-    passed = not pip_audit_json.has_vulns(run.data)
+    return _pip_audit_result(run.data, blocking=blocking)
+
+
+def _reused_pip_audit(repo_root: Path, *, blocking: bool) -> StepResult | None:
+    """Return the previous scan's result when this commit may reuse it.
+
+    A blocking repo whose reused scan has findings rescans instead: the
+    commit would otherwise be refused on a result that may predate the
+    pin bump meant to fix it. That rescan only happens when the step is
+    already red, so it costs nothing on the passing path.
+
+    Args:
+        repo_root: Git repo root.
+        blocking: ``[tool.forge.pip_audit].blocking``.
+
+    Returns:
+        The reused result, or ``None`` to scan — cadence says scan, or
+        the sidecar is missing or unreadable, or a blocking repo's reused
+        scan has findings.
+    """
+    notice = _pip_audit_reuse_reason(repo_root)
+    if notice is None:
+        return None
+    data = _read_audit_sidecar(repo_root)
+    if data is None or (blocking and pip_audit_json.has_vulns(data)):
+        return None
+    return _pip_audit_result(data, blocking=blocking, notice=notice)
+
+
+def _pip_audit_result(data: dict, *, blocking: bool, notice: str = "") -> StepResult:
+    """Build the pip_audit result from parsed scan data.
+
+    The one place a scan becomes a log, a marker and a loudness banner, so
+    a fresh scan and a reused one cannot disagree about the same findings.
+    The banner counts the report alone — *notice* is prepended afterwards
+    and never counted.
+
+    Args:
+        data: Parsed pip-audit JSON (``AuditRun.data`` or the sidecar).
+        blocking: ``[tool.forge.pip_audit].blocking``.
+        notice: Line opening the output, e.g. that the scan was reused.
+
+    Returns:
+        ``StepResult`` passing when there are no findings; otherwise
+        failing, non-blocking unless *blocking*.
+    """
+    output = pip_audit_json.render_report(data)
+    passed = not pip_audit_json.has_vulns(data)
     if not passed:
         count = _count_pip_audit_advisories(output)
         if count > _PIP_AUDIT_LOUDNESS_THRESHOLD:
@@ -1501,12 +1548,34 @@ def step_pip_audit(repo_root: Path) -> StepResult:
                 "these accumulate silently.\n\n"
             )
             output = banner + output
+    if notice:
+        output = f"{notice}\n\n{output}"
     return StepResult(
         name="pip_audit",
         passed=passed,
         output=output,
         non_blocking=not blocking,
     )
+
+
+def _read_audit_sidecar(repo_root: Path) -> dict | None:
+    """Return the sidecar's parsed scan, or ``None`` when it cannot be trusted.
+
+    Missing, unreadable, malformed, or not a JSON object all read as
+    ``None`` — the caller then scans, the same safe direction an
+    unreadable timestamp takes.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        The parsed scan data, or ``None``.
+    """
+    try:
+        data = json.loads((repo_root / PIP_AUDIT_SIDECAR).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _write_audit_sidecar(repo_root: Path, data: dict) -> None:

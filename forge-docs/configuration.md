@@ -211,8 +211,15 @@ of a commit's — on an answer that cannot have moved. It runs once per
 branch by default, and PR finalization forces a scan, so nothing is
 published unscanned.
 
-Every uncertain case scans: no previous scan, an unreadable one, one
-dated in the future, or a cadence value forge does not recognise. Naming
+A reused scan still reports its findings: the step's log opens with a
+notice that the scan was reused, then carries the same report, marker
+(`WARN` on findings, `FAIL` when `blocking = true`) and loudness banner a
+fresh scan would. A blocking repo whose reused scan has findings rescans
+instead, so a pin bump that fixed them is seen before the commit is
+refused.
+
+Every uncertain case scans: no previous scan, an unreadable one (stamp
+or contents of `code_health/pip_audit.json`), one dated in the future, or a cadence value forge does not recognise. Naming
 the step (`forge-precommit --only pip_audit`) or setting
 `FORGE_PIP_AUDIT_FORCE=1` also forces it.
 
