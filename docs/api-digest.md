@@ -1092,6 +1092,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_forced_steps(only: list[str]) -> Iterator[None]` _(internal)_ — Force explicitly named steps to run, then restore the environment.
 - `freshness_verdicts(root: Path) -> dict[str, str]` — Return each ``code_health/`` log's freshness verdict against the working tree.
 - `verdict(root: Path) -> tuple[bool, list[str]]` — Return whether every enabled step passed on the current tree.
+- `_verdict_closing_line(*, stale: bool, failing: list[str], missing: list[str]) -> str` _(internal)_ — Return the verdict's closing line, naming the cause of a FAIL.
 - `_report_freshness(only: list[str], *, as_json: bool) -> int` _(internal)_ — Report each ``code_health/`` log's freshness against the working tree.
 - `main() -> int` — CLI entry point.
 
