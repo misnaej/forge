@@ -52,8 +52,8 @@ full pass. Config reference:
   branch are tested as usual.
 - **A selection that collects nothing fails.** When named test files
   collect no tests (pytest exit 5), the run fails with an explanation
-  instead of passing; only a run with nothing selected is a no-op
-  success.
+  instead of passing; a run with nothing selected, or a whole-suite run,
+  still treats "no tests" as success.
 - **Full-run cadence.** The tracked one-line stamp `.forge-full-run`
   records the last *truly-all* run; when it exceeds
   `full_run_max_age_hours` (default 48), the `smart_test` pre-commit step

@@ -25,9 +25,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-# pytest's "no tests collected" exit code — treated as success for a batch
-# that legitimately selected nothing (the orchestrator decides whether an
-# empty selection should even call pytest).
+# pytest's "no tests collected" exit code — `_finalize` treats it as success
+# only for a whole-suite run; named test files that collect nothing fail.
 _PYTEST_NO_TESTS = 5
 
 

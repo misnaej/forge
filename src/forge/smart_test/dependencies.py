@@ -103,6 +103,18 @@ def _iter_py(roots: Iterable[Path]) -> Iterable[Path]:
         yield from root.rglob("*.py")
 
 
+def _is_test_file(path: Path) -> bool:
+    """Return whether pytest would collect *path* as a test module.
+
+    Args:
+        path: The file path to check.
+
+    Returns:
+        True if pytest would collect this path as a test module.
+    """
+    return path.name.startswith("test_") or path.name.endswith("_test.py")
+
+
 def all_test_files(repo_root: Path) -> set[str]:
     """Return every repo-relative test file under the configured test roots.
 
@@ -274,8 +286,8 @@ def _parse_sources(
         follow_mock_patches: Whether to follow mock.patch targets.
 
     Returns:
-        Tuple of (parsed dict mapping module name to (rel_path, targets),
-        and test_modules set).
+        ``(parsed, test_modules)``: module name → ``(rel_path, targets)``,
+        and the names of collectable test modules.
     """
     parsed: dict[str, tuple[str, set[str]]] = {}
     test_modules: set[str] = set()
@@ -324,7 +336,8 @@ def build_graph(
     namespace distinctly (``tests/test_x.py`` → ``tests.test_x``) while
     their ``from forge.x import …`` edges still point at the source
     module. Only edges to known internal modules are kept; external
-    imports are dropped.
+    imports are dropped. Every test module also gains edges to the
+    ``conftest.py`` files pytest loads for it (see :func:`_conftest_edges`).
 
     Args:
         repo_root: Git repo root.
@@ -384,18 +397,6 @@ def unscanned_conftests(repo_root: Path, changed: set[str]) -> set[str]:
         if rel.rpartition("/")[2] == "conftest.py"
         and not any((repo_root / rel).is_relative_to(tr) for tr in test_roots)
     }
-
-
-def _is_test_file(path: Path) -> bool:
-    """Return whether pytest would collect *path* as a test module.
-
-    Args:
-        path: The file path to check.
-
-    Returns:
-        True if pytest would collect this path as a test module.
-    """
-    return path.name.startswith("test_") or path.name.endswith("_test.py")
 
 
 def _conftest_edges(graph: _Graph) -> dict[str, set[str]]:

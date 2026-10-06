@@ -91,7 +91,7 @@ def effective_base_ref(
         the reason when ``HEAD`` is a root commit and there is no previous
         commit to compare against (the caller runs the full suite).
     """
-    if explicit:
+    if explicit or base_ref.startswith("-"):
         return base_ref, ""
     head = run_git("rev-parse", "HEAD", cwd=repo_root, check=False)
     base = run_git("rev-parse", f"{base_ref}^{{commit}}", cwd=repo_root, check=False)

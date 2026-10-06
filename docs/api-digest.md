@@ -1292,8 +1292,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class _RunConfig` _(internal)_ — Configuration for a tiered test run.
 - `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig, log: RunLog) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
-- `_escalate_to_full(repo_root: Path, base_ref: str, changed: set[str], cfg: dict[str, object]) -> bool` _(internal)_ — Check if either conftest or non-Python changes require escalation.
-- `_resolve_depth(args: argparse.Namespace, repo_root: Path, cfg: dict[str, object]) -> tuple[str | int, str, set[str]]` _(internal)_ — Resolve the depth tier and check for safe-fallback escalations.
+- `_escalate_to_full(repo_root: Path, base_ref: str, changed: set[str], cfg: dict[str, object]) -> bool` _(internal)_ — Return whether the change set must run the full suite.
+- `_resolve_run_inputs(args: argparse.Namespace, repo_root: Path, cfg: dict[str, object]) -> tuple[str | int, str, set[str]]` _(internal)_ — Resolve what a run needs: its depth, the ref it diffs against, the changes.
 - `_coverage_additions(args: argparse.Namespace, cfg: dict[str, object], changed: set[str]) -> tuple[set[str], bool]` _(internal)_ — Resolve coverage-validation settings and collect coverage additions.
 - `main() -> int` — Select and run change-affected tests by depth; write the log.
 
@@ -1314,6 +1314,7 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `tests_up_to(self, depth: int) -> list[str]` — Return the sorted unique test relpaths selected at *depth* or below.
 - `_roots(repo_root: Path) -> tuple[list[Path], list[Path]]` _(internal)_ — Return ``(source_dir_paths, test_dir_paths)`` as absolute paths.
 - `_iter_py(roots: Iterable[Path]) -> Iterable[Path]` _(internal)_ — Yield every ``.py`` file under *roots*.
+- `_is_test_file(path: Path) -> bool` _(internal)_ — Return whether pytest would collect *path* as a test module.
 - `all_test_files(repo_root: Path) -> set[str]` — Return every repo-relative test file under the configured test roots.
 - `_dotted(node: ast.expr) -> str | None` _(internal)_ — Return the dotted name of an attribute/name chain, or ``None``.
 - `_string_literals(args: list[ast.expr]) -> list[str]` _(internal)_ — Return the string-constant values among *args*, in order.
@@ -1324,7 +1325,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_parse_sources(repo_root: Path, source_roots: list[Path], test_roots: list[Path], *, follow_mock_patches: bool = False) -> tuple[dict[str, tuple[str, set[str]]], set[str]]` _(internal)_ — Parse all source and test files into an import target map.
 - `build_graph(repo_root: Path, *, follow_mock_patches: bool = False, include_ancestor_edges: bool = False) -> _Graph` — Parse the repo into an internal import graph.
 - `unscanned_conftests(repo_root: Path, changed: set[str]) -> set[str]` — Return changed ``conftest.py`` files outside every test root.
-- `_is_test_file(path: Path) -> bool` _(internal)_ — Return whether pytest would collect *path* as a test module.
 - `_conftest_edges(graph: _Graph) -> dict[str, set[str]]` _(internal)_ — Map each test module to the conftests pytest loads for it.
 - `select_tests(repo_root: Path, changed_files: set[str], max_depth: int, *, follow_mock_patches: bool = False) -> SelectionPlan` — Compute the depth-layered test selection for a change set.
 - `render_plan(plan: SelectionPlan, depth: int) -> str` — Render a parseable ``--show-files`` plan for *depth*.

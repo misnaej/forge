@@ -283,6 +283,11 @@ def _run_tiers(
     output = [config.header]
 
     def emit(text: str) -> None:
+        """Append text to the console output and the run log.
+
+        Args:
+            text: Text to record.
+        """
         output.append(text)
         log.append(text)
 
@@ -380,7 +385,11 @@ def _build_parser() -> argparse.ArgumentParser:
 def _escalate_to_full(
     repo_root: Path, base_ref: str, changed: set[str], cfg: dict[str, object]
 ) -> bool:
-    """Check if either conftest or non-Python changes require escalation.
+    """Return whether the change set must run the full suite.
+
+    Two triggers: a changed conftest outside the test roots (it applies to
+    tests the graph cannot see) and a non-Python change the selector
+    cannot map.
 
     Args:
         repo_root: Git repo root.
@@ -417,10 +426,14 @@ def _escalate_to_full(
     return False
 
 
-def _resolve_depth(
+def _resolve_run_inputs(
     args: argparse.Namespace, repo_root: Path, cfg: dict[str, object]
 ) -> tuple[str | int, str, set[str]]:
-    """Resolve the depth tier and check for safe-fallback escalations.
+    """Resolve what a run needs: its depth, the ref it diffs against, the changes.
+
+    The base is the *effective* one: on the base branch with a clean tree
+    it is ``HEAD^1`` (an empty diff would test nothing), and a root commit
+    forces ``full``. Safe-fallback triggers also force ``full``.
 
     Args:
         args: Parsed command-line arguments.
@@ -428,7 +441,8 @@ def _resolve_depth(
         cfg: Smart-test configuration dict.
 
     Returns:
-        Tuple of (depth_raw, base_ref, changed).
+        ``(depth_raw, base_ref, changed)`` — the depth token or ``"full"``,
+        the effective base ref, and the changed ``.py`` paths.
     """
     depth_token = args.depth
     if args.from_commit_message and (directive := _depth_from_commit(repo_root, cfg)):
@@ -437,6 +451,8 @@ def _resolve_depth(
     depth_raw = _parse_depth(depth_token)
 
     base_ref = resolve_base_ref(repo_root, args.base)
+    # An override counts as explicit only when resolve_base_ref honoured it;
+    # a rejected one (unresolvable or flag-shaped) fell back to auto-detection.
     effective, reason = effective_base_ref(
         repo_root, base_ref, explicit=args.base is not None and base_ref == args.base
     )
@@ -493,7 +509,7 @@ def main() -> int:
     cfg = _smart_test_config(repo_root)
     follow = bool(cfg.get("follow_mock_patches", False))
 
-    depth_raw, base_ref, changed = _resolve_depth(args, repo_root, cfg)
+    depth_raw, base_ref, changed = _resolve_run_inputs(args, repo_root, cfg)
 
     if depth_raw == _FULL:
         if args.show_files:
@@ -501,6 +517,14 @@ def main() -> int:
             return 0
 
         def full(log: RunLog) -> tuple[int, str]:
+            """Run the entire suite, recording output in the run log.
+
+            Args:
+                log: Run log that receives the suite output.
+
+            Returns:
+                ``(exit_code, combined_output)`` of the full-suite run.
+            """
             code, body = _run_full(
                 repo_root,
                 cfg,

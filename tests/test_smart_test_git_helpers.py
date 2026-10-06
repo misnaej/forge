@@ -496,3 +496,27 @@ def test_effective_base_ref_explicit_base_never_second_guessed(
         "main",
         "",
     )
+
+
+def test_effective_base_ref_flag_shaped_base_returned_unchanged(
+    tmp_path: Path,
+) -> None:
+    """Behavior: a ``-``-prefixed base is never probed as a ref (option injection)."""
+    init_git_repo(tmp_path)
+    assert git_helpers.effective_base_ref(tmp_path, "-x", explicit=False) == ("-x", "")
+
+
+def test_clean_base_branch_last_commit_change_is_detected(tmp_path: Path) -> None:
+    """Behavior: regression for the false green.
+
+    A post-merge run on the base branch with a clean tree must still see the
+    last commit's changed module.
+    """
+    init_git_repo(tmp_path)
+    _commit_file(tmp_path, "mod.py")
+    _commit_file(tmp_path, "other.py")
+    base = git_helpers.resolve_base_ref(tmp_path)
+    ref, _reason = git_helpers.effective_base_ref(tmp_path, base, explicit=False)
+    assert ref is not None
+    changed = git_helpers.changed_python_files(tmp_path, ref)
+    assert changed == {"other.py"}

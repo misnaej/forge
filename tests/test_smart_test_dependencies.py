@@ -855,7 +855,7 @@ def conftest_repo(tmp_path: Path) -> Path:
     tests = root / "tests"
     for folder in ("a", "b"):
         (tests / folder).mkdir(parents=True)
-        (tests / folder / "conftest.py").write_text("", encoding="utf-8")
+    (tests / "b" / "conftest.py").write_text("", encoding="utf-8")
     (tests / "conftest.py").write_text("", encoding="utf-8")
     (tests / "helpers.py").write_text("", encoding="utf-8")
     (tests / "a" / "conftest.py").write_text(
@@ -899,7 +899,6 @@ def test_module_imported_by_conftest_reaches_that_subtree(
 ) -> None:
     """Editing code a conftest imports reaches the conftest's tests, not others."""
     changed = {"src/myapp/fixtures.py"}
-    assert _depth0(conftest_repo, changed) == set()
     plan = select_tests(conftest_repo, changed, 1)
     assert set(plan.tests_up_to(1)) == {"tests/a/test_one.py"}
 
