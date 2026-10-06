@@ -25,9 +25,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-# pytest's "no tests collected" exit code — treated as success for a batch
-# that legitimately selected nothing (the orchestrator decides whether an
-# empty selection should even call pytest).
+# pytest's "no tests collected" exit code — `_finalize` treats it as success
+# only for a whole-suite run; named test files that collect nothing fail.
 _PYTEST_NO_TESTS = 5
 
 
@@ -80,7 +79,8 @@ def run_pytest(
 
     Returns:
         ``(exit_code, combined_output)``. Exit code 5 ("no tests collected")
-        is normalized to 0 — an empty batch is not a failure.
+        is normalized to 0 only for a whole-suite run; for named
+        *test_paths* it stays a failure.
     """
     if not test_paths and not coverage:
         return 0, "(no tests selected — nothing to run)\n"
@@ -99,8 +99,7 @@ def run_pytest(
             code, output = telemetry_mod.run_command(
                 cmd, repo_root, capture=True, cwd=repo_root, label=label
             )
-            code = 0 if code == _PYTEST_NO_TESTS else code
-            return code, notice + output
+            return _finalize(code, notice + output, selected=bool(test_paths))
         notice += (
             f"({missing_dependency_hint('psutil', extra='telemetry')} "
             "— running without telemetry)\n"
@@ -109,5 +108,32 @@ def run_pytest(
     proc = subprocess.run(
         cmd, cwd=repo_root, capture_output=True, text=True, check=False
     )
-    code = 0 if proc.returncode == _PYTEST_NO_TESTS else proc.returncode
-    return code, notice + proc.stdout + proc.stderr
+    return _finalize(
+        proc.returncode, notice + proc.stdout + proc.stderr, selected=bool(test_paths)
+    )
+
+
+def _finalize(code: int, output: str, *, selected: bool) -> tuple[int, str]:
+    """Apply the "no tests collected" rule to a finished pytest run.
+
+    Exit 5 is benign only for a whole-suite run (nothing named): a named
+    selection that collects nothing means the selector picked files that
+    hold no tests, and passing would report coverage that never ran.
+
+    Args:
+        code: pytest's exit code.
+        output: The run's combined output.
+        selected: Whether specific test files were passed to pytest.
+
+    Returns:
+        ``(exit_code, output)``, with an explanation appended when a
+        selection collected nothing.
+    """
+    if code != _PYTEST_NO_TESTS:
+        return code, output
+    if not selected:
+        return 0, output
+    return code, output + (
+        "\nsmart-test: the selected files collected no tests — failing rather "
+        "than reporting a run that tested nothing.\n"
+    )

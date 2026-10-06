@@ -36,6 +36,7 @@ from forge.audit.common import (
     make_audit_parser,
     relpath,
     resolve_roots,
+    untracked_summary_line,
     write_log,
 )
 from forge.git_utils import configure_cli_logging, missing_dependency_hint
@@ -158,7 +159,11 @@ def run(scope: Scope, roots: list[Path], config: OrphansConfig) -> int:
     paths = _scavenge_paths(scope, roots)
     if not paths:
         write_log(
-            "orphans", [], "No paths to scavenge.", output=config.output, scope=scope
+            "orphans",
+            [],
+            "No paths to scavenge." + untracked_summary_line(scope),
+            output=config.output,
+            scope=scope,
         )
         return 0
     v.scavenge([str(p) for p in paths])
@@ -168,7 +173,7 @@ def run(scope: Scope, roots: list[Path], config: OrphansConfig) -> int:
         f"Scanned {len(paths)} path(s). "
         f"Found {len(findings)} unused symbol(s) "
         f"(min_confidence={config.min_confidence})."
-    )
+    ) + untracked_summary_line(scope)
     write_log("orphans", findings, summary, output=config.output, scope=scope)
     return exit_code_for(findings)
 

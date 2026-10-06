@@ -330,10 +330,19 @@ def test_create_lock_falls_back_to_exclusive_create_without_hard_links(
 ) -> None:
     """A filesystem refusing ``link`` still yields a complete lock file."""
 
-    def no_link(*_args: object, **_kwargs: object) -> None:
+    def _no_link(*_args: object, **_kwargs: object) -> None:
+        """Refuse hard links as a restrictive filesystem would.
+
+        Args:
+            *_args: Positional arguments (unused).
+            **_kwargs: Keyword arguments (unused).
+
+        Raises:
+            PermissionError: Always.
+        """
         raise PermissionError
 
-    monkeypatch.setattr(run_log.os, "link", no_link)
+    monkeypatch.setattr(run_log.os, "link", _no_link)
     lock = tmp_path / LOCK_NAME
 
     assert run_log._create_lock(lock, "123 now\n") is True
@@ -360,10 +369,15 @@ def test_pid_alive_on_windows_never_calls_os_kill(
 ) -> None:
     """``os.kill`` terminates a process on win32, so liveness must not use it."""
 
-    def forbidden(*_args: object) -> None:
+    def _forbidden(*_args: object) -> None:
+        """Fail the test if called.
+
+        Args:
+            *_args: Positional arguments (unused).
+        """
         pytest.fail("os.kill must not be called on win32")
 
     monkeypatch.setattr(run_log.sys, "platform", "win32")
-    monkeypatch.setattr(run_log.os, "kill", forbidden)
+    monkeypatch.setattr(run_log.os, "kill", _forbidden)
 
     assert run_log._pid_alive(os.getpid() + 1) is True

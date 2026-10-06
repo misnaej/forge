@@ -90,6 +90,7 @@ from forge.git_utils import (
     run_gate_evidence,
     run_git,
     tag_commit_date,
+    tag_on_remote,
     v_tags,
 )
 
@@ -276,12 +277,26 @@ def validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]:
         ``(fragment, errors)`` — ``fragment`` is ``None`` whenever
         ``errors`` is non-empty.
     """
-    name = path.name
-    slug, ftype, filename_errors = _parse_and_validate_filename(name)
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        return None, [f"{name}: unreadable ({exc})"]
+        return None, [f"{path.name}: unreadable ({exc})"]
+    return _validate_fragment_text(path, text)
+
+
+def _validate_fragment_text(path: Path, text: str) -> tuple[Fragment | None, list[str]]:
+    """Apply :func:`validate_fragment`'s contract to *text* as *path*'s content.
+
+    Args:
+        path: Fragment path the text belongs to (its name is validated).
+        text: Fragment contents — from disk, or a staged blob.
+
+    Returns:
+        ``(fragment, errors)`` — ``fragment`` is ``None`` whenever
+        ``errors`` is non-empty.
+    """
+    name = path.name
+    slug, ftype, filename_errors = _parse_and_validate_filename(name)
     lines = text.splitlines()
     level, body, bump_errors = _parse_bump_line_and_body(path, lines)
     content_errors = _check_no_versions_or_headings(name, body)
@@ -406,6 +421,35 @@ def check_pending(root: Path) -> list[str]:
         are valid or none exist.
     """
     return _collect_valid_fragments(root)[1]
+
+
+def check_staged(root: Path, paths: list[str]) -> list[str]:
+    """Validate the staged (index) copy of each fragment in *paths*.
+
+    :func:`check_pending` reads the disk, but a commit carries the index:
+    a placeholder staged and then rewritten on disk would pass a disk-only
+    check while the commit ships the placeholder. Paths outside
+    ``changelog.d/*.md`` and paths absent from the index (a staged
+    deletion) are skipped — there is no blob to validate.
+
+    Args:
+        root: Repository root directory.
+        paths: Repo-relative candidate fragment paths.
+
+    Returns:
+        Every validation error found in the staged copies.
+    """
+    errors: list[str] = []
+    for rel in paths:
+        rel_path = Path(rel)
+        if rel_path.parent != FRAGMENTS_DIR or rel_path.suffix != ".md":
+            continue
+        try:
+            text = run_git("show", f":{rel}", cwd=root, log_errors=False)
+        except subprocess.CalledProcessError:
+            continue
+        errors.extend(_validate_fragment_text(rel_path, text)[1])
+    return errors
 
 
 def branch_added_fragments(root: Path) -> list[str]:
@@ -956,16 +1000,10 @@ def _create_and_push_tag(root: Path, version: str, level: str, n_fragments: int)
     push = push_tag(root, version)
     if not push.ok:
         # Local _tag_exists is useless here — this function just created
-        # that ref; only the remote can attest a concurrent winner.
-        remote_tag = run_git(
-            "ls-remote",
-            "--tags",
-            "origin",
-            f"refs/tags/{version}",
-            cwd=root,
-            check=False,
-        )
-        if remote_tag.strip():
+        # that ref; only the remote can attest a concurrent winner. An
+        # unanswered probe (None) cannot attest one, so it falls through
+        # to the failure report, as an unreadable listing always did.
+        if tag_on_remote(root, version):
             emit(f"auto-tag: {version} appeared remotely — another runner won.")
             return 0
         emit(
