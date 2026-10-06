@@ -1041,6 +1041,7 @@ _FORCE_PUSH_CASES = [
     pytest.param(
         "git push -uf origin feat", 2, id="blocks_combined_short_flag_cluster"
     ),
+    # `f` anywhere in a short-flag cluster forces, first or last.
     pytest.param("git push -fu origin main", 2, id="blocks_cluster_final_f"),
     pytest.param(
         "git push -fq origin main", 2, id="blocks_cluster_with_f_and_other_flags"
@@ -1053,6 +1054,9 @@ _FORCE_PUSH_CASES = [
         "true; git push --force origin main", 2, id="blocks_chained_after_separator"
     ),
     pytest.param("git  push -f origin main", 2, id="blocks_doubled_space"),
+    # The force-flag check is bounded to the matched push invocation, so an
+    # unrelated `-f`-bearing command chained after a plain push must not
+    # false-positive, and vice versa.
     pytest.param(
         "git push origin main; tar -f x",
         0,
@@ -1076,12 +1080,6 @@ def test_force_push_verdict(command: str, expected: int) -> None:
         expected: Expected hook exit code (2 blocks, 0 allows).
     """
     assert _run_hook(_FORCE_PUSH, command) == expected
-
-
-# --- force-flag scoping is per-invocation, not command-wide (#348) ---------
-# The force-flag check is bounded to the matched push segment
-# (`[^;&|]*`), so an unrelated `-f`-bearing command chained after a plain
-# push must not false-positive, and vice versa.
 
 
 # --- git_anchor.sh: shared lib integrity (#348 dedup contract) -------------
@@ -3433,42 +3431,29 @@ def test_fixer_recon_allows_three_full_precommit_runs_then_blocks_fourth(
     assert "STUCK" in proc.stderr
 
 
-def test_fixer_recon_only_flag_never_counts_toward_cap(tmp_path: Path) -> None:
-    """`--only` refreshes never count toward the cap, even once it's exhausted."""
-    init_git_repo(tmp_path)
-    _seed_precommit_ledger(tmp_path, "agent-a", 3)
-    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
-    proc = _run_hook_proc(
-        _FIXER_RECON,
-        "forge-precommit --only ruff",
-        options=HookOptions(
-            agent_type="forge:precommit-fixer",
-            agent_id="agent-a",
-            session_id="sess-1",
-            cwd=tmp_path,
-            env=env,
-        ),
-    )
-    assert proc.returncode == 0
-    ledger = (code_health_dir(tmp_path) / "agent_timing.jsonl").read_text()
-    assert ledger.count('"event":"precommit_full_run"') == 3
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("forge-precommit --only ruff", id="only_flag"),
+        # --freshness runs no steps at all: the same class of exemption as
+        # --only, which a full-run classifier excluding only --only would miss.
+        pytest.param("forge-precommit --freshness", id="freshness_flag"),
+    ],
+)
+def test_fixer_recon_partial_runs_never_count_toward_cap(
+    tmp_path: Path, command: str
+) -> None:
+    """Partial / read-only precommit runs never count toward the cap, even exhausted.
 
-
-def test_fixer_recon_freshness_flag_never_counts_toward_cap(tmp_path: Path) -> None:
-    """`--freshness` read-only queries never count toward the cap, even exhausted.
-
-    BEHAVIOR: `forge-precommit --freshness` runs no steps at all (#538) —
-    the same class of exemption as `--only`'s refreshes, pinned here as
-    its own sibling test since `_is_full_precommit` only excludes
-    `--only` today (a bare `--freshness` call would otherwise be
-    misclassified as the fourth full run and blocked).
+    Args:
+        command: A forge-precommit invocation that is not a full run.
     """
     init_git_repo(tmp_path)
     _seed_precommit_ledger(tmp_path, "agent-a", 3)
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
     proc = _run_hook_proc(
         _FIXER_RECON,
-        "forge-precommit --freshness",
+        command,
         options=HookOptions(
             agent_type="forge:precommit-fixer",
             agent_id="agent-a",
@@ -4194,16 +4179,28 @@ def _stub_wrapup_freshness_clis(
     return env
 
 
-def test_warn_stale_wrapup_ignores_non_push_command(tmp_path: Path) -> None:
-    """SCENARIO: an ordinary Bash call with no `git push` in it.
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("ls -la", id="non_push_command"),
+        # GIT_ANCHOR needs `git` right after a shell separator, which text
+        # inside a quoted argument never provides.
+        pytest.param('echo "please run git push later"', id="quoted_mention"),
+    ],
+)
+def test_warn_stale_wrapup_ignores_non_push(tmp_path: Path, command: str) -> None:
+    """SCENARIO: a Bash call with no real `git push` in it.
 
     MOCK SETUP: both CLIs stubbed and ready to answer.
     EXPECTED BEHAVIOR: the hook exits before probing either CLI — this
     hook fires on every Bash call, so the non-match path must cost nothing.
+
+    Args:
+        command: A command with no `git push` invocation.
     """
     env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
     proc = _run_hook_proc(
-        _WARN_STALE_WRAPUP, "ls -la", options=HookOptions(cwd=tmp_path, env=env)
+        _WARN_STALE_WRAPUP, command, options=HookOptions(cwd=tmp_path, env=env)
     )
     assert proc.returncode == 0
     assert proc.stdout == ""
@@ -4348,25 +4345,6 @@ def test_warn_stale_wrapup_fires_in_compound_command(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0
     assert "PR #42" in proc.stdout
-
-
-def test_warn_stale_wrapup_ignores_quoted_mention(tmp_path: Path) -> None:
-    """A `git push` mention inside a quoted string body must not anchor.
-
-    MOCK SETUP: both CLIs stubbed and ready to answer; GIT_ANCHOR requires
-    `git` immediately after a shell separator, which text inside a quoted
-    argument never provides.
-    EXPECTED BEHAVIOR: the hook exits before probing either CLI.
-    """
-    env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
-    proc = _run_hook_proc(
-        _WARN_STALE_WRAPUP,
-        'echo "please run git push later"',
-        options=HookOptions(cwd=tmp_path, env=env),
-    )
-    assert proc.returncode == 0
-    assert proc.stdout == ""
-    assert _record(env) == ""
 
 
 # --- warn_generated_conflicts.sh: post-merge generated-artifact instruction -
@@ -5665,7 +5643,7 @@ _SNAPSHOT_EXTRA_COMMANDS = [
     "cat <<<'git push -f'",
     "bash <<<'git push -f'",
     "cat << EOF; git push -f\nbody\nEOF",
-    # Wrapper shapes the lookback reads.
+    # Wrapper shapes the scanner detects.
     "bash -c 'git push -f'",
     "bash -o posix -c 'git push -f'",
     "ssh -o BatchMode=yes host 'git push -f'",
@@ -5792,6 +5770,9 @@ def test_quoting_constructs_agree_between_plain_and_wrapped_paths(
     assert plain == wrapped == expected
 
 
+# The scanner once read only the last 240 characters to spot a wrapper; the
+# padded cases must exceed it to prove that window is gone.
+_OLD_FIXED_WINDOW = 240
 _POSIX_PAD = "-o posix " * 30
 _SSH_PAD = "-o BatchMode=yes " * 20
 _PADDED_WRAPPER_CASES = [
@@ -5812,9 +5793,10 @@ def test_padded_wrapper_cannot_hide_a_force_push(command: str) -> None:
     padding moves it out of view.
 
     Args:
-        command: A wrapped force push behind 200+ characters of options.
+        command: A wrapped force push behind 270+ characters of options —
+            longer than the fixed window the scanner used to read.
     """
-    assert len(command) > 240
+    assert len(command) > _OLD_FIXED_WINDOW
     assert _run_hook(_FORCE_PUSH, command) == 2
 
 
@@ -5823,19 +5805,36 @@ def test_padded_wrapper_with_a_harmless_payload_is_allowed() -> None:
     assert _run_hook(_FORCE_PUSH, f"bash {_POSIX_PAD}-c 'echo hi'") == 0
 
 
-def test_scanner_stays_fast_on_a_50kb_single_line_command() -> None:
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(
+            "echo " + "x " * 25000 + f"; bash {_POSIX_PAD}-c 'git push -f'",
+            id="long-simple-command-then-wrapper",
+        ),
+        pytest.param(
+            "bash " + "-o posix " * 5500 + "-c 'git push -f'",
+            id="wrapper-padded-to-50kb",
+        ),
+    ],
+)
+def test_scanner_stays_fast_on_a_50kb_single_line_command(command: str) -> None:
     """A 50 KB one-line command is scanned in linear time.
 
     Wrapper detection reads the whole simple command; checking only when the
-    previous word could end a wrapper keeps that from going quadratic.
+    previous word could end a wrapper keeps that from going quadratic. The
+    bound is deliberately loose (a linear scan takes well under a second; the
+    quadratic version took about 18 s), so a loaded runner cannot trip it.
+
+    Args:
+        command: A ~50 KB command ending in a wrapped force push.
     """
-    command = "echo " + "x " * 25000 + f"; bash {_POSIX_PAD}-c 'git push -f'"
     start = time.monotonic()
     verdict = _run_hook(_FORCE_PUSH, command)
     elapsed = time.monotonic() - start
 
     assert verdict == 2
-    assert elapsed < 5
+    assert elapsed < 10
 
 
 @pytest.mark.parametrize(

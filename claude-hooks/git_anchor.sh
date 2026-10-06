@@ -116,9 +116,10 @@ GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|
 # returned — the guard then behaves as it did before the pre-pass existed.
 _GUARD_CMDPOS_AWK='
 function neut(t) { gsub(/[;&|()`<>\n!{}]/, "_", t); return t }
-# Wrapper type of the command so far. t is the current simple command —
-# the output since its last separator, however long: a fixed-size window
-# let padding (`bash -o posix -o posix … -c`) push the wrapper out of view.
+# Wrapper type of the command so far. t is the current wrapper chain — the
+# output since the chain base cb (see scan), however long: a fixed-size
+# window let padding (`bash -o posix -o posix … -c`) push the wrapper out
+# of view.
 function wtype(t) {
     if (t ~ RE_SHELLC || t ~ RE_HSTR) return 1
     if (t ~ RE_EVAL) return 2
@@ -225,7 +226,7 @@ function comment_end(s, i,   j) {
 # this). Sets HW (delimiter, quotes removed; "" when there is none), HQ
 # (delimiter was quoted: body is literal), HD (`<<-`: leading tabs
 # stripped), HX (the body is fed to a shell — `bash <<EOF`, read from
-# *before*, the text the scanner emitted so far, or `<<EOF | sh`, read
+# *before*, the current wrapper chain the scanner emitted, or `<<EOF | sh`, read
 # from the rest of the line) and HPOS (position after the delimiter).
 # Two heredoc-to-shell patterns, two regexes: RE_FEED and RE_PIPESH.
 function heredoc_open(s, i, before,   n, k, ch, j, rl) {
@@ -253,7 +254,8 @@ function heredoc_open(s, i, before,   n, k, ch, j, rl) {
 # payload) — so the full regex runs only when that word fits. It reads from
 # cb, the chain base: past the last character no wrapper regex can span
 # (a separator, `<`, `>`, `(`, `)`), which is also why a match can never
-# start before it. pws marks where the previous word began; hsh / hssh
+# start before it — except the `<<<` here-string, which is why the base
+# moves only after the previous word has been checked. pws marks where the previous word began; hsh / hssh
 # record a shell name / `ssh` in the current chain.
 function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, pc, bd, pa, wt, qs, cb, pws, pw, hsh, hssh) {
     n = length(s); out = ""; depth = 0; dollar = 0; nh = 0; bd = 0; pa = 0
@@ -268,6 +270,8 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
             wt = 0
             if ((hsh && pw ~ /^-[A-Za-z]*c[A-Za-z]*$/) || pw ~ /<<<$/ || pw ~ RE_EVALW || (qs && hssh))
                 wt = wtype(substr(out, cb + 1))
+            # Order matters: the base moves past pw only after the check
+            # above, or a `bash <<<` chain would be cut before it is read.
             if (match(pw, /[\n;&|()<>][^\n;&|()<>]*$/)) { cb = pws + RSTART; hsh = 0; hssh = 0 }
             if (pw ~ RE_HEADW) hsh = 1
             if (pw ~ RE_SSHW) hssh = 1
