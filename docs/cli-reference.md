@@ -1055,7 +1055,7 @@ Verify REPO_STRUCTURE.md is in sync with actual structure.
 
 options:
   -h, --help     show this help message and exit
-  --verbose, -v  Show all extracted paths.
+  --verbose, -v  Show every folder and bullet the parser read.
 ```
 
 ## verify-forge-test-naming
