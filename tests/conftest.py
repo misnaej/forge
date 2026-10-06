@@ -226,18 +226,25 @@ def _isolated_code_health(
 def claude_home(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    """Point the Claude Code files forge reads at an empty fake ``~/.claude``.
+    """Point every Claude Code file forge reads at an empty fake home.
 
-    Those readers resolve their paths at import time from the real home,
-    so without this every plugin-cache verdict in the suite would read the
-    machine's own install records — a result that changes with whatever
-    is installed. Nothing is created: an absent file is the default case.
-    A test that needs a record writes it under the returned directory.
+    Two kinds of reader need covering. Module constants resolved from the
+    real home at import time — ``version_surfaces.INSTALLED_PLUGINS`` and
+    ``KNOWN_MARKETPLACES``, ``doctor.USER_SETTINGS`` — are monkeypatched
+    to the fake ``.claude`` directory. Readers that call ``Path.home()``
+    when they run — ``version_surfaces.find_plugin_cache`` and
+    ``install_claudemd``'s settings path, for instance — follow ``HOME``,
+    which is set to the fake home. Without this a plugin-cache verdict
+    would depend on whatever the machine has installed. Nothing is
+    created: an absent file is the default case, and a test that needs a
+    record writes it under the returned directory.
 
     Returns:
         The fake ``.claude`` directory (not yet created on disk).
     """
-    claude_dir = tmp_path_factory.mktemp("home") / ".claude"
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    claude_dir = home / ".claude"
     plugins = claude_dir / "plugins"
     monkeypatch.setattr(
         version_surfaces, "INSTALLED_PLUGINS", plugins / "installed_plugins.json"

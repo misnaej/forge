@@ -320,6 +320,11 @@ def _source_mismatch_advisory(status: PluginCacheStatus) -> CheckResult:
     Returns:
         An advisory ``CheckResult`` with the re-pointing remediation.
     """
+    remediation = SOURCE_MISMATCH_REMEDIATION.format(
+        plugin=status.plugin_name,
+        repo=status.source_repo or "<owner/repo>",
+        ref=status.source_ref,
+    )
     return CheckResult(
         name="plugin:source",
         passed=False,
@@ -329,8 +334,7 @@ def _source_mismatch_advisory(status: PluginCacheStatus) -> CheckResult:
             f"the machine-wide {status.plugin_name} marketplace tracks "
             f"{status.registered_ref} — every repo on this machine updates "
             "from that one registration, so this repo can run another "
-            "release while updates report it current. "
-            f"{SOURCE_MISMATCH_REMEDIATION.format(plugin=status.plugin_name)}"
+            f"release while updates report it current. {remediation}"
         ),
     )
 
@@ -343,12 +347,9 @@ def _enabled_in(settings_path: Path) -> bool | None:
 
     Returns:
         The boolean the file sets, or ``None`` when the file is absent,
-        unreadable, or sets nothing for forge.
+        unreadable, not a JSON object, or sets nothing for forge.
     """
-    try:
-        data, err = read_json(settings_path)
-    except (OSError, UnicodeDecodeError):
-        return None
+    data, err = read_json(settings_path)
     enabled = data.get("enabledPlugins") if err is None else None
     if not isinstance(enabled, dict):
         return None

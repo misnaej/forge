@@ -786,7 +786,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `scaffold_claude_settings(settings_path: Path) -> bool` — Write a minimal ``.claude/settings.json`` if the file does not exist.
 - `ensure_claude_hooks_dir(hooks_dir: Path) -> bool` — Create ``.claude/hooks/`` with a README documenting the path convention.
 - `_installed_forge_scripts_version() -> str | None` _(internal)_ — Return the installed ``forge-scripts`` distribution version.
-- `_installed_plugin_version(plugins_file: Path) -> str | None` _(internal)_ — Read the installed Claude Code plugin version from the manifest.
+- `_installed_plugin_version(plugins_file: Path | None = None) -> str | None` _(internal)_ — Read the installed Claude Code plugin version from the manifest.
 - `_read_configured_channel(settings_path: Path) -> str | None` _(internal)_ — Return the marketplace ``ref`` consumers set to track a forge release channel.
 - `_upstream_cache_path() -> Path` _(internal)_ — Return the upstream-version-check cache file path.
 - `class ChannelTags` — Latest release tag on each of forge's two upstream branches.
@@ -1610,7 +1610,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _The three surfaces a forge install presents, read once for every checker._
 
-- `read_json(path: Path) -> tuple[dict, str | None]` — Read a JSON file. Returns (data, error_message_or_None).
+- `read_json(path: Path) -> tuple[dict, str | None]` — Read a JSON object file. Returns (data, error_message_or_None).
 - `version_key(name: str) -> tuple[int, ...]` — Return a sortable key for a version-shaped directory name.
 - `find_plugin_cache(plugin_name: str) -> Path | None` — Locate a Claude Code plugin cache directory by name.
 - `find_install_dir(plugin_root: Path) -> Path | None` — Walk the Claude Code cache layout to find the active plugin install.
@@ -1630,10 +1630,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_install_from_record(record: dict[str, object]) -> PluginInstall | None` _(internal)_ — Build a :class:`PluginInstall` from one raw record.
 - `_resolved(path: Path) -> Path` _(internal)_ — Return *path* resolved, or unchanged when resolution fails.
 - `_repo_slug(url: str) -> str | None` _(internal)_ — Return the ``owner/repo`` a git pin URL names.
-- `content_digests(plugin_dir: Path) -> dict[str, str]` — Hash each content area of a plugin tree.
-- `_area_digest(area: Path) -> str` _(internal)_ — Hash every file under *area* by relative path and bytes.
-- `_manifest_digest(manifest: Path) -> str` _(internal)_ — Hash a plugin manifest with its ``version`` field removed.
+- `content_digests(plugin_dir: Path) -> dict[str, str | None]` — Hash each content area of a plugin tree.
+- `_area_files(area: Path) -> list[Path] | None` _(internal)_ — List the regular files under *area* that count as content.
+- `_area_digest(area: Path) -> str | None` _(internal)_ — Hash every file under *area* by relative path and bytes.
+- `_manifest_digest(manifest: Path) -> str | None` _(internal)_ — Hash a plugin manifest with its ``version`` field removed.
 - `_repo_marketplace_ref(repo_root: Path) -> str | None` _(internal)_ — Marketplace ref this repo's own ``.claude/settings.json`` pins.
 - `class PluginCacheStatus` — What the Claude Code plugin cache says relative to what ships it.
 - `plugin_cache_status(repo_root: Path) -> PluginCacheStatus` — Compare the cached plugin against the manifest that ships it.
+- `_safe_text(value: str | None) -> str | None` _(internal)_ — Return *value* when it matches :data:`_SAFE_TEXT`, else a placeholder.
+- `_manifest_cache_status(repo_root: Path, manifest: Path) -> PluginCacheStatus` _(internal)_ — Compare a plugin-shipping repo's cached copy against its manifest.
 - `_consumer_cache_status(repo_root: Path) -> PluginCacheStatus` _(internal)_ — Compare a consumer's active cache slot against the ref it pinned.

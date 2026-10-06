@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 from importlib import metadata
 from pathlib import Path
 from typing import Final, NamedTuple
@@ -62,6 +64,23 @@ INSTALLED_PLUGINS: Final[Path] = (
 CONTENT_AREAS: Final[tuple[str, ...]] = ("agents", "skills", "claude-hooks")
 MANIFEST_AREA: Final[str] = ".claude-plugin/plugin.json"
 
+# Caps on what one content area may hash. Both trees live where any
+# process on the machine can write, and a planted huge file or sprawling
+# tree would otherwise stall every doctor run and every commit that asks.
+# A real area is a few hundred small files, far below either cap; past
+# one, the comparison reports "unknown" rather than guess.
+_MAX_AREA_FILES: Final[int] = 5000
+_MAX_AREA_BYTES: Final[int] = 50 * 1024 * 1024
+_READ_CHUNK: Final[int] = 1024 * 1024
+
+# What a value read from another tool's file may look like before it is
+# echoed in a verdict or interpolated into a remediation command. Plugin
+# names, versions and refs all fit; anything else — whitespace, control
+# characters, shell metacharacters — is replaced, so a hand-edited or
+# planted record cannot make an advisory print a different command.
+_SAFE_TEXT = re.compile(r"[A-Za-z0-9._/@+-]{1,100}")
+UNPRINTABLE: Final[str] = "<unprintable>"
+
 # Remediation per surface — the single command that re-converges that one
 # onto the current line. Doctor prints it as advice; precommit prints it
 # as the way past a block. One string, so the two can never disagree.
@@ -90,31 +109,44 @@ STALE_CACHE_REMEDIATION: Final[str] = (
 # registration does — and that moves the source for every repo.
 SOURCE_MISMATCH_REMEDIATION: Final[str] = (
     "`/plugin update` cannot fix this — it fetches from the registered "
-    "source. Re-point the machine-wide marketplace at the ref this repo "
-    "pins (`/plugin marketplace remove {plugin}`, add it again at that "
-    "ref, then `/plugin install {plugin}@{plugin}` — forge's "
-    "docs/claude-code-plugin.md, 'Changing the marketplace ref'). The "
+    "source. Re-point the machine-wide marketplace: `claude plugin "
+    "marketplace remove {plugin}`, then `claude plugin marketplace add "
+    "{repo}#{ref}` and `claude plugin install {plugin}@{plugin}` (removing "
+    "the marketplace also uninstalls the plugin) — or edit the "
+    "`extraKnownMarketplaces` ref in ~/.claude/settings.json. The "
     "registration is shared, so this changes the source for every repo "
     "on this machine"
 )
 
 
 def read_json(path: Path) -> tuple[dict, str | None]:
-    """Read a JSON file. Returns (data, error_message_or_None).
+    """Read a JSON object file. Returns (data, error_message_or_None).
+
+    Every file read this way is written by another tool — Claude Code's
+    install records and settings, a plugin manifest — so its shape is not
+    guaranteed. Anything but a readable JSON object is an error result,
+    never an exception, which lets every caller call ``.get`` on the data
+    unguarded.
 
     Args:
         path: Path to the JSON file to read.
 
     Returns:
-        Tuple of (parsed JSON data dict, error message or None).
+        Tuple of (parsed JSON object, error message or None); the object
+        is empty whenever there is an error.
     """
     if not path.is_file():
         return {}, f"missing: {path}"
     try:
-        with path.open() as fh:
-            return json.load(fh), None
+        with path.open(encoding="utf-8") as fh:
+            data = json.load(fh)
     except json.JSONDecodeError as exc:
         return {}, f"invalid JSON in {path}: {exc}"
+    except (OSError, UnicodeDecodeError) as exc:
+        return {}, f"unreadable: {path}: {exc}"
+    if not isinstance(data, dict):
+        return {}, f"not a JSON object: {path}"
+    return data, None
 
 
 def version_key(name: str) -> tuple[int, ...]:
@@ -370,11 +402,8 @@ def _marketplace_entries(repo_slug: str) -> list[dict[str, object]]:
         Matching entries in registry order; empty when the registry is
         absent, unreadable or not a JSON object.
     """
-    try:
-        data, err = read_json(KNOWN_MARKETPLACES)
-    except OSError:
-        return []
-    if err is not None or not isinstance(data, dict):
+    data, err = read_json(KNOWN_MARKETPLACES)
+    if err is not None:
         return []
     return [
         entry
@@ -443,11 +472,8 @@ def plugin_records(
         runs inside an advisory.
     """
     path = INSTALLED_PLUGINS if plugins_file is None else plugins_file
-    try:
-        data, err = read_json(path)
-    except (OSError, UnicodeDecodeError):
-        return []
-    plugins = data.get("plugins") if err is None and isinstance(data, dict) else None
+    data, err = read_json(path)
+    plugins = data.get("plugins") if err is None else None
     if not isinstance(plugins, dict):
         return []
     records: list[dict[str, object]] = []
@@ -529,11 +555,13 @@ def _resolved(path: Path) -> Path:
 
     Returns:
         The resolved path — so a symlinked checkout matches the path
-        Claude Code recorded — or *path* itself on an ``OSError``.
+        Claude Code recorded — or *path* itself when it cannot be resolved:
+        an ``OSError``, or a ``ValueError`` for a path carrying a NUL byte,
+        which a hand-edited record can hold.
     """
     try:
         return path.resolve()
-    except OSError:
+    except (OSError, ValueError):
         return path
 
 
@@ -565,7 +593,7 @@ def _repo_slug(url: str) -> str | None:
     return f"{owner}/{repo}"
 
 
-def content_digests(plugin_dir: Path) -> dict[str, str]:
+def content_digests(plugin_dir: Path) -> dict[str, str | None]:
     """Hash each content area of a plugin tree.
 
     Comparing names alone called a rewritten agent, or a hook fixed under
@@ -580,44 +608,77 @@ def content_digests(plugin_dir: Path) -> dict[str, str]:
     Returns:
         A sha256 hex digest per area in :data:`CONTENT_AREAS`, plus one
         for :data:`MANIFEST_AREA` with its ``version`` field removed. An
-        absent area hashes as empty.
+        absent area hashes as empty; an area over the size caps is
+        ``None`` — unknown, never a verdict.
     """
     digests = {area: _area_digest(plugin_dir / area) for area in CONTENT_AREAS}
     digests[MANIFEST_AREA] = _manifest_digest(plugin_dir / MANIFEST_AREA)
     return digests
 
 
-def _area_digest(area: Path) -> str:
+def _area_files(area: Path) -> list[Path] | None:
+    """List the regular files under *area* that count as content.
+
+    Symlinks are never followed or hashed, whether to files or to
+    directories: the trees live in a user-writable cache, and a link
+    could point the hash at anything on the machine. Bytecode caches are
+    skipped too — a session that runs a Python hook writes them into the
+    cache copy, and they say nothing about the content shipped.
+
+    Args:
+        area: Directory to walk.
+
+    Returns:
+        The files in sorted order, or ``None`` once more than
+        :data:`_MAX_AREA_FILES` are found.
+    """
+    files: list[Path] = []
+    for root, dirnames, filenames in os.walk(area):
+        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+        for name in filenames:
+            path = Path(root) / name
+            if path.suffix == ".pyc" or path.is_symlink() or not path.is_file():
+                continue
+            files.append(path)
+            if len(files) > _MAX_AREA_FILES:
+                return None
+    return sorted(files)
+
+
+def _area_digest(area: Path) -> str | None:
     """Hash every file under *area* by relative path and bytes.
 
     Args:
         area: Directory to hash.
 
     Returns:
-        The sha256 hex digest. Bytecode caches are skipped: a session that
-        runs a Python hook writes them into the cache copy, and they say
-        nothing about the content shipped.
+        The sha256 hex digest, or ``None`` when the area exceeds
+        :data:`_MAX_AREA_FILES` files or :data:`_MAX_AREA_BYTES` bytes.
     """
     digest = hashlib.sha256()
-    if not area.is_dir():
+    if area.is_symlink() or not area.is_dir():
         return digest.hexdigest()
-    files = sorted(
-        path
-        for path in area.rglob("*")
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
-    )
+    files = _area_files(area)
+    if files is None:
+        return None
+    total = 0
     for path in files:
         digest.update(path.relative_to(area).as_posix().encode())
         digest.update(b"\0")
         try:
-            digest.update(path.read_bytes())
+            with path.open("rb") as fh:
+                while chunk := fh.read(_READ_CHUNK):
+                    total += len(chunk)
+                    if total > _MAX_AREA_BYTES:
+                        return None
+                    digest.update(chunk)
         except OSError:
             digest.update(b"<unreadable>")
         digest.update(b"\0")
     return digest.hexdigest()
 
 
-def _manifest_digest(manifest: Path) -> str:
+def _manifest_digest(manifest: Path) -> str | None:
     """Hash a plugin manifest with its ``version`` field removed.
 
     Args:
@@ -625,10 +686,15 @@ def _manifest_digest(manifest: Path) -> str:
 
     Returns:
         The sha256 hex digest of the canonical JSON, or of the raw bytes
-        when the file is not a JSON object; an absent or unreadable file
-        hashes as empty.
+        when the file is not a JSON object; an absent, symlinked or
+        unreadable file hashes as empty, and one over
+        :data:`_MAX_AREA_BYTES` is ``None``.
     """
     try:
+        if manifest.is_symlink() or not manifest.is_file():
+            return hashlib.sha256().hexdigest()
+        if manifest.stat().st_size > _MAX_AREA_BYTES:
+            return None
         raw = manifest.read_bytes()
     except OSError:
         return hashlib.sha256().hexdigest()
@@ -653,13 +719,8 @@ def _repo_marketplace_ref(repo_root: Path) -> str | None:
         The ref, or ``None`` when the file is absent, unreadable or sets
         none.
     """
-    try:
-        data, err = read_json(repo_root / ".claude" / "settings.json")
-    except (OSError, UnicodeDecodeError):
-        return None
-    if err is not None or not isinstance(data, dict):
-        return None
-    return read_marketplace_ref(data)
+    data, err = read_json(repo_root / ".claude" / "settings.json")
+    return read_marketplace_ref(data) if err is None else None
 
 
 class PluginCacheStatus(NamedTuple):
@@ -671,9 +732,12 @@ class PluginCacheStatus(NamedTuple):
             consumer verdict, where the slot's declared version is not
             behind but its content is — or ``"source-mismatch"``, the
             consumer verdict where the machine-wide marketplace tracks a
-            different ref than the repo pins.
+            different ref than the repo pins — or ``"content-unknown"``,
+            when a tree is too large to hash within the caps.
         plugin_name: Name the manifest declares, falling back to the repo
-            directory's own name.
+            directory's own name. This and every other text field is
+            :data:`UNPRINTABLE` when its value contains characters outside
+            :data:`_SAFE_TEXT`.
         cached: Version in the cache, when there is one.
         declared: Version the manifest declares — or, on the consumer
             branch, the ref the repo pins.
@@ -684,6 +748,8 @@ class PluginCacheStatus(NamedTuple):
             for ``"source-mismatch"``.
         registered_ref: Ref the machine-wide marketplace registration
             tracks; populated only for ``"source-mismatch"``.
+        source_repo: ``owner/repo`` the pin names, for the re-pointing
+            command; populated only for ``"source-mismatch"``.
         fallback: ``True`` when no install record names this repo, so
             ``cached`` describes the newest cached copy rather than this
             repo's own.
@@ -697,6 +763,7 @@ class PluginCacheStatus(NamedTuple):
     source_ref: str | None = None
     registered_ref: str | None = None
     fallback: bool = False
+    source_repo: str | None = None
 
 
 def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
@@ -724,13 +791,57 @@ def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
     Args:
         repo_root: Repo whose ``.claude-plugin/plugin.json`` ships the plugin.
 
+    Every free-text field of the result is passed through
+    :func:`_safe_text`, since each was read from a file another tool
+    wrote and both callers print it.
+
+    Args:
+        repo_root: Repo whose ``.claude-plugin/plugin.json`` ships the plugin.
+
     Returns:
         A :class:`PluginCacheStatus`; ``"behind"``, ``"stale-content"`` and
         ``"source-mismatch"`` are the findings.
     """
     manifest = repo_root / ".claude-plugin" / "plugin.json"
-    if not manifest.is_file():
-        return _consumer_cache_status(repo_root)
+    if manifest.is_file():
+        status = _manifest_cache_status(repo_root, manifest)
+    else:
+        status = _consumer_cache_status(repo_root)
+    return status._replace(
+        plugin_name=_safe_text(status.plugin_name) or UNPRINTABLE,
+        cached=_safe_text(status.cached),
+        declared=_safe_text(status.declared),
+        source_ref=_safe_text(status.source_ref),
+        registered_ref=_safe_text(status.registered_ref),
+        source_repo=_safe_text(status.source_repo),
+    )
+
+
+def _safe_text(value: str | None) -> str | None:
+    """Return *value* when it matches :data:`_SAFE_TEXT`, else a placeholder.
+
+    Args:
+        value: A name, version or ref read from another tool's file.
+
+    Returns:
+        ``None`` for ``None``, *value* unchanged when every character is
+        allowed, otherwise :data:`UNPRINTABLE`.
+    """
+    if value is None:
+        return None
+    return value if _SAFE_TEXT.fullmatch(value) else UNPRINTABLE
+
+
+def _manifest_cache_status(repo_root: Path, manifest: Path) -> PluginCacheStatus:
+    """Compare a plugin-shipping repo's cached copy against its manifest.
+
+    Args:
+        repo_root: Repo that ships the plugin.
+        manifest: Its ``.claude-plugin/plugin.json``.
+
+    Returns:
+        The unsanitized :class:`PluginCacheStatus`.
+    """
     data, _err = read_json(manifest)
     plugin_name = str(data.get("name") or repo_root.name)
     declared = str(data["version"]) if data.get("version") else None
@@ -778,7 +889,8 @@ def _consumer_cache_status(repo_root: Path) -> PluginCacheStatus:
         ``"source-mismatch"`` when the registered marketplace tracks a
         different ref than the repo pins, ``"stale-content"`` when any
         content area differs from the pinned content, ``"current"`` when
-        none does, ``"uncached"`` when nothing is installed, and
+        none does, ``"content-unknown"`` when either tree exceeds the
+        hashing caps, ``"uncached"`` when nothing is installed, and
         ``"no-manifest"`` when the pin or the clone cannot be resolved.
     """
     pin = find_pin(repo_root)
@@ -805,6 +917,7 @@ def _consumer_cache_status(repo_root: Path) -> PluginCacheStatus:
             pin.ref,
             source_ref=source_ref,
             registered_ref=registered_ref,
+            source_repo=slug,
         )
     if source_dir is None:
         return PluginCacheStatus("no-manifest", repo_root.name, None, None)
@@ -813,6 +926,10 @@ def _consumer_cache_status(repo_root: Path) -> PluginCacheStatus:
         return PluginCacheStatus("uncached", plugin_name, None, pin.ref)
     cached = install_version(installs.install_dir)
     source, loaded = content_digests(source_dir), content_digests(installs.install_dir)
+    if None in source.values() or None in loaded.values():
+        return PluginCacheStatus(
+            "content-unknown", plugin_name, cached, pin.ref, fallback=installs.fallback
+        )
     stale = tuple(sorted(area for area in source if source[area] != loaded[area]))
     return PluginCacheStatus(
         "stale-content" if stale else "current",

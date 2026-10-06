@@ -1026,3 +1026,158 @@ def test_consumer_marketplace_source_check(
     if expected == "source-mismatch":
         assert (status.source_ref, status.registered_ref) == ("v6.11.0", "main")
         assert status.plugin_name == "forge"
+        assert status.source_repo == "misnaej/forge"
+
+
+# ---------------------------------------------------------------------------
+# Hostile or malformed input — degrade, never raise, never echo
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        (b'["a", "list"]', "not a JSON object"),
+        (b'{"name": "\xff\xfe"}', "unreadable"),
+    ],
+    ids=["list-typed", "non-utf8"],
+)
+def test_read_json_rejects_non_object_and_undecodable(
+    tmp_path: Path, raw: bytes, message: str
+) -> None:
+    """Anything but a readable JSON object is an error result, not a raise.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        raw: File bytes.
+        message: Expected error fragment.
+    """
+    path = tmp_path / "x.json"
+    path.write_bytes(raw)
+
+    data, err = version_surfaces.read_json(path)
+
+    assert data == {}
+    assert err is not None
+    assert message in err
+
+
+@pytest.mark.parametrize(
+    "raw", [b'["a", "list"]', b"\xff\xfe"], ids=["list-typed", "non-utf8"]
+)
+def test_install_version_falls_back_on_malformed_manifest(
+    tmp_path: Path, raw: bytes
+) -> None:
+    """A malformed cached manifest falls back to the slot's directory name.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        raw: Manifest bytes.
+    """
+    install = tmp_path / "9.1.1"
+    (install / ".claude-plugin").mkdir(parents=True)
+    (install / ".claude-plugin" / "plugin.json").write_bytes(raw)
+
+    assert version_surfaces.install_version(install) == "9.1.1"
+
+
+def test_plugin_installs_survives_nul_in_project_path(
+    tmp_path: Path,
+    claude_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A record whose projectPath holds a NUL byte matches nothing.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        claude_home: Fake ``~/.claude``.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    install = _write_plugin_tree(tmp_path / "cache" / "9.1.1", version="9.1.1")
+    _write_installed(
+        claude_home,
+        [_record(install, scope="project", project=tmp_path / "re\0po")],
+    )
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _n: None)
+
+    installs = version_surfaces.plugin_installs(tmp_path / "repo", "forge")
+
+    assert installs.repo is None
+
+
+def test_consumer_ignores_symlinks_inside_content_areas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Symlinked files and directories in a slot are never followed.
+
+    SCENARIO: a link in the cache copy pointing elsewhere on the machine
+    must neither be hashed nor walked into.
+    MOCK SETUP: clone and slot identical; the slot gains a symlinked file
+    and a symlinked directory under ``agents/``, both to outside content.
+    EXPECTED BEHAVIOR: ``"current"`` — the links contribute nothing.
+    """
+    repo, _clone, slot = _consumer_with_clone_and_cache(tmp_path, monkeypatch)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("elsewhere\n", encoding="utf-8")
+    (slot / "agents" / "linked.md").symlink_to(outside / "secret.md")
+    (slot / "agents" / "linked-dir").symlink_to(outside, target_is_directory=True)
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == "current"
+
+
+@pytest.mark.parametrize(
+    ("cap", "value"),
+    [("_MAX_AREA_FILES", 0), ("_MAX_AREA_BYTES", 3)],
+    ids=["file-cap", "byte-cap"],
+)
+def test_consumer_content_over_the_caps_is_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cap: str,
+    value: int,
+) -> None:
+    """A tree too large to hash yields "unknown", never stale or current.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        monkeypatch: Pytest monkeypatch fixture.
+        cap: Name of the cap constant lowered for the test.
+        value: The lowered cap.
+    """
+    repo, _clone, _slot = _consumer_with_clone_and_cache(tmp_path, monkeypatch)
+    monkeypatch.setattr(version_surfaces, cap, value)
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == "content-unknown"
+    assert status.stale_areas == ()
+
+
+def test_plugin_cache_status_replaces_unsafe_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Names and refs carrying shell or control characters are not echoed.
+
+    SCENARIO: a planted registry ref and clone manifest name would
+    otherwise be printed inside a remediation command.
+    MOCK SETUP: clone manifest name ``forge; rm -rf ~``; registry ref
+    ``main$(id)``.
+    EXPECTED BEHAVIOR: both fields read ``<unprintable>``.
+    """
+    repo, clone, _slot = _consumer_with_clone_and_cache(
+        tmp_path, monkeypatch, registry_ref="main$(id)"
+    )
+    (clone / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "forge; rm -rf ~", "version": "6.11.0"}),
+        encoding="utf-8",
+    )
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == "source-mismatch"
+    assert status.plugin_name == version_surfaces.UNPRINTABLE
+    assert status.registered_ref == version_surfaces.UNPRINTABLE
+    assert status.source_ref == "v6.11.0"

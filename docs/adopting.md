@@ -240,7 +240,8 @@ under an **earlier release's version** — and if that slot already
 existed, kept the earlier release's files. `/plugin update` compares
 version names only, so it reports "already at the latest version" and
 changes nothing, while every version check stays green. `forge-doctor`
-flags the slot when its hooks differ from the pinned release. The fix is
+flags the slot when its content (agents, skills, hooks or manifest)
+differs from the pinned release. The fix is
 to discard the slot so it refills from the pin:
 
 1. Move your plugin pin (marketplace ref) to an adoptable tag.

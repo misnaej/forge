@@ -564,7 +564,7 @@ def _installed_forge_scripts_version() -> str | None:
         return None
 
 
-def _installed_plugin_version(plugins_file: Path) -> str | None:
+def _installed_plugin_version(plugins_file: Path | None = None) -> str | None:
     """Read the installed Claude Code plugin version from the manifest.
 
     Parsing — both on-disk record shapes and every degradation — is the
@@ -572,11 +572,13 @@ def _installed_plugin_version(plugins_file: Path) -> str | None:
     and ``forge-doctor`` read the record the same way.
 
     Args:
-        plugins_file: Path to ``~/.claude/plugins/installed_plugins.json``.
+        plugins_file: Path to ``~/.claude/plugins/installed_plugins.json``;
+            ``None`` reads :data:`forge.version_surfaces.INSTALLED_PLUGINS`.
 
     Returns:
-        The most recent ``forge@forge`` record's version, or ``None`` if
-        the file does not exist, is malformed, or does not list forge.
+        The version of the latest ``forge@forge`` record carrying a
+        version, or ``None`` if the file does not exist, is malformed, or
+        lists no such record.
     """
     for record in reversed(plugin_records(PLUGIN_KEY, plugins_file)):
         version = record.get("version")
@@ -939,7 +941,7 @@ def check_upstream(
 
     Args:
         plugins_file: Path to ``~/.claude/plugins/installed_plugins.json``.
-            Default reads the real file under ``~/.claude``.
+            Default reads :data:`forge.version_surfaces.INSTALLED_PLUGINS`.
         settings_file: Path to ``~/.claude/settings.json``. Default
             reads the real file under ``~/.claude``.
         cache_ttl_hours: Throttle window. Tests pass a small value to
@@ -954,8 +956,6 @@ def check_upstream(
     if is_non_interactive():
         return
 
-    if plugins_file is None:
-        plugins_file = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
     if settings_file is None:
         settings_file = Path.home() / ".claude" / "settings.json"
 

@@ -60,10 +60,19 @@ from. A repo pinned to a tag on a machine registered at `main` (or the
 reverse) updates from the wrong ref, and `/plugin update` reports it
 current; each repo keeps whichever cached copy it last fetched. Claude
 Code offers no per-repo source pin, so forge detects this instead:
-`forge-doctor` reports a source mismatch naming both refs, and a global
-install beside the repo's own. The fix for a mismatch is re-pointing the
-registration ([below](#changing-the-marketplace-ref)) — which moves it
-for every repo on the machine.
+`forge-doctor` reports a source mismatch naming both refs in a repo that
+pins `forge-scripts`, and a global install beside the repo's own in a
+repo that enables forge. The fix for a mismatch is re-pointing the
+registration — which moves it for every repo on the machine:
+
+```
+claude plugin marketplace remove forge
+claude plugin marketplace add misnaej/forge#<ref>
+claude plugin install forge@forge     # removing the marketplace uninstalls it
+```
+
+or edit the `extraKnownMarketplaces` ref in `~/.claude/settings.json`
+(see [below](#changing-the-marketplace-ref)).
 
 To pin a specific plugin version (recommended):
 

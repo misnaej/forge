@@ -544,6 +544,7 @@ def test_plugin_cache_skew_explains_a_source_mismatch(
             "v9.0.0",
             source_ref="v9.0.0",
             registered_ref="main",
+            source_repo="misnaej/forge",
         ),
     )
 
@@ -551,10 +552,11 @@ def test_plugin_cache_skew_explains_a_source_mismatch(
 
     assert [r.name for r in results] == ["plugin:source"]
     assert results[0].info
-    assert "v9.0.0" in results[0].detail
-    assert "main" in results[0].detail
-    assert "cannot fix" in results[0].detail
-    assert "/plugin marketplace remove forge" in results[0].detail
+    detail = results[0].detail
+    assert "tracks main" in detail
+    assert "cannot fix" in detail
+    assert "claude plugin marketplace remove forge" in detail
+    assert "claude plugin marketplace add misnaej/forge#v9.0.0" in detail
 
 
 # --- _check_global_install() ---------------------------------------------
@@ -660,6 +662,28 @@ def test_global_install_advisory_silent_without_files(tmp_path: Path) -> None:
     Args:
         tmp_path: Pytest temp directory (a repo with no ``.claude/``).
     """
+    assert doctor._check_global_install(tmp_path) == []
+
+
+@pytest.mark.parametrize("malformed", ["repo", "user"])
+def test_global_install_advisory_survives_list_typed_settings(
+    tmp_path: Path, claude_home: Path, malformed: str
+) -> None:
+    """A settings file holding a JSON list neither crashes nor fires.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        claude_home: Fake ``~/.claude``.
+        malformed: Which settings file holds the list — the repo's (so the
+            repo does not enable forge) or the user's (so nothing global).
+    """
+    repo_settings = tmp_path / ".claude" / "settings.json"
+    user_settings = claude_home / "settings.json"
+    _write_settings(repo_settings, enabled=True)
+    _write_settings(user_settings, enabled=True)
+    target = repo_settings if malformed == "repo" else user_settings
+    target.write_text('["forge@forge"]', encoding="utf-8")
+
     assert doctor._check_global_install(tmp_path) == []
 
 
