@@ -840,10 +840,12 @@ def _log_parsed(repo_map: RepoMap) -> None:
     logger.info("Folders declared by headings:")
     for folder in repo_map.folders:
         mode = "full listing" if folder.strict else "summary"
-        logger.info("  %s/  (%s, line %d)", folder.path, mode, folder.line)
+        logger.info(
+            "  %s/  (%s, line %d)", sanitize_log_text(folder.path), mode, folder.line
+        )
     logger.info("Bullets:")
     for bullet in repo_map.bullets:
-        logger.info("  %s  (line %d)", bullet.path, bullet.line)
+        logger.info("  %s  (line %d)", sanitize_log_text(bullet.path), bullet.line)
     logger.info("")
 
 
@@ -880,7 +882,8 @@ def _log_summary(findings: Findings) -> None:
     logger.info(
         "  - Folders checked in full: %d (%s)",
         len(findings.strict_folders),
-        ", ".join(f"{f}/" for f in findings.strict_folders) or "none",
+        sanitize_log_text(", ".join(f"{f}/" for f in findings.strict_folders))
+        or "none",
     )
 
 
