@@ -8660,6 +8660,9 @@ def test_untracked_note_selects_what_the_step_selects_once_tracked(
         '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n'
         'exclude = ["src/vendor"]\n'
     )
+    # ruff's own exclusion: fix-forge-ruff still names the file to ruff,
+    # which checks a named file anyway, so it must stay in both selections.
+    (tmp_path / "ruff.toml").write_text('extend-exclude = ["scripts"]\n')
     for rel in ("src/pkg/__init__.py", "tests/conftest.py"):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text("")

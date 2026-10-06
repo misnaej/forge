@@ -1,3 +1,7 @@
 bump: patch
 
-Pre-commit no longer reports a clean pass while quietly skipping files you have not `git add`-ed. Some checks only look at files git already tracks, so a new module could pass pre-commit and then fail the moment it was committed. Now every run names the untracked files those checks skipped — in the step logs, the closing summary, `forge-precommit --verdict` (a `NOTE` line above the unchanged closing line) and the `forge-audit-*` changed-files logs — so you can add the ones that belong to your work and leave the rest out. Gitignored files are never listed, and the note never blocks a commit. One change can turn a previously passing commit red: in changelog-fragments mode, a fragment that is not staged no longer satisfies the changelog check, and the staged copy, not the file on disk, is the one validated. Stage the fragment with the change it describes.
+Pre-commit no longer reports a clean pass while quietly skipping files you have not `git add`-ed. Some checks only look at files git already tracks, so a new module could pass pre-commit and then fail the moment it was committed.
+
+Every run now names the untracked files those checks skipped — in the step logs, the closing summary, `forge-precommit --verdict` (a `NOTE` line above the unchanged closing line) and the `forge-audit-*` changed-files logs — so you can add the ones that belong to your work and leave the rest out. Gitignored files are never listed, and the note never blocks a commit.
+
+In changelog-fragments mode, a fragment that is not staged no longer satisfies the changelog check, and the staged copy, not the file on disk, is the one validated. This can turn a previously passing commit red: stage the fragment with the change it describes.

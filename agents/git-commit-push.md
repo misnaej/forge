@@ -79,7 +79,7 @@ MUST have run first; you fail if the pre-commit hook finds violations.
 
 4. **Stage changes** — first `git status --short`; review each `??` line per [Untracked files](#untracked-files). Stage only the files specified; "stage all" = tracked changes (`git add -u`) plus untracked files the caller *named*. Then verify:
    ```bash
-   git add -u && git add <named files>
+   git add -u && git add -- <named files>
    git status --short
    ```
 
@@ -109,7 +109,7 @@ Never improvise a split with `git reset` (blocked) or by re-staging
 blind:
 
 1. `git restore --staged .` — unstage everything (index only).
-2. `git add <path>...` — stage exactly the intended subset.
+2. `git add -- <path>...` — stage exactly the intended subset.
 3. `git status --short` + `git diff --cached --stat` — VERIFY it.
 4. Commit; repeat 2–4 for the next subset.
 

@@ -700,19 +700,21 @@ _NAME_CAP = 80
 
 
 def _quotable_name(path: str) -> str:
-    """Return *path* made safe to quote inside a backtick code span.
+    r"""Return *path* made safe to quote inside a backtick code span.
 
     Args:
         path: One untrusted repo-relative path.
 
     Returns:
-        The path with non-printables as ``?``, backticks escaped, and
-        anything past :data:`_NAME_CAP` characters cut to an ellipsis.
+        The path with non-printables as ``?``, anything past
+        :data:`_NAME_CAP` characters cut to an ellipsis, and backslashes
+        then backticks escaped — backslashes first, so a name ending in
+        ``\\`` cannot escape the closing backtick.
     """
     text = "".join(ch if ch.isprintable() else "?" for ch in path)
     if len(text) > _NAME_CAP:
         text = text[: _NAME_CAP - 1] + "…"
-    return text.replace("`", "\\`")
+    return text.replace("\\", "\\\\").replace("`", "\\`")
 
 
 def installed_console_scripts(name: str) -> set[str] | None:

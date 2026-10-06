@@ -3127,9 +3127,10 @@ def _untracked_in_reach(
     """Return the *untracked* files *step* would select if they were tracked.
 
     Mirrors each step's own file selection — roots, suffix and exclusions
-    — so the note names exactly the files the step passed over, and never
-    one it would have ignored anyway. A parity test holds each branch to
-    the step's real selector.
+    — so the note names the files the step passed over, and not one it
+    would have ignored anyway. A parity test holds each branch to the
+    step's real selector. The one gap is ruff run with ``force-exclude``
+    (see the ruff branch).
 
     Args:
         repo_root: Git repo root.
@@ -3170,7 +3171,11 @@ def _untracked_in_reach(
         return config.filter_under_roots(
             py, config.resolve_tool_roots(repo_root, "typecheck")
         )
-    # ruff in diff scope takes the whole diff.
+    # ruff in diff scope: fix-forge-ruff hands ruff every modified .py by
+    # name, with no [tool.forge].exclude filter, and ruff checks a file
+    # named on its command line even when its own `exclude` matches it.
+    # The one divergence is a ruff config with `force-exclude = true`:
+    # then the note may also name a file ruff itself would have dropped.
     return py
 
 
