@@ -678,6 +678,23 @@ options:
                        0 = resolvable).
 ```
 
+## forge-scratch-repo
+
+```text
+usage: forge-scratch-repo [-h] {snapshot,build} ...
+
+Create an isolated scratch copy or scratch repo for experiments (FOUNDATION
+§11 'Probing'). Prints the new directory's absolute path.
+
+positional arguments:
+  {snapshot,build}
+    snapshot        One-commit copy of the current checkout.
+    build           Repo built from a JSON spec of commits.
+
+options:
+  -h, --help        show this help message and exit
+```
+
 ## forge-slow-tests-report
 
 ```text

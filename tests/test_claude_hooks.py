@@ -1421,6 +1421,98 @@ def test_raw_git_commit_agent_gets_sequencer_rule_like_everyone(
     assert _run_hook(_RAW_GIT, command, options=options) == expected_exit
 
 
+_ROUTE_SHAPE = (
+    'python3 -c "import subprocess; '
+    "t=subprocess.check_output(['git','write-tree']).decode().strip(); "
+    "c=subprocess.check_output(['git','commit-tree',t,'-m','x']).decode().strip(); "
+    "subprocess.run(['git','update-ref','HEAD',c])\""
+)
+
+
+@pytest.mark.parametrize("agent_type", ["", "forge:git-commit-push"])
+@pytest.mark.parametrize(
+    "command", ["git update-ref refs/heads/x HEAD", "git fast-import < s"]
+)
+def test_raw_git_blocks_ref_plumbing_for_everyone(
+    agent_type: str, command: str
+) -> None:
+    """`update-ref` / `fast-import` move refs past every hook; no agent is exempt.
+
+    Args:
+        agent_type: Caller identity ("" for none, or the commit agent).
+        command: A ref-plumbing invocation.
+    """
+    assert _run_hook(_RAW_GIT, command, options=HookOptions(agent_type=agent_type)) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python3 -c \"import os; os.system('git commit -m x')\"",
+        "node -e \"require('child_process').execSync('git commit -m x')\"",
+        'perl -e \'system("git", "commit")\'',
+        "python3 <<EOF\nimport os\nos.system('git commit -m x')\nEOF",
+        "echo \"import os; os.system('git commit')\" | python3",
+        "uv run python -c \"import os; os.system('git commit')\"",
+        "conda run -n e python -c \"import os; os.system('git commit')\"",
+        "env X=1 python -c \"import os; os.system('git commit')\"",
+        _ROUTE_SHAPE,
+        "(python3 -c \"import os; os.system('git commit')\")",
+        "if true; then python3 -c \"import os; os.system('git commit')\"; fi",
+        "{ python3 -c \"import os; os.system('git commit')\"; }",
+        "python3 -W ignore -c \"import os; os.system('git commit')\"",
+        "python3 -Ic \"import os; os.system('git commit')\"",
+        "python3 <<< \"import os; os.system('git push')\"",
+        "xargs python3 -c \"import os; os.system('git commit')\"",
+        "/usr/bin/python3 -c \"import os; os.system('git commit')\"",
+    ],
+)
+def test_raw_git_blocks_inline_interpreter_git(command: str) -> None:
+    """Inline interpreter code that names git is blocked, wrappers included.
+
+    Args:
+        command: An interpreter invocation carrying git in inline code.
+    """
+    assert _run_hook(_RAW_GIT, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command", [_ROUTE_SHAPE, "python3 -c \"import os; os.system('git commit')\""]
+)
+def test_raw_git_interpreter_rule_has_no_commit_agent_bypass(command: str) -> None:
+    """The commit agent may run git itself, not route it through an interpreter.
+
+    Args:
+        command: An interpreter invocation carrying git in inline code.
+    """
+    options = HookOptions(agent_type="forge:git-commit-push")
+    assert _run_hook(_RAW_GIT, command, options=options) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'python -c "from forge import git_utils"',
+        "python3 -c \"print('github')\"",
+        "python3 -c \"print('.git/config')\"",
+        "python3 -c 'print(1)' && git status",
+        'git log | python3 -c "import sys"',
+        'gh issue create --body "run python -c with git"',
+        "python3 script.py",
+        "git update-ref --help",
+        "python3 -m pytest -p xdist -k git",
+        "python3 tool.py -p git",
+    ],
+)
+def test_raw_git_allows_interpreter_lookalikes(command: str) -> None:
+    """Interpreters not running git, and mentions of git, are not routes.
+
+    Args:
+        command: A command that only resembles the blocked route.
+    """
+    assert _run_hook(_RAW_GIT, command) == 0
+
+
 @pytest.mark.parametrize("agent_type", _COMMIT_AGENTS)
 @pytest.mark.parametrize("command", ["git commit -m x", "git push origin feat"])
 def test_raw_git_commit_agent_may_commit_and_push(
@@ -1731,7 +1823,7 @@ def test_destructive_allows_restore_staged_dot() -> None:
     assert _run_hook(_DESTRUCTIVE, "git restore --staged .") == 0
 
 
-# --- git stash: drop/clear block; pop/list/push allowed --------------------
+# --- git stash: every form blocked except list/show ------------------------
 
 
 def test_destructive_blocks_stash_drop() -> None:
@@ -1744,24 +1836,25 @@ def test_destructive_blocks_stash_clear() -> None:
     assert _run_hook(_DESTRUCTIVE, "git stash clear") == 2
 
 
-def test_destructive_allows_stash_pop() -> None:
-    """`git stash pop` is allowed — part of FOUNDATION §2's sanctioned dance."""
-    assert _run_hook(_DESTRUCTIVE, "git stash pop") == 0
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git stash pop",
+        "git stash apply",
+        "git stash push",
+        'git stash push -m "wip"',
+        "git stash",
+        "git stash save x",
+        "echo x; git stash pop",
+    ],
+)
+def test_destructive_blocks_stash_mutators(command: str) -> None:
+    """Every stash form except list/show is blocked, a bare `git stash` included.
 
-
-def test_destructive_allows_stash_list() -> None:
-    """`git stash list` (read-only) is allowed."""
-    assert _run_hook(_DESTRUCTIVE, "git stash list") == 0
-
-
-def test_destructive_allows_stash_push_with_message_no_untracked() -> None:
-    """`git stash push -m "wip"` (tracked-only, message-bearing) is allowed."""
-    assert _run_hook(_DESTRUCTIVE, 'git stash push -m "wip"') == 0
-
-
-def test_destructive_allows_stash_push_bare() -> None:
-    """A bare `git stash push` (tracked-only, no message) is allowed."""
-    assert _run_hook(_DESTRUCTIVE, "git stash push") == 0
+    Args:
+        command: A mutating stash invocation.
+    """
+    assert _run_hook(_DESTRUCTIVE, command) == 2
 
 
 @pytest.mark.parametrize(
@@ -1799,35 +1892,388 @@ def test_destructive_blocks_stash_untracked_forms(command: str) -> None:
     assert _run_hook(_DESTRUCTIVE, command) == 2
 
 
-def test_destructive_allows_stash_apply() -> None:
-    """`git stash apply` (no untracked flag) is allowed."""
-    assert _run_hook(_DESTRUCTIVE, "git stash apply") == 0
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git stash list",
+        "git stash show",
+        "git stash show -p",
+        "git stash show -u",
+        "git stash show --include-untracked",
+    ],
+)
+def test_destructive_allows_stash_readonly(command: str) -> None:
+    """Read-only stash subcommands stay allowed, whatever flags they carry.
 
+    The guard keys on the subcommand, so `show -u` (a display flag there)
+    is no longer a false positive.
 
-def test_destructive_blocks_stash_show_untracked_known_over_block() -> None:
-    """Verify false-positive block of stash show --include-untracked.
-
-    The untracked-stash guard tolerates interposed tokens between `stash`
-    and `--include-untracked`/`--all` so wrapper/global-option forms still
-    match; the tradeoff is that a read-only `stash show` invocation with
-    the same long flag also matches. This is documented and accepted rather
-    than narrowing the pattern and risking a real bypass (issue #404).
+    Args:
+        command: A `git stash list` / `git stash show` invocation.
     """
-    assert _run_hook(_DESTRUCTIVE, "git stash show --include-untracked") == 2
+    assert _run_hook(_DESTRUCTIVE, command) == 0
 
 
-def test_destructive_blocks_stash_show_untracked_short_flag() -> None:
-    """Verify the short-flag branch now matches interposed tokens too.
+# --- path-targeted restores: block only where uncommitted work lives -------
 
-    The short-flag branch was made token-tolerant (like the long-flag
-    branch) to close the interposed-token bypass a security review
-    surfaced — a flag between `stash` and `-u`/`-a` (e.g. `save`,
-    `--quiet`) must still trip the guard. The tradeoff, now symmetric
-    with the long-flag branch, is that a read-only `stash show -u` also
-    blocks as an accepted false positive rather than left as a bypass
-    seam (issue #404).
+
+def _git(
+    repo: Path, *args: str, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    """Run real git in *repo* with the shared test identity.
+
+    Args:
+        repo: Working directory.
+        *args: Git argv tail.
+        check: Raise on a non-zero exit.
+
+    Returns:
+        The completed process.
     """
-    assert _run_hook(_DESTRUCTIVE, "git stash show -u") == 2
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=check,
+    )
+
+
+@pytest.fixture
+def restore_repo(tmp_path: Path) -> Path:
+    """A repo on `main` with tracked `f` and `h`, plus branch `other` adding `g`.
+
+    Returns:
+        The repo root, checked out on a clean `main`.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    (repo / "f").write_text("one\n")
+    (repo / "h").write_text("one\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+    _git(repo, "checkout", "-q", "-b", "other")
+    (repo / "g").write_text("on other\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "other adds g")
+    _git(repo, "checkout", "-q", "main")
+    return repo
+
+
+def _restore_exit(repo: Path, command: str, *, cwd: Path | None = None) -> int:
+    """Run the destructive hook for *command* from *cwd* (default *repo*).
+
+    Args:
+        repo: Repo the command is meant to act on.
+        command: The Bash command to judge.
+        cwd: Directory the hook runs in; defaults to *repo*.
+
+    Returns:
+        The hook exit code.
+    """
+    return _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=cwd or repo))
+
+
+def test_destructive_restore_clean_path_allowed(restore_repo: Path) -> None:
+    """Restoring a path with no uncommitted work destroys nothing."""
+    assert _restore_exit(restore_repo, "git checkout -- f") == 0
+
+
+def test_destructive_restore_modified_tracked_blocked(restore_repo: Path) -> None:
+    """A modified working copy is work that exists nowhere else."""
+    (restore_repo / "f").write_text("edited\n")
+    assert _restore_exit(restore_repo, "git checkout -- f") == 2
+    assert _restore_exit(restore_repo, "git restore f") == 2
+
+
+def test_destructive_restore_untracked_in_the_way_blocked(restore_repo: Path) -> None:
+    """An untracked file the checkout would overwrite is work too."""
+    (restore_repo / "g").write_text("mine\n")
+    assert _restore_exit(restore_repo, "git checkout other -- g") == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout --ours -- f",
+        "git checkout --theirs f",
+        "git checkout -m f",
+        "git checkout --conflict=diff3 f",
+        "git restore --ours f",
+        "git restore --ignore-unmerged f",
+    ],
+)
+def test_destructive_conflict_flags_on_dirty_nonconflicted_path_blocked(
+    command: str, restore_repo: Path
+) -> None:
+    """Conflict-resolution flags are no exemption for a path that is not in conflict.
+
+    Args:
+        command: A restore carrying a conflict-resolution flag.
+    """
+    (restore_repo / "f").write_text("edited\n")
+    assert _restore_exit(restore_repo, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command", ["git checkout --ours -- f", "git checkout --theirs -- f"]
+)
+def test_destructive_conflict_flags_on_path_in_conflict_allowed(
+    command: str, restore_repo: Path
+) -> None:
+    """A path genuinely in conflict (`UU`) may be resolved with --ours/--theirs.
+
+    Args:
+        command: A conflict-resolution checkout.
+    """
+    repo = restore_repo
+    _git(repo, "checkout", "-q", "-b", "side")
+    (repo / "f").write_text("side\n")
+    _git(repo, "commit", "-q", "-am", "side edits f")
+    _git(repo, "checkout", "-q", "main")
+    (repo / "f").write_text("main\n")
+    _git(repo, "commit", "-q", "-am", "main edits f")
+    assert _git(repo, "merge", "side", check=False).returncode != 0
+    assert _git(repo, "status", "--porcelain", "--", "f").stdout.startswith("UU")
+    assert _restore_exit(repo, command) == 0
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("git checkout --fo main", 2),
+        ("git switch --disc main", 2),
+        ("git switch --de main", 0),
+        ("git restore --pathspec-f=x", 2),
+    ],
+)
+def test_destructive_abbreviated_long_options(
+    command: str, expected: int, tmp_path: Path
+) -> None:
+    """Guard reads unambiguous long-option prefixes as the full flag.
+
+    Git accepts abbreviated long-option prefixes; this test checks the guard.
+
+    Args:
+        command: A checkout/switch/restore using an abbreviated option.
+        expected: 2 for the destructive abbreviations, 0 for `--de` (detach).
+    """
+    options = HookOptions(cwd=tmp_path)
+    assert _run_hook(_DESTRUCTIVE, command, options=options) == expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [("git restore --stag --work f", 2), ("git restore --stag f", 0)],
+)
+def test_destructive_abbreviated_restore_staged_worktree(
+    command: str, expected: int, restore_repo: Path
+) -> None:
+    """`--stag` alone only unstages; adding `--work` re-adds the destructive half.
+
+    Args:
+        command: A restore with abbreviated --staged / --worktree.
+        expected: The hook's exit code with `f` modified.
+    """
+    (restore_repo / "f").write_text("edited\n")
+    assert _restore_exit(restore_repo, command) == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "if true; then git stash; fi",
+        "{ git stash; }",
+        "nohup git stash",
+        "time git checkout -f main",
+        "git -C. stash",
+        "git --git-dir .git checkout f",
+    ],
+)
+def test_destructive_blocks_broadened_anchor_forms(
+    command: str, tmp_path: Path
+) -> None:
+    """Compound-command, wrapper and attached-option shapes are still seen as git.
+
+    Args:
+        command: A blocked verb behind a keyword, brace group, wrapper or option form.
+    """
+    assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout -p",
+        "git restore -p",
+        "yes | git checkout -p",
+        "if x; then cd /o; git restore f; fi",
+        "{ cd /o; git restore f; }",
+        "builtin cd /o && git restore f",
+        "! cd /o; git restore f",
+        "git -c core.WORKTREE=/o restore f",
+        "git --config-env core.worktree=V restore f",
+        "GIT_CONFIG_COUNT=1 git restore f",
+        "git checkout --f main",
+    ],
+)
+def test_destructive_blocks_patch_chdir_and_worktree_relocation(
+    command: str, tmp_path: Path
+) -> None:
+    """Patch mode, a chdir in any compound form, and work-tree relocation fail closed.
+
+    Patch mode can discard hunks of dirty files without naming them; a
+    `cd` or relocated work tree means the status check would read the wrong
+    repository.
+
+    Args:
+        command: A restore/checkout whose target the hook cannot pin down.
+    """
+    assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 2
+
+
+def test_destructive_allows_cd_word_in_unrelated_command(tmp_path: Path) -> None:
+    """A mere mention of `cd` in a read-only command is not a chdir before a restore."""
+    options = HookOptions(cwd=tmp_path)
+    assert _run_hook(_DESTRUCTIVE, "echo cd; git status", options=options) == 0
+
+
+@pytest.mark.parametrize(("dirty", "expected"), [(True, 2), (False, 0)])
+def test_destructive_restore_attached_source_judged_on_state(
+    restore_repo: Path, *, dirty: bool, expected: int
+) -> None:
+    """`-sStable` (attached source) is not mistaken for a path; `f`'s state decides.
+
+    Args:
+        dirty: Whether `f` is modified before the hook runs.
+        expected: 2 when `f` holds uncommitted work, 0 when clean.
+    """
+    if dirty:
+        (restore_repo / "f").write_text("edited\n")
+    assert _restore_exit(restore_repo, "git restore -sStable f") == expected
+
+
+def test_destructive_restore_attached_dash_c_dirty_blocked(
+    restore_repo: Path, tmp_path: Path
+) -> None:
+    """`git -C<repo>` (attached form) resolves to the repo and judges its state."""
+    (restore_repo / "f").write_text("edited\n")
+    command = f"git -C{restore_repo} checkout -- f"
+    assert _restore_exit(restore_repo, command, cwd=tmp_path) == 2
+
+
+def test_destructive_restore_staged_only_outside_merge(restore_repo: Path) -> None:
+    """Staged changes outside a merge are blocked; unstaging stays allowed."""
+    (restore_repo / "f").write_text("staged\n")
+    _git(restore_repo, "add", "f")
+    assert _restore_exit(restore_repo, "git checkout -- f") == 2
+    assert _restore_exit(restore_repo, "git restore --staged f") == 0
+
+
+def test_destructive_restore_changelog_dir_mid_merge_allowed(
+    restore_repo: Path,
+) -> None:
+    """Staged-only entries that came from a merge can be re-derived.
+
+    The documented release-recovery restore of `changelog.d/` must keep
+    working mid-merge, even though the merge left a staged addition there.
+    """
+    repo = restore_repo
+    _git(repo, "checkout", "-q", "-b", "feature")
+    (repo / "f").write_text("feature side\n")
+    (repo / "changelog.d").mkdir()
+    (repo / "changelog.d" / "x.added.md").write_text("bump: patch\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feature")
+    _git(repo, "checkout", "-q", "main")
+    (repo / "f").write_text("main side\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "main edits f")
+    assert _git(repo, "merge", "feature", check=False).returncode != 0
+    assert (
+        _git(repo, "rev-parse", "-q", "--verify", "MERGE_HEAD", check=False).returncode
+        == 0
+    )
+    command = "git checkout $(git merge-base HEAD MERGE_HEAD) -- changelog.d/"
+    assert _restore_exit(repo, command) == 0
+
+
+def test_destructive_restore_after_cd_blocked(tmp_path: Path) -> None:
+    """A `cd` earlier in the command makes the directory unknowable: fail closed."""
+    command = "cd sub && git checkout -- f"
+    assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 2
+
+
+def test_destructive_restore_dash_c_resolves_the_target_repo(
+    restore_repo: Path, tmp_path: Path
+) -> None:
+    """`git -C <repo>` is judged against that repo, not the hook's cwd."""
+    command = f"git -C {restore_repo} checkout -- f"
+    assert _restore_exit(restore_repo, command, cwd=tmp_path) == 0
+    (restore_repo / "f").write_text("edited\n")
+    assert _restore_exit(restore_repo, command, cwd=tmp_path) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout -- *.py",
+        "git checkout -- $F",
+        "git checkout -- ~/x",
+        "git checkout -- ':(top)f'",
+        'git checkout -- "a b"',
+        "git --git-dir=x checkout -- f",
+        "git --work-tree=x restore f",
+    ],
+)
+def test_destructive_restore_fails_closed_when_paths_unknowable(
+    command: str, tmp_path: Path
+) -> None:
+    """Globs, expansions, pathspec magic, spaced paths and redirected repos block.
+
+    Args:
+        command: A restore whose target the hook cannot determine.
+    """
+    assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout --merge -- f",
+        "git checkout -m f",
+        "git checkout --theirs -- f",
+        "git switch -c new",
+        "git checkout main",
+    ],
+)
+def test_destructive_restore_allowed_forms(command: str, tmp_path: Path) -> None:
+    """Conflict resolution and plain branch switching are not path restores.
+
+    Args:
+        command: An allowed checkout/switch form.
+    """
+    assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout -f main",
+        "git checkout --force main",
+        "git switch -f main",
+        "git switch --discard-changes main",
+    ],
+)
+def test_destructive_blocks_forced_switch(command: str, tmp_path: Path) -> None:
+    """A forced switch throws away local modifications instead of refusing.
+
+    Args:
+        command: A forced checkout/switch.
+    """
+    assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 2
 
 
 # --- shared anchor idiom, one representative case per family ---------------

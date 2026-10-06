@@ -18,11 +18,15 @@
 #
 # GIT_ANCHOR matches a real `git <subcommand>` invocation at line-start or
 # after a shell separator (`;` `&` `|` `(`). It tolerates:
-# - a leading run of `VAR=val` assignments and a `command`/`env`/`exec`/
-#   `builtin`/`sudo` wrapper (incl. wrapper flag tokens like `sudo -n`),
-#   so `GIT_DIR=x git ...` can't slip the gate;
+# - a leading run of `VAR=val` assignments, `command`/`env`/`exec`/
+#   `builtin`/`sudo`/`nohup`/`nice`/`time` wrappers (incl. wrapper flag
+#   tokens like `sudo -n`) and the shell words that start a command inside
+#   a compound (`then`, `do`, `else`, `elif`, `{`, `!`), so
+#   `GIT_DIR=x git ...` and `if …; then git …; fi` can't slip the gate;
 # - a bounded run of git GLOBAL options between `git` and the subcommand
-#   (`--no-pager`, `-c k=v`, `-C <dir>`, `--git-dir=<x>`), so
+#   (`--no-pager`, `-c k=v`, `-C <dir>`, attached `-C<dir>`,
+#   `--git-dir=<x>` and `--git-dir <x>`, likewise `--work-tree`,
+#   `--namespace`, `--exec-path`, `--config-env`), so
 #   `git --no-pager <verb>` can't slip it either.
 #
 # SEG_ANCHOR is the same shape anchored to segment start, for hooks that
@@ -38,13 +42,18 @@
 # a backslash-newline continuation BETWEEN the words of an anchor,
 # wrappers nested more than one level deep with escaped inner quotes,
 # a non-heredoc script piped into a shell (`echo "…" | bash`; a heredoc
-# whose line pipes into a shell IS covered), an interpreter running a
-# subprocess (`python -c "subprocess.run(...)"`), space-separated
-# arg-taking globals other than -c/-C (`--git-dir x`) and multi-arg
-# wrapper flags (`sudo -u root`).
-GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][a-zA-Z-]*(=[^[:space:]]*)?[[:space:]]+)*'
+# whose line pipes into a shell IS covered), an interpreter running git
+# from a script FILE (`python x.py`) or from a verb assembled at runtime
+# (inline interpreter code that names git — `python -c "…git…"`, a heredoc
+# script — is refused by block_raw_git.sh as a tripwire, not a
+# boundary), git aliases (`git -c alias.x='!…' x`), wrappers that take
+# a separate argument (`sudo -u root`, `timeout 5`, `xargs`,
+# `find -exec`), and other git verbs that overwrite files or move refs
+# (`read-tree -u`, `checkout-index -f`, `branch -f`) — the guards are
+# tripwires for the routes agents were seen to take, not a sandbox.
+GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|nohup|nice|time|then|do|else|elif|[{!]|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+)*'
 # shellcheck disable=SC2034  # consumed by sourcing hooks
-SEG_ANCHOR='^[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][a-zA-Z-]*(=[^[:space:]]*)?[[:space:]]+)*'
+SEG_ANCHOR='^[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|nohup|nice|time|then|do|else|elif|[{!]|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+)*'
 
 # GH_ANCHOR is the same shape for `gh`: a real invocation at line-start
 # (leading whitespace included — the hand-rolled `^gh` patterns this
@@ -55,7 +64,7 @@ SEG_ANCHOR='^[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|
 # syntax), so the same bounded global-option run GIT_ANCHOR allows
 # follows `gh` here.
 # shellcheck disable=SC2034  # consumed by sourcing hooks
-GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|-[^[:space:]]+)[[:space:]]+)*gh[[:space:]]+((-R|--repo)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][a-zA-Z-]*(=[^[:space:]]*)?[[:space:]]+)*'
+GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|nohup|nice|time|then|do|else|elif|[{!]|-[^[:space:]]+)[[:space:]]+)*gh[[:space:]]+((-R|--repo)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+)*'
 
 # ---- Command positions ----------------------------------------------------
 #
@@ -345,6 +354,42 @@ command_positions() {
     fi
     view=$(printf '%s\n' "$1" | LC_ALL=C awk -v KEEP="$keep" "$_GUARD_CMDPOS_AWK" 2>/dev/null) || view="$1"
     printf '%s\n' "$view"
+}
+
+# guard_git_invocations <--words view> <verb>
+# Prints one line per `git … <verb>` invocation in the view: the text the
+# anchor matched before <verb> (wrappers, VAR=val, git global options),
+# a TAB, then the arguments after <verb> up to the end of that
+# invocation. A command substitution among the arguments — `$(…)`, or the
+# `(…)` the view renders for a quoted one or a backtick — is printed as
+# the single marker `@SUBST@` (its value is unknowable to a hook), and a
+# `)` that closes an enclosing subshell ends the invocation. Scanning
+# resumes right after <verb>, so an invocation nested inside a
+# substitution is reported on its own line as well. <verb> is a literal
+# subcommand; `git checkout-index` is not a `checkout`.
+guard_git_invocations() {
+    printf '%s\n' "$1" | LC_ALL=C awk -v ANCHOR="$GIT_ANCHOR" -v VERB="$2" '
+    {
+        line = $0
+        while (match(line, ANCHOR VERB)) {
+            pre = substr(line, RSTART, RLENGTH - length(VERB))
+            rest = substr(line, RSTART + RLENGTH)
+            line = rest
+            if (substr(rest, 1, 1) ~ /[[:alnum:]_-]/) continue
+            out = ""; depth = 0; n = length(rest)
+            for (i = 1; i <= n; i++) {
+                c = substr(rest, i, 1)
+                if (c == "$" && substr(rest, i + 1, 1) == "(") continue
+                if (c == "(") { if (depth == 0) out = out "@SUBST@"; depth++; continue }
+                if (c == ")") { if (depth == 0) break; depth--; continue }
+                if (depth > 0) continue
+                if (c == ";" || c == "&" || c == "|") break
+                out = out c
+            }
+            sub(/^[ \t(;&|]+/, "", pre)
+            printf "%s\t%s\n", pre, out
+        }
+    }'
 }
 
 # guard_help_only <command-positions view> <verb regex>

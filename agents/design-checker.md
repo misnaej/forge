@@ -26,7 +26,8 @@ and the wrapper's extras.
 ([§8](../FOUNDATION.md#8-documentation-standards)) — calibrate severity
 against them, never re-define them. Consumer `CLAUDE.md` may override; on conflict
 **consumer wins**, and the stricter of foundation default and the
-consumer's `ruff.toml` applies.
+consumer's `ruff.toml` applies. Any experiment runs in a
+`forge-scratch-repo` copy (§11 "Probing"), never the checkout.
 
 ## Why investigation recipes
 

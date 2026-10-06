@@ -1175,6 +1175,28 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_ssh_agent_has_identity() -> bool` _(internal)_ — Return True when ``ssh-add -l`` reports at least one loaded key.
 - `progress_logger(step_name: str, *, out: TextIO | None = None) -> Iterator[Callable[[str], None]]` — Yield a flushed printer; emit start / end markers with elapsed time.
 
+## `forge.scratch_repo`
+
+> _forge-scratch-repo — isolated scratch copies and scratch repos for agents._
+
+- `class ScratchError` — A request this CLI refuses; the message says why.
+- `_scratch_git(dest: Path, *args: str) -> str` _(internal)_ — Run git inside the scratch directory *dest* with the scratch flags.
+- `_work_tree_of(path: Path) -> Path | None` _(internal)_ — Return the top of the git work tree containing *path*, if any.
+- `_check_parent(parent: Path) -> Path` _(internal)_ — Validate the directory the scratch copy will be created in.
+- `_new_dest(parent: Path) -> Path` _(internal)_ — Create a fresh, empty scratch directory under *parent*.
+- `_source_root() -> Path` _(internal)_ — Return the work tree the caller is in — the snapshot source.
+- `_refuse_option_like(value: str, what: str) -> None` _(internal)_ — Refuse a ref or branch name git would read as an option.
+- `_export_ref(source: Path, ref: str, dest: Path) -> None` _(internal)_ — Write the tree of *ref* in *source* into *dest*.
+- `_copy_worktree(source: Path, dest: Path) -> None` _(internal)_ — Copy *source*'s tracked files, as they are on disk now, into *dest*.
+- `_commit_all(dest: Path, message: str) -> None` _(internal)_ — Stage everything in *dest* (ignored paths too) and commit it.
+- `snapshot(*, ref: str | None, worktree: bool, parent: Path) -> Path` — Create a one-commit scratch copy of the current checkout.
+- `_spec_path(dest: Path, rel: str) -> Path` _(internal)_ — Resolve a spec file path inside *dest*, refusing any escape.
+- `_load_spec(text: str) -> list[dict[str, Any]]` _(internal)_ — Parse and shape-check a build spec.
+- `_switch_branch(dest: Path, commit: dict[str, Any], *, first: bool) -> None` _(internal)_ — Put *dest* on the branch a spec commit names, creating it if needed.
+- `build(spec_text: str, *, parent: Path) -> Path` — Create a scratch repository from a JSON spec of commits.
+- `_parser() -> argparse.ArgumentParser` _(internal)_ — Build the argument parser.
+- `main(argv: list[str] | None = None) -> int` — Run the CLI.
+
 ## `forge.slow_tests_report`
 
 > _forge-slow-tests-report — surface the slowest tests from a pytest run._

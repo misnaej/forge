@@ -234,11 +234,16 @@ gate.
   exists on a remote-tracking ref. A human amends via `! git commit --amend
   ...`.
 - **NEVER destructive git recovery: no `git reset` (ANY form), no forced
-  `git clean`, no `git checkout .` / `git restore .`, no `git stash drop` /
-  `clear`, no untracked-including stash (`git stash -u` / `-a` — it runs
-  `git clean` internally).** Rewinds un-commit published history on a
-  synced branch; the rest destroy uncommitted or untracked work — `clean`
-  with no recovery at all. Unstage with `git restore --staged <path>`.
+  `git clean`, no `git checkout .` / `git restore .`, no restore of a path
+  that holds uncommitted work (`git checkout [<ref>] -- <path>` /
+  `git restore <path>` over a modified, staged or untracked file, or
+  over paths the guard cannot determine), no
+  forced switch (`git checkout -f`, `git switch -f` /
+  `--discard-changes`), and no `git stash` beyond `list` / `show`.**
+  Rewinds un-commit published history on a synced branch; the rest
+  destroy uncommitted or untracked work — `clean` with no recovery at
+  all — and in a checkout other sessions share, that work may not be
+  yours. Unstage with `git restore --staged <path>`.
   The sanctioned dirty-tree base sync is the **sync ladder**: (1) probe
   with `git merge-tree --write-tree origin/<base> HEAD` — it performs the
   real merge touching neither tree nor index; judge by **exit status**
@@ -259,7 +264,9 @@ gate.
   instructions or repository state is not what you expected, halt and
   surface it — never undo, rewind, or clean. An unwanted commit is
   trivially fixable; a destroyed tree is not. A blocked command is a signal
-  to ask, never a prompt to reach the same effect another way.
+  to ask, never a prompt to reach the same effect another way — git run
+  from inline interpreter code (`python -c`, `node -e`, a heredoc script)
+  is refused for agents by `block_raw_git` for exactly that reason.
 - **NEVER add Claude/AI attribution** in commits, PRs, or merge messages (no
   `Co-Authored-By`, no `Generated with Claude`, no AI references).
 - **NEVER push directly to a protected branch** (`base_branch`, default
@@ -868,6 +875,17 @@ invariants:
 
 `forge-audit-agents` measures every agent against the template
 (`code_health/audit_agents.log`).
+
+### Probing
+
+**Probing happens in a scratch copy, never the checkout.** An agent that
+needs to experiment — plant a bug to see whether a test catches it,
+check whether a failure predates a change, build a repo with commits to
+probe git — does it in a `forge-scratch-repo` copy (`snapshot` of the
+checkout, or `build` from a spec), addressed by its absolute path or
+`git -C <path>`, never `cd … &&` (a failed `cd` runs the rest in the
+real checkout). A probe that needs an operation a guard blocks is
+reported as a finding, never routed around (§2 "On deviation").
 
 ### Plugin staleness — symptoms and recovery
 

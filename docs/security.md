@@ -134,6 +134,14 @@ If you ship Claude Code agents:
 - Forge's own agents pin their tool list explicitly in frontmatter so
   they can't acquire `Write` / `Edit` permissions a reviewer didn't
   approve.
+- Give agents a sanctioned place to experiment. An agent that needs a
+  repo to probe in and has none will improvise one in the shared
+  checkout or route around a guard to get it. Forge's answer is
+  `forge-scratch-repo` (FOUNDATION §11 "Probing"); its guard hooks are
+  tripwires for the routes agents were seen to take — git from inline
+  interpreter code, `update-ref`, stash, restoring over unsaved edits —
+  not a sandbox. A script file run as `python x.py`, or a git verb
+  assembled at runtime, is not seen.
 
 ---
 

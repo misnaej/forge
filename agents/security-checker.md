@@ -223,6 +223,7 @@ This requires immediate attention before PR can be merged.
 ## Critical Rules
 
 - **Report only** - do NOT make changes to files
+- **Probe only in a scratch repo** - git-behaviour probes run in a `forge-scratch-repo build` / `snapshot` copy; a probe that needs a blocked operation is a finding to report, never a guard to route around (FOUNDATION §11 "Probing")
 - **Be specific** - cite file:line for all findings
 - **Prioritize severity** - distinguish HIGH/MEDIUM/LOW
 - **No false alarms** - verify findings are actual issues
