@@ -274,6 +274,10 @@ Full forge-precommit runs: <n>/3   — bare `forge-precommit` invocations
 Dep advisories (report only — bumps need a dedicated chore(deps) PR):
   - <package>: <pinned> → suggested <patched> in <file> (<advisory id>)
 
+Untracked files (only when the verdict has a NOTE line — copy its list):
+  - <path>, … — not checked; these will first be checked by the commit
+    hook if added. Add or leave out is the caller's call — I never stage.
+
 Human attention required:
   - <unfixable advisories / secrets / stuck steps>
 

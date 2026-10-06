@@ -150,6 +150,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `resolve_roots(roots: list[str] | None) -> list[Path]` — Resolve the effective scan roots.
 - `_is_excluded(path: Path) -> bool` _(internal)_ — Return ``True`` if ``path`` lies under any default-excluded directory.
 - `iter_files(scope: Scope, roots: list[Path], *, suffix: str = '.py') -> Iterator[Path]` — Yield matching files under ``roots`` respecting ``scope``.
+- `note_untracked(root: Path, suffix: str) -> None` — Record the untracked *suffix* files a changed-files walk passes over.
 - `relpath(path: Path) -> str` — Render ``path`` relative to the repo root for log stability.
 - `read_finding_count(log_text: str) -> int` — Return the ``# findings: N`` count :func:`write_log` puts in a log header.
 - `read_scope(log_text: str) -> str | None` — Return the ``# scope:`` value :func:`write_log` puts in a log header.
@@ -363,11 +364,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_existing_dirs(repo_root: Path, dirs: list[str]) -> list[str]` _(internal)_ — Filter *dirs* to existing in-repo paths, de-duplicated, order-preserving.
 - `resolve_tool_roots(repo_root: Path, tool: str, *, include_tests: bool = False) -> list[str]` — Resolve the scan roots a layout-consuming *tool* should use.
 - `declared_layout_dirs(repo_root: Path, *, include_tests: bool = True) -> list[str] | None` — Return the explicitly declared layout dirs, or ``None`` if undeclared.
+- `resolve_test_naming_roots(repo_root: Path) -> list[str]` — Resolve the *test-only* roots the test-naming check scans.
 - `filter_under_roots(files: list[str], roots: list[str]) -> list[str]` — Keep only *files* that live under one of *roots* (source-tree scoping).
 - `filter_excluded(files: list[str], globs: list[str]) -> list[str]` — Drop *files* matching any exclude *glob* (the ``[tool.forge].exclude`` half).
 - `select_diff_files(repo_root: Path, *, roots: list[str] | None = None, apply_exclude: bool = False, drop_deleted: bool = True, suffix: str = '.py') -> list[str]` — Select the modified files a diff-scoped step should check.
 - `tracked_files_under_roots(repo_root: Path, roots: list[str], *, suffix: str = '.py') -> list[str]` — Select the git-tracked files under *roots*, minus repo-wide excludes.
 - `_warn_untracked_under_roots(repo_root: Path, roots: list[str], suffix: str) -> None` _(internal)_ — Warn (dev-loop only) when untracked source under *roots* goes unscanned.
+- `summarize_paths(paths: list[str], *, limit: int = 10) -> str` — Render *paths* as one bounded, printable line.
 - `installed_console_scripts(name: str) -> set[str] | None` — Return *name*'s installed ``console_scripts`` entry-point names.
 
 ## `forge.continuation`
@@ -730,7 +733,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
 - `is_ancestor(root: Path | None, ancestor_ref: str, descendant_ref: str) -> bool` — Return whether *ancestor_ref* is an ancestor of *descendant_ref*.
 - `added_or_moved_files(*, repo_root: Path | None = None, base_branch: str = 'main', suffix: str = '.py') -> list[str]` — Return files ADDED or RENAMED vs the base branch (``--diff-filter=AR``).
-- `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None, base_branch: str = 'main') -> list[str]` — Get list of modified files from git.
+- `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None, base_branch: str = 'main', include_unstaged: bool = True) -> list[str]` — Get list of modified files from git.
 - `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
 - `get_untracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get untracked, non-gitignored files matching the suffix/prefix filters.
 - `path_escapes_repo(repo_root: Path, path: str) -> bool` — Return True if *path* resolves outside *repo_root*.
@@ -1147,10 +1150,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `timing_markers(text: str) -> dict[str, str]` — Return each step's marker from a ``precommit_timing.log`` body.
 - `_validate_step_names(names: Sequence[str]) -> None` _(internal)_ — Raise ``ValueError`` listing any *names* that are not registered steps.
 - `resolve_steps(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepDef]` — Resolve which steps to run, in registry order.
-- `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
+- `_untracked_in_reach(repo_root: Path, step: str, scope: str, untracked: list[str]) -> list[str]` _(internal)_ — Return the *untracked* files *step* would select if they were tracked.
+- `relevant_untracked_files(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[tuple[str, tuple[str, ...]]]` — List untracked files that an enabled step passed over, and which steps.
+- `_untracked_note(untracked: Sequence[tuple[str, tuple[str, ...]]]) -> str` _(internal)_ — Return the one-line note naming untracked files no run fully checked.
+- `_note_untracked_in_output(result: StepResult, untracked: Sequence[tuple[str, tuple[str, ...]]]) -> None` _(internal)_ — Append the per-step untracked line to *result*'s log output.
+- `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = (), untracked: Sequence[tuple[str, tuple[str, ...]]] | None = None) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
 - `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
 - `_capped(output: str) -> str` _(internal)_ — Return *output* trimmed to the shared evidence cap.
-- `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult]) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
+- `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult], *, untracked: Sequence[tuple[str, tuple[str, ...]]] = ()) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
 - `_forced_steps(only: list[str]) -> Iterator[None]` _(internal)_ — Force explicitly named steps to run, then restore the environment.
 - `freshness_verdicts(root: Path) -> dict[str, str]` — Return each ``code_health/`` log's freshness verdict against the working tree.
 - `verdict(root: Path) -> tuple[bool, list[str]]` — Return whether every enabled step passed on the current tree.
@@ -1606,7 +1613,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `verify_file(filepath: Path) -> list[Issue]` — Verify test naming standards in a single file.
 - `_check_file_name_alignment(filepath: Path) -> list[Issue]` _(internal)_ — Verify the ``test_`` prefix on test file names (Rule 2).
 - `_check_duplicate_file_names(all_files: list[Path]) -> list[Issue]` _(internal)_ — Check for duplicate or ambiguous file names.
-- `_test_scan_roots(repo_root: Path) -> list[str]` _(internal)_ — Resolve the *test-only* scan roots for ``--scope all`` (issue #83).
 - `_resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list[str]` _(internal)_ — Return repo-relative test file paths from CLI arg, scope, or git diff.
 - `_scan_files(py_files: list[str], repo_root: Path) -> tuple[list[Issue], list[str], int]` _(internal)_ — Verify each file, plus a cross-file duplicate-name check.
 - `_log_warnings(warnings: list[Issue]) -> None` _(internal)_ — Print warnings grouped by file.

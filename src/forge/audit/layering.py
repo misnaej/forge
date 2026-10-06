@@ -77,6 +77,7 @@ from forge.audit.common import (
     Severity,
     exit_code_for,
     make_audit_parser,
+    note_untracked,
     resolve_roots,
     under_module_prefix,
     write_log,
@@ -629,6 +630,7 @@ def run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int:
         # membership, not just the anchor path — mirrors dup's
         # _touches_changed semantics); HIGH findings always survive.
         changed = set(select_diff_files(root)) | escalate
+        note_untracked(root, ".py")
         touched_anchors: set[str] = set()
         for spec in layers:
             for mods in _direct_children(spec, modules).values():

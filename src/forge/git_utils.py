@@ -2302,11 +2302,15 @@ def get_modified_files(
     prefix: str | tuple[str, ...] | None = None,
     repo_root: Path | None = None,
     base_branch: str = "main",
+    include_unstaged: bool = True,
 ) -> list[str]:
     """Get list of modified files from git.
 
     Detects files modified in the current branch compared to the base
-    branch, including branch commits, staged files, and unstaged changes.
+    branch, including branch commits, staged files, and unstaged changes
+    to tracked files. An untracked file is never listed: git's diff does
+    not know it exists until it is added, so a caller checking this set
+    must say so rather than imply the file was looked at.
 
     Strategy:
         - Feature branch: all files modified vs the base ref from
@@ -2314,6 +2318,12 @@ def get_modified_files(
           first, local ``<base_branch>`` as offline fallback
           (branch commits + staged + unstaged)
         - Base branch: files modified vs previous commit
+
+    With ``include_unstaged=False`` the feature-branch view is what the
+    next commit would carry — branch commits plus the index — and it
+    never falls back to the previous commit: on a branch with no commits
+    yet, that fallback would report the base branch's last change as if
+    it were this one.
 
     Args:
         suffix: File suffix to filter by. Defaults to '.py'.
@@ -2329,6 +2339,9 @@ def get_modified_files(
             Callers with a loaded ``[tool.forge]`` config pass
             ``cfg.base_branch`` (``forge.config.select_diff_files`` does);
             the default matches the config default.
+        include_unstaged: Count working-tree edits that are not staged.
+            ``False`` answers "what is committed or staged" — the set a
+            gate that must see the commit's own content reads.
 
     Returns:
         Deduplicated list of modified file paths matching the filters.
@@ -2355,6 +2368,8 @@ def get_modified_files(
                 suffix=suffix,
                 prefix=prefix,
             )
+            if not include_unstaged:
+                return sorted(set(branch_files + staged_files))
             unstaged_files = _parse_files(
                 _run_git("diff", "--name-only", cwd=repo_root),
                 suffix=suffix,
@@ -2427,12 +2442,12 @@ def get_untracked_files(
 
     The complement to :func:`get_tracked_files`: files present on disk but
     absent from the index and **not** gitignored (``git ls-files --others
-    --exclude-standard``) — the "forgot to ``git add``" set: used to warn
-    when a first-party source file is silently skipped by a tracked-set
-    scan, and to count a changelog fragment that is written but not yet
-    staged. A gitignored file is *deliberately*
-    out of scope (issue #161) and is never listed here — that is exactly
-    what ``--exclude-standard`` filters out.
+    --exclude-standard``) — the "forgot to ``git add``" set. Every
+    tracked-set or diff-based check is blind to these files, so this is
+    what their callers list as *not checked*, leaving the add-or-leave-out
+    decision to whoever reads it; it never makes a file count as present.
+    A gitignored file is *deliberately* out of scope and is never listed
+    here — that is exactly what ``--exclude-standard`` filters out.
 
     Args:
         suffix: File suffix to filter by. Defaults to '.py'.

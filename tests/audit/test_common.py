@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
@@ -22,7 +23,7 @@ from forge.audit.common import (
     write_log,
 )
 from tests.audit.conftest import write_pyproject
-from tests.conftest import PRODUCED_AT_RE, commit_all
+from tests.conftest import GIT_ENV, PRODUCED_AT_RE, commit_all
 from tests.conftest import init_git_repo as _init_git_repo
 
 
@@ -453,6 +454,57 @@ def test_write_log_records_scope_header_and_count_still_parses(
     assert f"# scope: {scope.value}" in text.splitlines()[:10]
     assert read_finding_count(text) == 1
     assert read_scope(text) == scope.value
+
+
+def test_changed_scope_names_untracked_files_without_auditing_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A changed-files run reads only git's diff and says what it never saw.
+
+    The tracked edit is audited; the untracked module is not yielded, and
+    the log header names it — while the scope and finding-count readers
+    still parse. A non-``.py`` scratch file is not this audit's concern.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    commit_all(tmp_path, "seed")
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        check=True,
+    )
+    (tmp_path / "src" / "a.py").write_text("x = 2\n", encoding="utf-8")
+    (tmp_path / "src" / "new.py").write_text("y = 1\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("scratch\n", encoding="utf-8")
+    monkeypatch.setattr(common, "repo_root", lambda: tmp_path)
+
+    audited = [relpath(p) for p in iter_files(Scope.CHANGED, [])]
+    text = write_log("dup", [], summary="s", scope=Scope.CHANGED).read_text(
+        encoding="utf-8"
+    )
+
+    assert audited == ["src/a.py"]
+    [note] = [ln for ln in text.splitlines() if ln.startswith("# untracked")]
+    assert "# untracked, not audited: 1 — src/new.py" in note
+    assert read_scope(text) == "changed"
+    assert read_finding_count(text) == 0
+
+
+def test_full_scope_log_has_no_untracked_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full run walks the disk, untracked files included: nothing to name."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "new.py").write_text("y = 1\n", encoding="utf-8")
+    monkeypatch.setattr(common, "repo_root", lambda: tmp_path)
+
+    text = write_log("dup", [], summary="s", scope=Scope.FULL).read_text(
+        encoding="utf-8"
+    )
+
+    assert "untracked" not in text
 
 
 def test_write_log_without_scope_omits_the_header_line(fake_repo: Path) -> None:

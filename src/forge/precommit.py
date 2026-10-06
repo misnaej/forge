@@ -47,6 +47,11 @@ report to ``code_health/precommit_timing.log`` — newest full run overwrites;
 a ``--only`` run writes ``code_health/precommit_only_timing.log`` instead, so
 a partial run never replaces the full-run evidence a wrap-up reads.
 
+A step that selects its files from git never sees an untracked file. The
+run does not add such files and does not pass over them in silence either:
+the affected step logs, the closing summary and ``--verdict`` name them,
+so whoever reads the result decides whether each is forgotten work or junk.
+
 Usage:
 
 - ``forge-precommit`` — run the default sequence
@@ -101,6 +106,7 @@ from forge.git_utils import (
     emit,
     fetch_tags_best_effort,
     forge_cli_argv,
+    get_modified_files,
     get_untracked_files,
     is_ancestor,
     latest_v_tag,
@@ -2654,6 +2660,9 @@ def _handle_fragment_mode(
 ) -> StepResult:
     """Handle fragment-mode changelog validation.
 
+    A trigger is any change in *files*, staged or not; the fragment that
+    answers it must be committed or staged.
+
     Args:
         repo_root: Git repo root.
         files: Changed files from the diff.
@@ -2665,17 +2674,36 @@ def _handle_fragment_mode(
     """
     name = "changelog_updated"
     triggers = _changelog_triggers(files, require, exempt)
-    # The diff leaves untracked files out on purpose, but a fragment is
-    # authored before it is staged: the validator below already reads it
-    # from disk, so presence must too, or a valid fragment fails here until
-    # someone stages it. Gitignored paths stay excluded.
-    has_fragment = any(p.startswith(f"{FRAGMENTS_DIR}/") for p in files) or bool(
-        get_untracked_files(
-            suffix=".md", prefix=f"{FRAGMENTS_DIR}/", repo_root=repo_root
-        )
+    # Only a committed or staged fragment counts: one that exists only in
+    # the working tree is not in the commit this gate guards, so counting
+    # it would pass a commit that ships without its fragment. Whether
+    # an unstaged fragment belongs to this work is the author's call, so
+    # it is named below, never silently counted.
+    fragment_prefix = f"{FRAGMENTS_DIR}/"
+    in_commit = get_modified_files(
+        suffix="",
+        prefix=fragment_prefix,
+        repo_root=repo_root,
+        base_branch=config.load_config(repo_root).base_branch,
+        include_unstaged=False,
     )
+    has_fragment = bool(in_commit)
     if triggers and not has_fragment:
         blocking = _changelog_blocking(repo_root)
+        not_staged = sorted(
+            {p for p in files if p.startswith(fragment_prefix)}.union(
+                get_untracked_files(
+                    suffix="", prefix=fragment_prefix, repo_root=repo_root
+                )
+            )
+            - set(in_commit)
+        )
+        unstaged_note = (
+            f"\nNot staged, so not counted: {config.summarize_paths(not_staged)}"
+            " — stage the one that belongs to this change."
+            if not_staged
+            else ""
+        )
         return StepResult(
             name=name,
             passed=False,
@@ -2687,9 +2715,9 @@ def _handle_fragment_mode(
                 "gate and stops instead of authoring one, because slug, type "
                 f"and bump level choose the released version. Add "
                 f"{FRAGMENTS_DIR}/<slug>.<type>.md "
-                "with a 'bump: patch|minor|major' first line "
+                "with a 'bump: patch|minor|major' first line, and stage it "
                 "(docs/consumer-release.md, fragments mode). "
-                "No-version opt-outs apply unchanged."
+                "No-version opt-outs apply unchanged." + unstaged_note
             ),
             non_blocking=not blocking,
         )
@@ -3052,12 +3080,166 @@ def resolve_steps(
     return [d for d in _STEP_REGISTRY if d.name in chosen]
 
 
+# Steps that never see an untracked file, and the scopes in which they are
+# blind: each takes its files from git — the tracked set, or the diff
+# against the base — and git knows nothing of a file until it is added.
+# Left out on purpose because they do read untracked files: ruff and
+# typecheck in ``all`` scope (their roots go to a tool that walks the
+# disk), smart_test and repo_structure_check. ``layering`` always runs its
+# changed-files mode and ``changelog_updated`` always reads the diff, so
+# both are blind whatever the scope setting says.
+_UNTRACKED_BLIND_SCOPES: dict[str, frozenset[str]] = {
+    "ruff": frozenset({SCOPE_DIFF}),
+    "docstring_verification": frozenset(VALID_SCOPES),
+    "test_naming_check": frozenset(VALID_SCOPES),
+    "typecheck": frozenset({SCOPE_DIFF}),
+    "layering": frozenset(VALID_SCOPES),
+    "changelog_updated": frozenset(VALID_SCOPES),
+}
+
+
+def _untracked_in_reach(
+    repo_root: Path, step: str, scope: str, untracked: list[str]
+) -> list[str]:
+    """Return the *untracked* files *step* would select if they were tracked.
+
+    Mirrors each step's own file selection — roots, suffix and
+    ``[tool.forge].exclude`` — so the note names exactly the files the step
+    passed over, and never one it would have ignored anyway.
+
+    Args:
+        repo_root: Git repo root.
+        step: A step named in :data:`_UNTRACKED_BLIND_SCOPES`.
+        scope: The step's resolved scope.
+        untracked: Every untracked, non-gitignored file.
+
+    Returns:
+        The subset *step* would have checked, in input order.
+    """
+    if step == "changelog_updated":
+        if not config.is_fragments_mode(repo_root):
+            return []
+        return config.filter_under_roots(untracked, [str(FRAGMENTS_DIR)])
+    py = [f for f in untracked if f.endswith(".py")]
+    exclude = config.load_config(repo_root).exclude
+    if step == "docstring_verification":
+        if scope == SCOPE_ALL:
+            py = config.filter_under_roots(
+                py,
+                config.resolve_tool_roots(
+                    repo_root, "docstring_verification", include_tests=True
+                ),
+            )
+        return config.filter_excluded(py, exclude)
+    if step == "test_naming_check":
+        roots = config.resolve_test_naming_roots(repo_root)
+        return config.filter_excluded(config.filter_under_roots(py, roots), exclude)
+    if step == "typecheck":
+        return config.filter_under_roots(
+            py, config.resolve_tool_roots(repo_root, "typecheck")
+        )
+    # ruff (diff scope) and layering take the whole diff.
+    return py
+
+
+def relevant_untracked_files(
+    repo_root: Path,
+    *,
+    skip: Sequence[str] = (),
+    only: Sequence[str] = (),
+) -> list[tuple[str, tuple[str, ...]]]:
+    """List untracked files that an enabled step passed over, and which steps.
+
+    An untracked file is either forgotten work or junk, and only its
+    author can tell which — so a run never adds one, and never stays
+    silent about one either: this is the list it reports. A file appears
+    only when a step that would otherwise check it is enabled for this
+    run; a gitignored file never appears (``git ls-files --others
+    --exclude-standard`` is the one query made).
+
+    Args:
+        repo_root: Git repo root.
+        skip: Steps force-skipped for this run, as for :func:`resolve_steps`.
+        only: The exact steps of this run, as for :func:`resolve_steps`.
+
+    Returns:
+        ``(path, steps)`` pairs sorted by path, *steps* in run order. Empty
+        on a clean tree or outside a git work tree.
+    """
+    try:
+        untracked = get_untracked_files(suffix="", repo_root=repo_root)
+    except OSError:
+        return []
+    if not untracked:
+        return []
+    by_file: dict[str, list[str]] = {}
+    for step_def in resolve_steps(repo_root, skip=skip, only=only):
+        blind_in = _UNTRACKED_BLIND_SCOPES.get(step_def.name)
+        if blind_in is None:
+            continue
+        scope = _resolve_scope(repo_root, step_def.name)
+        if scope not in blind_in:
+            continue
+        for path in _untracked_in_reach(repo_root, step_def.name, scope, untracked):
+            by_file.setdefault(path, []).append(step_def.name)
+    return [(path, tuple(steps)) for path, steps in sorted(by_file.items())]
+
+
+def _untracked_note(untracked: Sequence[tuple[str, tuple[str, ...]]]) -> str:
+    """Return the one-line note naming untracked files no run fully checked.
+
+    Shared by the run summary and ``--verdict`` so both say the same thing.
+    The wording is a decision put to the reader, never a pass: a file is
+    listed because some step did not look at it.
+
+    Args:
+        untracked: :func:`relevant_untracked_files` output.
+
+    Returns:
+        The note, or ``""`` when *untracked* is empty.
+    """
+    if not untracked:
+        return ""
+    steps = list(dict.fromkeys(s for _, names in untracked for s in names))
+    paths = [path for path, _ in untracked]
+    return (
+        f"{len(paths)} untracked file(s) NOT fully checked — skipped by "
+        f"{', '.join(steps)}: {config.summarize_paths(paths)} — add them if "
+        "they belong to this work, leave them out if not"
+    )
+
+
+def _note_untracked_in_output(
+    result: StepResult, untracked: Sequence[tuple[str, tuple[str, ...]]]
+) -> None:
+    """Append the per-step untracked line to *result*'s log output.
+
+    A skipped step checked nothing at all, so the line would add nothing
+    its skip message does not already say.
+
+    Args:
+        result: A finished step's result, mutated in place.
+        untracked: :func:`relevant_untracked_files` output for the run.
+    """
+    if result.skipped:
+        return
+    mine = [path for path, steps in untracked if result.name in steps]
+    if not mine:
+        return
+    line = (
+        f"NOTE: {len(mine)} untracked file(s) not checked by this step: "
+        f"{config.summarize_paths(mine)}"
+    )
+    result.output = f"{result.output.rstrip()}\n{line}\n" if result.output else line
+
+
 def run_all(
     repo_root: Path | None = None,
     *,
     print_progress: bool = True,
     skip: Sequence[str] = (),
     only: Sequence[str] = (),
+    untracked: Sequence[tuple[str, tuple[str, ...]]] | None = None,
 ) -> list[StepResult]:
     """Run the resolved step sequence in order and return their results.
 
@@ -3075,12 +3257,17 @@ def run_all(
     run must never replace the full-run record that readers treat as the
     whole battery's result.
 
+    A step that passed over untracked files says so in its own log: one
+    ``NOTE:`` line naming them, appended after the step's output.
+
     Args:
         repo_root: Override the auto-detected git repo root. Useful in tests.
         print_progress: Print one-line PASS/FAIL/SKIP per step. Disable for
             JSON output to keep stdout machine-readable.
         skip: Step names to force-skip for this run.
         only: When non-empty, run exactly these steps.
+        untracked: :func:`relevant_untracked_files` for this run, when the
+            caller already computed it; ``None`` computes it here.
 
     Returns:
         List of ``StepResult``, one per executed step, in execution order.
@@ -3091,7 +3278,10 @@ def run_all(
     root = repo_root if repo_root is not None else get_repo_root()
     results: list[StepResult] = []
     this_module = sys.modules[__name__]
-    for step_def in resolve_steps(root, skip=skip, only=only):
+    steps = resolve_steps(root, skip=skip, only=only)
+    if untracked is None:
+        untracked = relevant_untracked_files(root, skip=skip, only=only)
+    for step_def in steps:
         # Resolve each step by name through the module namespace rather than
         # calling ``step_def.fn`` directly. The registry captured the
         # original function objects at import time, so a test that does
@@ -3102,6 +3292,7 @@ def run_all(
         started = time.monotonic()
         result = fn(root)
         result.elapsed_s = time.monotonic() - started
+        _note_untracked_in_output(result, untracked)
         if print_progress:
             _print_step_line(result)
         _write_log(root, result)
@@ -3152,6 +3343,8 @@ def _emit_human_summary(
     results: list[StepResult],
     blocking_failures: list[StepResult],
     non_blocking_warnings: list[StepResult],
+    *,
+    untracked: Sequence[tuple[str, tuple[str, ...]]] = (),
 ) -> None:
     """Print the human-readable pre-commit summary (non-JSON mode).
 
@@ -3159,6 +3352,9 @@ def _emit_human_summary(
         results: All step results.
         blocking_failures: Steps that failed and blocked the pre-commit.
         non_blocking_warnings: Steps that failed but did not block.
+        untracked: :func:`relevant_untracked_files` for the run; when
+            non-empty, one line names them so a pass is never read as
+            covering them.
     """
     emit("")
     if blocking_failures:
@@ -3188,6 +3384,9 @@ def _emit_human_summary(
             emit(f"  - {r.name}: see code_health/{r.name}.log")
     else:
         emit(f"{GREEN}All checks passed.{NC}")
+    note = _untracked_note(untracked)
+    if note:
+        emit(f"{YELLOW}{note}.{NC}")
     total_elapsed = sum(r.elapsed_s for r in results)
     emit(f"total {total_elapsed:.1f}s (per-step: code_health/precommit_timing.log)")
 
@@ -3281,7 +3480,8 @@ def verdict(root: Path) -> tuple[bool, list[str]]:
 
     Returns:
         ``(passed, lines)`` — one line per finding (``STALE``/``MISSING``/
-        ``FAIL``/the step's marker), ending ``verdict: PASS`` or
+        ``FAIL``/the step's marker), then a ``NOTE`` line when untracked
+        files went unchecked, ending ``verdict: PASS`` or
         ``verdict: FAIL — <cause>``.
     """
     verdicts = freshness_verdicts(root)
@@ -3312,6 +3512,12 @@ def verdict(root: Path) -> tuple[bool, list[str]]:
             stale = True
             lines.append(f"STALE {step.name}")
     ok = not (stale or failing or missing)
+    # Computed now, not read from the run: the question is what the current
+    # tree holds that no step looked at. Informational — it never changes
+    # ``ok``, and it sits above the closing line, which stays last.
+    note = _untracked_note(relevant_untracked_files(root))
+    if note:
+        lines.append(f"NOTE {note}")
     lines.append(_verdict_closing_line(stale=stale, failing=failing, missing=missing))
     return ok, lines
 
@@ -3490,6 +3696,8 @@ def main() -> int:
             "Run no steps: print each enabled step's result from the last "
             "full run and exit 1 unless every one passed (PASS/WARN/SKIP) "
             "and that run and the step logs describe the current tree. "
+            "A NOTE line names untracked files some step never checked "
+            "(it does not change the exit code). "
             "Paste its output instead of summarising pre-commit results."
         ),
     )
@@ -3520,10 +3728,19 @@ def main() -> int:
     skip = _split_csv(args.skip)
     only = _split_csv(args.only)
     results: list[StepResult] = []
+    untracked: list[tuple[str, tuple[str, ...]]] = []
     outcome: str | None = None
     try:
+        root = get_repo_root()
+        untracked = relevant_untracked_files(root, skip=skip, only=only)
         with _forced_steps(only):
-            results = run_all(print_progress=not args.json, skip=skip, only=only)
+            results = run_all(
+                repo_root=root,
+                print_progress=not args.json,
+                skip=skip,
+                only=only,
+                untracked=untracked,
+            )
         outcome = _attempt_outcome(results)
     except ValueError as exc:
         outcome = "error"
@@ -3539,7 +3756,9 @@ def main() -> int:
     if args.json:
         emit(json.dumps([asdict(r) for r in results], indent=2))
     else:
-        _emit_human_summary(results, blocking_failures, non_blocking_warnings)
+        _emit_human_summary(
+            results, blocking_failures, non_blocking_warnings, untracked=untracked
+        )
 
     return 1 if blocking_failures else 0
 

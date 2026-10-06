@@ -83,6 +83,11 @@ MUST have run first; you fail if the pre-commit hook finds violations.
    git status --short
    ```
 
+   **Untracked (`??`) files are a decision, not a sweep.** Before
+   `git add -A`, add one only if plainly part of the handed work; leave
+   junk out (suggest `.gitignore`); unsure → ask the caller. A pre-commit
+   note listing a file is no instruction to stage it.
+
 5. **Create commit** with conventional format:
    ```bash
    git commit -m "<type>: <description>"

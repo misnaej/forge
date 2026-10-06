@@ -20,10 +20,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from forge.config import declared_layout_dirs, load_config
+from forge.config import declared_layout_dirs, load_config, summarize_paths
 from forge.git_utils import (
     code_health_dir,
     get_modified_files,
+    get_untracked_files,
     produced_at_stamp,
     repo_root,
 )
@@ -64,6 +65,13 @@ DEFAULT_EXCLUDES: tuple[str, ...] = (
     "node_modules",
     ".egg-info",
 )
+
+
+# Untracked files a changed-files walk passed over in this process, for the
+# log that walk feeds to name. Filled by ``note_untracked``, drained by
+# ``write_log``: each audit CLI walks then writes once, and draining keeps
+# one audit's list out of a later log written in the same process.
+_untracked_passed_over: set[str] = set()
 
 
 class Scope(StrEnum):
@@ -194,8 +202,10 @@ def make_audit_parser(prog: str, description: str) -> argparse.ArgumentParser:
         choices=[s.value for s in Scope],
         default=Scope.FULL.value,
         help=(
-            "Audit scope. 'full' scans roots; 'changed' scans files "
-            "modified vs the configured base branch."
+            "Audit scope. 'full' scans roots; 'changed' scans tracked files "
+            "modified vs the configured base branch (committed, staged or "
+            "not) and names untracked files in the log instead of auditing "
+            "them."
         ),
     )
     parser.add_argument(
@@ -262,7 +272,9 @@ def iter_files(
     """Yield matching files under ``roots`` respecting ``scope``.
 
     For ``Scope.CHANGED``, defers to ``git_utils.get_modified_files`` so the
-    list matches what pre-commit sees on a feature branch.
+    list matches what pre-commit sees on a feature branch — untracked files
+    included in neither; they are recorded via :func:`note_untracked` for
+    :func:`write_log` to name instead.
 
     Args:
         scope: ``FULL`` or ``CHANGED``.
@@ -274,6 +286,7 @@ def iter_files(
     """
     if scope is Scope.CHANGED:
         root = repo_root()
+        note_untracked(root, suffix)
         base_branch = load_config(root).base_branch
         for rel in get_modified_files(
             suffix=suffix, repo_root=root, base_branch=base_branch
@@ -287,6 +300,31 @@ def iter_files(
         for path in r.rglob(f"*{suffix}"):
             if path.is_file() and not _is_excluded(path):
                 yield path
+
+
+def note_untracked(root: Path, suffix: str) -> None:
+    """Record the untracked *suffix* files a changed-files walk passes over.
+
+    A changed-files selection comes from git's diff, which never lists an
+    untracked file, so such a file is not audited — and saying so beats a
+    clean log a reader takes to cover it. :func:`iter_files` calls this
+    for every ``Scope.CHANGED`` walk, so the record covers exactly the
+    suffixes the audit asked for; an audit that selects its changed set
+    another way calls it itself. :func:`write_log` reports and clears the
+    record. Gitignored files and the default-excluded directories are left
+    out, as a full run would leave them.
+
+    Args:
+        root: Git repo root.
+        suffix: File extension the walk selects (with the dot).
+    """
+    try:
+        untracked = get_untracked_files(suffix=suffix, repo_root=root)
+    except OSError:
+        return
+    _untracked_passed_over.update(
+        rel for rel in untracked if not _is_excluded(root / rel)
+    )
 
 
 def relpath(path: Path) -> str:
@@ -351,7 +389,8 @@ def write_log(
     Output is overwritten on every run. The first line is the
     :func:`forge.git_utils.produced_at_stamp` naming the tree the findings
     describe, so a reader judges freshness by tree identity, never by
-    comparing timestamps.
+    comparing timestamps. A changed-files run adds a header line naming
+    the untracked files its walk passed over (:func:`note_untracked`).
 
     Args:
         name: Audit short name (e.g. ``"dup"``, ``"deps"``).
@@ -373,11 +412,25 @@ def write_log(
     log_path = output if output is not None else log_dir / f"audit_{name}.log"
 
     findings_list = list(findings)
+    skipped = sorted(_untracked_passed_over) if scope is Scope.CHANGED else []
+    _untracked_passed_over.clear()
 
     lines = [
         produced_at_stamp(root),
         f"# forge-audit-{name}",
         *([f"# scope: {scope.value}"] if scope is not None else []),
+        *(
+            [
+                (
+                    f"# untracked, not audited: {len(skipped)} — "
+                    f"{summarize_paths(skipped)} (changed mode reads git's diff, "
+                    "which lists no untracked file; add them if they belong to "
+                    "this work, leave them out if not)"
+                )
+            ]
+            if skipped
+            else []
+        ),
         f"# findings: {len(findings_list)}",
         "",
         "## Summary",

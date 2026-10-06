@@ -196,7 +196,17 @@ typecheck = "diff"            # pyrefly only on changed files under its roots
 ```
 
 Resolution order per step: `scope_overrides.<step>` → `scope` → `"all"`. An
-unrecognised value falls back to `"all"`. The other steps are either
+unrecognised value falls back to `"all"`.
+
+**Untracked files.** `diff` selects from git's diff (branch commits, staged
+and unstaged edits to tracked files), and `all` for `docstring_verification`
+and `test_naming_check` selects from the tracked set — neither ever contains
+a file you have not `git add`-ed. `ruff` and `typecheck` in `all` scope walk
+their roots on disk and do check one. A run never adds an untracked file
+and never passes over one silently: the affected step logs, the closing
+summary and `forge-precommit --verdict` name each one a step skipped, for you
+to add (forgotten work) or leave out (junk). Gitignored files are never
+listed. The other steps are either
 inherently whole-repo (`repo_structure_check`, `cli_wiring`, `manifest_json`,
 …) or scoped by their own `paths` key (`doctest`) — `scope` does not apply
 to them. `forge-config --list` shows the resolved values.

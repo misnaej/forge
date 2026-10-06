@@ -70,8 +70,10 @@ Non-blocking initially; promoted after Layer 3 trim PRs.
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans files
-                        modified vs the configured base branch.
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        tracked files modified vs the configured base branch
+                        (committed, staged or not) and names untracked files
+                        in the log instead of auditing them.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
@@ -110,8 +112,10 @@ Extract domain claims from docstrings/comments for verification.
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans files
-                        modified vs the configured base branch.
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        tracked files modified vs the configured base branch
+                        (committed, staged or not) and names untracked files
+                        in the log instead of auditing them.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
@@ -132,8 +136,10 @@ Structured-data integrity (CSV alignment + parse checks).
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans files
-                        modified vs the configured base branch.
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        tracked files modified vs the configured base branch
+                        (committed, staged or not) and names untracked files
+                        in the log instead of auditing them.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
@@ -154,8 +160,10 @@ readable dependency tree to code_health/audit_deps_tree.log.
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans files
-                        modified vs the configured base branch.
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        tracked files modified vs the configured base branch
+                        (committed, staged or not) and names untracked files
+                        in the log instead of auditing them.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
@@ -184,8 +192,10 @@ unchanged files is found.
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans files
-                        modified vs the configured base branch.
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        tracked files modified vs the configured base branch
+                        (committed, staged or not) and names untracked files
+                        in the log instead of auditing them.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
@@ -214,8 +224,10 @@ added/moved modules.
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans files
-                        modified vs the configured base branch.
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        tracked files modified vs the configured base branch
+                        (committed, staged or not) and names untracked files
+                        in the log instead of auditing them.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
@@ -234,8 +246,10 @@ Detect unused code via vulture (>= min-confidence).
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans files
-                        modified vs the configured base branch.
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        tracked files modified vs the configured base branch
+                        (committed, staged or not) and names untracked files
+                        in the log instead of auditing them.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
@@ -257,8 +271,10 @@ List lint/type/coverage suppressions and resolve rule names.
 options:
   -h, --help            show this help message and exit
   --scope {full,changed}
-                        Audit scope. 'full' scans roots; 'changed' scans files
-                        modified vs the configured base branch.
+                        Audit scope. 'full' scans roots; 'changed' scans
+                        tracked files modified vs the configured base branch
+                        (committed, staged or not) and names untracked files
+                        in the log instead of auditing them.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
   --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
@@ -643,8 +659,10 @@ options:
   --verdict             Run no steps: print each enabled step's result from
                         the last full run and exit 1 unless every one passed
                         (PASS/WARN/SKIP) and that run and the step logs
-                        describe the current tree. Paste its output instead of
-                        summarising pre-commit results.
+                        describe the current tree. A NOTE line names untracked
+                        files some step never checked (it does not change the
+                        exit code). Paste its output instead of summarising
+                        pre-commit results.
 ```
 
 ## forge-rebump

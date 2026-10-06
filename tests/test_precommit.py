@@ -7221,13 +7221,59 @@ def _changelog_updated_on_branch_with_source_change(
     return precommit.step_changelog_updated(work)
 
 
-def test_changelog_updated_untracked_valid_fragment_counts_as_present(
+def _git(work: Path, *args: str) -> None:
+    """Run one git command in *work* with the hermetic test environment.
+
+    Args:
+        work: Repo root.
+        *args: Git arguments.
+    """
+    subprocess.run(["git", *args], cwd=work, env=GIT_ENV, check=True)
+
+
+def test_changelog_updated_untracked_valid_fragment_not_counted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """BEHAVIOR: a fragment authored but not yet staged satisfies the gate."""
+    """BEHAVIOR: a fragment written but never added does not satisfy the gate.
+
+    It is not in the commit the gate guards, so the gate fails and names
+    the fragment as not staged rather than counting it.
+    """
     work = _init_fragments_mode_repo(tmp_path)
+    _changelog_updated_on_branch_with_source_change(work, monkeypatch)
     _write_pending_fragment(work, "a.added.md", "bump: minor\n- x\n")
-    result = _changelog_updated_on_branch_with_source_change(work, monkeypatch)
+    result = precommit.step_changelog_updated(work)
+    assert not result.passed
+    assert "require a changelog fragment" in result.output
+    assert "Not staged, so not counted: changelog.d/a.added.md" in result.output
+
+
+def test_changelog_updated_unstaged_intent_to_add_fragment_not_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BEHAVIOR: a fragment known to git but with nothing staged does not count.
+
+    ``git add -N`` records the path without its content: the file is no
+    longer untracked, yet the commit would still carry no fragment.
+    """
+    work = _init_fragments_mode_repo(tmp_path)
+    _changelog_updated_on_branch_with_source_change(work, monkeypatch)
+    _write_pending_fragment(work, "a.added.md", "bump: minor\n- x\n")
+    _git(work, "add", "-N", "changelog.d/a.added.md")
+    result = precommit.step_changelog_updated(work)
+    assert not result.passed
+    assert "Not staged, so not counted: changelog.d/a.added.md" in result.output
+
+
+def test_changelog_updated_staged_valid_fragment_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BEHAVIOR: a staged, not yet committed fragment satisfies the gate."""
+    work = _init_fragments_mode_repo(tmp_path)
+    _changelog_updated_on_branch_with_source_change(work, monkeypatch)
+    _write_pending_fragment(work, "a.added.md", "bump: minor\n- x\n")
+    _git(work, "add", "changelog.d/a.added.md")
+    result = precommit.step_changelog_updated(work)
     assert result.passed
 
 
@@ -7245,13 +7291,15 @@ def test_changelog_updated_untracked_gitignored_fragment_not_counted(
     assert "require a changelog fragment" in result.output
 
 
-def test_changelog_updated_untracked_invalid_fragment_still_fails(
+def test_changelog_updated_staged_invalid_fragment_still_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """BEHAVIOR: presence of an untracked fragment does not waive validation."""
+    """BEHAVIOR: presence of a staged fragment does not waive validation."""
     work = _init_fragments_mode_repo(tmp_path)
+    _changelog_updated_on_branch_with_source_change(work, monkeypatch)
     _write_pending_fragment(work, "a.bogus.md", "bump: minor\n- x\n")
-    result = _changelog_updated_on_branch_with_source_change(work, monkeypatch)
+    _git(work, "add", "changelog.d/a.bogus.md")
+    result = precommit.step_changelog_updated(work)
     assert not result.passed
     assert "Invalid changelog.d/" in result.output
 
@@ -7314,7 +7362,7 @@ def test_step_changelog_updated_fragments_mode_message_names_fragment_owner(
 def test_step_changelog_updated_fragments_mode_trigger_with_valid_fragment_passes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A trigger plus a valid fragment present in both the diff and on disk passes."""
+    """A trigger plus a valid fragment in the commit and on disk passes."""
     (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
     _write_fragments_pyproject(tmp_path)
     _write_pending_fragment(tmp_path, "a.added.md", "bump: minor\n- x\n")
@@ -7328,6 +7376,9 @@ def test_step_changelog_updated_fragments_mode_trigger_with_valid_fragment_passe
         precommit.config,
         "select_diff_files",
         lambda *_a, **_kw: ["src/pkg/mod.py", "changelog.d/a.added.md"],
+    )
+    monkeypatch.setattr(
+        precommit, "get_modified_files", lambda **_kw: ["changelog.d/a.added.md"]
     )
     result = precommit.step_changelog_updated(tmp_path)
     assert result.passed
@@ -7351,6 +7402,9 @@ def test_step_changelog_updated_fragments_mode_invalid_on_disk_fragment_fails(
         precommit.config,
         "select_diff_files",
         lambda *_a, **_kw: ["src/pkg/mod.py", "changelog.d/a.bogus.md"],
+    )
+    monkeypatch.setattr(
+        precommit, "get_modified_files", lambda **_kw: ["changelog.d/a.bogus.md"]
     )
     result = precommit.step_changelog_updated(tmp_path)
     assert not result.passed
@@ -8279,3 +8333,214 @@ def test_main_skips_the_panel_for_partial_ci_and_wip_runs(
         monkeypatch.setenv("FORGE_WIP_SYNC", "1")
     _drive_main(monkeypatch, lambda **_kw: [], *argv)
     assert not (panel_repo / ".plan" / "CONTINUATION.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# Untracked files: never checked, never silently passed over
+# ---------------------------------------------------------------------------
+
+_GOOD_MODULE = (
+    '"""A module."""\n\n\n'
+    "def f(x: int) -> int:\n"
+    '    """Return *x*.\n\n'
+    "    Args:\n"
+    "        x: A value.\n\n"
+    "    Returns:\n"
+    "        The value.\n"
+    '    """\n'
+    "    return x\n"
+)
+# Args names a parameter the signature does not have: a blocking
+# docstring-verification error whenever the file is checked.
+_BAD_MODULE = _GOOD_MODULE.replace("        x: A value.", "        y: A value.")
+
+
+@pytest.fixture
+def untracked_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A real repo on ``feat/x`` off ``main`` with one tracked, clean module.
+
+    Returns:
+        The repo root, pinned as pre-commit's root, with CI markers
+        cleared and ``src/pkg/good.py`` committed on ``main``.
+    """
+    for name in _CI_MARKERS:
+        monkeypatch.delenv(name, raising=False)
+    init_git_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n'
+    )
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "good.py").write_text(_GOOD_MODULE)
+    commit_all(tmp_path, "seed")
+    _git(tmp_path, "checkout", "-q", "-b", "feat/x")
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    return tmp_path
+
+
+def _set_scope(repo: Path, scope: str) -> None:
+    """Append a ``[tool.forge.precommit]`` scope to *repo*'s pyproject.
+
+    Args:
+        repo: Repo root.
+        scope: ``all`` or ``diff``.
+    """
+    with (repo / "pyproject.toml").open("a") as fh:
+        fh.write(f'\n[tool.forge.precommit]\nscope = "{scope}"\n')
+
+
+@pytest.mark.parametrize("scope", ["all", "diff"])
+def test_untracked_module_with_docstring_error_is_named_not_checked(
+    untracked_repo: Path, monkeypatch: pytest.MonkeyPatch, scope: str
+) -> None:
+    """The step passes over an untracked module and its log says so.
+
+    The module carries a blocking docstring error; the step still passes
+    because it never read the file, and the log names the file rather
+    than letting the PASS read as covering it.
+
+    Args:
+        scope: The docstring step's file-selection scope.
+    """
+    monkeypatch.chdir(untracked_repo)
+    _set_scope(untracked_repo, scope)
+    commit_all(untracked_repo, "scope")
+    (untracked_repo / "src" / "pkg" / "new.py").write_text(_BAD_MODULE)
+
+    [result] = precommit.run_all(
+        untracked_repo, print_progress=False, only=["docstring_verification"]
+    )
+
+    assert result.passed
+    log = (
+        git_utils.code_health_dir(untracked_repo) / "docstring_verification.log"
+    ).read_text()
+    assert "NOTE: 1 untracked file(s) not checked by this step: src/pkg/new.py" in log
+
+
+@pytest.mark.parametrize("scope", ["all", "diff"])
+def test_tracked_unstaged_edit_is_still_checked(
+    untracked_repo: Path, monkeypatch: pytest.MonkeyPatch, scope: str
+) -> None:
+    """An unstaged edit to a tracked file is checked in both scopes.
+
+    Args:
+        scope: The docstring step's file-selection scope.
+    """
+    monkeypatch.chdir(untracked_repo)
+    _set_scope(untracked_repo, scope)
+    commit_all(untracked_repo, "scope")
+    (untracked_repo / "src" / "pkg" / "good.py").write_text(_BAD_MODULE)
+
+    [result] = precommit.run_all(
+        untracked_repo, print_progress=False, only=["docstring_verification"]
+    )
+
+    assert not result.passed
+    assert "untracked" not in result.output
+
+
+def test_relevant_untracked_files_lists_only_what_a_blind_step_would_check(
+    untracked_repo: Path,
+) -> None:
+    """Scratch text and gitignored files are never listed; a module is.
+
+    The ``.py`` under the source root is one docstring verification would
+    have read; the ``.txt`` is one no enabled step reads, and the ignored
+    module is declared out of scope by the repo itself.
+    """
+    (untracked_repo / ".gitignore").write_text("src/pkg/ignored.py\n")
+    commit_all(untracked_repo, "ignore")
+    (untracked_repo / "src" / "pkg" / "new.py").write_text(_GOOD_MODULE)
+    (untracked_repo / "src" / "pkg" / "ignored.py").write_text(_GOOD_MODULE)
+    (untracked_repo / "notes.txt").write_text("scratch\n")
+
+    listed = precommit.relevant_untracked_files(untracked_repo)
+
+    assert [path for path, _ in listed] == ["src/pkg/new.py"]
+    assert "docstring_verification" in listed[0][1]
+
+
+def test_relevant_untracked_files_omits_a_step_that_reads_untracked_files(
+    untracked_repo: Path,
+) -> None:
+    """Ruff in ``all`` scope walks the disk, so it is never named; in ``diff`` it is.
+
+    ``all`` hands ruff the source roots and ruff reads every file under
+    them, untracked ones included — naming it would claim it skipped a
+    file it checked. ``diff`` hands it git's diff, which has no untracked
+    file in it.
+    """
+    (untracked_repo / "src" / "pkg" / "new.py").write_text(_GOOD_MODULE)
+
+    assert precommit.relevant_untracked_files(untracked_repo, only=["ruff"]) == []
+    _set_scope(untracked_repo, "diff")
+    assert precommit.relevant_untracked_files(untracked_repo, only=["ruff"]) == [
+        ("src/pkg/new.py", ("ruff",))
+    ]
+
+
+def test_relevant_untracked_files_clean_tree_is_empty(untracked_repo: Path) -> None:
+    """A tree with nothing untracked produces no note anywhere."""
+    assert precommit.relevant_untracked_files(untracked_repo) == []
+
+
+def test_relevant_untracked_files_outside_git_is_empty(tmp_path: Path) -> None:
+    """Outside a git work tree there is nothing to list, and nothing raises."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("X = 1\n")
+    assert precommit.relevant_untracked_files(tmp_path) == []
+
+
+def test_verdict_names_untracked_files_and_still_ends_pass(
+    untracked_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--verdict`` adds a NOTE line; the closing PASS line stays last.
+
+    The note is informational: every step passed on this tree, so the
+    verdict passes, but the reader is told what no step looked at.
+    """
+    rows = _all_rows(untracked_repo)
+    (untracked_repo / "src" / "pkg" / "new.py").write_text(_BAD_MODULE)
+    body = timing_log(*(f"{name} {mark}" for name, mark in rows.items()), stamp=None)
+    tree = git_utils.working_tree_sha(untracked_repo)
+    assert tree is not None
+    _write_log_with_stamp(untracked_repo, "precommit_timing", tree=tree, body=body)
+    monkeypatch.chdir(untracked_repo)
+
+    ok, lines = precommit.verdict(untracked_repo)
+
+    assert ok is True
+    assert lines[-1] == "verdict: PASS"
+    [note] = [line for line in lines if line.startswith("NOTE ")]
+    assert "1 untracked file(s) NOT fully checked" in note
+    assert "src/pkg/new.py" in note
+
+
+def test_verdict_clean_tree_has_no_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing untracked → no NOTE line in the verdict."""
+    init_git_repo(tmp_path)
+    _verdict_repo(tmp_path, monkeypatch, rows=_all_rows(tmp_path))
+
+    _ok, lines = precommit.verdict(tmp_path)
+
+    assert not [line for line in lines if line.startswith("NOTE")]
+
+
+def test_main_summary_names_untracked_files(
+    untracked_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The closing summary carries one combined line naming the untracked files."""
+    monkeypatch.chdir(untracked_repo)
+    (untracked_repo / "src" / "pkg" / "new.py").write_text(_GOOD_MODULE)
+
+    rc = _drive_main(monkeypatch, lambda **_kw: [])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "1 untracked file(s) NOT fully checked" in out
+    assert "src/pkg/new.py" in out
+    assert "add them if they belong to this work, leave them out if not" in out

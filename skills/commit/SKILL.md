@@ -13,6 +13,13 @@ Run the standard commit workflow:
    Agent(subagent_type="forge:precommit-fixer", prompt="Clear all pre-commit failures.")
    ```
 
+   **Decide each untracked file it lists.** Pre-commit never checks an
+   untracked file; the fixer's hand-back copies the note naming them.
+   For each one: forgotten work → name it for the commit (the commit
+   hook then checks it); junk → leave it out, and suggest a `.gitignore`
+   entry if it will recur. Ask the user when you cannot tell. Never
+   blanket-add them.
+
 2. **Run `git-commit-push`** to stage and commit:
    ```
    Agent(subagent_type="forge:git-commit-push", prompt="Commit changes with message: $ARGUMENTS")
