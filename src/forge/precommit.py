@@ -86,6 +86,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from forge import config, pip_audit_json
+from forge.audit.common import select_like_audit
 from forge.changelog import (
     changelog_version_findings,
     released_deleted_versions,
@@ -94,6 +95,7 @@ from forge.changelog import (
 )
 from forge.changelog_fragments import FRAGMENTS_DIR, branch_added_fragments
 from forge.changelog_fragments import check_pending as check_pending_fragments
+from forge.changelog_fragments import check_staged as check_staged_fragments
 from forge.config import installed_console_scripts, resolve_model_section
 from forge.continuation_state import write_state
 from forge.emergency_state import active_state
@@ -1076,6 +1078,20 @@ def step_c4(repo_root: Path) -> StepResult:
     return StepResult(name="c4", passed=passed, output=output)
 
 
+def _layering_configured(repo_root: Path) -> bool:
+    """Return whether ``[tool.forge.layering]`` gives the layering step work.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``True`` when layers or ``require_all_classified`` are configured;
+        otherwise :func:`step_layering` skips.
+    """
+    layering_cfg = config.read_tool_forge_section(repo_root, "layering")
+    return bool(layering_cfg.get("layer") or layering_cfg.get("require_all_classified"))
+
+
 def step_layering(repo_root: Path) -> StepResult:
     """Run ``forge-audit-layering`` — layer-composition gate.
 
@@ -1096,8 +1112,7 @@ def step_layering(repo_root: Path) -> StepResult:
     Raises:
         SystemExit: If ``forge-audit-layering`` is not on PATH.
     """
-    layering_cfg = config.read_tool_forge_section(repo_root, "layering")
-    if not (layering_cfg.get("layer") or layering_cfg.get("require_all_classified")):
+    if not _layering_configured(repo_root):
         return StepResult(
             name="layering",
             passed=True,
@@ -2722,6 +2737,13 @@ def _handle_fragment_mode(
             non_blocking=not blocking,
         )
     frag_errors = check_pending_fragments(repo_root)
+    # The commit carries the index, not the disk: a staged copy that
+    # differs from the file on disk is validated as staged too.
+    frag_errors += [
+        f"{err} (staged copy)"
+        for err in check_staged_fragments(repo_root, in_commit)
+        if err not in frag_errors
+    ]
     if frag_errors:
         return StepResult(
             name=name,
@@ -3080,21 +3102,22 @@ def resolve_steps(
     return [d for d in _STEP_REGISTRY if d.name in chosen]
 
 
-# Steps that never see an untracked file, and the scopes in which they are
-# blind: each takes its files from git — the tracked set, or the diff
-# against the base — and git knows nothing of a file until it is added.
-# Left out on purpose because they do read untracked files: ruff and
-# typecheck in ``all`` scope (their roots go to a tool that walks the
-# disk), smart_test and repo_structure_check. ``layering`` always runs its
-# changed-files mode and ``changelog_updated`` always reads the diff, so
-# both are blind whatever the scope setting says.
-_UNTRACKED_BLIND_SCOPES: dict[str, frozenset[str]] = {
-    "ruff": frozenset({SCOPE_DIFF}),
-    "docstring_verification": frozenset(VALID_SCOPES),
-    "test_naming_check": frozenset(VALID_SCOPES),
-    "typecheck": frozenset({SCOPE_DIFF}),
-    "layering": frozenset(VALID_SCOPES),
-    "changelog_updated": frozenset(VALID_SCOPES),
+# Steps that take their files from git — the tracked set, or the diff
+# against the base — and so never see a file until it is added: the
+# scopes in which each is blind, and what an untracked file then is to
+# it. Left out because they do read untracked files: ruff and typecheck in
+# ``all`` scope (their roots go to a tool that walks the disk), smart_test
+# and repo_structure_check. ``layering`` always runs its changed-files
+# mode and ``changelog_updated`` always reads the diff, so both are blind
+# whatever the scope setting says; the fragment a changelog check skips is
+# still format-validated on disk, so it is "not counted", not unchecked.
+_UNTRACKED_BLIND_SCOPES: dict[str, tuple[frozenset[str], str]] = {
+    "ruff": (frozenset({SCOPE_DIFF}), "not checked"),
+    "docstring_verification": (frozenset(VALID_SCOPES), "not checked"),
+    "test_naming_check": (frozenset(VALID_SCOPES), "not checked"),
+    "typecheck": (frozenset({SCOPE_DIFF}), "not checked"),
+    "layering": (frozenset(VALID_SCOPES), "not treated as changed"),
+    "changelog_updated": (frozenset(VALID_SCOPES), "not counted"),
 }
 
 
@@ -3103,9 +3126,10 @@ def _untracked_in_reach(
 ) -> list[str]:
     """Return the *untracked* files *step* would select if they were tracked.
 
-    Mirrors each step's own file selection — roots, suffix and
-    ``[tool.forge].exclude`` — so the note names exactly the files the step
-    passed over, and never one it would have ignored anyway.
+    Mirrors each step's own file selection — roots, suffix and exclusions
+    — so the note names exactly the files the step passed over, and never
+    one it would have ignored anyway. A parity test holds each branch to
+    the step's real selector.
 
     Args:
         repo_root: Git repo root.
@@ -3114,12 +3138,20 @@ def _untracked_in_reach(
         untracked: Every untracked, non-gitignored file.
 
     Returns:
-        The subset *step* would have checked, in input order.
+        The subset *step* would have selected, in input order.
     """
     if step == "changelog_updated":
-        if not config.is_fragments_mode(repo_root):
-            return []
         return config.filter_under_roots(untracked, [str(FRAGMENTS_DIR)])
+    if step == "layering":
+        # The layering audit weighs modules of the graph it walks from its
+        # own roots, with the audit pack's directory exclusions.
+        roots = config.resolve_tool_roots(repo_root, "layering")
+        return select_like_audit(
+            repo_root,
+            untracked,
+            suffix=".py",
+            roots=[(repo_root / r).resolve() for r in roots],
+        )
     py = [f for f in untracked if f.endswith(".py")]
     exclude = config.load_config(repo_root).exclude
     if step == "docstring_verification":
@@ -3138,8 +3170,33 @@ def _untracked_in_reach(
         return config.filter_under_roots(
             py, config.resolve_tool_roots(repo_root, "typecheck")
         )
-    # ruff (diff scope) and layering take the whole diff.
+    # ruff in diff scope takes the whole diff.
     return py
+
+
+def _step_does_work(repo_root: Path, step: str) -> bool:
+    """Return whether an enabled *step* would do work rather than self-skip.
+
+    A step that skips checks nothing, so attributing an untracked file to
+    it would claim a selection it never made. Uses the steps' own skip
+    predicates; the other steps in :data:`_UNTRACKED_BLIND_SCOPES` never
+    skip before selecting files.
+
+    Args:
+        repo_root: Git repo root.
+        step: A step named in :data:`_UNTRACKED_BLIND_SCOPES`.
+
+    Returns:
+        ``False`` when the step would skip on this repo and branch.
+    """
+    if step == "changelog_updated":
+        return config.is_fragments_mode(repo_root) and (
+            _changelog_updated_skip_gate(repo_root, config.load_config(repo_root))
+            is None
+        )
+    if step == "layering":
+        return _layering_configured(repo_root)
+    return True
 
 
 def relevant_untracked_files(
@@ -3153,9 +3210,9 @@ def relevant_untracked_files(
     An untracked file is either forgotten work or junk, and only its
     author can tell which — so a run never adds one, and never stays
     silent about one either: this is the list it reports. A file appears
-    only when a step that would otherwise check it is enabled for this
-    run; a gitignored file never appears (``git ls-files --others
-    --exclude-standard`` is the one query made).
+    only when a step that would otherwise select it is enabled for this
+    run and would not self-skip; a gitignored file never appears (``git
+    ls-files --others --exclude-standard`` is the one query made).
 
     Args:
         repo_root: Git repo root.
@@ -3164,21 +3221,19 @@ def relevant_untracked_files(
 
     Returns:
         ``(path, steps)`` pairs sorted by path, *steps* in run order. Empty
-        on a clean tree or outside a git work tree.
+        on a clean tree, and outside a git work tree because the ``git``
+        query fails there and yields no output.
     """
-    try:
-        untracked = get_untracked_files(suffix="", repo_root=repo_root)
-    except OSError:
-        return []
+    untracked = get_untracked_files(suffix="", repo_root=repo_root)
     if not untracked:
         return []
     by_file: dict[str, list[str]] = {}
     for step_def in resolve_steps(repo_root, skip=skip, only=only):
-        blind_in = _UNTRACKED_BLIND_SCOPES.get(step_def.name)
-        if blind_in is None:
+        entry = _UNTRACKED_BLIND_SCOPES.get(step_def.name)
+        if entry is None:
             continue
         scope = _resolve_scope(repo_root, step_def.name)
-        if scope not in blind_in:
+        if scope not in entry[0] or not _step_does_work(repo_root, step_def.name):
             continue
         for path in _untracked_in_reach(repo_root, step_def.name, scope, untracked):
             by_file.setdefault(path, []).append(step_def.name)
@@ -3186,11 +3241,11 @@ def relevant_untracked_files(
 
 
 def _untracked_note(untracked: Sequence[tuple[str, tuple[str, ...]]]) -> str:
-    """Return the one-line note naming untracked files no run fully checked.
+    """Return the one-line note naming untracked files some steps skipped.
 
     Shared by the run summary and ``--verdict`` so both say the same thing.
-    The wording is a decision put to the reader, never a pass: a file is
-    listed because some step did not look at it.
+    The wording is a decision put to the reader, never a pass, and names
+    what each step did *not* do — other steps may well have read the file.
 
     Args:
         untracked: :func:`relevant_untracked_files` output.
@@ -3200,12 +3255,17 @@ def _untracked_note(untracked: Sequence[tuple[str, tuple[str, ...]]]) -> str:
     """
     if not untracked:
         return ""
-    steps = list(dict.fromkeys(s for _, names in untracked for s in names))
+    by_verb: dict[str, list[str]] = {}
+    for step in dict.fromkeys(s for _, names in untracked for s in names):
+        by_verb.setdefault(_UNTRACKED_BLIND_SCOPES[step][1], []).append(step)
+    skipped_by = "; ".join(
+        f"{verb} by {', '.join(steps)}" for verb, steps in by_verb.items()
+    )
     paths = [path for path, _ in untracked]
     return (
-        f"{len(paths)} untracked file(s) NOT fully checked — skipped by "
-        f"{', '.join(steps)}: {config.summarize_paths(paths)} — add them if "
-        "they belong to this work, leave them out if not"
+        f"{len(paths)} untracked file(s) skipped by some steps ({skipped_by}): "
+        f"{config.summarize_paths(paths)} — add them if they belong to this "
+        "work, leave them out if not"
     )
 
 
@@ -3226,8 +3286,9 @@ def _note_untracked_in_output(
     mine = [path for path, steps in untracked if result.name in steps]
     if not mine:
         return
+    verb = _UNTRACKED_BLIND_SCOPES[result.name][1]
     line = (
-        f"NOTE: {len(mine)} untracked file(s) not checked by this step: "
+        f"NOTE: {len(mine)} untracked file(s) {verb} by this step: "
         f"{config.summarize_paths(mine)}"
     )
     result.output = f"{result.output.rstrip()}\n{line}\n" if result.output else line

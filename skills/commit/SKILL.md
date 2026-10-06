@@ -13,12 +13,9 @@ Run the standard commit workflow:
    Agent(subagent_type="forge:precommit-fixer", prompt="Clear all pre-commit failures.")
    ```
 
-   **Decide each untracked file it lists.** Pre-commit never checks an
-   untracked file; the fixer's hand-back copies the note naming them.
-   For each one: forgotten work → name it for the commit (the commit
-   hook then checks it); junk → leave it out, and suggest a `.gitignore`
-   entry if it will recur. Ask the user when you cannot tell. Never
-   blanket-add them.
+   **Decide each untracked file its hand-back lists**, per the rule in
+   `agents/git-commit-push.md` "Untracked files" — name the ones to add
+   in step 2; ask the user when you cannot tell.
 
 2. **Run `git-commit-push`** to stage and commit:
    ```

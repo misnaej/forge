@@ -33,8 +33,10 @@ from forge import (
     install_claudemd,
     precommit,
     regen_docs,
+    verify_test_naming,
     version_surfaces,
 )
+from forge.audit import common as audit_common
 from forge.pip_audit_json import AuditRun
 from forge.run_context import _CI_MARKERS
 from forge.smart_test import lifecycle as _lifecycle
@@ -7221,16 +7223,6 @@ def _changelog_updated_on_branch_with_source_change(
     return precommit.step_changelog_updated(work)
 
 
-def _git(work: Path, *args: str) -> None:
-    """Run one git command in *work* with the hermetic test environment.
-
-    Args:
-        work: Repo root.
-        *args: Git arguments.
-    """
-    subprocess.run(["git", *args], cwd=work, env=GIT_ENV, check=True)
-
-
 def test_changelog_updated_untracked_valid_fragment_not_counted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -7245,7 +7237,7 @@ def test_changelog_updated_untracked_valid_fragment_not_counted(
     result = precommit.step_changelog_updated(work)
     assert not result.passed
     assert "require a changelog fragment" in result.output
-    assert "Not staged, so not counted: changelog.d/a.added.md" in result.output
+    assert "Not staged, so not counted: `changelog.d/a.added.md`" in result.output
 
 
 def test_changelog_updated_unstaged_intent_to_add_fragment_not_counted(
@@ -7259,10 +7251,10 @@ def test_changelog_updated_unstaged_intent_to_add_fragment_not_counted(
     work = _init_fragments_mode_repo(tmp_path)
     _changelog_updated_on_branch_with_source_change(work, monkeypatch)
     _write_pending_fragment(work, "a.added.md", "bump: minor\n- x\n")
-    _git(work, "add", "-N", "changelog.d/a.added.md")
+    _rg_git(work, "add", "-N", "changelog.d/a.added.md")
     result = precommit.step_changelog_updated(work)
     assert not result.passed
-    assert "Not staged, so not counted: changelog.d/a.added.md" in result.output
+    assert "Not staged, so not counted: `changelog.d/a.added.md`" in result.output
 
 
 def test_changelog_updated_staged_valid_fragment_counts(
@@ -7272,9 +7264,29 @@ def test_changelog_updated_staged_valid_fragment_counts(
     work = _init_fragments_mode_repo(tmp_path)
     _changelog_updated_on_branch_with_source_change(work, monkeypatch)
     _write_pending_fragment(work, "a.added.md", "bump: minor\n- x\n")
-    _git(work, "add", "changelog.d/a.added.md")
+    _rg_git(work, "add", "changelog.d/a.added.md")
     result = precommit.step_changelog_updated(work)
     assert result.passed
+
+
+def test_changelog_updated_validates_the_staged_copy_not_the_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BEHAVIOR: a placeholder staged, then fixed only on disk, still fails.
+
+    The commit ships the index, so the staged copy is what must be valid;
+    a disk-only check would pass while the placeholder lands.
+    """
+    work = _init_fragments_mode_repo(tmp_path)
+    _changelog_updated_on_branch_with_source_change(work, monkeypatch)
+    _write_pending_fragment(work, "a.added.md", "placeholder\n")
+    _rg_git(work, "add", "changelog.d/a.added.md")
+    _write_pending_fragment(work, "a.added.md", "bump: minor\n- x\n")
+    result = precommit.step_changelog_updated(work)
+    assert not result.passed
+    assert "first line must be 'bump: patch|minor|major' (staged copy)" in (
+        result.output
+    )
 
 
 def test_changelog_updated_untracked_gitignored_fragment_not_counted(
@@ -7298,7 +7310,7 @@ def test_changelog_updated_staged_invalid_fragment_still_fails(
     work = _init_fragments_mode_repo(tmp_path)
     _changelog_updated_on_branch_with_source_change(work, monkeypatch)
     _write_pending_fragment(work, "a.bogus.md", "bump: minor\n- x\n")
-    _git(work, "add", "changelog.d/a.bogus.md")
+    _rg_git(work, "add", "changelog.d/a.bogus.md")
     result = precommit.step_changelog_updated(work)
     assert not result.passed
     assert "Invalid changelog.d/" in result.output
@@ -8336,7 +8348,7 @@ def test_main_skips_the_panel_for_partial_ci_and_wip_runs(
 
 
 # ---------------------------------------------------------------------------
-# Untracked files: never checked, never silently passed over
+# Untracked files: some steps skip them, and the run always says which
 # ---------------------------------------------------------------------------
 
 _GOOD_MODULE = (
@@ -8372,7 +8384,7 @@ def untracked_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / "src" / "pkg").mkdir(parents=True)
     (tmp_path / "src" / "pkg" / "good.py").write_text(_GOOD_MODULE)
     commit_all(tmp_path, "seed")
-    _git(tmp_path, "checkout", "-q", "-b", "feat/x")
+    _rg_git(tmp_path, "checkout", "-q", "-b", "feat/x")
     monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
     return tmp_path
 
@@ -8414,7 +8426,7 @@ def test_untracked_module_with_docstring_error_is_named_not_checked(
     log = (
         git_utils.code_health_dir(untracked_repo) / "docstring_verification.log"
     ).read_text()
-    assert "NOTE: 1 untracked file(s) not checked by this step: src/pkg/new.py" in log
+    assert "NOTE: 1 untracked file(s) not checked by this step: `src/pkg/new.py`" in log
 
 
 @pytest.mark.parametrize("scope", ["all", "diff"])
@@ -8512,8 +8524,8 @@ def test_verdict_names_untracked_files_and_still_ends_pass(
     assert ok is True
     assert lines[-1] == "verdict: PASS"
     [note] = [line for line in lines if line.startswith("NOTE ")]
-    assert "1 untracked file(s) NOT fully checked" in note
-    assert "src/pkg/new.py" in note
+    assert "1 untracked file(s) skipped by some steps (not checked by" in note
+    assert "`src/pkg/new.py`" in note
 
 
 def test_verdict_clean_tree_has_no_note(
@@ -8541,6 +8553,162 @@ def test_main_summary_names_untracked_files(
 
     assert rc == 0
     out = capsys.readouterr().out
-    assert "1 untracked file(s) NOT fully checked" in out
-    assert "src/pkg/new.py" in out
+    assert "1 untracked file(s) skipped by some steps (not checked by" in out
+    assert "`src/pkg/new.py`" in out
     assert "add them if they belong to this work, leave them out if not" in out
+
+
+def _commit_on_branch(repo: Path, message: str) -> None:
+    """Stage everything and commit it on the current branch.
+
+    Args:
+        repo: Repo root.
+        message: Commit message.
+    """
+    _rg_git(repo, "add", "-A")
+    _rg_git(repo, "commit", "-q", "-m", message)
+
+
+# Candidate files spanning every axis a step's selection filters on:
+# source vs test roots, a root no step scans, the repo-wide exclude, an
+# audit-excluded directory, a fragment, and a non-Python file.
+_PARITY_FILES = (
+    "src/pkg/m.py",
+    "tests/test_m.py",
+    "scripts/tool.py",
+    "src/vendor/v.py",
+    "src/build/b.py",
+    "changelog.d/a.added.md",
+    "notes.txt",
+)
+
+
+def _real_selection(repo: Path, step: str, scope: str) -> set[str]:
+    """Return the files *step* actually selects on *repo*, via its own selector.
+
+    Args:
+        repo: Repo root, with the candidates committed on the branch.
+        step: A step in ``_UNTRACKED_BLIND_SCOPES``.
+        scope: The scope the step runs at.
+
+    Returns:
+        The selected candidate paths.
+    """
+    if step == "ruff":
+        selected = config.select_diff_files(repo)
+    elif step == "docstring_verification":
+        selected = (
+            config.tracked_files_under_roots(
+                repo,
+                config.resolve_tool_roots(
+                    repo, "docstring_verification", include_tests=True
+                ),
+            )
+            if scope == "all"
+            else config.select_diff_files(repo, apply_exclude=True)
+        )
+    elif step == "test_naming_check":
+        selected = verify_test_naming._resolve_test_files(repo, None, scope)
+    elif step == "typecheck":
+        selected = config.select_diff_files(
+            repo, roots=config.resolve_tool_roots(repo, "typecheck")
+        )
+    elif step == "layering":
+        # The audit weighs graph modules (walked from its roots) that the
+        # diff touches.
+        layering_roots = config.resolve_tool_roots(repo, "layering")
+        roots = [(repo / r).resolve() for r in layering_roots]
+        modules = {
+            p.relative_to(repo).as_posix()
+            for p in audit_common.iter_files(audit_common.Scope.FULL, roots)
+        }
+        selected = [f for f in config.select_diff_files(repo) if f in modules]
+    else:  # changelog_updated: fragments in the commit view
+        selected = git_utils.get_modified_files(
+            suffix="",
+            prefix="changelog.d/",
+            repo_root=repo,
+            include_unstaged=False,
+        )
+    return set(selected) & set(_PARITY_FILES)
+
+
+@pytest.mark.parametrize(
+    ("step", "scope"),
+    [
+        (step, scope)
+        for step, (scopes, _verb) in precommit._UNTRACKED_BLIND_SCOPES.items()
+        for scope in sorted(scopes)
+    ],
+)
+def test_untracked_note_selects_what_the_step_selects_once_tracked(
+    tmp_path: Path, step: str, scope: str
+) -> None:
+    """The note's file choice equals the step's real selection, per step.
+
+    The same candidates are first untracked (what the note names), then
+    committed on the branch (what the step's own selector picks). Any
+    drift between ``_untracked_in_reach`` and a step's selector fails
+    here instead of producing a note that names the wrong files.
+
+    Args:
+        step: The step under comparison.
+        scope: The scope it runs at.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n'
+        'exclude = ["src/vendor"]\n'
+    )
+    for rel in ("src/pkg/__init__.py", "tests/conftest.py"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("")
+    commit_all(tmp_path, "seed")
+    _rg_git(tmp_path, "checkout", "-q", "-b", "feat/x")
+    for rel in _PARITY_FILES:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        body = "bump: patch\n\n- x\n" if rel.endswith(".md") else ""
+        (tmp_path / rel).write_text(body)
+
+    reach = set(
+        precommit._untracked_in_reach(tmp_path, step, scope, list(_PARITY_FILES))
+    )
+    _commit_on_branch(tmp_path, "candidates")
+
+    assert reach == _real_selection(tmp_path, step, scope)
+    assert reach, "the candidates must exercise the selector"
+
+
+def test_relevant_untracked_files_skips_steps_that_would_self_skip(
+    untracked_repo: Path,
+) -> None:
+    """An enabled step that would skip is never named as passing a file over.
+
+    Layering without layers and the changelog check without a CHANGELOG
+    both skip before selecting anything, so naming them would claim a
+    selection neither made.
+    """
+    with (untracked_repo / "pyproject.toml").open("a") as fh:
+        fh.write(
+            '\n[tool.forge.precommit]\nenable = ["layering", "changelog_updated"]\n'
+            '\n[tool.forge.changelog]\nmode = "fragments"\n'
+        )
+    (untracked_repo / "src" / "pkg" / "new.py").write_text(_GOOD_MODULE)
+    (untracked_repo / "changelog.d").mkdir()
+    (untracked_repo / "changelog.d" / "a.added.md").write_text("bump: patch\n\n- x\n")
+
+    listed = dict(precommit.relevant_untracked_files(untracked_repo))
+
+    assert "layering" not in listed["src/pkg/new.py"]
+    assert "changelog.d/a.added.md" not in listed
+
+
+def test_per_step_line_says_not_counted_for_the_changelog_check() -> None:
+    """The changelog check validates fragments on disk, so it says "not counted"."""
+    result = precommit.StepResult(name="changelog_updated", passed=False, output="x")
+    precommit._note_untracked_in_output(
+        result, [("changelog.d/a.added.md", ("changelog_updated",))]
+    )
+    assert result.output.endswith(
+        "NOTE: 1 untracked file(s) not counted by this step: `changelog.d/a.added.md`\n"
+    )

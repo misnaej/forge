@@ -67,13 +67,6 @@ DEFAULT_EXCLUDES: tuple[str, ...] = (
 )
 
 
-# Untracked files a changed-files walk passed over in this process, for the
-# log that walk feeds to name. Filled by ``note_untracked``, drained by
-# ``write_log``: each audit CLI walks then writes once, and draining keeps
-# one audit's list out of a later log written in the same process.
-_untracked_passed_over: set[str] = set()
-
-
 class Scope(StrEnum):
     """Audit scope selector."""
 
@@ -186,27 +179,41 @@ def under_module_prefix(module: str, prefix: str) -> bool:
     return module == prefix or module.startswith(f"{prefix}.")
 
 
-def make_audit_parser(prog: str, description: str) -> argparse.ArgumentParser:
+def make_audit_parser(
+    prog: str, description: str, *, honours_scope: bool = True
+) -> argparse.ArgumentParser:
     """Build the shared CLI surface for an audit script.
 
     Args:
         prog: Console-script name (e.g. ``"forge-audit-dup"``).
         description: One-line description shown in ``--help``.
+        honours_scope: Whether ``--scope changed`` narrows this audit.
+            ``False`` keeps the flag for a uniform CLI but says, truthfully,
+            that the audit reads everything either way.
 
     Returns:
         Parser with ``--scope``, ``--roots``, ``--output`` registered.
     """
     parser = argparse.ArgumentParser(prog=prog, description=description)
+    scope_help = (
+        (
+            "Audit scope. 'full' scans roots; 'changed' limits the report to "
+            "tracked files modified vs the configured base branch (committed, "
+            "staged or not); untracked files are never treated as changed, "
+            "and the log summary names them."
+        )
+        if honours_scope
+        else (
+            "Accepted for parity with the other forge-audit-* CLIs; this "
+            "audit reads every file it covers, untracked ones included, at "
+            "either scope."
+        )
+    )
     parser.add_argument(
         "--scope",
         choices=[s.value for s in Scope],
         default=Scope.FULL.value,
-        help=(
-            "Audit scope. 'full' scans roots; 'changed' scans tracked files "
-            "modified vs the configured base branch (committed, staged or "
-            "not) and names untracked files in the log instead of auditing "
-            "them."
-        ),
+        help=scope_help,
     )
     parser.add_argument(
         "--roots",
@@ -273,8 +280,7 @@ def iter_files(
 
     For ``Scope.CHANGED``, defers to ``git_utils.get_modified_files`` so the
     list matches what pre-commit sees on a feature branch — untracked files
-    included in neither; they are recorded via :func:`note_untracked` for
-    :func:`write_log` to name instead.
+    included in neither; :func:`untracked_summary_line` names them.
 
     Args:
         scope: ``FULL`` or ``CHANGED``.
@@ -286,7 +292,6 @@ def iter_files(
     """
     if scope is Scope.CHANGED:
         root = repo_root()
-        note_untracked(root, suffix)
         base_branch = load_config(root).base_branch
         for rel in get_modified_files(
             suffix=suffix, repo_root=root, base_branch=base_branch
@@ -302,28 +307,85 @@ def iter_files(
                 yield path
 
 
-def note_untracked(root: Path, suffix: str) -> None:
-    """Record the untracked *suffix* files a changed-files walk passes over.
+def select_like_audit(
+    root: Path,
+    rels: list[str],
+    *,
+    suffix: str | tuple[str, ...] = ".py",
+    roots: list[Path] | None = None,
+) -> list[str]:
+    """Keep the *rels* an audit's file selection would include.
 
-    A changed-files selection comes from git's diff, which never lists an
-    untracked file, so such a file is not audited — and saying so beats a
-    clean log a reader takes to cover it. :func:`iter_files` calls this
-    for every ``Scope.CHANGED`` walk, so the record covers exactly the
-    suffixes the audit asked for; an audit that selects its changed set
-    another way calls it itself. :func:`write_log` reports and clears the
-    record. Gitignored files and the default-excluded directories are left
-    out, as a full run would leave them.
+    The filters mirror the audit's own: *suffix*, the default-excluded
+    directories (as :func:`iter_files` applies them), and — for an audit
+    whose findings come from a walk of its roots — those *roots*.
 
     Args:
-        root: Git repo root.
-        suffix: File extension the walk selects (with the dot).
+        root: Git repo root the paths are relative to.
+        rels: Repo-relative candidate paths.
+        suffix: File extension(s) the audit reads, with the dot.
+        roots: Absolute scan roots to keep files under; ``None`` keeps
+            files anywhere (an audit reading the whole diff).
+
+    Returns:
+        The kept paths, in input order.
     """
-    try:
-        untracked = get_untracked_files(suffix=suffix, repo_root=root)
-    except OSError:
-        return
-    _untracked_passed_over.update(
-        rel for rel in untracked if not _is_excluded(root / rel)
+    kept: list[str] = []
+    for rel in rels:
+        abs_path = (root / rel).resolve()
+        if not rel.endswith(suffix) or _is_excluded(abs_path):
+            continue
+        if roots is not None and not any(abs_path.is_relative_to(r) for r in roots):
+            continue
+        kept.append(rel)
+    return kept
+
+
+def untracked_summary_line(
+    scope: Scope,
+    *,
+    suffix: str | tuple[str, ...] = ".py",
+    roots: list[Path] | None = None,
+    root: Path | None = None,
+) -> str:
+    """Return the note naming untracked files a changed-files run left out.
+
+    A changed-files selection is git's diff, which never lists an
+    untracked file, so such a file is never treated as changed — most
+    audits then do not read it at all — and saying so beats a clean log a
+    reader takes to cover it. A full run walks the disk and sees untracked
+    files, so it gets no note. Each audit appends the result to its own
+    summary, passing its own suffix and roots.
+
+    Args:
+        scope: The scope the audit ran at.
+        suffix: File extension(s) the audit reads, with the dot.
+        roots: As for :func:`select_like_audit`.
+        root: Git repo root; defaults to the process-wide repo root the
+            audit itself runs against.
+
+    Returns:
+        ``""`` for a full run, when nothing is left out, or outside a git
+        work tree (the ``git`` query fails there and yields no output);
+        otherwise the note, starting with a newline so it appends to a
+        summary as is. Gitignored files are never named.
+    """
+    if scope is not Scope.CHANGED:
+        return ""
+    root = root if root is not None else repo_root()
+    skipped = select_like_audit(
+        root,
+        get_untracked_files(suffix="", repo_root=root),
+        suffix=suffix,
+        roots=roots,
+    )
+    if not skipped:
+        return ""
+    return (
+        f"\nUntracked, not treated as changed: {len(skipped)} — "
+        f"{summarize_paths(skipped)}. Changed mode reads git's diff, which "
+        "lists no untracked file; add them if they belong to this work, "
+        "leave them out if not."
     )
 
 
@@ -389,8 +451,7 @@ def write_log(
     Output is overwritten on every run. The first line is the
     :func:`forge.git_utils.produced_at_stamp` naming the tree the findings
     describe, so a reader judges freshness by tree identity, never by
-    comparing timestamps. A changed-files run adds a header line naming
-    the untracked files its walk passed over (:func:`note_untracked`).
+    comparing timestamps.
 
     Args:
         name: Audit short name (e.g. ``"dup"``, ``"deps"``).
@@ -412,25 +473,11 @@ def write_log(
     log_path = output if output is not None else log_dir / f"audit_{name}.log"
 
     findings_list = list(findings)
-    skipped = sorted(_untracked_passed_over) if scope is Scope.CHANGED else []
-    _untracked_passed_over.clear()
 
     lines = [
         produced_at_stamp(root),
         f"# forge-audit-{name}",
         *([f"# scope: {scope.value}"] if scope is not None else []),
-        *(
-            [
-                (
-                    f"# untracked, not audited: {len(skipped)} — "
-                    f"{summarize_paths(skipped)} (changed mode reads git's diff, "
-                    "which lists no untracked file; add them if they belong to "
-                    "this work, leave them out if not)"
-                )
-            ]
-            if skipped
-            else []
-        ),
         f"# findings: {len(findings_list)}",
         "",
         "## Summary",

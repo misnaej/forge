@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import git_utils
-from forge.audit import common
+from forge.audit import common, dup
 from forge.audit.common import (
     Finding,
     Scope,
@@ -461,9 +461,10 @@ def test_changed_scope_names_untracked_files_without_auditing_them(
 ) -> None:
     """A changed-files run reads only git's diff and says what it never saw.
 
-    The tracked edit is audited; the untracked module is not yielded, and
-    the log header names it — while the scope and finding-count readers
-    still parse. A non-``.py`` scratch file is not this audit's concern.
+    End to end through a real audit: the tracked edit is audited, the
+    untracked module is not yielded, and the log summary names it — while
+    the scope and finding-count readers still parse. A non-``.py`` scratch
+    file is not this audit's concern.
     """
     _init_git_repo(tmp_path)
     (tmp_path / "src").mkdir()
@@ -481,30 +482,56 @@ def test_changed_scope_names_untracked_files_without_auditing_them(
     monkeypatch.setattr(common, "repo_root", lambda: tmp_path)
 
     audited = [relpath(p) for p in iter_files(Scope.CHANGED, [])]
-    text = write_log("dup", [], summary="s", scope=Scope.CHANGED).read_text(
+    dup.run(Scope.CHANGED, [tmp_path / "src"], dup.DupConfig())
+    text = (git_utils.code_health_dir(tmp_path) / "audit_dup.log").read_text(
         encoding="utf-8"
     )
 
     assert audited == ["src/a.py"]
-    [note] = [ln for ln in text.splitlines() if ln.startswith("# untracked")]
-    assert "# untracked, not audited: 1 — src/new.py" in note
+    [note] = [ln for ln in text.splitlines() if ln.startswith("Untracked")]
+    assert note.startswith("Untracked, not treated as changed: 1 — `src/new.py`.")
     assert read_scope(text) == "changed"
     assert read_finding_count(text) == 0
 
 
-def test_full_scope_log_has_no_untracked_line(
+def test_untracked_summary_line_keeps_to_the_audits_own_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A full run walks the disk, untracked files included: nothing to name."""
+    """Only files the audit would select are named: its suffix, roots, exclusions.
+
+    A full run walks the disk and sees untracked files, so it says nothing.
+    """
     _init_git_repo(tmp_path)
-    (tmp_path / "new.py").write_text("y = 1\n", encoding="utf-8")
+    for rel in ("src/a.py", "src/build/b.py", "scripts/c.py", "src/d.csv"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("", encoding="utf-8")
     monkeypatch.setattr(common, "repo_root", lambda: tmp_path)
+    src = [(tmp_path / "src").resolve()]
 
-    text = write_log("dup", [], summary="s", scope=Scope.FULL).read_text(
-        encoding="utf-8"
-    )
+    assert common.untracked_summary_line(Scope.FULL) == ""
+    rooted = common.untracked_summary_line(Scope.CHANGED, roots=src)
+    assert "1 — `src/a.py`." in rooted
+    anywhere = common.untracked_summary_line(Scope.CHANGED)
+    assert "2 — `scripts/c.py`, `src/a.py`." in anywhere
+    data = common.untracked_summary_line(Scope.CHANGED, suffix=(".csv", ".json"))
+    assert "1 — `src/d.csv`." in data
 
-    assert "untracked" not in text
+
+def test_untracked_summary_line_outside_git_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Outside a git work tree the query yields nothing, so there is no note."""
+    (tmp_path / "a.py").write_text("", encoding="utf-8")
+    monkeypatch.setattr(common, "repo_root", lambda: tmp_path)
+    assert common.untracked_summary_line(Scope.CHANGED) == ""
+
+
+def test_agents_audit_scope_help_does_not_claim_changed_mode() -> None:
+    """The agents audit reads every agent file at either scope; its help says so."""
+    parser = make_audit_parser("forge-audit-agents", "d", honours_scope=False)
+    text = " ".join(parser.format_help().split())
+    assert "untracked ones included, at either scope" in text
+    assert "never treated as changed" not in text
 
 
 def test_write_log_without_scope_omits_the_header_line(fake_repo: Path) -> None:

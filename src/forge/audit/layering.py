@@ -77,9 +77,9 @@ from forge.audit.common import (
     Severity,
     exit_code_for,
     make_audit_parser,
-    note_untracked,
     resolve_roots,
     under_module_prefix,
+    untracked_summary_line,
     write_log,
 )
 from forge.audit.deps import build_module_graph
@@ -630,7 +630,6 @@ def run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int:
         # membership, not just the anchor path — mirrors dup's
         # _touches_changed semantics); HIGH findings always survive.
         changed = set(select_diff_files(root)) | escalate
-        note_untracked(root, ".py")
         touched_anchors: set[str] = set()
         for spec in layers:
             for mods in _direct_children(spec, modules).values():
@@ -671,7 +670,10 @@ def run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int:
             findings,
             n_config_errors=len(errors),
             n_unclassified=n_unclassified,
-        ),
+        )
+        # The module graph walks *roots*, so only untracked modules there
+        # are ones changed mode would otherwise have weighed.
+        + untracked_summary_line(scope, roots=roots, root=root),
         output=config.output,
         scope=scope,
     )

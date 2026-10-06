@@ -196,17 +196,7 @@ typecheck = "diff"            # pyrefly only on changed files under its roots
 ```
 
 Resolution order per step: `scope_overrides.<step>` → `scope` → `"all"`. An
-unrecognised value falls back to `"all"`.
-
-**Untracked files.** `diff` selects from git's diff (branch commits, staged
-and unstaged edits to tracked files), and `all` for `docstring_verification`
-and `test_naming_check` selects from the tracked set — neither ever contains
-a file you have not `git add`-ed. `ruff` and `typecheck` in `all` scope walk
-their roots on disk and do check one. A run never adds an untracked file
-and never passes over one silently: the affected step logs, the closing
-summary and `forge-precommit --verdict` name each one a step skipped, for you
-to add (forgotten work) or leave out (junk). Gitignored files are never
-listed. The other steps are either
+unrecognised value falls back to `"all"`. The other steps are either
 inherently whole-repo (`repo_structure_check`, `cli_wiring`, `manifest_json`,
 …) or scoped by their own `paths` key (`doctest`) — `scope` does not apply
 to them. `forge-config --list` shows the resolved values.
@@ -216,6 +206,23 @@ roots** (`[tool.forge.typecheck].paths` → `source_dirs` → auto-detect), so i
 always checks a subset of what `all` would. Caveat: pyrefly's explicit-file
 mode ignores `project_excludes` from `pyrefly.toml` — keep `typecheck` on
 `all` if you rely on that key.
+
+**Untracked files.** Some steps take their files from git and so skip any
+file you have not `git add`-ed: in `diff` scope, the four steps above
+(git's diff holds branch commits plus staged and unstaged edits to tracked
+files, never an untracked file); in `all` scope, `docstring_verification`
+and `test_naming_check` (they read the tracked set). `layering` and
+`changelog_updated` skip untracked files in every scope — layering always
+weighs only the changed files, and the changelog check counts a fragment
+only once it is staged or committed (it still validates the format of one
+on disk). `ruff` and `typecheck` in `all` scope walk their roots on disk and
+do check untracked files, as do `smart_test` and `repo_structure_check`.
+A run never adds an untracked file and never passes over one silently: the
+affected step logs, the closing summary and `forge-precommit --verdict`
+name each file and the steps that skipped it, for you to add (forgotten
+work) or leave out (junk); a step that would skip on this repo is not named.
+The `forge-audit-*` logs written with `--scope changed` carry the same note
+in their summary. Gitignored files are never listed.
 
 > **Why default `all`?** A `diff`-only gate passes a commit while leaving
 > violations elsewhere in the tree unchecked — the gate then reflects "what

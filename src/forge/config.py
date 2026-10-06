@@ -673,27 +673,46 @@ def _warn_untracked_under_roots(repo_root: Path, roots: list[str], suffix: str) 
 
 
 def summarize_paths(paths: list[str], *, limit: int = 10) -> str:
-    """Render *paths* as one bounded, printable line.
+    """Render *paths* as one bounded, printable line of quoted names.
 
     Shared by every untracked-file note (pre-commit step logs, the run
     summary, ``--verdict``, the audit logs) so they name files the same
-    way. Non-printable characters are replaced: the line lands in logs
-    agents treat as evidence, and a file name must not be able to start a
-    line of its own there.
+    way. A file name is untrusted data that lands in logs agents read as
+    evidence, so each is quoted as a code span (its own backticks
+    escaped), capped in length, and stripped of non-printable characters
+    — it can neither start a line of its own nor read as prose.
 
     Args:
         paths: Repo-relative paths, in the order to show them.
         limit: How many names to show before summarising the rest.
 
     Returns:
-        ``a, b, c`` — or ``a, b, … (+N more)`` past *limit*.
+        The backtick-quoted names, comma-separated, ending
+        ``… (+N more)`` past *limit*.
     """
-    shown = [
-        "".join(ch if ch.isprintable() else "?" for ch in p) for p in paths[:limit]
-    ]
+    shown = [f"`{_quotable_name(p)}`" for p in paths[:limit]]
     more = len(paths) - limit
     tail = f", … (+{more} more)" if more > 0 else ""
     return ", ".join(shown) + tail
+
+
+_NAME_CAP = 80
+
+
+def _quotable_name(path: str) -> str:
+    """Return *path* made safe to quote inside a backtick code span.
+
+    Args:
+        path: One untrusted repo-relative path.
+
+    Returns:
+        The path with non-printables as ``?``, backticks escaped, and
+        anything past :data:`_NAME_CAP` characters cut to an ellipsis.
+    """
+    text = "".join(ch if ch.isprintable() else "?" for ch in path)
+    if len(text) > _NAME_CAP:
+        text = text[: _NAME_CAP - 1] + "…"
+    return text.replace("`", "\\`")
 
 
 def installed_console_scripts(name: str) -> set[str] | None:
