@@ -1072,7 +1072,7 @@ taxonomy by family:
   plan attached as a `plan-validated` comment; cleared for autonomous
   execution — see "Plan-readiness pipeline" below; never alongside
   `blocked`), `needs-recheck` (a merge changed files its plan names;
-  re-plan before execution).
+  re-plan before execution — recording a new plan clears it).
 - **Type** — `bug`, `feature`, `refactor` (no behavior change), `docs`,
   `tech-debt` (cleanup / consolidation), `security`, `research` (spike).
 - **Surface** — `quick-win` (easy + isolated + low-risk), `architecture`

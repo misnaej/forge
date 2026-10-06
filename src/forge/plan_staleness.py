@@ -11,60 +11,67 @@ still true (FOUNDATION §14 "Plan-readiness pipeline"):
     merged PR behind it, still blocks; ``Requires: nothing`` is satisfied.
 ``drift <issue> [--since ISO]``
     Lists merges on the base branch, since the authenticated plan was
-    posted (or *--since*), that touched a file the plan names — falling
-    back to the files the issue body names, and refusing when neither
-    names any. Also refuses an issue labelled both ``blocked`` and
-    ``plan-ready``.
+    posted (or *--since*), that touched a file the plan names. Merges
+    that deliver the issue's own ``Requires:`` entries are expected and
+    reported as notes, not drift. Refuses an issue labelled both
+    ``blocked`` and ``plan-ready``.
 ``overlap <merged-pr>``
-    Lists open issues whose body or authenticated plan names a file the
-    merged PR changed, skipping the issues that PR itself closes, and
-    marks the ones carrying ``plan-ready``.
+    Lists open issues whose authenticated plan names a file the merged PR
+    changed, skipping the issues that PR itself closes, and marks the
+    ones carrying ``plan-ready``.
+
+Both ``drift`` and ``overlap`` take an issue's files from one rule
+(:func:`plan_paths`): the authenticated plan's, or the issue body's only
+when the plan names none — said in a ``note:`` line when it happens.
 
 A plan comment counts only when it opens with ``[issue-triage]
 plan-validated:`` and its author has write, maintain or admin access per
 the ``collaborators/<login>/permission`` call; the newest such comment
-wins. Every GitHub or JSON failure is *unknown*, never clean. Output is
-plain lines a skill can relay: GitHub-derived text is limited to numbers,
-dates and validated paths, or fenced.
+wins. A candidate whose author's access cannot be looked up makes the
+answer unknown — it might be the real plan. Every GitHub or JSON failure
+is *unknown*, never clean. Output is plain lines a skill can relay:
+GitHub-derived text is limited to numbers, dates and validated paths, or
+fenced and capped. GitHub reads live in :mod:`forge.plan_staleness_gh`.
 
 Exit codes:
     0  clean
     1  finding — an unmet prerequisite, drift, or an overlapping issue
-    2  unknown or refused — a GitHub/JSON failure, an unparseable
-       ``Requires:`` line, no named files, both labels present, an
-       unresolvable base ref, or a PR that is not merged
+    2  unknown or refused — a GitHub/JSON failure, an unparseable or
+       missing ``Requires:`` line, a plan author whose access cannot be
+       checked, no named files, both labels present, an unresolvable or
+       unfetchable base ref, or a PR that is not merged
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Final, Protocol
+from typing import TYPE_CHECKING, Final, Protocol
 
 from forge.config import load_config
-from forge.gh_comments import GH_LIST_TIMEOUT, parse_paged_json
 from forge.git_utils import (
     configure_cli_logging,
     emit,
     fetch_quietly,
-    gh_api,
     repo_root,
     resolve_base_branch_ref,
     run_git,
     wrap_in_code_fence,
 )
+from forge.plan_staleness_gh import WRITE_PERMISSIONS, GhSource
 from forge.pr_delta import strip_fences
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Mapping
     from pathlib import Path
+
+    from forge.plan_staleness_gh import Comment, Issue, MergedPR, RefStatus
 
 
 configure_cli_logging()
@@ -73,11 +80,13 @@ logger = logging.getLogger(__name__)
 PLAN_MARKER: Final[str] = "[issue-triage] plan-validated:"
 PLAN_READY: Final[str] = "plan-ready"
 BLOCKED: Final[str] = "blocked"
-WRITE_PERMISSIONS: Final[frozenset[str]] = frozenset({"admin", "maintain", "write"})
 
 EXIT_CLEAN: Final[int] = 0
 EXIT_FINDING: Final[int] = 1
 EXIT_UNKNOWN: Final[int] = 2
+
+# Longest stretch of issue text echoed back (inside a fence).
+ECHO_CAP: Final[int] = 200
 
 # A `Requires:` line at the start of a line (after list/quote/bold markers),
 # or opening a bold span mid-line — the form recorded plans use. A
@@ -100,60 +109,17 @@ _NOTHING_RE: Final[re.Pattern[str]] = re.compile(r"^(?:nothing|none)$", re.IGNOR
 _TOKEN_SPLIT_RE: Final[re.Pattern[str]] = re.compile(r"[\s`()\[\]\"'|,;]+")
 _LINE_SUFFIX_RE: Final[re.Pattern[str]] = re.compile(r":\d+(?::\d+)?$")
 _FILE_RE: Final[re.Pattern[str]] = re.compile(
-    r"^[A-Za-z0-9_.][A-Za-z0-9_.\-/]*\.[A-Za-z0-9]{1,10}$"
+    r"[A-Za-z0-9_.][A-Za-z0-9_.\-/]*\.[A-Za-z0-9]{1,10}"
 )
 # Extensions that make a slash-free token a file (`pyproject.toml`), not
 # prose ("e.g.") or a dotted module name.
 _BARE_FILE_EXTENSIONS: Final[frozenset[str]] = frozenset(
     {"md", "py", "toml", "yml", "yaml", "json", "sh", "cfg", "txt", "ini", "lock"}
 )
-_LOGIN_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
+_LOGIN_RE: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}")
 _PR_SUBJECT_RE: Final[re.Pattern[str]] = re.compile(
     r"\(#(\d{1,7})\)\s*$|^Merge pull request #(\d{1,7})\b"
 )
-
-
-@dataclass(frozen=True)
-class Comment:
-    """One issue comment as the checks need it."""
-
-    id: int
-    body: str
-    created_at: str
-    author: str
-
-
-@dataclass(frozen=True)
-class Issue:
-    """One issue; ``comments`` is filled only by the open-issue listing."""
-
-    number: int
-    body: str
-    labels: tuple[str, ...]
-    created_at: str
-    comments: tuple[Comment, ...] = ()
-
-
-@dataclass(frozen=True)
-class RefStatus:
-    """What GitHub reports about one ``Requires:`` reference."""
-
-    number: int
-    is_pr: bool = field(kw_only=True)
-    state: str = field(kw_only=True)
-    state_reason: str | None = field(kw_only=True)
-    merged: bool = field(kw_only=True)
-
-
-@dataclass(frozen=True)
-class MergedPR:
-    """A PR's merge state, changed files and the issues it closes."""
-
-    number: int
-    merged: bool = field(kw_only=True)
-    merge_sha: str = field(kw_only=True)
-    closes: tuple[int, ...] = field(kw_only=True)
-    files: tuple[str, ...] = field(kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -173,6 +139,21 @@ class Requires:
     found: bool
     refs: tuple[int, ...]
     unparsed: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PlanLookup:
+    """The outcome of looking for an issue's authenticated plan.
+
+    ``unresolved`` is the id of a plan-marker comment, newer than any
+    confirmed plan, whose author's access could not be looked up — while
+    it is set the plan is unknown. ``ignored`` lists comments skipped
+    because their authors confirmedly lack write access.
+    """
+
+    plan: Comment | None
+    unresolved: int | None = None
+    ignored: tuple[int, ...] = ()
 
 
 class GitHubSource(Protocol):
@@ -229,7 +210,12 @@ class GitHubSource(Protocol):
         """
 
     def open_issues(self) -> list[Issue] | None:
-        """Return every open issue, comments included."""
+        """Return every open issue, comments included.
+
+        Returns:
+            Every open issue with its full comment list, or None when the
+            listing could not be read completely.
+        """
 
 
 @dataclass
@@ -367,6 +353,41 @@ def prerequisite_verdict(status: RefStatus) -> tuple[bool, str]:
     return False, "issue closed without a merged PR"
 
 
+def delivering_prs(statuses: Mapping[int, RefStatus]) -> dict[int, int]:
+    """Map each merged PR that delivered a prerequisite to that prerequisite.
+
+    A prerequisite closed as not planned delivered nothing, whatever PR is
+    linked to it.
+
+    Args:
+        statuses: Prerequisite number to its status.
+
+    Returns:
+        Merged PR number to the prerequisite number it delivered.
+    """
+    delivered: dict[int, int] = {}
+    for ref, status in statuses.items():
+        if not prerequisite_verdict(status)[0]:
+            continue
+        for pr in status.landed_by:
+            delivered.setdefault(pr, ref)
+    return delivered
+
+
+def capped_echo(text: str) -> str:
+    """Return *text* fenced and capped at :data:`ECHO_CAP` characters.
+
+    Args:
+        text: Issue-derived text to show.
+
+    Returns:
+        A fenced block, ending in ``…[truncated]`` when cut.
+    """
+    if len(text) > ECHO_CAP:
+        text = text[:ECHO_CAP] + " …[truncated]"
+    return wrap_in_code_fence(text)
+
+
 def is_safe_path(path: str) -> bool:
     """Return whether *path* may be handed to git as a repo-relative pathspec.
 
@@ -400,7 +421,7 @@ def named_paths(text: str) -> list[str]:
     for line in strip_fences(text.splitlines()):
         for raw in _TOKEN_SPLIT_RE.split(line):
             token = _LINE_SUFFIX_RE.sub("", raw.strip("*").rstrip(".:!?"))
-            if not (_FILE_RE.match(token) and is_safe_path(token)):
+            if not (_FILE_RE.fullmatch(token) and is_safe_path(token)):
                 continue
             extension = token.rsplit(".", 1)[-1].lower()
             if "/" not in token and extension not in _BARE_FILE_EXTENSIONS:
@@ -411,49 +432,57 @@ def named_paths(text: str) -> list[str]:
 
 
 def authenticated_plan(
-    comments: Iterable[Comment], is_writer: Callable[[str], bool]
-) -> Comment | None:
-    """Return the newest plan comment whose author has write access.
+    comments: Iterable[Comment], is_writer: Callable[[str], bool | None]
+) -> PlanLookup:
+    """Find the newest plan comment whose author has write access.
 
     A comment counts only when its body opens with :data:`PLAN_MARKER`;
-    anyone can type the marker, so a candidate from an author without
-    write access is skipped — never trusted, never a veto.
+    anyone can type the marker, so a candidate from a confirmed non-writer
+    is skipped — never trusted, never a veto. A candidate whose author's
+    access cannot be looked up stops the search: it may be the real plan,
+    so the answer is unknown rather than an older or absent plan.
 
     Args:
         comments: The issue's comments.
-        is_writer: Permission predicate for a login.
+        is_writer: Tri-state permission predicate for a login (``None``
+            when the lookup failed).
 
     Returns:
-        The qualifying comment, or ``None`` when none qualifies.
+        The lookup outcome.
     """
     candidates = sorted(
         (c for c in comments if c.body.lstrip().startswith(PLAN_MARKER)),
         key=lambda c: c.created_at,
         reverse=True,
     )
+    ignored: list[int] = []
     for comment in candidates:
-        if is_writer(comment.author):
-            return comment
-        logger.warning(
-            "plan-check: ignoring plan comment %s — author lacks write access",
-            comment.id,
-        )
-    return None
+        verdict = is_writer(comment.author)
+        if verdict is None:
+            return PlanLookup(None, unresolved=comment.id, ignored=tuple(ignored))
+        if verdict:
+            return PlanLookup(comment, ignored=tuple(ignored))
+        ignored.append(comment.id)
+    return PlanLookup(None, ignored=tuple(ignored))
 
 
-def plan_paths(plan: Comment | None, body: str) -> list[str]:
+def plan_paths(plan: Comment | None, body: str) -> tuple[list[str], bool]:
     """Return the files the plan names, falling back to the issue body's.
+
+    The one path rule ``drift`` and ``overlap`` share.
 
     Args:
         plan: The authenticated plan comment, if any.
         body: The issue body.
 
     Returns:
-        Named paths; empty when neither text names any.
+        ``(paths, from_body)``; *paths* is empty when neither text names
+        any file, and *from_body* says the body supplied them.
     """
     if plan is not None and (paths := named_paths(plan.body)):
-        return paths
-    return named_paths(body)
+        return paths, False
+    body_paths = named_paths(body)
+    return body_paths, bool(body_paths)
 
 
 def parse_timestamp(value: str) -> datetime:
@@ -500,7 +529,7 @@ def parse_merge_log(raw: str) -> list[Merge]:
 
 
 class WriterCheck:
-    """Write-access predicate over a :class:`GitHubSource`, cached per login."""
+    """Tri-state write-access predicate over a :class:`GitHubSource`, cached."""
 
     def __init__(self, source: GitHubSource) -> None:
         """Bind the predicate to *source*.
@@ -509,26 +538,56 @@ class WriterCheck:
             source: Where permission lookups go.
         """
         self._source = source
-        self._cache: dict[str, bool] = {}
+        self._cache: dict[str, bool | None] = {}
 
-    def __call__(self, login: str) -> bool:
+    def __call__(self, login: str) -> bool | None:
         """Return whether *login* has write, maintain or admin access.
 
-        A login that is not a plain GitHub username, or a lookup that
-        fails, counts as no access (FOUNDATION §14: fail closed).
+        A login that is not a plain GitHub username is confirmedly not a
+        writer (no lookup is made). A lookup that fails is unknown, never
+        "no access": a failure must not quietly demote the real plan.
 
         Args:
             login: GitHub login.
 
         Returns:
-            ``True`` only on a confirmed write-level permission.
+            ``True`` for write-level access, ``False`` for any lesser
+            permission or a malformed login, ``None`` when the lookup failed.
         """
         if login not in self._cache:
-            permission = (
-                self._source.permission(login) if _LOGIN_RE.match(login) else None
-            )
-            self._cache[login] = permission in WRITE_PERMISSIONS
+            if _LOGIN_RE.fullmatch(login) is None:
+                self._cache[login] = False
+            else:
+                permission = self._source.permission(login)
+                self._cache[login] = (
+                    None if permission is None else permission in WRITE_PERMISSIONS
+                )
         return self._cache[login]
+
+
+def _record_lookup(lookup: PlanLookup, number: int, report: Report) -> bool:
+    """Write a plan lookup's notes into *report*; ``False`` when it is unknown.
+
+    Args:
+        lookup: The lookup outcome.
+        number: Issue number.
+        report: Report to write into.
+
+    Returns:
+        Whether the lookup is usable.
+    """
+    for comment_id in lookup.ignored:
+        report.note(
+            f"note: ignored plan comment {comment_id} on #{number}; "
+            "its author lacks write access"
+        )
+    if lookup.unresolved is not None:
+        report.unknown(
+            f"unknown: could not check the access of plan comment "
+            f"{lookup.unresolved}'s author on #{number}"
+        )
+        return False
+    return True
 
 
 def _issue_and_plan(
@@ -543,19 +602,57 @@ def _issue_and_plan(
 
     Returns:
         The issue and its authenticated plan comment (None when absent), or
-        None when the issue could not be read.
+        None when the issue or its plan could not be determined.
     """
     issue = source.issue(number)
     comments = source.comments(number) if issue is not None else None
     if issue is None or comments is None:
         report.unknown(f"unknown: could not read issue #{number} from GitHub")
         return None
-    plan = authenticated_plan(comments, WriterCheck(source))
-    if plan is None:
+    lookup = authenticated_plan(comments, WriterCheck(source))
+    if not _record_lookup(lookup, number, report):
+        return None
+    if lookup.plan is None:
         report.note(f"plan: no authenticated plan-validated comment on #{number}")
     else:
-        report.note(f"plan: comment {plan.id} posted {plan.created_at}")
-    return issue, plan
+        report.note(f"plan: comment {lookup.plan.id} posted {lookup.plan.created_at}")
+    return issue, lookup.plan
+
+
+def _requires_texts(issue: Issue, plan: Comment | None) -> list[str]:
+    """Return the texts whose ``Requires:`` lines count: body, then plan.
+
+    Args:
+        issue: The issue.
+        plan: Its authenticated plan, if any.
+
+    Returns:
+        The texts to parse.
+    """
+    return [issue.body] + ([plan.body] if plan is not None else [])
+
+
+def _statuses(
+    source: GitHubSource, refs: Iterable[int], report: Report
+) -> dict[int, RefStatus]:
+    """Look up each prerequisite, recording an unknown line per failure.
+
+    Args:
+        source: GitHub reads.
+        refs: Prerequisite numbers.
+        report: Report that receives the failures.
+
+    Returns:
+        The statuses that could be read.
+    """
+    statuses: dict[int, RefStatus] = {}
+    for ref in refs:
+        status = source.ref_status(ref)
+        if status is None:
+            report.unknown(f"unknown: could not read #{ref} from GitHub")
+        else:
+            statuses[ref] = status
+    return statuses
 
 
 def check_prerequisites(source: GitHubSource, number: int) -> Report:
@@ -573,26 +670,90 @@ def check_prerequisites(source: GitHubSource, number: int) -> Report:
     if fetched is None:
         return report
     issue, plan = fetched
-    texts = [issue.body] + ([plan.body] if plan is not None else [])
-    requires = parse_requires(texts)
+    if BLOCKED in issue.labels and PLAN_READY in issue.labels:
+        report.note(
+            f"note: #{number} carries both blocked and plan-ready; drift refuses it"
+        )
+    requires = parse_requires(_requires_texts(issue, plan))
     if not requires.found:
-        report.unknown(f"unknown: #{number} has no Requires: line")
+        report.unknown(
+            f"unknown: #{number} has no Requires: line; add one "
+            "(Requires: nothing, or the PR or issue it waits on)"
+        )
     for entry in requires.unparsed:
         report.unknown("unknown: a Requires: entry could not be parsed:")
-        report.note(wrap_in_code_fence(entry))
+        report.note(capped_echo(entry))
     if requires.found and not requires.refs and not requires.unparsed:
         report.note("prerequisite: Requires: nothing")
-    for ref in requires.refs:
-        status = source.ref_status(ref)
-        if status is None:
-            report.unknown(f"unknown: could not read #{ref} from GitHub")
-            continue
+    for ref, status in _statuses(source, requires.refs, report).items():
         satisfied, reason = prerequisite_verdict(status)
         if satisfied:
             report.note(f"prerequisite: #{ref} landed — {reason}")
         else:
             report.finding(f"blocked: #{ref} — {reason}")
     return report
+
+
+def _drift_window(
+    issue: Issue, plan: Comment | None, since: datetime | None, report: Report
+) -> tuple[list[str], datetime] | None:
+    """Return the paths and cut-off drift checks, or None after a refusal.
+
+    Args:
+        issue: The issue.
+        plan: Its authenticated plan, if any.
+        since: Caller's cut-off, or None for the plan's post time.
+        report: Report that receives refusals and notes.
+
+    Returns:
+        ``(paths, cut-off)``, or None when the check is refused.
+    """
+    number = issue.number
+    if BLOCKED in issue.labels and PLAN_READY in issue.labels:
+        report.unknown(f"refused: #{number} is labelled both blocked and plan-ready")
+        return None
+    paths, from_body = plan_paths(plan, issue.body)
+    if not paths:
+        report.unknown(f"refused: neither the plan nor #{number} names any file")
+        return None
+    if from_body:
+        report.note(
+            f"note: #{number} paths come from the issue body, not an authenticated plan"
+        )
+    if since is None:
+        if plan is None:
+            report.unknown("refused: no authenticated plan to date from; pass --since")
+            return None
+        since = parse_timestamp(plan.created_at)
+    return paths, since
+
+
+def _report_merges(
+    merges: Iterable[Merge],
+    since: datetime,
+    delivered: Mapping[int, int],
+    report: Report,
+) -> None:
+    """Record each merge after *since*: a note when it delivers a prerequisite.
+
+    Args:
+        merges: Base-branch commits touching the plan's files.
+        since: Cut-off.
+        delivered: Merged PR number to the prerequisite it delivered.
+        report: Report to write into.
+    """
+    for merge in merges:
+        if merge.date <= since:
+            continue
+        head = f"{merge.sha[:12]} {merge.date.isoformat()}"
+        if merge.pr is not None and merge.pr in delivered:
+            report.note(
+                f"note: {head} PR #{merge.pr} delivers prerequisite "
+                f"#{delivered[merge.pr]}; not drift"
+            )
+            continue
+        pr = f"PR #{merge.pr}" if merge.pr else "no PR number in subject"
+        report.finding(f"drift: {head} {pr} changed {', '.join(merge.paths)}")
 
 
 def check_drift(
@@ -603,6 +764,9 @@ def check_drift(
     log_merges: Callable[[list[str]], list[Merge] | None],
 ) -> Report:
     """List base-branch merges that touched the plan's files since *since*.
+
+    Merges delivering the issue's own prerequisites are expected — the
+    plan was written to build on them — so they are noted, not counted.
 
     Args:
         source: GitHub reads.
@@ -619,52 +783,49 @@ def check_drift(
     if fetched is None:
         return report
     issue, plan = fetched
-    if BLOCKED in issue.labels and PLAN_READY in issue.labels:
-        report.unknown(f"refused: #{number} is labelled both blocked and plan-ready")
+    window = _drift_window(issue, plan, since, report)
+    if window is None:
         return report
-    paths = plan_paths(plan, issue.body)
-    if not paths:
-        report.unknown(f"refused: neither the plan nor #{number} names any file")
+    paths, cutoff = window
+    refs = parse_requires(_requires_texts(issue, plan)).refs
+    delivered = delivering_prs(_statuses(source, refs, report))
+    if report.unknowns:
         return report
-    if since is None:
-        if plan is None:
-            report.unknown("refused: no authenticated plan to date from; pass --since")
-            return report
-        since = parse_timestamp(plan.created_at)
-    cutoff = since.astimezone(UTC).isoformat()
-    report.note(f"since: {cutoff}; files: {', '.join(paths)}")
+    start = cutoff.astimezone(UTC).isoformat()
+    report.note(f"since: {start}; files: {', '.join(paths)}")
     merges = log_merges(paths)
     if merges is None:
         report.unknown("unknown: git could not list the base branch history")
         return report
-    for merge in merges:
-        if merge.date > since:
-            pr = f"PR #{merge.pr}" if merge.pr else "direct commit"
-            report.finding(
-                f"drift: {merge.sha[:12]} {merge.date.isoformat()} {pr} "
-                f"changed {', '.join(merge.paths)}"
-            )
+    _report_merges(merges, cutoff, delivered, report)
     return report
 
 
-def _overlap_line(issue: Issue, files: set[str], is_writer: WriterCheck) -> str | None:
-    """Return the finding line when *issue* names any of *files*.
+def _check_overlap_issue(
+    issue: Issue, files: set[str], is_writer: WriterCheck, report: Report
+) -> None:
+    """Record whether open *issue*'s files intersect *files*.
 
     Args:
         issue: Open issue to inspect.
-        files: Paths changed by the work being checked.
-        is_writer: Check deciding whether a plan author has write access.
-
-    Returns:
-        The overlap line, or None when the issue names none of *files*.
+        files: Paths the merged PR changed.
+        is_writer: Plan-author access check.
+        report: Report to write into.
     """
-    plan = authenticated_plan(issue.comments, is_writer)
-    named = named_paths(issue.body) + (named_paths(plan.body) if plan else [])
-    hits = sorted(files.intersection(named))
+    lookup = authenticated_plan(issue.comments, is_writer)
+    if not _record_lookup(lookup, issue.number, report):
+        return
+    paths, from_body = plan_paths(lookup.plan, issue.body)
+    hits = sorted(files.intersection(paths))
     if not hits:
-        return None
+        return
     marker = " plan-ready" if PLAN_READY in issue.labels else ""
-    return f"overlap: #{issue.number}{marker} names {', '.join(hits)}"
+    report.finding(f"overlap: #{issue.number}{marker} names {', '.join(hits)}")
+    if from_body:
+        report.note(
+            f"note: #{issue.number} paths come from the issue body, "
+            "not an authenticated plan"
+        )
 
 
 def check_overlap(source: GitHubSource, pr_number: int) -> Report:
@@ -689,331 +850,19 @@ def check_overlap(source: GitHubSource, pr_number: int) -> Report:
     if issues is None:
         report.unknown("unknown: could not list open issues from GitHub")
         return report
-    report.note(
-        f"merge: PR #{pr_number} {pr.merge_sha[:12]} changed {len(pr.files)} file(s)"
-    )
+    sha = f" {pr.merge_sha[:12]}" if pr.merge_sha else ""
+    report.note(f"merge: PR #{pr_number}{sha} changed {len(pr.files)} file(s)")
     files = set(pr.files)
     is_writer = WriterCheck(source)
     for issue in issues:
-        if issue.number in pr.closes:
-            continue
-        line = _overlap_line(issue, files, is_writer)
-        if line is not None:
-            report.finding(line)
+        if issue.number not in pr.closes:
+            _check_overlap_issue(issue, files, is_writer, report)
     return report
 
 
 # --------------------------------------------------------------------------
-# I/O adapters
+# Git adapter
 # --------------------------------------------------------------------------
-
-_STATUS_QUERY: Final[str] = (
-    "query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name)"
-    "{issueOrPullRequest(number:$n){__typename"
-    " ... on PullRequest{state merged}"
-    " ... on Issue{state stateReason"
-    " closedByPullRequestsReferences(first:20,includeClosedPrs:true){nodes{merged}}"
-    " timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent"
-    "{closer{__typename ... on PullRequest{merged}}}}}}}}}"
-)
-_PR_QUERY: Final[str] = (
-    "query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name)"
-    "{pullRequest(number:$n){merged mergeCommit{oid}"
-    " closingIssuesReferences(first:50){nodes{number}}}}}"
-)
-_OPEN_ISSUES_QUERY: Final[str] = (
-    "query($owner:String!,$name:String!,$endCursor:String)"
-    "{repository(owner:$owner,name:$name){issues(states:OPEN,first:50,"
-    "after:$endCursor){pageInfo{hasNextPage endCursor} nodes{number body createdAt"
-    " labels(first:50){nodes{name}} comments(last:100){totalCount"
-    " nodes{databaseId body createdAt author{login}}}}}}}"
-)
-_OPEN_ISSUES_JQ: Final[str] = (
-    "[.data.repository.issues.nodes[] | {number, body, created_at: .createdAt,"
-    " labels: [.labels.nodes[].name], total: .comments.totalCount,"
-    " comments: [.comments.nodes[] | {id: .databaseId, body, created_at: .createdAt,"
-    ' author: (.author.login // "")}]}]'
-)
-_COMMENTS_JQ: Final[str] = (
-    '[.[] | {id, body: (.body // ""), created_at, author: (.user.login // "")}]'
-)
-_REPO_FIELDS: Final[tuple[str, ...]] = ("-F", "owner={owner}", "-F", "name={repo}")
-
-
-def _loads(raw: str | None) -> dict[str, Any] | None:
-    """Decode one JSON document; ``None`` for a failed call or bad JSON.
-
-    Args:
-        raw: Raw ``gh`` output, or None when the call failed.
-
-    Returns:
-        The decoded document, or None.
-    """
-    if raw is None:
-        return None
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        logger.warning("plan-check: unparseable gh output: %.60s", raw)
-        return None
-
-
-def _pages(raw: str | None) -> list[Any] | None:
-    """Flatten paginated output, or ``None`` when the call or any page failed.
-
-    Args:
-        raw: Raw paginated ``gh`` output, or None when the call failed.
-
-    Returns:
-        The flattened items, or None.
-    """
-    if raw is None:
-        return None
-    try:
-        return parse_paged_json(raw, strict=True)
-    except (json.JSONDecodeError, TypeError):
-        logger.warning("plan-check: unparseable gh page output")
-        return None
-
-
-def _comment(item: dict[str, Any]) -> Comment:
-    """Build a :class:`Comment` from a projected JSON mapping.
-
-    Args:
-        item: Mapping with id, body, created_at and author keys.
-
-    Returns:
-        The comment.
-    """
-    return Comment(
-        id=int(item["id"]),
-        body=str(item.get("body") or ""),
-        created_at=str(item["created_at"]),
-        author=str(item.get("author") or ""),
-    )
-
-
-class _IncompleteListingError(Exception):
-    """An open issue could not be read completely; the listing is unknown."""
-
-
-class GhSource:
-    """Production :class:`GitHubSource` over ``gh api``; ``None`` on any failure."""
-
-    def _graphql(self, query: str, number: int, jq: str) -> dict[str, Any] | None:
-        """Run one numbered GraphQL query and decode its ``--jq`` projection.
-
-        Args:
-            query: GraphQL query text taking a ``$n`` number variable.
-            number: Issue or pull-request number.
-            jq: ``jq`` expression projecting the response.
-
-        Returns:
-            The decoded projection, or None on failure.
-        """
-        return _loads(
-            gh_api(
-                "graphql",
-                *_REPO_FIELDS,
-                "-F",
-                f"n={number}",
-                "-f",
-                f"query={query}",
-                "--jq",
-                jq,
-            )
-        )
-
-    def issue(self, number: int) -> Issue | None:
-        """Return issue *number* (body, labels, creation time).
-
-        Args:
-            number: Issue or pull-request number.
-
-        Returns:
-            The issue, or None when it could not be read.
-        """
-        data = _loads(
-            gh_api(
-                f"repos/{{owner}}/{{repo}}/issues/{number}",
-                "--jq",
-                '{number, body: (.body // ""), labels: [.labels[].name], created_at}',
-            )
-        )
-        if data is None:
-            return None
-        try:
-            return Issue(
-                number=int(data["number"]),
-                body=str(data["body"]),
-                labels=tuple(str(n) for n in data["labels"]),
-                created_at=str(data["created_at"]),
-            )
-        except (KeyError, TypeError, ValueError):
-            return None
-
-    def comments(self, number: int) -> list[Comment] | None:
-        """Return every comment on issue *number*, an empty list when none.
-
-        Args:
-            number: Issue or pull-request number.
-
-        Returns:
-            The comments, or None when they could not be read.
-        """
-        items = _pages(
-            gh_api(
-                f"repos/{{owner}}/{{repo}}/issues/{number}/comments",
-                "--paginate",
-                "--jq",
-                _COMMENTS_JQ,
-                timeout=GH_LIST_TIMEOUT,
-            )
-        )
-        try:
-            return None if items is None else [_comment(i) for i in items]
-        except (KeyError, TypeError, ValueError):
-            return None
-
-    def permission(self, login: str) -> str | None:
-        """Return *login*'s permission on the repo (``admin``, ``write``, ...).
-
-        Args:
-            login: GitHub login to look up.
-
-        Returns:
-            The permission name, or None when it could not be read.
-        """
-        data = _loads(
-            gh_api(
-                f"repos/{{owner}}/{{repo}}/collaborators/{login}/permission",
-                "--jq",
-                "{permission, role: .role_name}",
-            )
-        )
-        if not isinstance(data, dict):
-            return None
-        # `permission` folds maintain into write; `role_name` keeps it.
-        role = data.get("role")
-        return str(role) if role in WRITE_PERMISSIONS else str(data.get("permission"))
-
-    def ref_status(self, number: int) -> RefStatus | None:
-        """Return the landing status of issue-or-PR *number*.
-
-        Args:
-            number: Issue or pull-request number.
-
-        Returns:
-            The status, or None when it could not be read.
-        """
-        data = self._graphql(
-            _STATUS_QUERY, number, ".data.repository.issueOrPullRequest"
-        )
-        try:
-            if data is not None and data["__typename"] == "PullRequest":
-                return RefStatus(
-                    number,
-                    is_pr=True,
-                    state=str(data["state"]),
-                    state_reason=None,
-                    merged=bool(data["merged"]),
-                )
-            if data is None:
-                return None
-            closer = (data["timelineItems"]["nodes"] or [{}])[-1].get("closer") or {}
-            linked = data["closedByPullRequestsReferences"]["nodes"]
-            merged = bool(closer.get("merged")) or any(n["merged"] for n in linked)
-            return RefStatus(
-                number,
-                is_pr=False,
-                state=str(data["state"]),
-                state_reason=data.get("stateReason"),
-                merged=merged,
-            )
-        except (KeyError, TypeError, IndexError, AttributeError):
-            return None
-
-    def pull_request(self, number: int) -> MergedPR | None:
-        """Return PR *number*'s merge state, changed files and closed issues.
-
-        Args:
-            number: Issue or pull-request number.
-
-        Returns:
-            The merged-PR record, or None when it could not be read.
-        """
-        data = self._graphql(_PR_QUERY, number, ".data.repository.pullRequest")
-        files = _pages(
-            gh_api(
-                f"repos/{{owner}}/{{repo}}/pulls/{number}/files",
-                "--paginate",
-                "--jq",
-                "[.[] | .filename, (.previous_filename // empty)]",
-                timeout=GH_LIST_TIMEOUT,
-            )
-        )
-        if files is None or data is None:
-            return None
-        try:
-            return MergedPR(
-                number=number,
-                merged=bool(data["merged"]),
-                merge_sha=str((data.get("mergeCommit") or {}).get("oid") or ""),
-                closes=tuple(
-                    int(n["number"]) for n in data["closingIssuesReferences"]["nodes"]
-                ),
-                files=tuple(str(f) for f in files),
-            )
-        except (KeyError, TypeError, ValueError, AttributeError):
-            return None
-
-    def open_issues(self) -> list[Issue] | None:
-        """Return every open issue, comments included."""
-        items = _pages(
-            gh_api(
-                "graphql",
-                "--paginate",
-                *_REPO_FIELDS,
-                "-f",
-                f"query={_OPEN_ISSUES_QUERY}",
-                "--jq",
-                _OPEN_ISSUES_JQ,
-                timeout=GH_LIST_TIMEOUT * 2,
-            )
-        )
-        if items is None:
-            return None
-        try:
-            return [self._open_issue(item) for item in items]
-        except _IncompleteListingError:
-            return None
-
-    def _open_issue(self, item: dict[str, Any]) -> Issue:
-        """Build one listed issue, fetching all comments when the page truncated.
-
-        Args:
-            item: Projected listing entry for one open issue.
-
-        Returns:
-            The issue with its full comment list.
-        """
-        try:
-            comments = [_comment(c) for c in item["comments"]]
-            number = int(item["number"])
-            if int(item["total"]) > len(comments):
-                fetched = self.comments(number)
-                if fetched is None:
-                    raise _IncompleteListingError
-                comments = fetched
-            return Issue(
-                number=number,
-                body=str(item.get("body") or ""),
-                labels=tuple(str(n) for n in item["labels"]),
-                created_at=str(item["created_at"]),
-                comments=tuple(comments),
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise _IncompleteListingError from exc
 
 
 def git_merge_log(
@@ -1122,16 +971,19 @@ def _run_drift(args: argparse.Namespace, source: GitHubSource) -> Report:
         report = Report()
         report.unknown(f"refused: base branch {base_branch!r} does not resolve")
         return report
-    fetched = not base_ref.startswith("origin/") or fetch_quietly(
-        root, "origin", base_branch
-    )
-    if not fetched:
+    remote = base_ref.startswith("origin/")
+    if remote and not fetch_quietly(root, "origin", base_branch):
         report = Report()
         report.unknown(f"unknown: could not fetch {base_ref}; history may be stale")
         return report
-    return check_drift(
+    report = check_drift(
         source, args.issue, since=args.since, log_merges=git_merge_log(root, base_ref)
     )
+    if not remote:
+        report.lines.insert(
+            0, f"note: history read from local {base_ref}; it was not fetched"
+        )
+    return report
 
 
 def main(argv: list[str] | None = None, source: GitHubSource | None = None) -> int:

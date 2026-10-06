@@ -22,8 +22,8 @@ forge-plan-check drift <N> --since <createdAt>
 ```
 
 Confirm the issue is open, unblocked (`prerequisites` exits 0: every
-`Requires:` entry's work merged), non-colliding with open issues / PRs, and **plannable
-at all** — its author is a collaborator, or a collaborator endorsed it
+`Requires:` entry's work merged), non-colliding with open issues /
+PRs, and **plannable at all** — its author is a collaborator, or a collaborator endorsed it
 with an `[endorsed]` comment after the body's last edit (FOUNDATION
 §14 owns the rule, the `collaborators/<login>/permission` call that
 decides it, and the fail-closed behaviour when that call cannot

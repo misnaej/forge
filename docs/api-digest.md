@@ -921,12 +921,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _forge-plan-check — mechanical premise and prerequisite checks for validated plans._
 
-- `class Comment` — One issue comment as the checks need it.
-- `class Issue` — One issue; ``comments`` is filled only by the open-issue listing.
-- `class RefStatus` — What GitHub reports about one ``Requires:`` reference.
-- `class MergedPR` — A PR's merge state, changed files and the issues it closes.
 - `class Merge` — One first-parent commit on the base branch touching named paths.
 - `class Requires` — The ``Requires:`` entries parsed out of one or more texts.
+- `class PlanLookup` — The outcome of looking for an issue's authenticated plan.
 - `class GitHubSource` — The GitHub reads the checks perform; every method returns None on failure.
   - `issue(self, number: int) -> Issue | None` — Return issue *number* (body, labels, creation time).
   - `comments(self, number: int) -> list[Comment] | None` — Return every comment on issue *number*, an empty list when none.
@@ -943,34 +940,51 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_requires_rest(line: str) -> str | None` _(internal)_ — Return the text after a ``Requires:`` marker on *line*, or None.
 - `parse_requires(texts: Iterable[str]) -> Requires` — Parse every ``Requires:`` line in *texts*.
 - `prerequisite_verdict(status: RefStatus) -> tuple[bool, str]` — Decide whether one prerequisite has landed.
+- `delivering_prs(statuses: Mapping[int, RefStatus]) -> dict[int, int]` — Map each merged PR that delivered a prerequisite to that prerequisite.
+- `capped_echo(text: str) -> str` — Return *text* fenced and capped at :data:`ECHO_CAP` characters.
 - `is_safe_path(path: str) -> bool` — Return whether *path* may be handed to git as a repo-relative pathspec.
 - `named_paths(text: str) -> list[str]` — Return the repo-relative file paths *text* names, outside code fences.
-- `authenticated_plan(comments: Iterable[Comment], is_writer: Callable[[str], bool]) -> Comment | None` — Return the newest plan comment whose author has write access.
-- `plan_paths(plan: Comment | None, body: str) -> list[str]` — Return the files the plan names, falling back to the issue body's.
+- `authenticated_plan(comments: Iterable[Comment], is_writer: Callable[[str], bool | None]) -> PlanLookup` — Find the newest plan comment whose author has write access.
+- `plan_paths(plan: Comment | None, body: str) -> tuple[list[str], bool]` — Return the files the plan names, falling back to the issue body's.
 - `parse_timestamp(value: str) -> datetime` — Parse an ISO-8601 timestamp, reading a naive one as UTC.
 - `parse_merge_log(raw: str) -> list[Merge]` — Parse ``git log --name-only --format=%x1e%H%x1f%cI%x1f%s`` output.
-- `class WriterCheck` — Write-access predicate over a :class:`GitHubSource`, cached per login.
+- `class WriterCheck` — Tri-state write-access predicate over a :class:`GitHubSource`, cached.
+- `_record_lookup(lookup: PlanLookup, number: int, report: Report) -> bool` _(internal)_ — Write a plan lookup's notes into *report*; ``False`` when it is unknown.
 - `_issue_and_plan(source: GitHubSource, number: int, report: Report) -> tuple[Issue, Comment | None] | None` _(internal)_ — Fetch issue *number* and its authenticated plan, recording failures.
+- `_requires_texts(issue: Issue, plan: Comment | None) -> list[str]` _(internal)_ — Return the texts whose ``Requires:`` lines count: body, then plan.
+- `_statuses(source: GitHubSource, refs: Iterable[int], report: Report) -> dict[int, RefStatus]` _(internal)_ — Look up each prerequisite, recording an unknown line per failure.
 - `check_prerequisites(source: GitHubSource, number: int) -> Report` — Check that every prerequisite of issue *number* has landed.
+- `_drift_window(issue: Issue, plan: Comment | None, since: datetime | None, report: Report) -> tuple[list[str], datetime] | None` _(internal)_ — Return the paths and cut-off drift checks, or None after a refusal.
+- `_report_merges(merges: Iterable[Merge], since: datetime, delivered: Mapping[int, int], report: Report) -> None` _(internal)_ — Record each merge after *since*: a note when it delivers a prerequisite.
 - `check_drift(source: GitHubSource, number: int, *, since: datetime | None, log_merges: Callable[[list[str]], list[Merge] | None]) -> Report` — List base-branch merges that touched the plan's files since *since*.
-- `_overlap_line(issue: Issue, files: set[str], is_writer: WriterCheck) -> str | None` _(internal)_ — Return the finding line when *issue* names any of *files*.
+- `_check_overlap_issue(issue: Issue, files: set[str], is_writer: WriterCheck, report: Report) -> None` _(internal)_ — Record whether open *issue*'s files intersect *files*.
 - `check_overlap(source: GitHubSource, pr_number: int) -> Report` — List open issues naming a file merged PR *pr_number* changed.
-- `_loads(raw: str | None) -> dict[str, Any] | None` _(internal)_ — Decode one JSON document; ``None`` for a failed call or bad JSON.
+- `git_merge_log(root: Path, base_ref: str) -> Callable[[list[str]], list[Merge] | None]` — Return a ``log_merges`` callable over *base_ref*'s first-parent history.
+- `_since_arg(value: str) -> datetime` _(internal)_ — Argparse type for ``--since``: an ISO-8601 timestamp.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Return the ``forge-plan-check`` argument parser.
+- `_run_drift(args: argparse.Namespace, source: GitHubSource) -> Report` _(internal)_ — Resolve and refresh the base ref, then run the drift check.
+- `main(argv: list[str] | None = None, source: GitHubSource | None = None) -> int` — Run one ``forge-plan-check`` subcommand and print its report.
+
+## `forge.plan_staleness_gh`
+
+> _GitHub reads for ``forge-plan-check``: the records and the ``gh api`` adapter._
+
+- `class Comment` — One issue comment as the checks need it.
+- `class Issue` — One issue; ``comments`` is filled only by the open-issue listing.
+- `class RefStatus` — What GitHub reports about one ``Requires:`` reference.
+- `class MergedPR` — A PR's merge state, changed files and the issues it closes.
+- `_loads(raw: str | None) -> dict[str, Any] | None` _(internal)_ — Decode one JSON object; ``None`` for a failed call, bad JSON or a non-object.
 - `_pages(raw: str | None) -> list[Any] | None` _(internal)_ — Flatten paginated output, or ``None`` when the call or any page failed.
 - `_comment(item: dict[str, Any]) -> Comment` _(internal)_ — Build a :class:`Comment` from a projected JSON mapping.
+- `_issue_status(number: int, data: dict[str, Any]) -> RefStatus` _(internal)_ — Map an ``Issue`` GraphQL node to a :class:`RefStatus`.
 - `class _IncompleteListingError` _(internal)_ — An open issue could not be read completely; the listing is unknown.
-- `class GhSource` — Production :class:`GitHubSource` over ``gh api``; ``None`` on any failure.
+- `class GhSource` — Production ``GitHubSource`` over ``gh api``; ``None`` on any failure.
   - `issue(self, number: int) -> Issue | None` — Return issue *number* (body, labels, creation time).
   - `comments(self, number: int) -> list[Comment] | None` — Return every comment on issue *number*, an empty list when none.
   - `permission(self, login: str) -> str | None` — Return *login*'s permission on the repo (``admin``, ``write``, ...).
   - `ref_status(self, number: int) -> RefStatus | None` — Return the landing status of issue-or-PR *number*.
   - `pull_request(self, number: int) -> MergedPR | None` — Return PR *number*'s merge state, changed files and closed issues.
   - `open_issues(self) -> list[Issue] | None` — Return every open issue, comments included.
-- `git_merge_log(root: Path, base_ref: str) -> Callable[[list[str]], list[Merge] | None]` — Return a ``log_merges`` callable over *base_ref*'s first-parent history.
-- `_since_arg(value: str) -> datetime` _(internal)_ — Argparse type for ``--since``: an ISO-8601 timestamp.
-- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Return the ``forge-plan-check`` argument parser.
-- `_run_drift(args: argparse.Namespace, source: GitHubSource) -> Report` _(internal)_ — Resolve and refresh the base ref, then run the drift check.
-- `main(argv: list[str] | None = None, source: GitHubSource | None = None) -> int` — Run one ``forge-plan-check`` subcommand and print its report.
 
 ## `forge.post_checkout`
 

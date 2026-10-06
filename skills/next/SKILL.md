@@ -116,8 +116,9 @@ task-selection precedence rule in Important Rules).
 
 2. **Find open successors**: open issues whose `Requires:` line names
    one of those closed issues or merged PRs, kept only when
-   `forge-plan-check prerequisites <M>` exits 0 — every entry's work
-   merged, not merely its issue closed:
+   `forge-plan-check prerequisites <M>` (`<M>`: that open successor
+   issue's number) exits 0 — every entry's work merged, not merely its
+   issue closed:
    ```bash
    gh issue list --state open --limit 1000 --json number,title,body \
      --jq '.[] | select(.body | test("^Requires:.*#<N>\\b"))'

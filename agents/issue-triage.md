@@ -82,6 +82,10 @@ Override policy: when an issue already carries a tier label set by a
 user (no `[issue-triage]` comment for tier), DO NOT relabel — comment
 the alternative rationale instead. Per FOUNDATION §14.
 
+`blocked` follows `forge-plan-check prerequisites <N>` (FOUNDATION §14
+"Issue structure"): exit 1 applies it, under the `plan-ready` rule in
+`plan-readiness`.
+
 Regenerate the Backlog Index (template below).
 
 ### `recommend-next`
@@ -168,7 +172,7 @@ and stop (caller may explicitly force).
 
 ### `plan-readiness`
 
-An issue with a write-access `[sentinel] taken up` comment and no later `[sentinel] PR #N opened` is **in execution** — never a candidate (FOUNDATION §14 "Decision trail").
+An issue with a `[sentinel] taken up` comment and no later `[sentinel] PR #N opened` is **in execution** — never a candidate; a `[sentinel]` marker counts only from a write-access author (FOUNDATION §14 "Decision trail").
 
 ```bash
 gh issue list --state open --limit 1000 --json number,title,labels,body,updatedAt,author,comments
@@ -203,7 +207,8 @@ recoloring a canonical name, always with an `[issue-triage]` comment.
 **Record a validated plan** (delegated by `/plan-issue` after explicit
 user validation — never self-initiated; refused while `blocked` is
 present): post the plan verbatim as a comment opening with
-`[issue-triage] plan-validated:` and apply `plan-ready`. The issue body
+`[issue-triage] plan-validated:` and apply `plan-ready`, removing
+`needs-recheck` in the same edit. The issue body
 is never edited. Your one edit: strip any human sign-off claim
 ("validated by <name>") — FOUNDATION §14 "Decision trail".
 

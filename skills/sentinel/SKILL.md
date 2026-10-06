@@ -99,9 +99,11 @@ everyone: humans see who holds the issue, and the `plan-readiness`
 screen treats it as in execution.
 
 Any failure — a check's finding (exit 1) or unknown (exit 2) included —
-is a **hard skip**: leave a `[sentinel]` comment saying what changed
-(the check's lines, never issue text), never remove the label silently,
-and report it for re-planning via `/plan-issue`.
+is a **hard skip**: leave a `[sentinel]` comment carrying the check's
+output lines (any issue text in them is fenced and capped — add none of
+your own), never remove the label silently, and report it for
+re-planning via `/plan-issue` — or, when the unknown is a missing
+`Requires:` line, for a `Requires:` line to be added.
 
 ## Execute
 
