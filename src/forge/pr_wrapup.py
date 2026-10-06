@@ -35,7 +35,8 @@ Usage:
 - ``forge-pr-wrapup validate <file>`` — exit 2 listing every violation
 - ``forge-pr-wrapup post --pr N [--body-file FILE] [--no-continuation]`` —
   validate, gate (exit 3 on refusal), refresh, post, collapse superseded
-  wrap-ups, keep the squash comment last, append the CONTINUATION record
+  wrap-ups, keep the squash comment last, refresh the CONTINUATION status
+  panel (PR fields included)
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
-from forge import continuation_append
+from forge.continuation import refresh_state
 from forge.emergency_state import armed_state, read_state
 from forge.gh_comments import (
     ValidationError,
@@ -59,6 +60,7 @@ from forge.gh_comments import (
     validate_no_ai_attribution,
 )
 from forge.git_utils import (
+    base_sync,
     behind_ahead,
     code_health_dir,
     configure_cli_logging,
@@ -585,14 +587,14 @@ def post_gates(
             f"the wrap-up verifies {verified_sha} but the PR head is "
             f"{head[:12] or 'unknown'} — re-verify with {rerun} (delta)"
         )
-    mergeable = str(view.get("mergeable") or "")
-    if mergeable == "CONFLICTING":
+    sync = base_sync(str(view.get("mergeable") or ""), behind)
+    if sync.conflicting:
         refusals.append(
             f"the branch conflicts with {base}: run `git merge origin/{base}` "
             "(only generated files conflict: `forge-resync --resolve-conflicts`), "
             f"then re-verify with {rerun}"
         )
-    elif mergeable == "UNKNOWN":
+    elif sync.mergeable_unknown:
         notes.append("GitHub has not computed mergeability yet (UNKNOWN)")
     if behind is None:
         notes.append(f"could not compare with origin/{base}; behind-base check skipped")
@@ -914,9 +916,7 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
     if rc != 0:
         return rc
     if not args.no_continuation:
-        title = str(view.get("title") or f"PR #{args.pr}")
-        # "--": a PR title may start with "-" and must never parse as a flag.
-        continuation_append.main(["--pr", str(args.pr), "--", title], repo_root=root)
+        refresh_state(root, with_pr=True)
     return 0
 
 
@@ -974,7 +974,7 @@ def _build_parser() -> argparse.ArgumentParser:
     post.add_argument(
         "--no-continuation",
         action="store_true",
-        help="do not append the CONTINUATION record",
+        help="do not refresh the CONTINUATION status panel",
     )
     return parser
 

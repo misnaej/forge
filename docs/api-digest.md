@@ -370,20 +370,41 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_warn_untracked_under_roots(repo_root: Path, roots: list[str], suffix: str) -> None` _(internal)_ — Warn (dev-loop only) when untracked source under *roots* goes unscanned.
 - `installed_console_scripts(name: str) -> set[str] | None` — Return *name*'s installed ``console_scripts`` entry-point names.
 
-## `forge.continuation_append`
+## `forge.continuation`
 
-> _forge-continuation-append — append one line to ``.plan/CONTINUATION.md``._
+> _forge-continuation — keep ``.plan/CONTINUATION.md``'s status panel current._
 
-- `_today_iso() -> str` _(internal)_ — Return today's date as ``YYYY-MM-DD``.
-- `_ensure_file_and_section(path: Path) -> None` _(internal)_ — Create the file with the canonical headers if missing.
-- `_append_line(path: Path, line: str) -> None` _(internal)_ — Append *line* to *path* with a trailing newline.
-- `_split_sections(text: str) -> tuple[str, list[str], list[str], list[str]]` _(internal)_ — Split the file into head, digest lines, recent entries, and strays.
-- `_parse_digests(digest_lines: list[str]) -> dict[str, tuple[int, int, int, int, set[str]]]` _(internal)_ — Parse existing digest lines into per-day accumulators.
-- `_condense_into(acc: dict[str, tuple[int, int, int, int, set[str]]], overflow: list[str]) -> dict[str, tuple[int, int, int, int, set[str]]]` _(internal)_ — Fold rotated raw entries into the per-day digest accumulators.
-- `_render_digest(acc: dict[str, tuple[int, int, int, int, set[str]]]) -> list[str]` _(internal)_ — Render accumulators back into sorted digest lines.
-- `_partition_recent(recent: list[str], head: str, *, max_entries: int, cutoff: str) -> tuple[list[str], list[str], int]` _(internal)_ — Partition recent entries into keep/overflow with floor/cap constraints.
-- `_rotate(path: Path, archive: Path, *, max_entries: int, max_age_days: int) -> None` _(internal)_ — Rotate aged/overflowing recent entries into digest + archive.
-- `main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int` — Append one activity-log line and/or rotate the ledger tail.
+- `_no_pr(root: Path) -> PrState` _(internal)_ — Return the PR fields for a branch with no open PR.
+- `read_pr_state(root: Path) -> PrState | None` — Read the current branch's open PR from GitHub.
+- `refresh_state(root: Path, *, with_pr: bool = False, attempt: str | None = None) -> int` — Rewrite the status panel, optionally re-reading the PR first.
+- `check_note(root: Path) -> int` — Report the written section's line usage against its budget.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the ``forge-continuation`` argument parser.
+- `main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int` — Run ``forge-continuation``.
+
+## `forge.continuation_state`
+
+> _The ``.plan/CONTINUATION.md`` status panel — format, local state, rewrite._
+
+- `sanitize(value: object, *, limit: int = _VALUE_MAX) -> str` — Reduce *value* to a single panel-safe token.
+- `class PrState` — The open PR's fields, labelled with the PR head they were read at.
+  - `values(self) -> dict[str, str]` — Return the panel values keyed by :data:`PR_KEYS`.
+- `class LocalState` — What git alone says about the working copy.
+- `short_head(root: Path) -> str` — Return the short HEAD SHA.
+- `collect_local_state(root: Path) -> LocalState` — Read the panel's git-only fields, offline.
+- `_count(value: int | None) -> str` _(internal)_ — Render an optional count.
+- `_fragments_value(names: tuple[str, ...]) -> str` _(internal)_ — Render the fragment list as one bounded line.
+- `render_panel(local: LocalState, *, attempt: tuple[str, str | None], pr: dict[str, tuple[str, str | None]], updated: str) -> str` — Render the whole panel block, markers included.
+- `marker_problems(text: str) -> list[str]` — Return why *text*'s panel markers cannot be rewritten safely.
+- `panel_span(text: str) -> tuple[int, int] | None` — Return the panel block's ``[start, end)`` offsets in *text*.
+- `written_section(text: str) -> str` — Return the note minus its panel block.
+- `written_line_count(text: str) -> int` — Count the written section's lines, ignoring surrounding blank lines.
+- `migrate_legacy(text: str) -> str` — Drop the retired ledger, digest and archive pointer from *text*.
+- `parse_panel(text: str) -> dict[str, tuple[str, str | None]]` — Read the existing panel's values, re-sanitized.
+- `judgment_max_lines(root: Path) -> int` — Return the written section's line budget.
+- `note_is_ignored(root: Path) -> bool` — Return whether git ignores the note, so a write can never be committed.
+- `_utc_token() -> str` _(internal)_ — Return the current UTC time as a panel-safe token.
+- `_pr_fields(previous: dict[str, tuple[str, str | None]], pr: PrState | None) -> dict[str, tuple[str, str | None]]` _(internal)_ — Choose fresh PR fields or carry the previous ones forward.
+- `write_state(root: Path, *, attempt: str | None = None, pr: PrState | None = None) -> WriteOutcome` — Rewrite the note's status panel, migrating an old-format note first.
 
 ## `forge.doctor`
 
@@ -675,6 +696,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `push_branch(repo_root: Path, branch: str, *, set_upstream: bool = False, remote: str = 'origin') -> PushResult` — Push *branch* to *remote* without ever prompting or hanging.
 - `push_tag(repo_root: Path, tag: str, *, remote: str = 'origin') -> PushResult` — Push *tag* to *remote* without ever prompting or hanging.
 - `behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None` — Return how many commits HEAD is behind and ahead of *base_ref*.
+- `unpushed_commit_count(repo_root: Path) -> int | None` — Return how many commits HEAD holds that its upstream does not.
+- `staged_unstaged_paths(repo_root: Path) -> tuple[list[str], list[str]] | None` — Split the working tree's changed paths into staged and unstaged.
+- `class BaseSync` — Whether a PR's branch can merge into its base as it stands.
+  - `summary(self) -> str` — One token naming every problem, or ``clean``.
+- `base_sync(mergeable: str, behind: int | None) -> BaseSync` — Read GitHub's ``mergeable`` value and a behind-base count together.
 - `has_conflict_markers(text: str) -> bool` — Return whether *text* contains unresolved git conflict markers.
 - `file_has_conflict_markers(path: Path) -> bool` — Return whether the file at *path* holds unresolved conflict markers.
 - `resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref diff-scoped checks should compare against, origin-first.
@@ -1103,6 +1129,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `verdict(root: Path) -> tuple[bool, list[str]]` — Return whether every enabled step passed on the current tree.
 - `_verdict_closing_line(*, stale: bool, failing: list[str], missing: list[str]) -> str` _(internal)_ — Return the verdict's closing line, naming the cause of a FAIL.
 - `_report_freshness(only: list[str], *, as_json: bool) -> int` _(internal)_ — Report each ``code_health/`` log's freshness against the working tree.
+- `_attempt_outcome(results: Sequence[StepResult]) -> str` _(internal)_ — Name a finished run's result for the continuation status panel.
+- `_write_continuation_panel(outcome: str) -> None` _(internal)_ — Record this commit attempt in ``.plan/CONTINUATION.md``'s status panel.
 - `main() -> int` — CLI entry point.
 
 ## `forge.rebump`

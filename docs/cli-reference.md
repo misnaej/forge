@@ -315,28 +315,24 @@ options:
   --list      List forge config + advice (the default action).
 ```
 
-## forge-continuation-append
+## forge-continuation
 
 ```text
-usage: forge-continuation-append [-h] (--rotate | --commit HASH |
-                                 --pr NUMBER | --merge HASH)
-                                 [subject]
+usage: forge-continuation [-h] {state,check} ...
 
-Append one line to .plan/CONTINUATION.md's auto-appended activity section.
-Single source of truth for the format used by forge:git-commit-push and
-forge:pr-manager.
+Keep .plan/CONTINUATION.md's generated status panel current and check its
+written section's line budget.
 
 positional arguments:
-  subject        Subject line — commit subject, PR title, or merge subject
-                 (omitted with --rotate).
+  {state,check}
+    state        Rewrite the status panel; every byte outside it stays
+                 identical.
+    check        Report the written section's line usage against
+                 [tool.forge.continuation].judgment_max_lines; exit 1 on bad
+                 markers.
 
 options:
   -h, --help     show this help message and exit
-  --rotate       Run rotation/condensation only, without appending — the
-                 continuation-hygiene entry point for the /next skill.
-  --commit HASH  Record a commit. HASH is the short SHA.
-  --pr NUMBER    Record a PR wrap-up. NUMBER is the PR number (no leading #).
-  --merge HASH   Record a PR merge on main. HASH is the short SHA.
 ```
 
 ## forge-doctor

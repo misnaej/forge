@@ -4417,3 +4417,102 @@ def test_wrap_in_code_fence_content_backticks_cannot_close_the_block() -> None:
 
     assert fence == "`````"
     assert wrapped.split(fence) == ["", f"\n{hostile}\n", ""]
+
+
+# ---------------------------------------------------------------------------
+# staged_unstaged_paths / unpushed_commit_count / base_sync
+# ---------------------------------------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> None:
+    """Run git in *repo* with the shared test identity.
+
+    Args:
+        repo: Directory to run git in.
+        *args: Git command arguments.
+    """
+    subprocess.run(["git", *args], cwd=repo, env=_GIT_ENV, check=True)
+
+
+def _stage_split_repo(repo: Path) -> None:
+    """Build a tree with staged, unstaged, both-sides and untracked paths.
+
+    Args:
+        repo: Directory to initialise as the git repository.
+    """
+    _init_git_repo(repo)
+    for name in ("tracked.txt", "both.txt", "renamed.txt"):
+        (repo / name).write_text("v1\n", encoding="utf-8")
+    commit_all(repo, "base")
+    (repo / "tracked.txt").write_text("v2\n", encoding="utf-8")
+    _git(repo, "add", "tracked.txt")
+    (repo / "both.txt").write_text("v2\n", encoding="utf-8")
+    _git(repo, "add", "both.txt")
+    (repo / "both.txt").write_text("v3\n", encoding="utf-8")
+    _git(repo, "mv", "renamed.txt", "moved name.txt")
+    (repo / "new.txt").write_text("n\n", encoding="utf-8")
+
+
+def test_staged_unstaged_paths_splits_by_column(tmp_path: Path) -> None:
+    """Index changes are staged, worktree/untracked unstaged, both-sides in both."""
+    _stage_split_repo(tmp_path)
+    result = git_utils.staged_unstaged_paths(tmp_path)
+    assert result is not None
+    staged, unstaged = result
+    assert sorted(staged) == ["both.txt", "moved name.txt", "tracked.txt"]
+    assert sorted(unstaged) == ["both.txt", "new.txt"]
+
+
+def test_staged_unstaged_paths_clean_tree_is_two_empty_lists(tmp_path: Path) -> None:
+    """A clean tree is known-empty, not unknown."""
+    _init_git_repo(tmp_path)
+    assert git_utils.staged_unstaged_paths(tmp_path) == ([], [])
+
+
+def test_staged_unstaged_paths_is_none_outside_a_repo(tmp_path: Path) -> None:
+    """A git failure reads as unknown, never as zero changes."""
+    assert git_utils.staged_unstaged_paths(tmp_path) is None
+
+
+def test_unpushed_commit_count_tracks_the_upstream(tmp_path: Path) -> None:
+    """No upstream is unknown; pushed is 0; each local commit adds one."""
+    work, _bare = _init_single_track_repo(tmp_path)
+    assert git_utils.unpushed_commit_count(work) is None
+    _git(work, "branch", "-q", "--set-upstream-to=origin/main")
+    assert git_utils.unpushed_commit_count(work) == 0
+    (work / "a.txt").write_text("a", encoding="utf-8")
+    commit_all(work, "a")
+    assert git_utils.unpushed_commit_count(work) == 1
+    _git(work, "checkout", "-q", "-b", "side")
+    assert git_utils.unpushed_commit_count(work) is None
+
+
+def test_unpushed_commit_count_is_none_without_a_repo(tmp_path: Path) -> None:
+    """Git failure is unknown, not zero."""
+    assert git_utils.unpushed_commit_count(tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    ("mergeable", "behind", "summary"),
+    [
+        ("MERGEABLE", 0, "clean"),
+        ("CONFLICTING", 0, "conflicting"),
+        ("UNKNOWN", 0, "mergeability-unknown"),
+        ("MERGEABLE", 3, "behind-3"),
+        ("MERGEABLE", None, "behind-unknown"),
+        ("CONFLICTING", 2, "conflicting+behind-2"),
+        ("UNKNOWN", None, "mergeability-unknown+behind-unknown"),
+        ("", 0, "clean"),
+    ],
+)
+def test_base_sync_summary_names_every_problem(
+    mergeable: str, behind: int | None, summary: str
+) -> None:
+    """The one mergeability reading joins each problem into a single token.
+
+    Args:
+        mergeable: GitHub mergeability state fed to ``base_sync``.
+        behind: Commits behind the base, or None when unknown.
+        summary: Expected single-token summary.
+    """
+    assert git_utils.base_sync(mergeable, behind).summary == summary

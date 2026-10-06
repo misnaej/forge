@@ -104,10 +104,8 @@ starts at the change list hands them the very gap this flow exists to
 close.
 
 The issue body — the original ask — is never edited. Report the
-recorded comment URL, append it as a one-line record to
-`.plan/CONTINUATION.md` (an audit trail `/sentinel` can cross-check at
-pickup), and stop; execution belongs to `/sentinel` or a later
-session.
+recorded comment URL and stop; the comment on the issue is the record,
+and execution belongs to `/sentinel` or a later session.
 
 ## Draft-only mode
 

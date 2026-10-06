@@ -410,7 +410,8 @@ Verification is done, fixes are committed, and the wrap-up is authored
     names the fix (merge the base, re-verify with `/pr <PR#>`) and never
     merges. Otherwise it refreshes CI Status (never waiting for CI) and
     Issue Management from GitHub, posts, collapses superseded wrap-ups,
-    keeps the squash comment newest, and appends the CONTINUATION record.
+    keeps the squash comment newest, and refreshes the handoff note's
+    status panel with the PR fields.
     Then post the squash-merge message; a non-zero exit names the broken
     rule.
 
@@ -440,7 +441,7 @@ The squash-merge message becomes the permanent commit message on `main`.
 
 ## Step 6: Update CONTINUATION state
 
-18. `forge-pr-wrapup post` appends a one-line activity record to `.plan/CONTINUATION.md` (gitignored).
+18. `forge-pr-wrapup post` refreshes the status panel of `.plan/CONTINUATION.md` (FOUNDATION §10). Update the written section only if the PR changed what the next session needs to know.
 
 ## Step 7: Background PR monitor (default)
 

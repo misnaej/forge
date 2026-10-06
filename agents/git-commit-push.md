@@ -97,18 +97,9 @@ MUST have run first; you fail if the pre-commit hook finds violations.
    git push origin <branch>
    ```
 
-7. **Update CONTINUATION log** — after each successful push, record the
-   commit via `forge-continuation-append`, the SSoT for
-   [FOUNDATION §10](../FOUNDATION.md#10-continuation-protocol)'s format
-   (idempotent):
-
-   ```bash
-   forge-continuation-append \
-       --commit "$(git rev-parse --short HEAD)" \
-       "$(git log -1 --pretty=%s)"
-   ```
-
-   Skip on push failure.
+   The handoff note's status panel is refreshed by the pre-commit run
+   itself ([FOUNDATION §10](../FOUNDATION.md#10-continuation-protocol));
+   this agent writes nothing to `.plan/CONTINUATION.md`.
 
 8. **Report** the commit hash and push status
 
@@ -145,7 +136,7 @@ around it, or reach the same effect another way.
 |---|---|
 | **Pre-commit hook blocked the commit** | Read the `code_health/*.log` of each failing step, then emit the block below. Never fix, never bypass. |
 | **Base branch moved under you** (`git status -sb` shows behind, or a push reports non-fast-forward) | Report branch, upstream, ahead/behind counts. Syncing is the main agent's call — never pull, merge, or rebase. |
-| **Push rejected** | Report the verbatim git error; note the commit stands locally, only the push failed. Skip the CONTINUATION append. Never force. |
+| **Push rejected** | Report the verbatim git error; note the commit stands locally, only the push failed. Never force. |
 | **Index is not what the caller described** — extra or missing paths staged | Report `git status --short` verbatim plus the delta against your instructions. Never commit a superset, never stage the missing piece yourself. |
 | **A gate demands a file that does not exist** (changelog fragment, generated artifact) | Report the gate message unchanged; creating it is the main agent's. |
 
@@ -227,7 +218,6 @@ Files staged: <paths, or "all (-A)">
 Authorship: <the `forge-agent-profile --edits` output, verbatim>
 Pre-commit: passed
 Pushed: <branch> → origin/<branch> (tracking set, if -u)
-CONTINUATION: appended
 ```
 
 Otherwise emit the matching **Failure states** report.

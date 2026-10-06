@@ -143,6 +143,22 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/check_foundation_sync.sh",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/load_continuation.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/keep_continuation_state.sh",
+            "timeout": 30
           }
         ]
       }

@@ -179,7 +179,7 @@ Idempotent and re-run-safe — it's also the upgrade re-sync step (below).
 | `.githooks/.forge-hook-version` | 2 | **gitignore** (per-clone version sidecar) |
 | `docs/api-digest.md`, `docs/cli-reference.md` | 1 | **commit** (generated; checked for drift) |
 | `code_health/*.log`, `audit_deps_tree.log` | 1 | **gitignore** (regenerated each run) |
-| `.plan/CONTINUATION.md` | — | **gitignore** (cross-session handoff) |
+| `.plan/CONTINUATION.md` | — | **gitignore** (cross-session handoff; its status panel is written by `forge-continuation`, which refuses to write the file unless it is ignored) |
 | `.badges/docstring-coverage.svg` | 1 | commit only if you embed it in a README |
 
 ---

@@ -93,6 +93,6 @@ plan_dir_in_delete_chunk() {
     return 1
 }
 if echo "$COMMAND" | grep -qE "$CONTINUATION_RE" || plan_dir_in_delete_chunk; then
-    echo "BLOCKED: refusing to delete .plan/CONTINUATION.md — it is the only file that carries state across a context clear (FOUNDATION §10). Rewrite its sections in place instead of deleting it (see /next Phase 6)." >&2
+    echo "BLOCKED: refusing to delete .plan/CONTINUATION.md — it is the only file that carries state across a context clear (FOUNDATION §10). Refresh its status panel with \`forge-continuation state\` and rewrite its written section in place instead of deleting it (see /next Phase 6)." >&2
     exit 2
 fi

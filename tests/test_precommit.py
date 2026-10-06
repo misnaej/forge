@@ -28,6 +28,7 @@ import pytest
 
 from forge import config, emergency, git_utils, precommit, regen_docs, version_surfaces
 from forge.pip_audit_json import AuditRun
+from forge.run_context import _CI_MARKERS
 from forge.smart_test import lifecycle as _lifecycle
 from tests.conftest import (
     GIT_ENV,
@@ -8060,3 +8061,132 @@ def test_record_regenerated_records_doc_matching_index_blob(tmp_path: Path) -> N
     entry = regen_docs.load_record(repo)[rel]
     assert entry["doc_blob"] == regen_docs.index_blobs(repo)[rel]
     assert entry["inputs"] == "x"
+
+
+# ---------------------------------------------------------------------------
+# continuation status panel written by main()
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def panel_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A real tmp repo with ``.plan/`` ignored, pinned as pre-commit's root.
+
+    Returns:
+        The repo root; CI markers are cleared so the panel is written.
+    """
+    for name in _CI_MARKERS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("FORGE_WIP_SYNC", raising=False)
+    init_git_repo(tmp_path)
+    (tmp_path / ".gitignore").write_text(".plan/\n", encoding="utf-8")
+    commit_all(tmp_path, "ignore plan")
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    return tmp_path
+
+
+def _panel_text(root: Path) -> str:
+    """Return the handoff note under *root*.
+
+    Args:
+        root: Repository root directory.
+
+    Returns:
+        Contents of CONTINUATION.md.
+    """
+    return (root / ".plan" / "CONTINUATION.md").read_text(encoding="utf-8")
+
+
+def _drive_main(monkeypatch: pytest.MonkeyPatch, run_all: object, *argv: str) -> int:
+    """Run ``precommit.main`` with *run_all* stubbed and *argv* as arguments.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+        run_all: Mock for precommit.run_all.
+        *argv: Command-line arguments for precommit.main.
+
+    Returns:
+        Exit code from precommit.main().
+    """
+    monkeypatch.setattr(precommit, "run_all", run_all)
+    with patch.object(precommit.sys, "argv", ["forge-precommit", *argv]):
+        return precommit.main()
+
+
+def test_main_writes_the_panel_naming_the_blocking_step(
+    panel_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A blocked commit leaves its blocking step in the note, exit stays 1."""
+
+    def _blocked(**_kw: object) -> list[precommit.StepResult]:
+        return [precommit.StepResult(name="ruff_check", passed=False, output="x")]
+
+    assert _drive_main(monkeypatch, _blocked) == 1
+    assert "- last-attempt: blocked:ruff_check" in _panel_text(panel_repo)
+
+
+def test_main_writes_passed_on_a_clean_run(
+    panel_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clean run records ``passed``."""
+    assert _drive_main(monkeypatch, lambda **_kw: []) == 0
+    assert "- last-attempt: passed" in _panel_text(panel_repo)
+
+
+def test_main_writes_error_when_run_all_raises_value_error(
+    panel_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A usage error (unknown step) is recorded as ``error`` and still exits 1."""
+
+    def _bad(**_kw: object) -> list[precommit.StepResult]:
+        msg = "unknown step"
+        raise ValueError(msg)
+
+    assert _drive_main(monkeypatch, _bad) == 1
+    assert "- last-attempt: error" in _panel_text(panel_repo)
+
+
+def test_main_writes_interrupted_when_the_run_is_cut_short(
+    panel_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A KeyboardInterrupt still reaches the ``finally`` and is recorded."""
+
+    def _interrupt(**_kw: object) -> list[precommit.StepResult]:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        _drive_main(monkeypatch, _interrupt)
+    assert "- last-attempt: interrupted" in _panel_text(panel_repo)
+
+
+def test_main_never_fails_the_commit_when_the_panel_write_errors(
+    panel_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken panel write is logged, and pre-commit's exit code is unchanged."""
+
+    def _boom(*_a: object, **_kw: object) -> str:
+        msg = "disk full"
+        raise OSError(msg)
+
+    monkeypatch.setattr(precommit, "write_state", _boom)
+    assert _drive_main(monkeypatch, lambda **_kw: []) == 0
+
+
+@pytest.mark.parametrize("scenario", ["only", "ci", "wip-sync"])
+def test_main_skips_the_panel_for_partial_ci_and_wip_runs(
+    panel_repo: Path, monkeypatch: pytest.MonkeyPatch, scenario: str
+) -> None:
+    """``--only`` is not a commit attempt, CI has no reader, wip-sync runs nothing.
+
+    Args:
+        scenario: Which skip condition to set up (``only``, ``ci`` or ``wip-sync``).
+    """
+    argv: tuple[str, ...] = ()
+    if scenario == "only":
+        argv = ("--only", "ruff_check")
+    elif scenario == "ci":
+        monkeypatch.setenv("CI", "1")
+    else:
+        monkeypatch.setenv("FORGE_WIP_SYNC", "1")
+    _drive_main(monkeypatch, lambda **_kw: [], *argv)
+    assert not (panel_repo / ".plan" / "CONTINUATION.md").exists()

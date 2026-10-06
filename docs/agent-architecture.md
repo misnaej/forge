@@ -115,7 +115,6 @@ graph LR
   design_checker["⚖️ design-checker<br/>AI agent"]
   docs_types_checker["⚖️ docs-types-checker<br/>AI agent"]
   sk_fix(["/fix<br/>skill"])
-  cli_forge_continuation_append[("forge-continuation-append<br/>CLI")]
   cli_forge_precommit[("forge-precommit<br/>CLI")]
   cli_forge_smart_test[("forge-smart-test<br/>CLI")]
   git_commit_push["git-commit-push<br/>AI agent"]
@@ -154,7 +153,6 @@ graph LR
   sk_test -->|invokes| precommit_fixer
   sk_test -->|chains| sk_commit
   precommit_fixer -->|invokes| cli_forge_precommit
-  git_commit_push -->|invokes| cli_forge_continuation_append
   sk_smart_test -->|invokes| cli_forge_smart_test
   git_commit_push -.->|guarded by| hk_block_no_verify
   git_commit_push -.->|guarded by| hk_block_force_push
@@ -176,7 +174,6 @@ graph LR
   class docs_types_checker agent
   class docs_types_checker mutator
   class sk_fix skill
-  class cli_forge_continuation_append cli
   class cli_forge_precommit cli
   class cli_forge_smart_test cli
   class git_commit_push agent
@@ -221,7 +218,6 @@ graph LR
   hk_block_unverified_pr_create[/"block_unverified_pr_create<br/>hook"/]
   design_checker["⚖️ design-checker<br/>AI agent"]
   docs_types_checker["⚖️ docs-types-checker<br/>AI agent"]
-  cli_forge_continuation_append[("forge-continuation-append<br/>CLI")]
   cli_forge_pr_plan[("forge-pr-plan<br/>CLI")]
   cli_forge_pr_squash_comment[("forge-pr-squash-comment<br/>CLI")]
   cli_forge_pr_wrapup[("forge-pr-wrapup<br/>CLI")]
@@ -258,7 +254,6 @@ graph LR
   sk_pr_comments -->|invokes| pr_manager
   pr_manager -->|invokes| cli_forge_pr_squash_comment
   pr_manager -->|invokes, composes + posts the wrap-up| cli_forge_pr_wrapup
-  pr_manager -->|invokes| cli_forge_continuation_append
   pr_manager -.->|guarded by| hk_block_pr_merge
   pr_manager -.->|guarded by| hk_block_unverified_pr_create
   sk_pr -.->|guarded by| hk_block_unverified_pr_create
@@ -273,7 +268,6 @@ graph LR
   class design_checker reporter
   class docs_types_checker agent
   class docs_types_checker mutator
-  class cli_forge_continuation_append cli
   class cli_forge_pr_plan cli
   class cli_forge_pr_squash_comment cli
   class cli_forge_pr_wrapup cli
