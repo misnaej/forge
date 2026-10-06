@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import config, fix_ruff
+from forge.git_utils import code_health_dir
 
 
 if TYPE_CHECKING:
@@ -95,7 +96,7 @@ def test_scope_diff_skips_when_no_modified_files(
     assert not [c for c in calls if c[:1] == ["ruff"]]
     assert (
         "(no modified files — skipped)"
-        in (tmp_path / "code_health" / "ruff.log").read_text()
+        in (code_health_dir(tmp_path) / "ruff.log").read_text()
     )
 
 
@@ -106,7 +107,7 @@ def test_main_writes_ruff_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     _stub_subprocess(monkeypatch)
     monkeypatch.setattr("sys.argv", ["fix-forge-ruff"])
     fix_ruff.main()
-    log_path = tmp_path / "code_health" / "ruff.log"
+    log_path = code_health_dir(tmp_path) / "ruff.log"
     assert log_path.is_file()
     content = log_path.read_text()
     assert "$ ruff format" in content
@@ -146,7 +147,7 @@ def test_main_skipped_without_source_dirs(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["fix-forge-ruff"])
     assert fix_ruff.main() == 0
-    log = (tmp_path / "code_health" / "ruff.log").read_text()
+    log = (code_health_dir(tmp_path) / "ruff.log").read_text()
     assert "skipped" in log
 
 

@@ -500,7 +500,8 @@ and prints the slowest tests, merged across batches. Read-only, always
 exits `0` — a reporter, not a gate. Pass `--durations` explicitly on the
 command line (as above) so the report works regardless of your repo's
 pytest config; optionally mirror the flags in your own pytest config for
-bare local runs.
+bare local runs. The tee'd `pytest.log` is unstamped and never evidence —
+it only feeds the report in the same job.
 
 Full pasteable workflows (per-PR CI + scheduled
 `forge-upgrade --apply`) are in

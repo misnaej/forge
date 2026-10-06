@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import slow_tests_report
+from forge.git_utils import code_health_dir
 from forge.slow_tests_report import (
     Duration,
     _source_roots,
@@ -131,7 +132,7 @@ def test_main_reads_file_and_writes_out(
     """``main`` parses ``--log`` and persists the report to ``--out``."""
     log = tmp_path / "pytest.log"
     log.write_text(SINGLE_SECTION, encoding="utf-8")
-    out = tmp_path / "code_health" / "slow_tests.log"
+    out = code_health_dir(tmp_path) / "slow_tests.log"
     monkeypatch.setattr(
         "sys.argv",
         ["forge-slow-tests-report", "--log", str(log), "--out", str(out), "--top", "5"],
@@ -349,7 +350,7 @@ def test_main_log_and_baseline_appends_delta_block(
     baseline_path.write_text(
         json.dumps({"tests/test_a.py::test_slow::call": 1.0}), encoding="utf-8"
     )
-    out = tmp_path / "code_health" / "slow_tests.log"
+    out = code_health_dir(tmp_path) / "slow_tests.log"
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -388,7 +389,7 @@ def test_main_bare_baseline_uses_default_path_and_degrades_when_absent(
     log = tmp_path / "pytest.log"
     log.write_text(SINGLE_SECTION, encoding="utf-8")
     assert not (tmp_path / slow_tests_report.DEFAULT_BASELINE).exists()
-    out = tmp_path / "code_health" / "slow_tests.log"
+    out = code_health_dir(tmp_path) / "slow_tests.log"
     monkeypatch.setattr(
         "sys.argv",
         ["forge-slow-tests-report", "--log", str(log), "--baseline", "--out", str(out)],

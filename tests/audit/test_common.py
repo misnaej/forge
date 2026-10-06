@@ -16,6 +16,7 @@ from forge.audit.common import (
     iter_files,
     make_audit_parser,
     read_finding_count,
+    read_scope,
     relpath,
     resolve_roots,
     write_log,
@@ -428,3 +429,57 @@ def test_finding_render_keeps_injected_newline_on_one_line() -> None:
     assert rendered.count("[HIGH]") == 2  # escaped text, not a real line
     lines = [ln for ln in rendered.splitlines() if ln.strip()]
     assert len(lines) == 1
+
+
+@pytest.mark.parametrize("scope", [Scope.FULL, Scope.CHANGED])
+def test_write_log_records_scope_header_and_count_still_parses(
+    fake_repo: Path, scope: Scope
+) -> None:
+    """The ``# scope:`` line sits in the header window every reader scans.
+
+    A changed-files run writes the same file a full run does, so the scope
+    is the only thing telling them apart; the finding-count reader must
+    still find its line after the scope line was inserted above it.
+
+    Args:
+        scope: The scope recorded in the log header.
+    """
+    findings = [
+        Finding(audit="dup", severity=Severity.LOW, path="a.py", line=1, message="m")
+    ]
+    path = write_log("dup", findings, summary="s", scope=scope)
+    text = path.read_text(encoding="utf-8")
+
+    assert f"# scope: {scope.value}" in text.splitlines()[:10]
+    assert read_finding_count(text) == 1
+    assert read_scope(text) == scope.value
+
+
+def test_write_log_without_scope_omits_the_header_line(fake_repo: Path) -> None:
+    """No scope given: no ``# scope:`` line, and readers report unknown."""
+    text = write_log("dup", [], summary="s").read_text(encoding="utf-8")
+
+    assert "# scope:" not in text
+    assert read_scope(text) is None
+    assert read_finding_count(text) == 0
+
+
+@pytest.mark.parametrize(
+    ("log_text", "expected"),
+    [
+        ("# forge-audit-dup\n# scope: full\n# findings: 0\n", "full"),
+        ("# forge-audit-dup\n# scope: changed\n# findings: 0\n", "changed"),
+        ("# forge-audit-dup\n# findings: 0\n", None),
+        ("# scope:\n# findings: 0\n", None),
+        ("\n" * 10 + "# scope: full\n", None),
+    ],
+    ids=["full", "changed", "absent", "empty-value", "beyond-header-window"],
+)
+def test_read_scope_table(log_text: str, expected: str | None) -> None:
+    """``read_scope`` returns the header value, or ``None`` when unknown.
+
+    Args:
+        log_text: Audit log text whose header window is scanned.
+        expected: The scope value ``read_scope`` should return, or ``None``.
+    """
+    assert read_scope(log_text) == expected

@@ -6,6 +6,7 @@ import textwrap
 from typing import TYPE_CHECKING
 
 from forge import verify_docstring_coverage
+from forge.git_utils import code_health_dir
 
 
 if TYPE_CHECKING:
@@ -100,7 +101,7 @@ def test_pass_when_coverage_meets_threshold(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
     assert verify_docstring_coverage.main() == 0
-    log = (tmp_path / "code_health" / "docstring_coverage.log").read_text()
+    log = (code_health_dir(tmp_path) / "docstring_coverage.log").read_text()
     assert ">= fail-under" in log
 
 
@@ -113,7 +114,7 @@ def test_fail_when_coverage_below_threshold(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
     assert verify_docstring_coverage.main() == 1
-    log = (tmp_path / "code_health" / "docstring_coverage.log").read_text()
+    log = (code_health_dir(tmp_path) / "docstring_coverage.log").read_text()
     assert "< fail-under" in log
 
 
@@ -125,7 +126,7 @@ def test_skip_when_no_pyproject(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
     assert verify_docstring_coverage.main() == 0
-    log = (tmp_path / "code_health" / "docstring_coverage.log").read_text()
+    log = (code_health_dir(tmp_path) / "docstring_coverage.log").read_text()
     assert "skipped" in log
 
 
@@ -137,7 +138,7 @@ def test_skip_when_no_configured_paths_exist(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
     assert verify_docstring_coverage.main() == 0
-    log = (tmp_path / "code_health" / "docstring_coverage.log").read_text()
+    log = (code_health_dir(tmp_path) / "docstring_coverage.log").read_text()
     assert "skipped" in log
 
 
@@ -183,7 +184,7 @@ def test_missing_list_format_for_precommit_fixer_dispatch(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
     verify_docstring_coverage.main()
-    log = (tmp_path / "code_health" / "docstring_coverage.log").read_text()
+    log = (code_health_dir(tmp_path) / "docstring_coverage.log").read_text()
     assert "## Missing docstrings (" in log
     assert "MISSING:" in log
     assert "undocumented" in log
@@ -201,7 +202,7 @@ def test_default_fail_under_matches_foundation(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-docstring-coverage"])
     assert verify_docstring_coverage.main() == 0
-    log = (tmp_path / "code_health" / "docstring_coverage.log").read_text()
+    log = (code_health_dir(tmp_path) / "docstring_coverage.log").read_text()
     assert "fail-under 90" in log
 
 

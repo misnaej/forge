@@ -25,6 +25,7 @@ from forge.audit.suppressions import (
     resolve_ruff_rule,
     run,
 )
+from forge.git_utils import code_health_dir
 
 
 if TYPE_CHECKING:
@@ -266,7 +267,7 @@ def test_run_writes_log_with_findings(
         "w = 4  # pragma: no cover\n",
     )
     code = run(Scope.FULL, [fake_repo / "src"], SuppressionsConfig())
-    log_path = fake_repo / "code_health" / "audit_suppressions.log"
+    log_path = code_health_dir(fake_repo) / "audit_suppressions.log"
     log_text = log_path.read_text(encoding="utf-8")
     assert "[HIGH]" in log_text
     assert "[MEDIUM]" in log_text
@@ -280,7 +281,7 @@ def test_run_clean_file_returns_zero(fake_repo: Path) -> None:
     """A file with no suppressions yields exit 0 and no findings."""
     _write(fake_repo / "src" / "clean.py", "x = 1\n")
     code = run(Scope.FULL, [fake_repo / "src"], SuppressionsConfig())
-    log_path = fake_repo / "code_health" / "audit_suppressions.log"
+    log_path = code_health_dir(fake_repo) / "audit_suppressions.log"
     log_text = log_path.read_text(encoding="utf-8")
     assert "# findings: 0" in log_text
     assert code == 0

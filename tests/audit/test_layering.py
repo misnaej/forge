@@ -18,6 +18,7 @@ from forge.audit.layering import (
     parse_layers,
     run,
 )
+from forge.git_utils import code_health_dir
 from tests.audit.conftest import make_fake_repo, write_pyproject
 
 
@@ -995,7 +996,7 @@ def test_run_no_config_logs_nothing_to_enforce_and_skips_added_or_moved_files(
         ),
     )
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 0
@@ -1021,7 +1022,7 @@ def test_run_config_error_reports_high_at_pyproject_and_exercises_mocks(
         lambda **kw: calls.append(kw) or [],
     )
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 1
@@ -1038,7 +1039,7 @@ def test_run_layer_matching_zero_modules_reports_high_config_error(
     write_pyproject(fake_repo, SINGLE_LAYER_NO_MODULES_TOML)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert "[HIGH] pyproject.toml:1" in log_text
@@ -1054,7 +1055,7 @@ def test_run_multi_prefix_layer_matching_zero_modules_lists_all_prefixes(
     write_pyproject(fake_repo, MULTI_PREFIX_NO_MODULES_TOML)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert "matches no modules under 'myproj.a', 'myproj.b'" in log_text
@@ -1071,7 +1072,7 @@ def test_run_empty_target_layer_produces_single_config_error_and_no_child_findin
     _write(fake_repo / "src" / "myproj" / "pipelines" / "joby.py", PLAIN_MODULE)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert "layer 'domain' matches no modules under 'myproj.domain'" in log_text
@@ -1091,7 +1092,7 @@ def test_run_layer_matching_at_least_one_module_no_config_error(
     _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert "matches no modules" not in log_text
@@ -1115,7 +1116,7 @@ def test_run_changed_scope_filters_low_keeps_high(
     )
     monkeypatch.setattr(layering, "select_diff_files", lambda _root: [])
     code = run(Scope.CHANGED, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 1
@@ -1137,7 +1138,7 @@ def test_run_changed_scope_config_error_survives_empty_select_diff(
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     monkeypatch.setattr(layering, "select_diff_files", lambda _root: [])
     code = run(Scope.CHANGED, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 1
@@ -1166,7 +1167,7 @@ def test_run_changed_scope_high_survives_when_anchor_not_in_changed_or_escalate(
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [b_path])
     monkeypatch.setattr(layering, "select_diff_files", lambda _root: [])
     code = run(Scope.CHANGED, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 1
@@ -1183,7 +1184,7 @@ def test_run_clean_tree_valid_config_exits_zero(
     _write(fake_repo / "src" / "myproj" / "pipelines" / "good.py", GOOD_PIPELINE)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 0
@@ -1207,7 +1208,7 @@ def test_run_type_checking_only_import_does_not_satisfy_composes_all_of(
     )
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 0  # LOW (baseline) findings never block
@@ -1258,7 +1259,7 @@ def test_run_changed_scope_low_survives_via_non_anchor_child_member(
         lambda _root: ["src/myproj/pipelines/jobs/beta.py"],
     )
     code = run(Scope.CHANGED, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert "[LOW]" in log_text
@@ -1332,7 +1333,7 @@ def test_run_require_without_layers_exits_one_with_needs_at_least_one(
     write_pyproject(fake_repo, REQUIRE_NO_LAYERS_TOML)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 1
@@ -1350,7 +1351,7 @@ def test_run_dissolved_package_reports_high_unclassified_and_exits_one(
     _write(fake_repo / "src" / "orphan" / "mod.py", PLAIN_MODULE)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 1
@@ -1381,7 +1382,7 @@ def test_run_single_root_layer_prefix_classifies_sibling_package(
     _write(fake_repo / "src" / "myproj" / "other" / "y.py", PLAIN_MODULE)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 0
@@ -1398,7 +1399,7 @@ def test_run_allow_listed_package_reports_review_and_exits_zero(
     _write(fake_repo / "src" / "scripts" / "tool.py", PLAIN_MODULE)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 0
@@ -1416,7 +1417,7 @@ def test_run_stale_allow_entry_reports_review_and_exits_zero(
     _write(fake_repo / "src" / "myproj" / "domain" / "core.py", DOMAIN_MODULE)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 0
@@ -1442,7 +1443,7 @@ def test_run_composition_and_coverage_high_findings_both_counted_in_summary(
         lambda **_kw: ["src/myproj/pipelines/bad.py"],
     )
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 1
@@ -1461,7 +1462,7 @@ def test_run_changed_scope_drops_untouched_allow_review(
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     monkeypatch.setattr(layering, "select_diff_files", lambda _root: [])
     code = run(Scope.CHANGED, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 0
@@ -1484,7 +1485,7 @@ def test_run_changed_scope_keeps_touched_allow_review(
         lambda _root: ["src/scripts/tool.py"],
     )
     code = run(Scope.CHANGED, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 0
@@ -1506,7 +1507,7 @@ def test_run_changed_scope_keeps_unclassified_high_with_empty_diff(
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     monkeypatch.setattr(layering, "select_diff_files", lambda _root: [])
     code = run(Scope.CHANGED, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 1
@@ -1526,7 +1527,7 @@ def test_run_flag_off_default_ignores_unclassified_package(
     _write(fake_repo / "src" / "orphan" / "mod.py", PLAIN_MODULE)
     monkeypatch.setattr(layering, "added_or_moved_files", lambda **_kw: [])
     code = run(Scope.FULL, [fake_repo / "src"], LayeringConfig())
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert code == 0
@@ -1659,7 +1660,7 @@ def test_main_no_roots_excludes_mirrored_test_package(
 
     assert main() == 0
 
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert "test/zeroshot" not in log_text
@@ -1688,7 +1689,7 @@ def test_main_explicit_roots_overrides_source_only_resolution(
 
     assert main() == 0
 
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert "[LOW] test/zeroshot/helper.py" in log_text
@@ -1716,7 +1717,7 @@ def test_main_no_roots_granular_paths_key_beats_auto_detect(
 
     assert main() == 0
 
-    log_text = (fake_repo / "code_health" / "audit_layering.log").read_text(
+    log_text = (code_health_dir(fake_repo) / "audit_layering.log").read_text(
         encoding="utf-8",
     )
     assert "[LOW] codebase/zeroshot/mod.py" in log_text

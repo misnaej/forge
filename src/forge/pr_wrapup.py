@@ -60,6 +60,7 @@ from forge.gh_comments import (
 )
 from forge.git_utils import (
     behind_ahead,
+    code_health_dir,
     configure_cli_logging,
     emit,
     fetch_quietly,
@@ -141,7 +142,7 @@ SUPERSEDED_SUMMARY: Final[str] = (
     "Superseded by verified-at {new} — this wrap-up verified {old}"
 )
 
-WRAPUP_PATH: Final[Path] = Path("code_health") / "pr_wrapup.md"
+WRAPUP_NAME: Final[str] = "pr_wrapup.md"
 
 # Exit code for a publication `post` refuses (stale head, conflict, behind
 # base) — distinct from 2 (invalid body) so a caller can tell a fixable
@@ -646,7 +647,7 @@ def _code_quality(root: Path) -> str:
     Returns:
         The one-line Code Quality status.
     """
-    health = root / "code_health"
+    health = code_health_dir(root)
     timing = health / "precommit_timing.log"
     timing_text = timing.read_text(encoding="utf-8") if timing.is_file() else None
     verdicts = freshness_verdicts(root)
@@ -794,7 +795,7 @@ def _cmd_compose(args: argparse.Namespace) -> int:
     except ComposeError as exc:
         emit(f"pr-wrapup: {exc}")
         return 2
-    path = root / WRAPUP_PATH
+    path = code_health_dir(root) / WRAPUP_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     slots = unfilled_slots(text)
@@ -969,7 +970,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate":
         path: Path = args.file
     else:
-        path = args.body_file or repo_root() / WRAPUP_PATH
+        path = args.body_file or code_health_dir(repo_root()) / WRAPUP_NAME
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:

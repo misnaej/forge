@@ -27,6 +27,7 @@ from forge.audit.dup import (
     extract_units,
     run,
 )
+from forge.git_utils import code_health_dir
 
 
 if TYPE_CHECKING:
@@ -235,7 +236,9 @@ def test_run_writes_log_with_high_severity_for_cross_file_dup(fake_repo: Path) -
     _write(fake_repo / "src" / "a.py", IDENTICAL_BODY_A)
     _write(fake_repo / "src" / "b.py", IDENTICAL_BODY_B)
     code = run(Scope.FULL, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3))
-    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    log_text = (code_health_dir(fake_repo) / "audit_dup.log").read_text(
+        encoding="utf-8"
+    )
     assert "[HIGH]" in log_text
     assert "exact body duplicate of helper" in log_text
     assert code == 1
@@ -245,7 +248,9 @@ def test_run_clean_repo_returns_zero_exit(fake_repo: Path) -> None:
     """A repo with no duplicates produces exit 0 and a 'no findings' log."""
     _write(fake_repo / "src" / "only.py", IDENTICAL_BODY_A)
     code = run(Scope.FULL, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3))
-    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    log_text = (code_health_dir(fake_repo) / "audit_dup.log").read_text(
+        encoding="utf-8"
+    )
     assert "# findings: 0" in log_text
     assert code == 0
 
@@ -256,7 +261,9 @@ def test_severity_critical_for_three_plus_files(fake_repo: Path) -> None:
     _write(fake_repo / "src" / "b.py", IDENTICAL_BODY_B)
     _write(fake_repo / "src" / "c.py", IDENTICAL_BODY_A)
     run(Scope.FULL, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3))
-    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    log_text = (code_health_dir(fake_repo) / "audit_dup.log").read_text(
+        encoding="utf-8"
+    )
     assert "[CRITICAL]" in log_text
 
 
@@ -302,7 +309,9 @@ def test_run_changed_scope_finds_prior_art_in_unchanged_file(
     code = run(
         Scope.CHANGED, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3)
     )
-    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    log_text = (code_health_dir(fake_repo) / "audit_dup.log").read_text(
+        encoding="utf-8"
+    )
     assert "[HIGH]" in log_text
     assert "exact body duplicate" in log_text
     assert code == 1
@@ -319,7 +328,9 @@ def test_run_changed_scope_excludes_finding_with_no_changed_unit(
     code = run(
         Scope.CHANGED, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3)
     )
-    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    log_text = (code_health_dir(fake_repo) / "audit_dup.log").read_text(
+        encoding="utf-8"
+    )
     assert "exact body duplicate" not in log_text
     assert code == 0
 
@@ -336,7 +347,9 @@ def test_run_changed_scope_includes_near_dup_when_one_side_changed(
         [fake_repo / "src"],
         DupConfig(min_tokens=5, shingle_size=3, threshold=0.5),
     )
-    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    log_text = (code_health_dir(fake_repo) / "audit_dup.log").read_text(
+        encoding="utf-8"
+    )
     assert "near-duplicate (" in log_text
     assert code == 1
 
@@ -354,7 +367,9 @@ def test_run_changed_scope_excludes_near_dup_with_no_changed_unit(
         [fake_repo / "src"],
         DupConfig(min_tokens=5, shingle_size=3, threshold=0.5),
     )
-    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    log_text = (code_health_dir(fake_repo) / "audit_dup.log").read_text(
+        encoding="utf-8"
+    )
     assert "near-duplicate (" not in log_text
     assert code == 0
 
@@ -369,7 +384,9 @@ def test_run_changed_scope_includes_name_collision_when_changed(
     code = run(
         Scope.CHANGED, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3)
     )
-    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    log_text = (code_health_dir(fake_repo) / "audit_dup.log").read_text(
+        encoding="utf-8"
+    )
     assert "name collision" in log_text
     assert code == 0
 
@@ -385,7 +402,9 @@ def test_run_changed_scope_excludes_name_collision_with_no_changed_unit(
     code = run(
         Scope.CHANGED, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3)
     )
-    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    log_text = (code_health_dir(fake_repo) / "audit_dup.log").read_text(
+        encoding="utf-8"
+    )
     assert "name collision" not in log_text
     assert code == 0
 
@@ -416,7 +435,9 @@ def test_run_changed_scope_empty_changeset_short_circuits(
     code = run(
         Scope.CHANGED, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3)
     )
-    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    log_text = (code_health_dir(fake_repo) / "audit_dup.log").read_text(
+        encoding="utf-8"
+    )
     assert code == 0
     assert (
         "Matched 0 changed-file unit(s) against a 0-unit full-tree index. "
@@ -440,7 +461,9 @@ def test_run_changed_scope_indexes_file_outside_roots(
     code = run(
         Scope.CHANGED, [fake_repo / "src"], DupConfig(min_tokens=5, shingle_size=3)
     )
-    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    log_text = (code_health_dir(fake_repo) / "audit_dup.log").read_text(
+        encoding="utf-8"
+    )
     assert "exact body duplicate" in log_text
     assert code == 1
 
@@ -677,7 +700,9 @@ def test_run_changed_scope_findings_are_subset_of_full_scope(
         [fake_repo / "src"],
         DupConfig(min_tokens=5, shingle_size=3, threshold=0.5),
     )
-    log_text = (fake_repo / "code_health" / "audit_dup.log").read_text(encoding="utf-8")
+    log_text = (code_health_dir(fake_repo) / "audit_dup.log").read_text(
+        encoding="utf-8"
+    )
     assert "near-duplicate (" not in log_text
     assert "exact body duplicate" not in log_text
     assert code == 0

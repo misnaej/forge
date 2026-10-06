@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Final, cast
 from forge.config import load_config
 from forge.emergency import consume as emergency_consume
 from forge.git_utils import (
+    code_health_dir,
     configure_cli_logging,
     repo_root,
     resolve_current_branch,
@@ -50,7 +51,7 @@ from forge.git_utils import (
 )
 from forge.pr_delta import extract_verified_shas
 from forge.pr_plan import classify
-from forge.pr_wrapup import WRAPUP_PATH
+from forge.pr_wrapup import WRAPUP_NAME
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -234,7 +235,7 @@ def _read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | No
         ``(text, None)`` once the wrap-up is confirmed to verify HEAD, or
         ``(None, reason)`` naming why it does not.
     """
-    wrapup = root / WRAPUP_PATH
+    wrapup = code_health_dir(root) / WRAPUP_NAME
     if not wrapup.is_file():
         return None, (
             f"no authored wrap-up at {wrapup} for branch '{branch}'. "
@@ -359,7 +360,11 @@ def main() -> int:
         *(["--draft"] if args.draft else []),
         *extra,
     ]
-    logger.info("publishing '%s' — verified against %s", branch, root / WRAPUP_PATH)
+    logger.info(
+        "publishing '%s' — verified against %s",
+        branch,
+        code_health_dir(root) / WRAPUP_NAME,
+    )
     try:
         proc = subprocess.run(cmd, check=False)
     except OSError:

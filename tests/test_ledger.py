@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from forge.git_utils import code_health_dir
 from forge.ledger import append_ledger_line, parse_ledger
 
 
@@ -30,7 +31,7 @@ def test_append_ledger_line_writes_ts_first_then_fields_two_space_separated(
     tmp_path: Path,
 ) -> None:
     """``ts=`` leads the line; the given fields follow, two spaces apart."""
-    path = tmp_path / "code_health" / "some_history.log"
+    path = code_health_dir(tmp_path) / "some_history.log"
     append_ledger_line(path, {"label": "r1", "exit": 0})
     line = path.read_text(encoding="utf-8")
     parts = line.rstrip("\n").split("  ")

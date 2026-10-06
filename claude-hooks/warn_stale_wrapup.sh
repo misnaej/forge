@@ -36,10 +36,15 @@ PR=$(gh pr view --json number --jq .number 2>/dev/null)
 # A wrap-up already authored for this HEAD is a refresh in flight
 # (`/pr` pushes its fix commits before posting) — no reminder needed.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+# Log directory: FORGE_CODE_HEALTH_DIR when set (absolute, or relative to
+# the repo root), else <root>/code_health — the same rule as
+# forge.git_utils.code_health_dir, so this hook and the Python readers agree.
+CH_DIR=${FORGE_CODE_HEALTH_DIR:-code_health}
+case "$CH_DIR" in /*) ;; *) CH_DIR="$REPO_ROOT/$CH_DIR" ;; esac
 HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || true)
 # shellcheck source=wrapup_anchor.sh
 source "$(dirname "$0")/wrapup_anchor.sh"
-if [ -n "$HEAD_SHA" ] && wrapup_names_head "$REPO_ROOT/code_health/pr_wrapup.md" "$HEAD_SHA"; then
+if [ -n "$HEAD_SHA" ] && wrapup_names_head "$CH_DIR/pr_wrapup.md" "$HEAD_SHA"; then
     exit 0
 fi
 

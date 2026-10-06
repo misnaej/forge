@@ -39,7 +39,13 @@ from pathlib import Path
 
 from forge import config
 from forge.config import installed_console_scripts
-from forge.git_utils import FORGE_DIST_NAME, emit, pad_semver, parse_semver
+from forge.git_utils import (
+    FORGE_DIST_NAME,
+    code_health_dir,
+    emit,
+    pad_semver,
+    parse_semver,
+)
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
@@ -486,7 +492,8 @@ def _check_plugin_contents(plugin_root: Path | None) -> list[CheckResult]:
 # absence implies the CLI has been installed but never run. Surfaced as
 # advisory INFO so consumers discover capabilities they're not yet using.
 # Keep paths repo-relative; ``_check_under_used_capabilities`` resolves
-# them against the repo root.
+# them against the repo root (a ``code_health/`` path against the
+# step-log directory, see ``_artifact_path``).
 _UNDERUSED_ARTIFACTS: tuple[tuple[str, str, str], ...] = (
     ("install-forge-githooks", ".githooks/pre-commit", "install-forge-bootstrap"),
     ("install-forge-claude-md", "FOUNDATION.md", "install-forge-bootstrap"),
@@ -635,6 +642,25 @@ def _check_step_tools(repo_root: Path) -> list[CheckResult]:
     return results
 
 
+def _artifact_path(repo_root: Path, relpath: str) -> Path:
+    """Resolve an :data:`_UNDERUSED_ARTIFACTS` path against *repo_root*.
+
+    A ``code_health/`` path names a step log, so it follows the step-log
+    directory wherever :func:`forge.git_utils.code_health_dir` puts it.
+
+    Args:
+        repo_root: Directory the doctor was invoked from.
+        relpath: Repo-relative artifact path from the table.
+
+    Returns:
+        The artifact's location.
+    """
+    head, _, rest = relpath.partition("/")
+    if head == "code_health" and rest:
+        return code_health_dir(repo_root) / rest
+    return repo_root / relpath
+
+
 def _check_under_used_capabilities(repo_root: Path) -> list[CheckResult]:
     """Surface installed-but-never-run forge capabilities.
 
@@ -655,17 +681,14 @@ def _check_under_used_capabilities(repo_root: Path) -> list[CheckResult]:
     for cli, artifact_relpath, recommend in _UNDERUSED_ARTIFACTS:
         if shutil.which(cli) is None:
             continue  # not installed — not "under-used", just absent
-        artifact = repo_root / artifact_relpath
+        artifact = _artifact_path(repo_root, artifact_relpath)
         if artifact.exists():
             continue
         results.append(
             CheckResult(
                 name=f"underused:{cli}",
                 passed=True,
-                detail=(
-                    f"{cli} installed but {artifact_relpath} missing — "
-                    f"run `{recommend}`."
-                ),
+                detail=(f"{cli} installed but {artifact} missing — run `{recommend}`."),
                 info=True,
             )
         )

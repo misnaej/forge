@@ -33,6 +33,7 @@ from forge.agent_profile import (
     tool_rows,
     type_rows,
 )
+from forge.git_utils import code_health_dir
 from tests.conftest import GIT_ENV, commit_all, init_git_repo
 
 
@@ -1272,7 +1273,7 @@ def test_subagent_edits_excludes_main_session_and_stale_since_and_other_session(
     tmp_path: Path,
 ) -> None:
     """Only the row with an agent_type, a fresh ts, and the wanted session survives."""
-    ledger = tmp_path / agent_profile.LEDGER_RELPATH
+    ledger = code_health_dir(tmp_path) / agent_profile.LEDGER_NAME
     cutoff = _ms_to_dt(BASE_MS + 5000)
     events = [
         _event(
@@ -1321,7 +1322,7 @@ def test_subagent_edits_aggregates_multiple_agents_per_file_ignores_non_mutating
 ) -> None:
     """Two agents editing same path land in its set; non-mutating Bash adds nothing."""
     assert "Bash" not in MUTATING_TOOLS
-    ledger = tmp_path / agent_profile.LEDGER_RELPATH
+    ledger = code_health_dir(tmp_path) / agent_profile.LEDGER_NAME
     shared = str(tmp_path / "shared.py")
     events = [
         _event(
@@ -1365,7 +1366,7 @@ def test_subagent_edits_normalizes_absolute_paths_and_matches_restricted_paths(
     would silently report "none recorded" — indistinguishable from a
     clean tree — so this is the highest-value case in the group.
     """
-    ledger = tmp_path / agent_profile.LEDGER_RELPATH
+    ledger = code_health_dir(tmp_path) / agent_profile.LEDGER_NAME
     absolute = tmp_path / "src" / "foo.py"
     events = [
         _event(
@@ -1399,7 +1400,7 @@ def test_subagent_edits_known_false_when_ledger_missing_or_empty(
         expected_reason: Substring the receipt's ``reason`` must contain.
     """
     if create_empty:
-        ledger = tmp_path / agent_profile.LEDGER_RELPATH
+        ledger = code_health_dir(tmp_path) / agent_profile.LEDGER_NAME
         ledger.parent.mkdir(parents=True, exist_ok=True)
         ledger.touch()
 
@@ -1443,7 +1444,7 @@ def test_subagent_edits_unknown_when_every_row_lacks_a_path(tmp_path: Path) -> N
     rows" and returned ``known=True`` with an empty receipt, reporting a
     tree full of subagent edits as clean.
     """
-    ledger = tmp_path / agent_profile.LEDGER_RELPATH
+    ledger = code_health_dir(tmp_path) / agent_profile.LEDGER_NAME
     events = [
         _event(
             event="PostToolUse",
@@ -1512,7 +1513,7 @@ def test_render_edits_reports_a_file_still_dirty_after_an_unrelated_commit(
     # The subagent edits b.py, then the hook records it.
     (tmp_path / "b.py").write_text("b = 2\n", encoding="utf-8")
     _write_jsonl(
-        tmp_path / agent_profile.LEDGER_RELPATH,
+        code_health_dir(tmp_path) / agent_profile.LEDGER_NAME,
         [
             _event(
                 event="PostToolUse",
@@ -1567,7 +1568,7 @@ def test_append_history_writes_label_runs_types_wall_active_loop_and_cap_fields(
         stats=TranscriptStats(precommit_runs=PRECOMMIT_RUN_CAP + 1),
     )
     agent_profile.append_history(tmp_path, [loop_run, fixer_run], "nightly")
-    line = (tmp_path / "code_health" / "agent_profile_history.log").read_text(
+    line = (code_health_dir(tmp_path) / "agent_profile_history.log").read_text(
         encoding="utf-8"
     )
     assert "label=nightly" in line
@@ -1610,7 +1611,7 @@ def test_main_json_flag_writes_json_report_and_still_appends_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """``--json`` emits the machine-readable report and history still gets a line."""
-    ledger_path = tmp_path / "code_health" / "agent_timing.jsonl"
+    ledger_path = code_health_dir(tmp_path) / "agent_timing.jsonl"
     _write_jsonl(
         ledger_path,
         [
@@ -1635,7 +1636,7 @@ def test_main_json_flag_writes_json_report_and_still_appends_history(
     assert code == 0
     doc = json.loads(caplog.records[-1].getMessage())
     assert len(doc["runs"]) == 1
-    assert (tmp_path / "code_health" / "agent_profile_history.log").is_file()
+    assert (code_health_dir(tmp_path) / "agent_profile_history.log").is_file()
 
 
 def test_main_no_history_flag_skips_history_append(
@@ -1645,7 +1646,7 @@ def test_main_no_history_flag_skips_history_append(
     monkeypatch.setattr(agent_profile, "repo_root", lambda: tmp_path)
     monkeypatch.setattr("sys.argv", ["forge-agent-profile", "--no-history"])
     assert agent_profile.main() == 0
-    assert not (tmp_path / "code_health" / "agent_profile_history.log").exists()
+    assert not (code_health_dir(tmp_path) / "agent_profile_history.log").exists()
 
 
 def test_main_history_flag_renders_ledger_without_reading_agent_timing_jsonl(

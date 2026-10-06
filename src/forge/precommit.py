@@ -95,6 +95,7 @@ from forge.git_utils import (
     SCOPE_ALL,
     SCOPE_DIFF,
     VALID_SCOPES,
+    code_health_dir,
     emit,
     fetch_tags_best_effort,
     forge_cli_argv,
@@ -1264,7 +1265,7 @@ _PIP_AUDIT_LOUDNESS_THRESHOLD = 10
 # Sidecar holding pip-audit's parsed JSON, written by ``step_pip_audit`` and
 # reused by ``step_cve_usage`` so the two steps share one pip-audit scan per
 # commit instead of each hitting the OSV network independently (#78).
-PIP_AUDIT_SIDECAR = "code_health/pip_audit.json"
+PIP_AUDIT_SIDECAR_NAME = "pip_audit.json"
 
 # Matches a full ``pip-audit`` advisory ID:
 # - ``PYSEC-YYYY-N`` (year + sequence number, both digit-only)
@@ -1311,7 +1312,7 @@ def _pip_audit_scan_age_hours(repo_root: Path) -> float | None:
         is dated in the future — both mean scan, which is the safe
         direction.
     """
-    sidecar = repo_root / PIP_AUDIT_SIDECAR
+    sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
     try:
         mtime = sidecar.stat().st_mtime
     except OSError:
@@ -1367,7 +1368,8 @@ def _reuse_reason_branch(repo_root: Path) -> str | None:
     forked_at = run_git("show", "-s", "--format=%ct", fork, cwd=repo_root, check=False)
     if not forked_at.strip().isdigit():
         return None
-    sidecar_mtime = (repo_root / PIP_AUDIT_SIDECAR).stat().st_mtime
+    sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
+    sidecar_mtime = sidecar.stat().st_mtime
     if sidecar_mtime <= float(forked_at.strip()):
         return None
     return "already scanned on this branch"
@@ -1573,8 +1575,9 @@ def _read_audit_sidecar(repo_root: Path) -> dict | None:
     Returns:
         The parsed scan data, or ``None``.
     """
+    sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
     try:
-        data = json.loads((repo_root / PIP_AUDIT_SIDECAR).read_text(encoding="utf-8"))
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if isinstance(data, dict) and isinstance(data.get("dependencies"), list):
@@ -1596,7 +1599,7 @@ def _write_audit_sidecar(repo_root: Path, data: dict) -> None:
         repo_root: Git repo root.
         data: Parsed pip-audit JSON (``AuditRun.data``).
     """
-    path = repo_root / PIP_AUDIT_SIDECAR
+    path = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data), encoding="utf-8")
@@ -1649,8 +1652,9 @@ def step_cve_usage(repo_root: Path) -> StepResult:
         )
     require_cli("verify-forge-cve-usage", caller="forge-precommit")
     cmd = ["verify-forge-cve-usage"]
-    if (repo_root / PIP_AUDIT_SIDECAR).is_file():
-        cmd += ["--audit-json", PIP_AUDIT_SIDECAR]
+    sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
+    if sidecar.is_file():
+        cmd += ["--audit-json", str(sidecar)]
     passed, output = _run(cmd, cwd=repo_root)
     skipped = "skipped" in output
     return StepResult(
@@ -3231,7 +3235,7 @@ def freshness_verdicts(root: Path) -> dict[str, str]:
         Log name (without ``.log``) → ``fresh``, ``stale``, ``unstamped``,
         ``unknown`` or ``n/a``, in name order.
     """
-    log_dir = root / "code_health"
+    log_dir = code_health_dir(root)
     current = working_tree_sha(root)
     environment_steps = {step.name for step in _STEP_REGISTRY if not step.checks_files}
     return {
@@ -3268,7 +3272,7 @@ def verdict(root: Path) -> tuple[bool, list[str]]:
         ``verdict: FAIL — <cause>``.
     """
     verdicts = freshness_verdicts(root)
-    timing = root / "code_health" / "precommit_timing.log"
+    timing = code_health_dir(root) / "precommit_timing.log"
     markers = (
         timing_markers(timing.read_text(encoding="utf-8")) if timing.is_file() else {}
     )
@@ -3354,7 +3358,7 @@ def _report_freshness(only: list[str], *, as_json: bool) -> int:
         ``0`` — the report informs a reader; it never gates.
     """
     root = get_repo_root()
-    log_dir = root / "code_health"
+    log_dir = code_health_dir(root)
     verdicts = {
         name: verdict
         for name, verdict in freshness_verdicts(root).items()

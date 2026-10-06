@@ -709,7 +709,7 @@ tests, merged across all batches.
 options:
   -h, --help            show this help message and exit
   --log LOG             Path to the pytest log to parse, or '-' for stdin
-                        (default: code_health/pytest.log).
+                        (default: <code_health>/pytest.log).
   --top TOP             Number of slowest tests to show (default: 25).
   --out OUT             Also write the report to this file (e.g.
                         code_health/slow_tests.log).

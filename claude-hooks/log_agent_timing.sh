@@ -55,6 +55,11 @@ LINE=${OUT#*$'\n'}
 ROOT=${CLAUDE_PROJECT_DIR:-}
 [ -n "$ROOT" ] && [ -e "$ROOT/.git" ] || ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null) || exit 0
 
-mkdir -p "$ROOT/code_health" 2>/dev/null || exit 0
-printf '%s\n' "$LINE" >> "$ROOT/code_health/agent_timing.jsonl" 2>/dev/null
+# Log directory: FORGE_CODE_HEALTH_DIR when set (absolute, or relative to
+# the repo root), else <root>/code_health — the same rule as
+# forge.git_utils.code_health_dir, so this hook and the Python readers agree.
+CH_DIR=${FORGE_CODE_HEALTH_DIR:-code_health}
+case "$CH_DIR" in /*) ;; *) CH_DIR="$ROOT/$CH_DIR" ;; esac
+mkdir -p "$CH_DIR" 2>/dev/null || exit 0
+printf '%s\n' "$LINE" >> "$CH_DIR/agent_timing.jsonl" 2>/dev/null
 exit 0

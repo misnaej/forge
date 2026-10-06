@@ -16,8 +16,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from forge.audit.common import CODE_HEALTH_DIR, read_finding_count
+from forge.audit.common import read_finding_count
 from forge.git_utils import (
+    code_health_dir,
     configure_cli_logging,
     produced_at_stamp,
     repo_root,
@@ -49,7 +50,7 @@ class SubResult:
     Attributes:
         name: Audit short name (e.g. ``"dup"``).
         exit_code: Process exit code from the sub-audit.
-        log_path: Repo-relative path to the audit log.
+        log_path: Path to the audit log, repo-relative when inside the repo.
         finding_count: Findings reported, parsed from the log header.
     """
 
@@ -88,16 +89,21 @@ def _run_one(name: str, scope: str, roots: list[str] | None) -> SubResult:
     if proc.stderr:
         sys.stderr.write(proc.stderr)
 
-    log_rel = f"{CODE_HEALTH_DIR}/audit_{name}.log"
-    log_abs = repo_root() / log_rel
+    root = repo_root()
+    log_abs = code_health_dir(root) / f"audit_{name}.log"
     if log_abs.exists():
         count = read_finding_count(log_abs.read_text(encoding="utf-8"))
     else:
         count = -1
+    shown = (
+        log_abs.relative_to(root).as_posix()
+        if log_abs.is_relative_to(root)
+        else str(log_abs)
+    )
     return SubResult(
         name=name,
         exit_code=proc.returncode,
-        log_path=log_rel,
+        log_path=shown,
         finding_count=count,
     )
 
@@ -161,7 +167,7 @@ def main() -> int:
     if args.output is not None:
         summary_path = args.output
     else:
-        summary_path = repo_root() / CODE_HEALTH_DIR / "audit_summary.log"
+        summary_path = code_health_dir(repo_root()) / "audit_summary.log"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     # Same first-line stamp as every sub-audit log, so the summary is
     # judged fresh or stale by the same rule.

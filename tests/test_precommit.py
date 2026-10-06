@@ -541,7 +541,7 @@ def test_run_all_writes_code_health_logs(
     _stub_pip_audit_skipped(monkeypatch)
     _stub_docstring_coverage_skipped(monkeypatch)
     precommit.run_all(repo_root=tmp_path, print_progress=False)
-    log_dir = tmp_path / "code_health"
+    log_dir = git_utils.code_health_dir(tmp_path)
     assert log_dir.is_dir()
     expected = {
         "auto_rebuild.log",
@@ -822,7 +822,7 @@ def test_run_all_writes_precommit_timing_log(
     _stub_docstring_coverage_skipped(monkeypatch)
     results = precommit.run_all(repo_root=tmp_path, print_progress=False)
 
-    log_path = tmp_path / "code_health" / "precommit_timing.log"
+    log_path = git_utils.code_health_dir(tmp_path) / "precommit_timing.log"
     first_line = log_path.read_text(encoding="utf-8").splitlines()[0]
     assert PRODUCED_AT_RE.fullmatch(first_line)
     assert log_body(log_path).rstrip("\n") == precommit._format_timing_log(
@@ -1268,8 +1268,8 @@ def test_pip_audit_scan_age_hours_future_dated_returns_none(tmp_path: Path) -> N
     negative "hours ago" that reads as impossibly fresh; treating it as
     unknown instead falls back to the safe direction — scan.
     """
-    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
-    sidecar.parent.mkdir(parents=True)
+    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text("{}", encoding="utf-8")
     future = time.time() + 3600
     os.utime(sidecar, (future, future))
@@ -1278,8 +1278,8 @@ def test_pip_audit_scan_age_hours_future_dated_returns_none(tmp_path: Path) -> N
 
 def test_pip_audit_scan_age_hours_fresh_stamp_computes_hours(tmp_path: Path) -> None:
     """A stamp N hours old reports age_hours ≈ N — the reuse decision's input."""
-    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
-    sidecar.parent.mkdir(parents=True)
+    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text("{}", encoding="utf-8")
     mtime = time.time() - 2 * 3600
     os.utime(sidecar, (mtime, mtime))
@@ -1292,8 +1292,8 @@ def test_pip_audit_reuse_reason_cadence_always_never_skips(tmp_path: Path) -> No
     (tmp_path / "pyproject.toml").write_text(
         '[tool.forge.pip_audit]\ncadence = "always"\n'
     )
-    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
-    sidecar.parent.mkdir(parents=True)
+    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text("{}", encoding="utf-8")
     assert precommit._pip_audit_reuse_reason(tmp_path) is None
 
@@ -1336,8 +1336,8 @@ def test_pip_audit_reuse_reason_cadence_hours(
         f'[tool.forge.pip_audit]\ncadence = "hours"\n'
         f"max_age_hours = {max_age_hours_cfg}\n"
     )
-    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
-    sidecar.parent.mkdir(parents=True)
+    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text("{}", encoding="utf-8")
     mtime = time.time() - sidecar_age_hours * 3600
     os.utime(sidecar, (mtime, mtime))
@@ -1391,8 +1391,8 @@ def test_pip_audit_reuse_reason_cadence_branch(
     monkeypatch.setattr(precommit, "merge_base_with_head", _fake_merge_base)
     monkeypatch.setattr(precommit, "run_git", _fake_run_git)
 
-    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
-    sidecar.parent.mkdir(parents=True)
+    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text("{}", encoding="utf-8")
     sidecar_mtime = fork_committed_at + sidecar_offset_s
     os.utime(sidecar, (sidecar_mtime, sidecar_mtime))
@@ -1411,8 +1411,8 @@ def test_pip_audit_reuse_reason_unknown_cadence_scans(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[tool.forge.pip_audit]\ncadence = "fortnightly"\n'
     )
-    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
-    sidecar.parent.mkdir(parents=True)
+    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text("{}", encoding="utf-8")
     assert precommit._pip_audit_reuse_reason(tmp_path) is None
 
@@ -1427,8 +1427,8 @@ def test_pip_audit_reuse_reason_env_override_forces_scan(
     cadence config is even read.
     """
     monkeypatch.setenv(precommit._PIP_AUDIT_FORCE_ENV, "1")
-    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
-    sidecar.parent.mkdir(parents=True)
+    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text("{}", encoding="utf-8")
     assert precommit._pip_audit_reuse_reason(tmp_path) is None
 
@@ -1447,8 +1447,8 @@ def _seed_reusable_audit_sidecar(
         '[tool.forge.pip_audit]\ncadence = "hours"\nmax_age_hours = 24\n'
         f"blocking = {str(blocking).lower()}\n"
     )
-    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
-    sidecar.parent.mkdir(parents=True)
+    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(json.dumps(data), encoding="utf-8")
 
 
@@ -1567,8 +1567,8 @@ def test_step_pip_audit_unusable_sidecar_scans(
         monkeypatch: Pytest fixture for mocking.
         sidecar_kind: Which kind of unusable sidecar to create.
     """
-    sidecar = tmp_path / precommit.PIP_AUDIT_SIDECAR
-    sidecar.parent.mkdir(parents=True)
+    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     if sidecar_kind == "unreadable":
         sidecar.mkdir()
     else:
@@ -2876,7 +2876,7 @@ def test_step_pip_audit_writes_sidecar_when_data_parseable(
     run = _audit_run(1)
     monkeypatch.setattr(precommit.pip_audit_json, "run_json", lambda _root: run)
     precommit.step_pip_audit(tmp_path)
-    sidecar = tmp_path / "code_health" / "pip_audit.json"
+    sidecar = git_utils.code_health_dir(tmp_path) / "pip_audit.json"
     assert sidecar.exists()
     assert json.loads(sidecar.read_text()) == run.data
 
@@ -2894,7 +2894,7 @@ def test_step_pip_audit_does_not_write_sidecar_on_parse_error(
     bad_run = AuditRun(data=None, stderr="kaboom", returncode=1)
     monkeypatch.setattr(precommit.pip_audit_json, "run_json", lambda _root: bad_run)
     result = precommit.step_pip_audit(tmp_path)
-    assert not (tmp_path / "code_health" / "pip_audit.json").exists()
+    assert not (git_utils.code_health_dir(tmp_path) / "pip_audit.json").exists()
     assert result.non_blocking
     assert "no parseable JSON" in result.output
     assert not result.passed
@@ -2918,8 +2918,8 @@ def test_step_cve_usage_passes_audit_json_when_sidecar_present(
     (tmp_path / "cve_usage_patterns.toml").write_text(
         '["CVE-1"]\npackage = "x"\n', encoding="utf-8"
     )
-    sidecar = tmp_path / "code_health" / "pip_audit.json"
-    sidecar.parent.mkdir(parents=True)
+    sidecar = git_utils.code_health_dir(tmp_path) / "pip_audit.json"
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
     captured_argv: list[str] = []
@@ -2931,7 +2931,7 @@ def test_step_cve_usage_passes_audit_json_when_sidecar_present(
     monkeypatch.setattr(precommit, "_run", _fake_run)
     precommit.step_cve_usage(tmp_path)
     assert "--audit-json" in captured_argv
-    assert precommit.PIP_AUDIT_SIDECAR in captured_argv
+    assert str(sidecar) in captured_argv
 
 
 def test_step_cve_usage_runs_bare_when_sidecar_absent(
@@ -7389,7 +7389,7 @@ def _write_log_with_stamp(
     Returns:
         The written log path.
     """
-    log_dir = repo / "code_health"
+    log_dir = git_utils.code_health_dir(repo)
     log_dir.mkdir(parents=True, exist_ok=True)
     path = log_dir / f"{name}.log"
     path.write_text(
@@ -7443,11 +7443,13 @@ def test_main_freshness_human_output_reports_verdict_per_log_and_skips_history(
     _write_log_with_stamp(tmp_path, "fresh", tree=head_tree)
     _write_log_with_stamp(tmp_path, "stale", tree="0" * 40)
     _write_log_with_stamp(tmp_path, "unknown", tree="unknown")
-    (tmp_path / "code_health" / "unstamped.log").write_text("no stamp here\n")
-    (tmp_path / "code_health" / "smart_test_history.log").write_text(
+    (git_utils.code_health_dir(tmp_path) / "unstamped.log").write_text(
+        "no stamp here\n"
+    )
+    (git_utils.code_health_dir(tmp_path) / "smart_test_history.log").write_text(
         f"# produced-at: tree={head_tree} head=abc1234 2024-01-01T00:00:00Z\nhistory\n"
     )
-    (tmp_path / "code_health" / "pip_audit.json").write_text("{}\n")
+    (git_utils.code_health_dir(tmp_path) / "pip_audit.json").write_text("{}\n")
 
     with patch.object(precommit.sys, "argv", ["forge-precommit", "--freshness"]):
         rc = precommit.main()
@@ -7601,7 +7603,9 @@ def test_main_freshness_exits_zero_regardless_of_stale_or_unstamped_verdicts(
     init_git_repo(tmp_path)
     monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
     _write_log_with_stamp(tmp_path, "ruff", tree="0" * 40)
-    (tmp_path / "code_health" / "unstamped.log").write_text("plain text, no stamp\n")
+    (git_utils.code_health_dir(tmp_path) / "unstamped.log").write_text(
+        "plain text, no stamp\n"
+    )
 
     with patch.object(precommit.sys, "argv", ["forge-precommit", "--freshness"]):
         rc = precommit.main()
@@ -7623,8 +7627,8 @@ def test_main_freshness_human_output_drops_non_printable_chars_from_log_name(
     """
     init_git_repo(tmp_path)
     monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
-    log_dir = tmp_path / "code_health"
-    log_dir.mkdir()
+    log_dir = git_utils.code_health_dir(tmp_path)
+    log_dir.mkdir(exist_ok=True)
     name = "\x1b[31mruff"
     try:
         (log_dir / f"{name}.log").write_text(
@@ -7723,8 +7727,8 @@ def test_main_freshness_only_history_log_reports_history_not_missing(
     """
     init_git_repo(tmp_path)
     monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
-    (tmp_path / "code_health").mkdir()
-    (tmp_path / "code_health" / "smart_test_history.log").write_text(
+    git_utils.code_health_dir(tmp_path).mkdir(exist_ok=True)
+    (git_utils.code_health_dir(tmp_path) / "smart_test_history.log").write_text(
         "# produced-at: tree=unknown head=abc1234 2024-01-01T00:00:00Z\nhistory\n"
     )
 
@@ -7911,7 +7915,7 @@ def test_verdict_unstamped_step_log_fails(
     init_git_repo(tmp_path)
     rows = _all_rows(tmp_path)
     _verdict_repo(tmp_path, monkeypatch, rows=rows)
-    (tmp_path / "code_health" / "ruff.log").write_text("no stamp here\n")
+    (git_utils.code_health_dir(tmp_path) / "ruff.log").write_text("no stamp here\n")
 
     ok, lines = precommit.verdict(tmp_path)
 
@@ -7983,8 +7987,8 @@ def test_run_all_only_writes_only_log_and_leaves_full_log_untouched(
         return precommit.StepResult(name="ruff", passed=True, output="x")
 
     monkeypatch.setattr(precommit, "step_ruff", _ruff)
-    log_dir = tmp_path / "code_health"
-    log_dir.mkdir()
+    log_dir = git_utils.code_health_dir(tmp_path)
+    log_dir.mkdir(exist_ok=True)
     full = log_dir / "precommit_timing.log"
     full.write_bytes(b"# produced-at: tree=abc head=x\nfull run body\n")
     before = full.read_bytes()
@@ -8009,8 +8013,10 @@ def test_run_all_without_only_still_writes_full_log(
 
     precommit.run_all(repo_root=tmp_path, print_progress=False)
 
-    assert (tmp_path / "code_health" / "precommit_timing.log").is_file()
-    assert not (tmp_path / "code_health" / "precommit_only_timing.log").exists()
+    assert (git_utils.code_health_dir(tmp_path) / "precommit_timing.log").is_file()
+    assert not (
+        git_utils.code_health_dir(tmp_path) / "precommit_only_timing.log"
+    ).exists()
 
 
 def _staged_doc_repo(tmp_path: Path, rel: str) -> Path:

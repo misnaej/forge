@@ -506,6 +506,34 @@ def require_cli(
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 
+# Environment variable that relocates the step-log directory. A testing
+# aid: forge's own suite points it at a per-test temp dir so no test can
+# overwrite the real evidence agents read.
+CODE_HEALTH_ENV = "FORGE_CODE_HEALTH_DIR"
+
+
+def code_health_dir(repo_root: Path) -> Path:
+    """Return the directory forge writes and reads its step logs in.
+
+    The single place every ``code_health/`` path is built, so one
+    environment variable can redirect all of them — including in CLIs a
+    test runs as a subprocess. Without it, tests that exercise a CLI
+    write into the real checkout's logs, and an agent later reads a
+    test's leftover output as evidence about the code.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``$FORGE_CODE_HEALTH_DIR`` when set (a relative value is taken
+        relative to *repo_root*), else ``<repo_root>/code_health``.
+    """
+    override = os.environ.get(CODE_HEALTH_ENV)
+    if override:
+        return repo_root / override  # an absolute override replaces repo_root
+    return repo_root / "code_health"
+
+
 def write_step_log(repo_root: Path, name: str, output: str) -> Path:
     """Write *output* to ``code_health/<name>.log`` under *repo_root*.
 
@@ -529,7 +557,7 @@ def write_step_log(repo_root: Path, name: str, output: str) -> Path:
         :func:`produced_at_stamp` naming the tree the output describes.
     """
     safe_name = Path(name).name
-    log_path = repo_root / "code_health" / f"{safe_name}.log"
+    log_path = code_health_dir(repo_root) / f"{safe_name}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     text = _ANSI_ESCAPE_RE.sub("", output)
     text = text if text.endswith("\n") else text + "\n"
@@ -1563,6 +1591,31 @@ _STAMP_RE = re.compile(
 # gitignored path in `git add` makes it exit non-zero.
 _STAMP_EXCLUDED_DIR = "code_health"
 
+
+def _stamp_excluded_paths(repo_root: Path) -> list[str]:
+    """Return the repo-relative log directories a tree stamp leaves out.
+
+    Always the in-repo default; also a relocated log directory
+    (:func:`code_health_dir`) when it still lies inside the repo, or
+    every log written there would change the stamp of its siblings. A
+    directory outside the repo is invisible to ``git add -A`` already.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        Pathspecs relative to *repo_root*.
+    """
+    paths = [_STAMP_EXCLUDED_DIR]
+    try:
+        rel = code_health_dir(repo_root).resolve().relative_to(repo_root.resolve())
+    except ValueError:
+        return paths
+    if rel.as_posix() not in (".", _STAMP_EXCLUDED_DIR):
+        paths.append(rel.as_posix())
+    return paths
+
+
 LogFreshness = Literal["fresh", "stale", "unstamped", "unknown"]
 
 
@@ -1653,7 +1706,7 @@ def _tree_without_logs(
                 "--quiet",
                 "--ignore-unmatch",
                 "--",
-                _STAMP_EXCLUDED_DIR,
+                *_stamp_excluded_paths(repo_root),
                 cwd=repo_root,
                 env=env,
                 log_errors=False,

@@ -19,6 +19,7 @@ from forge.audit.data import (
     _gather_files,
     run,
 )
+from forge.git_utils import code_health_dir
 
 
 if TYPE_CHECKING:
@@ -185,7 +186,7 @@ def test_run_reports_csv_misalignment_as_high(fake_repo: Path) -> None:
         "name,direction,description\na,1,fine\nb,-1,{none: 0, low: 1, high: 2}\n",
     )
     code = run(Scope.FULL, [fake_repo / "docs"], DataConfig(suffixes=(".csv",)))
-    log_path = fake_repo / "code_health" / "audit_data.log"
+    log_path = code_health_dir(fake_repo) / "audit_data.log"
     log_text = log_path.read_text(encoding="utf-8")
     assert "[HIGH]" in log_text
     assert "column mismatch" in log_text
@@ -196,7 +197,7 @@ def test_run_clean_repo_returns_zero(fake_repo: Path) -> None:
     """A clean docs tree yields exit 0 and a zero-finding log."""
     _write(fake_repo / "docs" / "ok.csv", "a,b\n1,2\n")
     code = run(Scope.FULL, [fake_repo / "docs"], DataConfig(suffixes=(".csv",)))
-    log_path = fake_repo / "code_health" / "audit_data.log"
+    log_path = code_health_dir(fake_repo) / "audit_data.log"
     log_text = log_path.read_text(encoding="utf-8")
     assert "# findings: 0" in log_text
     assert code == 0

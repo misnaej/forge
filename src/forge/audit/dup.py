@@ -608,7 +608,7 @@ def run(scope: Scope, roots: list[Path], config: DupConfig) -> int:
         changed = {relpath(p) for p in changed_abs}
         if not changed:
             summary = _summary(0, 0, 0, 0, n_changed=0)
-            write_log("dup", [], summary, output=config.output)
+            write_log("dup", [], summary, output=config.output, scope=scope)
             return 0
 
     units: list[CodeUnit] = []
@@ -668,7 +668,7 @@ def run(scope: Scope, roots: list[Path], config: DupConfig) -> int:
         len(name_groups),
         n_changed=n_changed,
     )
-    write_log("dup", findings, summary, output=config.output)
+    write_log("dup", findings, summary, output=config.output, scope=scope)
     return exit_code_for(findings)
 
 

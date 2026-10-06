@@ -75,7 +75,9 @@ jobs:
       # bearing: an unspecified `run:` step is `bash -e {0}`, with no
       # pipefail, so `pytest | tee` would exit with tee's status and a
       # failing suite would report success. Only the explicit form gets
-      # `bash --noprofile --norc -eo pipefail {0}`.
+      # `bash --noprofile --norc -eo pipefail {0}`. The tee'd log is
+      # unstamped and never evidence: it only feeds the slow-tests
+      # report below, in this job.
       - name: pytest (full suite, durations captured)
         shell: bash
         run: |

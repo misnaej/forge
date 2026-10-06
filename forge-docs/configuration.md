@@ -30,6 +30,12 @@ CLI is the per-repo answer.
 
 You never edit forge's source to configure it — only `pyproject.toml`.
 
+One environment variable sits outside both homes: **`FORGE_CODE_HEALTH_DIR`**
+relocates the `code_health/` log directory (absolute, or relative to the
+repo root). It is a testing aid — point it at a temp directory in your test
+suite's setup so tests that run forge CLIs never overwrite the real logs
+agents read as evidence. Leave it unset everywhere else.
+
 ---
 
 ## Quick start

@@ -673,8 +673,11 @@ indirection for hypothetical needs.
 handling for scenarios that can't happen. Trust internal code and framework
 guarantees; validate only at system boundaries (user input, external APIs).
 
-**Cost** is a design property too — the library-performance goal, and why
-it is measured as a ratio rather than in seconds, live in §18.
+**Cost** is a design property too: the performance of code and of its
+tests is judged where the timing is known — a test's cost when it is
+written, from the durations that run already prints — and stays a review
+lens, never a commit gate. The library-performance goal, and why it is
+measured as a ratio rather than in seconds, live in §18.
 
 ---
 
@@ -963,7 +966,16 @@ Reviewed by `forge:design-checker`.
 - Foundation agents (`forge:precommit-fixer`, `forge:pr-manager`, `forge:design-checker`, `forge:git-commit-push`) **read these as the source of truth** instead of re-running the checks.
 - `forge:precommit-fixer` is the only agent that may run `forge-precommit` to (re)generate the logs — the only sanctioned wrapper; no agent invokes `ruff` / `git` / `gh` directly. Any agent may run the read-only `forge-precommit --freshness` and `forge-precommit --verdict` (whether every enabled step passed on the current tree; exits non-zero otherwise), which run no steps. `/pr`'s evidence commands (`forge-pr-plan --evidence`, `forge-pr-wrapup compose` in light-regen) run the generated-artifact checks through `forge-precommit --only`: they fix nothing in the tree and rewrite those steps' logs and `precommit_only_timing.log` — a `--only` run never replaces the full-run `precommit_timing.log` (`--evidence` also refreshes `audit_dup.log` and `audit_layering.log`). If a log is missing or stale, call precommit-fixer to refresh. **Never rewrite the logs from agents.**
 - **A log names the tree it describes.** Its first line is `# produced-at: tree=<sha> head=<short>[+dirty] <UTC time>`, where `tree` is the working tree the output was produced against. A log is **fresh** only when that tree equals the current working tree; `forge-precommit --freshness` reports a verdict per log (`fresh`, `stale`, `unstamped`, `unknown`; `n/a` for a step that checks the environment rather than files). Never judge freshness by file modification times.
-- `code_health/` is typically gitignored.
+- **What cannot be read counts as unknown, never as passed.** A log that
+  is missing, empty, unstamped, unparseable, or incomplete (no completion
+  line where its producer writes one) says nothing about the code. A
+  gating reader fails on unknown; an informational reader reports it and
+  exits 0. Prefer `forge-precommit --verdict` / `--freshness --json` over
+  grepping a log yourself. An audit log's `# scope:` line says whether
+  it covers the full tree (`full`) or only changed files (`changed`).
+- `code_health/` is typically gitignored. `FORGE_CODE_HEALTH_DIR`
+  relocates it — a testing aid, so a test suite never writes the real
+  evidence.
 
 ### Repo metadata for agents
 

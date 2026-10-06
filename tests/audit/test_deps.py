@@ -170,7 +170,7 @@ def test_run_reports_cycle_as_critical(fake_repo: Path) -> None:
         "from pkg import a\nclass B: pass\n",
     )
     code = run(Scope.FULL, [fake_repo / "src"], DepsConfig())
-    log_path = fake_repo / "code_health" / "audit_deps.log"
+    log_path = git_utils.code_health_dir(fake_repo) / "audit_deps.log"
     log_text = log_path.read_text(encoding="utf-8")
     assert "[CRITICAL]" in log_text
     assert "cyclic dependency" in log_text
@@ -187,7 +187,7 @@ def test_run_clean_graph_returns_zero(fake_repo: Path) -> None:
         [fake_repo / "src"],
         DepsConfig(distance_threshold=2.0),
     )
-    log_path = fake_repo / "code_health" / "audit_deps.log"
+    log_path = git_utils.code_health_dir(fake_repo) / "audit_deps.log"
     log_text = log_path.read_text(encoding="utf-8")
     assert "# findings: 0" in log_text
     assert code == 0
@@ -206,7 +206,7 @@ def test_run_distance_threshold_flags_outliers(fake_repo: Path) -> None:
         [fake_repo / "src"],
         DepsConfig(distance_threshold=0.5),
     )
-    log_path = fake_repo / "code_health" / "audit_deps.log"
+    log_path = git_utils.code_health_dir(fake_repo) / "audit_deps.log"
     log_text = log_path.read_text(encoding="utf-8")
     assert "[LOW]" in log_text
     assert "main sequence" in log_text
@@ -305,7 +305,7 @@ def test_run_writes_dependency_tree_log(fake_repo: Path) -> None:
     _init_git_repo(fake_repo)
     commit_all(fake_repo, "seed")
     run(Scope.FULL, [fake_repo / "src"], DepsConfig(distance_threshold=2.0))
-    tree_path = fake_repo / "code_health" / "audit_deps_tree.log"
+    tree_path = git_utils.code_health_dir(fake_repo) / "audit_deps_tree.log"
     assert tree_path.exists()
     tree_text = tree_path.read_text(encoding="utf-8")
     lines = tree_text.splitlines()

@@ -11,13 +11,11 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from forge import verify_cve_usage as cve
-
-
-if TYPE_CHECKING:
-    import pytest
+from forge.git_utils import code_health_dir
 
 
 _PATTERN_TOML = """\
@@ -120,7 +118,7 @@ def test_main_skips_without_pattern_file(
     monkeypatch.setattr(cve, "repo_root", lambda: tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-cve-usage"])
     assert cve.main() == 0
-    log = (tmp_path / "code_health" / "cve_usage.log").read_text()
+    log = (code_health_dir(tmp_path) / "cve_usage.log").read_text()
     assert "skipped" in log
 
 
@@ -144,7 +142,7 @@ def test_main_returns_one_on_finding(
     )
     monkeypatch.setattr("sys.argv", ["verify-forge-cve-usage"])
     assert cve.main() == 1
-    log = (tmp_path / "code_health" / "cve_usage.log").read_text()
+    log = (code_health_dir(tmp_path) / "cve_usage.log").read_text()
     assert "CVE-2024-0001" in log
     assert "src/app.py:1" in log
 
@@ -195,7 +193,7 @@ def test_active_cve_ids_reads_sidecar_without_running_pip_audit(
         ]
     }
     sidecar = tmp_path / "code_health" / "pip_audit.json"
-    sidecar.parent.mkdir(parents=True)
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(json.dumps(data), encoding="utf-8")
 
     def _no_call(_root: Path) -> None:
@@ -222,7 +220,7 @@ def test_active_cve_ids_unparseable_sidecar_returns_none(
 ) -> None:
     """active_cve_ids returns None when the sidecar file contains invalid JSON."""
     sidecar = tmp_path / "code_health" / "pip_audit.json"
-    sidecar.parent.mkdir(parents=True)
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text("not json", encoding="utf-8")
     result = cve.active_cve_ids(tmp_path, audit_json=Path("code_health/pip_audit.json"))
     assert result is None
@@ -256,7 +254,7 @@ def test_active_cve_ids_relative_path_resolves_against_root_not_cwd(
     """
     data: dict = {"dependencies": []}
     sidecar = tmp_path / "code_health" / "pip_audit.json"
-    sidecar.parent.mkdir(parents=True)
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(json.dumps(data), encoding="utf-8")
     # Pass a relative path; only root-relative resolution finds the file.
     result = cve.active_cve_ids(tmp_path, audit_json=Path("code_health/pip_audit.json"))
@@ -342,7 +340,7 @@ def test_list_inactive_exits_zero_without_pattern_file(
     monkeypatch.setattr("sys.argv", ["verify-forge-cve-usage", "--list-inactive"])
     rc = cve.main()
     assert rc == 0
-    assert not (tmp_path / "code_health" / "cve_usage.log").exists()
+    assert not (code_health_dir(tmp_path) / "cve_usage.log").exists()
 
 
 def test_list_inactive_exits_zero_when_active_ids_none(
@@ -361,7 +359,7 @@ def test_list_inactive_exits_zero_when_active_ids_none(
     monkeypatch.setattr(cve, "active_cve_ids", lambda _root, _audit_json: None)
     monkeypatch.setattr("sys.argv", ["verify-forge-cve-usage", "--list-inactive"])
     assert cve.main() == 0
-    assert not (tmp_path / "code_health" / "cve_usage.log").exists()
+    assert not (code_health_dir(tmp_path) / "cve_usage.log").exists()
 
 
 def test_list_inactive_reports_dormant(
@@ -388,7 +386,7 @@ def test_list_inactive_reports_dormant(
         rc = cve.main()
     assert rc == 0
     assert "CVE-A" in caplog.text
-    assert not (tmp_path / "code_health" / "cve_usage.log").exists()
+    assert not (code_health_dir(tmp_path) / "cve_usage.log").exists()
 
 
 def test_list_inactive_all_live_message(
@@ -413,4 +411,70 @@ def test_list_inactive_all_live_message(
         rc = cve.main()
     assert rc == 0
     assert "All mapped CVEs" in caplog.text
-    assert not (tmp_path / "code_health" / "cve_usage.log").exists()
+    assert not (code_health_dir(tmp_path) / "cve_usage.log").exists()
+
+
+_ONE_VULN_REPORT: dict = {
+    "dependencies": [
+        {
+            "name": "pkg0",
+            "version": "1.0",
+            "vulns": [
+                {
+                    "id": "PYSEC-2024-0",
+                    "aliases": ["CVE-2024-0"],
+                    "fix_versions": ["1.1"],
+                    "description": "desc",
+                }
+            ],
+        }
+    ]
+}
+
+
+@pytest.fixture
+def _no_live_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail loudly if a sidecar read falls back to running pip-audit."""
+
+    def _no_call(_root: Path) -> None:
+        msg = "run_json must not be called when a sidecar path is given"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(cve.pip_audit_json, "run_json", _no_call)
+
+
+@pytest.mark.usefixtures("_no_live_scan")
+def test_active_cve_ids_reads_sidecar_in_out_of_repo_override_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sidecar inside a relocated (out-of-repo) log directory is read."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    logs = tmp_path / "relocated-logs"
+    logs.mkdir()
+    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(logs))
+    sidecar = logs / "pip_audit.json"
+    sidecar.write_text(json.dumps(_ONE_VULN_REPORT), encoding="utf-8")
+
+    result = cve.active_cve_ids(repo, audit_json=sidecar)
+
+    assert result == cve.pip_audit_json.ids_from_data(_ONE_VULN_REPORT)
+    assert result
+
+
+@pytest.mark.usefixtures("_no_live_scan")
+def test_active_cve_ids_skips_sidecar_elsewhere_outside_repo_and_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The override widens the allowed read to one directory, not to everywhere."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    logs = tmp_path / "relocated-logs"
+    logs.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(logs))
+    stray = elsewhere / "pip_audit.json"
+    stray.write_text(json.dumps(_ONE_VULN_REPORT), encoding="utf-8")
+
+    assert cve.active_cve_ids(repo, audit_json=stray) is None

@@ -101,7 +101,7 @@ Run **every** Investigation Recipe below — one per audit log; skipping
 any is non-compliance:
 
 0. **Orient first**: read `REPO_STRUCTURE.md` (when present) before any recipe.
-1. For each recipe: read the log; when it is missing or `forge-precommit --freshness --only <log name>` reports anything but `fresh`, run the script (never judge staleness by file times). With an evidence pack ([reporter contract](_TEMPLATE.md#reporter-agent-header-contract)), start from it; re-run only an audit it marks stale or unavailable.
+1. For each recipe: read the log; when it is missing or `forge-precommit --freshness --only <log name>` reports anything but `fresh`, run the script (never judge staleness by file times); outside a PR review, a log whose `# scope:` line says `changed` is re-run at full scope. With an evidence pack ([reporter contract](_TEMPLATE.md#reporter-agent-header-contract)), start from it; re-run only an audit it marks stale or unavailable.
 2. For each finding above LOW severity: cite `file:line` and propose a fix.
 3. Stage 2: delegate the claims log to `forge:knowledge-search` for verification.
 4. Run repo-specific extras passed by the wrapper.

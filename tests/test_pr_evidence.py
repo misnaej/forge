@@ -81,7 +81,9 @@ def _repo(tmp_path: Path, *, fragments_mode: bool = False) -> Path:
     return repo
 
 
-def _seed_audit_log(root: Path, name: str, *, count: int, findings: str = "") -> None:
+def _seed_audit_log(
+    root: Path, name: str, *, count: int, findings: str = "", scope: str | None = None
+) -> None:
     r"""Write a ``write_log``-shaped ``code_health/audit_<name>.log``, fresh for *root*.
 
     Real ``audit.common.write_log`` is not used here — it always resolves
@@ -96,12 +98,14 @@ def _seed_audit_log(root: Path, name: str, *, count: int, findings: str = "") ->
         count: The ``# findings: N`` header value.
         findings: Raw findings body, already newline-terminated; empty
             renders ``write_log``'s own ``"(none)\\n"`` placeholder.
+        scope: The ``# scope:`` header value, or ``None`` to omit the line.
     """
-    log_dir = root / "code_health"
+    log_dir = git_utils.code_health_dir(root)
     log_dir.mkdir(parents=True, exist_ok=True)
     lines = [
         git_utils.produced_at_stamp(root),
         f"# forge-audit-{name}",
+        *([f"# scope: {scope}"] if scope is not None else []),
         f"# findings: {count}",
         "",
         "## Summary",
@@ -215,7 +219,7 @@ def test_health_lines_pairs_timing_markers_with_log_freshness(tmp_path: Path) ->
     """
     repo = _repo(tmp_path)
     stamp = git_utils.produced_at_stamp(repo)
-    log_dir = repo / "code_health"
+    log_dir = git_utils.code_health_dir(repo)
     log_dir.mkdir(parents=True, exist_ok=True)
     (log_dir / "precommit_timing.log").write_text(
         timing_log("ruff PASS", "docstring_verification WARN", stamp=stamp),
@@ -264,7 +268,7 @@ def test_build_pack_snapshots_timing_before_the_gates_rewrite_it(
     docstring's stated gather order.
     """
     repo = _repo(tmp_path)
-    timing_path = repo / "code_health" / "precommit_timing.log"
+    timing_path = git_utils.code_health_dir(repo) / "precommit_timing.log"
     timing_path.parent.mkdir(parents=True, exist_ok=True)
     timing_path.write_text(
         timing_log("ruff PASS", stamp=git_utils.produced_at_stamp(repo)),
@@ -274,7 +278,7 @@ def test_build_pack_snapshots_timing_before_the_gates_rewrite_it(
     def _fake_run_tool(argv: list[str], *, cwd: Path, timeout: object) -> FakeProc:
         del timeout
         if argv[0] == "forge-precommit":
-            (cwd / "code_health" / "precommit_only_timing.log").write_text(
+            (git_utils.code_health_dir(cwd) / "precommit_only_timing.log").write_text(
                 timing_log("ruff FAIL", stamp=git_utils.produced_at_stamp(cwd)),
                 encoding="utf-8",
             )
@@ -293,7 +297,7 @@ def test_build_pack_snapshots_timing_before_the_gates_rewrite_it(
     # A `--only` gate run writes its own log; the full-run log is never touched.
     on_disk = precommit.timing_markers(timing_path.read_text(encoding="utf-8"))
     assert on_disk == {"ruff": "PASS"}
-    only_log = repo / "code_health" / "precommit_only_timing.log"
+    only_log = git_utils.code_health_dir(repo) / "precommit_only_timing.log"
     assert precommit.timing_markers(only_log.read_text(encoding="utf-8")) == {
         "ruff": "FAIL"
     }
@@ -432,7 +436,9 @@ def test_audit_result_raises_unavailable_when_log_is_stale_after_run(
     [
         (None, "no log — run `forge-audit-agents --scope full`"),
         ("stale", "stale — re-run at full scope"),
-        ("fresh", "fresh, 2 finding(s)"),
+        ("fresh", "fresh, scope unknown, 2 finding(s)"),
+        ("fresh-full", "fresh, full, 2 finding(s)"),
+        ("fresh-changed", "fresh, changed, 2 finding(s)"),
     ],
 )
 def test_reported_audit_reports_freshness_without_running_anything(
@@ -446,7 +452,8 @@ def test_reported_audit_reports_freshness_without_running_anything(
     Args:
         seed: Which log state to seed on disk before the call — ``None``
             for no log, ``"stale"`` for one naming a different tree,
-            ``"fresh"`` for one matching *current*.
+            ``"fresh"`` for a scope-less one matching *current*, ``"fresh-full"`` /
+            ``"fresh-changed"`` for one that also records its scope.
         expected: The single line ``_reported_audit`` must return for that
             state.
 
@@ -458,7 +465,7 @@ def test_reported_audit_reports_freshness_without_running_anything(
         pr_evidence, "_run_tool", lambda *_a, **_kw: pytest.fail("must not run")
     )
     current = git_utils.working_tree_sha(repo)
-    log_dir = repo / "code_health"
+    log_dir = git_utils.code_health_dir(repo)
     if seed == "stale":
         log_dir.mkdir(parents=True, exist_ok=True)
         (log_dir / "audit_agents.log").write_text(
@@ -466,8 +473,9 @@ def test_reported_audit_reports_freshness_without_running_anything(
             "2020-01-01T00:00:00+00:00\n# forge-audit-agents\n# findings: 2\n",
             encoding="utf-8",
         )
-    elif seed == "fresh":
-        _seed_audit_log(repo, "agents", count=2)
+    elif seed is not None and seed.startswith("fresh"):
+        scope = seed.removeprefix("fresh-") if seed != "fresh" else None
+        _seed_audit_log(repo, "agents", count=2, scope=scope)
 
     assert pr_evidence._reported_audit(repo, "agents", current) == [expected]
 
@@ -581,7 +589,7 @@ def test_gate_lines_verdict_and_marker(
     def _fake_run_tool(argv: list[str], *, cwd: Path, timeout: object) -> FakeProc:
         del timeout
         assert argv[0] == "forge-precommit"
-        log_dir = cwd / "code_health"
+        log_dir = git_utils.code_health_dir(cwd)
         log_dir.mkdir(parents=True, exist_ok=True)
         (log_dir / "precommit_only_timing.log").write_text(
             timing_log(

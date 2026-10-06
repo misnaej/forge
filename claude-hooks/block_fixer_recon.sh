@@ -168,7 +168,12 @@ done <<< "$(command_positions --words "$COMMAND" | tr ';&|(' '\n\n\n\n')"
 [ "$FULL_RUN" = 1 ] && [ -n "$AGENT_ID" ] || exit 0
 ROOT=${CLAUDE_PROJECT_DIR:-}
 [ -n "$ROOT" ] && [ -e "$ROOT/.git" ] || ROOT=$(git -C "${CWD:-.}" rev-parse --show-toplevel 2>/dev/null) || exit 0
-LEDGER="$ROOT/code_health/agent_timing.jsonl"
+# Log directory: FORGE_CODE_HEALTH_DIR when set (absolute, or relative to
+# the repo root), else <root>/code_health — the same rule as
+# forge.git_utils.code_health_dir, so this hook and the Python readers agree.
+CH_DIR=${FORGE_CODE_HEALTH_DIR:-code_health}
+case "$CH_DIR" in /*) ;; *) CH_DIR="$ROOT/$CH_DIR" ;; esac
+LEDGER="$CH_DIR/agent_timing.jsonl"
 COUNT=0
 if [ -r "$LEDGER" ]; then
     # Self-generated line shape (fixed keys, this script is the only
@@ -182,7 +187,7 @@ if [ "${COUNT:-0}" -ge 3 ]; then
     echo "BLOCKED: STUCK — this precommit-fixer run already used its three full forge-precommit runs (agents/precommit-fixer.md hard cap). Do not run it again: emit the STUCK block naming the step still failing, what you tried, and hand back to the main agent. A single step CLI or forge-precommit --only <step> may refresh one log." >&2
     exit 2
 fi
-mkdir -p "$ROOT/code_health" 2>/dev/null || exit 0
+mkdir -p "$CH_DIR" 2>/dev/null || exit 0
 # Encoded by jq, like log_agent_timing.sh writing the same ledger: a
 # hand-built line would let an id carrying a quote close the field early
 # and forge (or evade) the count the grep above performs.

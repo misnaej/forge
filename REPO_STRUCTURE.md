@@ -108,6 +108,7 @@ Code.
    - git_helpers.py: diff-base resolution + changed-`.py` enumeration (committed delta + staged/unstaged/untracked), layered on `git_utils`
    - dependencies.py: reverse test→source import graph (built on `import_graph`) + depth expansion; `SelectionPlan`, `render_plan`
    - runner.py: import-cache hygiene + a single deterministic `pytest` invocation per batch (coverage only on `full`)
+   - run_log.py: single-writer lock (refuses a concurrent run, takes over a dead holder) and the incremental log sink — stamped at run start, appended per tier, closed with a `# complete:` line
    - lifecycle.py: test-lifecycle mechanics — development-marker detection, 30d lifecycle-skip filter, the tracked `.forge-full-run` 48h stamp, full-run history ledger, depth-2 differential check
    - coverage.py: opt-in coverage-validated selection — maps changed lines → covering tests via per-test coverage contexts (json or `.coverage` DB); unioned into the static pass
    - cli.py: `forge-smart-test` — `--depth 0/1/2/full`, `--show-files`, `--coverage`, `--base`, `--coverage-db`, `--from-commit-message`; depth batching with fail-fast; writes `code_health/smart_test.log`
@@ -253,6 +254,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_smart_test_dependencies.py: tests for smart_test.dependencies
    - test_smart_test_runner.py: tests for smart_test.runner
    - test_smart_test_cli.py: tests for smart_test.cli
+   - test_smart_test_run_log.py: tests for smart_test.run_log (lock, incremental sink)
    - test_verify_docstrings.py: tests for verify_docstrings
    - test_verify_docstring_coverage.py: tests for verify_docstring_coverage
    - test_verify_manifest.py: tests for verify_manifest
