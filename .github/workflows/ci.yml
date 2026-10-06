@@ -71,7 +71,8 @@ jobs:
 
       # Full suite with the durations sections the slow-tests reporter
       # consumes (flags live in [tool.pytest.ini_options] addopts; the
-      # tee mirrors the documented CI recipe). `shell: bash` is load
+      # tee follows the documented CI recipe except for where the log
+      # goes — see the end of this comment). `shell: bash` is load
       # bearing: an unspecified `run:` step is `bash -e {0}`, with no
       # pipefail, so `pytest | tee` would exit with tee's status and a
       # failing suite would report success. Only the explicit form gets
