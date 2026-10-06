@@ -450,6 +450,12 @@ options:
               without writing. Exit 1 on drift.
 ```
 
+## forge-memory-audit
+
+```text
+(--help unavailable for forge-memory-audit)
+```
+
 ## forge-next-prep
 
 ```text
