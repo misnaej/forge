@@ -941,7 +941,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--body-file",
         type=Path,
         metavar="FILE",
-        help="wrap-up markdown (default: code_health/pr_wrapup.md)",
+        help="wrap-up markdown (default: pr_wrapup.md in the log directory — "
+        "code_health/, or $FORGE_CODE_HEALTH_DIR when set)",
     )
     post.add_argument(
         "--no-continuation",

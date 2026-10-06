@@ -5719,3 +5719,42 @@ def test_help_exemption_does_not_leak(hook: str, command: str) -> None:
         command: Shell command with help-like token to execute through the hook.
     """
     assert _run_hook(hook, command) == _BLOCK
+
+
+@pytest.mark.parametrize(
+    "override",
+    [None, "logs/ch", "ABSOLUTE"],
+    ids=["unset", "relative", "absolute"],
+)
+def test_shell_hook_resolves_log_dir_like_code_health_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: str | None
+) -> None:
+    """``log_agent_timing.sh`` lands its ledger where ``code_health_dir`` says.
+
+    Both sides run under the same environment value, so a drift between
+    the shell rule and the Python resolver (unset, repo-relative, absolute)
+    splits the evidence between two directories.
+
+    Args:
+        override: ``FORGE_CODE_HEALTH_DIR`` value; ``None`` leaves it unset
+            and ``"ABSOLUTE"`` selects an absolute path under ``tmp_path``.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    if override is None:
+        monkeypatch.delenv("FORGE_CODE_HEALTH_DIR", raising=False)
+    else:
+        value = str(tmp_path / "abs-logs") if override == "ABSOLUTE" else override
+        monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", value)
+    payload = {
+        "hook_event_name": "SubagentStop",
+        "session_id": "s1",
+        "agent_id": "a1",
+        "agent_type": "forge:design-checker",
+    }
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo)}
+
+    assert _run_agent_timing_hook(payload, cwd=repo, env=env).returncode == 0
+
+    assert (code_health_dir(repo) / "agent_timing.jsonl").is_file()

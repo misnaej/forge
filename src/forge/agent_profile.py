@@ -1246,7 +1246,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ledger",
         type=Path,
-        help=f"Hook ledger (default: <repo>/code_health/{LEDGER_NAME}).",
+        help=f"Hook ledger (default: {LEDGER_NAME} in the log directory — "
+        "<repo>/code_health/, or $FORGE_CODE_HEALTH_DIR when set).",
     )
     parser.add_argument(
         "--transcripts",

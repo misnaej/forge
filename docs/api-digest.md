@@ -1304,8 +1304,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class LockHeldError` — Another live ``forge-smart-test`` run holds the log lock.
 - `_pid_alive(pid: int) -> bool` _(internal)_ — Return whether a process with *pid* exists.
 - `_read_holder(lock: Path) -> tuple[int, str]` _(internal)_ — Read the ``<pid> <started>`` line a lock file holds.
+- `_take_over_stale(lock: Path, dead_pid: int) -> None` _(internal)_ — Move a stale lock out of the way without clobbering a live one.
 - `acquire_lock(repo_root: Path) -> Path` — Take the log-directory lock for this process.
 - `release_lock(lock: Path) -> None` — Remove the lock if this process still holds it.
+- `_write_sink(path: Path, text: str, *, append: bool) -> None` _(internal)_ — Write *text* to *path* without following a symlink there.
 - `class RunLog` — The two log sinks of one run, written incrementally.
   - `for_repo(cls, repo_root: Path, names: tuple[str, ...]) -> RunLog` — Build the sinks for *repo_root*'s log directory.
   - `start(self, repo_root: Path, header: str = '') -> None` — Truncate the sinks and write the start-of-run stamp and header.

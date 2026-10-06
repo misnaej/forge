@@ -208,7 +208,8 @@ def make_audit_parser(prog: str, description: str) -> argparse.ArgumentParser:
         "--output",
         type=Path,
         default=None,
-        help="Override log path. Defaults to code_health/audit_<name>.log.",
+        help="Override log path. Defaults to audit_<name>.log in the log "
+        "directory (code_health/, or $FORGE_CODE_HEALTH_DIR when set).",
     )
     return parser
 

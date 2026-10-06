@@ -157,7 +157,8 @@ def main() -> int:
         "--output",
         type=Path,
         default=None,
-        help="Override summary log path (default: code_health/audit_summary.log).",
+        help="Override summary log path (default: audit_summary.log in the log "
+        "directory — code_health/, or $FORGE_CODE_HEALTH_DIR when set).",
     )
     args = parser.parse_args()
 

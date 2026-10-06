@@ -36,8 +36,9 @@ Report where agent and subagent time goes, and which files a subagent wrote
 
 options:
   -h, --help            show this help message and exit
-  --ledger LEDGER       Hook ledger (default:
-                        <repo>/code_health/agent_timing.jsonl).
+  --ledger LEDGER       Hook ledger (default: agent_timing.jsonl in the log
+                        directory — <repo>/code_health/, or
+                        $FORGE_CODE_HEALTH_DIR when set).
   --transcripts TRANSCRIPTS
                         Transcripts directory (~/.claude/projects/<encoded-
                         cwd>) not named in ledger.
@@ -73,8 +74,9 @@ options:
                         modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
-  --output OUTPUT       Override log path. Defaults to
-                        code_health/audit_<name>.log.
+  --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
+                        log directory (code_health/, or $FORGE_CODE_HEALTH_DIR
+                        when set).
 ```
 
 ## forge-audit-all
@@ -92,8 +94,9 @@ options:
   --roots [ROOTS ...]
   --only [{suppressions,agents,dup,deps,orphans,data,claims,layering} ...]
                         Run only these sub-audits (default: all).
-  --output OUTPUT       Override summary log path (default:
-                        code_health/audit_summary.log).
+  --output OUTPUT       Override summary log path (default: audit_summary.log
+                        in the log directory — code_health/, or
+                        $FORGE_CODE_HEALTH_DIR when set).
 ```
 
 ## forge-audit-claims
@@ -111,8 +114,9 @@ options:
                         modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
-  --output OUTPUT       Override log path. Defaults to
-                        code_health/audit_<name>.log.
+  --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
+                        log directory (code_health/, or $FORGE_CODE_HEALTH_DIR
+                        when set).
   --no-default-lexicon  Disable the built-in lexicon (use only forge-audit-
                         claims.toml).
 ```
@@ -132,8 +136,9 @@ options:
                         modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
-  --output OUTPUT       Override log path. Defaults to
-                        code_health/audit_<name>.log.
+  --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
+                        log directory (code_health/, or $FORGE_CODE_HEALTH_DIR
+                        when set).
 ```
 
 ## forge-audit-deps
@@ -153,8 +158,9 @@ options:
                         modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
-  --output OUTPUT       Override log path. Defaults to
-                        code_health/audit_<name>.log.
+  --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
+                        log directory (code_health/, or $FORGE_CODE_HEALTH_DIR
+                        when set).
   --distance-threshold DISTANCE_THRESHOLD
                         Report modules with main-sequence distance above this
                         value (default: 0.7).
@@ -182,8 +188,9 @@ options:
                         modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
-  --output OUTPUT       Override log path. Defaults to
-                        code_health/audit_<name>.log.
+  --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
+                        log directory (code_health/, or $FORGE_CODE_HEALTH_DIR
+                        when set).
   --min-tokens MIN_TOKENS
                         Skip functions with fewer normalized tokens (default:
                         30).
@@ -211,8 +218,9 @@ options:
                         modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
-  --output OUTPUT       Override log path. Defaults to
-                        code_health/audit_<name>.log.
+  --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
+                        log directory (code_health/, or $FORGE_CODE_HEALTH_DIR
+                        when set).
 ```
 
 ## forge-audit-orphans
@@ -230,8 +238,9 @@ options:
                         modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
-  --output OUTPUT       Override log path. Defaults to
-                        code_health/audit_<name>.log.
+  --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
+                        log directory (code_health/, or $FORGE_CODE_HEALTH_DIR
+                        when set).
   --min-confidence MIN_CONFIDENCE
                         Minimum vulture confidence (0-100) to report (default:
                         80).
@@ -252,8 +261,9 @@ options:
                         modified vs the configured base branch.
   --roots [ROOTS ...]   Source dirs to scan when --scope=full. Auto-detected
                         if omitted.
-  --output OUTPUT       Override log path. Defaults to
-                        code_health/audit_<name>.log.
+  --output OUTPUT       Override log path. Defaults to audit_<name>.log in the
+                        log directory (code_health/, or $FORGE_CODE_HEALTH_DIR
+                        when set).
 ```
 
 ## forge-changelog

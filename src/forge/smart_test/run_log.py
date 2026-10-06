@@ -13,11 +13,20 @@ must not be half one run, half another:
   time. A second run refuses and names the holder instead of clobbering
   the first run's log; a lock left by a process that no longer exists is
   taken over.
+
+The lock is portable (no ``fcntl``): it is a file created with
+``O_CREAT | O_EXCL``, and a stale one is taken over by first renaming it
+aside — an atomic step only one process wins — then checking that what
+was moved is the dead holder seen a moment earlier; if a live run had
+just taken the lock instead, it is put back. A three-way interleaving
+(two takers and a third fresh run inside that window) remains possible;
+it needs a dead holder and three simultaneous starts.
 """
 
 from __future__ import annotations
 
 import os
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -75,6 +84,29 @@ def _read_holder(lock: Path) -> tuple[int, str]:
         return 0, ""
 
 
+def _take_over_stale(lock: Path, dead_pid: int) -> None:
+    """Move a stale lock out of the way without clobbering a live one.
+
+    Args:
+        lock: The lock path.
+        dead_pid: The holder pid just read and found dead.
+    """
+    aside = lock.with_name(f"{lock.name}.stale-{os.getpid()}")
+    try:
+        lock.rename(aside)
+    except FileNotFoundError:
+        return  # another process already moved it
+    try:
+        moved_pid, _ = _read_holder(aside)
+        if moved_pid != dead_pid:
+            # A live run took the lock between our read and the rename:
+            # put its lock back (link fails rather than overwrite).
+            with suppress(OSError):
+                os.link(aside, lock)
+    finally:
+        aside.unlink(missing_ok=True)
+
+
 def acquire_lock(repo_root: Path) -> Path:
     """Take the log-directory lock for this process.
 
@@ -107,7 +139,7 @@ def acquire_lock(repo_root: Path) -> Path:
                     "log when it does"
                 )
                 raise LockHeldError(msg) from None
-            lock.unlink(missing_ok=True)
+            _take_over_stale(lock, pid)
             continue
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(line)
@@ -125,6 +157,27 @@ def release_lock(lock: Path) -> None:
     pid, _ = _read_holder(lock)
     if pid == os.getpid():
         lock.unlink(missing_ok=True)
+
+
+# Refuse to write through a symlink planted at a sink path (a log
+# directory relocated somewhere shared). Not every platform has the flag.
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
+
+def _write_sink(path: Path, text: str, *, append: bool) -> None:
+    """Write *text* to *path* without following a symlink there.
+
+    Args:
+        path: Sink file.
+        text: Content to write.
+        append: Append instead of truncating.
+    """
+    flags = (
+        os.O_WRONLY | os.O_CREAT | _NOFOLLOW | (os.O_APPEND if append else os.O_TRUNC)
+    )
+    fd = os.open(path, flags, 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
 
 
 @dataclass
@@ -164,7 +217,7 @@ class RunLog:
         text = f"{produced_at_stamp(repo_root)}\n{header}"
         for path in self.paths:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8")
+            _write_sink(path, text, append=False)
 
     def append(self, text: str) -> None:
         """Append *text* to every sink.
@@ -173,8 +226,7 @@ class RunLog:
             text: Output to add (one tier's section).
         """
         for path in self.paths:
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(text)
+            _write_sink(path, text, append=True)
 
     def complete(self, verdict: str) -> None:
         """Write the completion line that marks the log whole.

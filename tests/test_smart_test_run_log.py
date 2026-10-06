@@ -192,3 +192,92 @@ def test_pid_alive_rejects_non_positive_pids() -> None:
     assert not run_log._pid_alive(0)
     assert not run_log._pid_alive(-5)
     assert run_log._pid_alive(os.getpid())
+
+
+# ---------------------------------------------------------------------------
+# _take_over_stale
+# ---------------------------------------------------------------------------
+
+
+def _stale_leftovers(lock: Path) -> list[Path]:
+    """Return any ``<lock>.stale-*`` files beside *lock*.
+
+    Args:
+        lock: Lock file path whose stale siblings are listed.
+
+    Returns:
+        The matching leftover paths, empty when none remain.
+    """
+    return list(lock.parent.glob(f"{lock.name}.stale-*"))
+
+
+def test_take_over_stale_removes_the_dead_holders_lock(tmp_path: Path) -> None:
+    """A lock still naming the dead pid is deleted, leaving nothing behind."""
+    dead = _dead_pid()
+    lock = tmp_path / LOCK_NAME
+    lock.write_text(f"{dead} 2020-01-01T00:00:00+00:00\n", encoding="utf-8")
+
+    run_log._take_over_stale(lock, dead)
+
+    assert not lock.exists()
+    assert _stale_leftovers(lock) == []
+
+
+def test_take_over_stale_restores_a_lock_a_live_run_took_meanwhile(
+    tmp_path: Path,
+) -> None:
+    """If the lock now names another pid, it is put back untouched."""
+    lock = tmp_path / LOCK_NAME
+    live = f"{os.getpid()} 2026-01-01T00:00:00+00:00\n"
+    lock.write_text(live, encoding="utf-8")
+
+    run_log._take_over_stale(lock, _dead_pid())
+
+    assert lock.read_text(encoding="utf-8") == live
+    assert _stale_leftovers(lock) == []
+
+
+def test_take_over_stale_missing_lock_is_a_no_op(tmp_path: Path) -> None:
+    """Another process already moved the lock: nothing to do, no error."""
+    lock = tmp_path / LOCK_NAME
+
+    run_log._take_over_stale(lock, _dead_pid())
+
+    assert not lock.exists()
+    assert _stale_leftovers(lock) == []
+
+
+# ---------------------------------------------------------------------------
+# sinks never follow a symlink
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="needs O_NOFOLLOW")
+def test_start_refuses_to_write_through_a_symlinked_sink(tmp_path: Path) -> None:
+    """A symlink planted at a sink path is an error, not a write elsewhere."""
+    target = tmp_path / "victim.txt"
+    target.write_text("precious\n", encoding="utf-8")
+    log = RunLog.for_repo(tmp_path, ("a.log",))
+    log.paths[0].parent.mkdir(parents=True, exist_ok=True)
+    log.paths[0].symlink_to(target)
+
+    with pytest.raises(OSError, match="symbolic link"):
+        log.start(tmp_path)
+
+    assert target.read_text(encoding="utf-8") == "precious\n"
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="needs O_NOFOLLOW")
+def test_append_refuses_to_write_through_a_symlinked_sink(tmp_path: Path) -> None:
+    """A sink swapped for a symlink mid-run is not appended through."""
+    target = tmp_path / "victim.txt"
+    target.write_text("precious\n", encoding="utf-8")
+    log = RunLog.for_repo(tmp_path, ("a.log",))
+    log.start(tmp_path)
+    log.paths[0].unlink()
+    log.paths[0].symlink_to(target)
+
+    with pytest.raises(OSError, match="symbolic link"):
+        log.append("injected\n")
+
+    assert target.read_text(encoding="utf-8") == "precious\n"

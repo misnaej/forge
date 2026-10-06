@@ -403,7 +403,15 @@ def test_scope_all_passes_repo_root_and_resolved_roots_to_tracked_files_under_ro
 
 
 def _verify_body(tmp_path: Path, func_source: str) -> list:
-    """Write func_source to a test file and return verify_file issues."""
+    """Write func_source to a test file and return verify_file issues.
+
+    Args:
+        tmp_path: Directory receiving the generated module.
+        func_source: Source of the function under verification.
+
+    Returns:
+        The issues reported by ``verify_file``.
+    """
     target = tmp_path / "sections.py"
     target.write_text("'''Module docstring.'''\n\n\n" + func_source)
     return verify_file(target)
