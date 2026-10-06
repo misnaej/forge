@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -146,7 +147,7 @@ def test_acquire_lock_takes_over_a_dead_holders_lock(tmp_path: Path) -> None:
 def test_acquire_lock_treats_a_malformed_lock_as_stale(
     tmp_path: Path, content: str
 ) -> None:
-    """An unreadable holder line cannot name a live process, so it is replaced.
+    """An unreadable holder line, past the grace period, is stale and replaced.
 
     Args:
         content: The malformed lock-file content.
@@ -154,6 +155,8 @@ def test_acquire_lock_treats_a_malformed_lock_as_stale(
     lock = code_health_dir(tmp_path) / LOCK_NAME
     lock.parent.mkdir(parents=True, exist_ok=True)
     lock.write_text(content, encoding="utf-8")
+    aged = time.time() - 60
+    os.utime(lock, (aged, aged))
 
     taken = acquire_lock(tmp_path)
 
@@ -281,3 +284,86 @@ def test_append_refuses_to_write_through_a_symlinked_sink(tmp_path: Path) -> Non
         log.append("injected\n")
 
     assert target.read_text(encoding="utf-8") == "precious\n"
+
+
+# ---------------------------------------------------------------------------
+# lock creation, grace period, platform guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("content", ["", "garbage\n", "0 x\n"])
+def test_acquire_lock_fresh_malformed_lock_is_treated_as_live(
+    tmp_path: Path, content: str
+) -> None:
+    """A just-written unreadable lock may be mid-write by a live run: refuse.
+
+    Args:
+        content: The malformed lock-file content.
+    """
+    lock = code_health_dir(tmp_path) / LOCK_NAME
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(content, encoding="utf-8")
+
+    with pytest.raises(LockHeldError):
+        acquire_lock(tmp_path)
+
+    assert lock.read_text(encoding="utf-8") == content
+
+
+def test_held_lock_refusal_tells_the_user_how_to_clear_it(tmp_path: Path) -> None:
+    """The refusal names the lock file to delete when no run is active."""
+    lock = acquire_lock(tmp_path)
+
+    with pytest.raises(LockHeldError, match=f"delete {lock}"):
+        acquire_lock(tmp_path)
+
+
+def test_acquire_lock_leaves_no_staged_file_behind(tmp_path: Path) -> None:
+    """The temporary file the lock is linked from never outlives the call."""
+    lock = acquire_lock(tmp_path)
+
+    assert list(lock.parent.glob(f"{LOCK_NAME}.new-*")) == []
+
+
+def test_create_lock_falls_back_to_exclusive_create_without_hard_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filesystem refusing ``link`` still yields a complete lock file."""
+
+    def no_link(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError
+
+    monkeypatch.setattr(run_log.os, "link", no_link)
+    lock = tmp_path / LOCK_NAME
+
+    assert run_log._create_lock(lock, "123 now\n") is True
+
+    assert lock.read_text(encoding="utf-8") == "123 now\n"
+    assert list(tmp_path.glob(f"{LOCK_NAME}.new-*")) == []
+
+
+def test_create_lock_existing_lock_returns_false_and_stays_untouched(
+    tmp_path: Path,
+) -> None:
+    """Losing the creation race reports ``False`` and cleans its staged file."""
+    lock = tmp_path / LOCK_NAME
+    lock.write_text("1 theirs\n", encoding="utf-8")
+
+    assert run_log._create_lock(lock, "2 ours\n") is False
+
+    assert lock.read_text(encoding="utf-8") == "1 theirs\n"
+    assert list(tmp_path.glob(f"{LOCK_NAME}.new-*")) == []
+
+
+def test_pid_alive_on_windows_never_calls_os_kill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``os.kill`` terminates a process on win32, so liveness must not use it."""
+
+    def forbidden(*_args: object) -> None:
+        pytest.fail("os.kill must not be called on win32")
+
+    monkeypatch.setattr(run_log.sys, "platform", "win32")
+    monkeypatch.setattr(run_log.os, "kill", forbidden)
+
+    assert run_log._pid_alive(os.getpid() + 1) is True

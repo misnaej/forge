@@ -26,6 +26,8 @@ it needs a dead holder and three simultaneous starts.
 from __future__ import annotations
 
 import os
+import sys
+import time
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -39,6 +41,9 @@ if TYPE_CHECKING:
 
 
 LOCK_NAME = "smart_test.lock"
+# A lock file with no readable holder yet may belong to a run that is
+# still writing it; it counts as live for this long after its last change.
+_EMPTY_LOCK_GRACE_S = 5.0
 COMPLETE_PREFIX = "# complete: "
 
 
@@ -58,6 +63,11 @@ def _pid_alive(pid: int) -> bool:
     """
     if pid <= 0:
         return False
+    if sys.platform == "win32":
+        # There, os.kill(pid, 0) does not probe — it terminates the
+        # process. With no safe probe, a recorded holder counts as live;
+        # the refusal message says how to clear a stale lock by hand.
+        return True
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -93,7 +103,7 @@ def _take_over_stale(lock: Path, dead_pid: int) -> None:
     """
     aside = lock.with_name(f"{lock.name}.stale-{os.getpid()}")
     try:
-        lock.rename(aside)
+        lock.replace(aside)
     except FileNotFoundError:
         return  # another process already moved it
     try:
@@ -107,11 +117,65 @@ def _take_over_stale(lock: Path, dead_pid: int) -> None:
         aside.unlink(missing_ok=True)
 
 
+def _create_lock(lock: Path, line: str) -> bool:
+    """Create *lock* already holding *line*, failing if it exists.
+
+    The holder line is written to a private temporary file first and then
+    hard-linked into place, so the lock is never visible while empty — an
+    empty lock would read as having no holder. Where hard links are not
+    supported, falls back to an exclusive create followed by the write.
+
+    Args:
+        lock: The lock path.
+        line: The ``<pid> <started>`` holder line.
+
+    Returns:
+        ``True`` when this call created the lock, ``False`` when it existed.
+    """
+    staged = lock.with_name(f"{lock.name}.new-{os.getpid()}")
+    staged.write_text(line, encoding="utf-8")
+    try:
+        os.link(staged, lock)
+    except FileExistsError:
+        return False
+    except OSError:
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            return False
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(line)
+    finally:
+        staged.unlink(missing_ok=True)
+    return True
+
+
+def _holder_live(lock: Path, pid: int) -> bool:
+    """Return whether the lock's recorded holder must be respected.
+
+    Args:
+        lock: The lock path.
+        pid: The pid read from it (``0`` when unreadable or empty).
+
+    Returns:
+        ``True`` for a live pid, and for an unreadable lock changed within
+        the grace period (a run may be mid-way through writing it).
+    """
+    if pid <= 0:
+        try:
+            age = time.time() - lock.stat().st_mtime
+        except OSError:
+            return False
+        return age < _EMPTY_LOCK_GRACE_S
+    return _pid_alive(pid)
+
+
 def acquire_lock(repo_root: Path) -> Path:
     """Take the log-directory lock for this process.
 
-    Created atomically (``O_CREAT | O_EXCL``). An existing lock whose
-    process is gone is removed and the creation retried once.
+    Created atomically with its holder line already in it
+    (:func:`_create_lock`). An existing lock whose process is gone is
+    taken over (:func:`_take_over_stale`) and the creation retried once.
 
     Args:
         repo_root: Git repo root.
@@ -128,22 +192,17 @@ def acquire_lock(repo_root: Path) -> Path:
     lock = log_dir / LOCK_NAME
     line = f"{os.getpid()} {datetime.now(UTC).isoformat(timespec='seconds')}\n"
     for _ in range(2):
-        try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-        except FileExistsError:
-            pid, started = _read_holder(lock)
-            if _pid_alive(pid):
-                msg = (
-                    f"another forge-smart-test run (pid {pid}, started {started}) "
-                    f"is writing {log_dir}; wait for it to finish, or read its "
-                    "log when it does"
-                )
-                raise LockHeldError(msg) from None
-            _take_over_stale(lock, pid)
-            continue
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(line)
-        return lock
+        if _create_lock(lock, line):
+            return lock
+        pid, started = _read_holder(lock)
+        if _holder_live(lock, pid):
+            msg = (
+                f"another forge-smart-test run (pid {pid or '?'}, started "
+                f"{started or '?'}) is writing {log_dir}; wait for it to finish, "
+                f"or read its log when it does. If no run is active, delete {lock}"
+            )
+            raise LockHeldError(msg)
+        _take_over_stale(lock, pid)
     msg = f"could not take {lock}: it reappeared while being replaced"
     raise LockHeldError(msg)
 
