@@ -506,5 +506,17 @@
  "echo ok; sh -c \"git push -f\"": {
   "positions": "echo ok; sh -c ;git push -f;\n",
   "words": "echo ok; sh -c ;git push -f;\n"
+ },
+ "bash -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -c 'git push -f'": {
+  "positions": "bash -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -c ;git push -f;\n",
+  "words": "bash -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -c ;git push -f;\n"
+ },
+ "ssh -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes host 'git push -f'": {
+  "positions": "ssh -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes host ;git push -f;\n",
+  "words": "ssh -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes host ;git push -f;\n"
+ },
+ "sh -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix <<EOF\ngit push -f\nEOF": {
+  "positions": "sh -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix <<_\ngit push -f\n",
+  "words": "sh -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix <<_\ngit push -f\n"
  }
 }

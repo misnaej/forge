@@ -116,9 +116,10 @@ GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|
 # returned — the guard then behaves as it did before the pre-pass existed.
 _GUARD_CMDPOS_AWK='
 function neut(t) { gsub(/[;&|()`<>\n!{}]/, "_", t); return t }
-function tail(o) { return length(o) > 240 ? substr(o, length(o) - 239) : o }
-function wtype(o,   t) {
-    t = tail(o)
+# Wrapper type of the command so far. t is the current simple command —
+# the output since its last separator, however long: a fixed-size window
+# let padding (`bash -o posix -o posix … -c`) push the wrapper out of view.
+function wtype(t) {
     if (t ~ RE_SHELLC || t ~ RE_HSTR) return 1
     if (t ~ RE_EVAL) return 2
     if (t ~ RE_SSH) return 3
@@ -245,21 +246,39 @@ function heredoc_open(s, i, before,   n, k, ch, j, rl) {
     }
     HPOS = k
 }
-function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, pc, bd, pa, wt, qs) {
+# Wrapper detection reads the whole current simple command, with no size
+# cap, in linear time. Every wrapper regex ends in a shape the previous
+# word alone reveals — a `-…c…` flag after a shell name, `<<<`, `eval`, or
+# any word once `ssh` has been seen (only a quoted word can then be the
+# payload) — so the full regex runs only when that word fits. It reads from
+# cb, the chain base: past the last character no wrapper regex can span
+# (a separator, `<`, `>`, `(`, `)`), which is also why a match can never
+# start before it. pws marks where the previous word began; hsh / hssh
+# record a shell name / `ssh` in the current chain.
+function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, pc, bd, pa, wt, qs, cb, pws, pw, hsh, hssh) {
     n = length(s); out = ""; depth = 0; dollar = 0; nh = 0; bd = 0; pa = 0
+    cb = 0; pws = 0; hsh = 0; hssh = 0
     while (i <= n) {
         c = substr(s, i, 1)
         pc = (i == 1) ? "\n" : substr(s, i - 1, 1)
-        if (index(";&|\n()", c)) pa = 0
+        if (index(";&|\n()", c)) { pa = 0; cb = length(out); pws = cb + 1; hsh = 0; hssh = 0 }
         if (!index(" \t\n;&|()<>", c) && index(" \t<", pc)) {
-            wt = wtype(out)
             qs = (c == "\047" || c == "\"" || (c == "$" && index("\047\"", substr(s, i + 1, 1))))
+            pw = substr(out, pws + 1); sub(/[ \t]+$/, "", pw)
+            wt = 0
+            if ((hsh && pw ~ /^-[A-Za-z]*c[A-Za-z]*$/) || pw ~ /<<<$/ || pw ~ RE_EVALW || (qs && hssh))
+                wt = wtype(substr(out, cb + 1))
+            if (match(pw, /[\n;&|()<>][^\n;&|()<>]*$/)) { cb = pws + RSTART; hsh = 0; hssh = 0 }
+            if (pw ~ RE_HEADW) hsh = 1
+            if (pw ~ RE_SSHW) hssh = 1
+            pws = length(out)
             if (wt == 0 && pa && qs) wt = 2
             if (wt == 1 || (wt && qs)) {
                 w = pword(s, i); out = out rescan(w); i = WPOS
+                cb = length(out); pws = cb; hsh = 0; hssh = 0
                 pa = (wt >= 2); dollar = 0; continue
             }
-            if (wt == 2) out = out ";"
+            if (wt == 2) { out = out ";"; cb = length(out); pws = cb; hsh = 0; hssh = 0 }
         }
         if (c == "\\") {
             d = substr(s, i + 1, 1)
@@ -331,7 +350,7 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
         if (c == "#" && is_comment(s, i, pc, bd, mode)) { i = comment_end(s, i); continue }
         if (c == "<" && substr(s, i, 3) == "<<<") { out = out "<<<"; i += 3; dollar = 0; continue }
         if (c == "<" && substr(s, i + 1, 1) == "<") {
-            heredoc_open(s, i, tail(out))
+            heredoc_open(s, i, substr(out, cb + 1))
             if (HW != "") { nh++; hdl[nh] = HW; hq[nh] = HQ; ht[nh] = HD; hx[nh] = HX }
             out = out "<<_"; i = HPOS; dollar = 0; continue
         }
@@ -369,6 +388,9 @@ BEGIN {
     RE_HSTR = B SHELLS "(" ARG ")*[ \t]*<<<[ \t]*$"
     RE_FEED = B "(" SHELLS "|ssh)(" ARG ")*[ \t]*$"
     RE_PIPESH = "[|][ \t]*([^ \t\n;&|()<>]+[ \t]+)*(" SHELLS "|ssh)([ \t;&|)]|$)"
+    RE_HEADW = B SHELLS "$"
+    RE_SSHW = B "ssh$"
+    RE_EVALW = B "eval$"
 }
 { src = (NR == 1) ? $0 : src "\n" $0 }
 END { printf "%s\n", scan(src, 1, 0) }

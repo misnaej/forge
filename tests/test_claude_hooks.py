@@ -13,6 +13,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -5789,6 +5790,10 @@ _SNAPSHOT_EXTRA_COMMANDS = [
     "eval 'git push -f'",
     'sudo bash -lc "git push --force"',
     'echo ok; sh -c "git push -f"',
+    # Padded wrappers: the wrapper sits far before its payload.
+    "bash " + "-o posix " * 30 + "-c 'git push -f'",
+    "ssh " + "-o BatchMode=yes " * 20 + "host 'git push -f'",
+    "sh " + "-o posix " * 30 + "<<EOF\ngit push -f\nEOF",
 ]
 
 
@@ -5903,6 +5908,52 @@ def test_quoting_constructs_agree_between_plain_and_wrapped_paths(
     wrapped = _run_hook("block_force_push.sh", f"bash -c {shlex.quote(case)}")
 
     assert plain == wrapped == expected
+
+
+_POSIX_PAD = "-o posix " * 30
+_SSH_PAD = "-o BatchMode=yes " * 20
+_PADDED_WRAPPER_CASES = [
+    pytest.param(f"bash {_POSIX_PAD}-c 'git push -f'", id="bash-options"),
+    pytest.param(f"sh {_POSIX_PAD}-c 'git push --force'", id="sh-options"),
+    pytest.param(f'bash {_POSIX_PAD}-lc "git push -f origin main"', id="bash-cluster"),
+    pytest.param(f"ssh {_SSH_PAD}host 'git push -f'", id="ssh-options"),
+    pytest.param(f"sh {_POSIX_PAD}<<EOF\ngit push -f\nEOF", id="heredoc-to-shell"),
+    pytest.param(f"bash {_POSIX_PAD}<<<'git push -f'", id="here-string"),
+]
+
+
+@pytest.mark.parametrize("command", _PADDED_WRAPPER_CASES)
+def test_padded_wrapper_cannot_hide_a_force_push(command: str) -> None:
+    """SCENARIO: harmless options pad a wrapper far from its payload.
+
+    A wrapper is detected across its whole simple command, so no amount of
+    padding moves it out of view.
+
+    Args:
+        command: A wrapped force push behind 200+ characters of options.
+    """
+    assert len(command) > 240
+    assert _run_hook(_FORCE_PUSH, command) == 2
+
+
+def test_padded_wrapper_with_a_harmless_payload_is_allowed() -> None:
+    """The fix blocks wrapped force pushes, not long wrappers."""
+    assert _run_hook(_FORCE_PUSH, f"bash {_POSIX_PAD}-c 'echo hi'") == 0
+
+
+def test_scanner_stays_fast_on_a_50kb_single_line_command() -> None:
+    """A 50 KB one-line command is scanned in linear time.
+
+    Wrapper detection reads the whole simple command; checking only when the
+    previous word could end a wrapper keeps that from going quadratic.
+    """
+    command = "echo " + "x " * 25000 + f"; bash {_POSIX_PAD}-c 'git push -f'"
+    start = time.monotonic()
+    verdict = _run_hook(_FORCE_PUSH, command)
+    elapsed = time.monotonic() - start
+
+    assert verdict == 2
+    assert elapsed < 5
 
 
 @pytest.mark.parametrize(
