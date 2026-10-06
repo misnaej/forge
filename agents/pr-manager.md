@@ -179,10 +179,6 @@ Agent-scoped: `block_pr_merge`, `block_unverified_pr_create` (source of
 truth: `[tool.forge.agent_doc.guarded_by]`). Shared contract — what a
 block means and how to respond: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
 
-## CONTINUATION Log Update
-
-`forge-pr-wrapup post` appends the activity record after a successful post (rules: [FOUNDATION §10](../FOUNDATION.md#10-continuation-protocol)). Only when a wrap-up was posted another way, append it yourself: `forge-continuation-append --pr <PR#> "<PR title>"`.
-
 ## Output
 
 Report templates live in each task section — Verification's two mandatory PR comments, Fetch/Categorize's structured list, URL/comment-id returns elsewhere. Reports reach the **orchestrator only** — callers must relay to the user's terminal (rationale: `/pr` Step 3.9).

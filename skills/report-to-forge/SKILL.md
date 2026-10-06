@@ -113,8 +113,7 @@ gh issue create --repo "$UPSTREAM" --title "<process>: <symptom>" --body-file <d
 
 The upstream repo is resolved from the canonical constant — never a
 guessed URL. Return the issue URL to
-the user, and append a one-line record to `.plan/CONTINUATION.md`
-(FOUNDATION §10).
+the user.
 
 ## Scope
 

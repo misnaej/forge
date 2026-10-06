@@ -21,8 +21,10 @@ Run the standard commit workflow:
 
 3. If pre-commit hook fails, go back to step 1.
 
-4. **Update CONTINUATION state** for significant commits:
-   - `git-commit-push` agent appends a one-line activity record to `.plan/CONTINUATION.md` automatically (gitignored).
+4. **The handoff note needs nothing from you here.** Every commit
+   attempt (blocked ones too) refreshes the status panel in
+   `.plan/CONTINUATION.md` (FOUNDATION §10); update its written section
+   only when intent, a decision, or the next step changed.
 
 5. **Continue into verification when the branch's work is done.** If this
    commit completes the branch's planned implementation, do NOT stop here —

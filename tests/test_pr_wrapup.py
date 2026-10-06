@@ -10,10 +10,10 @@
 # ``tests/test_gh_comments.py``. `main`'s `post` subcommand additionally
 # patches `gh_pr_view` / `fetch_quietly` / `behind_ahead` / `repo_root` (a real
 # ``tmp_path`` repo, never the checkout this suite runs from) and
-# `continuation_append.main` — all real `gh`/git seams `post` now reaches
-# before it ever gets to `post_wrapup`. One `post` test deliberately leaves
-# `continuation_append.main` unpatched (a real ``tmp_path`` repo) to pin the
-# ``--`` argv-separator contract for a dash-prefixed PR title. The emergency
+# `refresh_state` — all real `gh`/git seams `post` now reaches before it ever
+# gets to `post_wrapup`. The PR title no longer reaches the continuation note
+# (the panel holds only forge-derived, sanitized values), so there is no
+# argv-separator case to pin. The emergency
 # waiver (`_is_emergency_post`) is exercised with a real sentinel file
 # (`forge.emergency.write_state`), never a patched `read_state`. `main`'s
 # `compose` subcommand runs against a real (`init_git_repo`) ``tmp_path`` repo
@@ -963,7 +963,7 @@ def test_main_post_gate_refusal_exits_three_and_never_posts_or_appends(
     """SCENARIO: the PR head has moved past the wrap-up's verified SHA.
 
     MOCK SETUP: `gh_pr_view` reports a head that does not prefix-match the
-    wrap-up's `verified-at:` SHA; `post_wrapup` and `continuation_append.main`
+    wrap-up's `verified-at:` SHA; `post_wrapup` and `refresh_state`
     are faked to fail the test if called at all.
     EXPECTED BEHAVIOR: exit 3 (`EXIT_REFUSED`), no post, no continuation append.
     """
@@ -992,7 +992,7 @@ def test_main_post_gate_refusal_exits_three_and_never_posts_or_appends(
         raise AssertionError(msg)
 
     monkeypatch.setattr(mod, "post_wrapup", _fail)
-    monkeypatch.setattr(mod.continuation_append, "main", _fail)
+    monkeypatch.setattr(mod, "refresh_state", _fail)
 
     rc = mod.main(["post", "--pr", "61", "--body-file", str(path)])
     assert rc == mod.EXIT_REFUSED
@@ -1007,7 +1007,7 @@ def test_main_post_clean_run_writes_refreshed_body_posts_and_appends_continuatio
 
     MOCK SETUP: `gh_pr_view` reports a matching head, a mergeable branch, and
     a passing rollup; `fetch_quietly`/`behind_ahead` report the branch even
-    with base; `post_wrapup` and `continuation_append.main` are faked to
+    with base; `post_wrapup` and `refresh_state` are faked to
     record their calls.
     EXPECTED BEHAVIOR: the file on disk is rewritten with the refreshed body
     (CI Status and Issue Management updated from the PR view), `post_wrapup`
@@ -1024,11 +1024,11 @@ def test_main_post_clean_run_writes_refreshed_body_posts_and_appends_continuatio
     monkeypatch.setattr(
         mod, "post_wrapup", lambda pr, body: post_calls.append((pr, body)) or 0
     )
-    continuation_calls: list[tuple[list[str], Path]] = []
+    continuation_calls: list[tuple[Path, bool]] = []
     monkeypatch.setattr(
-        mod.continuation_append,
-        "main",
-        lambda argv, *, repo_root: continuation_calls.append((argv, repo_root)) or 0,
+        mod,
+        "refresh_state",
+        lambda root, *, with_pr: continuation_calls.append((root, with_pr)) or 0,
     )
 
     rc = mod.main(["post", "--pr", "61", "--body-file", str(path)])
@@ -1040,7 +1040,7 @@ def test_main_post_clean_run_writes_refreshed_body_posts_and_appends_continuatio
     assert "Closes #42" in posted_body
     assert "✅ passed (1 checks)" in posted_body
     assert path.read_text(encoding="utf-8") == posted_body
-    assert continuation_calls == [(["--pr", "61", "--", "Some PR title"], tmp_path)]
+    assert continuation_calls == [(tmp_path, True)]
 
 
 def test_main_post_no_continuation_flag_skips_the_append(
@@ -1048,7 +1048,7 @@ def test_main_post_no_continuation_flag_skips_the_append(
     monkeypatch: pytest.MonkeyPatch,
     clean_wrapup_body: str,
 ) -> None:
-    """``--no-continuation`` still posts but never calls `continuation_append.main`."""
+    """``--no-continuation`` still posts but never calls `refresh_state`."""
     path = tmp_path / "wrapup.md"
     path.write_text(clean_wrapup_body, encoding="utf-8")
     monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
@@ -1070,7 +1070,7 @@ def test_main_post_no_continuation_flag_skips_the_append(
         msg = "must not append continuation with --no-continuation"
         raise AssertionError(msg)
 
-    monkeypatch.setattr(mod.continuation_append, "main", _fail)
+    monkeypatch.setattr(mod, "refresh_state", _fail)
 
     rc = mod.main(["post", "--pr", "61", "--body-file", str(path), "--no-continuation"])
     assert rc == 0
@@ -1157,7 +1157,7 @@ def test_main_post_emergency_waiver_needs_head_marker_and_matching_sentinel(
     MOCK SETUP: `gh_pr_view` reports a matching head and a MERGEABLE
     branch; `behind_ahead` reports 3 commits behind; when *sentinel_pr* is
     given, a REAL sentinel file (`forge.emergency.write_state`) records it
-    — never a patched `read_state`. `post_wrapup` / `continuation_append.main`
+    — never a patched `read_state`. `post_wrapup` / `refresh_state`
     are faked to record whether they ran. `tmp_path` needs no git init on
     the success path — `_branch_messages` degrades softly, per the
     existing clean-run test.
@@ -1190,14 +1190,14 @@ def test_main_post_emergency_waiver_needs_head_marker_and_matching_sentinel(
             ),
         )
     post_calls: list[int] = []
-    continuation_calls: list[list[str]] = []
+    continuation_calls: list[Path] = []
     monkeypatch.setattr(
         mod, "post_wrapup", lambda pr, _body: post_calls.append(pr) or 0
     )
     monkeypatch.setattr(
-        mod.continuation_append,
-        "main",
-        lambda argv, **_kwargs: continuation_calls.append(argv) or 0,
+        mod,
+        "refresh_state",
+        lambda root, **_kwargs: continuation_calls.append(root) or 0,
     )
 
     rc = mod.main(["post", "--pr", "61", "--body-file", str(path)])
@@ -1210,41 +1210,6 @@ def test_main_post_emergency_waiver_needs_head_marker_and_matching_sentinel(
         assert rc == mod.EXIT_REFUSED
         assert post_calls == []
         assert continuation_calls == []
-
-
-def test_main_post_title_starting_with_dash_reaches_the_real_continuation_append(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    clean_wrapup_body: str,
-) -> None:
-    """SCENARIO: a PR titled like a CLI flag (``--wip``, no space).
-
-    A space-free dash-prefixed title is deliberate: argparse treats any
-    arg containing a space as positional on its own (confirmed: even
-    ``"--rotate things"`` parses fine with no ``--`` separator at all), so
-    only a space-free title like ``--wip`` actually exercises the ``--``
-    argv-separator contract this test pins.
-
-    MOCK SETUP: only `gh_pr_view` / `fetch_quietly` / `behind_ahead` /
-    `post_wrapup` are faked — `continuation_append.main` runs for REAL
-    against `tmp_path`, the exact seam the ``--`` argv separator protects.
-    EXPECTED BEHAVIOR: no `SystemExit` from argparse mis-parsing the title
-    as a flag; `.plan/CONTINUATION.md` gains a line naming the PR and the
-    literal, dash-prefixed title.
-    """
-    path = tmp_path / "wrapup.md"
-    path.write_text(clean_wrapup_body, encoding="utf-8")
-    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
-    monkeypatch.setattr(mod, "gh_pr_view", lambda *_a, **_kw: _pr_view(title="--wip"))
-    monkeypatch.setattr(mod, "fetch_quietly", lambda *_a, **_kw: True)
-    monkeypatch.setattr(mod, "behind_ahead", lambda *_a, **_kw: (0, 1))
-    monkeypatch.setattr(mod, "post_wrapup", lambda _pr, _body: 0)
-
-    rc = mod.main(["post", "--pr", "61", "--body-file", str(path)])
-
-    assert rc == 0
-    continuation = (tmp_path / ".plan" / "CONTINUATION.md").read_text(encoding="utf-8")
-    assert "PR #61 wrap-up: --wip" in continuation
 
 
 def test_main_post_refuses_when_the_refreshed_body_fails_validation(

@@ -81,7 +81,7 @@ Three artifacts, each with one job:
 │  • forge doctor           • forge install labels|bootstrap     │
 │  • forge post-merge|checkout  • forge upgrade                  │
 │  • generic validators: repo-structure, manifest, plugin-ver,   │
-│    pr-squash-comment, gen-commit-types, continuation-append    │
+│    pr-squash-comment, gen-commit-types, continuation           │
 │  • generic audits: agents, claims, suppressions, all           │
 │                                                                │
 │  Invokes external analyzers as subprocesses (unchanged seam):  │
@@ -127,7 +127,7 @@ meaningful on a Python repo), so it stays in the Python pack initially.
 | `verify-forge-plugin-version` | **Rust core** | Semver compare vs git tags |
 | `forge-pr-squash-comment` | **Rust core** | Message validation + `gh` post |
 | `forge-gen-commit-types` / `forge-gen-cli-reference` | **Rust core** | Generation/parity checks |
-| `forge-continuation-append` | **Rust core** | Append-format string work |
+| `forge-continuation` | **Rust core** | Status-panel string work |
 | `verify-forge-cli-wiring` | **Rust core** | Grep over wiring sources (forge-internal) |
 | `verify-forge-doc-consistency` / `verify-forge-cve-usage` | **Rust core** | Grep over source/text — CLI-doc parity; CVE-usage pattern match |
 | `forge-audit-data` | **Rust core** | CSV/JSON/TOML/YAML integrity — language-agnostic |

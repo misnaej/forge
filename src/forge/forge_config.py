@@ -413,16 +413,11 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "(the safe-fallback guarantee).",
     ),
     ConfigKey(
-        ("tool", "forge", "continuation", "max_recent_entries"),
-        default=50,
-        description="Count cap for CONTINUATION.md's raw Recent-activity "
-        "tail; overflow rotates to the archive and the per-day digest.",
-    ),
-    ConfigKey(
-        ("tool", "forge", "continuation", "max_recent_age_days"),
-        default=7,
-        description="Age bound for DONE ledger entries (undone-pinned "
-        "entries stay); older lines rotate to the archive + digest.",
+        ("tool", "forge", "continuation", "judgment_max_lines"),
+        default=60,
+        description="Line budget for CONTINUATION.md's written section (the "
+        "part below the generated status panel); every write over it warns "
+        "and `forge-continuation check` reports usage.",
     ),
     ConfigKey(
         ("tool", "forge", "telemetry", "sample_interval"),

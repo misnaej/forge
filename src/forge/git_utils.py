@@ -1366,6 +1366,134 @@ def behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None:
     return behind, ahead
 
 
+def unpushed_commit_count(repo_root: Path) -> int | None:
+    """Return how many commits HEAD holds that its upstream does not.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        The count, or ``None`` when the branch has no upstream (never
+        pushed, detached HEAD) or git fails — "unknown" is not zero.
+    """
+    out = run_git(
+        "rev-list",
+        "--count",
+        "@{upstream}..HEAD",
+        cwd=repo_root,
+        check=False,
+        log_errors=False,
+    )
+    try:
+        return int(out)
+    except ValueError:
+        return None
+
+
+# ``git status --porcelain=v1`` record: two status columns, a space, the path.
+_PORCELAIN_PATH_COL = 3
+
+
+def staged_unstaged_paths(repo_root: Path) -> tuple[list[str], list[str]] | None:
+    """Split the working tree's changed paths into staged and unstaged.
+
+    A path with both index and worktree changes appears in both lists;
+    untracked paths count as unstaged. Read from ``git status -z`` so
+    paths with spaces or quotes survive unescaped.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``(staged, unstaged)`` path lists, or ``None`` when git fails.
+    """
+    # Not run_git: it strips stdout, which would eat the leading status
+    # column of the first -z record.
+    proc = subprocess.run(
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    staged: list[str] = []
+    unstaged: list[str] = []
+    records = iter(proc.stdout.split("\0"))
+    for record in records:
+        if len(record) < _PORCELAIN_PATH_COL:
+            continue
+        index, worktree, path = record[0], record[1], record[_PORCELAIN_PATH_COL:]
+        if index in "RC":
+            # A rename/copy record is followed by its source path.
+            next(records, None)
+        if index == "?":
+            unstaged.append(path)
+            continue
+        if index not in " !":
+            staged.append(path)
+        if worktree not in " !":
+            unstaged.append(path)
+    return staged, unstaged
+
+
+@dataclass(frozen=True)
+class BaseSync:
+    """Whether a PR's branch can merge into its base as it stands.
+
+    The one reading of GitHub's ``mergeable`` field plus the local
+    behind-base count, shared by the wrap-up publication gate and the
+    continuation status panel so the two never disagree about the same PR.
+
+    Attributes:
+        conflicting: GitHub reports ``CONFLICTING``.
+        mergeable_unknown: GitHub has not computed mergeability yet.
+        behind: Commits behind the base, or ``None`` when unknown.
+    """
+
+    conflicting: bool
+    mergeable_unknown: bool
+    behind: int | None
+
+    @property
+    def summary(self) -> str:
+        """One token naming every problem, or ``clean``.
+
+        Returns:
+            E.g. ``conflicting``, ``behind-3``, ``mergeability-unknown``,
+            ``behind-unknown``, joined with ``+``; ``clean`` when none.
+        """
+        problems: list[str] = []
+        if self.conflicting:
+            problems.append("conflicting")
+        elif self.mergeable_unknown:
+            problems.append("mergeability-unknown")
+        if self.behind is None:
+            problems.append("behind-unknown")
+        elif self.behind > 0:
+            problems.append(f"behind-{self.behind}")
+        return "+".join(problems) or "clean"
+
+
+def base_sync(mergeable: str, behind: int | None) -> BaseSync:
+    """Read GitHub's ``mergeable`` value and a behind-base count together.
+
+    Args:
+        mergeable: ``gh pr view --json mergeable`` value (``MERGEABLE``,
+            ``CONFLICTING``, ``UNKNOWN`` or empty).
+        behind: Commits the branch is behind its base, or ``None``.
+
+    Returns:
+        The combined :class:`BaseSync` reading.
+    """
+    return BaseSync(
+        conflicting=mergeable == "CONFLICTING",
+        mergeable_unknown=mergeable == "UNKNOWN",
+        behind=behind,
+    )
+
+
 def has_conflict_markers(text: str) -> bool:
     """Return whether *text* contains unresolved git conflict markers.
 

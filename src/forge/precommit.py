@@ -66,6 +66,7 @@ import argparse
 import hashlib
 import importlib.metadata
 import json
+import logging
 import os
 import re
 import shlex
@@ -89,6 +90,7 @@ from forge.changelog import (
 from forge.changelog_fragments import FRAGMENTS_DIR, branch_added_fragments
 from forge.changelog_fragments import check_pending as check_pending_fragments
 from forge.config import installed_console_scripts, resolve_model_section
+from forge.continuation_state import write_state
 from forge.emergency_state import active_state
 from forge.git_utils import (
     EVIDENCE_OUTPUT_CAP,
@@ -139,6 +141,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
 
     StepFn = Callable[[Path], "StepResult"]
+
+
+logger = logging.getLogger(__name__)
 
 
 # ANSI colors (suppressed if stdout isn't a TTY — keep machine-readable).
@@ -3379,6 +3384,40 @@ def _report_freshness(only: list[str], *, as_json: bool) -> int:
     return 0
 
 
+def _attempt_outcome(results: Sequence[StepResult]) -> str:
+    """Name a finished run's result for the continuation status panel.
+
+    Args:
+        results: The run's step results, in execution order.
+
+    Returns:
+        ``passed``, or ``blocked:<step>`` naming the first blocking failure.
+    """
+    blocking = next((r for r in results if not r.passed and not r.non_blocking), None)
+    return "passed" if blocking is None else f"blocked:{blocking.name}"
+
+
+def _write_continuation_panel(outcome: str) -> None:
+    """Record this commit attempt in ``.plan/CONTINUATION.md``'s status panel.
+
+    Runs whatever the outcome — a blocked commit loop is exactly what the
+    next session needs to see — and never changes pre-commit's exit code:
+    any failure is logged and swallowed. Skipped in CI, where nobody
+    resumes from the note.
+
+    Args:
+        outcome: ``passed``, ``blocked:<step>``, ``error`` or ``interrupted``.
+    """
+    if is_ci():
+        return
+    try:
+        write_state(get_repo_root(), attempt=outcome)
+    except Exception:
+        logger.exception(
+            "forge-precommit: could not update the continuation status panel"
+        )
+
+
 def main() -> int:
     """CLI entry point.
 
@@ -3472,12 +3511,20 @@ def main() -> int:
 
     skip = _split_csv(args.skip)
     only = _split_csv(args.only)
+    results: list[StepResult] = []
+    outcome: str | None = None
     try:
         with _forced_steps(only):
             results = run_all(print_progress=not args.json, skip=skip, only=only)
+        outcome = _attempt_outcome(results)
     except ValueError as exc:
+        outcome = "error"
         emit(f"{RED}forge-precommit: {exc}{NC}")
         return 1
+    finally:
+        # A partial (--only) run is not a commit attempt.
+        if not only:
+            _write_continuation_panel(outcome or "interrupted")
 
     blocking_failures = [r for r in results if not r.passed and not r.non_blocking]
     non_blocking_warnings = [r for r in results if not r.passed and r.non_blocking]
