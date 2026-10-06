@@ -532,6 +532,22 @@ def test_drift_without_merges_is_clean() -> None:
     assert report.exit_code == ps.EXIT_CLEAN
 
 
+def test_body_only_requires_cannot_hide_drift() -> None:
+    """A body `Requires:` added after validation does not excuse a merge.
+
+    SCENARIO: a plan exists and names its files; the body later gains
+    `Requires: #9`, naming a merged PR that changed a plan file after
+    approval. Only the plan's entries excuse merges, so that merge is
+    still drift.
+    """
+    gh = _source("Requires: #9", [_plan("Edit `src/forge/a.py`.")])
+    gh.statuses[9] = _status(9, is_pr=True, state="MERGED", merged=True, landed_by=(9,))
+    log = LogRecorder([_merge("20", "src/forge/a.py", pr=9)])
+    report = ps.check_drift(gh, 10, since=None, log_merges=log)
+    assert report.exit_code == ps.EXIT_FINDING
+    assert _lines(report, "drift:")
+
+
 def test_drift_notes_merges_that_deliver_its_own_prerequisites() -> None:
     """Merges landing the issue's prerequisites are expected, not drift.
 

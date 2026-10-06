@@ -16,9 +16,10 @@ still true (FOUNDATION §14 "Plan-readiness pipeline"):
     reported as notes, not drift. Refuses an issue labelled both
     ``blocked`` and ``plan-ready``.
 ``overlap <merged-pr>``
-    Lists open issues whose authenticated plan names a file the merged PR
-    changed, skipping the issues that PR itself closes, and marks the
-    ones carrying ``plan-ready``.
+    Lists open issues naming a file the merged PR changed — the files of
+    their authenticated plan, or of the issue body when the plan names
+    none (said in a note) — skipping the issues that PR itself closes,
+    and marks the ones carrying ``plan-ready``.
 
 Both ``drift`` and ``overlap`` take an issue's files from one rule
 (:func:`plan_paths`): the authenticated plan's, or the issue body's only
@@ -765,8 +766,10 @@ def check_drift(
 ) -> Report:
     """List base-branch merges that touched the plan's files since *since*.
 
-    Merges delivering the issue's own prerequisites are expected — the
+    Merges delivering the plan's own prerequisites are expected — the
     plan was written to build on them — so they are noted, not counted.
+    Only the authenticated plan's ``Requires:`` entries excuse a merge
+    (the body's, when there is no plan).
 
     Args:
         source: GitHub reads.
@@ -787,7 +790,11 @@ def check_drift(
     if window is None:
         return report
     paths, cutoff = window
-    refs = parse_requires(_requires_texts(issue, plan)).refs
+    # Exclusions come from the validated plan alone: a body edited after
+    # validation could otherwise name a merged PR and hide real drift. The
+    # body counts only when there is no plan (the --since path).
+    excusing = plan.body if plan is not None else issue.body
+    refs = parse_requires([excusing]).refs
     delivered = delivering_prs(_statuses(source, refs, report))
     if report.unknowns:
         return report
