@@ -56,13 +56,13 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from forge.audit.common import sanitize_log_text
 from forge.git_utils import (
     capturing_to_step_log,
     configure_cli_logging,
-    get_tracked_files,
-    get_untracked_files,
     path_escapes_repo,
     repo_root,
+    run_git,
 )
 
 
@@ -83,10 +83,13 @@ logger = logging.getLogger(__name__)
 # the one place an agent reads the claim, so the claim is owned here.
 CANONICAL_OPENING = (
     "Checked on every commit by `verify-forge-repo-structure`: every listed "
-    "file and folder exists, every path named in a description exists, and "
-    "every folder with its own heading lists all its files and subfolders "
-    "that git does not ignore, except hidden ones, `__init__.py` and "
-    "`conftest.py`, unless the heading is marked `<!-- summary -->`."
+    "file and folder exists; every backticked file path in a description "
+    "(a known file type, or ending in `/`) exists; and every folder with its "
+    "own heading lists all its files and subfolders that git does not "
+    "ignore, except hidden ones, `__init__.py`, `conftest.py` and build or "
+    "cache output (`build`, `dist`, `tmp`, `code_health`, `*.egg-info`, "
+    "compiled and editor-backup files), unless the heading is marked "
+    "`<!-- summary -->`."
 )
 
 # Heading suffix opting a folder section out of the full-listing rule.
@@ -607,8 +610,21 @@ def git_listing(root: Path) -> Listing:
     Returns:
         The listing.
     """
-    files = get_tracked_files(suffix="", repo_root=root)
-    files += get_untracked_files(suffix="", repo_root=root)
+    # NUL-separated output: plain `git ls-files` C-quotes any name holding
+    # a control or (by default) non-ASCII character, and a quoted name no
+    # longer starts with its folder — such a file would escape the
+    # "on disk but unlisted" rule entirely.
+    out = run_git(
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        cwd=root,
+        check=False,
+        log_errors=False,
+    )
+    files = sorted({name for name in out.split("\0") if name})
     return Listing.from_files(files)
 
 
@@ -843,8 +859,11 @@ def _log_group(title: str, marker: str, items: tuple[str, ...]) -> None:
         return
     logger.warning("%s:", title)
     logger.warning("-" * 50)
+    # Items carry names from the map and from git (filenames may hold
+    # newlines or escape codes); this log is evidence agents read, so a
+    # name must never be able to forge a line of it.
     for item in items:
-        logger.warning("  %s %s", marker, item)
+        logger.warning("  %s %s", marker, sanitize_log_text(item))
     logger.warning("")
 
 

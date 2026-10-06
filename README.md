@@ -159,6 +159,7 @@ graph LR
     release_tooling -->|"imports"| config_shared
     release_tooling -->|"imports"| installers
     smart_test -->|"imports"| config_shared
+    verifiers -->|"imports"| audit_suite
     verifiers -->|"imports"| config_shared
     verifiers -->|"imports"| release_tooling
     classDef component fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e

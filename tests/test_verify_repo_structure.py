@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import sys
 from typing import TYPE_CHECKING
@@ -17,6 +18,9 @@ import pytest
 
 from forge.verify_repo_structure import (
     CANONICAL_OPENING,
+    EXEMPT_NAMES,
+    IGNORE_PATTERNS,
+    SUMMARY_MARKER,
     main,
     parse_map,
     verify_structure,
@@ -388,6 +392,66 @@ def test_main_prints_canonical_sentence_on_opening_violation(
     write_map(repo, build_map(SECTION_FORGE, SECTION_CONFIG, opening="Hello."))
     assert run_main(repo, monkeypatch, caplog) == 1
     assert CANONICAL_OPENING in messages(caplog)
+
+
+def test_main_log_carries_no_raw_control_character_from_map_names(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A stale backticked name holding an ANSI escape is logged inert.
+
+    This covers the map's own backticked tokens; the filename channel is
+    covered by the unlisted-file test below.
+    """
+    section = SECTION_FORGE.replace(
+        "pre-commit dispatcher",
+        "wraps `ghost\x1b\x07pwned.py`",
+    )
+    write_map(repo, build_map(section, SECTION_CONFIG))
+    assert run_main(repo, monkeypatch, caplog) == 1
+    text = messages(caplog)
+    assert "ghost" in text
+    assert text.count("RESULT:") == 1
+    assert not [ch for ch in text if ch != "\n" and (ord(ch) < 0x20 or ord(ch) == 0x7F)]
+
+
+def test_main_reports_unlisted_files_git_would_quote_sanitized(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tracked control-character and non-ASCII names are still seen as unlisted.
+
+    SCENARIO: a strict folder gains two tracked, unlisted files whose names
+    plain `git ls-files` would C-quote, hiding their folder prefix.
+    EXPECTED BEHAVIOR: both are reported under "on disk but unlisted", the
+    log holds no raw control character, and RESULT appears once.
+    """
+    add_file(repo, "src/forge/ctl\x1bname.py")
+    add_file(repo, "src/forge/café.py")
+    commit_all(repo, "add quoted names")
+    assert run_main(repo, monkeypatch, caplog) == 1
+    text = messages(caplog)
+    assert "café.py" in text
+    assert "ctl" in text
+    assert "On disk but unlisted: 2" in text
+    assert text.count("RESULT:") == 1
+    assert not [ch for ch in text if ch != "\n" and (ord(ch) < 0x20 or ord(ch) == 0x7F)]
+
+
+def test_canonical_opening_names_every_exemption() -> None:
+    """The map's opening names each exemption the check actually applies."""
+    literal = re.compile(r"\^([A-Za-z0-9_]+)\$")
+    folder_names = {
+        m.group(1)
+        for pattern in IGNORE_PATTERNS
+        if (m := literal.fullmatch(pattern)) and not m.group(1).startswith("__")
+    }
+    assert {"build", "dist", "tmp", "code_health"} <= folder_names
+    required = folder_names | EXEMPT_NAMES | {SUMMARY_MARKER}
+    missing = {name for name in required if name not in CANONICAL_OPENING}
+    assert not missing
 
 
 def test_main_returns_one_when_repo_structure_missing(

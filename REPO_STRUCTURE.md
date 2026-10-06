@@ -1,10 +1,6 @@
 # Repo Structure
 
-Checked on every commit by `verify-forge-repo-structure`: every listed
-file and folder exists, every path named in a description exists, and
-every folder with its own heading lists all its files and subfolders that
-git does not ignore, except hidden ones, `__init__.py` and `conftest.py`,
-unless the heading is marked `<!-- summary -->`.
+Checked on every commit by `verify-forge-repo-structure`: every listed file and folder exists; every backticked file path in a description (a known file type, or ending in `/`) exists; and every folder with its own heading lists all its files and subfolders that git does not ignore, except hidden ones, `__init__.py`, `conftest.py` and build or cache output (`build`, `dist`, `tmp`, `code_health`, `*.egg-info`, compiled and editor-backup files), unless the heading is marked `<!-- summary -->`.
 
 ## Forge Package (`src/forge/`)
 
