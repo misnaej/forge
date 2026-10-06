@@ -78,6 +78,7 @@ from forge.pr_delta import (
     find_closing_refs,
     non_fragment_adds,
     strip_fences,
+    unlisted_closing_refs,
 )
 from forge.pr_plan import added_paths, classify, gh_pr_view, wrapup_freshness
 from forge.pr_squash_comment import SQUASH_MARKER, ensure_last
@@ -755,6 +756,23 @@ def _branch_messages(root: Path, base_ref: str) -> str:
     )
 
 
+def _also_closed(body: str, listed: list[int]) -> list[int]:
+    """Return issues the PR body closes in prose that *listed* omits.
+
+    Only the PR body is scanned: forge squash-merges, so the branch's own
+    commit messages never reach the base branch and their prose closes
+    nothing.
+
+    Args:
+        body: PR description; ``""`` when no PR exists yet.
+        listed: Issue numbers the summary already shows as closed.
+
+    Returns:
+        Issue numbers in first-appearance order.
+    """
+    return [ref for ref in unlisted_closing_refs(body) if ref not in listed]
+
+
 def _gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs:
     """Collect everything ``compose`` renders from.
 
@@ -804,7 +822,9 @@ def _gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs:
             non_fragment_adds(added_paths(root, f"{args.base}...HEAD"))
         ),
         issue_management=render_issue_management(
-            refs, pr_body_checked=view is not None
+            refs,
+            pr_body_checked=view is not None,
+            also_closed=_also_closed(body, refs),
         ),
         code_quality=_code_quality(root),
         ci_status=_ci_status(args.pr, view),
@@ -911,13 +931,14 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
         for refusal in refusals:
             emit(f"pr-wrapup: refused: {refusal}")
         return EXIT_REFUSED
-    refs = find_closing_refs(
-        f"{view.get('body') or ''}\n{_branch_messages(root, f'origin/{base}')}"
-    )
+    body = str(view.get("body") or "")
+    refs = find_closing_refs(f"{body}\n{_branch_messages(root, f'origin/{base}')}")
     refreshed = refresh_sections(
         text,
         ci_status=_ci_status(args.pr, view),
-        issue_management=render_issue_management(refs, pr_body_checked=True),
+        issue_management=render_issue_management(
+            refs, pr_body_checked=True, also_closed=_also_closed(body, refs)
+        ),
     )
     problems = validate_wrapup(refreshed)
     if problems:

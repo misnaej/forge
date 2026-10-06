@@ -207,6 +207,23 @@ always checks a subset of what `all` would. Caveat: pyrefly's explicit-file
 mode ignores `project_excludes` from `pyrefly.toml` — keep `typecheck` on
 `all` if you rely on that key.
 
+**Untracked files.** Some steps take their files from git and so skip any
+file you have not `git add`-ed: in `diff` scope, the four steps above
+(git's diff holds branch commits plus staged and unstaged edits to tracked
+files, never an untracked file); in `all` scope, `docstring_verification`
+and `test_naming_check` (they read the tracked set). `layering` and
+`changelog_updated` skip untracked files in every scope — layering always
+weighs only the changed files, and the changelog check counts a fragment
+only once it is staged or committed (it still validates the format of one
+on disk). `ruff` and `typecheck` in `all` scope walk their roots on disk and
+do check untracked files, as do `smart_test` and `repo_structure_check`.
+A run never adds an untracked file and never passes over one silently: the
+affected step logs, the closing summary and `forge-precommit --verdict`
+name each file and the steps that skipped it, for you to add (forgotten
+work) or leave out (junk); a step that would skip on this repo is not named.
+The `forge-audit-*` logs written with `--scope changed` carry the same note
+in their summary. Gitignored files are never listed.
+
 > **Why default `all`?** A `diff`-only gate passes a commit while leaving
 > violations elsewhere in the tree unchecked — the gate then reflects "what
 > you touched," not "what's clean." `all` is the honest floor (FOUNDATION §4).
@@ -291,9 +308,10 @@ round, and each also works standalone:
   blocking drift gate for `docs/cli-reference.md` (mirror of
   `api_digest_check`). Self-skips when the doc is absent.
 - `foundation_md_check` — verifies `FOUNDATION.md` byte-reproduces the
-  installed forge foundation (version banner ignored, the same rule
-  `install-forge-claude-md` syncs by). A hand edit, an unmanaged file,
-  or a stale copy fails. An **editable-install self-reference** (the
+  installed forge foundation (the same rule `install-forge-claude-md`
+  syncs by; the managed banner carries no version). A hand edit, an
+  unmanaged file, a stale copy, or one still carrying the older versioned
+  banner fails — run `install-forge-claude-md` once to rewrite it. An **editable-install self-reference** (the
   repo file IS the installed copy, as in forge's own repo) fails too:
   a byte-compare that would approve any edit proves nothing. Self-skips
   when no `FOUNDATION.md` exists.

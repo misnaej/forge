@@ -391,6 +391,9 @@ def _skipped(entry: Mapping[str, object]) -> bool:
 
     Args:
         entry: A rollup check entry mapping.
+
+    Returns:
+        True when the entry's conclusion is a not-run conclusion.
     """
     return str(entry.get("conclusion") or "") in _NOT_RUN_CONCLUSIONS
 
@@ -460,20 +463,43 @@ def summarize_rollup(
 
 
 def render_issue_management(
-    closing_refs: Sequence[int], *, pr_body_checked: bool
+    closing_refs: Sequence[int],
+    *,
+    pr_body_checked: bool,
+    also_closed: Sequence[int] = (),
 ) -> str:
     """Render the Issue Management line from the closing keywords found.
+
+    *also_closed* names issues a close keyword elsewhere in the PR body
+    would close. The no-keyword warning is worded so it never contradicts
+    them: what is missing is a closing line, not a closing effect.
 
     Args:
         closing_refs: Issue numbers the PR would close.
         pr_body_checked: Whether the PR body was part of the search.
+        also_closed: Issue numbers GitHub would also close although
+            *closing_refs* omits them.
 
     Returns:
-        ``Closes #…`` or a warning when none was found; noted when only
-        commit messages could be searched.
+        One of ``Closes #…``; ``Closes #… — GitHub would also close (on
+        merge into the default branch): #…``; the ``⚠️ no closing keyword
+        found …`` warning; or ``⚠️ no closing keyword on its own line …;
+        GitHub would still close (on merge into the default branch): #…``.
+        Each is suffixed with a note when only commit messages could be
+        searched.
     """
+    also = ", ".join(f"#{ref}" for ref in also_closed)
     if closing_refs:
         text = "Closes " + ", ".join(f"#{ref}" for ref in closing_refs)
+        if also:
+            text += (
+                f" — GitHub would also close (on merge into the default branch): {also}"
+            )
+    elif also:
+        text = (
+            "⚠️ no closing keyword on its own line (Closes/Fixes/Resolves #N); "
+            f"GitHub would still close (on merge into the default branch): {also}"
+        )
     else:
         text = "⚠️ no closing keyword found (Closes/Fixes/Resolves #N on its own line)"
     if not pr_body_checked:

@@ -397,6 +397,10 @@ Verification is done, fixes are committed, and the wrap-up is authored
    - [ ] Documentation checker passes
    - [ ] Tests pass
    ```
+   An issue this PR only partly delivers is `Part of #N`, never a close
+   keyword anywhere in the body (FOUNDATION §6 "PR descriptions"); a
+   warning from `forge-pr-create` naming an issue means the body would
+   close it on merge.
 3. **Draft opened in Step 0** → `gh pr ready <PR#>` — unless the user asked
    to keep it draft.
 
@@ -444,7 +448,7 @@ The squash-merge message becomes the permanent commit message on `main`.
 
 17. **`issue-triage`** — Run `post-pr` mode after merge:
     ```
-    Agent(subagent_type="forge:issue-triage", prompt="Run post-pr mode. PR #<number> was just finalized. Detect issues closed by this PR, remove their tier labels, and regenerate the 📋 Backlog Index issue.")
+    Agent(subagent_type="forge:issue-triage", prompt="Run post-pr mode. PR #<number> was just merged. Detect issues closed by this PR, remove their tier labels, run the overlap sweep (forge-plan-check overlap <number>), and regenerate the 📋 Backlog Index issue.")
     ```
 
 ## Step 6: Update CONTINUATION state

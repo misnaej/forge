@@ -334,7 +334,7 @@ breaks are MAJOR releases:
 | `forge.git_utils.latest_v_tag(root)` | Highest `v*` tag by semver sort, or `None`. |
 | `forge.git_utils.parse_semver(version)` | Leading `X.Y.Z` triple (optional `v`, suffix-tolerant), or `None`. |
 | `forge.git_utils.next_version(latest_tag, bump)` | Pure semver bump: `"v1.2.3"` + `"minor"` → `"v1.3.0"`; `None` → `v0.0.0` base. |
-| `forge.git_utils.run_git(*args, cwd=..., check=...)` | Run git, return stripped stdout; raises on failure when `check=True`. |
+| `forge.git_utils.run_git(*args, cwd=..., check=..., timeout=None)` | Run git, return stripped stdout; raises on failure when `check=True`. The optional `timeout=` (seconds) bounds the call and raises `subprocess.TimeoutExpired` when it elapses. |
 | `forge.git_utils.configure_cli_logging()` | Root logger at `INFO`, bare-message formatter; idempotent. |
 | `forge.changelog.release_headings(text)` | Set of `vX.Y.Z` named in `##` release headings. |
 | `forge.changelog.top_release_heading(text)` | Topmost recognized `vX.Y.Z` release heading, or `None`. |

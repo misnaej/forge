@@ -79,6 +79,7 @@ from forge.audit.common import (
     make_audit_parser,
     resolve_roots,
     under_module_prefix,
+    untracked_summary_line,
     write_log,
 )
 from forge.audit.deps import build_module_graph
@@ -669,7 +670,10 @@ def run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int:
             findings,
             n_config_errors=len(errors),
             n_unclassified=n_unclassified,
-        ),
+        )
+        # The module graph walks *roots*, so only untracked modules there
+        # are ones changed mode would otherwise have weighed.
+        + untracked_summary_line(scope, roots=roots, root=root),
         output=config.output,
         scope=scope,
     )

@@ -353,18 +353,24 @@ def validate_no_ai_attribution(
         raise ValidationError(msg)
 
 
-def parse_paged_json(raw: str) -> list[Any]:
+def parse_paged_json(raw: str, *, strict: bool = False) -> list[Any]:
     """Flatten ``gh api --paginate --jq '[...]'`` output into one list.
 
     Args:
         raw: Stdout from the paginated call — one JSON array per page,
             newline-separated.
+        strict: Raise on an unparseable page instead of skipping it — for
+            callers that must fail closed, where a partial listing would
+            read as a complete one.
 
     Returns:
         Every page's entries in page order — the element type follows
         the caller's ``--jq`` projection (mappings or bare timestamps);
         unparseable lines are skipped with a warning rather than
-        aborting the run.
+        aborting the run, unless *strict*.
+
+    Raises:
+        json.JSONDecodeError: When *strict* and a page is not JSON.
     """
     items: list[Any] = []
     for line in raw.splitlines():
@@ -373,6 +379,8 @@ def parse_paged_json(raw: str) -> list[Any]:
         try:
             page = json.loads(line)
         except json.JSONDecodeError:
+            if strict:
+                raise
             logger.warning("skipping unparseable gh api page: %.60s", line)
             continue
         items.extend(page)

@@ -31,6 +31,7 @@ from tests.conftest import tag_exists as conftest_tag_exists
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
     from pathlib import Path
 
 
@@ -579,6 +580,97 @@ def test_main_from_changelog_flags_stranded_entries(
     assert any("stranded" in r.getMessage() for r in caplog.records)
 
 
+@pytest.mark.parametrize(
+    ("fragments", "advice"),
+    [(False, "forge-changelog restrand"), (True, "changelog.d/")],
+    ids=["shared-heading", "fragments"],
+)
+def test_stranded_error_repair_matches_changelog_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fragments: bool,
+    advice: str,
+) -> None:
+    """The stranded error names the section and a repair that works in its mode.
+
+    restrand self-skips in fragments mode, so advising it there would send
+    the reader to a command that does nothing.
+
+    Args:
+        fragments: Whether the repo runs changelog fragments mode.
+        advice: Text the repair sentence must contain.
+    """
+    work, _bare = _repo_with_origin(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.2.3\n- released work\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.2.3", "-m", "v1.2.3"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    (work / "CHANGELOG.md").write_text(
+        "## v1.2.3\n- released work\n- stranded feature\n"
+    )
+    monkeypatch.setattr(release, "is_fragments_mode", lambda _root: fragments)
+
+    message = release._stranded_entries_error(work, "v1.2.3")
+
+    assert message is not None
+    assert "v1.2.3" in message
+    assert advice in message
+    assert ("restrand" in message) is not fragments
+
+
+@pytest.mark.parametrize("extra_args", [[], ["--dry-run"]])
+def test_main_from_changelog_backfilled_section_is_not_stranded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    extra_args: list[str],
+) -> None:
+    """A section first appearing after the tag (assembler backfill) rests, exit 0.
+
+    Behavior: pins the idempotent-release contract for an assembly that files
+    notes under an already-tagged version whose heading never existed.
+
+    Args:
+        tmp_path: Temporary directory for test repository.
+        monkeypatch: pytest fixture for patching.
+        caplog: pytest fixture for log capture.
+        extra_args: Parametrized list of additional command-line arguments.
+    """
+    work, _bare = _repo_with_origin(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.4.1\n- older work\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.4.2", "-m", "v1.4.2"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    (work / "CHANGELOG.md").write_text(
+        "## v1.4.2\n- backfilled work\n\n## v1.4.1\n- older work\n"
+    )
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "backfill"], cwd=work, env=_GIT_ENV, check=True
+    )
+    _single_track_cfg(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog", *extra_args])
+    monkeypatch.chdir(work)
+    with caplog.at_level(logging.INFO, logger="forge.release"):
+        assert release.main() == 0
+    assert not any("stranded" in r.getMessage() for r in caplog.records)
+
+
 def test_main_from_changelog_idempotent_when_ahead_without_changelog_change(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -832,6 +924,121 @@ def test_cut_release_push_wires_log_errors_off_race_tolerant(
     assert release._cut_release(tmp_path, "v1.0.0", race_tolerant=True) == 0
     assert release._cut_release(tmp_path, "v1.0.0", race_tolerant=False) == 0
     assert push_log_errors == [False, True]
+
+
+def _timing_out_push(*, land: bool) -> Callable[..., str]:
+    """Build a ``release.run_git`` stand-in whose tag push times out.
+
+    Every other git call runs for real, so the remote check after the
+    timeout queries the real bare origin while the real local tag exists.
+
+    Args:
+        land: Perform the real push before raising — a push the remote
+            accepted but that stalled before git heard back.
+
+    Returns:
+        The replacement ``run_git`` callable.
+    """
+
+    def _run_git(
+        *args: str,
+        cwd: Path | None = None,
+        check: bool = True,
+        log_errors: bool = True,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> str:
+        if args[0] == "push":
+            # The push must be bounded and prompt-free, or a stalled
+            # remote hangs the release instead of reaching this branch.
+            assert timeout == release.PUSH_TIMEOUT_S
+            assert env == {"GIT_TERMINAL_PROMPT": "0"}
+            if land:
+                git_utils.run_git(*args, cwd=cwd)
+            raise subprocess.TimeoutExpired(cmd=["git", *args], timeout=timeout)
+        return git_utils.run_git(
+            *args, cwd=cwd, check=check, log_errors=log_errors, env=env, timeout=timeout
+        )
+
+    return _run_git
+
+
+def test_cut_release_push_timeout_with_tag_on_remote_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCENARIO: the tag push times out after the remote accepted it.
+
+    MOCK SETUP: real work tree + bare origin; ``release.run_git`` performs
+        the real push, then raises ``TimeoutExpired`` (bounded by
+        ``PUSH_TIMEOUT_S``).
+    EXPECTED BEHAVIOR: the remote is asked, holds the tag → exit 0 with a
+        log saying the timed-out push landed.
+    """
+    work, bare = _repo_with_origin(tmp_path)
+    monkeypatch.setattr(release, "run_git", _timing_out_push(land=True))
+    with caplog.at_level(logging.INFO, logger="forge.release"):
+        assert release._cut_release(work, "v1.0.0") == 0
+    assert _tag_exists(bare, "v1.0.0")
+    assert any("timed-out push landed" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize("race_tolerant", [False, True])
+def test_cut_release_push_timeout_without_remote_tag_fails_readably(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    race_tolerant: bool,
+) -> None:
+    """SCENARIO: the tag push times out and the remote never got the tag.
+
+    MOCK SETUP: real work tree + bare origin; ``release.run_git`` raises
+        ``TimeoutExpired`` on the push without pushing. The local tag is
+        real, so a check that consulted local tags would wrongly pass.
+    EXPECTED BEHAVIOR: exit 1 in both modes, with one traceback-free
+        error naming the manual push that finishes the release.
+
+    Args:
+        race_tolerant: The ``_cut_release`` mode under test.
+    """
+    work, bare = _repo_with_origin(tmp_path)
+    monkeypatch.setattr(release, "run_git", _timing_out_push(land=False))
+    with caplog.at_level(logging.ERROR, logger="forge.release"):
+        assert release._cut_release(work, "v1.0.0", race_tolerant=race_tolerant) == 1
+    assert _tag_exists(work, "v1.0.0")
+    assert not _tag_exists(bare, "v1.0.0")
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    message = errors[0].getMessage()
+    assert "origin does not have it" in message
+    assert "git push origin v1.0.0" in message
+    assert "in this checkout" in message
+    assert errors[0].exc_info is None
+
+
+def test_cut_release_push_timeout_with_unknown_remote_says_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCENARIO: the push times out and origin cannot be asked either.
+
+    MOCK SETUP: real work tree + bare origin; the push times out and
+        ``release.tag_on_remote`` reports ``None`` (probe failed).
+    EXPECTED BEHAVIOR: exit 1, the error says origin's state is unknown
+        rather than claiming the tag is missing.
+    """
+    work, _bare = _repo_with_origin(tmp_path)
+    monkeypatch.setattr(release, "run_git", _timing_out_push(land=False))
+    monkeypatch.setattr(release, "tag_on_remote", lambda *_a: None)
+    with caplog.at_level(logging.ERROR, logger="forge.release"):
+        assert release._cut_release(work, "v1.0.0") == 1
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "whether origin has it is unknown" in errors[0].getMessage()
+    assert "does not have it" not in errors[0].getMessage()
 
 
 def test_main_from_changelog_model_guard_beats_idempotency(

@@ -361,6 +361,55 @@ def test_get_modified_files_applies_prefix_tuple(
     assert files == ["test/old.py", "tests/new.py"]
 
 
+def test_get_modified_files_without_unstaged_keeps_commit_view_and_never_falls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``include_unstaged=False`` drops working-tree edits and the HEAD~1 fallback.
+
+    A branch with nothing committed or staged yet must answer "nothing",
+    not the previous commit's files — on a fresh branch those belong to
+    the base branch's last change.
+    """
+    _stub_branch_path(
+        monkeypatch,
+        tmp_path,
+        current_branch="feat/x",
+        diff_outputs={
+            "origin/main...HEAD": "",
+            "--cached": "",
+            "": "src/c.py\n",
+            "HEAD~1": "changelog.d/base.added.md\n",
+        },
+    )
+    assert git_utils.get_modified_files(suffix="", include_unstaged=False) == []
+    assert git_utils.get_modified_files(suffix="") == ["src/c.py"]
+
+
+def test_get_modified_files_without_unstaged_on_base_reads_last_commit_and_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On the base branch the commit view is ``HEAD~1..HEAD`` plus the index.
+
+    The working-tree fallback (``git diff HEAD~1``) would also report an
+    unstaged edit, which no commit carries.
+    """
+    _stub_branch_path(
+        monkeypatch,
+        tmp_path,
+        current_branch="main",
+        diff_outputs={
+            "HEAD": "src/last.py\n",
+            "--cached": "src/staged.py\n",
+            "HEAD~1": "src/last.py\nsrc/staged.py\nsrc/worktree.py\n",
+        },
+    )
+    assert git_utils.get_modified_files(include_unstaged=False) == [
+        "src/last.py",
+        "src/staged.py",
+    ]
+    assert "src/worktree.py" in git_utils.get_modified_files()
+
+
 def test_get_modified_files_main_falls_back_to_head_prev(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -893,6 +942,51 @@ def test_run_git_log_errors_false_suppresses_failure_log(
             log_errors=False,
         )
     assert not caplog.records
+
+
+def test_run_git_timeout_reaches_subprocess_and_defaults_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit ``timeout`` reaches ``subprocess.run``; unset stays unbounded."""
+    seen: list[object] = []
+
+    def _fake_run(_cmd: list[str], **kw: object) -> object:
+        seen.append(kw["timeout"])
+        return type("P", (), {"stdout": " out \n"})()
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.run_git("fetch", timeout=7) == "out"
+    assert git_utils.run_git("status") == "out"
+    assert seen == [7, None]
+
+
+@pytest.mark.parametrize("check", [True, False])
+def test_run_git_timeout_raises_and_logs_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    check: bool,
+) -> None:
+    """A timeout re-raises ``TimeoutExpired`` whatever ``check`` says.
+
+    It logs one traceback-free line naming the git verb and the bound,
+    so a CI log shows a stalled remote rather than a forge crash.
+
+    Args:
+        check: The ``check`` flag passed to ``run_git``.
+    """
+
+    def _fake_run(cmd: list[str], *, timeout: float, **_kw: object) -> object:
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    with (
+        caplog.at_level(logging.ERROR, logger="forge.git_utils"),
+        pytest.raises(subprocess.TimeoutExpired),
+    ):
+        git_utils.run_git("push", "origin", "v1.0.0", check=check, timeout=120)
+    assert [r.getMessage() for r in caplog.records] == ["git push timed out after 120s"]
+    assert caplog.records[0].exc_info is None
 
 
 # ---------------------------------------------------------------------------
@@ -2085,6 +2179,53 @@ def test_fetch_quietly_sets_git_terminal_prompt_env(
     monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
     assert git_utils.fetch_quietly(tmp_path, "origin", "main") is True
     assert captured["env"] == {"GIT_TERMINAL_PROMPT": "0"}
+    assert captured["timeout"] == git_utils.PUSH_TIMEOUT_S
+
+
+def test_fetch_quietly_returns_false_on_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stalled remote (timeout) reads as a failed fetch, never a raise."""
+
+    def _fake_run_git(*args: str, timeout: float, **_kw: object) -> str:
+        raise subprocess.TimeoutExpired(cmd=["git", *args], timeout=timeout)
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    assert git_utils.fetch_quietly(tmp_path, "origin", "main") is False
+
+
+def test_tag_on_remote_reads_the_remote_not_the_local_tag(tmp_path: Path) -> None:
+    """``True`` only once origin holds the tag; a local-only tag is ``False``.
+
+    The local tag exists in both checks, so a probe that consulted it
+    would answer ``True`` before the push.
+    """
+    work, _bare = _init_single_track_repo(tmp_path)
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=work, env=_GIT_ENV, check=True)
+    assert git_utils.tag_on_remote(work, "v1.0.0") is False
+    subprocess.run(
+        ["git", "push", "-q", "origin", "v1.0.0"], cwd=work, env=_GIT_ENV, check=True
+    )
+    assert git_utils.tag_on_remote(work, "v1.0.0") is True
+
+
+def test_tag_on_remote_unknown_when_the_probe_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stalled probe is ``None`` (unknown), never a guessed answer.
+
+    The probe must also be bounded and prompt-free itself.
+    """
+    seen: dict[str, object] = {}
+
+    def _fake_run_git(*args: str, timeout: float, **kw: object) -> str:
+        seen.update(kw, timeout=timeout)
+        raise subprocess.TimeoutExpired(cmd=["git", *args], timeout=timeout)
+
+    monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
+    assert git_utils.tag_on_remote(tmp_path, "v1.0.0") is None
+    assert seen["timeout"] == git_utils.PUSH_TIMEOUT_S
+    assert seen["env"] == {"GIT_TERMINAL_PROMPT": "0"}
 
 
 def test_fetch_quietly_dash_prefixed_remote_or_refspec_returns_false_without_git(

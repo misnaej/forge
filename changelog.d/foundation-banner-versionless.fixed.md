@@ -1,0 +1,3 @@
+bump: patch
+
+The "managed by forge" banner at the top of `FOUNDATION.md` and of the mirrored `forge-docs/README.md` no longer names a forge version. The version it showed was routinely wrong: an upgrade that left the principles text unchanged kept the old number, and the banner's own advice to re-run the sync changed nothing. The banners now say only that the file is managed and how to sync it; `forge-doctor` reports which forge is installed. On your next `install-forge-claude-md` (run by `forge-upgrade`), each file gets a one-line banner change, once; after that, checkouts on different forge versions write byte-identical files.

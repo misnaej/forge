@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import logging
 from typing import cast
 
@@ -431,6 +432,13 @@ def test_parse_paged_json_skips_malformed_line(
     assert "unparseable" in caplog.text
 
 
+def test_parse_paged_json_strict_raises_on_malformed_line() -> None:
+    """Strict mode fails closed: a partial listing never reads as complete."""
+    raw = f"{page_json({'id': 1})}\nnot json"
+    with pytest.raises(json.JSONDecodeError):
+        mod.parse_paged_json(raw, strict=True)
+
+
 # ---------------------------------------------------------------------------
 # post_new_comment
 # ---------------------------------------------------------------------------
@@ -476,7 +484,7 @@ def test_delete_comment_false_and_warns_on_failure(
 # ---------------------------------------------------------------------------
 
 
-def assert_no_raw_field_reads_a_file(cmd: list[str]) -> None:
+def _assert_no_raw_field_reads_a_file(cmd: list[str]) -> None:
     """Assert no `gh api` raw-field flag in *cmd* carries an `@` value.
 
     Stated as an invariant over argv rather than as an expected list,
@@ -550,7 +558,7 @@ def test_patch_comment_true_with_expected_argv_and_body(
         "body=@-",
     ]
     assert captured["input"] == "new body"
-    assert_no_raw_field_reads_a_file(cast("list[str]", captured["cmd"]))
+    _assert_no_raw_field_reads_a_file(cast("list[str]", captured["cmd"]))
 
 
 def test_patch_comment_false_and_warns_on_failure(
