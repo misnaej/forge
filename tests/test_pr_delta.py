@@ -26,6 +26,7 @@ from forge.pr_delta import (
     regen_only_diff,
     strip_fences,
     touches_high_blast_radius,
+    touches_rule_surface,
     touches_source_paths,
 )
 
@@ -126,6 +127,36 @@ def test_delta_decision_high_blast_radius_path_forces_full() -> None:
 def test_high_blast_radius_paths_is_non_empty() -> None:
     """Guard against accidental empty constant (would disable the gate)."""
     assert len(HIGH_BLAST_RADIUS_PATHS) > 0
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("skills/x/SKILL.md", True),
+        ("agents/a.md", True),
+        ("CLAUDE.md", True),
+        ("FOUNDATION.md", True),
+        (".claude/skills/y/SKILL.md", True),
+        (".claude/agents/z.md", True),
+        ("Agents/A.md", True),
+        ("src/forge/x.py", False),
+        ("docs/CLAUDE.md", False),
+        ("tests/test_x.py", False),
+    ],
+)
+def test_touches_rule_surface_classifies_path(path: str, *, expected: bool) -> None:
+    """Rule-surface prefixes and root files match; look-alikes elsewhere do not.
+
+    Args:
+        path: A single changed repo-relative path.
+        expected: Whether it belongs to the rule surface.
+    """
+    assert touches_rule_surface([path]) is expected
+
+
+def test_touches_rule_surface_empty_list_is_false() -> None:
+    """Empty path list does not touch rule surface."""
+    assert touches_rule_surface([]) is False
 
 
 def test_provenance_gate_steps_pins_literal_contents() -> None:

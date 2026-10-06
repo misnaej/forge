@@ -190,6 +190,11 @@ task-selection precedence rule in Important Rules).
       git and GitHub — the note owes the next session *orientation*, not
       a log. The never-delete rule protects the FILE, not stale content
       inside it.
+    - Run `forge-memory-audit status --memory-dir <memory dir>` (the
+      harness names the agent's memory directory in the session
+      context). When it reports the threshold is crossed, **offer**
+      `/memory-audit` — never run it silently. No memory directory →
+      skip.
 
     If `.plan/CONTINUATION.md` does not exist, `forge-continuation state`
     creates it with an empty written section. It is gitignored.

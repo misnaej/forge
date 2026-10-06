@@ -222,6 +222,14 @@ line/blast-radius thresholds as the backstop. A fix that goes beyond
 mechanical (a code change addressing a checker finding) re-runs the
 affected reporter, so its `verified-at:` matches the tree being pushed.
 
+### Offer a memory audit on rule-surface PRs
+
+When the plan JSON reports `rule_surface: true` (the PR edits
+`CLAUDE.md`, `FOUNDATION.md`, `skills/`, `agents/` or their `.claude/`
+copies), offer `/memory-audit` in one line: a memory that motivated the
+rule change is now a duplicate, and a memory the change contradicts
+needs a decision. Offered, never run; a declined offer changes nothing.
+
 ## Step 3: Update plan/docs (MANDATORY when applicable)
 
 Documentation must stay in sync with code. For each item below, update **only if the PR changed something that affects it**:
