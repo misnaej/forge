@@ -57,7 +57,7 @@ from forge.changelog import (
     stranded_added_versions,
     top_release_heading,
 )
-from forge.config import load_config
+from forge.config import is_fragments_mode, load_config
 from forge.git_utils import (
     configure_cli_logging,
     create_annotated_tag,
@@ -213,10 +213,11 @@ def _stranded_entries_error(repo_root: Path, tag: str) -> str | None:
     appended entries under the already-released heading — their commits
     would ship untagged (setuptools-scm ``X.Y.Z.devN``) while CI stays
     green. The tag-side and ``HEAD``-side contents are classified by
-    :func:`forge.changelog.stranded_added_versions` — the same canonical
+    :func:`forge.changelog.stranded_added_versions` — the canonical
     membership-based detector the ``changelog_version`` pre-commit step
-    uses — so a restrand (new heading opened above the released one,
-    entries moved out) counts as normal regardless of how git renders
+    also uses, here with its backfill exemption on — so a restrand (new
+    heading opened above the released one, entries moved out) counts as
+    normal regardless of how git renders
     the diff. Only sections that already existed at *tag* can be
     stranded: a release assembly backfills headings for versions that
     were tagged before their notes were assembled, and a section that
@@ -244,15 +245,27 @@ def _stranded_entries_error(repo_root: Path, tag: str) -> str | None:
     if not old_text:
         return None
     text = (repo_root / "CHANGELOG.md").read_text(encoding="utf-8")
-    if not stranded_added_versions(old_text, text, tag, ignore_new_sections=True):
+    stranded = stranded_added_versions(old_text, text, tag, ignore_new_sections=True)
+    if not stranded:
         return None
+    where = ", ".join(stranded)
+    # restrand self-skips in fragments mode, where the changelog is the
+    # assembler's output: there the only source of such lines is a hand
+    # edit, and the fix is to turn them back into a fragment.
+    repair = (
+        "Move those lines out of the released section into a "
+        "`changelog.d/<slug>.<type>.md` fragment, commit, and merge; the "
+        "next assembly files them under a new version."
+        if is_fragments_mode(repo_root)
+        else "Run `forge-changelog restrand` (mechanical repair — moves them "
+        "under the next open `## vX.Y.Z` heading and stages the result), "
+        "commit, and merge; the next tag-release run will cut it."
+    )
     return (
         f"CHANGELOG.md changed since {tag} but the top heading still "
-        f"declares {tag} — entries are stranded under an already-released "
-        "heading and their commits would ship untagged. Run "
-        "`forge-changelog restrand` (mechanical repair — moves them under "
-        "the next open `## vX.Y.Z` heading and stages the result), commit, "
-        "and merge; the next tag-release run will cut it."
+        f"declares {tag} — entries are stranded under already-released "
+        f"section(s) present at the tag ({where}) and their commits would "
+        f"ship untagged. {repair}"
     )
 
 

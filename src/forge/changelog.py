@@ -456,7 +456,10 @@ def stranded_added_versions(
             A section that first appears after the comparison point is an
             assembler backfill — the release assembly files notes under
             the heading of a version already tagged — not entries slipped
-            in under a released heading.
+            in under a released heading. Only ``forge-release`` sets it:
+            backfill happens only in fragments mode, where the pre-commit
+            step skips this check, so the pre-commit and restrand callers
+            stay strict.
 
     Returns:
         Distinct stranded versions in file order; empty when none.

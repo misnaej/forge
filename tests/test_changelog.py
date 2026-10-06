@@ -230,6 +230,21 @@ def test_stranded_gain_in_existing_section_reported_in_both_modes() -> None:
         assert result == ["v0.2.0"]
 
 
+def test_stranded_gain_under_empty_released_heading_still_reported() -> None:
+    """A heading present but empty at the tag is not new: an added entry strands.
+
+    The backfill exemption keys on the heading existing at the comparison
+    point, not on it having content — otherwise any empty released heading
+    would become a place to slip work in untagged.
+    """
+    old = "## v0.2.0\n\n## v0.1.0\n- first\n"
+    new = "## v0.2.0\n- slipped in\n\n## v0.1.0\n- first\n"
+    result = changelog.stranded_added_versions(
+        old, new, "v0.2.0", ignore_new_sections=True
+    )
+    assert result == ["v0.2.0"]
+
+
 # ---------------------------------------------------------------------------
 # released_deleted_versions
 # ---------------------------------------------------------------------------
