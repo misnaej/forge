@@ -428,10 +428,9 @@ def _check_global_install(repo_root: Path) -> list[CheckResult]:
                 "this repo enables its own copy too — the global copy can "
                 "shadow this repo's, so it may run an older forge while every "
                 "update reports it current. Fix: `claude plugin uninstall "
-                f"{PLUGIN_KEY} --scope user` and keep forge enabled per repo; "
-                "a repo that should not load the global copy at all can opt "
-                "out in its .claude/settings.local.json: "
-                f'{{"enabledPlugins": {{"{PLUGIN_KEY}": false}}}}. '
+                f"{PLUGIN_KEY} --scope user` and keep forge enabled per repo "
+                "(a per-repo enabledPlugins false is no fix: it turns forge "
+                "off in that repo entirely). "
                 "The pip package is per environment, but the plugin source "
                 "is per machine."
             ),

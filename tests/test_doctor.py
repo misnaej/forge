@@ -701,7 +701,7 @@ def test_global_install_advisory(
     detail = results[0].detail
     assert results[0].info
     assert "claude plugin uninstall forge@forge --scope user" in detail
-    assert "settings.local.json" in detail
+    assert "enabledPlugins false is no fix" in detail
     assert "per machine" in detail
 
 

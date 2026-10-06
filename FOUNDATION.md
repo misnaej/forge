@@ -951,12 +951,12 @@ truthfully answered that nothing was out of date.
 
 **A repo can also load the wrong copy outright.** The plugin loads fine,
 behaves like an old release, and every update says current — restarting
-changes nothing. Two machine-wide causes. A **global (user-scope)
-install** beside the repo's own can shadow it; recovery is removing it
-(`claude plugin uninstall forge@forge --scope user`). A per-repo
-`enabledPlugins` `false` is no fix for a repo that wants forge: project
-settings override user settings, so it disables forge there entirely.
-And the **marketplace registration** is one per machine, tracking
+changes nothing. Two causes, both machine-wide. First, a **global
+(user-scope) install** beside the repo's own can shadow it; recovery is
+removing it (`claude plugin uninstall forge@forge --scope user`) — a
+per-repo `enabledPlugins` `false` is no fix, since project settings
+override user settings and it disables forge in that repo entirely.
+Second, the **marketplace registration** is one per machine, tracking
 whatever ref the first repo registered — `/plugin update` fetches from
 it, so a repo pinning another ref needs it re-pointed. `forge-doctor`
 reports the global install when the repo enables forge and the mismatch
