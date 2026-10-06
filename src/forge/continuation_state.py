@@ -21,8 +21,10 @@ first line inside the markers says it is data, not instructions.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -539,9 +541,20 @@ def write_state(
     path.parent.mkdir(parents=True, exist_ok=True)
     # Write-then-rename: a hook killed at its timeout must never leave a
     # truncated note, which would lose the written section.
-    staging = path.with_name(f"{path.name}.tmp")
-    staging.write_text(new_text, encoding="utf-8", newline="")
-    staging.replace(path)
+    # The staging file is created exclusively under a unique name: it never
+    # follows a link planted at a fixed name, and two writers (pre-commit
+    # and the PreCompact hook) never share one.
+    fd, staging_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    staging = Path(staging_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(new_text)
+        staging.replace(path)
+    except BaseException:
+        staging.unlink(missing_ok=True)
+        raise
     used, budget = written_line_count(new_text), judgment_max_lines(root)
     if used > budget:
         logger.warning(

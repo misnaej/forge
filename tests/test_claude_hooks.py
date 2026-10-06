@@ -5888,3 +5888,20 @@ def test_load_continuation_is_silent_when_there_is_no_note(tmp_path: Path) -> No
         env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
     )
     assert (proc.returncode, proc.stdout) == (0, "")
+
+
+def test_load_continuation_is_silent_when_the_note_is_a_symlink(
+    tmp_path: Path,
+) -> None:
+    """A linked note could pull any file into every session, so it is not loaded."""
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret content", encoding="utf-8")
+    note = tmp_path / ".plan" / "CONTINUATION.md"
+    note.parent.mkdir()
+    note.symlink_to(outside)
+    proc = _run_plain_hook(
+        "load_continuation.sh",
+        cwd=tmp_path,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
+    )
+    assert (proc.returncode, proc.stdout) == (0, "")

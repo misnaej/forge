@@ -26,7 +26,8 @@ gh issue list --state open --label plan-ready --limit 1000 \
 1. Candidates found → pickup re-check, then execute the best one
    (highest tier, oldest validation first).
 2. No candidates → run the **empty-loop screen** below, then end the
-   session with a resume note in `.plan/CONTINUATION.md`; re-invoking
+   session with a resume line in the written section of
+   `.plan/CONTINUATION.md` (FOUNDATION §10); re-invoking
    `/sentinel` resumes the loop.
 3. Exit conditions: the user stops the loop, or every remaining
    candidate is awaiting user input.

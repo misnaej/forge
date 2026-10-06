@@ -13,8 +13,9 @@ Usage:
   carrying the last PR fields forward with their as-of label (offline).
 - ``forge-continuation state --with-pr`` — also re-read the open PR's
   mergeability, CI and wrap-up freshness from GitHub.
-- ``forge-continuation state --attempt passed|blocked:<step>`` — record a
-  commit attempt's result.
+- ``forge-continuation state --attempt <result>`` — record a commit
+  attempt's result: ``passed``, ``blocked:<step>``, ``error`` or
+  ``interrupted`` (free-form, sanitized).
 - ``forge-continuation check`` — report the written section's line usage
   against ``[tool.forge.continuation].judgment_max_lines``; exits ``1``
   when the panel markers are mismatched or duplicated.
@@ -213,7 +214,10 @@ def _build_parser() -> argparse.ArgumentParser:
     state.add_argument(
         "--attempt",
         metavar="RESULT",
-        help="Record a commit attempt: `passed`, `blocked:<step>` or `error`.",
+        help=(
+            "Record a commit attempt: `passed`, `blocked:<step>`, `error` "
+            "or `interrupted` (free-form; sanitized)."
+        ),
     )
     sub.add_parser(
         "check",
