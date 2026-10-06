@@ -38,7 +38,11 @@ Apply the testing documentation standards in
    `pytestmark = pytest.mark.development` at module level.
 4. Write the tests, applying the §8 testing documentation standards in
    full (see *Source of truth* above) — do not improvise alternatives.
-5. Run `pytest <file> -v` and iterate until green.
+5. Run `pytest <file> -v` and iterate until green. To check whether a
+   failure predates your change, read the base version
+   (`git show <base>:<path>`) or run it in a
+   `forge-scratch-repo snapshot --ref <base>` copy — never stash or
+   restore in the shared checkout (FOUNDATION §2, §11 "Probing").
 
 ## Scope Boundaries
 

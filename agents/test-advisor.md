@@ -57,6 +57,10 @@ pr=$(gh pr view --json number --jq '.number' 2>/dev/null || echo "?")
 5. Emit a compliance report: ✅ / ⚠️ / ❌ per dimension with `file:line`,
    naming the §8 rule each finding maps to; when the smart-test history
    ledger shows lifecycle-skip candidates, list them (report-only).
+6. A mutation probe (plant a bug, see whether the tests catch it) runs
+   only in a `forge-scratch-repo snapshot --worktree` copy, addressed by
+   its absolute path — never by editing the source under review
+   (FOUNDATION §11 "Probing").
 
 ## Scope Boundaries
 

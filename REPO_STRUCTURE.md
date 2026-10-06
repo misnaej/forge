@@ -90,6 +90,7 @@ Code.
    - changelog.py: shared `## vX.Y.Z` CHANGELOG heading recognition (`release_headings`, `changelog_lacks_entry`) — single source for release and the changelog_updated step; public API for consumers
    - import_graph.py: `forge.import_graph` — shared AST import primitives (`extract_import_targets`, `resolve_module_name`, `closest_known`) used by `audit.deps` and `smart_test.dependencies`
    - run_context.py: `forge.run_context` — CI vs workstation detection (`is_non_interactive`, `git_auth_mode`, `progress_logger`) per FOUNDATION §15
+   - scratch_repo.py: `forge-scratch-repo` — isolated scratch copies for agent experiments (FOUNDATION §11 "Probing"): `snapshot [--ref REF | --worktree]` copies the checkout into a fresh one-commit repo, `build --spec` makes a repo from a JSON spec of commits; reads the source checkout only, refuses a non-ignored target inside a work tree
 
 2. **Audit Subpackage (`src/forge/audit/`)**
    - common.py: shared helpers (scope enum, file iteration)
@@ -247,6 +248,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_pr_squash_comment.py: tests for pr_squash_comment
    - test_precommit.py: tests for precommit dispatcher
    - test_run_context.py: tests for run_context (CI vs workstation detection)
+   - test_scratch_repo.py: tests for scratch_repo (forge-scratch-repo snapshot/build)
    - test_smart_test_git_helpers.py: tests for smart_test.git_helpers
    - test_smart_test_dependencies.py: tests for smart_test.dependencies
    - test_smart_test_runner.py: tests for smart_test.runner
