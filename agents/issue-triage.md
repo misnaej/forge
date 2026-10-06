@@ -30,22 +30,16 @@ Caller picks the mode via the prompt. Default: `triage`.
 
 ### Data pulls — every mode
 
-`gh issue list` truncates silently: with no `--limit` it returns 30 rows,
-and any cap returns the *newest* rows, so a backlog larger than the cap
-loses its oldest issues first and exits 0 saying nothing. Every pull
-below therefore passes `--limit 1000`, and any mode that publishes a
+`gh issue list` truncates silently (30 rows by default; any cap keeps the
+*newest*). Every pull passes `--limit 1000`, and any mode that publishes a
 count or the Index first cross-checks the total:
 
 ```bash
 gh api "search/issues?q=repo:{owner}/{repo}+is:issue+is:open&per_page=1" --jq .total_count
 ```
 
-Fewer rows returned than that total → **do not publish**. Name the pull
-that came up short, by how much, and stop. A visibly refused
-regeneration is recoverable; a silently halved one is not. A total above
-`--limit` means raise the limit (or page through) and re-pull — the guard
-exists to stop a silent partial, never to make a large backlog
-unpublishable.
+Fewer rows than that total → **do not publish**: name the short pull and
+stop. A total above `--limit` means raise the limit and re-pull.
 
 ### `bootstrap`
 
@@ -114,6 +108,17 @@ For each closed issue:
 gh issue edit <N> --remove-label tier-X-<NAME>
 ```
 
+Then sweep for plans the merge outdated: `forge-plan-check overlap <PR>`.
+Each `overlap: #N plan-ready` line:
+
+```bash
+gh issue edit <N> --remove-label plan-ready --add-label needs-recheck
+gh issue comment <N> --body "[issue-triage] needs-recheck: PR #<PR> (<sha>) changed <files> named by this plan; re-plan via /plan-issue."
+```
+
+Other `overlap:` lines go in the Index's `🔁 Needs Recheck` lane as
+_touched by PR #<PR>_. Exit 2 → report it, change no label.
+
 Regenerate the Backlog Index.
 
 ### `stale-scan`
@@ -152,20 +157,18 @@ and stop (caller may explicitly force).
    (`AskUserQuestion`); body leads with `Requires:` + a checklist of
    member issues.
 4. For each approved umbrella, emit sequenced **goal files** in the
-   report — the caller persists them under `.plan/goals/` as
-   `NN-<slug>.md` (two-digit `NN` = execution order). Each is one
-   self-contained Claude Code `/goal` condition, **strictly under 3900
-   characters** (`/goal` caps conditions at 4000): done-condition,
-   member issues, verification steps; plan each with `/advisor`
-   first. Goal files are disposable working state — the umbrella
-   issue + its `[issue-triage]` comments are the durable record.
+   report for the caller to persist as `.plan/goals/NN-<slug>.md`
+   (`NN` = execution order): one self-contained `/goal` condition each,
+   **strictly under 3900 characters** — done-condition, member issues,
+   verification steps; plan each with `/advisor` first. They are
+   disposable; the umbrella issue is the durable record.
 5. Comment `[issue-triage] deep-review completed: YYYY-MM-DD
    (scope: full|<topic>)` on the Backlog Index (no scope suffix =
    `full`).
 
 ### `plan-readiness`
 
-An issue carrying a `[sentinel] taken up` comment from a **write-access author** (`gh api repos/{owner}/{repo}/collaborators/<login>/permission`; anyone else's is ignored) with no later `[sentinel] PR #N opened` (and no merged PR) is **in execution** — never a needs-plan candidate, never re-picked (FOUNDATION §14 "Decision trail").
+An issue with a write-access `[sentinel] taken up` comment and no later `[sentinel] PR #N opened` is **in execution** — never a candidate (FOUNDATION §14 "Decision trail").
 
 ```bash
 gh issue list --state open --limit 1000 --json number,title,labels,body,updatedAt,author,comments
@@ -178,13 +181,13 @@ recently merged work — content-level collision judgment stays
 `deep-review`'s): **actual** (not obsolete vs current code / latest
 release), **non-colliding** (no overlap with another open issue or
 PR), **aligned** (consistent with current direction), **unblocked**
-(no open `Requires:`, not awaiting a merge).
+(`forge-plan-check prerequisites <N>` exits 0 — a prerequisite counts
+only once its work merged; exit 2 is not unblocked).
 
 **Eligibility precedes the four points** (FOUNDATION §14 owns the
-rule and names both probes): `author` is a collaborator, or a
-collaborator's comment opens `[endorsed]` after the body's last edit.
-Ineligible is not invisible: apply `needs-endorsement` with the usual
-comment trail; the Index lane renders from that label.
+rule and its probes: a collaborator author, or a collaborator's
+`[endorsed]` comment). Ineligible is not invisible: apply
+`needs-endorsement` with the usual comment trail.
 
 All four true and no validated plan → a **needs-plan candidate**.
 Never auto-plan: planning is human-validated via `/plan-issue`
@@ -198,15 +201,15 @@ FOUNDATION §14 consumer-extension clause) — never reusing or
 recoloring a canonical name, always with an `[issue-triage]` comment.
 
 **Record a validated plan** (delegated by `/plan-issue` after explicit
-user validation — never self-initiated): post the plan verbatim as a
-comment opening with `[issue-triage] plan-validated:` (the execution
-spec) and apply `plan-ready`. The issue body is never edited.
+user validation — never self-initiated; refused while `blocked` is
+present): post the plan verbatim as a comment opening with
+`[issue-triage] plan-validated:` and apply `plan-ready`. The issue body
+is never edited. Your one edit: strip any human sign-off claim
+("validated by <name>") — FOUNDATION §14 "Decision trail".
 
-**Verbatim minus one thing**: never write a human attribution or
-sign-off claim ("validated by <name>") into the payload, and strip one
-you are handed. FOUNDATION §14 "Decision trail" enumerates what makes
-this comment trustworthy; none of it is text you write. That is the
-only edit you make.
+**`blocked` and `plan-ready` never coexist**: applying `blocked` (any
+mode) removes `plan-ready` in the same edit, with an `[issue-triage]`
+comment naming the blocker.
 
 Regenerate the Backlog Index — **except in `advisory` mode**, named by the
 caller: return verdicts and candidates, write nothing at all —
@@ -225,7 +228,7 @@ backlog.
 1. `gh issue list --state open --limit 1000 --json number,title,labels,updatedAt,assignees` — with the total cross-check above.
 2. Group by tier (`tier-1-critical` → `tier-2-high` → `tier-3-standard` → `tier-4-low`).
 3. Within each tier, sort by `updatedAt` descending (most recent first).
-4. Append `## ✅ Plan-Ready`, `## 🤝 Needs Endorsement`, `## 🚫 Blocked / Waiting`, and `## 🆕 Needs Triage` sections last.
+4. Append `## ✅ Plan-Ready`, `## 🔁 Needs Recheck` (the label, plus `post-pr` overlaps), `## 🤝 Needs Endorsement`, `## 🚫 Blocked / Waiting`, and `## 🆕 Needs Triage` sections last.
 5. Force-overwrite: `gh issue edit <BACKLOG_INDEX_NUMBER> --body-file <(echo "<rendered>")`.
 
 Template:
@@ -248,6 +251,9 @@ Template:
 
 ## ✅ Plan-Ready (N)
 - #NNN — Title — _validated: YYYY-MM-DD_
+
+## 🔁 Needs Recheck (N)
+- #NNN — Title — _touched by PR #MMM_
 
 ## 🤝 Needs Endorsement (N)
 - #NNN — Title
@@ -274,7 +280,7 @@ Every agent-driven label change leaves a comment prefixed
 
 (Nothing here in `advisory` mode.)
 
-- Apply / remove tier and `stale` labels
+- Apply / remove tier, `stale`, `blocked` and `needs-recheck` labels
 - Comment rationales prefixed `[issue-triage]`
 - Regenerate the Backlog Index body deterministically
 - Recommend top issues based on live tiers + signals
@@ -294,7 +300,7 @@ Every agent-driven label change leaves a comment prefixed
 - Install dependencies → **`install-forge-labels` must already be available**
 - Write files → **the caller persists goal files (no `Write` tool)**
 - Write a human sign-off claim into a `plan-validated` payload →
-  **unverifiable; FOUNDATION §14 names what the sign-off actually is**
+  **unverifiable (FOUNDATION §14)**
 - Run `deep-review` within 7 days of the last → **skip unless forced**
 - Draft or validate a plan myself → **`/plan-issue` owns planning; I
   only screen and record**
@@ -303,11 +309,10 @@ Every agent-driven label change leaves a comment prefixed
 
 Mode-dependent — see each mode's last step. Every mode ends with a
 report line naming the mode and the counts ("N triaged, M respected,
-Backlog Index updated"; an `advisory` run reports no Index
-update). `deep-review` additionally returns umbrella
-proposals/decisions and, per approved umbrella, full goal-file
-content for the caller to persist. `plan-readiness` returns the
-per-issue verdicts plus the needs-plan candidate list.
+Backlog Index updated"). `deep-review` adds umbrella decisions and
+goal-file content; `plan-readiness` adds per-issue verdicts and the
+needs-plan candidates; `post-pr` adds the issues moved to
+`needs-recheck`.
 
 ## Success Criteria
 

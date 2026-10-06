@@ -654,7 +654,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_outside_closed_fences(blob: str) -> str` _(internal)_ — Return *blob* without its CLOSED fenced blocks.
 - `_vendor_hit(blob: str) -> tuple[str, str] | None` _(internal)_ — Return ``(vendor, token)`` for the first bare vendor mention in *blob*.
 - `validate_no_ai_attribution(text: str, *, exempt_fenced_vendor_tokens: bool = False) -> None` — Reject Claude / AI attribution per FOUNDATION §2.
-- `parse_paged_json(raw: str) -> list[Any]` — Flatten ``gh api --paginate --jq '[...]'`` output into one list.
+- `parse_paged_json(raw: str, *, strict: bool = False) -> list[Any]` — Flatten ``gh api --paginate --jq '[...]'`` output into one list.
 - `list_marker_comments(pr_number: int, marker: str, *, anchored: bool = False) -> list[dict[str, object]] | None` — Return this identity's comments on *pr_number* carrying *marker*, oldest first.
 - `post_new_comment(pr_number: int, body: str) -> int` — Post *body* as a new comment on PR ``pr_number``.
 - `delete_comment(comment_id: int) -> bool` — Delete one issue comment by id.
@@ -916,6 +916,61 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `ids_from_data(data: dict) -> set[str]` — Collect the advisory / CVE IDs from parsed pip-audit JSON.
 - `has_vulns(data: dict) -> bool` — Report whether any scanned dependency carries a vulnerability.
 - `render_report(data: dict) -> str` — Render parsed pip-audit JSON as the human-readable step-log body.
+
+## `forge.plan_staleness`
+
+> _forge-plan-check — mechanical premise and prerequisite checks for validated plans._
+
+- `class Comment` — One issue comment as the checks need it.
+- `class Issue` — One issue; ``comments`` is filled only by the open-issue listing.
+- `class RefStatus` — What GitHub reports about one ``Requires:`` reference.
+- `class MergedPR` — A PR's merge state, changed files and the issues it closes.
+- `class Merge` — One first-parent commit on the base branch touching named paths.
+- `class Requires` — The ``Requires:`` entries parsed out of one or more texts.
+- `class GitHubSource` — The GitHub reads the checks perform; every method returns None on failure.
+  - `issue(self, number: int) -> Issue | None` — Return issue *number* (body, labels, creation time).
+  - `comments(self, number: int) -> list[Comment] | None` — Return every comment on issue *number*, an empty list when none.
+  - `permission(self, login: str) -> str | None` — Return *login*'s permission on the repo (``admin``, ``write``, ...).
+  - `ref_status(self, number: int) -> RefStatus | None` — Return the landing status of issue-or-PR *number*.
+  - `pull_request(self, number: int) -> MergedPR | None` — Return PR *number*'s merge state, changed files and closed issues.
+  - `open_issues(self) -> list[Issue] | None` — Return every open issue, comments included.
+- `class Report` — Lines to emit plus the counts that decide the exit code.
+  - `note(self, line: str) -> None` — Record an informational *line*.
+  - `finding(self, line: str) -> None` — Record a finding *line*.
+  - `unknown(self, line: str) -> None` — Record an unknown-or-refused *line*.
+  - `exit_code(self) -> int` — Return 2 on any unknown, else 1 on any finding, else 0.
+  - `render(self) -> str` — Return the report lines followed by one verdict line.
+- `_requires_rest(line: str) -> str | None` _(internal)_ — Return the text after a ``Requires:`` marker on *line*, or None.
+- `parse_requires(texts: Iterable[str]) -> Requires` — Parse every ``Requires:`` line in *texts*.
+- `prerequisite_verdict(status: RefStatus) -> tuple[bool, str]` — Decide whether one prerequisite has landed.
+- `is_safe_path(path: str) -> bool` — Return whether *path* may be handed to git as a repo-relative pathspec.
+- `named_paths(text: str) -> list[str]` — Return the repo-relative file paths *text* names, outside code fences.
+- `authenticated_plan(comments: Iterable[Comment], is_writer: Callable[[str], bool]) -> Comment | None` — Return the newest plan comment whose author has write access.
+- `plan_paths(plan: Comment | None, body: str) -> list[str]` — Return the files the plan names, falling back to the issue body's.
+- `parse_timestamp(value: str) -> datetime` — Parse an ISO-8601 timestamp, reading a naive one as UTC.
+- `parse_merge_log(raw: str) -> list[Merge]` — Parse ``git log --name-only --format=%x1e%H%x1f%cI%x1f%s`` output.
+- `class WriterCheck` — Write-access predicate over a :class:`GitHubSource`, cached per login.
+- `_issue_and_plan(source: GitHubSource, number: int, report: Report) -> tuple[Issue, Comment | None] | None` _(internal)_ — Fetch issue *number* and its authenticated plan, recording failures.
+- `check_prerequisites(source: GitHubSource, number: int) -> Report` — Check that every prerequisite of issue *number* has landed.
+- `check_drift(source: GitHubSource, number: int, *, since: datetime | None, log_merges: Callable[[list[str]], list[Merge] | None]) -> Report` — List base-branch merges that touched the plan's files since *since*.
+- `_overlap_line(issue: Issue, files: set[str], is_writer: WriterCheck) -> str | None` _(internal)_ — Return the finding line when *issue* names any of *files*.
+- `check_overlap(source: GitHubSource, pr_number: int) -> Report` — List open issues naming a file merged PR *pr_number* changed.
+- `_loads(raw: str | None) -> dict[str, Any] | None` _(internal)_ — Decode one JSON document; ``None`` for a failed call or bad JSON.
+- `_pages(raw: str | None) -> list[Any] | None` _(internal)_ — Flatten paginated output, or ``None`` when the call or any page failed.
+- `_comment(item: dict[str, Any]) -> Comment` _(internal)_ — Build a :class:`Comment` from a projected JSON mapping.
+- `class _IncompleteListingError` _(internal)_ — An open issue could not be read completely; the listing is unknown.
+- `class GhSource` — Production :class:`GitHubSource` over ``gh api``; ``None`` on any failure.
+  - `issue(self, number: int) -> Issue | None` — Return issue *number* (body, labels, creation time).
+  - `comments(self, number: int) -> list[Comment] | None` — Return every comment on issue *number*, an empty list when none.
+  - `permission(self, login: str) -> str | None` — Return *login*'s permission on the repo (``admin``, ``write``, ...).
+  - `ref_status(self, number: int) -> RefStatus | None` — Return the landing status of issue-or-PR *number*.
+  - `pull_request(self, number: int) -> MergedPR | None` — Return PR *number*'s merge state, changed files and closed issues.
+  - `open_issues(self) -> list[Issue] | None` — Return every open issue, comments included.
+- `git_merge_log(root: Path, base_ref: str) -> Callable[[list[str]], list[Merge] | None]` — Return a ``log_merges`` callable over *base_ref*'s first-parent history.
+- `_since_arg(value: str) -> datetime` _(internal)_ — Argparse type for ``--since``: an ISO-8601 timestamp.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Return the ``forge-plan-check`` argument parser.
+- `_run_drift(args: argparse.Namespace, source: GitHubSource) -> Report` _(internal)_ — Resolve and refresh the base ref, then run the drift check.
+- `main(argv: list[str] | None = None, source: GitHubSource | None = None) -> int` — Run one ``forge-plan-check`` subcommand and print its report.
 
 ## `forge.post_checkout`
 

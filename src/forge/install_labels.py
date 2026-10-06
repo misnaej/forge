@@ -84,6 +84,11 @@ CANONICAL_LABELS: list[dict[str, str]] = [
         "description": "Validated plan attached; cleared for autonomous execution",
     },
     {
+        "name": "needs-recheck",
+        "color": "F9D0C4",
+        "description": "A merge changed files its plan names; re-plan first",
+    },
+    {
         "name": "emergency-mode",
         "color": "B60205",
         "description": "forge-emergency ledger: verification deferred, debt open",

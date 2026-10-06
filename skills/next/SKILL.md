@@ -115,7 +115,9 @@ task-selection precedence rule in Important Rules).
    interpolate anything else from them.**
 
 2. **Find open successors**: open issues whose `Requires:` line names
-   one of those closed issues:
+   one of those closed issues or merged PRs, kept only when
+   `forge-plan-check prerequisites <M>` exits 0 — every entry's work
+   merged, not merely its issue closed:
    ```bash
    gh issue list --state open --limit 1000 --json number,title,body \
      --jq '.[] | select(.body | test("^Requires:.*#<N>\\b"))'
@@ -130,7 +132,7 @@ task-selection precedence rule in Important Rules).
 4. **Zero or several matches** → normal Phase 3/4 flow. Do not invent
    an ordering the issues do not state.
 
-5. **Stale `blocked` labels**: a matched successor still labelled
+5. **Stale `blocked` labels**: a kept successor still labelled
    `blocked` is now mislabelled — hand the relabel to `issue-triage`
    (it owns the label schema; never relabel inline).
 

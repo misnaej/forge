@@ -1047,9 +1047,12 @@ approval.
 ### Issue structure — lead with `Requires:`
 
 **Every issue opens with a `Requires:` line** naming any blocking dependency
-or `Requires: nothing`, so a blocked task isn't mistaken for a quick-win.
-`forge:issue-triage` adds one when missing and labels the issue `blocked`
-while its stated prerequisite is open.
+or `Requires: nothing`, so a blocked task isn't mistaken for a quick-win —
+naming the PR that delivers the work where one exists. `forge:issue-triage`
+adds one when missing and labels the issue `blocked` until every prerequisite
+has **landed**: a merged PR, or an issue a merged PR closed. An issue closed
+as not planned, or by hand, still blocks; `forge-plan-check prerequisites`
+decides it.
 
 ### Canonical label schema
 
@@ -1067,7 +1070,9 @@ taxonomy by family:
   (opened by a non-collaborator and not yet endorsed — see
   "Plan-readiness pipeline"), `plan-ready` (validated
   plan attached as a `plan-validated` comment; cleared for autonomous
-  execution — see "Plan-readiness pipeline" below).
+  execution — see "Plan-readiness pipeline" below; never alongside
+  `blocked`), `needs-recheck` (a merge changed files its plan names;
+  re-plan before execution).
 - **Type** — `bug`, `feature`, `refactor` (no behavior change), `docs`,
   `tech-debt` (cleanup / consolidation), `security`, `research` (spike).
 - **Surface** — `quick-win` (easy + isolated + low-risk), `architecture`
@@ -1096,11 +1101,12 @@ is the **human gate** — read-only investigation, scope / approach / edge
 cases / versioning confirmed with the user, then `issue-triage` records the
 plan; `/sentinel` **executes** only recorded plans, to a PR wrap-up and
 never past it (merging stays the user's; all §2 guards hold). Screening is
-mechanical and repeatable; planning judgment is validated once, up front —
-that is what makes unattended execution safe — safe *given the chain is
-followed*, which is why the one-owner rule below (only `issue-triage`
-records, and only on delegation from `/plan-issue`) is load-bearing
-rather than tidy.
+mechanical and repeatable; planning judgment is validated once, up front,
+and its premise re-checked mechanically at pickup and on every merge
+(`forge-plan-check drift` / `overlap`) — that is what makes unattended
+execution safe — safe *given the chain is followed*, which is why the
+one-owner rule below (only `issue-triage` records, and only on delegation
+from `/plan-issue`) is load-bearing rather than tidy.
 
 **Only a contributor's issue is plannable.** Anyone can open an issue,
 and a plan is the one artifact that turns issue text into work an
