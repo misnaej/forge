@@ -1137,6 +1137,42 @@ def fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool:
     return True
 
 
+def tag_on_remote(repo_root: Path, tag: str) -> bool | None:
+    """Ask ``origin`` whether it holds *tag*, never prompting or hanging.
+
+    The one remote tag probe for forge's tag-cutting CLIs. It consults the
+    remote only: a caller that has just created *tag* locally learns
+    nothing from the local ref about whether a push landed. Bounded by
+    :data:`PUSH_TIMEOUT_S` with ``GIT_TERMINAL_PROMPT=0``, because it
+    typically runs right after a push to the same remote has stalled.
+
+    Args:
+        repo_root: Git repo root.
+        tag: Tag name to look for (e.g. ``v1.2.3``).
+
+    Returns:
+        ``True`` when the remote holds *tag*; ``False`` when it answered
+        and does not; ``None`` when the query failed or timed out, so
+        the remote's state is unknown.
+    """
+    try:
+        # No `--` guard needed: the pattern always starts with
+        # `refs/tags/`, so a dash-prefixed tag can never parse as an option.
+        listing = run_git(
+            "ls-remote",
+            "--tags",
+            "origin",
+            f"refs/tags/{tag}",
+            cwd=repo_root,
+            env={"GIT_TERMINAL_PROMPT": "0"},
+            log_errors=False,
+            timeout=PUSH_TIMEOUT_S,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    return bool(listing)
+
+
 # Environment variables that reconfigure git for one process — a
 # `core.hooksPath` set this way silently skips the pre-commit hook — or
 # point it at another repository, index or object store. A caller's

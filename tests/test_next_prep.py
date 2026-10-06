@@ -174,58 +174,154 @@ def test_maybe_tag_release_creates_and_pushes_new_tag(
 
 
 def _run_main_with_timeout_on(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, verb: str, argv: list[str]
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    verb: str,
+    argv: list[str],
+    *,
+    remote_has_tag: bool | None = None,
 ) -> int:
-    """Run ``next_prep.main`` with the ``run_git`` call for *verb* timing out.
+    """Run ``next_prep.main`` with the git call for *verb* timing out.
+
+    ``fetch`` and ``push`` go through ``run_git``; ``pull`` is a direct
+    ``subprocess.run``. Either way the timed-out call must have been
+    bounded by ``PUSH_TIMEOUT_S`` and barred from prompting.
 
     Args:
         monkeypatch: pytest fixture for patching.
         tmp_path: Sandbox dir treated as the repo root.
-        verb: The git verb (``"fetch"`` / ``"push"``) whose call times out.
+        verb: The git verb (``"fetch"`` / ``"pull"`` / ``"push"``) whose
+            call times out.
         argv: argv list passed via ``sys.argv``.
+        remote_has_tag: What the remote tag probe answers after a
+            timed-out push.
 
     Returns:
         ``main``'s exit code.
     """
 
-    def _fake_git(*args: str, timeout: float | None = None, **_kw: object) -> str:
+    def _time_out(cmd: list[str], timeout: float | None, env: object) -> None:
+        assert timeout == next_prep.PUSH_TIMEOUT_S
+        assert isinstance(env, dict)
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+
+    def _fake_git(
+        *args: str, timeout: float | None = None, env: object = None, **_kw: object
+    ) -> str:
         if args[0] == verb:
-            assert timeout == next_prep.PUSH_TIMEOUT_S
-            raise subprocess.TimeoutExpired(cmd=["git", *args], timeout=timeout)
+            _time_out(["git", *args], timeout, env)
         return ""
+
+    def _fake_run(
+        cmd: list[str],
+        *,
+        timeout: float | None = None,
+        env: object = None,
+        **_kw: object,
+    ) -> FakeProc:
+        if cmd[1] == verb:
+            _time_out(cmd, timeout, env)
+        return FakeProc()
 
     (tmp_path / ".claude-plugin").mkdir()
     (tmp_path / ".claude-plugin" / "plugin.json").write_text(
         json.dumps({"name": "x", "version": "1.2.10"})
     )
     monkeypatch.setattr(next_prep, "run_git", _fake_git)
+    monkeypatch.setattr(next_prep, "tag_on_remote", lambda *_a: remote_has_tag)
     monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.2.9")
     monkeypatch.setattr(next_prep, "create_annotated_tag", lambda *_a, **_kw: None)
     monkeypatch.setattr(next_prep, "fetch_tags_best_effort", lambda _root: [])
-    monkeypatch.setattr(next_prep.subprocess, "run", lambda *_a, **_kw: FakeProc())
+    monkeypatch.setattr(next_prep.subprocess, "run", _fake_run)
     monkeypatch.setattr(next_prep.Path, "cwd", classmethod(lambda _: tmp_path))
     monkeypatch.setattr(next_prep.sys, "argv", argv)
     return next_prep.main()
 
 
+_TAG_ARGV = ["forge-next-prep", "--tag", "--no-sync", "--no-prune-branches"]
+
+
+@pytest.mark.parametrize(
+    ("remote_has_tag", "state"),
+    [(False, "origin does not have it"), (None, "whether origin has it is unknown")],
+)
 def test_main_timed_out_tag_push_exits_one_with_manual_push(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    *,
+    remote_has_tag: bool | None,
+    state: str,
 ) -> None:
-    """SCENARIO: the release-tag push stalls past ``PUSH_TIMEOUT_S``.
+    """SCENARIO: the release-tag push stalls and origin lacks it or is mute.
 
-    MOCK SETUP: ``run_git`` raises ``TimeoutExpired`` on ``push``; tag
-        creation and the tag refresh are stubbed.
-    EXPECTED BEHAVIOR: exit 1, no traceback, and an error naming the
-        manual push — a re-run would see the local tag and not retry.
+    MOCK SETUP: ``run_git`` raises ``TimeoutExpired`` on ``push``; the
+        remote probe answers *remote_has_tag*; tag creation is stubbed.
+    EXPECTED BEHAVIOR: exit 1, no traceback, and one error that states
+        origin's state truthfully and names the manual push — a re-run in
+        this checkout would see the local tag and not retry.
+
+    Args:
+        remote_has_tag: The probe's answer.
+        state: The phrase the error must use for that answer.
     """
-    argv = ["forge-next-prep", "--tag", "--no-sync", "--no-prune-branches"]
     with caplog.at_level(logging.ERROR, logger="forge.next_prep"):
-        assert _run_main_with_timeout_on(monkeypatch, tmp_path, "push", argv) == 1
+        rc = _run_main_with_timeout_on(
+            monkeypatch, tmp_path, "push", _TAG_ARGV, remote_has_tag=remote_has_tag
+        )
+    assert rc == 1
     errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert len(errors) == 1
-    assert "git push origin v1.2.10" in errors[0].getMessage()
+    message = errors[0].getMessage()
+    assert state in message
+    assert "git push origin v1.2.10" in message
+    assert "in this checkout" in message
+    assert errors[0].exc_info is None
+
+
+def test_main_timed_out_tag_push_that_landed_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCENARIO: the tag push times out but origin did receive the tag.
+
+    MOCK SETUP: ``run_git`` raises ``TimeoutExpired`` on ``push``; the
+        remote probe reports the tag present.
+    EXPECTED BEHAVIOR: exit 0 and the usual "Tagged and pushed" line,
+        noting that the timed-out push landed; no error.
+    """
+    with caplog.at_level(logging.INFO, logger="forge.next_prep"):
+        rc = _run_main_with_timeout_on(
+            monkeypatch, tmp_path, "push", _TAG_ARGV, remote_has_tag=True
+        )
+    assert rc == 0
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any(
+        "Tagged and pushed v1.2.10" in r.getMessage()
+        and "timed-out push landed" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_main_timed_out_pull_exits_one(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCENARIO: ``git pull --ff-only`` stalls past the bound.
+
+    MOCK SETUP: ``subprocess.run`` raises ``TimeoutExpired`` on ``pull``.
+    EXPECTED BEHAVIOR: exit 1 with one traceback-free error saying origin
+        did not answer the pull — not misreported as divergence.
+    """
+    argv = ["forge-next-prep", "--no-prune-branches"]
+    with caplog.at_level(logging.ERROR, logger="forge.next_prep"):
+        assert _run_main_with_timeout_on(monkeypatch, tmp_path, "pull", argv) == 1
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "did not answer the pull" in errors[0].getMessage()
     assert errors[0].exc_info is None
 
 

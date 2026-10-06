@@ -693,6 +693,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
 - `unmerged_paths(repo_root: Path) -> list[str]` — Return the repo-relative paths currently in an unmerged index state.
 - `fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool` — Fetch *refspec* from *remote* without ever prompting for credentials.
+- `tag_on_remote(repo_root: Path, tag: str) -> bool | None` — Ask ``origin`` whether it holds *tag*, never prompting or hanging.
 - `_is_git_env_override(name: str) -> bool` _(internal)_ — Return whether *name* overrides git's config or repository per process.
 - `git_env_overrides_removed() -> Iterator[None]` — Run the body with git's per-process environment overrides removed.
 - `class PushResult` — The outcome of :func:`push_branch` or :func:`push_tag`.
@@ -889,12 +890,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_tag_misuse_warning(repo_root: Path) -> str | None` _(internal)_ — Return a warning when ``--tag`` is used in a repo with no manifest.
 - `class TagDecision` — Outcome of ``--tag``: the tag cut, or why none was.
 - `_maybe_tag_release(repo_root: Path) -> TagDecision` _(internal)_ — Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
-- `_log_tag_push_timeout(tag: str) -> None` _(internal)_ — Tell the operator how to finish a tag push that timed out.
+- `_log_tag_push_timeout(tag: str, *, on_remote: bool | None) -> None` _(internal)_ — Tell the operator how to finish a tag push that timed out.
 - `_fetch_origin(repo_root: Path) -> bool` _(internal)_ — Run the bounded ``git fetch --prune`` the sync starts with.
 - `_gone_branches(repo_root: Path) -> list[str]` _(internal)_ — Return local branch names whose tracking remote is ``[origin/...: gone]``.
 - `_prune_gone_branches(repo_root: Path) -> tuple[list[str], list[str]]` _(internal)_ — ``git branch -d`` every branch whose remote is gone.
 - `_log_prune_result(repo_root: Path) -> None` _(internal)_ — Prune stale local branches and log the outcome.
 - `main() -> int` — Refresh main, optionally tag the release, prune stale local branches.
+- `_pull_ff_only(repo_root: Path, target_branch: str) -> bool` _(internal)_ — Fast-forward *target_branch* from origin, bounded and prompt-free.
 - `_tag_and_report(repo_root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run the post-sync tail: optional tag, optional prune, advisory.
 
 ## `forge.pip_audit_json`
@@ -1206,7 +1208,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_tag_exists(repo_root: Path, tag: str) -> bool` _(internal)_ — Return whether *tag* already exists locally or on ``origin``.
 - `_select_branch_guard(repo_root: Path, base_branch: str, *, from_changelog_mode: bool) -> str | None` _(internal)_ — Choose the appropriate branch guard for the release mode.
 - `_prepare_from_changelog(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Resolve and validate the tag declared in CHANGELOG.md.
-- `_tag_on_remote(repo_root: Path, tag: str) -> bool | None` _(internal)_ — Return whether *tag* exists on ``origin``, or ``None`` when unknowable.
 - `_resolve_push_timeout(repo_root: Path, tag: str) -> int` _(internal)_ — Decide the outcome of a tag push that hit :data:`PUSH_TIMEOUT_S`.
 - `_cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> int` _(internal)_ — Create the annotated *tag* on ``HEAD`` and push it to ``origin``.
 - `main() -> int` — Cut the ``vX.Y.Z`` release tag — bumped off the latest tag, or declared.

@@ -68,6 +68,7 @@ from forge.git_utils import (
     parse_semver,
     read_local_plugin_version,
     run_git,
+    tag_on_remote,
 )
 from forge.run_context import is_ci
 
@@ -284,16 +285,9 @@ def _tag_exists(repo_root: Path, tag: str) -> bool:
     # create_annotated_tag's argv.
     if run_git("tag", "--list", "--", tag, cwd=repo_root, check=False):
         return True
-    return bool(
-        run_git(
-            "ls-remote",
-            "--tags",
-            "origin",
-            f"refs/tags/{tag}",
-            cwd=repo_root,
-            check=False,
-        )
-    )
+    # An unanswered query (None) reads as absent, as it always has: the
+    # guards built on this treat "not found" as "go ahead and cut".
+    return tag_on_remote(repo_root, tag) is True
 
 
 def _select_branch_guard(
@@ -370,36 +364,14 @@ def _prepare_from_changelog(
     return tag, None
 
 
-def _tag_on_remote(repo_root: Path, tag: str) -> bool | None:
-    """Return whether *tag* exists on ``origin``, or ``None`` when unknowable.
-
-    Asks the remote only. :func:`_tag_exists` would answer ``True`` from
-    the local tag that was just created, which says nothing about whether
-    the push landed. The query is bounded like the push it follows: the
-    remote that just stalled may stall again.
-
-    Args:
-        repo_root: Repo root.
-        tag: Tag name to look for.
-
-    Returns:
-        ``True`` / ``False`` when the remote answered; ``None`` when the
-        query failed or timed out.
-    """
-    try:
-        listing = run_git(
-            "ls-remote",
-            "--tags",
-            "origin",
-            f"refs/tags/{tag}",
-            cwd=repo_root,
-            log_errors=False,
-            env={"GIT_TERMINAL_PROMPT": "0"},
-            timeout=PUSH_TIMEOUT_S,
-        )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        return None
-    return bool(listing)
+# A timed-out push leaves a local tag behind, which changes what a re-run
+# in the same checkout does; every timeout message carries this note.
+_RERUN_NOTE = (
+    "Re-running forge-release in this checkout will not retry the push: "
+    "the local tag counts as released, so `--from-changelog` reports it "
+    "done and `--bump` would cut the next version instead (a fresh "
+    "checkout without the tag does retry)."
+)
 
 
 def _resolve_push_timeout(repo_root: Path, tag: str) -> int:
@@ -417,21 +389,29 @@ def _resolve_push_timeout(repo_root: Path, tag: str) -> int:
     Returns:
         ``0`` when the remote now holds *tag*; ``1`` otherwise.
     """
-    if _tag_on_remote(repo_root, tag):
+    on_remote = tag_on_remote(repo_root, tag)
+    if on_remote:
         logger.info("Tagged and pushed %s (the timed-out push landed).", tag)
         return 0
-    # A re-run would not retry this push: the local tag already counts as
-    # released (`--from-changelog` exits early on it, `--bump` computes
-    # the version after it). Name the manual push instead.
-    logger.error(
-        "Pushing %s to origin timed out after %ss. The tag exists locally; "
-        "whether origin has it is unknown, and re-running forge-release "
-        "will not retry this push because the local tag already counts as "
-        "released. Once origin responds, push it with `git push origin %s`.",
-        tag,
-        PUSH_TIMEOUT_S,
-        tag,
-    )
+    if on_remote is False:
+        logger.error(
+            "Pushing %s to origin timed out after %ss, and origin does not "
+            "have it; push it with `git push origin %s`. %s",
+            tag,
+            PUSH_TIMEOUT_S,
+            tag,
+            _RERUN_NOTE,
+        )
+    else:
+        logger.error(
+            "Pushing %s to origin timed out after %ss. The tag exists "
+            "locally; whether origin has it is unknown. Once origin "
+            "responds, push it with `git push origin %s` if it is missing. %s",
+            tag,
+            PUSH_TIMEOUT_S,
+            tag,
+            _RERUN_NOTE,
+        )
     return 1
 
 
@@ -465,6 +445,7 @@ def _cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> i
             tag,
             cwd=repo_root,
             log_errors=not race_tolerant,
+            env={"GIT_TERMINAL_PROMPT": "0"},
             timeout=PUSH_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:

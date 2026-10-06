@@ -949,9 +949,13 @@ def _timing_out_push(*, land: bool) -> Callable[..., str]:
         timeout: float | None = None,
     ) -> str:
         if args[0] == "push":
+            # The push must be bounded and prompt-free, or a stalled
+            # remote hangs the release instead of reaching this branch.
+            assert timeout == release.PUSH_TIMEOUT_S
+            assert env == {"GIT_TERMINAL_PROMPT": "0"}
             if land:
                 git_utils.run_git(*args, cwd=cwd)
-            raise subprocess.TimeoutExpired(cmd=["git", *args], timeout=timeout or 0)
+            raise subprocess.TimeoutExpired(cmd=["git", *args], timeout=timeout)
         return git_utils.run_git(
             *args, cwd=cwd, check=check, log_errors=log_errors, env=env, timeout=timeout
         )
@@ -1007,9 +1011,34 @@ def test_cut_release_push_timeout_without_remote_tag_fails_readably(
     assert not _tag_exists(bare, "v1.0.0")
     errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert len(errors) == 1
-    assert "timed out" in errors[0].getMessage()
-    assert "git push origin v1.0.0" in errors[0].getMessage()
+    message = errors[0].getMessage()
+    assert "origin does not have it" in message
+    assert "git push origin v1.0.0" in message
+    assert "in this checkout" in message
     assert errors[0].exc_info is None
+
+
+def test_cut_release_push_timeout_with_unknown_remote_says_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCENARIO: the push times out and origin cannot be asked either.
+
+    MOCK SETUP: real work tree + bare origin; the push times out and
+        ``release.tag_on_remote`` reports ``None`` (probe failed).
+    EXPECTED BEHAVIOR: exit 1, the error says origin's state is unknown
+        rather than claiming the tag is missing.
+    """
+    work, _bare = _repo_with_origin(tmp_path)
+    monkeypatch.setattr(release, "run_git", _timing_out_push(land=False))
+    monkeypatch.setattr(release, "tag_on_remote", lambda *_a: None)
+    with caplog.at_level(logging.ERROR, logger="forge.release"):
+        assert release._cut_release(work, "v1.0.0") == 1
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "whether origin has it is unknown" in errors[0].getMessage()
+    assert "does not have it" not in errors[0].getMessage()
 
 
 def test_main_from_changelog_model_guard_beats_idempotency(
