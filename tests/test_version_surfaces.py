@@ -104,6 +104,14 @@ def test_hook_sidecar_version_none_when_sidecar_empty(tmp_path: Path) -> None:
     assert version_surfaces.hook_sidecar_version(tmp_path) is None
 
 
+def test_hook_sidecar_version_none_when_sidecar_undecodable(tmp_path: Path) -> None:
+    """A sidecar holding non-UTF-8 bytes reads as absent, not a crash."""
+    githooks = tmp_path / ".githooks"
+    githooks.mkdir()
+    (githooks / version_surfaces.HOOK_VERSION_SIDECAR).write_bytes(b"\xff\xfe")
+    assert version_surfaces.hook_sidecar_version(tmp_path) is None
+
+
 # ---------------------------------------------------------------------------
 # plugin_cache_version
 # ---------------------------------------------------------------------------
@@ -381,18 +389,24 @@ def _write_consumer_pin(repo_root: Path, ref: str) -> None:
     )
 
 
-def _write_registry(path: Path, install_location: Path | str) -> None:
+def _write_registry(
+    path: Path, install_location: Path | str, *, ref: str | None = None
+) -> None:
     """Write a ``known_marketplaces.json`` pointing forge at *install_location*.
 
     Args:
         path: File to write.
         install_location: Value for the entry's ``installLocation``.
+        ref: The registration's ``source.ref``; omitted when ``None``.
     """
+    source = {"source": "github", "repo": "misnaej/forge"}
+    if ref is not None:
+        source["ref"] = ref
     path.write_text(
         json.dumps(
             {
                 "forge": {
-                    "source": {"source": "github", "repo": "misnaej/forge"},
+                    "source": source,
                     "installLocation": str(install_location),
                 }
             }
@@ -423,7 +437,9 @@ def test_plugin_cache_status_current_when_cache_matches_manifest(
     assert status.state == "current"
     assert status.cached == "2.23.1"
     assert status.declared == "2.23.1"
-    assert status.missing_hooks == ()
+    assert status.stale_areas == ()
+    # No install record names this repo, so the newest copy was judged.
+    assert status.fallback is True
 
 
 def test_plugin_cache_status_behind_when_cache_lags_manifest(
@@ -448,7 +464,7 @@ def test_plugin_cache_status_behind_when_cache_lags_manifest(
     assert (status.cached, status.declared) == ("2.22.0", "2.23.1")
 
 
-def test_plugin_cache_status_consumer_reports_hooks_the_cache_lacks(
+def test_plugin_cache_status_consumer_names_stale_content_areas(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -458,7 +474,7 @@ def test_plugin_cache_status_consumer_reports_hooks_the_cache_lacks(
     declares a version no higher than the clone's, yet ships fewer hooks.
     MOCK SETUP: no repo manifest; a pin at v6.11.0; a marketplace clone
     carrying three hooks; a cache slot carrying one of them.
-    EXPECTED BEHAVIOR: ``"stale-content"`` naming the two absent hooks.
+    EXPECTED BEHAVIOR: ``"stale-content"`` naming the hooks area.
     """
     repo = tmp_path / "consumer"
     _write_consumer_pin(repo, "v6.11.0")
@@ -483,17 +499,14 @@ def test_plugin_cache_status_consumer_reports_hooks_the_cache_lacks(
     assert status.plugin_name == "forge"
     assert status.cached == "5.2.0"
     assert status.declared == "v6.11.0"
-    assert status.missing_hooks == (
-        "block_no_verify.sh",
-        "warn_generated_conflicts.sh",
-    )
+    assert status.stale_areas == ("claude-hooks",)
 
 
-def test_plugin_cache_status_consumer_current_when_hook_sets_match(
+def test_plugin_cache_status_consumer_current_when_content_matches(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A consumer slot carrying every pinned hook is current.
+    """A consumer slot carrying the pinned content byte for byte is current.
 
     MOCK SETUP: clone and cache slot ship the same two hooks, with the
     slot's declared version *below* the pinned ref.
@@ -518,7 +531,7 @@ def test_plugin_cache_status_consumer_current_when_hook_sets_match(
     status = version_surfaces.plugin_cache_status(repo)
 
     assert status.state == "current"
-    assert status.missing_hooks == ()
+    assert status.stale_areas == ()
 
 
 def test_plugin_cache_status_consumer_uncached_when_no_slot_installed(
@@ -660,3 +673,519 @@ def test_repo_slug_reads_every_pin_url_shape(url: str, expected: str | None) -> 
         expected: Expected slug result or None.
     """
     assert version_surfaces._repo_slug(url) == expected
+
+
+# ---------------------------------------------------------------------------
+# installed_plugins.json — which copy this repo uses
+# ---------------------------------------------------------------------------
+
+
+def _write_installed(claude_home: Path, records: object) -> None:
+    """Write a fake ``installed_plugins.json`` listing *records* for forge.
+
+    Args:
+        claude_home: The fake ``~/.claude`` from the ``claude_home`` fixture.
+        records: The ``forge@forge`` value — a list of records or a single
+            record, the two shapes seen on disk.
+    """
+    plugins = claude_home / "plugins"
+    plugins.mkdir(parents=True, exist_ok=True)
+    (plugins / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {"forge@forge": records}}),
+        encoding="utf-8",
+    )
+
+
+def _record(
+    install_dir: Path, *, scope: str, project: Path | None = None
+) -> dict[str, str]:
+    """Build one install record the way Claude Code writes it.
+
+    Args:
+        install_dir: The cache directory the install loads.
+        scope: ``"user"`` or ``"project"``.
+        project: The repo a project-scope record belongs to.
+
+    Returns:
+        The record dict.
+    """
+    record = {
+        "scope": scope,
+        "installPath": str(install_dir),
+        "version": install_dir.name,
+    }
+    if project is not None:
+        record["projectPath"] = str(project)
+    return record
+
+
+def test_plugin_installs_prefers_this_repos_record_over_newest_copy(
+    tmp_path: Path,
+    claude_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repo is judged on the copy its own record names, not the newest.
+
+    SCENARIO: four repos on four cached copies all reported the newest;
+    the record for this repo must win over the newest copy on disk.
+    MOCK SETUP: cache holds 8.2.0 and 9.1.1; this repo's record names
+    8.2.0, another repo's names 9.1.1.
+    EXPECTED BEHAVIOR: 8.2.0 is chosen and no fallback is flagged.
+    """
+    cache = tmp_path / "cache" / "forge" / "forge"
+    old = _write_plugin_tree(cache / "8.2.0", version="8.2.0")
+    new = _write_plugin_tree(cache / "9.1.1", version="9.1.1")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_installed(
+        claude_home,
+        [
+            _record(new, scope="project", project=tmp_path / "other"),
+            _record(old, scope="project", project=repo),
+        ],
+    )
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _n: cache.parent)
+
+    installs = version_surfaces.plugin_installs(repo, "forge")
+
+    assert installs.repo is not None
+    assert installs.repo.version == "8.2.0"
+    assert installs.install_dir == old
+    assert installs.fallback is False
+
+
+def test_plugin_installs_falls_back_to_newest_copy_without_a_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No record for this repo → the newest cached copy, flagged as such.
+
+    MOCK SETUP: no installed_plugins.json; the cache holds 8.2.0 and 9.1.1.
+    EXPECTED BEHAVIOR: 9.1.1 is judged and ``fallback`` says so.
+    """
+    cache = tmp_path / "cache" / "forge" / "forge"
+    _write_plugin_tree(cache / "8.2.0", version="8.2.0")
+    new = _write_plugin_tree(cache / "9.1.1", version="9.1.1")
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _n: cache.parent)
+
+    installs = version_surfaces.plugin_installs(tmp_path / "repo", "forge")
+
+    assert installs.repo is None
+    assert installs.install_dir == new
+    assert installs.fallback is True
+
+
+@pytest.mark.parametrize("with_user", [True, False])
+def test_plugin_installs_reports_a_user_scope_record(
+    tmp_path: Path,
+    claude_home: Path,
+    *,
+    with_user: bool,
+) -> None:
+    """A machine-wide record is reported, never substituted for the repo's.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        claude_home: Fake ``~/.claude``.
+        with_user: Whether a user-scope record exists alongside the repo's.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    own = _write_plugin_tree(tmp_path / "cache" / "9.1.1", version="9.1.1")
+    records = [_record(own, scope="project", project=repo)]
+    if with_user:
+        global_copy = _write_plugin_tree(
+            tmp_path / "cache" / "3.30.0", version="3.30.0"
+        )
+        records.insert(0, _record(global_copy, scope="user"))
+    _write_installed(claude_home, records)
+
+    installs = version_surfaces.plugin_installs(repo, "forge")
+
+    assert installs.install_dir == own
+    if with_user:
+        assert installs.user is not None
+        assert installs.user.version == "3.30.0"
+    else:
+        assert installs.user is None
+
+
+def test_plugin_records_accepts_a_single_record(
+    tmp_path: Path, claude_home: Path
+) -> None:
+    """A single record in place of a list is read the same way.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        claude_home: Fake ``~/.claude``.
+    """
+    install = _write_plugin_tree(tmp_path / "cache" / "9.1.1", version="9.1.1")
+    _write_installed(claude_home, _record(install, scope="user"))
+
+    assert [r["version"] for r in version_surfaces.plugin_records("forge")] == ["9.1.1"]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{not-json",
+        '["a", "list"]',
+        '{"plugins": ["not", "a", "dict"]}',
+        '{"plugins": {"forge@forge": [42, null, {"installPath": 7}]}}',
+    ],
+)
+def test_plugin_installs_degrades_on_malformed_records(
+    tmp_path: Path,
+    claude_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    content: str,
+) -> None:
+    """Malformed install records read as "no record", never an exception.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        claude_home: Fake ``~/.claude``.
+        monkeypatch: Pytest monkeypatch fixture.
+        content: Raw ``installed_plugins.json`` text.
+    """
+    (claude_home / "plugins").mkdir(parents=True)
+    (claude_home / "plugins" / "installed_plugins.json").write_text(
+        content, encoding="utf-8"
+    )
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _n: None)
+
+    installs = version_surfaces.plugin_installs(tmp_path, "forge")
+
+    assert installs == version_surfaces.PluginInstalls(None, None, None, fallback=False)
+
+
+def test_plugin_cache_status_manifest_repo_judges_its_own_copy(
+    tmp_path: Path,
+    claude_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A plugin-shipping repo whose own copy lags is ``"behind"``.
+
+    SCENARIO: the newest cached copy is current, so judging it would say
+    "current" for a repo still loading an older one.
+    MOCK SETUP: manifest 9.1.1; cache holds 9.0.0 and 9.1.1; this repo's
+    record names 9.0.0.
+    EXPECTED BEHAVIOR: ``"behind"`` at 9.0.0, no fallback.
+    """
+    repo = _write_plugin_tree(tmp_path / "repo", version="9.1.1")
+    cache = tmp_path / "cache" / "forge" / "forge"
+    own = _write_plugin_tree(cache / "9.0.0", version="9.0.0")
+    _write_plugin_tree(cache / "9.1.1", version="9.1.1")
+    _write_installed(claude_home, [_record(own, scope="project", project=repo)])
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _n: cache.parent)
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert (status.state, status.cached, status.fallback) == ("behind", "9.0.0", False)
+
+
+# ---------------------------------------------------------------------------
+# Consumer content comparison and marketplace source
+# ---------------------------------------------------------------------------
+
+
+def _consumer_with_clone_and_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    registry_ref: str | None = None,
+) -> tuple[Path, Path, Path]:
+    """Build a pinned consumer, its marketplace clone and an identical slot.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        monkeypatch: Pytest monkeypatch fixture.
+        registry_ref: The registration's ``source.ref``, if any.
+
+    Returns:
+        ``(repo, clone, slot)`` — the slot starts byte-identical to the
+        clone, so a test changes one side to create the difference it
+        exercises.
+    """
+    repo = tmp_path / "consumer"
+    _write_consumer_pin(repo, "v6.11.0")
+    trees = []
+    for root in (tmp_path / "marketplaces" / "forge", tmp_path / "cache" / "6.11.0"):
+        tree = _write_plugin_tree(root, version="6.11.0", hooks=("a.sh",))
+        (tree / "agents").mkdir()
+        (tree / "agents" / "reviewer.md").write_text("review\n", encoding="utf-8")
+        trees.append(tree)
+    clone, slot = trees
+    registry = tmp_path / "known_marketplaces.json"
+    _write_registry(registry, clone, ref=registry_ref)
+    monkeypatch.setattr(version_surfaces, "KNOWN_MARKETPLACES", registry)
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _n: slot.parent)
+    return repo, clone, slot
+
+
+def test_consumer_same_hook_names_with_changed_content_is_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hook fixed under the same name still counts as stale content.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    repo, clone, _slot = _consumer_with_clone_and_cache(tmp_path, monkeypatch)
+    (clone / "claude-hooks" / "a.sh").write_text("#!/bin/sh\nfixed\n", encoding="utf-8")
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == "stale-content"
+    assert status.stale_areas == ("claude-hooks",)
+
+
+def test_consumer_rewritten_agent_is_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rewritten agent — no hook involved — is detected and named.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    repo, _clone, slot = _consumer_with_clone_and_cache(tmp_path, monkeypatch)
+    (slot / "agents" / "reviewer.md").write_text("older\n", encoding="utf-8")
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == "stale-content"
+    assert status.stale_areas == ("agents",)
+
+
+def test_consumer_manifest_version_only_difference_is_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Manifests differing only in ``version`` are the same content.
+
+    Fragments mode parks the manifest version at the latest tag, so trees
+    with identical content legitimately disagree there.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    repo, clone, _slot = _consumer_with_clone_and_cache(tmp_path, monkeypatch)
+    (clone / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"version": "6.12.0", "name": "forge"}), encoding="utf-8"
+    )
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == "current"
+    assert status.stale_areas == ()
+
+
+@pytest.mark.parametrize(
+    ("registry_ref", "settings_ref", "expected"),
+    [
+        ("main", None, "source-mismatch"),
+        ("v6.11.0", None, "current"),
+        (None, None, "current"),
+        ("main", "main", "current"),
+    ],
+    ids=["mismatch", "match", "unknown-registry-ref", "settings-ref-wins"],
+)
+def test_consumer_marketplace_source_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    registry_ref: str | None,
+    settings_ref: str | None,
+    expected: str,
+) -> None:
+    """The machine-wide registration must track the ref this repo pins.
+
+    The repo side is its ``.claude/settings.json`` marketplace ref when
+    set, else the pip pin's ref; a missing ref on either side is unknown,
+    never a mismatch.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        monkeypatch: Pytest monkeypatch fixture.
+        registry_ref: The registration's ``source.ref``.
+        settings_ref: The repo settings' marketplace ref, if any.
+        expected: The verdict.
+    """
+    repo, _clone, _slot = _consumer_with_clone_and_cache(
+        tmp_path, monkeypatch, registry_ref=registry_ref
+    )
+    if settings_ref is not None:
+        (repo / ".claude").mkdir()
+        (repo / ".claude" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "extraKnownMarketplaces": {
+                        "forge": {"source": {"repo": "x/y", "ref": settings_ref}}
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == expected
+    if expected == "source-mismatch":
+        assert (status.source_ref, status.registered_ref) == ("v6.11.0", "main")
+        assert status.plugin_name == "forge"
+        assert status.source_repo == "misnaej/forge"
+
+
+# ---------------------------------------------------------------------------
+# Hostile or malformed input — degrade, never raise, never echo
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        (b'["a", "list"]', "not a JSON object"),
+        (b'{"name": "\xff\xfe"}', "unreadable"),
+    ],
+    ids=["list-typed", "non-utf8"],
+)
+def test_read_json_rejects_non_object_and_undecodable(
+    tmp_path: Path, raw: bytes, message: str
+) -> None:
+    """Anything but a readable JSON object is an error result, not a raise.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        raw: File bytes.
+        message: Expected error fragment.
+    """
+    path = tmp_path / "x.json"
+    path.write_bytes(raw)
+
+    data, err = version_surfaces.read_json(path)
+
+    assert data == {}
+    assert err is not None
+    assert message in err
+
+
+@pytest.mark.parametrize(
+    "raw", [b'["a", "list"]', b"\xff\xfe"], ids=["list-typed", "non-utf8"]
+)
+def test_install_version_falls_back_on_malformed_manifest(
+    tmp_path: Path, raw: bytes
+) -> None:
+    """A malformed cached manifest falls back to the slot's directory name.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        raw: Manifest bytes.
+    """
+    install = tmp_path / "9.1.1"
+    (install / ".claude-plugin").mkdir(parents=True)
+    (install / ".claude-plugin" / "plugin.json").write_bytes(raw)
+
+    assert version_surfaces.install_version(install) == "9.1.1"
+
+
+def test_plugin_installs_survives_nul_in_project_path(
+    tmp_path: Path,
+    claude_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A record whose projectPath holds a NUL byte matches nothing.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        claude_home: Fake ``~/.claude``.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    install = _write_plugin_tree(tmp_path / "cache" / "9.1.1", version="9.1.1")
+    _write_installed(
+        claude_home,
+        [_record(install, scope="project", project=tmp_path / "re\0po")],
+    )
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _n: None)
+
+    installs = version_surfaces.plugin_installs(tmp_path / "repo", "forge")
+
+    assert installs.repo is None
+
+
+def test_consumer_ignores_symlinks_inside_content_areas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Symlinked files and directories in a slot are never followed.
+
+    SCENARIO: a link in the cache copy pointing elsewhere on the machine
+    must neither be hashed nor walked into.
+    MOCK SETUP: clone and slot identical; the slot gains a symlinked file
+    and a symlinked directory under ``agents/``, both to outside content.
+    EXPECTED BEHAVIOR: ``"current"`` — the links contribute nothing.
+    """
+    repo, _clone, slot = _consumer_with_clone_and_cache(tmp_path, monkeypatch)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("elsewhere\n", encoding="utf-8")
+    (slot / "agents" / "linked.md").symlink_to(outside / "secret.md")
+    (slot / "agents" / "linked-dir").symlink_to(outside, target_is_directory=True)
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == "current"
+
+
+@pytest.mark.parametrize(
+    ("cap", "value"),
+    [("_MAX_AREA_FILES", 0), ("_MAX_AREA_BYTES", 3)],
+    ids=["file-cap", "byte-cap"],
+)
+def test_consumer_content_over_the_caps_is_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cap: str,
+    value: int,
+) -> None:
+    """A tree too large to hash yields "unknown", never stale or current.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        monkeypatch: Pytest monkeypatch fixture.
+        cap: Name of the cap constant lowered for the test.
+        value: The lowered cap.
+    """
+    repo, _clone, _slot = _consumer_with_clone_and_cache(tmp_path, monkeypatch)
+    monkeypatch.setattr(version_surfaces, cap, value)
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == "content-unknown"
+    assert status.stale_areas == ()
+
+
+def test_plugin_cache_status_replaces_unsafe_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Names and refs carrying shell or control characters are not echoed.
+
+    SCENARIO: a planted registry ref and clone manifest name would
+    otherwise be printed inside a remediation command.
+    MOCK SETUP: clone manifest name ``forge; rm -rf ~``; registry ref
+    ``main$(id)``.
+    EXPECTED BEHAVIOR: both fields read ``<unprintable>``.
+    """
+    repo, clone, _slot = _consumer_with_clone_and_cache(
+        tmp_path, monkeypatch, registry_ref="main$(id)"
+    )
+    (clone / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "forge; rm -rf ~", "version": "6.11.0"}),
+        encoding="utf-8",
+    )
+
+    status = version_surfaces.plugin_cache_status(repo)
+
+    assert status.state == "source-mismatch"
+    assert status.plugin_name == version_surfaces.UNPRINTABLE
+    assert status.registered_ref == version_surfaces.UNPRINTABLE
+    assert status.source_ref == "v6.11.0"

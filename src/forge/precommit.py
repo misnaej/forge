@@ -804,10 +804,18 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
             skipped=True,
         )
     if status.state != "behind":
+        # Only "behind" fails this step; every other verdict passes, but
+        # the line still names the verdict — "current" printed for an
+        # unparseable version would be a claim nothing checked.
+        verdict = (
+            "is current"
+            if status.state == "current"
+            else f"not compared ({status.state})"
+        )
         return StepResult(
             name="plugin_sync",
             passed=True,
-            output=f"plugin cache {cached} is current (manifest {manifest_version}).",
+            output=f"plugin cache {cached} {verdict} (manifest {manifest_version}).",
         )
     blocking = bool(_forge_step_config(repo_root, "plugin_sync").get("blocking", False))
     return StepResult(
@@ -1182,9 +1190,10 @@ def step_foundation_md_check(repo_root: Path) -> StepResult:
 
     The provenance gate behind the ``/pr`` regen-verified light path: a
     resync PR's ``FOUNDATION.md`` must byte-reproduce the shipped
-    ``forge/data/FOUNDATION.md`` (version banner ignored — the same rule
-    ``install-forge-claude-md`` syncs by). A hand edit, an unmanaged
-    file, or a stale copy FAILS — falling the PR back to the full
+    ``forge/data/FOUNDATION.md`` (the same byte-for-byte rule
+    ``install-forge-claude-md`` syncs by; the banner carries no version).
+    A hand edit, an unmanaged file, a stale copy, or one still carrying
+    the older versioned banner FAILS — falling the PR back to the full
     review round.
 
     **Editable-install self-reference is a FAIL, not a pass**: in
@@ -1243,8 +1252,7 @@ def step_foundation_md_check(repo_root: Path) -> StepResult:
             name="foundation_md_check",
             passed=True,
             output=(
-                "FOUNDATION.md reproduces the installed forge-scripts "
-                "foundation (version banner ignored)."
+                "FOUNDATION.md byte-reproduces the installed forge-scripts foundation."
             ),
         )
     return StepResult(

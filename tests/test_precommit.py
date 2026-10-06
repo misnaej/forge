@@ -26,7 +26,15 @@ from unittest.mock import patch
 
 import pytest
 
-from forge import config, emergency, git_utils, precommit, regen_docs, version_surfaces
+from forge import (
+    config,
+    emergency,
+    git_utils,
+    install_claudemd,
+    precommit,
+    regen_docs,
+    version_surfaces,
+)
 from forge.pip_audit_json import AuditRun
 from forge.run_context import _CI_MARKERS
 from forge.smart_test import lifecycle as _lifecycle
@@ -2801,6 +2809,21 @@ def test_step_foundation_md_check_passes_when_matches_installed(
     assert "reproduces the installed" in result.output
 
 
+def test_step_foundation_md_check_passes_on_synced_file_unstubbed(
+    tmp_path: Path,
+) -> None:
+    """A FOUNDATION.md written by `sync_foundation` passes the real step.
+
+    No stubs: the installed foundation is the real packaged one, so this
+    pins that the writer and the checker agree on "in sync" (a version in
+    the banner once made them disagree across installs).
+    """
+    install_claudemd.sync_foundation(tmp_path / "FOUNDATION.md")
+    result = precommit.step_foundation_md_check(tmp_path)
+    assert result.passed, result.output
+    assert not result.skipped
+
+
 def test_step_foundation_md_check_fails_when_divergent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3639,6 +3662,28 @@ def test_step_plugin_sync_passes_when_cache_ahead_of_manifest(
     assert result.passed
 
 
+def test_step_plugin_sync_names_an_unparsed_verdict_truthfully(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unparseable cached version passes but is never called "current".
+
+    MOCK SETUP: manifest 2.9.0; the cached version reads ``not-a-version``.
+    EXPECTED BEHAVIOR: passes (only "behind" fails), and the line names
+    the ``unparsed`` verdict instead of claiming the cache is current.
+    """
+    _write_plugin_manifest(tmp_path, "2.9.0")
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
+    monkeypatch.setattr(
+        version_surfaces, "plugin_cache_version", lambda _root: "not-a-version"
+    )
+    result = precommit.step_plugin_sync(tmp_path)
+    assert result.passed
+    assert "not compared (unparsed)" in result.output
+    assert "is current" not in result.output
+
+
 def test_step_plugin_sync_warns_when_behind_and_unconfigured(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3652,6 +3697,50 @@ def test_step_plugin_sync_warns_when_behind_and_unconfigured(
     assert not result.passed
     assert result.non_blocking
     assert "⚠️" in result.output
+
+
+def test_step_plugin_sync_judges_this_repos_own_install(
+    tmp_path: Path,
+    claude_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repo's own install record decides the verdict, not the newest copy.
+
+    SCENARIO: another repo on the machine fetched the current release, so
+    the newest cached copy matches the manifest while this repo still
+    loads an older one.
+    MOCK SETUP: manifest 2.9.0; the newest-copy lookup answers 2.9.0; the
+    install record for this repo names a 2.8.0 copy.
+    EXPECTED BEHAVIOR: a WARN naming 2.8.0 — the repo is behind.
+    """
+    repo = tmp_path / "repo"
+    _write_plugin_manifest(repo, "2.9.0")
+    own = tmp_path / "cache" / "2.8.0"
+    _write_plugin_manifest(own, "2.8.0")
+    (claude_home / "plugins").mkdir(parents=True)
+    (claude_home / "plugins" / "installed_plugins.json").write_text(
+        json.dumps(
+            {
+                "plugins": {
+                    "forge@forge": [
+                        {
+                            "scope": "project",
+                            "projectPath": str(repo),
+                            "installPath": str(own),
+                            "version": "2.8.0",
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: repo)
+    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.9.0")
+    result = precommit.step_plugin_sync(repo)
+    assert not result.passed
+    assert "2.8.0" in result.output
 
 
 def test_step_plugin_sync_blocks_when_behind_and_configured_blocking(
