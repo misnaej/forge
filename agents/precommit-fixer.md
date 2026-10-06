@@ -231,12 +231,17 @@ Re-invoke me without arguments. See FOUNDATION §3.
 ## Critical Rules
 
 - **Fix ALL violations**, including pre-existing ones (FOUNDATION §4).
-- **`ARG002` (unused argument) — FIX, never suppress:**
+- **`ARG001` / `ARG002` (unused argument) — FIX, never suppress:**
+  0. **Test parameters are never removed or renamed** (`test_*.py`,
+     `*_test.py`, `conftest.py`): any one may be a side-effect fixture.
+     List it under "Human attention required".
   1. Grep callers for keyword usage: `grep -rn "param_name=" .` scoped to source dirs.
   2. Check whether the function overrides an abstract / parent method (interface contract).
   3. If callers pass by keyword OR it's an interface method → prefix with `_` (keeps the position) AND update keyword call sites.
   4. Otherwise → prefix with `_` or remove the arg entirely AND update all call sites.
   5. Never rename without checking callers first.
+- **Never rewrite a docstring to match a signature change you made in
+  the same pass** — it hides your edit from review.
 
 ## Guard hooks
 

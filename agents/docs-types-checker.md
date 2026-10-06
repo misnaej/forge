@@ -226,6 +226,7 @@ def process(data: list) -> None:
 - **Read the implementation** before fixing parameter names
 - **Check child classes** for overridden methods - docstring should match actual signature
 - **Documentation describes CURRENT state** — see [FOUNDATION §8](../FOUNDATION.md#8-documentation-standards). Treat as a hard ERROR.
+- **In test files, never describe removed or absent setup as "not needed"** — a missing fixture parameter may be a bug, not a design; report it instead.
 - **DO NOT commit** - the calling agent will handle that
 
 ## Scope Boundaries

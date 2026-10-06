@@ -424,6 +424,26 @@ def test_precommit_fixer_agent_pins_verdict_and_hand_back_contract() -> None:
     assert "git status: not run (hook-blocked)" in body
 
 
+def test_fixer_and_docs_agents_protect_side_effect_fixtures() -> None:
+    """The fixer never strips test parameters or re-documents its own edits.
+
+    SCENARIO: a test requests a fixture only for its side effect; ruff flags
+    the parameter as unused, and a fixer that deletes it switches the
+    fixture off while the test stays green — then rewrites the docstring to
+    say no setup is needed.
+    EXPECTED BEHAVIOR: the shipped fixer body carries both guards, and the
+    docs agent carries the matching caution.
+    """
+    fixer = " ".join((REPO_ROOT / "agents" / "precommit-fixer.md").read_text().split())
+    assert "Test parameters are never removed or renamed" in fixer
+    assert "Human attention required" in fixer
+    assert "Never rewrite a docstring to match a signature change you made" in fixer
+    docs = " ".join(
+        (REPO_ROOT / "agents" / "docs-types-checker.md").read_text().split()
+    )
+    assert 'never describe removed or absent setup as "not needed"' in docs
+
+
 def test_plugin_registers_fixer_verdict_hook_on_subagent_stop() -> None:
     """`plugin.json` runs require_fixer_verdict.sh on SubagentStop for the fixer."""
     manifest = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())

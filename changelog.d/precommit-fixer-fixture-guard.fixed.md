@@ -1,0 +1,3 @@
+bump: patch
+
+- **The pre-commit fixer no longer silently switches off test setup.** A test often requests a fixture only for its side effect (for example, pointing the code at a temp directory), so ruff reports the parameter as unused. The fixer used to delete it: the fixture stopped running, the test kept passing — now writing into the real repo — and the docstring was rewritten to say no setup was needed. The fixer now never removes or renames a parameter of a test function in a test file and lists it for a human instead, never rewrites a docstring to match a signature change it made itself in the same pass, and the docs agent never describes missing test setup as "not needed". Some test-file lint findings will now be reported rather than cleared.
