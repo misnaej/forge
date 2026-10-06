@@ -1,0 +1,3 @@
+bump: patch
+
+`forge-smart-test` no longer reports success after testing nothing. Editing a `conftest.py` now runs every test under it (a conftest outside the test folders runs the full suite); running on the base branch itself — typically CI after a merge — tests what the last commit changed instead of an empty diff; and a selection whose files collect no tests fails with an explanation. Helper modules under test folders are treated as dependencies of the tests that import them, not as tests. In forge-sized suites, editing a shared conftest now selects most of the suite, and a pytest configuration that deselects every selected test now fails.

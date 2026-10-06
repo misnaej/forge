@@ -39,6 +39,21 @@ full pass. Config reference:
   `[tool.forge.smart_test].nonpython_ignore` (default: `*.md`, the plugin
   manifest, `.plan/*`, `.gitignore`, the stamp itself) are exempt. A change
   the graph does not understand is never silently under-selected.
+- **Conftests reach their tests.** A `conftest.py` is a dependency of
+  every test in its folder and below, so editing it — or code it
+  imports — selects that subtree at depth 0. A changed conftest outside
+  the test roots (e.g. at the repo root) escalates to `full`. Only
+  `test_*.py` / `*_test.py` files are ever selected as tests; conftests
+  and helper modules are dependencies.
+- **Running on the base branch tests the last commit.** When the base
+  resolves to `HEAD` itself and the tree is clean — CI after a merge —
+  the change set is `HEAD^1..HEAD`, not an empty diff; a root commit runs
+  `full`. An explicit `--base` always wins, and local edits on the base
+  branch are tested as usual.
+- **A selection that collects nothing fails.** When named test files
+  collect no tests (pytest exit 5), the run fails with an explanation
+  instead of passing; only a run with nothing selected is a no-op
+  success.
 - **Full-run cadence.** The tracked one-line stamp `.forge-full-run`
   records the last *truly-all* run; when it exceeds
   `full_run_max_age_hours` (default 48), the `smart_test` pre-commit step

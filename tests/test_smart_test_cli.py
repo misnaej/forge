@@ -1107,6 +1107,59 @@ def test_main_depth1_nonpython_change_escalates_to_full(
     assert recorded[0]["coverage"] is True
 
 
+@pytest.mark.parametrize("trigger", ["root_commit", "unscanned_conftest"])
+def test_main_unsafe_diff_escalates_depth0_to_full(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    trigger: str,
+) -> None:
+    """A root commit or a repo-root conftest change escalates to the full suite.
+
+    Args:
+        tmp_path: Temporary directory for the test.
+        monkeypatch: pytest monkeypatch fixture.
+        trigger: The scenario to test - "root_commit" or "unscanned_conftest".
+
+    SCENARIO: ``--depth 0``; either no previous commit exists to diff
+        against, or the only change is a conftest outside every test root.
+    MOCK SETUP: cli.resolve_base_ref -> "main"; cli.effective_base_ref and
+        cli.changed_python_files stubbed per trigger; run_pytest captured.
+    EXPECTED BEHAVIOR: the single run_pytest call carries ``label="full"``.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "0"])
+    monkeypatch.setattr(cli, "resolve_base_ref", lambda _r, _b: "main")
+    root_commit = trigger == "root_commit"
+    monkeypatch.setattr(
+        cli,
+        "effective_base_ref",
+        lambda _r, _b, **_kw: (None, "root") if root_commit else ("main", ""),
+    )
+    monkeypatch.setattr(
+        cli,
+        "changed_python_files",
+        lambda _r, _ref: set() if root_commit else {"conftest.py"},
+    )
+    labels: list[str] = []
+
+    def _fake(
+        _root: object,
+        _paths: list[str],
+        *,
+        coverage: bool = False,
+        telemetry: bool = False,
+        label: str = "",
+    ) -> tuple[int, str]:
+        del coverage, telemetry
+        labels.append(label)
+        return 0, "ok"
+
+    monkeypatch.setattr(cli, "run_pytest", _fake)
+
+    assert cli.main() == 0
+    assert labels == ["full"]
+
+
 def test_main_depth1_ignored_glob_change_no_escalation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

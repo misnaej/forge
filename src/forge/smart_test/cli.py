@@ -41,10 +41,12 @@ from forge.smart_test.dependencies import (
     all_test_files,
     render_plan,
     select_tests,
+    unscanned_conftests,
 )
 from forge.smart_test.git_helpers import (
     changed_non_python_files,
     changed_python_files,
+    effective_base_ref,
     head_commit_message,
     resolve_base_ref,
 )
@@ -375,6 +377,106 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _escalate_to_full(
+    repo_root: Path, base_ref: str, changed: set[str], cfg: dict[str, object]
+) -> bool:
+    """Check if either conftest or non-Python changes require escalation.
+
+    Args:
+        repo_root: Git repo root.
+        base_ref: The base ref to diff against.
+        changed: Changed repo-relative paths.
+        cfg: Smart-test configuration dict.
+
+    Returns:
+        True if escalation to full suite is required.
+    """
+    if conftests := unscanned_conftests(repo_root, changed):
+        logger.info(
+            "Safe fallback: %s applies outside the scanned test roots — "
+            "escalating to depth=full.",
+            min(conftests),
+        )
+        return True
+
+    ignore_cfg = cfg.get("nonpython_ignore")
+    ignore = (
+        tuple(str(g) for g in ignore_cfg)
+        if isinstance(ignore_cfg, list)
+        else lifecycle.DEFAULT_NONPYTHON_IGNORE
+    )
+    unmappable = changed_non_python_files(repo_root, base_ref, ignore_globs=ignore)
+    if unmappable:
+        logger.info(
+            "Safe fallback: %d non-Python change(s) the selector cannot "
+            "map (e.g. %s) — escalating to depth=full.",
+            len(unmappable),
+            min(unmappable),
+        )
+        return True
+    return False
+
+
+def _resolve_depth(
+    args: argparse.Namespace, repo_root: Path, cfg: dict[str, object]
+) -> tuple[str | int, str, set[str]]:
+    """Resolve the depth tier and check for safe-fallback escalations.
+
+    Args:
+        args: Parsed command-line arguments.
+        repo_root: Git repo root.
+        cfg: Smart-test configuration dict.
+
+    Returns:
+        Tuple of (depth_raw, base_ref, changed).
+    """
+    depth_token = args.depth
+    if args.from_commit_message and (directive := _depth_from_commit(repo_root, cfg)):
+        depth_token = directive
+        logger.info("Depth '%s' set from commit-message directive.", depth_token)
+    depth_raw = _parse_depth(depth_token)
+
+    base_ref = resolve_base_ref(repo_root, args.base)
+    effective, reason = effective_base_ref(
+        repo_root, base_ref, explicit=args.base is not None and base_ref == args.base
+    )
+    if reason:
+        logger.info("%s.", reason)
+    if effective is None:
+        depth_raw = _FULL
+    else:
+        base_ref = effective
+    changed = changed_python_files(repo_root, base_ref)
+
+    if depth_raw != _FULL and _escalate_to_full(repo_root, base_ref, changed, cfg):
+        depth_raw = _FULL
+
+    return depth_raw, base_ref, changed
+
+
+def _coverage_additions(
+    args: argparse.Namespace, cfg: dict[str, object], changed: set[str]
+) -> tuple[set[str], bool]:
+    """Resolve coverage-validation settings and collect coverage additions.
+
+    Args:
+        args: Parsed command-line arguments.
+        cfg: Smart-test configuration dict.
+        changed: Changed repo-relative paths.
+
+    Returns:
+        Tuple of (extra_depth0, coverage_validate).
+    """
+    coverage_json = args.coverage_json or cfg.get("coverage_json")
+    coverage_validate = bool(cfg.get("coverage_validate", False)) or bool(
+        args.coverage_json
+    )
+    extra_depth0: set[str] = set()
+    if coverage_validate and isinstance(coverage_json, str):
+        extra_depth0 = cov_stage.tests_covering(Path(coverage_json), changed)
+    return extra_depth0, coverage_validate
+
+
 def main() -> int:
     """Select and run change-affected tests by depth; write the log.
 
@@ -391,31 +493,7 @@ def main() -> int:
     cfg = _smart_test_config(repo_root)
     follow = bool(cfg.get("follow_mock_patches", False))
 
-    depth_token = args.depth
-    if args.from_commit_message and (directive := _depth_from_commit(repo_root, cfg)):
-        depth_token = directive
-        logger.info("Depth '%s' set from commit-message directive.", depth_token)
-    depth_raw = _parse_depth(depth_token)
-
-    base_ref = resolve_base_ref(repo_root, args.base)
-    changed = changed_python_files(repo_root, base_ref)
-
-    if depth_raw != _FULL:
-        ignore_cfg = cfg.get("nonpython_ignore")
-        ignore = (
-            tuple(str(g) for g in ignore_cfg)
-            if isinstance(ignore_cfg, list)
-            else lifecycle.DEFAULT_NONPYTHON_IGNORE
-        )
-        unmappable = changed_non_python_files(repo_root, base_ref, ignore_globs=ignore)
-        if unmappable:
-            logger.info(
-                "Safe fallback: %d non-Python change(s) the selector cannot "
-                "map (e.g. %s) — escalating to depth=full.",
-                len(unmappable),
-                min(unmappable),
-            )
-            depth_raw = _FULL
+    depth_raw, base_ref, changed = _resolve_depth(args, repo_root, cfg)
 
     if depth_raw == _FULL:
         if args.show_files:
@@ -438,13 +516,7 @@ def main() -> int:
     depth = cast("int", depth_raw)
     plan = select_tests(repo_root, changed, depth, follow_mock_patches=follow)
 
-    coverage_json = args.coverage_json or cfg.get("coverage_json")
-    coverage_validate = bool(cfg.get("coverage_validate", False)) or bool(
-        args.coverage_json
-    )
-    extra_depth0: set[str] = set()
-    if coverage_validate and isinstance(coverage_json, str):
-        extra_depth0 = cov_stage.tests_covering(Path(coverage_json), changed)
+    extra_depth0, coverage_validate = _coverage_additions(args, cfg, changed)
 
     if args.show_files:
         logger.info("%s", render_plan(plan, depth))

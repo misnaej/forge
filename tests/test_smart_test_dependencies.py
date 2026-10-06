@@ -22,6 +22,7 @@ from forge.smart_test.dependencies import (
     build_graph,
     render_plan,
     select_tests,
+    unscanned_conftests,
 )
 
 
@@ -815,3 +816,105 @@ def test_all_test_files_excludes_test_named_file_under_source_dir(
     """A ``test_*.py``-named file under a SOURCE dir is not collected as a test."""
     result = all_test_files(all_test_files_repo)
     assert "src/myapp/test_lookalike.py" not in result
+
+
+# ---------------------------------------------------------------------------
+# conftest edges — pytest loads conftests without any import statement
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def conftest_repo(tmp_path: Path) -> Path:
+    """Repo whose tests sit under a root conftest and two sibling subtrees.
+
+    Layout::
+
+        <root>/
+          pyproject.toml            # source_dirs = ["src"], test_dirs = ["tests"]
+          src/myapp/__init__.py
+          src/myapp/fixtures.py     # imported by tests/a/conftest.py
+          tests/conftest.py         # applies to every test
+          tests/helpers.py          # helper, never a test
+          tests/a/conftest.py       # imports myapp.fixtures
+          tests/a/test_one.py
+          tests/b/conftest.py
+          tests/b/test_two.py
+
+    Returns:
+        The repo root path.
+    """
+    root = tmp_path
+    (root / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n',
+        encoding="utf-8",
+    )
+    pkg = root / "src" / "myapp"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "fixtures.py").write_text("y = 1\n", encoding="utf-8")
+    tests = root / "tests"
+    for folder in ("a", "b"):
+        (tests / folder).mkdir(parents=True)
+        (tests / folder / "conftest.py").write_text("", encoding="utf-8")
+    (tests / "conftest.py").write_text("", encoding="utf-8")
+    (tests / "helpers.py").write_text("", encoding="utf-8")
+    (tests / "a" / "conftest.py").write_text(
+        "from myapp.fixtures import y\n", encoding="utf-8"
+    )
+    (tests / "a" / "test_one.py").write_text("def test_one():\n    pass\n")
+    (tests / "b" / "test_two.py").write_text("def test_two():\n    pass\n")
+    return root
+
+
+def _depth0(root: Path, changed: set[str]) -> set[str]:
+    """Select tests affected by changes at depth 0.
+
+    Args:
+        root: Repository root path.
+        changed: Changed files to analyze.
+
+    Returns:
+        Set of test file paths affected at depth 0.
+    """
+    return set(select_tests(root, changed, 0).tests_up_to(0))
+
+
+def test_conftest_only_change_selects_its_subtree_at_depth_0(
+    conftest_repo: Path,
+) -> None:
+    """A root conftest edit reaches every test beneath it with no import edge."""
+    assert _depth0(conftest_repo, {"tests/conftest.py"}) == {
+        "tests/a/test_one.py",
+        "tests/b/test_two.py",
+    }
+
+
+def test_nested_conftest_selects_only_its_own_subtree(conftest_repo: Path) -> None:
+    """A nested conftest must not drag in sibling subtrees."""
+    assert _depth0(conftest_repo, {"tests/b/conftest.py"}) == {"tests/b/test_two.py"}
+
+
+def test_module_imported_by_conftest_reaches_that_subtree(
+    conftest_repo: Path,
+) -> None:
+    """Editing code a conftest imports reaches the conftest's tests, not others."""
+    changed = {"src/myapp/fixtures.py"}
+    assert _depth0(conftest_repo, changed) == set()
+    plan = select_tests(conftest_repo, changed, 1)
+    assert set(plan.tests_up_to(1)) == {"tests/a/test_one.py"}
+
+
+def test_conftests_and_helpers_never_emitted_as_test_paths(
+    conftest_repo: Path,
+) -> None:
+    """Only ``test_*.py`` / ``*_test.py`` files are ever selected as tests."""
+    changed = {"tests/conftest.py", "tests/helpers.py", "tests/a/conftest.py"}
+    selected = set(select_tests(conftest_repo, changed, 1).tests_up_to(1))
+    assert selected
+    assert all(p.rpartition("/")[2].startswith("test_") for p in selected)
+
+
+def test_unscanned_conftests_returns_repo_root_conftest(conftest_repo: Path) -> None:
+    """A conftest outside every test root is reported; one under a root is not."""
+    changed = {"conftest.py", "tests/conftest.py", "src/myapp/fixtures.py"}
+    assert unscanned_conftests(conftest_repo, changed) == {"conftest.py"}

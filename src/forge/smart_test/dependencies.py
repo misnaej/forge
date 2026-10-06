@@ -119,7 +119,7 @@ def all_test_files(repo_root: Path) -> set[str]:
     _, tests = _roots(repo_root)
     found: set[str] = set()
     for path in _iter_py(tests):
-        if path.name.startswith("test_") or path.name.endswith("_test.py"):
+        if _is_test_file(path):
             found.add(path.relative_to(repo_root).as_posix())
     return found
 
@@ -258,6 +258,57 @@ class _Graph:
     test_modules: set[str] = field(default_factory=set)
 
 
+def _parse_sources(
+    repo_root: Path,
+    source_roots: list[Path],
+    test_roots: list[Path],
+    *,
+    follow_mock_patches: bool = False,
+) -> tuple[dict[str, tuple[str, set[str]]], set[str]]:
+    """Parse all source and test files into an import target map.
+
+    Args:
+        repo_root: Git repo root.
+        source_roots: List of source root paths.
+        test_roots: List of test root paths.
+        follow_mock_patches: Whether to follow mock.patch targets.
+
+    Returns:
+        Tuple of (parsed dict mapping module name to (rel_path, targets),
+        and test_modules set).
+    """
+    parsed: dict[str, tuple[str, set[str]]] = {}
+    test_modules: set[str] = set()
+    for path in _iter_py([*source_roots, *test_roots]):
+        is_test = any(path.is_relative_to(tr) for tr in test_roots)
+        # Source files are named by their real import root (package-walk) so
+        # the dotted name matches what importers use even when the configured
+        # scan dir is not the sys.path root. Test files stay repo-rooted
+        # (tests.test_x) so they namespace distinctly from the source tree.
+        name = (
+            resolve_module_name(path, [repo_root])
+            if is_test
+            else resolve_package_module_name(path, repo_root)
+        )
+        if not name:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        rel = path.relative_to(repo_root).as_posix()
+        targets = extract_import_targets(tree, name, include_type_checking=True)
+        if is_test:
+            # Only files pytest collects are tests; a conftest or a helper
+            # under a test root is a dependency, never a selected test.
+            if _is_test_file(path):
+                test_modules.add(name)
+            if follow_mock_patches:
+                targets = targets | _patch_targets(tree)
+        parsed[name] = (rel, targets)
+    return parsed, test_modules
+
+
 def build_graph(
     repo_root: Path,
     *,
@@ -293,33 +344,9 @@ def build_graph(
         The populated :class:`_Graph`.
     """
     source_roots, test_roots = _roots(repo_root)
-
-    parsed: dict[str, tuple[str, set[str]]] = {}
-    test_modules: set[str] = set()
-    for path in _iter_py([*source_roots, *test_roots]):
-        is_test = any(path.is_relative_to(tr) for tr in test_roots)
-        # Source files are named by their real import root (package-walk) so
-        # the dotted name matches what importers use even when the configured
-        # scan dir is not the sys.path root. Test files stay repo-rooted
-        # (tests.test_x) so they namespace distinctly from the source tree.
-        name = (
-            resolve_module_name(path, [repo_root])
-            if is_test
-            else resolve_package_module_name(path, repo_root)
-        )
-        if not name:
-            continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
-        rel = path.relative_to(repo_root).as_posix()
-        targets = extract_import_targets(tree, name, include_type_checking=True)
-        if is_test:
-            test_modules.add(name)
-            if follow_mock_patches:
-                targets = targets | _patch_targets(tree)
-        parsed[name] = (rel, targets)
+    parsed, test_modules = _parse_sources(
+        repo_root, source_roots, test_roots, follow_mock_patches=follow_mock_patches
+    )
 
     known = set(parsed)
     graph = _Graph(test_modules=test_modules)
@@ -327,10 +354,82 @@ def build_graph(
         graph.path_of[name] = rel
         resolved = {m for t in targets if (m := closest_known(t, known)) and m != name}
         graph.imports[name] = resolved
+    for name, conftests in _conftest_edges(graph).items():
+        graph.imports[name] |= conftests
     if include_ancestor_edges:
         for name, ancestors in ancestor_edges(known).items():
             graph.imports[name] |= ancestors
     return graph
+
+
+def unscanned_conftests(repo_root: Path, changed: set[str]) -> set[str]:
+    """Return changed ``conftest.py`` files outside every test root.
+
+    A conftest under a test root reaches its tests through the graph
+    (see :func:`_conftest_edges`); one elsewhere — typically at the repo
+    root, applying to the whole suite — never enters the graph, so the
+    only safe answer is the full suite.
+
+    Args:
+        repo_root: Git repo root.
+        changed: Repo-relative changed paths.
+
+    Returns:
+        The changed conftest paths no test root contains.
+    """
+    _, test_roots = _roots(repo_root)
+    return {
+        rel
+        for rel in changed
+        if rel.rpartition("/")[2] == "conftest.py"
+        and not any((repo_root / rel).is_relative_to(tr) for tr in test_roots)
+    }
+
+
+def _is_test_file(path: Path) -> bool:
+    """Return whether pytest would collect *path* as a test module.
+
+    Args:
+        path: The file path to check.
+
+    Returns:
+        True if pytest would collect this path as a test module.
+    """
+    return path.name.startswith("test_") or path.name.endswith("_test.py")
+
+
+def _conftest_edges(graph: _Graph) -> dict[str, set[str]]:
+    """Map each test module to the conftests pytest loads for it.
+
+    pytest runs every test under the ``conftest.py`` files of its folder
+    and each ancestor folder, without any import statement naming them,
+    so the edge has to be modelled: without it a conftest edit — often an
+    autouse fixture every test runs under — reaches no test at all.
+
+    Args:
+        graph: The graph with ``path_of`` and ``test_modules`` populated.
+
+    Returns:
+        Test module → the conftest modules that apply to it.
+    """
+    conftest_in: dict[str, str] = {}
+    for name, rel in graph.path_of.items():
+        folder, _, filename = rel.rpartition("/")
+        if filename == "conftest.py":
+            conftest_in[folder] = name
+    edges: dict[str, set[str]] = {}
+    for name in graph.test_modules:
+        folder = graph.path_of[name].rpartition("/")[0]
+        found: set[str] = set()
+        while True:
+            if (conftest := conftest_in.get(folder)) is not None:
+                found.add(conftest)
+            if not folder:
+                break
+            folder = folder.rpartition("/")[0]
+        if found:
+            edges[name] = found
+    return edges
 
 
 def select_tests(
