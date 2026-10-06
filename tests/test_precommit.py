@@ -3662,6 +3662,28 @@ def test_step_plugin_sync_passes_when_cache_ahead_of_manifest(
     assert result.passed
 
 
+def test_step_plugin_sync_names_an_unparsed_verdict_truthfully(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unparseable cached version passes but is never called "current".
+
+    MOCK SETUP: manifest 2.9.0; the cached version reads ``not-a-version``.
+    EXPECTED BEHAVIOR: passes (only "behind" fails), and the line names
+    the ``unparsed`` verdict instead of claiming the cache is current.
+    """
+    _write_plugin_manifest(tmp_path, "2.9.0")
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
+    monkeypatch.setattr(
+        version_surfaces, "plugin_cache_version", lambda _root: "not-a-version"
+    )
+    result = precommit.step_plugin_sync(tmp_path)
+    assert result.passed
+    assert "not compared (unparsed)" in result.output
+    assert "is current" not in result.output
+
+
 def test_step_plugin_sync_warns_when_behind_and_unconfigured(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

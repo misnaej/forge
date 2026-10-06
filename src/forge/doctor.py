@@ -64,6 +64,7 @@ from forge.version_surfaces import (
     plugin_cache_status,
     plugin_records,
     read_json,
+    safe_text,
 )
 
 
@@ -78,7 +79,9 @@ USER_SETTINGS = Path.home() / ".claude" / "settings.json"
 
 # Verdicts that judged a cached copy — the only ones a fallback to the
 # newest copy can have misdescribed.
-_CACHE_VERDICTS = frozenset({"current", "behind", "unparsed", "stale-content"})
+_CACHE_VERDICTS = frozenset(
+    {"current", "behind", "unparsed", "stale-content", "content-unknown"}
+)
 
 
 @dataclass
@@ -255,6 +258,8 @@ def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
         results.append(_stale_cache_advisory(status))
     elif status.state == "source-mismatch":
         results.append(_source_mismatch_advisory(status))
+    elif status.state == "content-unknown":
+        results.append(_content_unknown_advisory(status))
     elif status.state == "behind":
         results.append(
             CheckResult(
@@ -306,6 +311,32 @@ def _stale_cache_advisory(status: PluginCacheStatus) -> CheckResult:
             f"STALE PLUGIN: cache slot v{status.cached} does not carry the "
             f"content pinned at {status.declared} — differs in: {areas}. "
             f"{STALE_CACHE_REMEDIATION.format(plugin=status.plugin_name)}"
+        ),
+    )
+
+
+def _content_unknown_advisory(status: PluginCacheStatus) -> CheckResult:
+    """Wrap a ``"content-unknown"`` verdict as an advisory saying what to check.
+
+    Silence here would read as "current", which nothing established.
+
+    Args:
+        status: The ``"content-unknown"`` verdict.
+
+    Returns:
+        An advisory ``CheckResult`` with the manual check and the
+        slot-clearing remediation.
+    """
+    return CheckResult(
+        name="version_skew:plugin_cache",
+        passed=False,
+        info=True,
+        detail=(
+            f"plugin cache v{status.cached} could not be compared with the "
+            f"content pinned at {status.declared}: a plugin tree exceeded the "
+            "hashing size caps, so whether the loaded copy is current is "
+            "unknown. Compare the cache slot with the pinned release by hand, "
+            f"or {STALE_CACHE_REMEDIATION.format(plugin=status.plugin_name)}"
         ),
     )
 
@@ -566,17 +597,27 @@ def _check_plugin_manifests(
     plugin_ok = plugin_err is None and plugin_data.get("name") == plugin_name
     market_ok = market_err is None and market_data.get("name") == plugin_name
 
+    # The manifests sit in a user-writable cache; their values and the
+    # read errors (which embed paths and exception text) are echoed only
+    # in a form that cannot carry control characters into the report.
+    plugin_detail = (
+        f"name={safe_text(plugin_data.get('name'))}, "
+        f"version={safe_text(plugin_data.get('version'))}"
+    )
     return [
         CheckResult(
             name="plugin.json",
             passed=plugin_ok,
-            detail=plugin_err
-            or f"name={plugin_data.get('name')}, version={plugin_data.get('version')}",
+            detail=repr(plugin_err) if plugin_err else plugin_detail,
         ),
         CheckResult(
             name="marketplace.json",
             passed=market_ok,
-            detail=market_err or f"name={market_data.get('name')}",
+            detail=(
+                repr(market_err)
+                if market_err
+                else f"name={safe_text(market_data.get('name'))}"
+            ),
         ),
     ]
 

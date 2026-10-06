@@ -256,7 +256,10 @@ def hook_sidecar_version(repo_root: Path) -> str | None:
     sidecar = repo_root / ".githooks" / HOOK_VERSION_SIDECAR
     if not sidecar.is_file():
         return None
-    return sidecar.read_text(encoding="utf-8").strip() or None
+    try:
+        return sidecar.read_text(encoding="utf-8").strip() or None
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 def plugin_cache_version(plugin_root: Path | None) -> str | None:
@@ -792,7 +795,7 @@ def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
         repo_root: Repo whose ``.claude-plugin/plugin.json`` ships the plugin.
 
     Every free-text field of the result is passed through
-    :func:`_safe_text`, since each was read from a file another tool
+    :func:`safe_text`, since each was read from a file another tool
     wrote and both callers print it.
 
     Args:
@@ -808,28 +811,30 @@ def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
     else:
         status = _consumer_cache_status(repo_root)
     return status._replace(
-        plugin_name=_safe_text(status.plugin_name) or UNPRINTABLE,
-        cached=_safe_text(status.cached),
-        declared=_safe_text(status.declared),
-        source_ref=_safe_text(status.source_ref),
-        registered_ref=_safe_text(status.registered_ref),
-        source_repo=_safe_text(status.source_repo),
+        plugin_name=safe_text(status.plugin_name) or UNPRINTABLE,
+        cached=safe_text(status.cached),
+        declared=safe_text(status.declared),
+        source_ref=safe_text(status.source_ref),
+        registered_ref=safe_text(status.registered_ref),
+        source_repo=safe_text(status.source_repo),
     )
 
 
-def _safe_text(value: str | None) -> str | None:
-    """Return *value* when it matches :data:`_SAFE_TEXT`, else a placeholder.
+def safe_text(value: object) -> str | None:
+    """Return *value* as text if it matches :data:`_SAFE_TEXT`, else a placeholder.
 
     Args:
-        value: A name, version or ref read from another tool's file.
+        value: A name, version or ref read from another tool's file — any
+            JSON value, since the file's shape is not guaranteed.
 
     Returns:
-        ``None`` for ``None``, *value* unchanged when every character is
-        allowed, otherwise :data:`UNPRINTABLE`.
+        ``None`` for ``None``, the value's text unchanged when every
+        character is allowed, otherwise :data:`UNPRINTABLE`.
     """
     if value is None:
         return None
-    return value if _SAFE_TEXT.fullmatch(value) else UNPRINTABLE
+    text = str(value)
+    return text if _SAFE_TEXT.fullmatch(text) else UNPRINTABLE
 
 
 def _manifest_cache_status(repo_root: Path, manifest: Path) -> PluginCacheStatus:

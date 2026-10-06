@@ -522,6 +522,55 @@ def test_plugin_cache_skew_names_stale_areas_for_a_consumer(
     assert "/plugin update forge@forge (then /reload-plugins)" not in detail
 
 
+def test_plugin_cache_skew_reports_unknown_content_with_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An uncomparable tree is reported as unknown, never left silent.
+
+    MOCK SETUP: ``plugin_cache_status`` stubbed with a
+    ``"content-unknown"`` verdict judged on the newest cached copy.
+    EXPECTED BEHAVIOR: an advisory saying the result is unknown and what
+    to do, followed by the own-copy advisory.
+    """
+    monkeypatch.setattr(
+        doctor,
+        "plugin_cache_status",
+        lambda _root: version_surfaces.PluginCacheStatus(
+            "content-unknown", "forge", "6.11.0", "v6.11.0", fallback=True
+        ),
+    )
+
+    results = doctor._check_plugin_cache_skew(tmp_path)
+
+    assert [r.name for r in results] == ["version_skew:plugin_cache", "plugin:own_copy"]
+    assert all(r.info for r in results)
+    assert "unknown" in results[0].detail
+    assert "~/.claude/plugins/cache/forge/" in results[0].detail
+
+
+def test_plugin_manifests_do_not_echo_crafted_names(tmp_path: Path) -> None:
+    """A cached manifest's name with shell characters is not printed raw.
+
+    Args:
+        tmp_path: Pytest temp directory standing in for the cache slot.
+    """
+    manifest_dir = tmp_path / "9.1.1" / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "plugin.json").write_text(
+        json.dumps({"name": "forge\n$(id)", "version": "9.1.1"}), encoding="utf-8"
+    )
+    (manifest_dir / "marketplace.json").write_text(
+        json.dumps({"name": "forge; rm -rf ~"}), encoding="utf-8"
+    )
+
+    plugin_json, market_json = doctor._check_plugin_manifests(tmp_path, "forge")
+
+    assert plugin_json.detail == "name=<unprintable>, version=9.1.1"
+    assert market_json.detail == "name=<unprintable>"
+    assert not plugin_json.passed
+
+
 def test_plugin_cache_skew_explains_a_source_mismatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -418,6 +418,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_plugin_install(plugin_name: str) -> CheckResult` _(internal)_ — Verify Claude Code has installed the named plugin locally.
 - `_check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report a Claude Code plugin cache lagging what should be loaded.
 - `_stale_cache_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
+- `_content_unknown_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"content-unknown"`` verdict as an advisory saying what to check.
 - `_source_mismatch_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"source-mismatch"`` verdict as an advisory naming both refs.
 - `_enabled_in(settings_path: Path) -> bool | None` _(internal)_ — Return ``enabledPlugins["forge@forge"]`` from a settings file.
 - `_check_global_install(repo_root: Path) -> list[CheckResult]` _(internal)_ — Flag a machine-wide forge install alongside this repo's own.
@@ -1637,6 +1638,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_repo_marketplace_ref(repo_root: Path) -> str | None` _(internal)_ — Marketplace ref this repo's own ``.claude/settings.json`` pins.
 - `class PluginCacheStatus` — What the Claude Code plugin cache says relative to what ships it.
 - `plugin_cache_status(repo_root: Path) -> PluginCacheStatus` — Compare the cached plugin against the manifest that ships it.
-- `_safe_text(value: str | None) -> str | None` _(internal)_ — Return *value* when it matches :data:`_SAFE_TEXT`, else a placeholder.
+- `safe_text(value: object) -> str | None` — Return *value* as text if it matches :data:`_SAFE_TEXT`, else a placeholder.
 - `_manifest_cache_status(repo_root: Path, manifest: Path) -> PluginCacheStatus` _(internal)_ — Compare a plugin-shipping repo's cached copy against its manifest.
 - `_consumer_cache_status(repo_root: Path) -> PluginCacheStatus` _(internal)_ — Compare a consumer's active cache slot against the ref it pinned.

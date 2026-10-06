@@ -804,10 +804,18 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
             skipped=True,
         )
     if status.state != "behind":
+        # Only "behind" fails this step; every other verdict passes, but
+        # the line still names the verdict — "current" printed for an
+        # unparseable version would be a claim nothing checked.
+        verdict = (
+            "is current"
+            if status.state == "current"
+            else f"not compared ({status.state})"
+        )
         return StepResult(
             name="plugin_sync",
             passed=True,
-            output=f"plugin cache {cached} is current (manifest {manifest_version}).",
+            output=f"plugin cache {cached} {verdict} (manifest {manifest_version}).",
         )
     blocking = bool(_forge_step_config(repo_root, "plugin_sync").get("blocking", False))
     return StepResult(

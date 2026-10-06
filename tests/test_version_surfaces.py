@@ -104,6 +104,14 @@ def test_hook_sidecar_version_none_when_sidecar_empty(tmp_path: Path) -> None:
     assert version_surfaces.hook_sidecar_version(tmp_path) is None
 
 
+def test_hook_sidecar_version_none_when_sidecar_undecodable(tmp_path: Path) -> None:
+    """A sidecar holding non-UTF-8 bytes reads as absent, not a crash."""
+    githooks = tmp_path / ".githooks"
+    githooks.mkdir()
+    (githooks / version_surfaces.HOOK_VERSION_SIDECAR).write_bytes(b"\xff\xfe")
+    assert version_surfaces.hook_sidecar_version(tmp_path) is None
+
+
 # ---------------------------------------------------------------------------
 # plugin_cache_version
 # ---------------------------------------------------------------------------
