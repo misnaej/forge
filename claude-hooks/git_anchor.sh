@@ -37,7 +37,8 @@
 # `${IFS}` splicing and variable indirection (`$GIT push`), `xargs git`,
 # a backslash-newline continuation BETWEEN the words of an anchor,
 # wrappers nested more than one level deep with escaped inner quotes,
-# a script piped into a shell (`… | bash`), an interpreter running a
+# a non-heredoc script piped into a shell (`echo "…" | bash`; a heredoc
+# whose line pipes into a shell IS covered), an interpreter running a
 # subprocess (`python -c "subprocess.run(...)"`), space-separated
 # arg-taking globals other than -c/-C (`--git-dir x`) and multi-arg
 # wrapper flags (`sudo -u root`).
@@ -73,20 +74,28 @@ GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|
 #   `ssh <host> "…"` or `bash <<<"…"` stays visible, re-scanned with its
 #   own quoting, between two `;` marks — so each guard applies its
 #   existing rule to the wrapped command exactly as if it were typed
-#   directly; a heredoc fed to a shell (`bash <<EOF`, `ssh host <<EOF`)
-#   is kept as commands for the same reason;
-# - an escaped separator (`\;`) is a literal, so it is emitted as `_`.
+#   directly. The payload is the WHOLE shell word after the wrapper —
+#   adjacent quoted and unquoted spans concatenate (`bash -c 'a'"; b"`),
+#   and every later quoted argument of `eval` / `ssh` joins it. A heredoc
+#   fed to a shell (`bash <<EOF`, `ssh host <<EOF`, or a heredoc line that
+#   pipes into one: `cat <<EOF | sh`) is kept as commands for the same
+#   reason;
+# - an escaped separator (`\;`) is a literal, so it is emitted as `_`;
+# - when unsure, the scanner keeps text VISIBLE (a false block costs a
+#   `!`; a bypass costs the guard): `#` starts a comment only at an
+#   unescaped word start outside `${…}` and never inside backticks, and
+#   `$((…))` / `((…))` are copied through verbatim, so a `<<` shift there
+#   never opens a heredoc that would blank the lines after it.
 #
 # `command_positions --words "$COMMAND"` prints the same view with quoted
 # spans kept as their words instead of blanked (quote characters dropped,
 # separators inside them neutralised to `_`). Guards gate on the first
 # view and read flags, refspecs, branch names and paths from this one: a
 # quoted `"--no-verify"` or `"main"` is still the flag or branch the
-# command receives, but a `;` inside a quoted message can no longer end
-# the invocation early or start a fake one.
+# command receives, but a `;` inside a quoted message cannot end the
+# invocation early or start a fake one.
 #
-# The scanner is the quote state machine block_amend_pushed_commit.sh
-# introduced, generalised: one left-to-right pass mirroring bash's own
+# The scanner is a quote state machine: one left-to-right pass mirroring bash's own
 # tokenizer (single quotes have no escapes; in double quotes a backslash
 # escapes only `"` `\` `$` and backtick; `$'…'` honours backslashes; a
 # LIVE `$` — never one produced by `\$`, and toggled by `$$` — opens
@@ -99,14 +108,66 @@ GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|
 _GUARD_CMDPOS_AWK='
 function neut(t) { gsub(/[;&|()`<>\n!{}]/, "_", t); return t }
 function tail(o) { return length(o) > 240 ? substr(o, length(o) - 239) : o }
-function wrapper(o,   t) {
+function wtype(o,   t) {
     t = tail(o)
-    return (t ~ RE_SHELLC || t ~ RE_EVAL || t ~ RE_SSH || t ~ RE_HSTR)
+    if (t ~ RE_SHELLC || t ~ RE_HSTR) return 1
+    if (t ~ RE_EVAL) return 2
+    if (t ~ RE_SSH) return 3
+    return 0
 }
 function rescan(t,   r) {
     if (PD >= 4) return ";" t ";"
     PD++; r = scan(t, 1, 0); PD--
     return ";" r ";"
+}
+function pword(s, i,   n, w, c, d, k, j, ch, e) {
+    n = length(s); w = ""
+    while (i <= n) {
+        c = substr(s, i, 1)
+        if (index(" \t\n;&|()<>", c)) break
+        if (c == "\\") { d = substr(s, i + 1, 1); if (d != "\n") w = w d; i += 2; continue }
+        if (c == "$" && substr(s, i + 1, 1) == "\047") {
+            k = i + 2
+            while (k <= n) {
+                ch = substr(s, k, 1)
+                if (ch == "\\") { w = w substr(s, k + 1, 1); k += 2; continue }
+                if (ch == "\047") break
+                w = w ch; k++
+            }
+            i = k + 1; continue
+        }
+        if (c == "\047") {
+            j = index(substr(s, i + 1), "\047")
+            if (j == 0) { w = w substr(s, i + 1); i = n + 1 } else { w = w substr(s, i + 1, j - 1); i = i + j + 1 }
+            continue
+        }
+        if (c == "\"") {
+            k = i + 1
+            while (k <= n) {
+                ch = substr(s, k, 1)
+                if (ch == "\\") {
+                    d = substr(s, k + 1, 1)
+                    if (d == "\n") { k += 2; continue }
+                    if (index("\"\\$`", d)) { w = w d; k += 2; continue }
+                    w = w ch; k++; continue
+                }
+                if (ch == "\"") break
+                if ((ch == "$" && substr(s, k + 1, 1) == "(") || ch == "`") {
+                    if (ch == "`") scan(s, k + 1, 2); else scan(s, k + 2, 1)
+                    e = RPOS; w = w substr(s, k, e - k); k = e; continue
+                }
+                w = w ch; k++
+            }
+            i = k + 1; continue
+        }
+        if ((c == "$" && substr(s, i + 1, 1) == "(") || c == "`") {
+            if (c == "`") scan(s, i + 1, 2); else scan(s, i + 2, 1)
+            e = RPOS; w = w substr(s, i, e - i); i = e; continue
+        }
+        w = w c; i++
+    }
+    WPOS = i
+    return w
 }
 function hdline(s,   n, k, ch, out, sb) {
     n = length(s); k = 1; out = ""
@@ -121,10 +182,22 @@ function hdline(s,   n, k, ch, out, sb) {
     }
     return out
 }
-function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, q, line, sb, e, payload, ansi, dec, vis, kv, ch, h, cmp, dash, pc) {
-    n = length(s); out = ""; depth = 0; dollar = 0; nh = 0
+function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, q, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, dash, pc, bd, pa, wt, qs, rl) {
+    n = length(s); out = ""; depth = 0; dollar = 0; nh = 0; bd = 0; pa = 0
     while (i <= n) {
         c = substr(s, i, 1)
+        pc = (i == 1) ? "\n" : substr(s, i - 1, 1)
+        if (index(";&|\n()", c)) pa = 0
+        if (!index(" \t\n;&|()<>", c) && index(" \t<", pc)) {
+            wt = wtype(out)
+            qs = (c == "\047" || c == "\"" || (c == "$" && index("\047\"", substr(s, i + 1, 1))))
+            if (wt == 0 && pa && qs) wt = 2
+            if (wt == 1 || (wt && qs)) {
+                w = pword(s, i); out = out rescan(w); i = WPOS
+                pa = (wt >= 2); dollar = 0; continue
+            }
+            if (wt == 2) out = out ";"
+        }
         if (c == "\\") {
             d = substr(s, i + 1, 1)
             if (d != "\n") out = out neut(d)
@@ -132,7 +205,6 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
         }
         if (c == "\047") {
             ansi = dollar; dollar = 0
-            payload = wrapper(out)
             k = i + 1; dec = ""
             if (ansi) {
                 while (k <= n) {
@@ -146,38 +218,34 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
                 if (j == 0) { dec = substr(s, k); k = n + 1 } else { dec = substr(s, k, j - 1); k = k + j - 1 }
             }
             i = k + 1
-            if (payload) out = out rescan(dec)
-            else if (KEEP) out = out neut(dec)
+            if (KEEP) out = out neut(dec)
             else out = out "_"
             continue
         }
         if (c == "\"") {
             dollar = 0
-            payload = wrapper(out)
-            k = i + 1; dec = ""; vis = ""; kv = ""
+            k = i + 1; vis = ""; kv = ""
             while (k <= n) {
                 j = match(substr(s, k), /[\\"$`]/)
-                if (j == 0) { ch = substr(s, k); dec = dec ch; kv = kv neut(ch); k = n + 1; break }
-                if (j > 1) { ch = substr(s, k, j - 1); dec = dec ch; kv = kv neut(ch); k += j - 1 }
+                if (j == 0) { kv = kv neut(substr(s, k)); k = n + 1; break }
+                if (j > 1) { kv = kv neut(substr(s, k, j - 1)); k += j - 1 }
                 ch = substr(s, k, 1)
                 if (ch == "\\") {
                     d = substr(s, k + 1, 1)
                     if (d == "\n") { k += 2; continue }
-                    if (index("\"\\$`", d)) { dec = dec d; kv = kv neut(d); k += 2; continue }
-                    dec = dec ch; kv = kv ch; k++; continue
+                    if (index("\"\\$`", d)) { kv = kv neut(d); k += 2; continue }
+                    kv = kv ch; k++; continue
                 }
                 if (ch == "\"") break
                 if ((ch == "$" && substr(s, k + 1, 1) == "(") || ch == "`") {
                     sb = (ch == "`") ? scan(s, k + 1, 2) : scan(s, k + 2, 1)
-                    e = RPOS
-                    dec = dec substr(s, k, e - k); vis = vis "(" sb ")"; kv = kv "(" sb ")"
-                    k = e; continue
+                    vis = vis "(" sb ")"; kv = kv "(" sb ")"
+                    k = RPOS; continue
                 }
-                dec = dec ch; kv = kv ch; k++
+                kv = kv ch; k++
             }
             i = k + 1
-            if (payload) out = out rescan(dec)
-            else if (KEEP) out = out kv
+            if (KEEP) out = out kv
             else out = out "_" vis
             continue
         }
@@ -185,13 +253,24 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
             if (mode == 2) { RPOS = i + 1; return out }
             sb = scan(s, i + 1, 2); out = out "(" sb ")"; i = RPOS; dollar = 0; continue
         }
+        if (c == "(" && substr(s, i + 1, 1) == "(" && (pc == "$" || index(" \t\n;&|(", pc))) {
+            d = 0
+            for (k = i; k <= n; k++) {
+                ch = substr(s, k, 1)
+                if (ch == "(") d++
+                else if (ch == ")") { d--; if (d == 0) break }
+            }
+            out = out substr(s, i, k - i + 1); i = k + 1; dollar = 0; continue
+        }
         if (c == "(") { if (mode == 1) depth++; out = out c; i++; dollar = 0; continue }
         if (c == ")") {
             if (mode == 1) { if (depth == 0) { RPOS = i + 1; return out } depth-- }
             out = out c; i++; dollar = 0; continue
         }
-        pc = (i == 1) ? "\n" : substr(s, i - 1, 1)
-        if (c == "#" && index(" \t\n;&|()", pc)) {
+        if (c == "{" && pc == "$") bd++
+        if (c == "}" && bd > 0) bd--
+        if (c == "#" && mode != 2 && bd == 0 && index(" \t\n;&|()", pc) \
+            && !(index(" \t", pc) && substr(s, i - 2, 1) == "\\")) {
             j = index(substr(s, i), "\n")
             i = (j == 0) ? n + 1 : i + j - 1
             continue
@@ -208,7 +287,12 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
                 if (ch == "\047" || ch == "\"" || ch == "\\") { q = 1; k++; continue }
                 w = w ch; k++
             }
-            if (w != "") { nh++; hdl[nh] = w; hq[nh] = q; ht[nh] = dash; hx[nh] = (tail(out) ~ RE_FEED) }
+            if (w != "") {
+                j = index(substr(s, k), "\n")
+                rl = (j == 0) ? substr(s, k) : substr(s, k, j - 1)
+                nh++; hdl[nh] = w; hq[nh] = q; ht[nh] = dash
+                hx[nh] = (tail(out) ~ RE_FEED || rl ~ RE_PIPESH)
+            }
             out = out "<<_"; i = k; dollar = 0; continue
         }
         if (c == "\n") {
@@ -229,7 +313,6 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
             continue
         }
         if (c == "$") { out = out c; dollar = !dollar; i++; continue }
-        if (c != " " && c != "\t" && (pc == " " || pc == "\t") && tail(out) ~ RE_EVAL) out = out ";"
         out = out c; dollar = 0; i++
     }
     RPOS = n + 1
@@ -245,6 +328,7 @@ BEGIN {
     RE_SSH = B "ssh(" ARG ")+[ \t]+$"
     RE_HSTR = B SHELLS "(" ARG ")*[ \t]*<<<[ \t]*$"
     RE_FEED = B "(" SHELLS "|ssh)(" ARG ")*[ \t]*$"
+    RE_PIPESH = "[|][ \t]*([^ \t\n;&|()<>]+[ \t]+)*(" SHELLS "|ssh)([ \t;&|)]|$)"
 }
 { src = (NR == 1) ? $0 : src "\n" $0 }
 END { printf "%s\n", scan(src, 1, 0) }

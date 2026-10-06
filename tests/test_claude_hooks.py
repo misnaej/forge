@@ -4751,7 +4751,7 @@ def test_verdict_hook_fails_open_when_ledger_unwritable(tmp_path: Path) -> None:
 
 
 # Guards locate a command by its POSITION in the shell grammar, not by text
-# anywhere in the line (issues #467, #594, #614): quoted prose and heredoc
+# anywhere in the line: quoted prose and heredoc
 # bodies are inert, while $(..), backticks, `sh -c`, `eval`, `ssh host "..."`
 # and heredocs fed to a shell still execute and stay visible.
 _ALLOW = 0
@@ -4994,6 +4994,92 @@ _POSITION_CASES = [
         'git push origin "HEAD:main"',
         _BLOCK,
         id="quoted-refspec-still-read",
+    ),
+    # Constructs where bash runs the guarded command although the text
+    # looks like a comment, an arithmetic shift, or a split quoted word.
+    pytest.param(
+        "block_force_push.sh",
+        "echo `echo #`; git push -f",
+        _BLOCK,
+        id="hash-inside-backticks-is-not-a-comment-push",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "echo `echo a #`; git reset --hard",
+        _BLOCK,
+        id="hash-inside-backticks-is-not-a-comment-reset",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "echo ${x:-a #b}; git push -f",
+        _BLOCK,
+        id="hash-inside-parameter-expansion",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "echo a\\ #x; git push -f",
+        _BLOCK,
+        id="hash-after-escaped-space",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "echo $((1<<X))\ngit push -f\nX",
+        _BLOCK,
+        id="arithmetic-shift-is-not-a-heredoc",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "(( a<<X ))\ngit reset --hard\nX",
+        _BLOCK,
+        id="arithmetic-command-shift-is-not-a-heredoc",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "bash -c 'echo hi'\"; git push -f\"",
+        _BLOCK,
+        id="payload-single-then-double",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "bash -c \"echo hi\"'; git push -f'",
+        _BLOCK,
+        id="payload-double-then-single",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "sh -c 'true'' ; git reset --hard'",
+        _BLOCK,
+        id="payload-two-single-spans",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "bash -c ''\"git push -f\"",
+        _BLOCK,
+        id="payload-empty-span-first",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        'bash -c "git""  reset --hard"',
+        _BLOCK,
+        id="payload-split-double-spans",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        'bash -c git" reset --hard"',
+        _BLOCK,
+        id="payload-unquoted-then-quoted",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "cat <<EOF | sh\ngit push -f\nEOF",
+        _BLOCK,
+        id="heredoc-piped-into-sh",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "cat <<'EOF' | bash\ngit push -f\nEOF",
+        _BLOCK,
+        id="quoted-heredoc-piped-into-bash",
     ),
 ]
 
