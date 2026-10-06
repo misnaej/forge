@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import asdict
 from typing import TYPE_CHECKING
 
 import pytest
@@ -307,6 +308,28 @@ def test_classify_modified_source_path_returns_full(tmp_path: Path) -> None:
     assert plan.mode == "full"
     reason = next(r for r in plan.reasons if r.startswith("not light-code:"))
     assert "src/forge/existing.py" in reason
+
+
+@pytest.mark.parametrize(
+    ("changed_path", "expected"),
+    [("agents/a.md", True), ("src/forge/new_mod.py", False)],
+)
+def test_classify_rule_surface_flag_follows_changed_paths(
+    tmp_path: Path, changed_path: str, *, expected: bool
+) -> None:
+    """The plan reports rule_surface for an agents/ change, not a src-only one.
+
+    Args:
+        tmp_path: Pytest ``tmp_path`` fixture directory.
+        changed_path: The single file the feature branch adds.
+        expected: The ``rule_surface`` value the plan must carry.
+    """
+    repo = _repo_with_branch_diff(tmp_path, {changed_path: "x\n"})
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.rule_surface is expected
+    assert asdict(plan)["rule_surface"] is expected
 
 
 def test_classify_renamed_file_returns_full(tmp_path: Path) -> None:

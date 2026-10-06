@@ -860,6 +860,24 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_one_line(value: str) -> str` _(internal)_ — Fold line breaks in a tail value so the record stays one line.
 - `parse_ledger(text: str, *, tail_key: str | None = None) -> list[dict[str, str]]` — Parse ledger lines into field mappings, skipping damaged ones.
 
+## `forge.memory_audit`
+
+> _forge-memory-audit — count new agent memories since the last audit._
+
+- `note_names(memory_dir: Path) -> set[str]` — Return the memory note filenames in *memory_dir*.
+- `read_audit_stamp(memory_dir: Path) -> tuple[str, set[str]] | None` — Return the last audit's date and the note names it saw.
+- `write_audit_stamp(memory_dir: Path) -> Path` — Rewrite the stamp with today's date and the current note names.
+- `new_notes(memory_dir: Path) -> set[str]` — Return the notes the last audit did not see.
+- `_repo_root() -> Path` _(internal)_ — Return the git toplevel of the cwd, or the cwd outside a repo.
+- `configured_threshold(repo_root: Path) -> int` — Return ``[tool.forge.memory_audit].threshold``.
+- `configured_lessons_file(repo_root: Path) -> Path` — Return the lessons file, resolved against *repo_root*.
+- `_check_dir(memory_dir: Path) -> bool` _(internal)_ — Return whether *memory_dir* exists, explaining on stderr if not.
+- `promotion_candidates(lessons_file: Path) -> list[str]` — Return the lessons that have come up often enough to promote.
+- `status(memory_dir: Path, repo_root: Path) -> int` — Print the new-memory count and whether to offer the audit.
+- `stamp(memory_dir: Path) -> int` — Record the current notes as audited.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the ``forge-memory-audit`` argument parser.
+- `main(argv: list[str] | None = None) -> int` — Run ``forge-memory-audit``.
+
 ## `forge.next_prep`
 
 > _forge-next-prep — prepare main for the next task (fetch, pull, tag, prune)._
@@ -924,6 +942,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
 - `regen_only_diff(changed_paths: list[str]) -> bool` — Return whether every changed path is a forge-managed regen artifact.
 - `touches_source_paths(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`SOURCE_PATHS`.
+- `touches_rule_surface(changed_paths: list[str]) -> bool` — Return whether any of *changed_paths* is under :data:`RULE_SURFACE_PATHS`.
 - `non_fragment_adds(added_paths: list[str]) -> list[str]` — Return the subset of *added_paths* that is not a changelog fragment.
 - `_is_fragment_path(path: str) -> bool` _(internal)_ — Whether *path* is a changelog fragment by directory AND by name.
 - `light_wrapup_decision(*, line_count: int, changed_paths: list[str], added_paths: list[str]) -> tuple[bool, str]` — Decide whether a diff qualifies for the light wrap-up path.

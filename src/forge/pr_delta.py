@@ -132,6 +132,20 @@ LIGHT_WRAPUP_LINE_THRESHOLD: Final[int] = 50
 SOURCE_PATHS: Final[tuple[str, ...]] = ("src/",)
 
 
+# The rule surface: files an agent loads as instructions. A PR touching
+# any of them may make a persistent agent memory redundant or wrong, so
+# `/pr` offers a memory audit when one is changed. Entries ending in `/`
+# are directory prefixes; the rest are exact repo-root paths.
+RULE_SURFACE_PATHS: Final[tuple[str, ...]] = (
+    "CLAUDE.md",
+    "FOUNDATION.md",
+    "skills/",
+    "agents/",
+    ".claude/skills/",
+    ".claude/agents/",
+)
+
+
 # The changelog-fragment directory as a path prefix, the one exemption to
 # the light wrap-up's added-file disqualifier. Derived from
 # `changelog_fragments.FRAGMENTS_DIR` rather than re-spelled, so the
@@ -392,6 +406,29 @@ def touches_source_paths(changed_paths: list[str]) -> list[str]:
         for path in changed_paths
         if any(path.casefold().startswith(prefix) for prefix in SOURCE_PATHS)
     ]
+
+
+def touches_rule_surface(changed_paths: list[str]) -> bool:
+    """Return whether any of *changed_paths* is under :data:`RULE_SURFACE_PATHS`.
+
+    Casefolded, same rationale as :func:`touches_high_blast_radius`: a
+    case-varied path lands in the same directory on a case-insensitive
+    filesystem and must not dodge the match.
+
+    Args:
+        changed_paths: Repo-relative paths from ``git diff --name-only``.
+
+    Returns:
+        ``True`` when at least one path matches a rule-surface prefix or
+        exact path, ``False`` otherwise (including for an empty list).
+    """
+    for path in changed_paths:
+        folded = path.casefold()
+        for entry in RULE_SURFACE_PATHS:
+            target = entry.casefold()
+            if (target.endswith("/") and folded.startswith(target)) or folded == target:
+                return True
+    return False
 
 
 def non_fragment_adds(added_paths: list[str]) -> list[str]:

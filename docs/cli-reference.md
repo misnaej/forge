@@ -453,7 +453,17 @@ options:
 ## forge-memory-audit
 
 ```text
-(--help unavailable for forge-memory-audit)
+usage: forge-memory-audit [-h] {status,stamp} ...
+
+Count agent memories added since the last /memory-audit.
+
+positional arguments:
+  {status,stamp}
+    status        print the new-memory count and whether to offer the audit
+    stamp         record the current memories as audited
+
+options:
+  -h, --help      show this help message and exit
 ```
 
 ## forge-next-prep

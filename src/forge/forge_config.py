@@ -420,6 +420,20 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "and `forge-continuation check` reports usage.",
     ),
     ConfigKey(
+        ("tool", "forge", "memory_audit", "threshold"),
+        default=5,
+        description="New agent memories since the last /memory-audit at "
+        "which `forge-memory-audit status` (run by /next) says to offer the "
+        "audit.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "memory_audit", "lessons_file"),
+        "docs/lessons.md",
+        "Holding file for SHOULD-SHIP lessons /memory-audit moves out of "
+        "agent memory; never auto-loaded (FOUNDATION §12). A relative .md "
+        "path inside the repo.",
+    ),
+    ConfigKey(
         ("tool", "forge", "telemetry", "sample_interval"),
         default=1.0,
         description="Seconds between resource samples taken by forge-telemetry "

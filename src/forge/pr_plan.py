@@ -20,6 +20,7 @@ Output contract (single JSON object on stdout; diagnostics go to stderr)::
         "precommit_scope": [...],
         "reasons": [...],
         "classified_at": "<sha>",
+        "rule_surface": true | false,
     }
 
 ``reporters`` names the verification agents the skill must run.
@@ -28,7 +29,9 @@ means the full strict battery for "full" and "light-code", and no
 pre-commit run at all for "delta". ``reasons`` is the human-readable
 classification trail.
 ``classified_at`` is HEAD at classification time; ``pr-manager`` warns when
-posting at a different HEAD.
+posting at a different HEAD. ``rule_surface`` is ``true`` when any changed
+path is on the rule surface (``CLAUDE.md``, ``FOUNDATION.md``, skills or
+agents), in every mode — the ``/pr`` skill then offers a memory audit.
 
 A second, read-only mode — ``--freshness --pr N`` — answers the
 post-publication question the classifier's ``verified-at:`` baseline makes
@@ -102,6 +105,7 @@ from forge.pr_delta import (
     light_wrapup_decision,
     regen_only_diff,
     touches_high_blast_radius,
+    touches_rule_surface,
 )
 from forge.pr_evidence import write_pack
 
@@ -144,6 +148,9 @@ class PrPlan:
             decision taken (including why higher-priority modes were
             rejected).
         classified_at: Short ``HEAD`` SHA at classification time.
+        rule_surface: Whether the diff touches the rule surface
+            (:data:`forge.pr_delta.RULE_SURFACE_PATHS`) — the ``/pr``
+            skill's cue to offer a memory audit. Independent of ``mode``.
     """
 
     mode: str
@@ -151,6 +158,7 @@ class PrPlan:
     precommit_scope: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
     classified_at: str = ""
+    rule_surface: bool = False
 
 
 @dataclass(frozen=True)
@@ -499,11 +507,13 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
 
     Returns:
         The complete plan, ``classified_at`` stamped with the current
-        short ``HEAD`` SHA.
+        short ``HEAD`` SHA and ``rule_surface`` computed from the whole
+        ``<base>...HEAD`` diff whichever mode wins.
     """
     head = run_git("rev-parse", "--short", "HEAD", cwd=root)
     reasons: list[str] = []
     paths = _changed_paths(root, f"{base}...HEAD")
+    rule_surface = touches_rule_surface(paths)
 
     if docs_only_diff(paths, configured_docs_only_globs(root)):
         reasons.append(
@@ -515,6 +525,7 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
             precommit_scope=list(DOCS_ONLY_PRECOMMIT_STEPS),
             reasons=reasons,
             classified_at=head,
+            rule_surface=rule_surface,
         )
     reasons.append(f"not docs-only: diff vs {base} has non-doc or high-blast paths")
 
@@ -530,6 +541,7 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
             precommit_scope=list(PROVENANCE_GATE_STEPS),
             reasons=reasons,
             classified_at=head,
+            rule_surface=rule_surface,
         )
     reasons.append("not regen-only: diff touches non-managed paths")
 
@@ -540,6 +552,7 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
             precommit_scope=[],
             reasons=reasons,
             classified_at=head,
+            rule_surface=rule_surface,
         )
 
     added = added_paths(root, f"{base}...HEAD")
@@ -560,6 +573,7 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
             precommit_scope=[],
             reasons=reasons,
             classified_at=head,
+            rule_surface=rule_surface,
         )
     reasons.append(f"not light-code: {why}")
 
@@ -570,6 +584,7 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
         precommit_scope=[],
         reasons=reasons,
         classified_at=head,
+        rule_surface=rule_surface,
     )
 
 

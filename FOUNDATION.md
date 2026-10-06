@@ -975,6 +975,13 @@ Reviewed by `forge:design-checker`.
   (consumers must not patch shipped files locally; upgrades overwrite them).
   Personal agent memory holds only what cannot ship: individual preferences
   and private context.
+- **Lessons enter through an intake, and earn their way into the rules.**
+  A true, shareable lesson found in memory (the `/memory-audit`
+  SHOULD-SHIP verdict) goes first to the repo's lessons file — never
+  auto-loaded — or, for forge itself, to a forge report; never straight
+  into an always-loaded doc. It is promoted into `CLAUDE.md`, a skill or
+  an agent only when it comes up a second time. The memory is deleted
+  only after its new home has been written.
 
 ---
 
