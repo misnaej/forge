@@ -1,0 +1,3 @@
+bump: patch
+
+The safety guards can no longer be slipped past by padding a wrapper command. Before, a guard looked back only about 240 characters to decide whether a command was wrapped (`bash -c "…"`, `ssh host "…"`, `bash <<EOF`), so `bash -o posix -o posix … -c "git push -f"` with enough harmless options let the force-push through. Wrapper detection now reads the whole simple command, still in linear time (a 50 KB one-line command is scanned in a fraction of a second). Only commands that were meant to be blocked are newly blocked. The shared command scanner behind every guard is also split into named, separately tested pieces behind a saved-output snapshot, so a later change to it cannot silently alter what any guard sees.

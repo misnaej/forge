@@ -1032,114 +1032,56 @@ def test_rebase_ignores_word_in_commit_message() -> None:
 _FORCE_PUSH = "block_force_push.sh"
 
 
-def test_force_push_blocks_long_force_flag() -> None:
-    """`git push --force` is blocked."""
-    assert _run_hook(_FORCE_PUSH, "git push --force origin main") == 2
+_FORCE_PUSH_CASES = [
+    pytest.param("git push --force origin main", 2, id="blocks_long_force_flag"),
+    pytest.param(
+        "git push --force-with-lease=origin/main", 2, id="blocks_force_with_lease"
+    ),
+    pytest.param("git push -f origin main", 2, id="blocks_short_f_flag"),
+    pytest.param(
+        "git push -uf origin feat", 2, id="blocks_combined_short_flag_cluster"
+    ),
+    pytest.param("git push -fu origin main", 2, id="blocks_cluster_final_f"),
+    pytest.param(
+        "git push -fq origin main", 2, id="blocks_cluster_with_f_and_other_flags"
+    ),
+    pytest.param("git push origin +main", 2, id="blocks_plus_refspec"),
+    pytest.param("git push origin main", 0, id="allows_plain_push"),
+    pytest.param("git push -u origin feat", 0, id="allows_set_upstream"),
+    pytest.param("git push --follow-tags origin main", 0, id="allows_follow_tags"),
+    pytest.param(
+        "true; git push --force origin main", 2, id="blocks_chained_after_separator"
+    ),
+    pytest.param("git  push -f origin main", 2, id="blocks_doubled_space"),
+    pytest.param(
+        "git push origin main; tar -f x",
+        0,
+        id="allows_unrelated_dash_f_after_separator",
+    ),
+    pytest.param(
+        'git push origin main && git commit -m "use --force later"',
+        0,
+        id="allows_force_mention_after_chained_command",
+    ),
+    pytest.param("git status", 0, id="allows_non_push_git"),
+]
 
 
-def test_force_push_blocks_force_with_lease() -> None:
-    """`git push --force-with-lease` (and its =value form) is blocked."""
-    assert _run_hook(_FORCE_PUSH, "git push --force-with-lease=origin/main") == 2
+@pytest.mark.parametrize(("command", "expected"), _FORCE_PUSH_CASES)
+def test_force_push_verdict(command: str, expected: int) -> None:
+    """Force-push verdict: 2 blocks, 0 allows (per-invocation scoping).
 
-
-def test_force_push_blocks_short_f_flag() -> None:
-    """`git push -f` (short --force) is blocked — the pre-hardening gap."""
-    assert _run_hook(_FORCE_PUSH, "git push -f origin main") == 2
-
-
-def test_force_push_blocks_combined_short_flag_cluster() -> None:
-    """A short-flag cluster containing `f` (`-uf`) is blocked."""
-    assert _run_hook(_FORCE_PUSH, "git push -uf origin feat") == 2
-
-
-def test_force_push_blocks_cluster_final_f() -> None:
-    r"""`-fu` (`f` cluster-leading) is blocked.
-
-    Regression (#348 design review): the scoped flag regex used to end in
-    `f\\b`, which only matched a cluster-final `f`. `-fu` has `f` first, so
-    the fix requires `f` to match anywhere in the cluster
-    (`-[a-zA-Z]*f[a-zA-Z]*\\b`).
+    Args:
+        command: Bash command fed to the hook.
+        expected: Expected hook exit code (2 blocks, 0 allows).
     """
-    assert _run_hook(_FORCE_PUSH, "git push -fu origin main") == 2
-
-
-def test_force_push_blocks_cluster_with_f_and_other_flags() -> None:
-    """`-fq` (`f` followed by another short flag) is blocked.
-
-    Regression (#348 design review): same cluster-final gap as `-fu` — `f`
-    must match anywhere in the cluster, not only at its end.
-    """
-    assert _run_hook(_FORCE_PUSH, "git push -fq origin main") == 2
-
-
-def test_force_push_blocks_plus_refspec() -> None:
-    """A `+`-prefixed force refspec (`origin +main`) is blocked."""
-    assert _run_hook(_FORCE_PUSH, "git push origin +main") == 2
-
-
-def test_force_push_allows_plain_push() -> None:
-    """A normal `git push origin main` is allowed."""
-    assert _run_hook(_FORCE_PUSH, "git push origin main") == 0
-
-
-def test_force_push_allows_set_upstream() -> None:
-    """`git push -u origin feat` (no `f`) is not mistaken for a force push."""
-    assert _run_hook(_FORCE_PUSH, "git push -u origin feat") == 0
-
-
-def test_force_push_allows_follow_tags() -> None:
-    """`--follow-tags` contains no short `-f` cluster and is allowed."""
-    assert _run_hook(_FORCE_PUSH, "git push --follow-tags origin main") == 0
-
-
-def test_force_push_blocks_chained_after_separator() -> None:
-    """A force push chained after a separator (`foo; git push -f`) is blocked.
-
-    Regression: the outer gate must anchor after a shell separator, not only
-    at string-start, or a chained command bypasses the block entirely.
-    """
-    assert _run_hook(_FORCE_PUSH, "true; git push --force origin main") == 2
-
-
-def test_force_push_blocks_doubled_space() -> None:
-    """`git  push -f` (a doubled space) is blocked — the gate allows any ws."""
-    assert _run_hook(_FORCE_PUSH, "git  push -f origin main") == 2
+    assert _run_hook(_FORCE_PUSH, command) == expected
 
 
 # --- force-flag scoping is per-invocation, not command-wide (#348) ---------
 # The force-flag check is bounded to the matched push segment
 # (`[^;&|]*`), so an unrelated `-f`-bearing command chained after a plain
 # push must not false-positive, and vice versa.
-
-
-def test_force_push_allows_unrelated_dash_f_after_separator() -> None:
-    """`git push origin main; tar -f x` — a later `-f` in another command — is allowed.
-
-    Regression: without per-invocation scoping, the force-flag grep would
-    match `-f` anywhere in the command string, false-positiving on an
-    unrelated command chained after a plain push.
-    """
-    assert _run_hook(_FORCE_PUSH, "git push origin main; tar -f x") == 0
-
-
-def test_force_push_allows_force_mention_after_chained_command() -> None:
-    """A plain push chained with an unrelated `--force`-mentioning commit is allowed.
-
-    The literal word `--force` sits in a later, separator-bounded segment
-    (a commit message), so it must not taint the earlier plain-push match.
-    """
-    assert (
-        _run_hook(
-            _FORCE_PUSH,
-            'git push origin main && git commit -m "use --force later"',
-        )
-        == 0
-    )
-
-
-def test_force_push_allows_non_push_git() -> None:
-    """A non-push git command (`git status`) is not inspected."""
-    assert _run_hook(_FORCE_PUSH, "git status") == 0
 
 
 # --- git_anchor.sh: shared lib integrity (#348 dedup contract) -------------
@@ -1713,54 +1655,32 @@ def test_destructive_blocks_stash_push_untracked() -> None:
 # --- git clean: -f/-d/-x/-X/--force block; dry-run (-n/--dry-run) allowed --
 
 
-def test_destructive_blocks_clean_force_flag() -> None:
-    """`git clean -f` is blocked."""
-    assert _run_hook(_DESTRUCTIVE, "git clean -f") == 2
+_DESTRUCTIVE_CLEAN_CASES = [
+    pytest.param("git clean -f", 2, id="blocks_clean_force_flag"),
+    pytest.param("git clean -fdx", 2, id="blocks_clean_clustered_fdx"),
+    pytest.param("git clean -f -d -x", 2, id="blocks_clean_separate_flags"),
+    pytest.param("git clean --force", 2, id="blocks_clean_long_force_flag"),
+    pytest.param("git clean -n", 0, id="allows_clean_dry_run_short_flag"),
+    pytest.param("git clean --dry-run", 0, id="allows_clean_dry_run_long_flag"),
+    pytest.param("git clean -nf", 0, id="allows_clean_dry_run_clustered_with_force"),
+    pytest.param(
+        "git clean --dry-run --force",
+        0,
+        id="allows_clean_dry_run_and_force_as_separate_flags",
+    ),
+    pytest.param("git clean", 0, id="allows_bare_clean"),
+]
 
 
-def test_destructive_blocks_clean_clustered_fdx() -> None:
-    """`git clean -fdx` (clustered short flags) is blocked."""
-    assert _run_hook(_DESTRUCTIVE, "git clean -fdx") == 2
+@pytest.mark.parametrize(("command", "expected"), _DESTRUCTIVE_CLEAN_CASES)
+def test_destructive_clean_verdict(command: str, expected: int) -> None:
+    """`git clean` verdict: force blocks (2); dry-run and bare clean allow (0).
 
-
-def test_destructive_blocks_clean_separate_flags() -> None:
-    """`git clean -f -d -x` (separate short flags) is blocked."""
-    assert _run_hook(_DESTRUCTIVE, "git clean -f -d -x") == 2
-
-
-def test_destructive_blocks_clean_long_force_flag() -> None:
-    """`git clean --force` is blocked."""
-    assert _run_hook(_DESTRUCTIVE, "git clean --force") == 2
-
-
-def test_destructive_allows_clean_dry_run_short_flag() -> None:
-    """`git clean -n` (dry run) is allowed — it only lists candidates."""
-    assert _run_hook(_DESTRUCTIVE, "git clean -n") == 0
-
-
-def test_destructive_allows_clean_dry_run_long_flag() -> None:
-    """`git clean --dry-run` is allowed."""
-    assert _run_hook(_DESTRUCTIVE, "git clean --dry-run") == 0
-
-
-def test_destructive_allows_clean_dry_run_clustered_with_force() -> None:
-    """`-nf` (dry-run clustered with force in the same token) short-circuits allowed.
-
-    The dry-run check runs first, so a dry-run flag anywhere in the
-    invocation stands down the force check even when `-f` sits in the
-    same cluster.
+    Args:
+        command: Bash command fed to the hook.
+        expected: Expected hook exit code (2 blocks, 0 allows).
     """
-    assert _run_hook(_DESTRUCTIVE, "git clean -nf") == 0
-
-
-def test_destructive_allows_clean_dry_run_and_force_as_separate_flags() -> None:
-    """`--dry-run --force` (both present) is allowed — dry-run wins."""
-    assert _run_hook(_DESTRUCTIVE, "git clean --dry-run --force") == 0
-
-
-def test_destructive_allows_bare_clean() -> None:
-    """A bare `git clean` (no flags at all) is allowed — nothing to delete yet."""
-    assert _run_hook(_DESTRUCTIVE, "git clean") == 0
+    assert _run_hook(_DESTRUCTIVE, command) == expected
 
 
 def test_destructive_blocks_clean_bounded_per_invocation() -> None:
@@ -2790,63 +2710,33 @@ def test_amend_uses_payload_cwd_not_process_cwd(tmp_path: Path) -> None:
     assert proc.returncode == 2
 
 
-def test_amend_pushed_commit_registered_in_plugin_json() -> None:
-    """Verify hook is wired into plugin.json's Bash PreToolUse group."""
-    manifest = json.loads(
-        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
-    )
-    pre_tool_use = manifest["hooks"]["PreToolUse"]
-    commands = [hook["command"] for group in pre_tool_use for hook in group["hooks"]]
-    assert any(_AMEND in cmd for cmd in commands)
-
-
 _CONTINUATION_DELETE = "block_continuation_delete.sh"
 
 
-def test_continuation_delete_allows_sibling_file() -> None:
-    """Deleting a `.plan/` sibling file (not CONTINUATION.md) is allowed (#241).
+_CONTINUATION_DELETE_ALLOWED = [
+    pytest.param("rm .plan/weekly_summary_2026-07-10.md", id="sibling_file"),
+    pytest.param(
+        "python -c \"import pathlib; pathlib.Path('.plan/w.md').unlink()\"",
+        id="interpreter_one_liner",
+    ),
+    pytest.param(
+        'gh issue create --body "blocked rm .plan/weekly.md and unlink"',
+        id="quoted_prose_mention",
+    ),
+    pytest.param("rm foo.plan", id="non_plan_path"),
+    pytest.param("echo CONTINUATION.md", id="mention_without_delete"),
+    pytest.param("ls .plan", id="non_delete_action"),
+]
 
-    The issue's reported false positive: a weekly-summary file living
-    alongside CONTINUATION.md must stay deletable.
+
+@pytest.mark.parametrize("command", _CONTINUATION_DELETE_ALLOWED)
+def test_continuation_delete_allows(command: str) -> None:
+    """Sibling `.plan/` files and prose mentions pass.
+
+    Args:
+        command: Bash command fed to the hook.
     """
-    assert _run_hook(_CONTINUATION_DELETE, "rm .plan/weekly_summary_2026-07-10.md") == 0
-
-
-def test_continuation_delete_allows_interpreter_one_liner() -> None:
-    """A `python -c` one-liner unlink slips through — documented, accepted gap."""
-    assert (
-        _run_hook(
-            _CONTINUATION_DELETE,
-            "python -c \"import pathlib; pathlib.Path('.plan/w.md').unlink()\"",
-        )
-        == 0
-    )
-
-
-def test_continuation_delete_allows_quoted_prose_mention() -> None:
-    """`rm`/`unlink` wording quoted inside prose (e.g. an issue body) is allowed."""
-    assert (
-        _run_hook(
-            _CONTINUATION_DELETE,
-            'gh issue create --body "blocked rm .plan/weekly.md and unlink"',
-        )
-        == 0
-    )
-
-
-def test_continuation_delete_allows_non_plan_path() -> None:
-    """`rm foo.plan` (a file merely ending in `.plan`) is not the `.plan/` dir."""
-    assert _run_hook(_CONTINUATION_DELETE, "rm foo.plan") == 0
-
-
-def test_continuation_delete_allows_mention_without_delete() -> None:
-    """Mentioning CONTINUATION.md without a delete verb is allowed."""
-    assert _run_hook(_CONTINUATION_DELETE, "echo CONTINUATION.md") == 0
-
-
-def test_continuation_delete_allows_non_delete_action() -> None:
-    """A non-delete action on `.plan` (`ls`) is allowed."""
-    assert _run_hook(_CONTINUATION_DELETE, "ls .plan") == 0
+    assert _run_hook(_CONTINUATION_DELETE, command) == 0
 
 
 def test_continuation_delete_blocks_continuation_md_direct() -> None:
@@ -4009,15 +3899,30 @@ def _record(env: dict[str, str]) -> str:
     return log.read_text(encoding="utf-8") if log.exists() else ""
 
 
-def test_keep_squash_last_ignores_unrelated_commands(tmp_path: Path) -> None:
-    """SCENARIO: an ordinary Bash call that touches no PR comment.
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("ls -la", id="ignores_unrelated_commands"),
+        pytest.param(
+            "forge-pr-squash-comment --pr 61 --bullet a --bullet b --bullet c",
+            id="does_not_recurse_on_its_own_cli",
+        ),
+    ],
+)
+def test_keep_squash_last_never_invokes_the_cli(command: str, tmp_path: Path) -> None:
+    """SCENARIO: an ordinary Bash call, or the squash CLI's own post.
 
-    MOCK SETUP: recording stub on PATH; the hook runs against `ls -la`.
-    EXPECTED BEHAVIOR: the CLI is never invoked — this hook fires on
-    every Bash call, so the non-match path must cost nothing.
+    MOCK SETUP: recording stub on PATH; the hook runs against the command.
+    EXPECTED BEHAVIOR: the CLI is never invoked — this hook fires on every
+    Bash call, so the non-match path must cost nothing, and the CLI's own
+    post already lands last (re-entering costs a round trip).
+
+    Args:
+        command: Bash command fed to the hook.
+        tmp_path: Pytest temporary directory holding the stub CLI.
     """
     env = _stub_squash_cli(tmp_path, "exit 0")
-    assert _run_hook(_KEEP_SQUASH_LAST, "ls -la", options=HookOptions(env=env)) == 0
+    assert _run_hook(_KEEP_SQUASH_LAST, command, options=HookOptions(env=env)) == 0
     assert _record(env) == ""
 
 
@@ -4038,93 +3943,67 @@ def test_keep_squash_last_runs_after_a_conversation_comment(tmp_path: Path) -> N
     assert "PR #61" in proc.stdout
 
 
-def test_keep_squash_last_runs_after_a_review_thread_reply(tmp_path: Path) -> None:
-    """SCENARIO: `/pr-comments` replies on a review thread.
-
-    MOCK SETUP: recording stub; the command is the REST replies endpoint,
-    whose comments never appear in the conversation listing.
-    EXPECTED BEHAVIOR: the PR number is read out of the endpoint path.
-    """
-    env = _stub_squash_cli(tmp_path, "exit 0")
-    command = (
-        "gh api repos/o/r/pulls/77/comments/123/replies --method POST -f body=done"
-    )
-    assert _run_hook(_KEEP_SQUASH_LAST, command, options=HookOptions(env=env)) == 0
-    assert "--pr 77" in _record(env)
-
-
-def test_keep_squash_last_does_not_recurse_on_its_own_cli(tmp_path: Path) -> None:
-    """The squash CLI's own post already lands last; re-entering costs a round trip."""
-    env = _stub_squash_cli(tmp_path, "exit 0")
-    assert (
-        _run_hook(
-            _KEEP_SQUASH_LAST,
-            "forge-pr-squash-comment --pr 61 --bullet a --bullet b --bullet c",
-            options=HookOptions(env=env),
-        )
-        == 0
-    )
-    assert _record(env) == ""
-
-
-def test_keep_squash_last_runs_despite_trailing_cli_name_mention(
-    tmp_path: Path,
-) -> None:
-    """A CLI-name mention inside an argument does not exempt a raw post.
-
-    Only a command *starting with* (or chained to) the CLI name is its own
-    post; naming it inside a `--body` string is still a raw `gh pr comment`
-    that must re-enter the guard.
-    """
-    env = _stub_squash_cli(tmp_path, "exit 0")
-    assert (
-        _run_hook(
-            _KEEP_SQUASH_LAST,
+@pytest.mark.parametrize(
+    ("command", "pr_arg"),
+    [
+        pytest.param(
+            "gh api repos/o/r/pulls/77/comments/123/replies --method POST -f body=done",
+            "--pr 77",
+            id="runs_after_a_review_thread_reply",
+        ),
+        pytest.param(
             'gh pr comment 61 --body "see forge-pr-squash-comment"',
-            options=HookOptions(env=env),
-        )
-        == 0
-    )
-    assert "--pr 61" in _record(env)
-
-
-def test_keep_squash_last_is_silent_on_a_no_op(tmp_path: Path) -> None:
-    """A comment that is already newest produces no agent-visible output."""
-    env = _stub_squash_cli(tmp_path, 'echo "squash comment is already the newest"')
-    proc = _run_hook_proc(
-        _KEEP_SQUASH_LAST, "gh pr comment 61 --body x", options=HookOptions(env=env)
-    )
-    assert proc.returncode == 0
-    assert proc.stdout.strip() == ""
-
-
-def test_keep_squash_last_stays_silent_when_no_squash_comment_exists(
-    tmp_path: Path,
+            "--pr 61",
+            id="runs_despite_trailing_cli_name_mention",
+        ),
+    ],
+)
+def test_keep_squash_last_runs_for_the_named_pr(
+    command: str, pr_arg: str, tmp_path: Path
 ) -> None:
-    """SCENARIO: replies land on a PR whose squash message is not authored yet.
+    """SCENARIO: review-thread reply or raw post naming the CLI in `--body`.
 
-    MOCK SETUP: the stub exits 1, as the CLI does with nothing to move.
+    MOCK SETUP: recording stub reports a successful re-post.
+    EXPECTED BEHAVIOR: the CLI runs for the PR named in the command; a
+    CLI-name mention in an argument does not exempt a raw post.
+
+    Args:
+        command: Bash command fed to the hook.
+        pr_arg: The `--pr <N>` argument the CLI is expected to receive.
+        tmp_path: Pytest temporary directory holding the stub CLI.
+    """
+    env = _stub_squash_cli(tmp_path, "exit 0")
+    assert _run_hook(_KEEP_SQUASH_LAST, command, options=HookOptions(env=env)) == 0
+    assert pr_arg in _record(env)
+
+
+@pytest.mark.parametrize(
+    "stub_body",
+    [
+        pytest.param(
+            'echo "squash comment is already the newest"', id="is_silent_on_a_no_op"
+        ),
+        pytest.param("exit 1", id="stays_silent_when_no_squash_comment_exists"),
+    ],
+)
+def test_keep_squash_last_is_silent(stub_body: str, tmp_path: Path) -> None:
+    """SCENARIO: the comment is already newest, or no squash message is authored yet.
+
+    MOCK SETUP: the stub reports a no-op, or exits 1 as the CLI does with
+    nothing to move.
     EXPECTED BEHAVIOR: exit 0 and no output — the mid-review state is
     normal, and a post-tool hook must never fail a working command.
+
+    Args:
+        stub_body: Shell body of the stub CLI standing in for the real one.
+        tmp_path: Pytest temporary directory holding the stub CLI.
     """
-    env = _stub_squash_cli(tmp_path, "exit 1")
+    env = _stub_squash_cli(tmp_path, stub_body)
     proc = _run_hook_proc(
         _KEEP_SQUASH_LAST, "gh pr comment 61 --body x", options=HookOptions(env=env)
     )
     assert proc.returncode == 0
     assert proc.stdout.strip() == ""
-
-
-def test_keep_squash_last_registered_as_a_post_tool_hook() -> None:
-    """plugin.json wires the hook on PostToolUse(Bash), not as a blocker."""
-    manifest = json.loads(
-        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
-    )
-    post = manifest["hooks"]["PostToolUse"]
-    bash_groups = [group for group in post if group.get("matcher") == "Bash"]
-    assert len(bash_groups) == 1
-    commands = [hook["command"] for hook in bash_groups[0]["hooks"]]
-    assert any(_KEEP_SQUASH_LAST in cmd for cmd in commands)
 
 
 # --- block_raw_wrapup_post.sh: the wrap-up is posted only via the CLI ------
@@ -4240,14 +4119,21 @@ def test_raw_wrapup_post_allows_an_empty_command() -> None:
     assert _run_hook(_RAW_WRAPUP_POST, "") == 0
 
 
-def test_raw_wrapup_post_registered_in_plugin_json() -> None:
-    """plugin.json wires the hook on PreToolUse(Bash), not as a passive check."""
+@pytest.mark.parametrize(
+    "hook",
+    [
+        pytest.param(_AMEND, id="amend_pushed_commit"),
+        pytest.param(_RAW_WRAPUP_POST, id="raw_wrapup_post"),
+    ],
+)
+def test_hook_registered_in_plugin_json_pre_tool_use(hook: str) -> None:
+    """plugin.json wires the hook into the PreToolUse group, not as a passive check."""
     manifest = json.loads(
         (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
     )
     pre_tool_use = manifest["hooks"]["PreToolUse"]
-    commands = [hook["command"] for group in pre_tool_use for hook in group["hooks"]]
-    assert any(_RAW_WRAPUP_POST in cmd for cmd in commands)
+    commands = [h["command"] for group in pre_tool_use for h in group["hooks"]]
+    assert any(hook in cmd for cmd in commands)
 
 
 # --- warn_stale_wrapup.sh: post-push staleness reminder --------------------
@@ -4483,18 +4369,6 @@ def test_warn_stale_wrapup_ignores_quoted_mention(tmp_path: Path) -> None:
     assert _record(env) == ""
 
 
-def test_warn_stale_wrapup_registered_as_a_post_tool_hook() -> None:
-    """plugin.json wires the hook on PostToolUse(Bash), not as a blocker."""
-    manifest = json.loads(
-        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
-    )
-    post = manifest["hooks"]["PostToolUse"]
-    bash_groups = [group for group in post if group.get("matcher") == "Bash"]
-    assert len(bash_groups) == 1
-    commands = [hook["command"] for hook in bash_groups[0]["hooks"]]
-    assert any(_WARN_STALE_WRAPUP in cmd for cmd in commands)
-
-
 # --- warn_generated_conflicts.sh: post-merge generated-artifact instruction -
 
 _WARN_GENERATED_CONFLICTS = "warn_generated_conflicts.sh"
@@ -4607,7 +4481,15 @@ def test_warn_generated_conflicts_silent_when_forge_resync_missing(
     assert proc.stdout == ""
 
 
-def test_warn_generated_conflicts_registered_as_a_post_tool_hook() -> None:
+@pytest.mark.parametrize(
+    "hook",
+    [
+        pytest.param(_KEEP_SQUASH_LAST, id="keep_squash_last"),
+        pytest.param(_WARN_STALE_WRAPUP, id="warn_stale_wrapup"),
+        pytest.param(_WARN_GENERATED_CONFLICTS, id="warn_generated_conflicts"),
+    ],
+)
+def test_hook_registered_as_a_post_tool_hook(hook: str) -> None:
     """plugin.json wires the hook on PostToolUse(Bash), not as a blocker."""
     manifest = json.loads(
         (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
@@ -4615,8 +4497,8 @@ def test_warn_generated_conflicts_registered_as_a_post_tool_hook() -> None:
     post = manifest["hooks"]["PostToolUse"]
     bash_groups = [group for group in post if group.get("matcher") == "Bash"]
     assert len(bash_groups) == 1
-    commands = [hook["command"] for hook in bash_groups[0]["hooks"]]
-    assert any(_WARN_GENERATED_CONFLICTS in cmd for cmd in commands)
+    commands = [h["command"] for h in bash_groups[0]["hooks"]]
+    assert any(hook in cmd for cmd in commands)
 
 
 # --- log_agent_timing.sh: SubagentStart/Stop/PostToolUse ledger append -----
