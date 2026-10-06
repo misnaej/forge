@@ -191,6 +191,19 @@ function hdline(s,   n, k, ch, out, sb) {
     }
     return out
 }
+# `$((…))` / `((…))`: arithmetic, emitted verbatim up to its balanced
+# close. Its parentheses are not subshells, so they must not move the
+# mode-1 depth count. Returns the text; the position after it is in APOS.
+function arith(s, i,   n, k, d, ch) {
+    n = length(s); d = 0
+    for (k = i; k <= n; k++) {
+        ch = substr(s, k, 1)
+        if (ch == "(") d++
+        else if (ch == ")") { d--; if (d == 0) break }
+    }
+    APOS = k + 1
+    return substr(s, i, k - i + 1)
+}
 function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, q, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, dash, pc, bd, pa, wt, qs, rl) {
     n = length(s); out = ""; depth = 0; dollar = 0; nh = 0; bd = 0; pa = 0
     while (i <= n) {
@@ -263,13 +276,7 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
             sb = scan(s, i + 1, 2); out = out "(" sb ")"; i = RPOS; dollar = 0; continue
         }
         if (c == "(" && substr(s, i + 1, 1) == "(" && (pc == "$" || index(" \t\n;&|(", pc))) {
-            d = 0
-            for (k = i; k <= n; k++) {
-                ch = substr(s, k, 1)
-                if (ch == "(") d++
-                else if (ch == ")") { d--; if (d == 0) break }
-            }
-            out = out substr(s, i, k - i + 1); i = k + 1; dollar = 0; continue
+            out = out arith(s, i); i = APOS; dollar = 0; continue
         }
         if (c == "(") { if (mode == 1) depth++; out = out c; i++; dollar = 0; continue }
         if (c == ")") {
