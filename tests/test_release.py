@@ -579,6 +579,51 @@ def test_main_from_changelog_flags_stranded_entries(
     assert any("stranded" in r.getMessage() for r in caplog.records)
 
 
+@pytest.mark.parametrize("extra_args", [[], ["--dry-run"]])
+def test_main_from_changelog_backfilled_section_is_not_stranded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    extra_args: list[str],
+) -> None:
+    """A section first appearing after the tag (assembler backfill) rests, exit 0.
+
+    Behavior: pins the idempotent-release contract for an assembly that files
+    notes under an already-tagged version whose heading never existed.
+
+    Args:
+        tmp_path: Temporary directory for test repository.
+        monkeypatch: pytest fixture for patching.
+        caplog: pytest fixture for log capture.
+        extra_args: Parametrized list of additional command-line arguments.
+    """
+    work, _bare = _repo_with_origin(tmp_path)
+    (work / "CHANGELOG.md").write_text("## v1.4.1\n- older work\n")
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v1.4.2", "-m", "v1.4.2"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    (work / "CHANGELOG.md").write_text(
+        "## v1.4.2\n- backfilled work\n\n## v1.4.1\n- older work\n"
+    )
+    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "backfill"], cwd=work, env=_GIT_ENV, check=True
+    )
+    _single_track_cfg(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog", *extra_args])
+    monkeypatch.chdir(work)
+    with caplog.at_level(logging.INFO, logger="forge.release"):
+        assert release.main() == 0
+    assert not any("stranded" in r.getMessage() for r in caplog.records)
+
+
 def test_main_from_changelog_idempotent_when_ahead_without_changelog_change(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

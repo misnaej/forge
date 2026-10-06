@@ -27,7 +27,10 @@ Two version sources, one orchestration:
 - ``--from-changelog`` — cut the version the ``CHANGELOG.md`` top
   heading *declares* (the single-track convention's rolling-next
   analogue). Idempotent: already tagged → exit ``0`` "nothing to
-  release", so a tag-on-merge CI job and a manual cut can race safely.
+  release", so a tag-on-merge CI job and a manual cut can race safely —
+  including after an assembly that backfilled notes under headings of
+  versions already tagged. The one exception is stranded work: entries
+  added under a section that already existed at the tag fail loudly.
   Under CI (``forge.run_context.is_ci``) the on-branch guard becomes a
   ``HEAD == origin/<base_branch>`` check, since merge-event checkouts
   are detached. Two mode-specific rules on top of the guard list above:
@@ -214,7 +217,11 @@ def _stranded_entries_error(repo_root: Path, tag: str) -> str | None:
     membership-based detector the ``changelog_version`` pre-commit step
     uses — so a restrand (new heading opened above the released one,
     entries moved out) counts as normal regardless of how git renders
-    the diff. A wording fix to already-released text still counts as a
+    the diff. Only sections that already existed at *tag* can be
+    stranded: a release assembly backfills headings for versions that
+    were tagged before their notes were assembled, and a section that
+    first appears after the tag is that backfill, not a late addition.
+    A wording fix to already-released text still counts as a
     gain (accepted bias, same as the pre-commit sibling: a false
     positive is a cheap re-run; a missed stranding ships features
     untagged). Depends on ``main()``'s upfront ``git fetch --tags``
@@ -237,7 +244,7 @@ def _stranded_entries_error(repo_root: Path, tag: str) -> str | None:
     if not old_text:
         return None
     text = (repo_root / "CHANGELOG.md").read_text(encoding="utf-8")
-    if not stranded_added_versions(old_text, text, tag):
+    if not stranded_added_versions(old_text, text, tag, ignore_new_sections=True):
         return None
     return (
         f"CHANGELOG.md changed since {tag} but the top heading still "

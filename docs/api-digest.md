@@ -285,7 +285,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_env_no_version() -> str | None` _(internal)_ — Return the name of the first truthy opt-out env var, or ``None``.
 - `wants_no_version(repo_root: Path) -> str | None` — Return the fired no-version signal, or ``None`` when none is set.
 - `_section_content(text: str) -> dict[str, set[str]]` _(internal)_ — Map each release version to its normalized non-heading content lines.
-- `stranded_added_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections gained content vs *old_text*.
+- `stranded_added_versions(old_text: str, new_text: str, latest_tag: str | None, *, ignore_new_sections: bool = False) -> list[str]` — Return released versions whose sections gained content vs *old_text*.
 - `released_deleted_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections lost content vs *old_text*.
 - `_version_heading_span(text: str, version: str) -> tuple[int | None, int | None]` _(internal)_ — Return the character span of *version*'s heading line plus its newline.
 - `restrand_changelog(old_text: str, new_text: str, latest_tag: str, bump: str) -> str` — Move entries stranded under released headings to the next open slot.
