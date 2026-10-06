@@ -423,10 +423,10 @@ def test_plugin_cache_skew_flags_lagging_cache(
 
     results = doctor._check_plugin_cache_skew(tmp_path)
 
-    assert len(results) == 1
-    assert results[0].name == "version_skew:plugin_cache"
+    # No install record names this repo, so the own-copy advisory follows.
+    assert [r.name for r in results] == ["version_skew:plugin_cache", "plugin:own_copy"]
     assert not results[0].passed
-    assert results[0].info  # advisory only — never sways the exit code
+    assert all(r.info for r in results)  # advisory only — never sways exit code
     assert "2.22.0" in results[0].detail
     assert "2.23.1" in results[0].detail
     assert "/plugin update forge@forge" in results[0].detail
@@ -438,7 +438,9 @@ def test_plugin_cache_skew_empty_when_not_behind(
 ) -> None:
     """A cache at the same version as the manifest is not "behind" (>= boundary).
 
-    MOCK SETUP: both the manifest and the cached install report v2.23.1.
+    MOCK SETUP: both the manifest and the cached install report v2.23.1;
+    no install record names the repo.
+    EXPECTED BEHAVIOR: only the own-copy advisory — no skew finding.
     """
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()
@@ -457,7 +459,9 @@ def test_plugin_cache_skew_empty_when_not_behind(
     )
     monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
 
-    assert doctor._check_plugin_cache_skew(tmp_path) == []
+    results = doctor._check_plugin_cache_skew(tmp_path)
+
+    assert [r.name for r in results] == ["plugin:own_copy"]
 
 
 def test_plugin_cache_skew_empty_when_uncached(
@@ -479,7 +483,7 @@ def test_plugin_cache_skew_empty_when_uncached(
     assert doctor._check_plugin_cache_skew(tmp_path) == []
 
 
-def test_plugin_cache_skew_names_missing_hooks_for_a_consumer(
+def test_plugin_cache_skew_names_stale_areas_for_a_consumer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -488,8 +492,8 @@ def test_plugin_cache_skew_names_missing_hooks_for_a_consumer(
     SCENARIO: the repo ships no manifest of its own, so the verdict comes
     from the pin-vs-cache content comparison.
     MOCK SETUP: ``plugin_cache_status`` is stubbed with a
-    ``"stale-content"`` verdict listing two absent hooks.
-    EXPECTED BEHAVIOR: one advisory naming both hooks and the cache-slot
+    ``"stale-content"`` verdict naming two differing areas.
+    EXPECTED BEHAVIOR: one advisory naming both areas and the cache-slot
     deletion — never ``/plugin update``, which compares the frozen
     declared versions and reports no change.
     """
@@ -501,7 +505,7 @@ def test_plugin_cache_skew_names_missing_hooks_for_a_consumer(
             "forge",
             "5.2.0",
             "v6.11.0",
-            ("block_raw_wrapup_post.sh", "warn_generated_conflicts.sh"),
+            ("agents", "claude-hooks"),
         ),
     )
 
@@ -512,11 +516,192 @@ def test_plugin_cache_skew_names_missing_hooks_for_a_consumer(
     assert not results[0].passed
     assert results[0].info  # advisory only — never sways the exit code
     detail = results[0].detail
-    assert "block_raw_wrapup_post.sh" in detail
-    assert "warn_generated_conflicts.sh" in detail
+    assert "agents, claude-hooks" in detail
     assert "v6.11.0" in detail
     assert "~/.claude/plugins/cache/forge/" in detail
     assert "/plugin update forge@forge (then /reload-plugins)" not in detail
+
+
+def test_plugin_cache_skew_explains_a_source_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mismatched machine-wide source names both refs and the re-pointing.
+
+    MOCK SETUP: ``plugin_cache_status`` stubbed with a
+    ``"source-mismatch"`` verdict (repo pins v9.0.0, registration tracks
+    main).
+    EXPECTED BEHAVIOR: one advisory naming both refs and saying
+    ``/plugin update`` cannot fix it.
+    """
+    monkeypatch.setattr(
+        doctor,
+        "plugin_cache_status",
+        lambda _root: version_surfaces.PluginCacheStatus(
+            "source-mismatch",
+            "forge",
+            None,
+            "v9.0.0",
+            source_ref="v9.0.0",
+            registered_ref="main",
+        ),
+    )
+
+    results = doctor._check_plugin_cache_skew(tmp_path)
+
+    assert [r.name for r in results] == ["plugin:source"]
+    assert results[0].info
+    assert "v9.0.0" in results[0].detail
+    assert "main" in results[0].detail
+    assert "cannot fix" in results[0].detail
+    assert "/plugin marketplace remove forge" in results[0].detail
+
+
+# --- _check_global_install() ---------------------------------------------
+
+
+def _write_settings(path: Path, *, enabled: bool) -> None:
+    """Write a Claude Code settings file setting forge's enablement.
+
+    Args:
+        path: Settings file to write (parents created).
+        enabled: Value for ``enabledPlugins["forge@forge"]``.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"enabledPlugins": {"forge@forge": enabled}}), encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        {
+            "user_enabled": True,
+            "user_record": False,
+            "local_disabled": False,
+            "expected": True,
+        },
+        {
+            "user_enabled": False,
+            "user_record": True,
+            "local_disabled": False,
+            "expected": True,
+        },
+        {
+            "user_enabled": False,
+            "user_record": False,
+            "local_disabled": False,
+            "expected": False,
+        },
+        {
+            "user_enabled": True,
+            "user_record": False,
+            "local_disabled": True,
+            "expected": False,
+        },
+    ],
+    ids=["user-settings", "user-record", "no-global", "repo-opted-out"],
+)
+def test_global_install_advisory(
+    tmp_path: Path,
+    claude_home: Path,
+    case: dict[str, bool],
+) -> None:
+    """A machine-wide forge beside this repo's own is reported, not judged.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        claude_home: Fake ``~/.claude``.
+        case: Test case with user_enabled, user_record, local_disabled, expected.
+    """
+    user_enabled = case["user_enabled"]
+    user_record = case["user_record"]
+    local_disabled = case["local_disabled"]
+    expected = case["expected"]
+
+    repo = tmp_path / "repo"
+    _write_settings(repo / ".claude" / "settings.json", enabled=True)
+    if local_disabled:
+        _write_settings(repo / ".claude" / "settings.local.json", enabled=False)
+    if user_enabled:
+        _write_settings(claude_home / "settings.json", enabled=True)
+    if user_record:
+        install = tmp_path / "cache" / "3.30.0"
+        install.mkdir(parents=True)
+        (claude_home / "plugins").mkdir(parents=True)
+        (claude_home / "plugins" / "installed_plugins.json").write_text(
+            json.dumps(
+                {
+                    "plugins": {
+                        "forge@forge": [{"scope": "user", "installPath": str(install)}]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    results = doctor._check_global_install(repo)
+
+    if not expected:
+        assert results == []
+        return
+    assert [r.name for r in results] == ["plugin:global_install"]
+    detail = results[0].detail
+    assert results[0].info
+    assert "claude plugin uninstall forge@forge --scope user" in detail
+    assert "settings.local.json" in detail
+    assert "per machine" in detail
+
+
+def test_global_install_advisory_silent_without_files(tmp_path: Path) -> None:
+    """No settings and no records anywhere is a no-op, never an error.
+
+    Args:
+        tmp_path: Pytest temp directory (a repo with no ``.claude/``).
+    """
+    assert doctor._check_global_install(tmp_path) == []
+
+
+def test_global_install_advisory_leaves_exit_code_unchanged(
+    tmp_path: Path,
+    claude_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The global-install advisory never fails ``forge-doctor``.
+
+    MOCK SETUP: every other check stubbed to nothing; forge enabled both
+    in the repo and in user settings; cwd is the repo.
+    EXPECTED BEHAVIOR: exit 0 with the advisory present in the JSON.
+    """
+    _write_settings(tmp_path / ".claude" / "settings.json", enabled=True)
+    _write_settings(claude_home / "settings.json", enabled=True)
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "_check_clis",
+        "_check_gh",
+        "_check_step_tools",
+        "_check_version_skew",
+        "_check_plugin_cache_skew",
+        "_surface_pin_revision",
+        "_check_under_used_capabilities",
+        "_check_plugin_manifests",
+        "_check_plugin_contents",
+    ):
+        monkeypatch.setattr(doctor, name, lambda *_a: [])
+    monkeypatch.setattr(
+        doctor,
+        "_check_plugin_install",
+        lambda _n: doctor.CheckResult("plugin:installed", passed=True, detail=""),
+    )
+    monkeypatch.setattr(doctor, "find_plugin_cache", lambda _n: None)
+    monkeypatch.setattr(doctor.sys, "argv", ["forge-doctor", "--json"])
+    emitted: list[str] = []
+    monkeypatch.setattr(doctor, "emit", emitted.append)
+
+    assert doctor.main() == 0
+    names = [r["name"] for r in json.loads(emitted[0])]
+    assert names == ["plugin:installed", "plugin:global_install"]
 
 
 # --- pad_semver() -------------------------------------------------------

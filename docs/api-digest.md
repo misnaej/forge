@@ -418,6 +418,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_plugin_install(plugin_name: str) -> CheckResult` _(internal)_ — Verify Claude Code has installed the named plugin locally.
 - `_check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report a Claude Code plugin cache lagging what should be loaded.
 - `_stale_cache_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
+- `_source_mismatch_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"source-mismatch"`` verdict as an advisory naming both refs.
+- `_enabled_in(settings_path: Path) -> bool | None` _(internal)_ — Return ``enabledPlugins["forge@forge"]`` from a settings file.
+- `_check_global_install(repo_root: Path) -> list[CheckResult]` _(internal)_ — Flag a machine-wide forge install alongside this repo's own.
 - `_check_version_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
 - `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
 - `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
@@ -783,7 +786,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `scaffold_claude_settings(settings_path: Path) -> bool` — Write a minimal ``.claude/settings.json`` if the file does not exist.
 - `ensure_claude_hooks_dir(hooks_dir: Path) -> bool` — Create ``.claude/hooks/`` with a README documenting the path convention.
 - `_installed_forge_scripts_version() -> str | None` _(internal)_ — Return the installed ``forge-scripts`` distribution version.
-- `_plugin_entry_version(entry: object) -> str | None` _(internal)_ — Pull the ``version`` field out of a single forge@forge entry.
 - `_installed_plugin_version(plugins_file: Path) -> str | None` _(internal)_ — Read the installed Claude Code plugin version from the manifest.
 - `_read_configured_channel(settings_path: Path) -> str | None` _(internal)_ — Return the marketplace ``ref`` consumers set to track a forge release channel.
 - `_upstream_cache_path() -> Path` _(internal)_ — Return the upstream-version-check cache file path.
@@ -1619,8 +1621,19 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `editable_install_origin() -> Path | None` — Return the checkout an editable ``forge-scripts`` install points at.
 - `_direct_url() -> dict[str, object] | None` _(internal)_ — Return the distribution's parsed ``direct_url.json``, or ``None``.
 - `marketplace_clone(repo_slug: str) -> Path | None` — Local clone Claude Code keeps for the marketplace serving *repo_slug*.
+- `registered_marketplace_ref(repo_slug: str) -> str | None` — Ref the machine-wide marketplace registration for *repo_slug* tracks.
+- `_marketplace_entries(repo_slug: str) -> list[dict[str, object]]` _(internal)_ — Registry entries whose source is the GitHub repo *repo_slug*.
+- `class PluginInstall` — One install record from ``installed_plugins.json``.
+- `class PluginInstalls` — Which installed copies of a plugin bear on one repo.
+- `plugin_records(plugin: str, plugins_file: Path | None = None) -> list[dict[str, object]]` — Raw install records Claude Code keeps for *plugin*.
+- `plugin_installs(repo_root: Path, plugin_name: str) -> PluginInstalls` — Find the installed copies of *plugin_name* that bear on *repo_root*.
+- `_install_from_record(record: dict[str, object]) -> PluginInstall | None` _(internal)_ — Build a :class:`PluginInstall` from one raw record.
+- `_resolved(path: Path) -> Path` _(internal)_ — Return *path* resolved, or unchanged when resolution fails.
 - `_repo_slug(url: str) -> str | None` _(internal)_ — Return the ``owner/repo`` a git pin URL names.
-- `_hook_names(plugin_dir: Path) -> frozenset[str]` _(internal)_ — Names of the Claude Code hooks a plugin directory ships.
+- `content_digests(plugin_dir: Path) -> dict[str, str]` — Hash each content area of a plugin tree.
+- `_area_digest(area: Path) -> str` _(internal)_ — Hash every file under *area* by relative path and bytes.
+- `_manifest_digest(manifest: Path) -> str` _(internal)_ — Hash a plugin manifest with its ``version`` field removed.
+- `_repo_marketplace_ref(repo_root: Path) -> str | None` _(internal)_ — Marketplace ref this repo's own ``.claude/settings.json`` pins.
 - `class PluginCacheStatus` — What the Claude Code plugin cache says relative to what ships it.
 - `plugin_cache_status(repo_root: Path) -> PluginCacheStatus` — Compare the cached plugin against the manifest that ships it.
 - `_consumer_cache_status(repo_root: Path) -> PluginCacheStatus` _(internal)_ — Compare a consumer's active cache slot against the ref it pinned.

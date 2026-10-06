@@ -949,6 +949,17 @@ comparing plugin and package version numbers: that check was built,
 shipped and removed once already, because the command it named
 truthfully answered that nothing was out of date.
 
+**A repo can also load the wrong copy outright.** The plugin loads fine,
+behaves like an old release, and every update says current — restarting
+changes nothing. Two causes, both machine-wide: a **global (user-scope)
+install** beside the repo's own, which can shadow it — recovery is
+removing the global install; and the **marketplace registration**, which
+is one per machine and tracks whatever ref the first repo registered —
+`/plugin update` fetches from it, so a repo pinning another ref needs the
+registration re-pointed. `forge-doctor` reports both, and judges the
+copy this repo's own install record names rather than the newest one
+cached.
+
 ### Consumer Claude Code hook path convention
 
 Consumer hooks live under `.claude/hooks/`, registered in

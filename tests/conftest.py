@@ -18,7 +18,9 @@ It also isolates the suite from the real evidence: every test gets its own
 ``code_health/`` directory through ``FORGE_CODE_HEALTH_DIR`` (inherited by
 CLIs a test runs as subprocesses), and the session fails at the end, naming
 the files, if anything changed the real checkout's ``code_health/`` — the
-backstop for a module that builds the path without the resolver.
+backstop for a module that builds the path without the resolver. Likewise,
+``claude_home`` points the Claude Code install records forge reads at an
+empty fake ``~/.claude``, so no verdict depends on the machine's plugins.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from forge import doctor, version_surfaces
 from forge.git_utils import CODE_HEALTH_ENV, PushResult
 
 
@@ -217,6 +220,33 @@ def _isolated_code_health(
     it; a test that needs a specific directory overrides the variable.
     """
     monkeypatch.setenv(CODE_HEALTH_ENV, str(tmp_path_factory.mktemp("code_health")))
+
+
+@pytest.fixture(autouse=True)
+def claude_home(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point the Claude Code files forge reads at an empty fake ``~/.claude``.
+
+    Those readers resolve their paths at import time from the real home,
+    so without this every plugin-cache verdict in the suite would read the
+    machine's own install records — a result that changes with whatever
+    is installed. Nothing is created: an absent file is the default case.
+    A test that needs a record writes it under the returned directory.
+
+    Returns:
+        The fake ``.claude`` directory (not yet created on disk).
+    """
+    claude_dir = tmp_path_factory.mktemp("home") / ".claude"
+    plugins = claude_dir / "plugins"
+    monkeypatch.setattr(
+        version_surfaces, "INSTALLED_PLUGINS", plugins / "installed_plugins.json"
+    )
+    monkeypatch.setattr(
+        version_surfaces, "KNOWN_MARKETPLACES", plugins / "known_marketplaces.json"
+    )
+    monkeypatch.setattr(doctor, "USER_SETTINGS", claude_dir / "settings.json")
+    return claude_dir
 
 
 @pytest.fixture(autouse=True)

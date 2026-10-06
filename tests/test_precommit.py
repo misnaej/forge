@@ -3677,6 +3677,50 @@ def test_step_plugin_sync_warns_when_behind_and_unconfigured(
     assert "⚠️" in result.output
 
 
+def test_step_plugin_sync_judges_this_repos_own_install(
+    tmp_path: Path,
+    claude_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repo's own install record decides the verdict, not the newest copy.
+
+    SCENARIO: another repo on the machine fetched the current release, so
+    the newest cached copy matches the manifest while this repo still
+    loads an older one.
+    MOCK SETUP: manifest 2.9.0; the newest-copy lookup answers 2.9.0; the
+    install record for this repo names a 2.8.0 copy.
+    EXPECTED BEHAVIOR: a WARN naming 2.8.0 — the repo is behind.
+    """
+    repo = tmp_path / "repo"
+    _write_plugin_manifest(repo, "2.9.0")
+    own = tmp_path / "cache" / "2.8.0"
+    _write_plugin_manifest(own, "2.8.0")
+    (claude_home / "plugins").mkdir(parents=True)
+    (claude_home / "plugins" / "installed_plugins.json").write_text(
+        json.dumps(
+            {
+                "plugins": {
+                    "forge@forge": [
+                        {
+                            "scope": "project",
+                            "projectPath": str(repo),
+                            "installPath": str(own),
+                            "version": "2.8.0",
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: repo)
+    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.9.0")
+    result = precommit.step_plugin_sync(repo)
+    assert not result.passed
+    assert "2.8.0" in result.output
+
+
 def test_step_plugin_sync_blocks_when_behind_and_configured_blocking(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
