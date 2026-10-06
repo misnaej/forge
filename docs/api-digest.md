@@ -623,7 +623,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_vendor_hit(blob: str) -> tuple[str, str] | None` _(internal)_ — Return ``(vendor, token)`` for the first bare vendor mention in *blob*.
 - `validate_no_ai_attribution(text: str, *, exempt_fenced_vendor_tokens: bool = False) -> None` — Reject Claude / AI attribution per FOUNDATION §2.
 - `parse_paged_json(raw: str) -> list[Any]` — Flatten ``gh api --paginate --jq '[...]'`` output into one list.
-- `list_marker_comments(pr_number: int, marker: str) -> list[dict[str, object]] | None` — Return this identity's comments on *pr_number* carrying *marker*, oldest first.
+- `list_marker_comments(pr_number: int, marker: str, *, anchored: bool = False) -> list[dict[str, object]] | None` — Return this identity's comments on *pr_number* carrying *marker*, oldest first.
 - `post_new_comment(pr_number: int, body: str) -> int` — Post *body* as a new comment on PR ``pr_number``.
 - `delete_comment(comment_id: int) -> bool` — Delete one issue comment by id.
 - `patch_comment(comment_id: int, body: str) -> bool` — Replace one issue comment's body in place.
@@ -955,7 +955,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_word_total(title: str, bullets: list[str]) -> int` _(internal)_ — Count whitespace-split words across the title and every bullet.
 - `_preview(text: str) -> str` _(internal)_ — Shorten one message part to a printable first line for the breakdown.
 - `_word_breakdown(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Render one indented line per message part: label, word count, preview.
-- `_check_word_count(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the ≤ ``MAX_WORDS`` cap problem, with a per-part breakdown.
+- `_check_word_count(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the ``HARD_MAX_WORDS`` ceiling problem, with a per-part breakdown.
+- `word_cap_warning(title: str, bullets: list[str]) -> str | None` — Return the warning for a message between the target and the ceiling.
 - `_check_attribution(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the Claude / AI attribution problem per FOUNDATION §2 (shared gate).
 - `build_body(title: str, bullets: list[str]) -> str` — Build the GitHub comment body around a validated message.
 - `validate(title: str, bullets: list[str]) -> list[str]` — Return every FOUNDATION §6 rule the message breaks.
@@ -980,6 +981,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> list[str]` _(internal)_ — Enforce the word budget, scaled by the number of findings sections.
 - `_check_attribution(text: str) -> list[str]` _(internal)_ — Wrap the shared FOUNDATION §2 attribution gate as a violation list.
 - `validate_wrapup(text: str) -> list[str]` — Return every rule the wrap-up *text* breaks (empty means valid).
+- `_check_no_squash_section(text: str) -> list[str]` _(internal)_ — Refuse a wrap-up that embeds the squash-merge message.
 - `_collapse(existing: list[dict[str, object]], new_sha: str) -> int` _(internal)_ — Fold every earlier wrap-up into a ``<details>`` block, once.
 - `post_wrapup(pr_number: int, body: str) -> int` — Post *body* as the PR's wrap-up, retiring the ones it supersedes.
 - `_section_bounds(lines: list[str], title: str) -> tuple[int, int] | None` _(internal)_ — Return the ``(heading, end)`` line indexes of section *title*.

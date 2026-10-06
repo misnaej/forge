@@ -35,18 +35,26 @@ Rules (FOUNDATION §6 "Squash-merge messages"):
 
 - title matches conventional-commit ``<type>(...)?: <subject>``
 - 3-5 ``--bullet`` entries
-- total whitespace-split word count (title + bullets) ≤ 50
+- total whitespace-split word count (title + bullets): target ≤ 50;
+  51-55 posts with a warning; over 55 is refused
 - no Claude / AI attribution patterns
 
 A failing run names every broken rule at once; a word-cap violation
-also lists each part's word count and how many words to cut.
+also lists each part's word count and how many words to cut to reach
+the 50-word target. A message in the 51-55 band prints the same
+breakdown as a warning (also under ``--dry-run``) and posts.
+
+Only a comment whose body starts with :data:`SQUASH_MARKER` is treated
+as a squash comment, so a wrap-up that quotes the marker is never
+deleted or re-posted in its place.
 
 Output: the body posted to GitHub is the literal text below (the inner
 fences are real ``` blocks, not escapes):
 
     <!-- forge:squash-merge-message -->
-    **Squash-merge message** — copy each fence into the matching field
-    of the squash dialog. The PR title is already synced to the title.
+    **Squash-merge message** — copy each fence verbatim into the matching
+    field of the squash dialog. The PR title is synced to the title below,
+    so GitHub's prefill already matches.
 
     **Title**
 
@@ -116,7 +124,13 @@ TITLE_RE: Final[re.Pattern[str]] = re.compile(
 
 MIN_BULLETS: Final[int] = 3
 MAX_BULLETS: Final[int] = 5
+# The target, and what "cut N" is measured against. Messages up to the
+# hard ceiling still post, with a warning: a hard edge at the target sent
+# agents round a retry loop over a word or two, while the intent — if it
+# cannot be said in about 50 words, the PR is too big — survives a
+# small, visible overshoot.
 MAX_WORDS: Final[int] = 50
+HARD_MAX_WORDS: Final[int] = 55
 # A breakdown line only has to identify the part to shorten, not show it.
 PREVIEW_CHARS: Final[int] = 40
 
@@ -181,7 +195,8 @@ def _word_total(title: str, bullets: list[str]) -> int:
         bullets: Bullet strings.
 
     Returns:
-        The combined word count :data:`MAX_WORDS` caps.
+        The combined word count :data:`MAX_WORDS` targets and
+        :data:`HARD_MAX_WORDS` caps.
     """
     return len(title.split()) + sum(len(b.split()) for b in bullets)
 
@@ -231,25 +246,50 @@ def _word_breakdown(title: str, bullets: list[str]) -> list[str]:
 
 
 def _check_word_count(title: str, bullets: list[str]) -> list[str]:
-    """Return the ≤ ``MAX_WORDS`` cap problem, with a per-part breakdown.
+    """Return the ``HARD_MAX_WORDS`` ceiling problem, with a per-part breakdown.
 
     Args:
         title: Squash title.
         bullets: Bullet strings.
 
     Returns:
-        An empty list at or under the cap. Over it, one problem whose
-        first line names the total and how many words to cut, followed
-        by the :func:`_word_breakdown` lines.
+        An empty list at or under the ceiling. Over it, one problem whose
+        first line names the total and how many words to cut to reach the
+        ``MAX_WORDS`` target, followed by the :func:`_word_breakdown` lines.
     """
     total = _word_total(title, bullets)
-    if total <= MAX_WORDS:
+    if total <= HARD_MAX_WORDS:
         return []
     header = (
-        f"squash-merge message is {total} words; FOUNDATION §6 caps at "
-        f"{MAX_WORDS} (cut {total - MAX_WORDS})"
+        f"squash-merge message is {total} words; FOUNDATION §6 refuses over "
+        f"{HARD_MAX_WORDS} and targets {MAX_WORDS} (cut {total - MAX_WORDS})"
     )
     return ["\n".join([header, *_word_breakdown(title, bullets)])]
+
+
+def word_cap_warning(title: str, bullets: list[str]) -> str | None:
+    """Return the warning for a message between the target and the ceiling.
+
+    Kept out of :func:`validate` so validation stays a pure list of
+    refusals: a warning never blocks, it only tells the author the
+    message is over target and what to trim.
+
+    Args:
+        title: Squash title.
+        bullets: Bullet strings.
+
+    Returns:
+        The warning (total, target, per-part breakdown) for a total of
+        ``MAX_WORDS + 1`` to ``HARD_MAX_WORDS`` words, else ``None``.
+    """
+    total = _word_total(title, bullets)
+    if not MAX_WORDS < total <= HARD_MAX_WORDS:
+        return None
+    header = (
+        f"squash-merge message is {total} words — over the {MAX_WORDS}-word "
+        f"target (posting anyway; aim for <= {MAX_WORDS}, cut {total - MAX_WORDS})"
+    )
+    return "\n".join([header, *_word_breakdown(title, bullets)])
 
 
 def _check_attribution(title: str, bullets: list[str]) -> list[str]:
@@ -331,9 +371,12 @@ def _list_squash_comments(pr_number: int) -> list[dict[str, object]] | None:
 
     Returns:
         Per :func:`forge.gh_comments.list_marker_comments` for
-        :data:`SQUASH_MARKER`.
+        :data:`SQUASH_MARKER`, anchored: only a comment whose body starts
+        with the marker is a squash comment. A wrap-up that quotes the
+        marker mid-text is not one, so it is never deleted as a
+        superseded squash comment nor re-posted in its place.
     """
-    return list_marker_comments(pr_number, SQUASH_MARKER)
+    return list_marker_comments(pr_number, SQUASH_MARKER, anchored=True)
 
 
 def _latest_activity_at(pr_number: int) -> str | None:
@@ -565,6 +608,8 @@ def main() -> int:
         return 1
 
     body = build_body(args.title, args.bullet)
+    if warning := word_cap_warning(args.title, args.bullet):
+        sys.stderr.write(f"forge-pr-squash-comment: warning: {warning}\n")
 
     if args.dry_run:
         # stdout stays exactly the body; the counts go to stderr beside it.

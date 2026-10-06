@@ -596,8 +596,11 @@ advisories with the suggested pin; they never edit pins.
 
 ### Squash-merge messages (mandatory at PR finalization)
 
-`forge:pr-manager` enforces: max 50 words; 3–5 bullets; conventional-commit
-title; title + bullets only; no Claude/AI attribution. Posted via
+`forge:pr-manager` enforces: a 50-word target (51–55 words posts with a
+warning naming what to trim; over 55 is refused); 3–5 bullets;
+conventional-commit title; title + bullets only; no Claude/AI attribution.
+The squash message is a comment of its own — never embedded in the
+wrap-up, which `forge-pr-wrapup validate` refuses. Posted via
 **`forge-pr-squash-comment`** (validates every rule; `--dry-run` previews) —
 never hand-constructed. The squash message is the permanent `main`
 commit; if it can't be summarized in 50 words, the PR is too big.

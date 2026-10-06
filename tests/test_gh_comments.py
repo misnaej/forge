@@ -295,6 +295,52 @@ def test_list_marker_comments_keeps_only_marked_comments(
     assert [c["id"] for c in found] == [555]
 
 
+MID_TEXT_COMMENT = {
+    **MARKED_COMMENT,
+    "id": 600,
+    "body": f"a wrap-up that quotes {MARKER} mid-text",
+}
+LEADING_WHITESPACE_COMMENT = {
+    **MARKED_COMMENT,
+    "id": 601,
+    "body": f"\n  \n{MARKER}\nbody",
+}
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_ids"),
+    [
+        ({"anchored": True}, [601]),
+        ({}, [600, 601]),
+    ],
+)
+def test_list_marker_comments_anchoring(
+    monkeypatch: pytest.MonkeyPatch,
+    kwargs: dict[str, bool],
+    expected_ids: list[int],
+) -> None:
+    """SCENARIO: one comment quotes the marker mid-text, one opens with it.
+
+    MOCK SETUP: ``gh_api`` returns both; ``own_login`` matches the author.
+    EXPECTED BEHAVIOR: anchored matching skips the mid-text quote and keeps
+    the comment that starts with the marker after leading whitespace; the
+    default substring match keeps both.
+
+    Args:
+        kwargs: Keyword arguments forwarded to ``list_marker_comments``.
+        expected_ids: Comment ids the listing should return.
+    """
+    monkeypatch.setattr(mod, "own_login", lambda: "octocat")
+    monkeypatch.setattr(
+        mod,
+        "gh_api",
+        lambda *_a, **_kw: page_json(MID_TEXT_COMMENT, LEADING_WHITESPACE_COMMENT),
+    )
+    found = mod.list_marker_comments(61, MARKER, **kwargs)
+    assert found is not None
+    assert [c["id"] for c in found] == expected_ids
+
+
 def test_list_marker_comments_spans_pages(monkeypatch: pytest.MonkeyPatch) -> None:
     """SCENARIO: ``--paginate`` emits one JSON array per page.
 
