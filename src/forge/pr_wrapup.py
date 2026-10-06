@@ -618,8 +618,8 @@ def post_gates(
             else "every check was skipped"
         )
         notes.append(
-            f"CI has not run on this PR ({cause}); the wrap-up's CI Status "
-            "says so, and local verification is the only evidence"
+            f"CI has not run on this PR ({cause}); local verification is the "
+            "only evidence"
         )
     return refusals, notes
 

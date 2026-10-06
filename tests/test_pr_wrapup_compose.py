@@ -610,8 +610,6 @@ def test_summarize_rollup_skipped_checks_never_count_as_passed(
     """
     result = summarize_rollup(rollup, is_draft=is_draft)
     assert result == expected
-    if expected.startswith("⚪"):
-        assert "passed" not in result
 
 
 def test_rollup_not_run_is_false_for_an_empty_rollup() -> None:

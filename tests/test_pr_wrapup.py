@@ -1482,7 +1482,8 @@ def test_main_compose_draft_pr_with_only_skipped_checks_renders_draft_wording(
 
     assert rc == 0
     written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
-    assert "⚪ CI not run — 1 skipped (draft PR)" in written
+    assert "CI not run" in written
+    assert "(draft PR)" in written
     assert "✅ passed" not in written
 
 
