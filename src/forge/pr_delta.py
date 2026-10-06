@@ -314,7 +314,7 @@ def find_loose_closing_refs(text: str) -> list[int]:
 
 
 def unlisted_closing_refs(body: str) -> list[int]:
-    """Return issues GitHub would close for *body* that the strict counter omits.
+    """Return closing-keyword refs in *body* that the strict counter omits.
 
     Args:
         body: PR description.
