@@ -29,14 +29,20 @@ source "$ANCHOR_LIB"
 # git_anchor.sh for the exact shape). A plain space ahead of `gh` with
 # no separator or wrapper token is NOT an invocation — that lets
 # `echo gh pr merge` through, which is harmless (we want to block actual
-# merges, not text mentions of the command).
-if echo "$COMMAND" | grep -qE "${GH_ANCHOR}pr[[:space:]]+merge\b"; then
+# merges, not text mentions of the command). Found on the
+# command-positions view (git_anchor.sh), so a quoted mention never fires
+# and `bash -c "gh pr merge 1"` does; a help request merges nothing.
+CMDPOS=$(command_positions "$COMMAND")
+if echo "$CMDPOS" | grep -qE "${GH_ANCHOR}pr[[:space:]]+merge\b" \
+    && ! guard_help_only "$CMDPOS" "${GH_ANCHOR}pr[[:space:]]+merge\b"; then
     echo "BLOCKED: agents must not merge PRs. Merging is the user's call. Have the user run: ! $COMMAND" >&2
     exit 2
 fi
 
-# Direct API merges that achieve the same effect.
-if echo "$COMMAND" | grep -qE 'gh +api[^|]*pulls/[0-9]+/merge'; then
+# Direct API merges that achieve the same effect: a real `gh api` call,
+# whose (often quoted) endpoint is read from the --words view.
+if echo "$CMDPOS" | grep -qE "${GH_ANCHOR}api\b" \
+    && command_positions --words "$COMMAND" | grep -qE 'gh +api[^|]*pulls/[0-9]+/merge'; then
     echo "BLOCKED: agents must not merge PRs via the API. Have the user run: ! $COMMAND" >&2
     exit 2
 fi

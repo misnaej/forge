@@ -49,17 +49,21 @@ if [ ! -r "$ANCHOR_LIB" ]; then
 fi
 source "$ANCHOR_LIB"
 
-# `gh pr create` at start-of-string or after a shell separator — same
-# matching convention as block_pr_merge.sh (a plain space ahead of `gh`
-# is not a separator, letting text mentions through).
-if ! echo "$COMMAND" | grep -qE "${GH_ANCHOR}pr[[:space:]]+create\b"; then
+# `gh pr create` at a real command position — found on the
+# command-positions view (git_anchor.sh), so a quoted mention or a grep
+# pattern naming it never fires, `bash -c "gh pr create …"` does, and a
+# help request (`gh pr create --help`) publishes nothing.
+CMDPOS=$(command_positions "$COMMAND")
+if ! echo "$CMDPOS" | grep -qE "${GH_ANCHOR}pr[[:space:]]+create\b" \
+    || guard_help_only "$CMDPOS" "${GH_ANCHOR}pr[[:space:]]+create\b"; then
     exit 0
 fi
 
 # The embedded skip form must sit at command position, directly prefixing
 # the create invocation — a free-text mention (e.g. in a --title/--body
-# that discusses this hook) must NOT trip the bypass.
-if echo "$COMMAND" | grep -qE '(^|[;&|(])[[:space:]]*FORGE_SKIP_WRAPUP_GATE=1[[:space:]]+gh[[:space:]]+pr[[:space:]]+create\b' \
+# that discusses this hook) must NOT trip the bypass, so it too is read
+# from the command-positions view.
+if echo "$CMDPOS" | grep -qE '(^|[;&|(])[[:space:]]*FORGE_SKIP_WRAPUP_GATE=1[[:space:]]+gh[[:space:]]+pr[[:space:]]+create\b' \
     || [ "${FORGE_SKIP_WRAPUP_GATE:-}" = "1" ]; then
     exit 0
 fi

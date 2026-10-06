@@ -35,17 +35,33 @@ set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 [ -z "$COMMAND" ] && exit 0
+# Anchors and the command-positions views live in the shared lib (one home
+# for every guard that locates a command).
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+if [ ! -r "$ANCHOR_LIB" ]; then
+    # Fail CLOSED: a missing/unreadable lib (corrupted plugin cache) must
+    # block, not silently disarm the guard — only exit 2 blocks in the
+    # PreToolUse contract.
+    echo "BLOCKED: guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$ANCHOR_LIB"
+
+# Cheap bail: no real git push or gh api at all. Found on the shared
+# command-positions view, so a quoted mention never counts and
+# `bash -c "git push origin :main"` does.
+CMDPOS=$(command_positions "$COMMAND")
+if ! echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}push\b" \
+    && ! echo "$CMDPOS" | grep -qE "${GH_ANCHOR}api\b"; then
+    exit 0
+fi
 
 # Split on shell separators so a ':main' / 'DELETE' token in one segment
 # (e.g. a commit message) can never trip a push/api in another segment.
-# `||` before `|` so a double-pipe collapses to one break.
-SEGMENTS=$(printf '%s' "$COMMAND" | sed -E 's/(&&|\|\||;|\|)/\n/g')
-
-# Cheap bail: no segment is a git push or a gh api at all.
-if ! echo "$SEGMENTS" | grep -qE 'git[[:space:]]+push' \
-    && ! echo "$SEGMENTS" | grep -qE 'gh[[:space:]]+api'; then
-    exit 0
-fi
+# `||` before `|` so a double-pipe collapses to one break. Segments come
+# from the --words view: a separator inside a quoted argument never splits
+# an invocation, and a quoted refspec or endpoint is still read.
+SEGMENTS=$(command_positions --words "$COMMAND" | sed -E 's/(&&|\|\||;|\|)/\n/g')
 
 REPO_ROOT=$(echo "$INPUT" | jq -r '.cwd // empty')
 if [ -z "$REPO_ROOT" ] || ! echo "$REPO_ROOT" | grep -qE '^/'; then

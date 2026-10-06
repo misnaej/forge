@@ -30,13 +30,19 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}rebase\b"; then
+# Commands are found on the command-positions view (git_anchor.sh): a
+# quoted mention is not a rebase, a wrapped `bash -c "git rebase …"` is.
+CMDPOS=$(command_positions "$COMMAND")
+if echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}rebase\b" \
+    && ! guard_help_only "$CMDPOS" "${GIT_ANCHOR}rebase\b"; then
     _block "git rebase"
 fi
 
 # `git pull --rebase` / `-r` is a rebase too — it replays local commits onto
-# the upstream tip, rewriting them exactly as `git rebase` would.
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}pull\b" \
-    && echo "$COMMAND" | grep -qE -- '--rebase\b|(^|\s)-[a-zA-Z]*r\b'; then
+# the upstream tip, rewriting them exactly as `git rebase` would. The flag
+# is read from the --words view, so a quoted `"--rebase"` still counts.
+if echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}pull\b" \
+    && ! guard_help_only "$CMDPOS" "${GIT_ANCHOR}pull\b" \
+    && command_positions --words "$COMMAND" | grep -qE -- '--rebase\b|(^|\s)-[a-zA-Z]*r\b'; then
     _block "git pull --rebase"
 fi

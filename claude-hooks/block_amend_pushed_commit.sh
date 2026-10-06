@@ -45,72 +45,22 @@ source "$ANCHOR_LIB"
 
 # Cheap text bail FIRST — this hook fires on every Bash call, so the two
 # git subprocess queries below run only on a real `git commit … --amend`
-# match. Quoted segments are stripped so a commit MESSAGE mentioning
-# --amend never fires; `commit([[:space:]]|$)` excludes commit-tree /
+# match. Both the invocation and the flag are read from the shared
+# command-positions view (git_anchor.sh), so a commit MESSAGE mentioning
+# --amend never fires, while `bash -c "git commit --amend"` and an amend
+# inside `"$(…)"` do; `commit([[:space:]]|$)` excludes commit-tree /
 # commit-graph; `--am(e(n(d)?)?)?` covers git's accepted unambiguous
-# long-option abbreviations of --amend.
-# Quote stripping is a single left-to-right pass tracking quote state
-# (none / single / double), mirroring bash's own tokenizer: single quotes
-# have no escapes; inside double quotes a backslash escapes the next
-# character. Two independent regex passes CANNOT do this — whichever
-# quote style strips first cross-pairs its delimiter characters embedded
-# in the OTHER style's spans (`-m "it's" --amend -m "don't"` swallows the
-# live --amend), and swapping the order just mirrors the bypass.
+# long-option abbreviations of --amend. The view mirrors bash's quote and
+# escape rules (incl. `$'…'`, escaped dollars, backslash-newline joins).
 # Residual: a NON-git token like `./run.sh --amend` after `git commit …`
 # in one compound command can false-positive; the block is conservative
 # and a human runs it with `!`.
-# States: 0 unquoted, 1 single-quoted, 2 double-quoted, 3 ANSI-C $'…'.
-# Unquoted backslash consumes itself and emits the next char verbatim
-# (bash: `\-` is `-`), and at end-of-line is a line continuation (the
-# two lines join). $'…' differs from '…' in exactly one way bash cares
-# about: backslash escapes work inside it, including \047 itself.
-# The `dollar` flag marks a LIVE `$` — one emitted as a plain char, not
-# one produced by backslash-escaping (`\$` is a literal dollar in bash,
-# so `\$'…'` opens a PLAIN quote, never ANSI-C). Reading the raw text at
-# i-1 cannot tell those apart; only emission state can. Consecutive `$`
-# TOGGLE the flag: bash consumes `$$` atomically (the PID parameter), so
-# `$$'…'` is plain-quoted while `$$$'…'` is ANSI-C — exact parity.
-# Threat model note: this stripper faithfully mirrors bash's quote and
-# escape rules for straightforward commands — the reflexive amend the
-# hook exists to catch. Deliberate multi-layer obfuscation (`bash -c`,
-# `${IFS}` splicing, xargs) is the git-guard family's documented
-# accepted residual (git_anchor.sh), not this hook's job to chase.
-STRIPPED=$(printf '%s\n' "$COMMAND" | awk '
-    BEGIN { state = 0; pending = ""; dollar = 0; carry = 0 }
-    {
-        out = ""; cont = 0
-        if (carry == 0) dollar = 0
-        n = length($0)
-        for (i = 1; i <= n; i++) {
-            c = substr($0, i, 1)
-            if (state == 0) {
-                if (c == "\\") {
-                    if (i == n) cont = 1
-                    else { i++; out = out substr($0, i, 1); dollar = 0 }
-                }
-                else if (c == "\047") {
-                    state = dollar ? 3 : 1
-                    dollar = 0
-                }
-                else if (c == "\"") { state = 2; dollar = 0 }
-                else if (c == "$") { out = out c; dollar = !dollar }
-                else { out = out c; dollar = 0 }
-            } else if (state == 1) {
-                if (c == "\047") state = 0
-            } else if (state == 2) {
-                if (c == "\\") i++
-                else if (c == "\"") state = 0
-            } else {
-                if (c == "\\") i++
-                else if (c == "\047") state = 0
-            }
-        }
-        pending = pending out
-        carry = cont
-        if (cont == 0 && state == 0) { print pending; pending = "" }
-    }
-    END { if (pending != "") print pending }')
+STRIPPED=$(command_positions "$COMMAND")
 if ! echo "$STRIPPED" | grep -qE "${GIT_ANCHOR}commit([[:space:]]|\$)"; then
+    exit 0
+fi
+# Asking for help amends nothing (shared rule: git_anchor.sh).
+if guard_help_only "$STRIPPED" "${GIT_ANCHOR}commit([[:space:]]|\$)"; then
     exit 0
 fi
 if ! echo "$STRIPPED" | grep -qE -- '(^|[[:space:]])--am(e(n(d)?)?)?([^[:alnum:]_-]|$)'; then

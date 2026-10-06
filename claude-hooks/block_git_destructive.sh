@@ -48,9 +48,20 @@ if [ ! -r "$ANCHOR_LIB" ]; then
 fi
 source "$ANCHOR_LIB"
 
+# Commands are found on the command-positions view (git_anchor.sh) — a
+# quoted mention is not a reset, a wrapped `bash -c "git reset …"` is —
+# and their flags and pathspecs are read from the --words view, where a
+# quoted argument is still the argument git receives. `_guarded <verb-re>`
+# is true when a real invocation exists that is not just asking for help.
+CMDPOS=$(command_positions "$COMMAND")
+WORDS=$(command_positions --words "$COMMAND")
+_guarded() {
+    echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}$1" && ! guard_help_only "$CMDPOS" "${GIT_ANCHOR}$1"
+}
+
 # `git reset` — every form. The blanket ban subsumes the --hard/--merge
 # block that previously lived in block_git_reset_hard.sh (retired).
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}reset\b"; then
+if _guarded 'reset\b'; then
     _block "git reset" "Rewinds un-commit history (published commits on a synced branch) and --hard/--merge discard uncommitted work; to unstage, use \`git restore --staged <path>\` instead."
 fi
 
@@ -59,7 +70,9 @@ fi
 # is the sanctioned way to REPORT untracked state — but the exemption is
 # evaluated PER INVOCATION: the command is split at shell separators so
 # `git clean -n; git clean -f` still blocks on the second segment.
-while IFS= read -r seg; do
+# Segments come from the --words view, so a separator inside a quoted
+# argument never splits an invocation and a quoted mention never forms one.
+_guarded 'clean\b' && while IFS= read -r seg; do
     if echo "$seg" | grep -qE "${SEG_ANCHOR}clean\b"; then
         # Flags are scanned only AFTER the `clean` token, so a wrapper's
         # own flag (`sudo -n git clean -f`) can't masquerade as dry-run.
@@ -71,7 +84,7 @@ while IFS= read -r seg; do
             _block "git clean" "It deletes untracked files permanently — no reflog, no index, no recovery; report the untracked paths instead (\`git clean -n\` to list them)."
         fi
     fi
-done < <(printf '%s\n' "$COMMAND" | tr ';&|(' '\n')
+done < <(printf '%s\n' "$WORDS" | tr ';&|(' '\n')
 
 # Discard-everything restores: the pathspec `.` (or `./`) as the whole
 # target, with any run of flags tolerated in between so `git checkout -f .`
@@ -79,15 +92,15 @@ done < <(printf '%s\n' "$COMMAND" | tr ';&|(' '\n')
 # `git checkout ./subdir`, `git checkout <branch>`, `git restore <path>`,
 # and `git checkout --ours -- <path>` all stay allowed.
 DOT_TAIL='([[:space:]]+--?[^[:space:]]+)*([[:space:]]+--)?[[:space:]]+\.(/)?([[:space:]]|$|[;&|])'
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}checkout${DOT_TAIL}"; then
+if _guarded 'checkout\b' && echo "$WORDS" | grep -qE "${GIT_ANCHOR}checkout${DOT_TAIL}"; then
     _block "git checkout ." "It discards every uncommitted modification in the tree; restore individual paths deliberately, or stop and report."
 fi
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}restore${DOT_TAIL}"; then
+if _guarded 'restore\b' && echo "$WORDS" | grep -qE "${GIT_ANCHOR}restore${DOT_TAIL}"; then
     # `git restore --staged .` only unstages (index-only, worktree
     # untouched) and is the sanctioned unstage-everything form — allowed
     # unless --worktree re-adds the destructive half.
-    if ! echo "$COMMAND" | grep -qE "${GIT_ANCHOR}restore[^;&|]*--staged\b" \
-        || echo "$COMMAND" | grep -qE "${GIT_ANCHOR}restore[^;&|]*(--worktree\b|(^|[[:space:]])-W\b)"; then
+    if ! echo "$WORDS" | grep -qE "${GIT_ANCHOR}restore[^;&|]*--staged\b" \
+        || echo "$WORDS" | grep -qE "${GIT_ANCHOR}restore[^;&|]*(--worktree\b|(^|[[:space:]])-W\b)"; then
         _block "git restore ." "It discards every uncommitted modification in the tree; restore individual paths deliberately, or stop and report."
     fi
 fi
@@ -95,7 +108,7 @@ fi
 # `git stash drop` / `clear`, tolerating interposed flags
 # (`git stash --quiet drop`) — a dropped stash is unreferenced and gone.
 # Deleting a stash is never the agent's call (FOUNDATION §2).
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}stash([[:space:]]+-[^[:space:]]+)*[[:space:]]+(drop|clear)\b"; then
+if _guarded 'stash\b' && echo "$WORDS" | grep -qE "${GIT_ANCHOR}stash([[:space:]]+-[^[:space:]]+)*[[:space:]]+(drop|clear)\b"; then
     _block "git stash drop/clear" "A dropped stash is unreferenced and unrecoverable; leave the stash alone and report (\`git stash list\` to show it)."
 fi
 
@@ -105,8 +118,8 @@ fi
 # (checkout-index, never overwrites) has a documented failure class.
 # FOUNDATION §2's sync ladder secures dirty work with a checkpoint
 # commit instead; plain tracked-only stash verbs stay unblocked.
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}stash([[:space:]]+[^;&|[:space:]]+)*[[:space:]]+(--include-untracked|--all)\b" \
-    || echo "$COMMAND" | grep -qE "${GIT_ANCHOR}stash([[:space:]]+[^;&|[:space:]]+)*[[:space:]]+-[a-zA-Z]*[ua][a-zA-Z]*\b"; then
+if _guarded 'stash\b' && { echo "$WORDS" | grep -qE "${GIT_ANCHOR}stash([[:space:]]+[^;&|[:space:]]+)*[[:space:]]+(--include-untracked|--all)\b" \
+    || echo "$WORDS" | grep -qE "${GIT_ANCHOR}stash([[:space:]]+[^;&|[:space:]]+)*[[:space:]]+-[a-zA-Z]*[ua][a-zA-Z]*\b"; }; then
     _block "git stash -u/-a" "Untracked-including stash runs \`git clean\` internally and its restore can fail; use FOUNDATION §2's sync ladder (probe, direct merge, or wip-sync checkpoint commit) instead."
 fi
 

@@ -23,6 +23,19 @@ COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')
 
 # The three surfaces that bury a comment: conversation comments, review
 # submissions, and review-thread replies (REST `/pulls/<N>/comments`).
+# The gh call is found on the shared command-positions view (a quoted
+# mention posts nothing); the endpoint is read from the raw text, where a
+# quoted path is still the path.
+# Advisory only: without the shared lib there is nothing to locate with,
+# and a reminder must never turn into a failure.
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+[ -r "$ANCHOR_LIB" ] || exit 0
+# shellcheck source=git_anchor.sh
+source "$ANCHOR_LIB"
+if ! command_positions "$COMMAND" |
+    grep -qE "${GH_ANCHOR}(pr[[:space:]]+(comment|review)|api)\b"; then
+    exit 0
+fi
 if ! printf '%s' "$COMMAND" |
     grep -qE 'gh +pr +(comment|review)|/pulls/[0-9]+/comments'; then
     exit 0

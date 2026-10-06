@@ -58,6 +58,18 @@ case "$COMMAND" in
         ;;
 esac
 
+# Anchors and the command-positions views live in the shared lib (one home
+# for every guard that locates a command).
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+if [ ! -r "$ANCHOR_LIB" ]; then
+    # Fail CLOSED: a missing/unreadable lib (corrupted plugin cache) must
+    # block, not silently disarm the guard — only exit 2 blocks in the
+    # PreToolUse contract.
+    echo "BLOCKED: guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$ANCHOR_LIB"
+
 _block() {
     echo "BLOCKED: precommit-fixer's Bash is limited to forge-precommit, the step CLIs, forge-smart-test --depth 0, and targeted pytest node-ids — the code_health/ logs are the only evidence (agents/precommit-fixer.md, FOUNDATION §3). '$1' is outside that set; do not run reconnaissance, read the logs." >&2
     exit 2
@@ -128,7 +140,10 @@ _segment_ok() {
 # Normalize every command separator (; & | and subshell-opening
 # parens) to newlines, then require EVERY segment to pass — a pipe into
 # a non-allowlisted tool, or a chained recon command, blocks the whole
-# invocation (conservative by intent).
+# invocation (conservative by intent). Segments come from the shared
+# --words view (git_anchor.sh): a separator inside a quoted node id never
+# splits it, `$(…)` inside double quotes is its own segment, and a
+# `bash -c` / `eval` payload is split out and judged like any command.
 FULL_RUN=0
 while IFS= read -r segment; do
     if ! _segment_ok "$segment"; then
@@ -137,7 +152,7 @@ while IFS= read -r segment; do
     if _is_full_precommit "$segment"; then
         FULL_RUN=1
     fi
-done <<< "$(printf '%s' "$COMMAND" | tr ';&|(' '\n\n\n\n')"
+done <<< "$(command_positions --words "$COMMAND" | tr ';&|(' '\n\n\n\n')"
 
 # ---- The three-run cap, made mechanical (agents/precommit-fixer.md) ----
 # The fixer's contract allows three full `forge-precommit` runs per

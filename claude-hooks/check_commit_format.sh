@@ -10,6 +10,17 @@
 set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+# Anchors and the command-positions views live in the shared lib (one home
+# for every guard that locates a command).
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+if [ ! -r "$ANCHOR_LIB" ]; then
+    # Fail CLOSED: a missing/unreadable lib (corrupted plugin cache) must
+    # block, not silently disarm the guard — only exit 2 blocks in the
+    # PreToolUse contract.
+    echo "BLOCKED: guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$ANCHOR_LIB"
 
 # Try heredoc pattern first: the subject is the first non-empty line
 # after `<<'EOF'` (or unquoted `<<EOF`).
@@ -45,12 +56,16 @@ CONVENTIONAL_TYPES='feat|fix|refactor|test|docs|chore|perf|ci|build|style|revert
 # containing the literal FORGE_WIP_SYNC=1 must not be mistaken for a
 # checkpoint commit.
 IS_COMMIT=false
-if echo "$COMMAND" | grep -qE 'git([[:space:]]+[^;&|[:space:]]+)*[[:space:]]+commit\b'; then
+# Both the commit and the env marker are read from the shared
+# command-positions view: a quoted mention of either is not one.
+CMDPOS=$(command_positions "$COMMAND")
+if echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}commit\b" \
+    && ! guard_help_only "$CMDPOS" "${GIT_ANCHOR}commit\b"; then
     IS_COMMIT=true
 fi
 HAS_WIP_ENV=false
 HAS_WIP_MSG=false
-if $IS_COMMIT && echo "$COMMAND" | grep -qE '(^|[;&|[:space:]])FORGE_WIP_SYNC=1([;&|[:space:]]|$)'; then
+if $IS_COMMIT && echo "$CMDPOS" | grep -qE '(^|[;&|[:space:]])FORGE_WIP_SYNC=1([;&|[:space:]]|$)'; then
     HAS_WIP_ENV=true
 fi
 if ! $IS_COMMIT; then
