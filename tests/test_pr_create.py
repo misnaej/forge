@@ -196,28 +196,12 @@ def test_pr_create_warns_when_the_body_closes_an_unlisted_issue(
     assert "Part of #N" in warnings[0]
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        pytest.param("Closes #5\n", id="bare-closing-line"),
-        pytest.param(None, id="unreadable-body-file"),
-    ],
-)
-def test_pr_create_stays_quiet_without_unlisted_closes(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-    body: str | None,
+def test_pr_create_publishes_quietly_when_the_body_file_is_unreadable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A bare closing line, or a body it cannot read, publishes without a warning.
-
-    Args:
-        body: Body file content, or ``None`` to leave the file missing.
-    """
+    """A body file it cannot read is left to `gh`: no warning, no refusal."""
     repo = _publishable_repo(tmp_path)
     monkeypatch.chdir(repo)
-    if body is not None:
-        (repo / "body.md").write_text(body)
     calls = _stub_gh(monkeypatch)
 
     with caplog.at_level("WARNING", logger=pr_create.__name__):

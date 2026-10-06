@@ -651,15 +651,21 @@ def test_render_issue_management_notes_absence_when_the_pr_body_was_not_searched
 def test_render_issue_management_names_what_github_also_closes() -> None:
     """Issues closed from prose are appended after the listed ones."""
     text = render_issue_management([1], pr_body_checked=True, also_closed=[4, 5])
-    assert text == "Closes #1 — GitHub will also close: #4, #5"
+    assert text == (
+        "Closes #1 — GitHub would also close (on merge into the default branch): #4, #5"
+    )
 
 
-def test_render_issue_management_without_extras_is_unchanged() -> None:
-    """An empty ``also_closed`` renders byte-identically to omitting it."""
-    for refs in ([1, 2], []):
-        assert render_issue_management(
-            refs, pr_body_checked=True, also_closed=()
-        ) == render_issue_management(refs, pr_body_checked=True)
+def test_render_issue_management_without_extras_renders_the_plain_forms() -> None:
+    """An empty ``also_closed`` adds nothing to either plain form."""
+    assert (
+        render_issue_management([1, 2], pr_body_checked=True, also_closed=())
+        == "Closes #1, #2"
+    )
+    assert (
+        render_issue_management([], pr_body_checked=True, also_closed=())
+        == "⚠️ no closing keyword found (Closes/Fixes/Resolves #N on its own line)"
+    )
 
 
 def test_render_issue_management_no_closing_line_still_names_github_closes() -> None:
@@ -668,7 +674,7 @@ def test_render_issue_management_no_closing_line_still_names_github_closes() -> 
     assert "no closing keyword found" not in text
     assert text == (
         "⚠️ no closing keyword on its own line (Closes/Fixes/Resolves #N); "
-        "GitHub will still close: #4"
+        "GitHub would still close (on merge into the default branch): #4"
     )
 
 

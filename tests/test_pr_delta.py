@@ -766,6 +766,13 @@ def test_unlisted_closing_refs_names_what_the_strict_counter_misses() -> None:
     assert unlisted_closing_refs(_PARTIAL_CLOSE_SENTENCE) == [508, 504]
 
 
+def test_closing_scans_ignore_an_oversized_issue_number() -> None:
+    """A digit run past ``int()``'s limit is no reference, and raises nothing."""
+    body = f"closes #{'9' * 5000}\n"
+    assert find_loose_closing_refs(body) == []
+    assert find_closing_refs(body) == []
+
+
 def test_unlisted_closing_refs_empty_for_bare_closing_lines() -> None:
     """A body in forge's bare-line style has nothing unlisted."""
     assert unlisted_closing_refs("## Summary\nText.\n\nCloses #5\nFixes #6\n") == []

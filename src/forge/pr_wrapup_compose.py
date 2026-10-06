@@ -470,8 +470,8 @@ def render_issue_management(
 ) -> str:
     """Render the Issue Management line from the closing keywords found.
 
-    *also_closed* names issues GitHub closes from a keyword inside a
-    sentence. The no-keyword warning is worded so it never contradicts
+    *also_closed* names issues a close keyword elsewhere in the PR body
+    would close. The no-keyword warning is worded so it never contradicts
     them: what is missing is a closing line, not a closing effect.
 
     Args:
@@ -481,18 +481,24 @@ def render_issue_management(
             *closing_refs* omits them.
 
     Returns:
-        ``Closes #…`` or a warning when none was found; noted when only
-        commit messages could be searched.
+        One of ``Closes #…``; ``Closes #… — GitHub would also close (on
+        merge into the default branch): #…``; the ``⚠️ no closing keyword
+        found …`` warning; or ``⚠️ no closing keyword on its own line …;
+        GitHub would still close (on merge into the default branch): #…``.
+        Each is suffixed with a note when only commit messages could be
+        searched.
     """
     also = ", ".join(f"#{ref}" for ref in also_closed)
     if closing_refs:
         text = "Closes " + ", ".join(f"#{ref}" for ref in closing_refs)
         if also:
-            text += f" — GitHub will also close: {also}"
+            text += (
+                f" — GitHub would also close (on merge into the default branch): {also}"
+            )
     elif also:
         text = (
             "⚠️ no closing keyword on its own line (Closes/Fixes/Resolves #N); "
-            f"GitHub will still close: {also}"
+            f"GitHub would still close (on merge into the default branch): {also}"
         )
     else:
         text = "⚠️ no closing keyword found (Closes/Fixes/Resolves #N on its own line)"

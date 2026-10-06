@@ -951,7 +951,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `fenced_line_indexes(lines: list[str]) -> set[int]` — Return the indexes of *lines* inside fenced code blocks, delimiters included.
 - `strip_fences(lines: list[str]) -> list[str]` — Return *lines* without fenced code blocks (fence lines included).
 - `find_closing_refs(text: str) -> list[int]` — Return the issue numbers a PR body or commit message would close.
-- `find_loose_closing_refs(text: str) -> list[int]` — Return the issue numbers GitHub itself would close for *text*.
+- `find_loose_closing_refs(text: str) -> list[int]` — Return the closing-keyword ``#N`` references anywhere in *text*.
 - `unlisted_closing_refs(body: str) -> list[int]` — Return issues GitHub would close for *body* that the strict counter omits.
 - `touches_high_blast_radius(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`HIGH_BLAST_RADIUS_PATHS`.
 - `configured_docs_only_globs(repo_root: Path) -> tuple[str, ...]` — Return the consumer's extra docs-only globs from ``[tool.forge.pr]``.

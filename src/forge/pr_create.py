@@ -305,10 +305,10 @@ def _warn_unlisted_closes(body_file: str) -> None:
         return
     refs = ", ".join(f"#{ref}" for ref in unlisted)
     logger.warning(
-        "GitHub will close %s when this merges, although forge's closing-keyword "
-        "check does not list %s (a close keyword inside a sentence still closes "
-        "the whole issue). If this PR delivers only part of it, write "
-        '"Part of #N" instead.',
+        "GitHub would close %s if this merges into the default branch, although "
+        "forge's closing-keyword check does not list %s (a close keyword closes "
+        "the whole issue wherever it appears in the description; write "
+        '"Part of #N" for partial delivery).',
         refs,
         "it" if len(unlisted) == 1 else "them",
     )
