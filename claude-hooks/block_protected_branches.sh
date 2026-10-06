@@ -35,8 +35,13 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-# Only inspect git commit / git push — checkout, status, log, etc. always allowed.
-if ! echo "$COMMAND" | grep -qE "${GIT_ANCHOR}(commit|push)\b"; then
+# Only inspect git commit / git push — checkout, status, log, etc. always
+# allowed. Commands are found on the command-positions view (git_anchor.sh):
+# a quoted mention is not a push, `bash -c "git push origin main"` is; a
+# help request commits and pushes nothing.
+CMDPOS=$(command_positions "$COMMAND")
+if ! echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}(commit|push)\b" \
+    || guard_help_only "$CMDPOS" "${GIT_ANCHOR}(commit|push)\b"; then
     exit 0
 fi
 REPO_ROOT=$(echo "$INPUT" | jq -r '.cwd // empty')
@@ -81,14 +86,16 @@ PY
 # `+main`. The current-branch check below never sees these. Nothing — not
 # even forge:git-commit-push — may push directly to a protected branch
 # (FOUNDATION §2). (#74)
-if echo "$COMMAND" | grep -qE "${GIT_ANCHOR}push\b"; then
+if echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}push\b"; then
     # EVERY invocation in the command, not just one: a literal
     # `^…git push` sed left prefixed forms unstripped, and stripping
     # through the last match instead judged only the final destination —
     # a chain could carry a protected push in front of a harmless one.
     # Each match stops at the next separator, so tokens never leak
     # between invocations, and a subshell's `)` is never part of a ref.
-    invocations=$(echo "$COMMAND" | grep -oE "${GIT_ANCHOR}push\b[^;&|)]*" || true)
+    # Invocations come from the --words view: only real pushes are read,
+    # and a quoted refspec (`"HEAD:main"`) is still the refspec git gets.
+    invocations=$(command_positions --words "$COMMAND" | grep -oE "${GIT_ANCHOR}push\b[^;&|)]*" || true)
     while IFS= read -r invocation; do
         [ -n "$invocation" ] || continue
         push_args=$(printf '%s' "$invocation" | sed -E "s/^${GIT_ANCHOR}push//")

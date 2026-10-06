@@ -4748,3 +4748,320 @@ def test_verdict_hook_fails_open_when_ledger_unwritable(tmp_path: Path) -> None:
     proc = _run_verdict_hook(tmp_path, env, message="all done")
     assert proc.returncode == 0
     assert "block" not in proc.stdout
+
+
+# Guards locate a command by its POSITION in the shell grammar, not by text
+# anywhere in the line (issues #467, #594, #614): quoted prose and heredoc
+# bodies are inert, while $(..), backticks, `sh -c`, `eval`, `ssh host "..."`
+# and heredocs fed to a shell still execute and stay visible.
+_ALLOW = 0
+_BLOCK = 2
+_POSITION_CASES = [
+    # Text that merely mentions a guarded verb must be allowed.
+    pytest.param(
+        "block_install_deps.sh",
+        'grep -nE "conda (env )?(create|update|install)|mamba|pip install" setup.sh',
+        _ALLOW,
+        id="467-grep-mentions-install",
+    ),
+    pytest.param(
+        "block_unverified_pr_create.sh",
+        'grep -nE "help|dry-run|gh pr create|grep -qE" '
+        "claude-hooks/block_unverified_pr_create.sh",
+        _ALLOW,
+        id="467-grep-mentions-pr-create",
+    ),
+    pytest.param(
+        "block_install_deps.sh",
+        "echo 'note (pip install x) not real'",
+        _ALLOW,
+        id="594-echo-parenthesised-install",
+    ),
+    pytest.param(
+        "block_install_deps.sh",
+        "git log --grep='(pip install'",
+        _ALLOW,
+        id="594-git-log-grep-install",
+    ),
+    pytest.param(
+        "block_install_deps.sh",
+        "gh pr comment 1 --body 'run (pip install foo)'",
+        _ALLOW,
+        id="594-pr-comment-body-install",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "python3 -c \"print('(git push --force)')\"",
+        _ALLOW,
+        id="594-python-string-force-push",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        'gh issue comment 1 --body "see (git push --force) and git commit"',
+        _ALLOW,
+        id="594-issue-comment-body-git",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        "cat > f.md <<'EOF'\ngit commit -m x\nEOF",
+        _ALLOW,
+        id="614-quoted-heredoc-body-inert",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        'gh issue close 1 --comment "$(cat file)"',
+        _ALLOW,
+        id="614-command-substitution-of-harmless-cmd",
+    ),
+    pytest.param(
+        "block_install_deps.sh",
+        'gh issue comment 1 --body "the fix is to run\n'
+        'pixi reinstall <package>, which rebuilds"',
+        _ALLOW,
+        id="614-multiline-body-line-start-verb",
+    ),
+    pytest.param(
+        "block_raw_ruff.sh",
+        'git commit -m "x; ruff check ."',
+        _ALLOW,
+        id="614-quoted-semicolon-ruff",
+    ),
+    pytest.param(
+        "block_continuation_delete.sh",
+        'gh issue comment 1 --body "x; rm -rf .plan/"',
+        _ALLOW,
+        id="614-quoted-semicolon-rm-plan",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        'gh issue comment 1 --body "x; git clean -fd"',
+        _ALLOW,
+        id="614-quoted-semicolon-git-clean",
+    ),
+    # Real commands at a command position must be blocked.
+    pytest.param(
+        "block_install_deps.sh",
+        "pixi reinstall pkg",
+        _BLOCK,
+        id="pixi-reinstall-blocked",
+    ),
+    pytest.param(
+        "block_unverified_pr_create.sh",
+        'bash -c "gh pr create --title x"',
+        _BLOCK,
+        id="bash-c-pr-create",
+    ),
+    pytest.param(
+        "block_unverified_pr_create.sh",
+        "sh -c 'gh pr create --title x'",
+        _BLOCK,
+        id="sh-c-pr-create",
+    ),
+    pytest.param(
+        "block_unverified_pr_create.sh",
+        "(gh pr create --title x)",
+        _BLOCK,
+        id="subshell-pr-create",
+    ),
+    pytest.param(
+        "block_unverified_pr_create.sh",
+        "true && gh pr create --title x",
+        _BLOCK,
+        id="and-chain-pr-create",
+    ),
+    pytest.param(
+        "block_unverified_pr_create.sh",
+        "echo hi; gh pr create --title x",
+        _BLOCK,
+        id="semicolon-pr-create",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        'echo "$(git commit -m x)"',
+        _BLOCK,
+        id="substitution-in-double-quotes",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        'echo "`git commit -m x`"',
+        _BLOCK,
+        id="backticks-in-double-quotes",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        'bash -c "cd x && git push -f"',
+        _BLOCK,
+        id="bash-c-chain-force-push",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        'git push "--force" origin feat',
+        _BLOCK,
+        id="quoted-force-flag-still-read",
+    ),
+    pytest.param(
+        "block_no_verify.sh",
+        'git commit "--no-verify" -m x',
+        _BLOCK,
+        id="quoted-no-verify-still-read",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "git push --force; echo --help",
+        _BLOCK,
+        id="help-in-later-segment-no-exemption",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        "eval 'git commit -m x'",
+        _BLOCK,
+        id="eval-quoted",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        'ssh host "git push origin x"',
+        _BLOCK,
+        id="ssh-remote-command",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        "bash <<'EOF'\ngit commit -m x\nEOF",
+        _BLOCK,
+        id="heredoc-fed-to-shell",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        "cat > f.md <<EOF\n$(git commit -m x)\nEOF",
+        _BLOCK,
+        id="unquoted-heredoc-substitution-runs",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        "# don't\ngit commit -m x",
+        _BLOCK,
+        id="comment-apostrophe-does-not-hide-next-line",
+    ),
+    pytest.param(
+        "block_install_deps.sh",
+        'bash -c "pip install x"',
+        _BLOCK,
+        id="bash-c-install",
+    ),
+    pytest.param(
+        "block_git_rebase.sh",
+        'zsh -c "git rebase main"',
+        _BLOCK,
+        id="zsh-c-rebase",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        'bash -c "git reset --hard"',
+        _BLOCK,
+        id="bash-c-reset-hard",
+    ),
+    pytest.param(
+        "block_pr_merge.sh",
+        'bash -c "gh pr merge 1"',
+        _BLOCK,
+        id="bash-c-pr-merge",
+    ),
+    pytest.param(
+        "block_raw_ruff.sh",
+        'bash -c "ruff check ."',
+        _BLOCK,
+        id="bash-c-ruff",
+    ),
+    pytest.param(
+        "block_branch_deletion.sh",
+        'bash -c "git push origin :main"',
+        _BLOCK,
+        id="bash-c-branch-deletion",
+    ),
+    pytest.param(
+        "block_continuation_delete.sh",
+        'bash -c "rm -rf .plan"',
+        _BLOCK,
+        id="bash-c-continuation-delete",
+    ),
+    pytest.param(
+        "block_raw_wrapup_post.sh",
+        'bash -c "gh pr comment 1 --body-file code_health/pr_wrapup.md"',
+        _BLOCK,
+        id="bash-c-wrapup-post",
+    ),
+    pytest.param(
+        "block_protected_branches.sh",
+        'git push origin "HEAD:main"',
+        _BLOCK,
+        id="quoted-refspec-still-read",
+    ),
+]
+
+
+@pytest.mark.parametrize(("hook", "command", "expected"), _POSITION_CASES)
+def test_guards_locate_commands_by_position_not_by_text(
+    hook: str,
+    command: str,
+    expected: int,
+) -> None:
+    """SCENARIO: verb is guarded where shell runs it, not where quoted.
+
+    Args:
+        hook: Name of the guard hook to test.
+        command: Shell command to execute through the hook.
+        expected: Expected return code (0 for allow, 1 for block).
+    """
+    assert _run_hook(hook, command) == expected
+
+
+@pytest.mark.parametrize(
+    ("hook", "command"),
+    [
+        pytest.param(
+            "block_unverified_pr_create.sh", "gh pr create --help", id="pr-create"
+        ),
+        pytest.param("block_pr_merge.sh", "gh pr merge --help", id="pr-merge"),
+        pytest.param("block_raw_git.sh", "git commit -h", id="git-commit"),
+        pytest.param("block_git_destructive.sh", "git reset -h", id="git-reset"),
+        pytest.param("block_install_deps.sh", "pip install --help", id="pip-install"),
+        pytest.param("block_git_rebase.sh", "git rebase --help", id="git-rebase"),
+    ],
+)
+def test_help_flag_in_the_verbs_own_segment_is_allowed(hook: str, command: str) -> None:
+    """SCENARIO: asking a guarded verb for its help text is not running it.
+
+    Args:
+        hook: Name of the guard hook to test.
+        command: Shell command with help flag to execute through the hook.
+    """
+    assert _run_hook(hook, command) == _ALLOW
+
+
+@pytest.mark.parametrize(
+    ("hook", "command"),
+    [
+        pytest.param(
+            "block_unverified_pr_create.sh",
+            "gh pr create --title x; echo --help",
+            id="help-in-other-segment",
+        ),
+        pytest.param("block_raw_git.sh", "git commit -m -h", id="help-as-option-value"),
+        pytest.param(
+            "block_no_verify.sh",
+            "git commit -m -h --no-verify",
+            id="help-beside-no-verify",
+        ),
+        pytest.param(
+            "block_raw_git.sh", "git commit -- -h", id="help-after-double-dash"
+        ),
+        pytest.param("block_raw_git.sh", 'git commit "-h"', id="quoted-help"),
+    ],
+)
+def test_help_exemption_does_not_leak(hook: str, command: str) -> None:
+    """SCENARIO: a help-looking token that is not a real help flag still blocks.
+
+    Args:
+        hook: Name of the guard hook to test.
+        command: Shell command with help-like token to execute through the hook.
+    """
+    assert _run_hook(hook, command) == _BLOCK

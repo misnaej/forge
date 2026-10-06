@@ -39,7 +39,12 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-if [ "$IS_COMMIT_AGENT" != 1 ] && echo "$COMMAND" | grep -qE "${GIT_ANCHOR}(commit|push)\b"; then
+# Commands are found on the command-positions view (git_anchor.sh): a
+# quoted mention is not a commit, `bash -c "git commit …"` is. Asking a
+# guarded verb for help runs nothing and stays allowed.
+CMDPOS=$(command_positions "$COMMAND")
+if [ "$IS_COMMIT_AGENT" != 1 ] && echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}(commit|push)\b" \
+    && ! guard_help_only "$CMDPOS" "${GIT_ANCHOR}(commit|push)\b"; then
     echo "BLOCKED: raw 'git commit' / 'git push' from Bash is forbidden by FOUNDATION §3 mandatory-delegation. Use the forge:git-commit-push agent — it runs pre-commit, signs the commit per the convention, and pushes with the right tracking flags." >&2
     exit 2
 fi
@@ -53,7 +58,10 @@ fi
 # invocation earlier in the same command. Each occurrence is extracted
 # with its own argument list (terminated by `;`, `&`, `|`, `)`, or `#`
 # so a comment cannot smuggle a flag in) and judged alone; one
-# unexempted invocation blocks the command.
+# unexempted invocation blocks the command. Invocations come from the
+# --words view: only real invocations are judged (a quoted mention is not
+# one), and a quoted `"--abort"` handed to a real invocation still counts
+# as the flag it is.
 SEQUENCER_RE="${GIT_ANCHOR}(revert|cherry-pick)\b"
 SEQUENCER_EXEMPT_RE="(--(abort|quit|skip|no-commit)|[[:space:]]-n)\b"
 sequencer_blocked() {
@@ -65,10 +73,11 @@ sequencer_blocked() {
         # exempt the commit.
         invocation="${invocation%% -- *}"
         echo "$invocation" | grep -qE "$SEQUENCER_EXEMPT_RE" || return 0
-    done <<< "$(echo "$COMMAND" | grep -oE "${SEQUENCER_RE}[^;&|)#]*" || true)"
+    done <<< "$(command_positions --words "$COMMAND" | grep -oE "${SEQUENCER_RE}[^;&|)#]*" || true)"
     return 1
 }
-if echo "$COMMAND" | grep -qE "$SEQUENCER_RE" && sequencer_blocked; then
+if echo "$CMDPOS" | grep -qE "$SEQUENCER_RE" \
+    && ! guard_help_only "$CMDPOS" "$SEQUENCER_RE" && sequencer_blocked; then
     echo "BLOCKED: 'git revert' / 'git cherry-pick' create a commit through git's sequencer, which runs NO pre-commit hook — forbidden by FOUNDATION §3 for the same reason as raw 'git commit'. To undo a change, make a new commit through the normal flow. To leave a conflicted sequencer state, '--abort' / '--quit' / '--skip' stay allowed, as does '--no-commit'. If a human truly needs this, run it yourself with: ! $COMMAND" >&2
     exit 2
 fi

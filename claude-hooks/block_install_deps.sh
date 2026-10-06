@@ -29,9 +29,16 @@
 # `!`, or one of the keywords `then`/`else`/`elif`/`do`. Matching only the
 # first three let a command hide from every rule in this file behind any
 # of the others: `(pip install x)`, `{ pip install x; }`, `! pip install x`
-# and `if true; then pip install x; fi` were all allowed. Quoted prose
-# containing those characters can now false-positive; that trade is the
-# same one the git-guard family already makes.
+# and `if true; then pip install x; fi` were all allowed.
+#
+# Every rule runs on the shared command-positions view (git_anchor.sh), not
+# the raw text: quoted prose, grep patterns and heredoc bodies that merely
+# name a manager verb are blanked there, so they never match, while a
+# command wrapped in `bash -c "…"` / `eval` stays visible and is judged as
+# if typed directly. Flag-bearing tails (`<mgr> run … pip install`,
+# `forge-upgrade … --apply`) are read from the --words view, where a quoted
+# argument is still the argument the manager receives. A help request
+# (`pip install --help`) installs nothing and stays allowed.
 #
 # Opt-out via [tool.forge.hooks] in the repo's pyproject.toml:
 #   block_install_deps = false                 # allow every manager
@@ -42,6 +49,17 @@
 set -e
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+# Anchors and the command-positions views live in the shared lib (one home
+# for every guard that locates a command).
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+if [ ! -r "$ANCHOR_LIB" ]; then
+    # Fail CLOSED: a missing/unreadable lib (corrupted plugin cache) must
+    # block, not silently disarm the guard — only exit 2 blocks in the
+    # PreToolUse contract.
+    echo "BLOCKED: guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$ANCHOR_LIB"
 
 # Resolve the opt-out config. Prints ALL, NONE, or a comma-list of
 # managers. Defaults to ALL when pyproject / python / the key is absent —
@@ -81,6 +99,14 @@ block() {
     exit 2
 }
 
+CMDPOS=$(command_positions "$COMMAND")
+WORDS=$(command_positions --words "$COMMAND")
+# invoked <regex> — a real invocation matching <regex> that is not only a
+# help request.
+invoked() {
+    echo "$CMDPOS" | grep -qE "$1" && ! guard_help_only "$CMDPOS" "$1"
+}
+
 # Wrapper install forms (`<mgr> run pip install …`, `<mgr> run conda install …`)
 # are checked FIRST so a read-only `<mgr> run …` allowlist entry below can't
 # shadow them. The bare `pip`/`conda` rule below anchors the install verb to a
@@ -94,7 +120,8 @@ block() {
 # the second being the very form this hook's own --locked advisory recommends.
 # `python -m pip` is covered here too; the bare-pip rule below understands that
 # form but anchors to a command start, which `run` has already consumed.
-if echo "$COMMAND" | grep -qE '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*(conda|pipenv|uv|poetry|pixi)[[:space:]]+run\b[^;&|]*\b((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*[[:space:]]+install|conda[[:space:]]+(install|create|update|env[[:space:]]+(create|update)))\b' &&
+if invoked '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*(conda|pipenv|uv|poetry|pixi)[[:space:]]+run\b' &&
+    echo "$WORDS" | grep -qE '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*(conda|pipenv|uv|poetry|pixi)[[:space:]]+run\b[^;&|]*\b((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*[[:space:]]+install|conda[[:space:]]+(install|create|update|env[[:space:]]+(create|update)))\b' &&
     { blocked pip || blocked conda || blocked pipenv || blocked uv || blocked poetry || blocked pixi; }; then
     block
 fi
@@ -131,14 +158,14 @@ if blocked pixi; then
             echo "BLOCKED: \`pixi $verb\` is not on the agent allowlist ($(printf '%s' "$PIXI_ALLOWED_VERBS" | tr '|' ' ')). Unrecognised pixi verbs block by default — most of pixi's surface writes pixi.toml, pixi.lock, or the global tool store. If this one only reads, tell the user to run it themselves with: ! $COMMAND" >&2
             exit 2
         fi
-    done < <(printf '%s\n' "$COMMAND" | tr ';&|(){}!' '\n')
+    done < <(printf '%s\n' "$CMDPOS" | tr ';&|(){}!' '\n')
 fi
 
 # Read-only commands for every manager stay allowed (coarse fast-path). Note
 # `conda run` is intentionally absent — `conda run <non-install>` falls
 # through harmlessly (nothing below blocks it), while `conda run pip install`
 # is already handled above.
-if echo "$COMMAND" | grep -qE '(pip show|pip list|pip audit|pip-audit|conda (list|info|search|activate)|pipenv (--version|graph)|poetry (show|--version)|uv (pip list|--version))'; then
+if echo "$CMDPOS" | grep -qE '(pip show|pip list|pip audit|pip-audit|conda (list|info|search|activate)|pipenv (--version|graph)|poetry (show|--version)|uv (pip list|--version))'; then
     exit 0
 fi
 
@@ -146,17 +173,17 @@ fi
 # substring inside a quoted body (e.g. an issue body mentioning `pip
 # install`) doesn't trigger. (Accepted slip-through: `xargs pip install`.)
 if blocked pip || blocked conda; then
-    if echo "$COMMAND" | grep -qE '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*|conda) (install|create|env (create|update)|update)'; then
+    if invoked '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*|conda) (install|create|env (create|update)|update)'; then
         block
     fi
 fi
-if blocked pipenv && echo "$COMMAND" | grep -qE '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*pipenv[[:space:]]+(install|sync|lock|update|uninstall)\b'; then
+if blocked pipenv && invoked '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*pipenv[[:space:]]+(install|sync|lock|update|uninstall)\b'; then
     block
 fi
-if blocked poetry && echo "$COMMAND" | grep -qE '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*poetry[[:space:]]+(add|install|update|lock|remove)\b'; then
+if blocked poetry && invoked '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*poetry[[:space:]]+(add|install|update|lock|remove)\b'; then
     block
 fi
-if blocked uv && echo "$COMMAND" | grep -qE '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*uv[[:space:]]+(add|sync|lock|remove|(pip|tool|python)[[:space:]]+install)\b'; then
+if blocked uv && invoked '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*uv[[:space:]]+(add|sync|lock|remove|(pip|tool|python)[[:space:]]+install)\b'; then
     block
 fi
 
@@ -165,14 +192,15 @@ fi
 # rule out statically. Advisory, not a block: the command is legitimate
 # (it is how tests run), and an agent that adopts the flag never sees this
 # line again.
-if blocked pixi && echo "$COMMAND" | grep -qE '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*pixi[[:space:]]+(run|shell)\b' &&
-    ! echo "$COMMAND" | grep -qE '\-\-(locked|frozen)\b'; then
+if blocked pixi && echo "$CMDPOS" | grep -qE '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*pixi[[:space:]]+(run|shell)\b' &&
+    ! echo "$WORDS" | grep -qE '\-\-(locked|frozen)\b'; then
     echo "NOTE: \`pixi run\` / \`pixi shell\` rewrite pixi.lock when the manifest changed. Pass \`--locked\` — it still installs from the lock, but fails instead of re-solving (FOUNDATION §2)."
 fi
 
 # forge-upgrade --apply runs pip install --force-reinstall internally;
 # it's an explicit setup-script affordance, not for agents.
-if echo "$COMMAND" | grep -qE '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*forge-upgrade(\s|$).*--apply\b'; then
+if invoked '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*forge-upgrade(\s|$)' &&
+    echo "$WORDS" | grep -qE '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*forge-upgrade(\s|$).*--apply\b'; then
     echo "BLOCKED: forge-upgrade --apply runs pip install. Agents must not. Tell the user the exact command to run themselves with: ! $COMMAND" >&2
     exit 2
 fi

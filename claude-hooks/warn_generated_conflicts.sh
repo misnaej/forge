@@ -23,7 +23,8 @@ ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
 [ -f "$ANCHOR_LIB" ] || exit 0
 # shellcheck source=git_anchor.sh
 source "$ANCHOR_LIB"
-printf '%s' "$COMMAND" | grep -qE "${GIT_ANCHOR}merge\b" || exit 0
+# Found on the command-positions view: a quoted mention merged nothing.
+command_positions "$COMMAND" | grep -qE "${GIT_ANCHOR}merge\b" || exit 0
 
 command -v forge-resync >/dev/null 2>&1 || exit 0
 

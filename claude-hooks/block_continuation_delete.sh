@@ -8,6 +8,17 @@
 set -e
 INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
+# Anchors and the command-positions views live in the shared lib (one home
+# for every guard that locates a command).
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+if [ ! -r "$ANCHOR_LIB" ]; then
+    # Fail CLOSED: a missing/unreadable lib (corrupted plugin cache) must
+    # block, not silently disarm the guard — only exit 2 blocks in the
+    # PreToolUse contract.
+    echo "BLOCKED: guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$ANCHOR_LIB"
 
 # Command-position anchor, adapted from the family idiom in
 # block_raw_git.sh / block_force_push.sh / block_git_rebase.sh with ONE
@@ -18,14 +29,17 @@ COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
 # safety regression. The anchor keeps `rm`/`unlink` quoted inside prose
 # (issue bodies, commit messages) from firing. Accepted slip-throughs:
 # the same command-position-anchor limitations as the rest of the family
-# (shell keywords, eval/trap/nohup/time wrappers, backtick substitution,
-# indirect variables, interpreter one-liners) — a guardrail against
+# (shell keywords, trap/nohup/time wrappers, indirect variables,
+# interpreter one-liners; `eval`, `bash -c` and backticks ARE covered by
+# the shared command-positions view) — a guardrail against
 # honest mistakes, not an adversarial boundary.
 # The wrapper group also tolerates flag tokens (`xargs -0 rm`,
 # `sudo -n rm`) — without it, any flag breaks the wrapper chain and the
-# verb escapes the anchor.
+# verb escapes the anchor. The delete is found on the shared
+# command-positions view (git_anchor.sh), so `rm` quoted in prose never
+# fires while `bash -c "rm …"` and `eval rm …` do.
 RM_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|xargs|-[^[:space:]]+)[[:space:]]+)*(rm|unlink)([[:space:]]|$)'
-if ! echo "$COMMAND" | grep -qE "${RM_ANCHOR}"; then
+if ! command_positions "$COMMAND" | grep -qE "${RM_ANCHOR}"; then
     exit 0
 fi
 # Target: CONTINUATION.md itself, or the whole .plan directory. The
@@ -61,6 +75,8 @@ PLAN_DIR_RE="(^|[[:space:]\"'=(/\`])\.plan(/+([[:space:];&|)\"'\`*?{.]|$)|[[:spa
 # `find` half and reopens the xargs coverage the header calls
 # load-bearing. For the same reason nothing is truncated at `--`: unlike
 # git's pathspec separator, `rm --` is followed by the targets themselves.
+# Chunks come from the --words view: a separator inside a quoted path
+# never splits it, and a quoted `.plan` is still the target `rm` receives.
 #
 # Known gap, unchanged by this shaping and predating it: a *directory*
 # delete built through command substitution (`rm -rf $(true).plan/`)
@@ -73,7 +89,7 @@ plan_dir_in_delete_chunk() {
         [ -n "$chunk" ] || continue
         echo "$chunk" | grep -qE "$RM_ANCHOR" || continue
         echo "$chunk" | grep -qE "$PLAN_DIR_RE" && return 0
-    done <<< "$(echo "$COMMAND" | tr ';&\n' '\n\n\n')"
+    done <<< "$(command_positions --words "$COMMAND" | tr ';&\n' '\n\n\n')"
     return 1
 }
 if echo "$COMMAND" | grep -qE "$CONTINUATION_RE" || plan_dir_in_delete_chunk; then
