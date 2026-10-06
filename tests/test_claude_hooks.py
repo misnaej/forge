@@ -2103,6 +2103,58 @@ def test_destructive_blocks_broadened_anchor_forms(
     assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 2
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout -p",
+        "git restore -p",
+        "yes | git checkout -p",
+        "if x; then cd /o; git restore f; fi",
+        "{ cd /o; git restore f; }",
+        "builtin cd /o && git restore f",
+        "! cd /o; git restore f",
+        "git -c core.WORKTREE=/o restore f",
+        "git --config-env core.worktree=V restore f",
+        "GIT_CONFIG_COUNT=1 git restore f",
+        "git checkout --f main",
+    ],
+)
+def test_destructive_blocks_patch_chdir_and_worktree_relocation(
+    command: str, tmp_path: Path
+) -> None:
+    """Patch mode, a chdir in any compound form, and work-tree relocation fail closed.
+
+    Patch mode can discard hunks of dirty files without naming them; a
+    `cd` or relocated work tree means the status check would read the wrong
+    repository.
+
+    Args:
+        command: A restore/checkout whose target the hook cannot pin down.
+    """
+    assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 2
+
+
+def test_destructive_allows_cd_word_in_unrelated_command(tmp_path: Path) -> None:
+    """A mere mention of `cd` in a read-only command is not a chdir before a restore."""
+    options = HookOptions(cwd=tmp_path)
+    assert _run_hook(_DESTRUCTIVE, "echo cd; git status", options=options) == 0
+
+
+@pytest.mark.parametrize(("dirty", "expected"), [(True, 2), (False, 0)])
+def test_destructive_restore_attached_source_judged_on_state(
+    restore_repo: Path, *, dirty: bool, expected: int
+) -> None:
+    """`-sStable` (attached source) is not mistaken for a path; `f`'s state decides.
+
+    Args:
+        dirty: Whether `f` is modified before the hook runs.
+        expected: 2 when `f` holds uncommitted work, 0 when clean.
+    """
+    if dirty:
+        (restore_repo / "f").write_text("edited\n")
+    assert _restore_exit(restore_repo, "git restore -sStable f") == expected
+
+
 def test_destructive_restore_attached_dash_c_dirty_blocked(
     restore_repo: Path, tmp_path: Path
 ) -> None:

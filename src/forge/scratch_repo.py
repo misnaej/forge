@@ -1,11 +1,11 @@
 """forge-scratch-repo — isolated scratch copies and scratch repos for agents.
 
-Agents meant only to look (reviewers, test advisors) or only to write
-tests sometimes need to *try* something: plant a bug to see whether a
-test catches it, or build a small repo with commits to probe how git
-behaves. With no sanctioned place to do that, they did it in the shared
-checkout, or routed around the guard hooks to get the commits they
-needed. This CLI is that place (FOUNDATION §11 "Probing"):
+Agents that only look (reviewers, test advisors) or only write tests
+still need to try things: plant a bug to see whether a test catches it,
+or build a small repo with commits to probe how git behaves. Doing that
+in the shared checkout risks other sessions' work, and the guard hooks
+refuse the git operations it would take there. This CLI is the
+sanctioned place for it (FOUNDATION §11 "Probing"):
 
 - ``snapshot`` copies the current repository into a fresh directory as
   a one-commit repo — the tree at ``--ref`` (default ``HEAD``), or with
@@ -132,14 +132,16 @@ def _check_parent(parent: Path) -> Path:
             raise ScratchError(msg)
         return resolved
     rel = resolved.relative_to(top.resolve())
-    ignored = rel != Path() and (
-        subprocess.run(
-            ["git", "check-ignore", "-q", "--", f"{rel.as_posix()}/"],
+    # check-ignore prints the path when it is ignored and nothing otherwise.
+    ignored = rel != Path() and bool(
+        run_git(
+            "check-ignore",
+            "--",
+            f"{rel.as_posix()}/",
             cwd=top,
-            capture_output=True,
             check=False,
-        ).returncode
-        == 0
+            log_errors=False,
+        )
     )
     if not ignored:
         msg = (

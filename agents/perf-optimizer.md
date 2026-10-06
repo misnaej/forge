@@ -48,7 +48,7 @@ Follow this 7-step sequence in order. Do not skip, reorder, or shortcut.
 - Deterministic seeds, so variants are comparable
 - Benchmark must call the target's **public entry point**, not internal helpers
 - Emit a single scalar timing per run (median of N=3 minimum, N=5 preferred)
-- Save as `/tmp/perf_<target>.py` — never inside the repo. Scratch copies come from `forge-scratch-repo snapshot --worktree` (FOUNDATION §11 "Probing"), which prints a fresh directory's absolute path; never reuse a pre-existing path
+- Save as `/tmp/perf_<target>.py` — never inside the repo. Scratch copies come from `forge-scratch-repo snapshot --worktree` (FOUNDATION §11 "Probing"), which prints a fresh directory's path
 
 ### Step 3 — Baseline
 

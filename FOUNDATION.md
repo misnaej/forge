@@ -236,7 +236,8 @@ gate.
 - **NEVER destructive git recovery: no `git reset` (ANY form), no forced
   `git clean`, no `git checkout .` / `git restore .`, no restore of a path
   that holds uncommitted work (`git checkout [<ref>] -- <path>` /
-  `git restore <path>` over a modified, staged or untracked file), no
+  `git restore <path>` over a modified, staged or untracked file, or
+  over paths the guard cannot determine), no
   forced switch (`git checkout -f`, `git switch -f` /
   `--discard-changes`), and no `git stash` beyond `list` / `show`.**
   Rewinds un-commit published history on a synced branch; the rest
@@ -871,17 +872,20 @@ invariants:
 - **Reporters do not have `Write` or `Edit`.** Exception: reporter-with-artifact
   agents may hold the single mutating tool their artifact needs — see
   [`agents/_TEMPLATE.md`](../agents/_TEMPLATE.md#tool-sets-per-role).
-- **Probing happens in a scratch copy, never the checkout.** An agent that
-  needs to experiment — plant a bug to see whether a test catches it,
-  check whether a failure predates a change, build a repo with commits to
-  probe git — does it in a `forge-scratch-repo` copy (`snapshot` of the
-  checkout, or `build` from a spec), addressed by its absolute path or
-  `git -C <path>`, never `cd … &&` (a failed `cd` runs the rest in the
-  real checkout). A probe that needs an operation a guard blocks is
-  reported as a finding, never routed around (§2 "On deviation").
 
 `forge-audit-agents` measures every agent against the template
 (`code_health/audit_agents.log`).
+
+### Probing
+
+**Probing happens in a scratch copy, never the checkout.** An agent that
+needs to experiment — plant a bug to see whether a test catches it,
+check whether a failure predates a change, build a repo with commits to
+probe git — does it in a `forge-scratch-repo` copy (`snapshot` of the
+checkout, or `build` from a spec), addressed by its absolute path or
+`git -C <path>`, never `cd … &&` (a failed `cd` runs the rest in the
+real checkout). A probe that needs an operation a guard blocks is
+reported as a finding, never routed around (§2 "On deviation").
 
 ### Plugin staleness — symptoms and recovery
 

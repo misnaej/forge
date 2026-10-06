@@ -8,6 +8,9 @@
 # (`--abort` / `--quit` / `--skip`) or stage without committing
 # (`--no-commit` / `-n`) create nothing and stay allowed: they are how an
 # agent gets out of a conflicted sequencer state.
+# Also blocked, for every agent: ref plumbing (`update-ref`,
+# `fast-import`) and inline interpreter code that names git (a tripwire,
+# not a boundary — see the rule below).
 # FOUNDATION §3 mandatory-delegation — use the forge:git-commit-push agent.
 #
 # Bypass: the forge:git-commit-push agent may run `git commit` / `git
@@ -15,10 +18,10 @@
 # (the `name:` frontmatter of the calling subagent, per
 # code.claude.com/docs/en/hooks); when it matches `git-commit-push` or
 # `forge:git-commit-push`, only the commit/push rule is waived. Every other
-# rule here — the fail-closed anchor-lib check and the revert/cherry-pick
-# rule — applies to that agent like to everyone: the sequencer creates
-# commits with no pre-commit hook, which is exactly what that agent exists
-# to prevent. Same scoped-bypass shape as block_protected_branches.sh.
+# rule here — the fail-closed anchor-lib check, revert/cherry-pick, ref
+# plumbing and inline interpreter git — applies to that agent like to
+# everyone: each creates commits or moves refs with no pre-commit hook,
+# which is exactly what that agent exists to prevent. Same scoped-bypass shape as block_protected_branches.sh.
 set -e
 INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
@@ -94,8 +97,8 @@ fi
 
 # Inline interpreter code that runs git. A guard reads the shell command,
 # so git started from a `python3 -c` / `node -e` / heredoc script is
-# invisible to every rule above — the route a reviewer once took to make
-# commits the commit guard had refused. Blocked when an interpreter at a
+# invisible to every rule above — the route that would otherwise make
+# commits past the commit guard. Blocked when an interpreter at a
 # command position (bare, path-qualified, or behind a runner such as
 # `env`, `uv run`, `pixi run`, `conda run`) receives inline code — `-c`,
 # `-e`, `-E`, `-p`, `--eval`, `--print`, `-` or a heredoc / here-string —

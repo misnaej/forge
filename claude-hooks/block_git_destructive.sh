@@ -24,8 +24,8 @@
 #   worktree-touching `git restore <paths>`) when a named path holds
 #   uncommitted work — checked against live `git status`, failing closed
 #   when the paths cannot be determined. Restoring clean paths, plain
-#   branch switching and conflict resolution (`--ours`/`--theirs`) stay
-#   allowed.
+#   branch switching and conflict resolution (`--ours`/`--theirs`) on
+#   paths actually in conflict stay allowed.
 # - Forced switches: `git checkout -f` and `git switch -f` /
 #   `--discard-changes`.
 # - `git stash` in every form except `list` / `show`.
@@ -146,15 +146,18 @@ fi
 # so the documented release-recovery restore of `changelog.d/` keeps
 # working. Conflict resolution (`--ours`/`--theirs`/`--merge`/`-m`/
 # `--conflict`) stays allowed for paths that are actually in conflict —
-# on any other path those flags overwrite it like a plain restore. When the hook cannot tell what a path
-# names or where the command runs — a glob, `$`, `~`, pathspec magic, a
+# on any other path those flags overwrite it like a plain restore.
+# When the hook cannot tell what a path names or where the command runs — a glob, `$`, `~`, pathspec magic, a
 # quoted path with spaces, an earlier `cd`, `--git-dir`/`--work-tree` —
 # it blocks: a false block costs a `!`, a wrong allow costs someone's
 # work.
 PAYLOAD_CWD=$(jq -r '.cwd // empty' <<< "$INPUT")
 case "$PAYLOAD_CWD" in /*) ;; *) PAYLOAD_CWD="." ;; esac
 CMDPOS_CHDIR=0
-if echo "$CMDPOS" | grep -qE '(^|[;&|(])[[:space:]]*(cd|pushd|popd)([[:space:]]|$)'; then
+# Any `cd`/`pushd`/`popd` word outside quotes counts — behind `then`,
+# `{`, `!`, `builtin`, `command` … as much as at line start. Over-matching
+# only blocks a restore that would otherwise be checked (fail closed).
+if echo "$CMDPOS" | grep -qE '(^|[[:space:];&|(!{])(cd|pushd|popd)([[:space:];&|)]|$)'; then
     CMDPOS_CHDIR=1
 fi
 
@@ -173,8 +176,9 @@ _invocation_dir() {
             continue
         fi
         if [ "$next" = c ]; then
-            # `-c core.worktree=…` relocates the work tree.
-            case "$tok" in *[Ww]ork[Tt]ree*) return 1 ;; esac
+            # `-c core.worktree=…` relocates the work tree (config keys
+            # are case-insensitive).
+            case "$(printf '%s' "$tok" | tr '[:upper:]' '[:lower:]')" in *worktree*) return 1 ;; esac
             next=0
             continue
         fi
@@ -184,7 +188,8 @@ _invocation_dir() {
             -C?*) tok="${tok#-C}"
                 case "$tok" in *'$'* | *'@SUBST@'* | '~'*) return 1 ;; esac
                 case "$tok" in /*) dir="$tok" ;; *) dir="$dir/$tok" ;; esac ;;
-            --git-dir* | --work-tree* | GIT_DIR=* | GIT_WORK_TREE=* | GIT_INDEX_FILE=*) return 1 ;;
+            --git-dir* | --work-tree* | --config-env* | GIT_DIR=* | GIT_WORK_TREE=* \
+                | GIT_INDEX_FILE=* | GIT_CONFIG_*) return 1 ;;
         esac
     done
     printf '%s\n' "$dir"
@@ -262,6 +267,9 @@ _checkout_holds_work() {
                     conflict=1
                 fi
                 ;;
+            # `-p` (patch) restores hunks interactively — with no pathspec,
+            # across the whole tree. Treated as unknowable.
+            -*p*) return 0 ;;
             -*) ;;
             *) before+=("$tok") ;;
         esac
@@ -308,6 +316,8 @@ _restore_holds_work() {
                     || _abbrev "$tok" --ignore-unmerged 4; then conflict=1
                 fi
                 ;;
+            -s?*) ;;
+            -*p*) return 0 ;;
             -*)
                 case "$tok" in *S*) staged=1 ;; esac
                 case "$tok" in *W*) worktree=1 ;; esac
@@ -333,8 +343,14 @@ _restore_holds_work() {
 _restore_blocked() {
     local verb="$1" pre tail dir i=0 n_words n_pos
     local -a word_lines=() pos_lines=()
-    mapfile -t word_lines <<< "$(guard_git_invocations "$WORDS" "$verb")"
-    mapfile -t pos_lines <<< "$(guard_git_invocations "$CMDPOS" "$verb")"
+    local line
+    # Plain read loops, not mapfile: the hooks stay portable to bash 3.2
+    # (macOS default), where a bash-4 builtin would error — and an
+    # erroring hook exits non-2, which allows the command.
+    while IFS= read -r line; do word_lines+=("$line"); done \
+        <<< "$(guard_git_invocations "$WORDS" "$verb")"
+    while IFS= read -r line; do pos_lines+=("$line"); done \
+        <<< "$(guard_git_invocations "$CMDPOS" "$verb")"
     [ "${#word_lines[@]}" = "${#pos_lines[@]}" ] || return 0
     for ((i = 0; i < ${#word_lines[@]}; i++)); do
         [ -n "${word_lines[$i]}" ] || continue
@@ -371,7 +387,7 @@ _forced_switch() {
             case "$tok" in
                 --) break ;;
                 --*)
-                    if _abbrev "$tok" --force 4 || _abbrev "$tok" --discard-changes 4; then
+                    if _abbrev "$tok" --force 3 || _abbrev "$tok" --discard-changes 4; then
                         return 0
                     fi
                     ;;
