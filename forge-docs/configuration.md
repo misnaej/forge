@@ -298,6 +298,22 @@ round, and each also works standalone:
   a byte-compare that would approve any edit proves nothing. Self-skips
   when no `FOUNDATION.md` exists.
 
+## `[tool.forge.memory_audit]` — when `/memory-audit` is offered
+
+```toml
+[tool.forge.memory_audit]
+threshold = 5                    # new memories since the last audit before /next offers it
+lessons_file = "docs/lessons.md" # where SHOULD-SHIP lessons go (relative .md path inside the repo)
+```
+
+`forge-memory-audit status --memory-dir <dir>` reports the new-memory
+count against `threshold`, the lessons file, and the lessons that have
+come up often enough to promote (FOUNDATION §12). The lessons file is
+never auto-loaded; a path outside the repo or not ending in `.md` falls
+back to the default with a warning.
+
+---
+
 ## `[tool.forge.smart_test]` — opt-in change-scoped test gate
 
 Drives the optional `smart_test` pre-commit step, which runs

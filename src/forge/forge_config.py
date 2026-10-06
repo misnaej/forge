@@ -430,8 +430,8 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         ("tool", "forge", "memory_audit", "lessons_file"),
         "docs/lessons.md",
         "Holding file for SHOULD-SHIP lessons /memory-audit moves out of "
-        "agent memory; never auto-loaded, promoted to CLAUDE.md / a skill / "
-        "an agent at the second occurrence.",
+        "agent memory; never auto-loaded (FOUNDATION §12). A relative .md "
+        "path inside the repo.",
     ),
     ConfigKey(
         ("tool", "forge", "telemetry", "sample_interval"),

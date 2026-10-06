@@ -865,13 +865,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _forge-memory-audit — count new agent memories since the last audit._
 
 - `note_names(memory_dir: Path) -> set[str]` — Return the memory note filenames in *memory_dir*.
-- `read_stamp(memory_dir: Path) -> tuple[str, set[str]] | None` — Return the last audit's date and the note names it saw.
-- `write_stamp(memory_dir: Path) -> Path` — Rewrite the stamp with today's date and the current note names.
+- `read_audit_stamp(memory_dir: Path) -> tuple[str, set[str]] | None` — Return the last audit's date and the note names it saw.
+- `write_audit_stamp(memory_dir: Path) -> Path` — Rewrite the stamp with today's date and the current note names.
 - `new_notes(memory_dir: Path) -> set[str]` — Return the notes the last audit did not see.
 - `_repo_root() -> Path` _(internal)_ — Return the git toplevel of the cwd, or the cwd outside a repo.
 - `configured_threshold(repo_root: Path) -> int` — Return ``[tool.forge.memory_audit].threshold``.
 - `configured_lessons_file(repo_root: Path) -> Path` — Return the lessons file, resolved against *repo_root*.
 - `_check_dir(memory_dir: Path) -> bool` _(internal)_ — Return whether *memory_dir* exists, explaining on stderr if not.
+- `promotion_candidates(lessons_file: Path) -> list[str]` — Return the lessons that have come up often enough to promote.
 - `status(memory_dir: Path, repo_root: Path) -> int` — Print the new-memory count and whether to offer the audit.
 - `stamp(memory_dir: Path) -> int` — Record the current notes as audited.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the ``forge-memory-audit`` argument parser.

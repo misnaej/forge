@@ -59,14 +59,14 @@ def test_new_notes_without_stamp_is_every_note(memory_dir: Path) -> None:
 
 def test_stamp_then_nothing_new(memory_dir: Path) -> None:
     """After stamping, new_notes returns empty set."""
-    memory_audit.write_stamp(memory_dir)
+    memory_audit.write_audit_stamp(memory_dir)
 
     assert memory_audit.new_notes(memory_dir) == set()
 
 
 def test_edited_note_is_not_new(memory_dir: Path) -> None:
     """Edited notes are not considered new."""
-    memory_audit.write_stamp(memory_dir)
+    memory_audit.write_audit_stamp(memory_dir)
     (memory_dir / "alpha.md").write_text("edited\n", encoding="utf-8")
 
     assert memory_audit.new_notes(memory_dir) == set()
@@ -74,7 +74,7 @@ def test_edited_note_is_not_new(memory_dir: Path) -> None:
 
 def test_note_added_after_stamp_is_new(memory_dir: Path) -> None:
     """Notes added after stamping are new."""
-    memory_audit.write_stamp(memory_dir)
+    memory_audit.write_audit_stamp(memory_dir)
     (memory_dir / "gamma.md").write_text("gamma\n", encoding="utf-8")
 
     assert memory_audit.new_notes(memory_dir) == {"gamma.md"}
@@ -82,24 +82,24 @@ def test_note_added_after_stamp_is_new(memory_dir: Path) -> None:
 
 def test_stamp_round_trips_names(memory_dir: Path) -> None:
     """Stamp stores and retrieves the current note names."""
-    memory_audit.write_stamp(memory_dir)
+    memory_audit.write_audit_stamp(memory_dir)
 
-    stamp = memory_audit.read_stamp(memory_dir)
+    stamp = memory_audit.read_audit_stamp(memory_dir)
 
     assert stamp is not None
     assert stamp[1] == memory_audit.note_names(memory_dir)
 
 
 def test_read_stamp_missing_returns_none(memory_dir: Path) -> None:
-    """read_stamp returns None when there is no stamp file."""
-    assert memory_audit.read_stamp(memory_dir) is None
+    """read_audit_stamp returns None when there is no stamp file."""
+    assert memory_audit.read_audit_stamp(memory_dir) is None
 
 
 def test_read_stamp_empty_file_returns_none(memory_dir: Path) -> None:
-    """read_stamp returns None when the stamp file is empty."""
+    """read_audit_stamp returns None when the stamp file is empty."""
     (memory_dir / memory_audit.STAMP_NAME).write_text("", encoding="utf-8")
 
-    assert memory_audit.read_stamp(memory_dir) is None
+    assert memory_audit.read_audit_stamp(memory_dir) is None
 
 
 def test_status_below_threshold_does_not_offer(
@@ -133,7 +133,7 @@ def test_status_after_stamp_reports_date_not_never(
     memory_dir: Path, repo_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Status reports audit date after stamping, not never."""
-    memory_audit.write_stamp(memory_dir)
+    memory_audit.write_audit_stamp(memory_dir)
 
     memory_audit.status(memory_dir, repo_root)
 
@@ -219,3 +219,101 @@ def test_main_stamp_writes_stamp_and_reports(
     assert code == 0
     assert "stamped 2 memories" in capsys.readouterr().out
     assert (memory_dir / memory_audit.STAMP_NAME).is_file()
+
+
+@pytest.mark.parametrize("value", ["/etc/lessons.md", "../outside.md", "notes.txt"])
+def test_unsafe_lessons_file_falls_back_to_default(
+    repo_root: Path, caplog: pytest.LogCaptureFixture, value: str
+) -> None:
+    """An absolute, escaping or non-markdown lessons path is replaced and warned.
+
+    Args:
+        repo_root: Repo directory the config is written into.
+        caplog: Pytest log capture fixture (injected).
+        value: The rejected ``lessons_file`` setting.
+    """
+    _write_pyproject(
+        repo_root, f'[tool.forge.memory_audit]\nlessons_file = "{value}"\n'
+    )
+
+    with caplog.at_level("WARNING"):
+        result = memory_audit.configured_lessons_file(repo_root)
+
+    assert result == repo_root / "docs/lessons.md"
+    assert "lessons_file" in caplog.text
+
+
+def test_relative_lessons_file_is_honoured(repo_root: Path) -> None:
+    """A relative in-repo markdown path is used as configured."""
+    _write_pyproject(
+        repo_root, '[tool.forge.memory_audit]\nlessons_file = "notes/lessons.md"\n'
+    )
+
+    assert memory_audit.configured_lessons_file(repo_root) == (
+        repo_root / "notes/lessons.md"
+    )
+
+
+def test_write_audit_stamp_replaces_planted_symlink(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """A symlink at the stamp name is replaced, never written through."""
+    target = tmp_path / "outside.txt"
+    target.write_text("original\n", encoding="utf-8")
+    stamp_path = memory_dir / memory_audit.STAMP_NAME
+    stamp_path.symlink_to(target)
+
+    memory_audit.write_audit_stamp(memory_dir)
+
+    assert target.read_text(encoding="utf-8") == "original\n"
+    assert stamp_path.is_file()
+    assert not stamp_path.is_symlink()
+    assert not (memory_dir / f".{memory_audit.STAMP_NAME}.tmp").exists()
+
+
+@pytest.fixture
+def lessons_file(tmp_path: Path) -> Path:
+    """Lessons file with entries at 1, 2 and 3 occurrences plus a bare heading.
+
+    Returns:
+        Path to the lessons file.
+    """
+    path = tmp_path / "lessons.md"
+    path.write_text(
+        "# Lessons\n\n"
+        "## Once\n- occurrences: 1\n\n"
+        "## Twice\n- occurrences: 2\n\n"
+        "## No count here\nsome prose\n\n"
+        "## Thrice\n- occurrences: 3\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_promotion_candidates_lists_repeats_in_file_order(lessons_file: Path) -> None:
+    """Items with 2+ occurrences listed; singles and bare headings are not."""
+    assert memory_audit.promotion_candidates(lessons_file) == ["Twice", "Thrice"]
+
+
+def test_promotion_candidates_missing_file_is_empty(tmp_path: Path) -> None:
+    """An absent lessons file yields no candidates."""
+    assert memory_audit.promotion_candidates(tmp_path / "absent.md") == []
+
+
+def test_status_reports_promotion_candidates(
+    memory_dir: Path,
+    repo_root: Path,
+    lessons_file: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Status prints the candidate count and titles."""
+    target = repo_root / "docs/lessons.md"
+    target.parent.mkdir()
+    target.write_text(lessons_file.read_text(encoding="utf-8"), encoding="utf-8")
+
+    memory_audit.status(memory_dir, repo_root)
+
+    out = capsys.readouterr().out
+    assert "promotion candidates: 2" in out
+    assert "Twice" in out
+    assert "Thrice" in out

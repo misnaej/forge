@@ -224,9 +224,9 @@ affected reporter, so its `verified-at:` matches the tree being pushed.
 
 ### Offer a memory audit on rule-surface PRs
 
-When the plan JSON reports `rule_surface: true` (the PR edits
-`CLAUDE.md`, `FOUNDATION.md`, `skills/`, `agents/` or their `.claude/`
-copies), offer `/memory-audit` in one line: a memory that motivated the
+When the plan JSON reports `rule_surface: true` (the PR edits a path
+in `forge.pr_delta.RULE_SURFACE_PATHS` — the rule files), offer
+`/memory-audit` in one line: a memory that motivated the
 rule change is now a duplicate, and a memory the change contradicts
 needs a decision. Offered, never run; a declined offer changes nothing.
 

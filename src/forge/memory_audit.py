@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import logging
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -70,7 +71,7 @@ def note_names(memory_dir: Path) -> set[str]:
     }
 
 
-def read_stamp(memory_dir: Path) -> tuple[str, set[str]] | None:
+def read_audit_stamp(memory_dir: Path) -> tuple[str, set[str]] | None:
     """Return the last audit's date and the note names it saw.
 
     Args:
@@ -91,7 +92,7 @@ def read_stamp(memory_dir: Path) -> tuple[str, set[str]] | None:
     return lines[0].strip(), names
 
 
-def write_stamp(memory_dir: Path) -> Path:
+def write_audit_stamp(memory_dir: Path) -> Path:
     """Rewrite the stamp with today's date and the current note names.
 
     Args:
@@ -103,7 +104,12 @@ def write_stamp(memory_dir: Path) -> Path:
     path = memory_dir / STAMP_NAME
     today = _dt.datetime.now(tz=_dt.UTC).date().isoformat()
     body = "\n".join([today, *sorted(note_names(memory_dir))]) + "\n"
-    path.write_text(body, encoding="utf-8")
+    # Written to a temp file and renamed over the stamp: a symlink planted
+    # at the stamp's name is replaced, never written through.
+    staging = memory_dir / f".{STAMP_NAME}.tmp"
+    staging.unlink(missing_ok=True)
+    staging.write_text(body, encoding="utf-8")
+    staging.replace(path)
     return path
 
 
@@ -118,14 +124,18 @@ def new_notes(memory_dir: Path) -> set[str]:
         stamp. Names only — an edited note is not new.
     """
     current = note_names(memory_dir)
-    stamp = read_stamp(memory_dir)
+    stamp = read_audit_stamp(memory_dir)
     if stamp is None:
         return current
     return current - stamp[1]
 
 
 def _repo_root() -> Path:
-    """Return the git toplevel of the cwd, or the cwd outside a repo."""
+    """Return the git toplevel of the cwd, or the cwd outside a repo.
+
+    Not ``git_utils.repo_root``: that one exits outside a repo, and the
+    memory directory this CLI reads lives outside any repo.
+    """
     try:
         top = run_git("rev-parse", "--show-toplevel", check=False, log_errors=False)
     except (OSError, subprocess.SubprocessError):
@@ -166,13 +176,30 @@ def configured_lessons_file(repo_root: Path) -> Path:
         repo_root: Repository whose ``pyproject.toml`` is read.
 
     Returns:
-        ``[tool.forge.memory_audit].lessons_file`` when it is a non-empty
-        string, else :data:`DEFAULT_LESSONS_FILE`.
+        ``[tool.forge.memory_audit].lessons_file`` when it is a relative
+        ``.md`` path that stays inside *repo_root*, else
+        :data:`DEFAULT_LESSONS_FILE`. The skill writes to this path, and
+        the setting comes from the repo being worked on — a cloned repo
+        must not be able to aim that write at a file outside itself.
     """
     raw = read_tool_forge_section(repo_root, "memory_audit").get("lessons_file")
     if not isinstance(raw, str) or not raw.strip():
-        raw = DEFAULT_LESSONS_FILE
-    return repo_root / raw
+        return repo_root / DEFAULT_LESSONS_FILE
+    candidate = Path(raw)
+    resolved = (repo_root / candidate).resolve()
+    if (
+        candidate.is_absolute()
+        or candidate.suffix != ".md"
+        or not resolved.is_relative_to(repo_root.resolve())
+    ):
+        logger.warning(
+            "forge-memory-audit: lessons_file %r must be a relative .md path "
+            "inside the repo; using %s",
+            raw,
+            DEFAULT_LESSONS_FILE,
+        )
+        return repo_root / DEFAULT_LESSONS_FILE
+    return repo_root / candidate
 
 
 def _check_dir(memory_dir: Path) -> bool:
@@ -195,6 +222,41 @@ def _check_dir(memory_dir: Path) -> bool:
     return False
 
 
+# One lessons-file entry: a ``## <lesson>`` heading followed (anywhere in
+# its section) by ``- occurrences: N``.
+_LESSON_HEADING_RE = re.compile(r"^## (?P<title>.+?)\s*$")
+_OCCURRENCES_RE = re.compile(r"^- occurrences:\s*(?P<n>\d+)\s*$")
+PROMOTION_AT = 2
+
+
+def promotion_candidates(lessons_file: Path) -> list[str]:
+    """Return the lessons that have come up often enough to promote.
+
+    The threshold is FOUNDATION §12's second occurrence; reading it here
+    keeps the count mechanical instead of a re-read of the file by the
+    agent each audit.
+
+    Args:
+        lessons_file: The repo's lessons file.
+
+    Returns:
+        Titles of entries whose ``occurrences`` is at least
+        :data:`PROMOTION_AT`, in file order; empty when the file is absent.
+    """
+    if not lessons_file.is_file():
+        return []
+    candidates: list[str] = []
+    title: str | None = None
+    for line in lessons_file.read_text(encoding="utf-8").splitlines():
+        if heading := _LESSON_HEADING_RE.match(line):
+            title = heading["title"]
+        elif title and (count := _OCCURRENCES_RE.match(line)):
+            if int(count["n"]) >= PROMOTION_AT:
+                candidates.append(title)
+            title = None
+    return candidates
+
+
 def status(memory_dir: Path, repo_root: Path) -> int:
     """Print the new-memory count and whether to offer the audit.
 
@@ -209,12 +271,17 @@ def status(memory_dir: Path, repo_root: Path) -> int:
         return 1
     count = len(new_notes(memory_dir))
     threshold = configured_threshold(repo_root)
-    last = read_stamp(memory_dir)
+    last = read_audit_stamp(memory_dir)
     emit(f"new memories: {count}")
     emit(f"threshold: {threshold}")
     emit(f"offer audit: {'yes' if count >= threshold else 'no'}")
     emit(f"last audit: {last[0] if last else 'never'}")
-    emit(f"lessons file: {configured_lessons_file(repo_root)}")
+    lessons = configured_lessons_file(repo_root)
+    emit(f"lessons file: {lessons}")
+    promote = promotion_candidates(lessons)
+    emit(f"promotion candidates: {len(promote)}")
+    for title in promote:
+        emit(f"  - {title}")
     return 0
 
 
@@ -230,7 +297,7 @@ def stamp(memory_dir: Path) -> int:
     """
     if not _check_dir(memory_dir):
         return 1
-    path = write_stamp(memory_dir)
+    path = write_audit_stamp(memory_dir)
     emit(f"stamped {len(note_names(memory_dir))} memories: {path}")
     return 0
 
