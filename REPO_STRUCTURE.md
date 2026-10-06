@@ -1,38 +1,14 @@
 # Repo Structure
 
-This overview summarizes the current layout of the Forge repository. Keep
-this file up to date as the repo evolves — `verify-forge-repo-structure`
-checks it against the actual tree on every commit. A directory section
-whose heading ends with `<!-- exhaustive -->` is additionally checked
-both directions: every non-hidden file in the directory must be listed,
-and every listed file must exist.
-
-## Overview
-
-Forge is a shared engineering foundation: process docs, pre-commit
-verification scripts, git hooks, and an optional Claude Code plugin. It
-ships as the `forge-scripts` pip package and works with or without Claude
-Code.
-
-## Core Components
-
-- **Python package (`src/forge/`)**: verification CLIs, the pre-commit
-  dispatcher, installers, and the `audit/` subpackage.
-- **Claude Code plugin (`.claude-plugin/`, `agents/`, `skills/`,
-  `claude-hooks/`)**: agents, slash-command skills, and safety hooks
-  discovered by Claude Code after install.
-- **Git hooks (`.githooks/`)**: pre-commit and post-* hooks installed by
-  `install-forge-githooks`; `post-merge.d/` and `post-checkout.d/` hold
-  forge's own tracked extensions (`10-dev-setup.sh` re-runs `./dev/setup.sh`
-  so every clone runs the latest forge).
-- **Tests (`tests/`)**: pytest suite mirroring the package layout.
+Checked on every commit by `verify-forge-repo-structure`: every listed file and folder exists; every backticked file path in a description (a known file type, or ending in `/`) exists; and every folder with its own heading lists all its files and subfolders that git does not ignore, except hidden ones, `__init__.py`, `conftest.py` and build or cache output (`build`, `dist`, `tmp`, `code_health`, `*.egg-info`, compiled and editor-backup files), unless the heading is marked `<!-- summary -->`.
 
 ## Forge Package (`src/forge/`)
 
 1. **CLI Modules**
-   - precommit.py: `forge-precommit` — pre-commit dispatcher; most steps shell out to their own SRP CLI, a few (env_sync, pip_audit) run in-process for speed / single-invocation sharing; every full run wall-clocks each step and writes `code_health/precommit_timing.log` (per-step elapsed + total, `elapsed_s` in `--json`; a `--only` run writes `precommit_only_timing.log`); `--verdict` reports whether every enabled step passed on the current tree
+   - precommit.py: `forge-precommit` — pre-commit dispatcher; most steps shell out to their own SRP CLI, a few (env_sync, pip_audit) run in-process for speed / single-invocation sharing; every full run wall-clocks each step and writes `code_health/precommit_timing.log` (per-step elapsed + total, `elapsed_s` in `--json`; a `--only` run writes `code_health/precommit_only_timing.log`); `--verdict` reports whether every enabled step passed on the current tree
    - regen_docs.py: when `regen_docs` must rebuild the generated docs — input fingerprints from index blob shas + the installed forge, compared with a per-clone record under `.git/forge/` of the last successful build
    - next_prep.py: `forge-next-prep` — refresh main, optional rolling-next tag bump, prune stale branches; used by `/next` skill
+   - emergency_state.py: dependency-free reader for the `forge-emergency` sentinel (fails closed: absent, unreadable or corrupt means "not armed"), split out so pre-commit gates can check it without importing the CLI's PR-planning surface
    - emergency.py: `forge-emergency` — one-shot deferred-verification bypass (start/status/consume/end): ledger issue first, gitignored sentinel, `forge-pr-create` consumes the single allowed `wrapup-mode: emergency` publication, retroactive verification closes the ledger after delivery; pre-commit and §2 hooks never relieved
    - rebump.py: `forge-rebump` — mechanical post-merge version-slot resolver: classifies a feature branch's bump intent from its fork-point manifest delta (merge stages mid-merge, merge-base on a clean tree), takes the next open slot above the latest tag, restacks/retitles the CHANGELOG in shared-heading mode (fragments mode: no-op), stages, never commits; refuses on unrelated conflicts
    - release.py: `forge-release` — single-track release orchestrator for tag-versioned (setuptools-scm) consumer repos: guards (clean tree, on base branch, single-track model, CHANGELOG entry) → annotated tag + push (exempt in `cli_wiring_exempt.toml`)
@@ -48,9 +24,11 @@ Code.
    - pr_plan.py: `forge-pr-plan` — deterministic finalization-path classifier for the `/pr` skill; composes the pr_delta primitives over the real diff and emits the JSON plan (mode/reporters/precommit_scope/reasons); `--freshness --pr N` is the read-only wrap-up-staleness verdict the FOUNDATION §6 monitor polls (and forge-emergency's repayment check reuses); `--evidence` also writes the review evidence pack
    - pr_evidence.py: the review evidence pack `forge-pr-plan --evidence` writes to `code_health/pr_evidence.log` — PR identity and diff, log freshness and pre-commit step markers, dup/layering findings at changed scope plus other audit logs' freshness, generated-artifact checks, api-digest changes, closing keywords and fragment presence; each item rendered `unavailable` on failure, the audits and generated-artifact checks under a timeout
    - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; `--baseline`/`--update-baseline` compare against the committed `.forge-test-durations.json` (WARN-shaped, never gates; absent or malformed baseline = one skip line, not a wall of new-slow); `--coverage-json` ranks test functions by unique covered statements per second from a `coverage json --show-contexts` export; wired via the `/perf` skill
-   - telemetry.py: `forge-telemetry` — process-tree RSS + host CPU sampler around a wrapped command; per-run log/plot artifacts, append-only `telemetry_history.log`, `--history` trend reader
-   - agent_profile.py: `forge-agent-profile` — where agent and subagent time goes: pairs the `log_agent_timing` hook ledger (`code_health/agent_timing.jsonl`) with the subagent transcripts it names into per-agent-type wall/active time, slowest runs, per-tool cost, loop suspects, and `forge:precommit-fixer` cap breaches; append-only `agent_profile_history.log`; wired via `/perf` and `/report-to-forge`
-   - ledger.py: the one writer + parser for the append-only `key=value` ledgers under `code_health/` (`telemetry_history.log`, `smart_test_history.log`, `agent_profile_history.log`)
+   - telemetry.py: `forge-telemetry` — process-tree RSS + host CPU sampler around a wrapped command; per-run log/plot artifacts, append-only `code_health/telemetry_history.log`, `--history` trend reader
+   - agent_profile.py: `forge-agent-profile` — where agent and subagent time goes: pairs the `log_agent_timing` hook ledger (`code_health/agent_timing.jsonl`) with the subagent transcripts it names into per-agent-type wall/active time, slowest runs, per-tool cost, loop suspects, and `forge:precommit-fixer` cap breaches; append-only `code_health/agent_profile_history.log`; wired via `/perf` and `/report-to-forge`
+   - ledger.py: the one writer + parser for the append-only `key=value` ledgers under `code_health/` (telemetry_history.log, smart_test_history.log, agent_profile_history.log)
+   - config.py: loader for the `[tool.forge]` table in a repo's `pyproject.toml` (base branch and the other forge settings, defaulting to single-branch `main` behaviour)
+   - memory_audit.py: `forge-memory-audit` — `status` counts agent memory notes added since the last audit stamp and says whether to offer `/memory-audit`; `stamp` rewrites the stamp after an audit
    - forge_config.py: `forge-config` — lists every `[tool.forge.*]` key forge reads (value/default + description), names native sections like `[tool.interrogate]`, and advises on recommended-but-unset config; read-only, surfaced by `install-forge-bootstrap`
    - fix_ruff.py: `fix-forge-ruff` — runs `ruff format` + `ruff check --fix --unsafe-fixes`, re-stages modified tracked files, writes `code_health/ruff.log`
    - verify_docstrings.py: `verify-forge-docstrings` — docstring accuracy
@@ -62,7 +40,7 @@ Code.
    - verify_cli_wiring.py: `verify-forge-cli-wiring` — checks every `[project.scripts]` CLI is reachable from a wiring source; backs the `cli_wiring` step
    - verify_doc_consistency.py: `verify-forge-doc-consistency` — checks every `[project.scripts]` CLI is documented in `docs/cli-reference.md`; backs the opt-in `doc_consistency` pre-commit step (non-blocking)
    - verify_agent_doc.py: `verify-forge-agent-doc` — keeps a hand-maintained agent-architecture doc in sync (coverage of every agent/skill + no dangling hook/CLI/skill refs; `--diff` Layer-2 helper); backs the self-skipping `agent_doc` step
-   - verify_cve_usage.py: `verify-forge-cve-usage` — usage-scoped second stage on `pip_audit`; intersects live pip-audit CVE IDs with a consumer `cve_usage_patterns.toml` map and greps source for the patterns; backs the opt-in `cve_usage` pre-commit step (non-blocking). `--audit-json` reuses the `pip_audit` step's scan (one pip-audit run/commit); `--list-inactive` reports dormant map entries (read-only)
+   - verify_cve_usage.py: `verify-forge-cve-usage` — usage-scoped second stage on `pip_audit`; intersects live pip-audit CVE IDs with a consumer cve_usage_patterns.toml map and greps source for the patterns; backs the opt-in `cve_usage` pre-commit step (non-blocking). `--audit-json` reuses the `pip_audit` step's scan (one pip-audit run/commit); `--list-inactive` reports dormant map entries (read-only)
    - pip_audit_json.py: shared single-invocation pip-audit JSON helper (`run_json` + `ids_from_data` / `has_vulns` / `render_report`); the neutral seam both `precommit.step_pip_audit` and `verify_cve_usage` depend on so pip-audit runs at most once per invocation
    - install_readme_badges.py: `install-forge-readme-badges` — write/verify a drift-aware README status-badge managed block (shields.io + local docstring-coverage SVG); opt-in via `[tool.forge.badges]`; `--check` mode
    - verify_plugin_version.py: `verify-forge-plugin-version` — rolling-next guard (plugin.json["version"] > latest git tag)
@@ -70,7 +48,7 @@ Code.
      doc generator
    - gen_api_digest.py: `forge-gen-api-digest` — public-symbol API
      digest generator
-   - gen_c4.py: `forge-gen-c4` — emits a C4 architecture model from the import graph + a `[tool.forge.c4]` / `c4.toml` model skeleton; `--format dsl` (Structurizr + managed README block), `--format html` (self-contained offline **per-view tabbed** Mermaid view laid out by the **ELK** engine, vendored `mermaid.min.js` + ELK loader, dagre fallback; `direction`/`edges` config; any-element `[[relationship]]` endpoints), `--format pdf` (vector PDF via an already-installed headless browser) / `--format svg` (one vector SVG per view, same browser path), `--format mermaid` (raw); `--check` drift mode backs the opt-in `c4` pre-commit step; opt-in, self-skips when unconfigured
+   - gen_c4.py: `forge-gen-c4` — emits a C4 architecture model from the import graph + a `[tool.forge.c4]` / `c4.toml` model skeleton; `--format dsl` (Structurizr + managed README block), `--format html` (self-contained offline **per-view tabbed** Mermaid view laid out by the **ELK** engine, vendored `data/mermaid.min.js` + ELK loader, dagre fallback; `direction`/`edges` config; any-element `[[relationship]]` endpoints), `--format pdf` (vector PDF via an already-installed headless browser) / `--format svg` (one vector SVG per view, same browser path), `--format mermaid` (raw); `--check` drift mode backs the opt-in `c4` pre-commit step; opt-in, self-skips when unconfigured
    - gen_commit_types.py: `forge-gen-commit-types` — generates the conventional-commit type list managed block (parity with pr_squash_comment)
    - gen_common.py: shared drift-check helper for the `forge-gen-*`
      doc generators
@@ -119,7 +97,9 @@ Code.
    - CHANGELOG.md: shipped copy of the changelog (symlink) — read by `forge-upgrade` to surface consumer-action upgrade notes
    - mermaid.min.js: vendored Mermaid UMD bundle (MIT, pinned) — copied next to `forge-gen-c4 --format html` output so the diagram renders offline
    - mermaid-layout-elk.iife.min.js: vendored Mermaid v11 ELK layout loader, re-bundled to a classic-script IIFE (esbuild, chunks inlined) so it loads from `file://` where the upstream ESM build can't; the HTML registers it for clean cross-cluster layout with a dagre fallback (MIT, pinned)
-   - VENDORED.md: provenance record (URL, version, SHA-256, rebuild command) for vendored third-party assets under `data/`
+   - plugin-roster.toml: shipped roster of forge's plugin skills and hooks, read by `verify-forge-agent-doc` so consumer agent docs can name them; regenerated and drift-checked by `tests/test_verify_agent_doc.py`
+   - docs/: symlinks to the `forge-docs/` reference pages, shipped so `install-forge-claude-md` can write them into consumer repos
+   - VENDORED.md: provenance record (URL, version, SHA-256, rebuild command) for vendored third-party assets in this folder
 
 ## Agents Directory (`agents/`)
 
@@ -135,6 +115,7 @@ ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-proto
 - knowledge-search.md: grounded knowledge retrieval agent
 - perf-optimizer.md: performance optimization agent
 - pr-manager.md: PR lifecycle agent
+- prior-art.md: run before creating a file or top-level symbol — REUSE / EXTEND / NEW verdict grounded in named queries against the api-digest and dup log
 - precommit-fixer.md: pre-commit report dispatcher (reads `code_health/*.log`, delegates per failure type)
 - security-checker.md: security review agent
 - test-advisor.md: test coverage planning + review agent
@@ -144,7 +125,7 @@ ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-proto
 ## Skills Directory (`skills/`)
 
 Slash-command skills auto-discovered by the Claude Code plugin. Each
-subdirectory holds a single `SKILL.md`:
+subdirectory holds a single SKILL.md:
 
 - c4/: build a C4 architecture model — reason out context/containers/components into c4.toml, then run forge-gen-c4
 - commit/: standard commit flow
@@ -163,9 +144,9 @@ subdirectory holds a single `SKILL.md`:
 - triage/: issue backlog triage
 - weekly/: weekly summary report
 
-## Claude Hooks Directory (`claude-hooks/`) <!-- exhaustive -->
+## Claude Hooks Directory (`claude-hooks/`)
 
-Shell hooks referenced by `plugin.json` for Claude Code safety
+Shell hooks referenced by `.claude-plugin/plugin.json` for Claude Code safety
 enforcement:
 
 - block_branch_deletion.sh: block agent deletion of protected remote branches (no bypass)
@@ -210,6 +191,8 @@ enforcement:
 - pre-commit: pre-commit gate (delegates to `forge-precommit`)
 - post-checkout: post-checkout hook
 - post-merge: post-merge hook
+- post-merge.d/: forge's own tracked post-merge extensions — `10-dev-setup.sh` re-runs `./dev/setup.sh` so every clone runs the latest forge (`FORGE_NO_AUTO_SETUP=1` skips once)
+- post-checkout.d/: forge's own tracked post-checkout extensions — its `10-dev-setup.sh` hands off to the post-merge one after a branch switch
 
 ## Tests Directory (`tests/`)
 
@@ -270,6 +253,24 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_verify_plugin_version.py: tests for verify_plugin_version
    - test_verify_repo_structure.py: tests for verify_repo_structure
    - test_verify_test_naming.py: tests for verify_test_naming
+   - test_agent_profile.py: tests for agent_profile (where agent and subagent time goes)
+   - test_changelog_fragments.py: tests for changelog_fragments (fragment validation, discovery, assembly, and the `forge-changelog` CLI)
+   - test_dev_setup_hook.py: tests for the `dev/setup.sh` auto-refresh git-hook extensions, run as real bash subprocesses
+   - test_forge_config.py: tests for forge_config
+   - test_gh_comments.py: tests for gh_comments (shared PR-comment plumbing: paging, filtering, attribution)
+   - test_ledger.py: tests for ledger (the append-only `key=value` ledger shape)
+   - test_memory_audit.py: tests for memory_audit (new-memory counting and the audit stamp)
+   - test_pr_create.py: tests for pr_create (publishing a PR from the branch it verifies, against real ephemeral git repos)
+   - test_pr_plan.py: tests for pr_plan (the `/pr` finalization-path classifier, `--freshness` and `--evidence`)
+   - test_pr_wrapup.py: tests for pr_wrapup (validate/compose/post lifecycle and the CLI)
+   - test_pr_wrapup_compose.py: tests for pr_wrapup_compose (pure wrap-up rendering)
+   - test_release_tag_invariant.py: enforcing test for the release-tag invariant in `docs/release-process.md` (every tag's own tree carries its version in the manifest and the changelog)
+   - test_slow_tests_report.py: tests for slow_tests_report
+   - test_smart_test_coverage.py: tests for smart_test.coverage (coverage-validated selection)
+   - test_smart_test_lifecycle.py: tests for smart_test.lifecycle (development markers, lifecycle skips, full-run stamp and history)
+   - test_smart_test_superset.py: regression harness checking the union of forge-smart-test's three selection channels covers every guaranteed test-to-code link
+   - test_telemetry.py: tests for telemetry (the resource-profiling wrapper)
+   - test_version_surfaces.py: tests for version_surfaces (the three install-version readers)
 
 2. **Audit Tests (`tests/audit/`)**
    - test_agents.py: tests for audit.agents
@@ -279,6 +280,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_data.py: tests for audit.data
    - test_deps.py: tests for audit.deps
    - test_dup.py: tests for audit.dup
+   - test_layering.py: tests for audit.layering (layer-composition enforcement)
    - test_orphans.py: tests for audit.orphans
    - test_suppressions.py: tests for audit.suppressions
 
@@ -288,6 +290,7 @@ Forge's own bootstrap tooling (not a consumer pattern):
 
 - README.md: dev environment documentation
 - setup.sh: conda env + editable install + hooks + doctor
+- get_conda_env_name.sh: sourced helper resolving this clone's conda env name (`$CONDA_ENV_NAME`, then a `.conda_env_name` file at the clone root, then the caller's default) so several clones can run side by side
 - test-matrix.sh: multi-version test matrix runner
 
 ## Shipped reference set (`forge-docs/`)
@@ -351,7 +354,8 @@ Architecture RFCs and research reports — aspirational or advisory, not descrip
 ## Additional Directories
 
 1. **GitHub Infrastructure (`.github/`)**
-   - workflows/: GitHub Actions CI workflows
+   - workflows/: GitHub Actions workflows — `ci.yml` (the pre-commit checks on every PR and push to `main`) and `tag-release.yml` (cuts the release tag after CI succeeds on the assembly merge)
+   - dependabot.yml: monthly Dependabot updates for the SHA-pinned GitHub Actions
 
 2. **Code Health (`code_health/`)**
    - Pre-commit check logs (gitignored): `ruff.log`,

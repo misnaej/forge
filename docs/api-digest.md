@@ -1539,17 +1539,41 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _verify-forge-repo-structure — verify REPO_STRUCTURE.md matches the actual tree._
 
-- `should_ignore(name: str) -> bool` — Check whether a top-level path name should be ignored.
-- `_filter_paths(paths: set[str]) -> set[str]` _(internal)_ — Filter out non-filesystem strings from extracted paths.
-- `_add_inline_paths(line: str, paths: set[str]) -> None` _(internal)_ — Extract backtick paths and top-level references from a single line.
-- `extract_paths_from_markdown(content: str) -> set[str]` — Extract filesystem paths mentioned in REPO_STRUCTURE.md.
-- `exhaustive_section_findings(content: str, root: Path) -> set[str]` — Compare marker-opted directory sections against their disk contents.
+- `class Folder` — A folder declared by a heading or numbered item.
+- `class Bullet` — A ``- <name>:`` bullet naming one file or folder.
+- `class NamedPath` — A backticked path inside a description or paragraph.
+- `class RepoMap` — Everything the checks need from a parsed ``REPO_STRUCTURE.md``.
+- `class Listing` — The repository's files as git sees them.
+  - `from_files(cls, files: set[str] | list[str]) -> Listing` — Build a listing, deriving the folder set from the file paths.
+  - `exists(self, path: str) -> bool` — Check whether a repo-relative path is a known file or folder.
+  - `children(self, folder: str) -> set[str]` — Return a folder's direct children that a full listing must name.
+- `class Findings` — Result of checking a map against the repository.
+  - `in_sync(self) -> bool` — Whether every rule passed.
+- `should_ignore(name: str) -> bool` — Check whether a path segment matches an ignore pattern.
+- `_is_exempt(name: str) -> bool` _(internal)_ — Whether a direct child is exempt from full listings.
+- `_parent_dirs(path: str) -> list[str]` _(internal)_ — Return every folder enclosing a repo-relative file path.
+- `_under_ignored_root(path: str) -> bool` _(internal)_ — Whether a repo-relative path lies under an ignored root.
+- `_normalize(path: str) -> str` _(internal)_ — Normalise a doc-supplied path to repo-relative form without slashes.
+- `class _MapParser` _(internal)_ — Line-by-line state machine turning map markdown into a ``RepoMap``.
+  - `folder(self) -> str | None` — The folder the current line is described under, if any.
+  - `feed(self, lineno: int, line: str) -> None` — Consume one markdown line.
+  - `result(self) -> RepoMap` — Return the parsed map.
+- `_looks_like_path(token: str) -> bool` _(internal)_ — Whether a backticked token names a concrete repository path.
+- `parse_map(content: str) -> RepoMap` — Parse ``REPO_STRUCTURE.md`` text.
+- `git_listing(root: Path) -> Listing` — List the repository's tracked and untracked-unignored files.
+- `_checkable(root: Path, path: str) -> bool` _(internal)_ — Whether a doc-supplied path is inside the repo and not ignored.
+- `find_missing(repo_map: RepoMap, listing: Listing, root: Path) -> list[str]` — Find listed files and declared folders absent from the repository.
+- `strict_folders(repo_map: RepoMap, listing: Listing, root: Path) -> list[str]` — Return the folders whose full listing is enforced.
+- `find_unlisted(repo_map: RepoMap, listing: Listing, folders: list[str]) -> list[str]` — Find entries of fully-listed folders that the map does not name.
+- `find_stale_names(repo_map: RepoMap, listing: Listing) -> list[str]` — Find backticked description paths that resolve nowhere.
+- `find_violations(repo_map: RepoMap, root: Path) -> list[str]` — Find opening, prose and containment violations.
 - `path_is_covered(path: str, documented_paths: set[str]) -> bool` — Check whether a path is covered by the documented paths.
-- `get_actual_top_level(root: Path) -> set[str]` — Get the top-level items that should be documented.
-- `verify_documented_paths_exist(documented_paths: set[str], root: Path) -> set[str]` — Find documented paths that do not exist on disk.
-- `verify_structure(root: Path, *, verbose: bool = False) -> tuple[set[str], set[str], int]` — Verify REPO_STRUCTURE.md against the actual repository tree.
-- `_log_issues(not_found: set[str], not_documented: set[str]) -> None` _(internal)_ — Log details about the drift found.
-- `_log_fix_instructions(not_found: set[str], not_documented: set[str]) -> None` _(internal)_ — Log instructions for resolving the detected drift.
+- `check_map(repo_map: RepoMap, listing: Listing, root: Path) -> Findings` — Run every rule against a parsed map.
+- `verify_structure(root: Path, *, verbose: bool = False) -> Findings` — Verify REPO_STRUCTURE.md against the repository.
+- `_log_parsed(repo_map: RepoMap) -> None` _(internal)_ — Log every folder and bullet the parser read.
+- `_log_group(title: str, marker: str, items: tuple[str, ...]) -> None` _(internal)_ — Log one finding group when it is non-empty.
+- `_log_summary(findings: Findings) -> None` _(internal)_ — Log every count, on a pass as well as on drift.
+- `_log_fix_instructions(findings: Findings) -> None` _(internal)_ — Log instructions for resolving the detected drift.
 - `main() -> int` — Verify REPO_STRUCTURE.md is in sync with the repository tree.
 
 ## `forge.verify_test_naming`

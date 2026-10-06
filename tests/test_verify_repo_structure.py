@@ -1,121 +1,457 @@
-"""Tests for the verify-forge-repo-structure CLI public API."""
+"""Tests for the verify-forge-repo-structure CLI public API.
+
+# MOCKING STRATEGY: no mocks. The disk side of the check comes from git, so
+# every test runs against a real throwaway git repo. One module-scoped
+# template repo is built once and copied per test (cheaper than one
+# ``git init`` per test); only ``main`` tests patch ``repo_root``.
+"""
 
 from __future__ import annotations
 
 import logging
+import re
+import shutil
 import sys
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge.verify_repo_structure import (
-    exhaustive_section_findings,
-    extract_paths_from_markdown,
+    CANONICAL_OPENING,
+    EXEMPT_NAMES,
+    IGNORE_PATTERNS,
+    SUMMARY_MARKER,
     main,
+    parse_map,
     verify_structure,
 )
+from tests.conftest import commit_all, init_git_repo
 
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pytest
 
-
-IN_SYNC_MARKDOWN = """\
-# Repo Structure
-
+SECTION_FORGE = """\
 ## Forge Package (`src/forge/`)
 
-1. **CLI Modules**
-   - precommit.py: pre-commit dispatcher
+- precommit.py: pre-commit dispatcher
+"""
 
+SECTION_CONFIG = """\
 ## Configuration Files
 
-1. **Documentation**
-   - README.md: main documentation
-   - REPO_STRUCTURE.md: this file
-"""
-
-DRIFTED_MARKDOWN = """\
-# Repo Structure
-
-## Forge Package (`src/forge/`)
-
-1. **CLI Modules**
-   - precommit.py: pre-commit dispatcher
-   - ghost.py: does not exist on disk
+- README.md: main documentation
+- REPO_STRUCTURE.md: this file
 """
 
 
-def _build_in_sync_repo(root: Path) -> None:
-    """Create a minimal repo tree matching IN_SYNC_MARKDOWN.
+def build_map(*sections: str, opening: str = CANONICAL_OPENING) -> str:
+    """Assemble a REPO_STRUCTURE.md body.
 
     Args:
-        root: Directory to populate as the repo root.
+        *sections: Markdown sections placed after the opening.
+        opening: Text between the title and the first section.
+
+    Returns:
+        The markdown text.
     """
+    parts = ["# Repo Structure", opening, *sections]
+    return "\n\n".join(p for p in parts if p) + "\n"
+
+
+IN_SYNC_MARKDOWN = build_map(SECTION_FORGE, SECTION_CONFIG)
+
+
+@pytest.fixture(scope="module")
+def minimal_git_repo_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A committed git repo holding the files IN_SYNC_MARKDOWN describes.
+
+    Returns:
+        Path of the template repo; tests copy it, never modify it.
+    """
+    root = tmp_path_factory.mktemp("repo_template")
+    init_git_repo(root)
     (root / "src" / "forge").mkdir(parents=True)
+    (root / "src" / "forge" / "__init__.py").write_text("")
     (root / "src" / "forge" / "precommit.py").write_text("")
     (root / "README.md").write_text("")
+    commit_all(root, "template")
+    return root
+
+
+@pytest.fixture
+def repo(minimal_git_repo_template: Path, tmp_path: Path) -> Path:
+    """A private copy of the template repo with IN_SYNC_MARKDOWN written.
+
+    Returns:
+        Root of the copied repo.
+    """
+    root = tmp_path / "repo"
+    shutil.copytree(minimal_git_repo_template, root)
     (root / "REPO_STRUCTURE.md").write_text(IN_SYNC_MARKDOWN)
+    return root
 
 
-def test_extract_paths_from_markdown_resolves_section_relative_files() -> None:
-    """Indented .py references resolve against the enclosing section path."""
-    paths = extract_paths_from_markdown(IN_SYNC_MARKDOWN)
-    assert "src/forge" in paths
-    assert "src/forge/precommit.py" in paths
-    assert "README.md" in paths
+def write_map(root: Path, content: str) -> None:
+    """Replace the repo's REPO_STRUCTURE.md.
+
+    Args:
+        root: Repo root.
+        content: New markdown content.
+    """
+    (root / "REPO_STRUCTURE.md").write_text(content)
 
 
-def test_verify_structure_reports_in_sync(tmp_path: Path) -> None:
-    """A REPO_STRUCTURE.md matching the tree yields no drift."""
-    _build_in_sync_repo(tmp_path)
-    not_found, not_documented, total = verify_structure(tmp_path)
-    assert not_found == set()
-    assert not_documented == set()
-    assert total > 0
+def add_file(root: Path, rel: str) -> None:
+    """Create an empty file, making parent folders as needed.
+
+    Args:
+        root: Repo root.
+        rel: Repo-relative path.
+    """
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("")
 
 
-def test_verify_structure_reports_documented_but_missing(tmp_path: Path) -> None:
-    """A documented path absent from disk is reported as drift."""
-    (tmp_path / "src" / "forge").mkdir(parents=True)
-    (tmp_path / "src" / "forge" / "precommit.py").write_text("")
-    (tmp_path / "REPO_STRUCTURE.md").write_text(DRIFTED_MARKDOWN)
-    not_found, _not_documented, _total = verify_structure(tmp_path)
-    assert "src/forge/ghost.py" in not_found
-
-
-def test_main_returns_zero_when_in_sync(
-    tmp_path: Path,
+def run_main(
+    root: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Exit code is 0 when REPO_STRUCTURE.md matches the repo tree."""
-    _build_in_sync_repo(tmp_path)
-    monkeypatch.setattr(
-        "forge.verify_repo_structure.repo_root",
-        lambda: tmp_path,
-    )
+    caplog: pytest.LogCaptureFixture,
+) -> int:
+    """Run the CLI ``main`` against *root* with INFO logs captured.
+
+    Args:
+        root: Repo root to verify.
+        monkeypatch: Pytest monkeypatch fixture.
+        caplog: Pytest log capture fixture.
+
+    Returns:
+        The exit code.
+    """
+    monkeypatch.setattr("forge.verify_repo_structure.repo_root", lambda: root)
     monkeypatch.setattr(sys, "argv", ["verify-forge-repo-structure"])
-    assert main() == 0
+    with caplog.at_level(logging.INFO):
+        return main()
 
 
-def test_main_returns_one_when_drift_detected(
+def messages(caplog: pytest.LogCaptureFixture) -> str:
+    """Join every captured log message.
+
+    Returns:
+        All messages, newline-separated.
+    """
+    return "\n".join(record.getMessage() for record in caplog.records)
+
+
+# --- in sync / missing ------------------------------------------------------
+
+
+def test_matching_map_is_in_sync(repo: Path) -> None:
+    """A map matching the tree yields no findings."""
+    findings = verify_structure(repo)
+    assert findings.in_sync
+    assert findings.strict_folders == ("src/forge",)
+
+
+def test_listed_file_absent_from_disk_is_missing(repo: Path) -> None:
+    """A listed file that does not exist is reported as missing."""
+    write_map(
+        repo,
+        build_map(SECTION_FORGE + "- ghost.py: not on disk\n", SECTION_CONFIG),
+    )
+    findings = verify_structure(repo)
+    assert any("src/forge/ghost.py" in m for m in findings.missing)
+
+
+def test_deleted_listed_markdown_file_is_missing(repo: Path) -> None:
+    """A listed ``.md`` file removed from the tree is reported missing."""
+    add_file(repo, "agents/design-checker.md")
+    section = "## Agents (`agents/`)\n\n- design-checker.md: reviewer\n"
+    write_map(repo, build_map(SECTION_FORGE, section, SECTION_CONFIG))
+    assert verify_structure(repo).in_sync
+    (repo / "agents" / "design-checker.md").unlink()
+    findings = verify_structure(repo)
+    assert any("agents/design-checker.md" in m for m in findings.missing)
+
+
+def test_sibling_folder_bullets_do_not_nest() -> None:
+    """``- a/:`` then ``- b/:`` at one indent resolve as siblings."""
+    content = build_map("## Skills (`skills/`)\n\n- a/: first\n- b/: second\n")
+    paths = [b.path for b in parse_map(content).bullets]
+    assert paths == ["skills/a", "skills/b"]
+
+
+def test_indented_bullet_nests_under_folder_bullet() -> None:
+    """A deeper-indented bullet resolves under the folder bullet above it."""
+    content = build_map("## Skills (`skills/`)\n\n- a/: first\n  - x.md: inner\n")
+    paths = [b.path for b in parse_map(content).bullets]
+    assert paths == ["skills/a", "skills/a/x.md"]
+
+
+# --- unlisted entries -------------------------------------------------------
+
+
+def test_unlisted_file_in_headed_folder_fails(repo: Path) -> None:
+    """A file in a headed folder that the map does not name is unlisted."""
+    add_file(repo, "src/forge/extra.py")
+    findings = verify_structure(repo)
+    assert not findings.in_sync
+    assert "src/forge/extra.py" in findings.unlisted
+
+
+def test_summary_marked_section_is_not_strict(repo: Path) -> None:
+    """``<!-- summary -->`` opts a headed folder out of the full listing."""
+    add_file(repo, "src/forge/extra.py")
+    section = SECTION_FORGE.replace("`)", "`) <!-- summary -->", 1)
+    write_map(repo, build_map(section, SECTION_CONFIG))
+    findings = verify_structure(repo)
+    assert findings.in_sync
+    assert findings.strict_folders == ()
+
+
+def test_bullet_only_subfolder_contents_not_checked(repo: Path) -> None:
+    """A subfolder named only as a bullet counts as one entry."""
+    add_file(repo, "src/forge/sub/a.py")
+    add_file(repo, "src/forge/sub/b.py")
+    section = SECTION_FORGE + "- sub/: a subpackage\n"
+    write_map(repo, build_map(section, SECTION_CONFIG))
+    assert verify_structure(repo).in_sync
+
+
+def test_unlisted_subfolder_in_headed_folder_fails(repo: Path) -> None:
+    """A subfolder the map never names is unlisted."""
+    add_file(repo, "src/forge/sub/a.py")
+    assert "src/forge/sub" in verify_structure(repo).unlisted
+
+
+def test_exempt_entries_need_no_listing(repo: Path) -> None:
+    """Ignored, hidden, ``__init__.py`` and ``conftest.py`` are never required."""
+    (repo / ".gitignore").write_text("ignored.py\n")
+    add_file(repo, "src/forge/ignored.py")
+    add_file(repo, "src/forge/.hidden")
+    add_file(repo, "src/forge/conftest.py")
+    add_file(repo, "src/forge/__pycache__/x.pyc")
+    assert verify_structure(repo).in_sync
+
+
+def test_must_document_top_level_item_is_required(repo: Path) -> None:
+    """A MUST_DOCUMENT top-level folder the map never mentions is unlisted."""
+    add_file(repo, "docs/guide.md")
+    assert "docs" in verify_structure(repo).unlisted
+
+
+def test_leftover_exhaustive_marker_is_harmless(repo: Path) -> None:
+    """A retired ``<!-- exhaustive -->`` marker is just a comment."""
+    section = SECTION_FORGE.replace("`)", "`) <!-- exhaustive -->", 1)
+    write_map(repo, build_map(section, SECTION_CONFIG))
+    assert verify_structure(repo).in_sync
+
+
+# --- opening and prose ------------------------------------------------------
+
+
+def test_extra_prose_before_first_section_fails(repo: Path) -> None:
+    """Anything beyond the canonical sentence in the opening is a violation."""
+    write_map(
+        repo,
+        build_map(
+            SECTION_FORGE,
+            SECTION_CONFIG,
+            opening=CANONICAL_OPENING + "\n\nThis repo is great.",
+        ),
+    )
+    findings = verify_structure(repo)
+    assert any("opening" in v for v in findings.violations)
+
+
+def test_missing_opening_fails(repo: Path) -> None:
+    """A map with no opening sentence at all is a violation."""
+    write_map(repo, build_map(SECTION_FORGE, SECTION_CONFIG, opening=""))
+    assert not verify_structure(repo).in_sync
+
+
+def test_canonical_opening_alone_passes(repo: Path) -> None:
+    """The canonical sentence, wrapped across lines, passes."""
+    wrapped = CANONICAL_OPENING.replace(", ", ",\n", 1)
+    write_map(repo, build_map(SECTION_FORGE, SECTION_CONFIG, opening=wrapped))
+    assert verify_structure(repo).in_sync
+
+
+def test_prose_in_section_without_folder_path_fails(repo: Path) -> None:
+    """A prose paragraph under a heading with no folder path is a violation."""
+    section = SECTION_CONFIG + "\nThese files configure the repo.\n"
+    write_map(repo, build_map(SECTION_FORGE, section))
+    findings = verify_structure(repo)
+    assert any("prose" in v for v in findings.violations)
+
+
+# --- stale names ------------------------------------------------------------
+
+
+def test_stale_backticked_name_in_description_fails(repo: Path) -> None:
+    """A backticked file that does not exist is a stale name."""
+    section = SECTION_FORGE + "- other.py: wraps `ghost.py` for callers\n"
+    add_file(repo, "src/forge/other.py")
+    write_map(repo, build_map(section, SECTION_CONFIG))
+    findings = verify_structure(repo)
+    assert any("ghost.py" in s for s in findings.stale_names)
+
+
+def test_existing_backticked_name_passes(repo: Path) -> None:
+    """A backticked name resolving under the section folder is fine."""
+    section = SECTION_FORGE.replace(
+        "pre-commit dispatcher",
+        "see `__init__.py` and `README.md`",
+    )
+    write_map(repo, build_map(section, SECTION_CONFIG))
+    assert verify_structure(repo).in_sync
+
+
+def test_cli_names_and_config_keys_are_not_paths(repo: Path) -> None:
+    """CLI names, dotted config keys and globs are never checked as paths."""
+    section = SECTION_FORGE.replace(
+        "pre-commit dispatcher",
+        "runs `forge-precommit`, reads `tool.forge.step` and `*.toml`, "
+        "`--only` and `a=b`",
+    )
+    write_map(repo, build_map(section, SECTION_CONFIG))
+    assert verify_structure(repo).in_sync
+
+
+def test_names_under_ignored_roots_are_skipped(repo: Path) -> None:
+    """Paths under ``code_health/`` and ``.plan/`` are not checked."""
+    section = SECTION_FORGE.replace(
+        "pre-commit dispatcher",
+        "writes `code_health/x.log` and `.plan/CONTINUATION.md`",
+    )
+    write_map(repo, build_map(section, SECTION_CONFIG))
+    assert verify_structure(repo).in_sync
+
+
+# --- containment ------------------------------------------------------------
+
+
+def test_traversal_heading_cannot_escape_repo(
+    minimal_git_repo_template: Path,
     tmp_path: Path,
+) -> None:
+    """A ``../`` heading is a violation and leaks nothing from outside.
+
+    The outside folder genuinely exists next to the repo, so only the
+    containment guard can be what keeps its files out of the findings.
+    """
+    root = tmp_path / "a" / "b"
+    shutil.copytree(minimal_git_repo_template, root)
+    add_file(tmp_path / "a", "outside/leaked.sh")
+    escape = "## Escape (`../outside/`)\n\n- one.sh: whatever\n"
+    write_map(root, build_map(SECTION_FORGE, escape, SECTION_CONFIG))
+    findings = verify_structure(root)
+    assert any("escapes" in v for v in findings.violations)
+    assert not any("leaked" in u for u in findings.unlisted)
+    assert "../outside" not in findings.strict_folders
+
+
+# --- CLI --------------------------------------------------------------------
+
+
+def test_main_returns_zero_and_prints_both_counts_when_in_sync(
+    repo: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Exit code is 1 and drift is logged when a documented path is missing."""
-    (tmp_path / "src" / "forge").mkdir(parents=True)
-    (tmp_path / "src" / "forge" / "precommit.py").write_text("")
-    (tmp_path / "REPO_STRUCTURE.md").write_text(DRIFTED_MARKDOWN)
-    monkeypatch.setattr(
-        "forge.verify_repo_structure.repo_root",
-        lambda: tmp_path,
+    """A pass exits 0 and still prints both drift counts."""
+    assert run_main(repo, monkeypatch, caplog) == 0
+    text = messages(caplog)
+    assert "Listed but missing: 0" in text
+    assert "On disk but unlisted: 0" in text
+    assert "Paths checked" not in text
+
+
+def test_main_returns_one_and_logs_drift(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Drift exits 1, names the unlisted file, and prints the fix text."""
+    add_file(repo, "src/forge/extra.py")
+    assert run_main(repo, monkeypatch, caplog) == 1
+    text = messages(caplog)
+    assert "DRIFT DETECTED" in text
+    assert "src/forge/extra.py" in text
+    assert "<!-- summary -->" in text
+
+
+def test_main_prints_canonical_sentence_on_opening_violation(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An opening violation prints the exact sentence to paste."""
+    write_map(repo, build_map(SECTION_FORGE, SECTION_CONFIG, opening="Hello."))
+    assert run_main(repo, monkeypatch, caplog) == 1
+    assert CANONICAL_OPENING in messages(caplog)
+
+
+def test_main_log_carries_no_raw_control_character_from_map_names(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A stale backticked name holding an ANSI escape is logged inert.
+
+    This covers the map's own backticked tokens; the filename channel is
+    covered by the unlisted-file test below.
+    """
+    section = SECTION_FORGE.replace(
+        "pre-commit dispatcher",
+        "wraps `ghost\x1b\x07pwned.py`",
     )
-    monkeypatch.setattr(sys, "argv", ["verify-forge-repo-structure"])
-    with caplog.at_level(logging.INFO):
-        result = main()
-    assert result == 1
-    assert any("DRIFT DETECTED" in record.getMessage() for record in caplog.records)
+    write_map(repo, build_map(section, SECTION_CONFIG))
+    assert run_main(repo, monkeypatch, caplog) == 1
+    text = messages(caplog)
+    assert "ghost" in text
+    assert text.count("RESULT:") == 1
+    assert not [ch for ch in text if ch != "\n" and (ord(ch) < 0x20 or ord(ch) == 0x7F)]
+
+
+def test_main_reports_unlisted_files_git_would_quote_sanitized(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tracked control-character and non-ASCII names are still seen as unlisted.
+
+    SCENARIO: a strict folder gains two tracked, unlisted files whose names
+    plain `git ls-files` would C-quote, hiding their folder prefix.
+    EXPECTED BEHAVIOR: both are reported under "on disk but unlisted", the
+    log holds no raw control character, and RESULT appears once.
+    """
+    add_file(repo, "src/forge/ctl\x1bname.py")
+    add_file(repo, "src/forge/café.py")
+    commit_all(repo, "add quoted names")
+    assert run_main(repo, monkeypatch, caplog) == 1
+    text = messages(caplog)
+    assert "café.py" in text
+    assert "ctl" in text
+    assert "On disk but unlisted: 2" in text
+    assert text.count("RESULT:") == 1
+    assert not [ch for ch in text if ch != "\n" and (ord(ch) < 0x20 or ord(ch) == 0x7F)]
+
+
+def test_canonical_opening_names_every_exemption() -> None:
+    """The map's opening names each exemption the check actually applies."""
+    literal = re.compile(r"\^([A-Za-z0-9_]+)\$")
+    folder_names = {
+        m.group(1)
+        for pattern in IGNORE_PATTERNS
+        if (m := literal.fullmatch(pattern)) and not m.group(1).startswith("__")
+    }
+    assert {"build", "dist", "tmp", "code_health"} <= folder_names
+    required = folder_names | EXEMPT_NAMES | {SUMMARY_MARKER}
+    missing = {name for name in required if name not in CANONICAL_OPENING}
+    assert not missing
 
 
 def test_main_returns_one_when_repo_structure_missing(
@@ -124,205 +460,5 @@ def test_main_returns_one_when_repo_structure_missing(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Exit code is 1 and an error is logged when REPO_STRUCTURE.md is absent."""
-    monkeypatch.setattr(
-        "forge.verify_repo_structure.repo_root",
-        lambda: tmp_path,
-    )
-    monkeypatch.setattr(sys, "argv", ["verify-forge-repo-structure"])
-    with caplog.at_level(logging.WARNING):
-        result = main()
-    assert result == 1
-    assert any(
-        "REPO_STRUCTURE.md not found" in record.getMessage()
-        for record in caplog.records
-    )
-
-
-def test_verify_structure_flags_undocumented_must_document_item(tmp_path: Path) -> None:
-    """Verify disk item absent from markdown is caught as important_not_documented."""
-    _build_in_sync_repo(tmp_path)
-    # `docs` is in MUST_DOCUMENT but is not referenced by IN_SYNC_MARKDOWN.
-    (tmp_path / "docs").mkdir()
-    _documented_not_found, important_not_documented, _total = verify_structure(tmp_path)
-    assert "docs" in important_not_documented
-
-
-def test_extract_paths_from_markdown_empty_returns_empty() -> None:
-    """Empty markdown yields no paths."""
-    assert extract_paths_from_markdown("") == set()
-
-
-def test_extract_paths_from_markdown_prose_only_returns_empty() -> None:
-    """Markdown with no path-like tokens yields no paths."""
-    assert extract_paths_from_markdown("# Title\n\nJust prose, no paths.\n") == set()
-
-
-def test_exhaustive_section_findings_complete_listing_returns_empty(
-    tmp_path: Path,
-) -> None:
-    """An exhaustive section listing every disk file yields no findings."""
-    (tmp_path / "claude-hooks").mkdir()
-    (tmp_path / "claude-hooks" / "one.sh").write_text("")
-    (tmp_path / "claude-hooks" / "two.sh").write_text("")
-    content = (
-        "## Claude Hooks (`claude-hooks/`) <!-- exhaustive -->\n\n"
-        "- one.sh: first hook\n"
-        "- two.sh: second hook\n"
-    )
-    assert exhaustive_section_findings(content, tmp_path) == set()
-
-
-def test_exhaustive_section_findings_flags_unlisted_disk_file(
-    tmp_path: Path,
-) -> None:
-    """A disk file absent from an exhaustive section's listing is flagged."""
-    (tmp_path / "claude-hooks").mkdir()
-    (tmp_path / "claude-hooks" / "one.sh").write_text("")
-    (tmp_path / "claude-hooks" / "two.sh").write_text("")
-    content = (
-        "## Claude Hooks (`claude-hooks/`) <!-- exhaustive -->\n\n"
-        "- one.sh: first hook\n"
-    )
-    findings = exhaustive_section_findings(content, tmp_path)
-    assert "claude-hooks/: not listed in its exhaustive section: two.sh" in findings
-
-
-def test_exhaustive_section_findings_flags_listed_but_absent_file(
-    tmp_path: Path,
-) -> None:
-    """A listed file missing from disk is flagged as listed but absent."""
-    (tmp_path / "claude-hooks").mkdir()
-    (tmp_path / "claude-hooks" / "one.sh").write_text("")
-    content = (
-        "## Claude Hooks (`claude-hooks/`) <!-- exhaustive -->\n\n"
-        "- one.sh: first hook\n"
-        "- ghost.sh: does not exist on disk\n"
-    )
-    findings = exhaustive_section_findings(content, tmp_path)
-    assert "claude-hooks/: listed but absent from disk: ghost.sh" in findings
-
-
-def test_exhaustive_section_findings_unmarked_section_ignored(
-    tmp_path: Path,
-) -> None:
-    """A section without the exhaustive marker is not checked (opt-in)."""
-    (tmp_path / "claude-hooks").mkdir()
-    (tmp_path / "claude-hooks" / "one.sh").write_text("")
-    (tmp_path / "claude-hooks" / "two.sh").write_text("")
-    content = "## Claude Hooks (`claude-hooks/`)\n\n- one.sh: first hook\n"
-    assert exhaustive_section_findings(content, tmp_path) == set()
-
-
-def test_exhaustive_section_findings_marker_without_backtick_path_ignored(
-    tmp_path: Path,
-) -> None:
-    """A marker on a heading with no `path/` is ignored, not a crash."""
-    (tmp_path / "claude-hooks").mkdir()
-    (tmp_path / "claude-hooks" / "one.sh").write_text("")
-    (tmp_path / "claude-hooks" / "two.sh").write_text("")
-    content = "## Claude Hooks <!-- exhaustive -->\n\n- one.sh: first hook\n"
-    assert exhaustive_section_findings(content, tmp_path) == set()
-
-
-def test_exhaustive_section_findings_marker_dir_nonexistent_ignored(
-    tmp_path: Path,
-) -> None:
-    """A marker pointing at a nonexistent directory is ignored, not a crash."""
-    content = (
-        "## Ghost Section (`ghost-dir/`) <!-- exhaustive -->\n\n- one.sh: first hook\n"
-    )
-    assert exhaustive_section_findings(content, tmp_path) == set()
-
-
-def test_exhaustive_section_findings_hidden_files_not_required(
-    tmp_path: Path,
-) -> None:
-    """Hidden (dotfile) directory contents are not required to be listed."""
-    (tmp_path / "claude-hooks").mkdir()
-    (tmp_path / "claude-hooks" / "one.sh").write_text("")
-    (tmp_path / "claude-hooks" / ".hidden").write_text("")
-    content = (
-        "## Claude Hooks (`claude-hooks/`) <!-- exhaustive -->\n\n"
-        "- one.sh: first hook\n"
-    )
-    assert exhaustive_section_findings(content, tmp_path) == set()
-
-
-def test_exhaustive_section_findings_absolute_path_heading_ignored(
-    tmp_path: Path,
-) -> None:
-    """A doc-supplied absolute-path heading cannot escape containment.
-
-    Security-review traversal class: pathlib's ``/`` operator discards the
-    left operand entirely when the right side is absolute, so
-    ``root / "/etc"`` silently becomes ``/etc`` rather than
-    ``root/etc`` — outside `root` regardless of the directory's own
-    existence. The containment check must reject this before any
-    ``iterdir()`` call, so no findings (and no leaked disk listing) result.
-    """
-    content = "## Escape Attempt (`/etc`) <!-- exhaustive -->\n\n- one.sh: whatever\n"
-    assert exhaustive_section_findings(content, tmp_path) == set()
-
-
-def test_exhaustive_section_findings_relative_traversal_heading_ignored(
-    tmp_path: Path,
-) -> None:
-    """A doc-supplied `..`-traversal heading cannot escape containment.
-
-    Security-review traversal class: `..` segments in a doc-supplied path
-    let a crafted heading walk out of the repo root even though
-    ``root / candidate`` never looks like an absolute escape. The target
-    directory is created for real, outside ``repo_root`` but still inside
-    ``tmp_path`` (pytest's sandbox), to prove the guard rejects the
-    resolved path even when it points at a genuine, listable directory.
-    """
-    repo_root = tmp_path / "a" / "b"
-    repo_root.mkdir(parents=True)
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (outside / "leaked.sh").write_text("")
-    content = (
-        "## Escape Attempt (`../../outside/`) <!-- exhaustive -->\n\n"
-        "- one.sh: whatever\n"
-    )
-    assert exhaustive_section_findings(content, repo_root) == set()
-
-
-EXHAUSTIVE_DRIFT_MARKDOWN = """\
-# Repo Structure
-
-## Forge Package (`src/forge/`)
-
-1. **CLI Modules**
-   - precommit.py: pre-commit dispatcher
-
-## Claude Hooks (`claude-hooks/`) <!-- exhaustive -->
-
-- one.sh: first hook
-
-## Configuration Files
-
-1. **Documentation**
-   - README.md: main documentation
-   - REPO_STRUCTURE.md: this file
-"""
-
-
-def test_verify_structure_reports_exhaustive_section_drift(tmp_path: Path) -> None:
-    """A file missing from a marked exhaustive section lands in undocumented."""
-    (tmp_path / "src" / "forge").mkdir(parents=True)
-    (tmp_path / "src" / "forge" / "precommit.py").write_text("")
-    (tmp_path / "README.md").write_text("")
-    (tmp_path / "REPO_STRUCTURE.md").write_text(EXHAUSTIVE_DRIFT_MARKDOWN)
-    (tmp_path / "claude-hooks").mkdir()
-    (tmp_path / "claude-hooks" / "one.sh").write_text("")
-    (tmp_path / "claude-hooks" / "two.sh").write_text("")
-
-    _documented_not_found, important_not_documented, _total = verify_structure(
-        tmp_path,
-    )
-
-    assert (
-        "claude-hooks/: not listed in its exhaustive section: two.sh"
-        in important_not_documented
-    )
+    assert run_main(tmp_path, monkeypatch, caplog) == 1
+    assert "REPO_STRUCTURE.md not found" in messages(caplog)

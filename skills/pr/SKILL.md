@@ -252,7 +252,7 @@ Documentation must stay in sync with code. For each item below, update **only if
     **mandatory**, not skip-when-absent: the entry was deliberately not
     written during the PR, so author it here — CI's changelog check
     stays red until it lands.
-12. **`REPO_STRUCTURE.md`** (when the repo maintains one — see [FOUNDATION §13](../../FOUNDATION.md#13-code_health-convention)) — list new source modules and new test files so the canonical repo map stays accurate. The `repo_structure_check` pre-commit step does not enforce two-way coverage; this update is on the PR author.
+12. **`REPO_STRUCTURE.md`** (when the repo maintains one — see [FOUNDATION §13](../../FOUNDATION.md#13-code_health-convention)) — list new source modules and new test files so the canonical repo map stays accurate. The `repo_structure_check` pre-commit step enforces both directions for every folder with its own heading (unless marked `<!-- summary -->`), so an unlisted file fails it; the one-line description is still the PR author's to write.
 13. **Per-component READMEs** (e.g., subsystem-level `README.md` files, agent definition files) — if their tools, setup, or usage changed.
 14. **Agent-architecture doc** (when `[tool.forge.agent_doc]` is configured, and the PR touched `agents/`, `skills/`, or `claude-hooks/`) — run `verify-forge-agent-doc --diff <target-branch>` for the graph-relevant edges this PR added/removed, and update the configured doc where a delegation, rename, or removal left it stale. `docs-types-checker` owns this at PR review; self-skips otherwise.
 15. **Verify cross-references** — no document should reference a deleted file or outdated path.
