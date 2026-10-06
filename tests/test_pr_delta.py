@@ -20,6 +20,7 @@ from forge.pr_delta import (
     docs_only_diff,
     extract_verified_shas,
     find_closing_refs,
+    find_loose_closing_refs,
     light_wrapup_decision,
     non_fragment_adds,
     regen_commands,
@@ -28,6 +29,7 @@ from forge.pr_delta import (
     touches_high_blast_radius,
     touches_rule_surface,
     touches_source_paths,
+    unlisted_closing_refs,
 )
 
 
@@ -718,3 +720,52 @@ def test_find_closing_refs_ignores_a_fenced_block() -> None:
 def test_find_closing_refs_deduplicates_repeated_refs() -> None:
     """The same issue number closed twice is reported once, first-appearance order."""
     assert find_closing_refs("Closes #5\nFixes #5\n") == [5]
+
+
+# ---------------------------------------------------------------------------
+# find_loose_closing_refs / unlisted_closing_refs
+# ---------------------------------------------------------------------------
+
+_PARTIAL_CLOSE_SENTENCE = "Closes #508, closes #504's doctor half."
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        pytest.param(_PARTIAL_CLOSE_SENTENCE, [508, 504], id="partial-close-sentence"),
+        pytest.param(
+            "This change fixes #12 by bounding the probe.\n", [12], id="mid-sentence"
+        ),
+        pytest.param("Resolves: #3\n", [3], id="colon-form"),
+        pytest.param("CLOSED #4 earlier\n", [4], id="any-case"),
+        pytest.param("Closes #9\nSee also: fixes #9\n", [9], id="deduplicated"),
+        pytest.param("```\ncloses #99\n```\n", [], id="fenced-block-ignored"),
+        pytest.param("Run `git log --grep 'fixes #7'` first\n", [], id="inline-code"),
+        pytest.param("Part of #504\n", [], id="part-of"),
+        pytest.param("Closes #1, #2\n", [1], id="bare-number-after-comma"),
+        pytest.param("The regex prefixes #5 with a caret\n", [], id="keyword-suffix"),
+        pytest.param("closes owner/repo#6\n", [], id="other-repo-ref"),
+        pytest.param("fixes https://github.com/o/r/issues/8\n", [], id="url-ref"),
+    ],
+)
+def test_find_loose_closing_refs_reads_prose_as_github_does(
+    text: str, expected: list[int]
+) -> None:
+    """A keyword next to a local ``#N`` anywhere in prose counts; quoted text does not.
+
+    Args:
+        text: PR description fragment.
+        expected: Issue numbers GitHub would close for it.
+    """
+    assert find_loose_closing_refs(text) == expected
+
+
+def test_unlisted_closing_refs_names_what_the_strict_counter_misses() -> None:
+    """The partial-close sentence closes two issues the bare-line counter omits."""
+    assert find_closing_refs(_PARTIAL_CLOSE_SENTENCE) == []
+    assert unlisted_closing_refs(_PARTIAL_CLOSE_SENTENCE) == [508, 504]
+
+
+def test_unlisted_closing_refs_empty_for_bare_closing_lines() -> None:
+    """A body in forge's bare-line style has nothing unlisted."""
+    assert unlisted_closing_refs("## Summary\nText.\n\nCloses #5\nFixes #6\n") == []

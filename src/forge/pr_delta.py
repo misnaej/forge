@@ -192,6 +192,17 @@ _CLOSING_LINE_RE: Final[re.Pattern[str]] = re.compile(
     rf"^{_CLOSING_KEYWORD}\s+#\d+(?:[\s,]+(?:{_CLOSING_KEYWORD}\s+)?#\d+)*[.,;]*$",
     re.IGNORECASE,
 )
+# GitHub reads a closing keyword anywhere in prose, an optional colon
+# included. The leading `\b` keeps a word that merely ends in a keyword
+# ("prefixes #5") from counting, and requiring whitespace straight before
+# `#` keeps `owner/repo#N` and issue URLs out: those name another
+# repository's issue, never one this PR's merge would close here.
+_LOOSE_CLOSING_RE: Final[re.Pattern[str]] = re.compile(
+    rf"\b{_CLOSING_KEYWORD}:?\s+#(\d+)\b", re.IGNORECASE
+)
+# An inline code span: a backtick run closed by a run of the same length.
+# Text inside one is quoted, not prose GitHub acts on.
+_CODE_SPAN_RE: Final[re.Pattern[str]] = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 
 
 def fenced_line_indexes(lines: list[str]) -> set[int]:
@@ -267,6 +278,43 @@ def find_closing_refs(text: str) -> list[int]:
             if ref not in refs:
                 refs.append(ref)
     return refs
+
+
+def find_loose_closing_refs(text: str) -> list[int]:
+    """Return the issue numbers GitHub itself would close for *text*.
+
+    Unlike :func:`find_closing_refs`, a keyword inside a sentence counts,
+    because GitHub acts on it there: "closes #504's doctor half" closes
+    all of #504. The difference between the two lists is what a reader of
+    forge's summary would not expect to see closed. Fenced blocks and
+    inline code spans are skipped; only this repository's ``#N`` counts.
+
+    Args:
+        text: PR body or any markdown.
+
+    Returns:
+        Issue numbers in first-appearance order, without duplicates.
+    """
+    refs: list[int] = []
+    for line in strip_fences(text.splitlines()):
+        for number in _LOOSE_CLOSING_RE.findall(_CODE_SPAN_RE.sub(" ", line)):
+            ref = int(number)
+            if ref not in refs:
+                refs.append(ref)
+    return refs
+
+
+def unlisted_closing_refs(body: str) -> list[int]:
+    """Return issues GitHub would close for *body* that the strict counter omits.
+
+    Args:
+        body: PR description.
+
+    Returns:
+        Loose-only issue numbers in first-appearance order.
+    """
+    strict = find_closing_refs(body)
+    return [ref for ref in find_loose_closing_refs(body) if ref not in strict]
 
 
 def touches_high_blast_radius(changed_paths: list[str]) -> list[str]:

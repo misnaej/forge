@@ -939,6 +939,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_spend_emergency(root: Path) -> str | None` _(internal)_ — Consume the armed emergency sentinel, or refuse.
 - `_read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | None]` _(internal)_ — Read the wrap-up and confirm it verifies this checkout's HEAD.
 - `_gate(root: Path, branch: str, base: str) -> str | None` _(internal)_ — Return why publication is refused, or ``None`` to allow it.
+- `_warn_unlisted_closes(body_file: str) -> None` _(internal)_ — Warn when the body would close an issue forge's summary does not list.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the argument parser.
 - `main() -> int` — Entry point for ``forge-pr-create``.
 
@@ -950,6 +951,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `fenced_line_indexes(lines: list[str]) -> set[int]` — Return the indexes of *lines* inside fenced code blocks, delimiters included.
 - `strip_fences(lines: list[str]) -> list[str]` — Return *lines* without fenced code blocks (fence lines included).
 - `find_closing_refs(text: str) -> list[int]` — Return the issue numbers a PR body or commit message would close.
+- `find_loose_closing_refs(text: str) -> list[int]` — Return the issue numbers GitHub itself would close for *text*.
+- `unlisted_closing_refs(body: str) -> list[int]` — Return issues GitHub would close for *body* that the strict counter omits.
 - `touches_high_blast_radius(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`HIGH_BLAST_RADIUS_PATHS`.
 - `configured_docs_only_globs(repo_root: Path) -> tuple[str, ...]` — Return the consumer's extra docs-only globs from ``[tool.forge.pr]``.
 - `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
@@ -1050,6 +1053,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_code_quality(root: Path) -> str` _(internal)_ — Render Code Quality from the timing log and each log's freshness.
 - `_ci_status(pr_number: int | None, view: Mapping[str, object] | None) -> str` _(internal)_ — Return the CI Status line for the PR as *view* shows it.
 - `_branch_messages(root: Path, base_ref: str) -> str` _(internal)_ — Return the commit messages on HEAD since *base_ref*.
+- `_also_closed(body: str, listed: list[int]) -> list[int]` _(internal)_ — Return issues the PR body closes in prose that *listed* omits.
 - `_gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs` _(internal)_ — Collect everything ``compose`` renders from.
 - `_cmd_compose(args: argparse.Namespace) -> int` _(internal)_ — Write ``code_health/pr_wrapup.md`` with slots for the author to fill.
 - `_is_emergency_post(root: Path, text: str, pr: int) -> bool` _(internal)_ — Return whether *text* is the recorded emergency PR's own wrap-up.
@@ -1077,7 +1081,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_skipped(entry: Mapping[str, object]) -> bool` _(internal)_ — Return whether a rollup entry concluded without executing.
 - `rollup_not_run(rollup: Sequence[Mapping[str, object]]) -> bool` — Return whether checks were reported but none of them executed.
 - `summarize_rollup(rollup: Sequence[Mapping[str, object]], *, is_draft: bool = False) -> str` — Summarize ``gh pr view --json statusCheckRollup`` as one status line.
-- `render_issue_management(closing_refs: Sequence[int], *, pr_body_checked: bool) -> str` — Render the Issue Management line from the closing keywords found.
+- `render_issue_management(closing_refs: Sequence[int], *, pr_body_checked: bool, also_closed: Sequence[int] = ()) -> str` — Render the Issue Management line from the closing keywords found.
 - `unfilled_slots(text: str) -> list[str]` — Return the names of every fill-in slot still in *text*.
 - `evidence_fence(block: str) -> str` — Return only the fenced part of a ``run_gate_evidence`` block.
 

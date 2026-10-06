@@ -161,6 +161,72 @@ def test_pr_create_publishes_when_wrapup_names_own_head(
     assert calls[0][head_index + 1] == "feature/publish-me"
 
 
+def _publishable_repo(tmp_path: Path) -> Path:
+    """Build a checkout whose wrap-up verifies its own HEAD.
+
+    Args:
+        tmp_path: Pytest's per-test temporary directory.
+
+    Returns:
+        The checkout root.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    _write_wrapup(repo, _head_sha(repo))
+    return repo
+
+
+def test_pr_create_warns_when_the_body_closes_an_unlisted_issue(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A close keyword inside a sentence warns, and publication still proceeds."""
+    repo = _publishable_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    (repo / "body.md").write_text("Closes #508, closes #504's doctor half.\n")
+    calls = _stub_gh(monkeypatch)
+
+    with caplog.at_level("WARNING", logger=pr_create.__name__):
+        assert _run_main(monkeypatch, repo) == 0
+
+    assert len(calls) == 1
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "#508, #504" in warnings[0]
+    assert "Part of #N" in warnings[0]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param("Closes #5\n", id="bare-closing-line"),
+        pytest.param(None, id="unreadable-body-file"),
+    ],
+)
+def test_pr_create_stays_quiet_without_unlisted_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    body: str | None,
+) -> None:
+    """A bare closing line, or a body it cannot read, publishes without a warning.
+
+    Args:
+        body: Body file content, or ``None`` to leave the file missing.
+    """
+    repo = _publishable_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    if body is not None:
+        (repo / "body.md").write_text(body)
+    calls = _stub_gh(monkeypatch)
+
+    with caplog.at_level("WARNING", logger=pr_create.__name__):
+        assert _run_main(monkeypatch, repo) == 0
+
+    assert len(calls) == 1
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+
 def test_pr_create_refuses_without_a_wrapup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

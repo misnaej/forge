@@ -463,20 +463,37 @@ def summarize_rollup(
 
 
 def render_issue_management(
-    closing_refs: Sequence[int], *, pr_body_checked: bool
+    closing_refs: Sequence[int],
+    *,
+    pr_body_checked: bool,
+    also_closed: Sequence[int] = (),
 ) -> str:
     """Render the Issue Management line from the closing keywords found.
+
+    *also_closed* names issues GitHub closes from a keyword inside a
+    sentence. The no-keyword warning is worded so it never contradicts
+    them: what is missing is a closing line, not a closing effect.
 
     Args:
         closing_refs: Issue numbers the PR would close.
         pr_body_checked: Whether the PR body was part of the search.
+        also_closed: Issue numbers GitHub would also close although
+            *closing_refs* omits them.
 
     Returns:
         ``Closes #…`` or a warning when none was found; noted when only
         commit messages could be searched.
     """
+    also = ", ".join(f"#{ref}" for ref in also_closed)
     if closing_refs:
         text = "Closes " + ", ".join(f"#{ref}" for ref in closing_refs)
+        if also:
+            text += f" — GitHub will also close: {also}"
+    elif also:
+        text = (
+            "⚠️ no closing keyword on its own line (Closes/Fixes/Resolves #N); "
+            f"GitHub will still close: {also}"
+        )
     else:
         text = "⚠️ no closing keyword found (Closes/Fixes/Resolves #N on its own line)"
     if not pr_body_checked:

@@ -474,6 +474,13 @@ advisories with the suggested pin; they never edit pins.
   product but not the codebase: no class/function names or internals; lead
   with the consequence, not the mechanism; say plainly when results stop
   being comparable. Technical detail belongs under `Changes`.
+- **A close keyword closes the whole issue.** GitHub acts on
+  `Closes`/`Fixes`/`Resolves #N` anywhere in the description — inside a
+  sentence too — and closes the issue on merge however little of it the
+  PR delivers. A PR delivering part of an issue writes `Part of #N`; only
+  the PR that completes it closes it. Forge's own style is one bare
+  `Closes #N` per line, and publishing warns when GitHub would close an
+  issue that form does not list.
 
 ### PR finalization — verify first, never block on CI
 

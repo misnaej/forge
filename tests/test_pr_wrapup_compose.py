@@ -648,6 +648,30 @@ def test_render_issue_management_notes_absence_when_the_pr_body_was_not_searched
     assert text.endswith("— commit messages only; the PR body was not searched")
 
 
+def test_render_issue_management_names_what_github_also_closes() -> None:
+    """Issues closed from prose are appended after the listed ones."""
+    text = render_issue_management([1], pr_body_checked=True, also_closed=[4, 5])
+    assert text == "Closes #1 — GitHub will also close: #4, #5"
+
+
+def test_render_issue_management_without_extras_is_unchanged() -> None:
+    """An empty ``also_closed`` renders byte-identically to omitting it."""
+    for refs in ([1, 2], []):
+        assert render_issue_management(
+            refs, pr_body_checked=True, also_closed=()
+        ) == render_issue_management(refs, pr_body_checked=True)
+
+
+def test_render_issue_management_no_closing_line_still_names_github_closes() -> None:
+    """With no bare closing line, the warning never claims nothing closes."""
+    text = render_issue_management([], pr_body_checked=True, also_closed=[4])
+    assert "no closing keyword found" not in text
+    assert text == (
+        "⚠️ no closing keyword on its own line (Closes/Fixes/Resolves #N); "
+        "GitHub will still close: #4"
+    )
+
+
 # ---------------------------------------------------------------------------
 # unfilled_slots
 # ---------------------------------------------------------------------------

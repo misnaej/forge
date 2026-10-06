@@ -38,7 +38,8 @@ import logging
 import re
 import subprocess
 import sys
-from typing import TYPE_CHECKING, Final, cast
+from pathlib import Path
+from typing import Final, cast
 
 from forge.config import load_config
 from forge.emergency import consume as emergency_consume
@@ -49,13 +50,10 @@ from forge.git_utils import (
     resolve_current_branch,
     run_git,
 )
-from forge.pr_delta import extract_verified_shas
+from forge.pr_delta import extract_verified_shas, unlisted_closing_refs
 from forge.pr_plan import classify
 from forge.pr_wrapup import WRAPUP_NAME
 
-
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from pathlib import Path
 
 configure_cli_logging()
 logger = logging.getLogger(__name__)
@@ -286,6 +284,36 @@ def _gate(root: Path, branch: str, base: str) -> str | None:
     return None
 
 
+def _warn_unlisted_closes(body_file: str) -> None:
+    """Warn when the body would close an issue forge's summary does not list.
+
+    Advisory only: a body that cannot be read here (stdin as ``-``, a
+    missing file) is left for ``gh`` to report, so it never changes
+    whether publication proceeds.
+
+    Args:
+        body_file: The ``--body-file`` value, as ``gh`` will read it.
+    """
+    if body_file == "-":
+        return
+    try:
+        body = Path(body_file).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return
+    unlisted = unlisted_closing_refs(body)
+    if not unlisted:
+        return
+    refs = ", ".join(f"#{ref}" for ref in unlisted)
+    logger.warning(
+        "GitHub will close %s when this merges, although forge's closing-keyword "
+        "check does not list %s (a close keyword inside a sentence still closes "
+        "the whole issue). If this PR delivers only part of it, write "
+        '"Part of #N" instead.',
+        refs,
+        "it" if len(unlisted) == 1 else "them",
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the argument parser.
 
@@ -360,6 +388,7 @@ def main() -> int:
         *(["--draft"] if args.draft else []),
         *extra,
     ]
+    _warn_unlisted_closes(args.body_file)
     logger.info(
         "publishing '%s' — verified against %s",
         branch,

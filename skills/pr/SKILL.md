@@ -397,6 +397,10 @@ Verification is done, fixes are committed, and the wrap-up is authored
    - [ ] Documentation checker passes
    - [ ] Tests pass
    ```
+   An issue this PR only partly delivers is `Part of #N`, never a close
+   keyword anywhere in the body (FOUNDATION §6 "PR descriptions"); a
+   warning from `forge-pr-create` naming an issue means the body would
+   close it.
 3. **Draft opened in Step 0** → `gh pr ready <PR#>` — unless the user asked
    to keep it draft.
 
