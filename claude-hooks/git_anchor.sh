@@ -204,6 +204,18 @@ function arith(s, i,   n, k, d, ch) {
     APOS = k + 1
     return substr(s, i, k - i + 1)
 }
+# A `#` opens a comment only where bash would: at a word start (after a
+# blank or separator, not an escaped blank), outside `${…}` (where `#` is
+# an operator) and outside backticks (mode 2, whose close ends the scan).
+function is_comment(s, i, pc, bd, mode) {
+    if (mode == 2 || bd != 0 || !index(" \t\n;&|()", pc)) return 0
+    return !(index(" \t", pc) && substr(s, i - 2, 1) == "\\")
+}
+# Position of the newline ending the comment at i (or past the end).
+function comment_end(s, i,   j) {
+    j = index(substr(s, i), "\n")
+    return (j == 0) ? length(s) + 1 : i + j - 1
+}
 function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, q, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, dash, pc, bd, pa, wt, qs, rl) {
     n = length(s); out = ""; depth = 0; dollar = 0; nh = 0; bd = 0; pa = 0
     while (i <= n) {
@@ -285,12 +297,7 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
         }
         if (c == "{" && pc == "$") bd++
         if (c == "}" && bd > 0) bd--
-        if (c == "#" && mode != 2 && bd == 0 && index(" \t\n;&|()", pc) \
-            && !(index(" \t", pc) && substr(s, i - 2, 1) == "\\")) {
-            j = index(substr(s, i), "\n")
-            i = (j == 0) ? n + 1 : i + j - 1
-            continue
-        }
+        if (c == "#" && is_comment(s, i, pc, bd, mode)) { i = comment_end(s, i); continue }
         if (c == "<" && substr(s, i, 3) == "<<<") { out = out "<<<"; i += 3; dollar = 0; continue }
         if (c == "<" && substr(s, i + 1, 1) == "<") {
             k = i + 2; dash = 0
