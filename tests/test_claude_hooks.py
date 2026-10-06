@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -5719,6 +5720,189 @@ def test_help_exemption_does_not_leak(hook: str, command: str) -> None:
         command: Shell command with help-like token to execute through the hook.
     """
     assert _run_hook(hook, command) == _BLOCK
+
+
+# --- git_anchor.sh scanner: committed snapshot + quoting parity -------------
+# The command-position scanner is one shared awk program every guard trusts;
+# a refactor that quietly changes what it blanks blinds them all. The
+# snapshot pins its output over a corpus so a change is either provably
+# neutral or a deliberate, reviewed regeneration.
+
+_SNAPSHOT_PATH = Path(__file__).with_name("command_positions_snapshot.json")
+_SNAPSHOT_ENV = "FORGE_UPDATE_SNAPSHOT"
+
+# Commands from the amend quote-desync tests, the help-case tables, and the
+# quoting shapes found in review (inline there, so restated here).
+_SNAPSHOT_EXTRA_COMMANDS = [
+    'git commit -m "\\"" --amend -m "z"',
+    'git commit -m \'"\' --amend -m "z"',
+    'git commit -m "it\'s" --amend -m "don\'t"',
+    "git commit -m 'say \"hi' --amend -m 'there\"'",
+    "git commit \\--amend",
+    "git \\commit --amend",
+    "git commit -m $'it\\'s ok' --amend",
+    "git commit --a\\\nmend",
+    "git commit -m \\$'X\\' --amend puppy",
+    "git commit -m $$'x\\' --amend puppy",
+    "git --no-pager commit --amend",
+    'git commit -m "use --amend later"',
+    "GIT_DIR=/tmp/x git commit --amend",
+    "sudo -n git commit --amend",
+    "(git commit --amend)",
+    "git commit --amend-ish -m x",
+    "gh pr create --help",
+    "gh pr merge --help",
+    "git commit -h",
+    "git reset -h",
+    "pip install --help",
+    "git rebase --help",
+    "gh pr create --title x; echo --help",
+    "git commit -m -h",
+    "git commit -m -h --no-verify",
+    "git commit -- -h",
+    'git commit "-h"',
+    # Arithmetic, comment and heredoc-opener shapes — the three scanner
+    # pieces the refactor moves, so the snapshot guards each of them.
+    "echo $((1+2)); git push -f",
+    "((x++)) && git push -f origin main",
+    "echo $(( (1+2) * 3 )) # git push -f",
+    "x=1 # git push --force",
+    "echo a#b; git push -f",
+    "echo ${x#y} git push -f",
+    "echo foo \\# git push -f",
+    "git push origin main # --force",
+    "cat <<EOF\ngit push -f\nEOF",
+    "cat <<'EOF'\ngit push -f $(x)\nEOF",
+    "cat <<-EOF\n\tgit push -f\n\tEOF",
+    "bash <<EOF\ngit push -f\nEOF",
+    "sh <<'EOF'\ngit push --force\nEOF",
+    "cat <<EOF | sh\ngit push -f\nEOF",
+    "ssh host <<EOF\ngit push -f\nEOF",
+    "cat <<EOF\n$(git push -f)\nEOF",
+    "cat <<<'git push -f'",
+    "bash <<<'git push -f'",
+    "cat << EOF; git push -f\nbody\nEOF",
+    # Wrapper shapes the lookback reads.
+    "bash -c 'git push -f'",
+    "bash -o posix -c 'git push -f'",
+    "ssh -o BatchMode=yes host 'git push -f'",
+    "eval 'git push -f'",
+    'sudo bash -lc "git push --force"',
+    'echo ok; sh -c "git push -f"',
+]
+
+
+def _snapshot_corpus() -> list[str]:
+    """Build the deduplicated, order-stable snapshot corpus.
+
+    Returns:
+        Every command from the position and sequencer tables plus the
+        extra shapes, first occurrence wins.
+    """
+    commands = [param.values[1] for param in _POSITION_CASES]
+    commands += list(_SEQUENCER_CASES)
+    commands += _SNAPSHOT_EXTRA_COMMANDS
+    return list(dict.fromkeys(commands))
+
+
+def _scanner_view(command: str, *, words: bool) -> str:
+    """Run the shared lib's ``command_positions`` over *command*.
+
+    Args:
+        command: The shell command to scan.
+        words: Use the ``--words`` view (quoted spans keep their words).
+
+    Returns:
+        The view the scanner prints.
+    """
+    flag = "--words " if words else ""
+    script = f'source "$1/git_anchor.sh"; command_positions {flag}"$2"'
+    return subprocess.run(
+        ["bash", "-c", script, "_", str(_HOOKS_DIR), command],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def _compute_snapshot() -> dict[str, dict[str, str]]:
+    """Scan the whole corpus in both views.
+
+    Returns:
+        Mapping of command to its ``positions`` and ``words`` views.
+    """
+    return {
+        command: {
+            "positions": _scanner_view(command, words=False),
+            "words": _scanner_view(command, words=True),
+        }
+        for command in _snapshot_corpus()
+    }
+
+
+def test_command_positions_snapshot_is_unchanged() -> None:
+    """SCENARIO: the scanner's output over the corpus matches the saved file.
+
+    Regenerate deliberately with ``FORGE_UPDATE_SNAPSHOT=1``.
+    """
+    actual = _compute_snapshot()
+    if os.environ.get(_SNAPSHOT_ENV) == "1":
+        _SNAPSHOT_PATH.write_text(
+            json.dumps(actual, indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        return
+    expected = json.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    diffs = [
+        f"{command!r}\n  expected: {expected.get(command)!r}\n  actual:   {views!r}"
+        for command, views in actual.items()
+        if expected.get(command) != views
+    ]
+    diffs += [f"{c!r}\n  missing from corpus" for c in expected if c not in actual]
+    assert not diffs, (
+        f"{len(diffs)} scanner snapshot case(s) differ "
+        f"(regenerate with {_SNAPSHOT_ENV}=1 if deliberate):\n" + "\n".join(diffs)
+    )
+
+
+# Each case is a force push placed inside or outside one quoting construct.
+# The plain path and the `bash -c '<case>'` path run different quote
+# handlers, so they must reach the same verdict or the handlers drifted.
+_QUOTING_CASES = [
+    pytest.param("echo 'git push -f'", _ALLOW, id="single-quoted-text"),
+    pytest.param("echo 'x'; git push -f", _BLOCK, id="after-single-quotes"),
+    pytest.param("echo 'it'\\''s'; git push -f", _BLOCK, id="single-quote-splice"),
+    pytest.param('echo "git push -f"', _ALLOW, id="double-quoted-text"),
+    pytest.param('echo "a \\" b"; git push -f', _BLOCK, id="escaped-dquote-then-live"),
+    pytest.param('echo "a \\" git push -f"', _ALLOW, id="escaped-dquote-stays-inside"),
+    pytest.param("echo $'a\\'b'; git push -f", _BLOCK, id="ansi-c-escaped-quote"),
+    pytest.param("echo $'git push -f'", _ALLOW, id="ansi-c-text"),
+    pytest.param("echo $$'x'; git push -f", _BLOCK, id="double-dollar-toggle"),
+    pytest.param("echo \\$'x'; git push -f", _BLOCK, id="escaped-dollar-toggle"),
+    pytest.param("echo \\\ngit push -f", _ALLOW, id="backslash-newline-argument"),
+    pytest.param("true; \\\ngit push -f", _BLOCK, id="backslash-newline-before-verb"),
+    pytest.param('echo "$(git push -f)"', _BLOCK, id="nested-subst-in-dquotes"),
+    pytest.param(
+        'echo "$(echo "x"; git push -f)"', _BLOCK, id="nested-quotes-in-subst"
+    ),
+    pytest.param("echo `git push -f`", _BLOCK, id="backtick-subst"),
+    pytest.param('echo "`git push -f`"', _BLOCK, id="backtick-in-dquotes"),
+]
+
+
+@pytest.mark.parametrize(("case", "expected"), _QUOTING_CASES)
+def test_quoting_constructs_agree_between_plain_and_wrapped_paths(
+    case: str, expected: int
+) -> None:
+    """SCENARIO: a quoting construct is read the same bare and under `bash -c`.
+
+    Args:
+        case: Command with a force push inside or outside a quoted construct.
+        expected: Expected verdict for both paths.
+    """
+    plain = _run_hook("block_force_push.sh", case)
+    wrapped = _run_hook("block_force_push.sh", f"bash -c {shlex.quote(case)}")
+
+    assert plain == wrapped == expected
 
 
 @pytest.mark.parametrize(
