@@ -1,0 +1,3 @@
+bump: patch
+
+A stalled remote no longer hangs a release or a sync. The release-tag push in `forge-release`, the tag push and the opening fetch in `forge-next-prep`, and the background fetch used when composing a PR wrap-up now give up after about 2 minutes with a clear message instead of waiting until CI's own job limit kills them silently. When a timed-out tag push may still have reached the remote, `forge-release` asks the remote before reporting failure; when it cannot tell, it says the tag exists locally and gives the `git push` that finishes the job, since re-running would not retry it. `forge.git_utils.run_git` gains an optional `timeout=` (seconds) that raises `subprocess.TimeoutExpired` when it elapses; without it, behaviour is unchanged.

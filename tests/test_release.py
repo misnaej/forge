@@ -31,6 +31,7 @@ from tests.conftest import tag_exists as conftest_tag_exists
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
     from pathlib import Path
 
 
@@ -923,6 +924,92 @@ def test_cut_release_push_wires_log_errors_off_race_tolerant(
     assert release._cut_release(tmp_path, "v1.0.0", race_tolerant=True) == 0
     assert release._cut_release(tmp_path, "v1.0.0", race_tolerant=False) == 0
     assert push_log_errors == [False, True]
+
+
+def _timing_out_push(*, land: bool) -> Callable[..., str]:
+    """Build a ``release.run_git`` stand-in whose tag push times out.
+
+    Every other git call runs for real, so the remote check after the
+    timeout queries the real bare origin while the real local tag exists.
+
+    Args:
+        land: Perform the real push before raising — a push the remote
+            accepted but that stalled before git heard back.
+
+    Returns:
+        The replacement ``run_git`` callable.
+    """
+
+    def _run_git(
+        *args: str,
+        cwd: Path | None = None,
+        check: bool = True,
+        log_errors: bool = True,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> str:
+        if args[0] == "push":
+            if land:
+                git_utils.run_git(*args, cwd=cwd)
+            raise subprocess.TimeoutExpired(cmd=["git", *args], timeout=timeout or 0)
+        return git_utils.run_git(
+            *args, cwd=cwd, check=check, log_errors=log_errors, env=env, timeout=timeout
+        )
+
+    return _run_git
+
+
+def test_cut_release_push_timeout_with_tag_on_remote_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCENARIO: the tag push times out after the remote accepted it.
+
+    MOCK SETUP: real work tree + bare origin; ``release.run_git`` performs
+        the real push, then raises ``TimeoutExpired`` (bounded by
+        ``PUSH_TIMEOUT_S``).
+    EXPECTED BEHAVIOR: the remote is asked, holds the tag → exit 0 with a
+        log saying the timed-out push landed.
+    """
+    work, bare = _repo_with_origin(tmp_path)
+    monkeypatch.setattr(release, "run_git", _timing_out_push(land=True))
+    with caplog.at_level(logging.INFO, logger="forge.release"):
+        assert release._cut_release(work, "v1.0.0") == 0
+    assert _tag_exists(bare, "v1.0.0")
+    assert any("timed-out push landed" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize("race_tolerant", [False, True])
+def test_cut_release_push_timeout_without_remote_tag_fails_readably(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    race_tolerant: bool,
+) -> None:
+    """SCENARIO: the tag push times out and the remote never got the tag.
+
+    MOCK SETUP: real work tree + bare origin; ``release.run_git`` raises
+        ``TimeoutExpired`` on the push without pushing. The local tag is
+        real, so a check that consulted local tags would wrongly pass.
+    EXPECTED BEHAVIOR: exit 1 in both modes, with one traceback-free
+        error naming the manual push that finishes the release.
+
+    Args:
+        race_tolerant: The ``_cut_release`` mode under test.
+    """
+    work, bare = _repo_with_origin(tmp_path)
+    monkeypatch.setattr(release, "run_git", _timing_out_push(land=False))
+    with caplog.at_level(logging.ERROR, logger="forge.release"):
+        assert release._cut_release(work, "v1.0.0", race_tolerant=race_tolerant) == 1
+    assert _tag_exists(work, "v1.0.0")
+    assert not _tag_exists(bare, "v1.0.0")
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "timed out" in errors[0].getMessage()
+    assert "git push origin v1.0.0" in errors[0].getMessage()
+    assert errors[0].exc_info is None
 
 
 def test_main_from_changelog_model_guard_beats_idempotency(

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
@@ -169,6 +171,82 @@ def test_maybe_tag_release_creates_and_pushes_new_tag(
     assert created == [(tmp_path, "v1.2.10", "HEAD", False)]
     # Push was invoked via run_git.
     assert any(c[:2] == ["push", "origin"] and "v1.2.10" in c for c in invoked)
+
+
+def _run_main_with_timeout_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, verb: str, argv: list[str]
+) -> int:
+    """Run ``next_prep.main`` with the ``run_git`` call for *verb* timing out.
+
+    Args:
+        monkeypatch: pytest fixture for patching.
+        tmp_path: Sandbox dir treated as the repo root.
+        verb: The git verb (``"fetch"`` / ``"push"``) whose call times out.
+        argv: argv list passed via ``sys.argv``.
+
+    Returns:
+        ``main``'s exit code.
+    """
+
+    def _fake_git(*args: str, timeout: float | None = None, **_kw: object) -> str:
+        if args[0] == verb:
+            assert timeout == next_prep.PUSH_TIMEOUT_S
+            raise subprocess.TimeoutExpired(cmd=["git", *args], timeout=timeout)
+        return ""
+
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "x", "version": "1.2.10"})
+    )
+    monkeypatch.setattr(next_prep, "run_git", _fake_git)
+    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.2.9")
+    monkeypatch.setattr(next_prep, "create_annotated_tag", lambda *_a, **_kw: None)
+    monkeypatch.setattr(next_prep, "fetch_tags_best_effort", lambda _root: [])
+    monkeypatch.setattr(next_prep.subprocess, "run", lambda *_a, **_kw: FakeProc())
+    monkeypatch.setattr(next_prep.Path, "cwd", classmethod(lambda _: tmp_path))
+    monkeypatch.setattr(next_prep.sys, "argv", argv)
+    return next_prep.main()
+
+
+def test_main_timed_out_tag_push_exits_one_with_manual_push(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCENARIO: the release-tag push stalls past ``PUSH_TIMEOUT_S``.
+
+    MOCK SETUP: ``run_git`` raises ``TimeoutExpired`` on ``push``; tag
+        creation and the tag refresh are stubbed.
+    EXPECTED BEHAVIOR: exit 1, no traceback, and an error naming the
+        manual push — a re-run would see the local tag and not retry.
+    """
+    argv = ["forge-next-prep", "--tag", "--no-sync", "--no-prune-branches"]
+    with caplog.at_level(logging.ERROR, logger="forge.next_prep"):
+        assert _run_main_with_timeout_on(monkeypatch, tmp_path, "push", argv) == 1
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "git push origin v1.2.10" in errors[0].getMessage()
+    assert errors[0].exc_info is None
+
+
+def test_main_timed_out_fetch_exits_one_before_syncing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCENARIO: the opening ``git fetch --prune`` stalls past the bound.
+
+    MOCK SETUP: ``run_git`` raises ``TimeoutExpired`` on ``fetch``.
+    EXPECTED BEHAVIOR: exit 1 with one traceback-free error saying
+        origin did not answer.
+    """
+    argv = ["forge-next-prep", "--no-prune-branches"]
+    with caplog.at_level(logging.ERROR, logger="forge.next_prep"):
+        assert _run_main_with_timeout_on(monkeypatch, tmp_path, "fetch", argv) == 1
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "did not answer the fetch" in errors[0].getMessage()
+    assert errors[0].exc_info is None
 
 
 # ---------------------------------------------------------------------------

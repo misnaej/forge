@@ -683,12 +683,32 @@ def _run_git(*args: str, cwd: Path | None = None) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+# A push or fetch crosses the network; a credential prompt nobody can
+# answer, or a stalled remote, must end instead of hanging the caller
+# (FOUNDATION §15).
+PUSH_TIMEOUT_S = 120
+
+
+def _log_git_timeout(args: tuple[str, ...], timeout: float | None) -> None:
+    """Log the one-line ``git <verb> timed out`` notice, without a traceback.
+
+    A timeout's stack says nothing the line does not; a traceback in a CI
+    log reads as a crash in forge rather than an unresponsive remote.
+
+    Args:
+        args: The git argv tail that timed out.
+        timeout: The bound, in seconds, that elapsed.
+    """
+    logger.error("git %s timed out after %ss", args[0] if args else "", timeout)
+
+
 def run_git(
     *args: str,
     cwd: Path | None = None,
     check: bool = True,
     log_errors: bool = True,
     env: Mapping[str, str] | None = None,
+    timeout: float | None = None,
 ) -> str:
     """Run ``git`` with *args* in *cwd* and return stripped stdout.
 
@@ -710,6 +730,10 @@ def run_git(
         env: Variables to set for this invocation only, merged over the
             current environment (e.g. ``GIT_INDEX_FILE`` pointing at a
             scratch index).
+        timeout: Hard bound in seconds on the invocation; ``None`` (the
+            default) waits indefinitely. Pass one for anything that
+            crosses the network (:data:`PUSH_TIMEOUT_S`), where a
+            stalled remote would otherwise hang the caller.
 
     Returns:
         Trimmed stdout.
@@ -723,6 +747,10 @@ def run_git(
             invisible. Invariant for callers: never pass a
             credential-bearing arg or URL (e.g. a token-embedded remote)
             — a failure would echo it verbatim into CI logs.
+        subprocess.TimeoutExpired: When *timeout* elapses, whatever
+            ``check`` says — a git that never answered has no exit
+            status to tolerate. One ``git <verb> timed out after <N>s``
+            line is logged first (when ``log_errors`` is ``True``).
     """
     try:
         proc = subprocess.run(
@@ -732,7 +760,12 @@ def run_git(
             text=True,
             check=check,
             env={**os.environ, **env} if env is not None else None,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired:
+        if log_errors:
+            _log_git_timeout(args, timeout)
+        raise
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
         if log_errors and detail:
@@ -1073,7 +1106,9 @@ def fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool:
 
     A caller that only compares against a remote branch must not hang on a
     credential prompt nobody can answer (FOUNDATION §15): the fetch runs
-    with ``GIT_TERMINAL_PROMPT=0``, and any failure is returned, not raised.
+    with ``GIT_TERMINAL_PROMPT=0`` and is bounded by :data:`PUSH_TIMEOUT_S`
+    so a stalled remote cannot hang it either, and any failure — a timeout
+    included — is returned, not raised.
 
     Args:
         repo_root: Git repo root.
@@ -1095,15 +1130,12 @@ def fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool:
             cwd=repo_root,
             env={"GIT_TERMINAL_PROMPT": "0"},
             log_errors=False,
+            timeout=PUSH_TIMEOUT_S,
         )
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return False
     return True
 
-
-# A push crosses the network; a credential prompt nobody can answer, or a
-# stalled remote, must end instead of hanging the caller (FOUNDATION §15).
-PUSH_TIMEOUT_S = 120
 
 # Environment variables that reconfigure git for one process — a
 # `core.hooksPath` set this way silently skips the pre-commit hook — or

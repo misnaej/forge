@@ -680,7 +680,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `gh_api(*args: str, timeout: int = GH_TIMEOUT_S) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
 - `own_login() -> str | None` — Return the GitHub login ``gh`` is authenticated as, once per process.
 - `_run_git(*args: str, cwd: Path | None = None) -> str` _(internal)_ — Run a git command and return stdout.
-- `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True, env: Mapping[str, str] | None = None) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
+- `_log_git_timeout(args: tuple[str, ...], timeout: float | None) -> None` _(internal)_ — Log the one-line ``git <verb> timed out`` notice, without a traceback.
+- `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True, env: Mapping[str, str] | None = None, timeout: float | None = None) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `_fallback_identity_args(repo_root: Path) -> list[str]` _(internal)_ — Return ``-c`` identity flags when git has no usable committer identity.
 - `create_annotated_tag(repo_root: Path, tag: str, *, commit: str = 'HEAD', force: bool = False) -> None` — Create annotated *tag* at *commit*, surviving identity-less runners.
 - `wrap_in_code_fence(text: str) -> str` — Return *text* inside a markdown code fence it cannot close.
@@ -888,6 +889,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_tag_misuse_warning(repo_root: Path) -> str | None` _(internal)_ — Return a warning when ``--tag`` is used in a repo with no manifest.
 - `class TagDecision` — Outcome of ``--tag``: the tag cut, or why none was.
 - `_maybe_tag_release(repo_root: Path) -> TagDecision` _(internal)_ — Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
+- `_log_tag_push_timeout(tag: str) -> None` _(internal)_ — Tell the operator how to finish a tag push that timed out.
+- `_fetch_origin(repo_root: Path) -> bool` _(internal)_ — Run the bounded ``git fetch --prune`` the sync starts with.
 - `_gone_branches(repo_root: Path) -> list[str]` _(internal)_ — Return local branch names whose tracking remote is ``[origin/...: gone]``.
 - `_prune_gone_branches(repo_root: Path) -> tuple[list[str], list[str]]` _(internal)_ — ``git branch -d`` every branch whose remote is gone.
 - `_log_prune_result(repo_root: Path) -> None` _(internal)_ — Prune stale local branches and log the outcome.
@@ -1203,6 +1206,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_tag_exists(repo_root: Path, tag: str) -> bool` _(internal)_ — Return whether *tag* already exists locally or on ``origin``.
 - `_select_branch_guard(repo_root: Path, base_branch: str, *, from_changelog_mode: bool) -> str | None` _(internal)_ — Choose the appropriate branch guard for the release mode.
 - `_prepare_from_changelog(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Resolve and validate the tag declared in CHANGELOG.md.
+- `_tag_on_remote(repo_root: Path, tag: str) -> bool | None` _(internal)_ — Return whether *tag* exists on ``origin``, or ``None`` when unknowable.
+- `_resolve_push_timeout(repo_root: Path, tag: str) -> int` _(internal)_ — Decide the outcome of a tag push that hit :data:`PUSH_TIMEOUT_S`.
 - `_cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> int` _(internal)_ — Create the annotated *tag* on ``HEAD`` and push it to ``origin``.
 - `main() -> int` — Cut the ``vX.Y.Z`` release tag — bumped off the latest tag, or declared.
 

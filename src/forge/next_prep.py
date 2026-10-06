@@ -43,6 +43,7 @@ from forge.config import (
     load_config,
 )
 from forge.git_utils import (
+    PUSH_TIMEOUT_S,
     configure_cli_logging,
     create_annotated_tag,
     fetch_tags_best_effort,
@@ -175,6 +176,11 @@ def _maybe_tag_release(repo_root: Path) -> TagDecision:
     Returns:
         The decision — ``tag`` set (e.g. ``"v1.2.10"``) on success,
         ``None`` otherwise, with the reason either way.
+
+    Raises:
+        subprocess.TimeoutExpired: When the tag push exceeds
+            :data:`~forge.git_utils.PUSH_TIMEOUT_S`; what the operator
+            must do next is logged first.
     """
     plugin_ver = read_local_plugin_version(repo_root)
     if plugin_ver is None:
@@ -198,8 +204,59 @@ def _maybe_tag_release(repo_root: Path) -> TagDecision:
         )
     tag = f"v{plugin_ver}"
     create_annotated_tag(repo_root, tag)
-    run_git("push", "origin", tag, cwd=repo_root)
+    try:
+        run_git("push", "origin", tag, cwd=repo_root, timeout=PUSH_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        _log_tag_push_timeout(tag)
+        raise
     return TagDecision(tag, f"plugin.json {plugin_ver} is ahead of {latest}")
+
+
+def _log_tag_push_timeout(tag: str) -> None:
+    """Tell the operator how to finish a tag push that timed out.
+
+    Logged without a traceback: the stack would only show forge waiting
+    on git, and reads in CI as a crash rather than an unresponsive remote.
+
+    Args:
+        tag: The tag that was created locally but whose push timed out.
+    """
+    # A re-run would not retry: latest_v_tag now sees the local tag, so
+    # plugin.json reads as "already tagged". Name the manual push.
+    logger.error(
+        "%s was created locally but its push timed out; whether origin has "
+        "it is unknown. Re-running forge-next-prep --tag will not retry (the "
+        "local tag counts as already tagged) — once origin responds, push it "
+        "with `git push origin %s`.",
+        tag,
+        tag,
+    )
+
+
+def _fetch_origin(repo_root: Path) -> bool:
+    """Run the bounded ``git fetch --prune`` the sync starts with.
+
+    Args:
+        repo_root: Repo root.
+
+    Returns:
+        ``True`` when the fetch finished; ``False`` when origin did not
+        answer within :data:`~forge.git_utils.PUSH_TIMEOUT_S` (logged).
+    """
+    try:
+        run_git("fetch", "--prune", cwd=repo_root, timeout=PUSH_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        pass
+    else:
+        return True
+    # Logged outside the handler, without a traceback: the stack would
+    # only show forge waiting on git.
+    logger.error(
+        "origin did not answer the fetch within %ss — nothing was synced; "
+        "re-run once it responds.",
+        PUSH_TIMEOUT_S,
+    )
+    return False
 
 
 def _gone_branches(repo_root: Path) -> list[str]:
@@ -279,7 +336,8 @@ def main() -> int:
 
     Returns:
         ``0`` on success, ``1`` when the target branch cannot
-        fast-forward (divergent state — user intervention needed).
+        fast-forward (divergent state — user intervention needed) or
+        when origin does not answer the fetch or tag push in time.
     """
     parser = argparse.ArgumentParser(
         prog="forge-next-prep",
@@ -328,7 +386,8 @@ def main() -> int:
         return _tag_and_report(repo_root, args)
 
     logger.info("Fetching from origin...")
-    run_git("fetch", "--prune", cwd=repo_root)
+    if not _fetch_origin(repo_root):
+        return 1
 
     logger.info("Checking out %s and pulling...", target_branch)
     # Prefer ``git switch``: it operates only on branches, so it's
@@ -381,14 +440,18 @@ def _tag_and_report(repo_root: Path, args: argparse.Namespace) -> int:
         args: Parsed CLI namespace (``tag``, ``no_prune_branches``).
 
     Returns:
-        Always ``0`` — failures in these steps raise.
+        ``1`` when the tag push timed out (already logged); otherwise ``0``
+        — other failures in these steps raise.
     """
     if args.tag:
         misuse = _tag_misuse_warning(repo_root)
         if misuse:
             logger.warning(misuse)
         else:
-            decision = _maybe_tag_release(repo_root)
+            try:
+                decision = _maybe_tag_release(repo_root)
+            except subprocess.TimeoutExpired:
+                return 1
             if decision.tag:
                 logger.info("Tagged and pushed %s (%s)", decision.tag, decision.reason)
             else:
