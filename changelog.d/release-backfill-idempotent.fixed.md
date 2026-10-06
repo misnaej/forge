@@ -1,0 +1,3 @@
+bump: patch
+
+`forge-release --from-changelog` now succeeds ("nothing to release") after a changelog assembly that backfilled notes under the heading of a version that was already tagged. Before, it compared the changelog against its state at the tag, where that section did not exist yet, mistook the backfilled notes for entries slipped in after the release, and exited 1 on the assembly merge and on every later push — even in preview mode — while recommending a repair that would have filed the notes under an unreleased version. Notes genuinely added under a section that existed at the tag are still caught. Repos that check the tag themselves before calling the command can drop that workaround.

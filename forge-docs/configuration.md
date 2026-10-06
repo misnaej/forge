@@ -291,9 +291,10 @@ round, and each also works standalone:
   blocking drift gate for `docs/cli-reference.md` (mirror of
   `api_digest_check`). Self-skips when the doc is absent.
 - `foundation_md_check` — verifies `FOUNDATION.md` byte-reproduces the
-  installed forge foundation (version banner ignored, the same rule
-  `install-forge-claude-md` syncs by). A hand edit, an unmanaged file,
-  or a stale copy fails. An **editable-install self-reference** (the
+  installed forge foundation (the same rule `install-forge-claude-md`
+  syncs by; the managed banner carries no version). A hand edit, an
+  unmanaged file, a stale copy, or one still carrying the older versioned
+  banner fails — run `install-forge-claude-md` once to rewrite it. An **editable-install self-reference** (the
   repo file IS the installed copy, as in forge's own repo) fails too:
   a byte-compare that would approve any edit proves nothing. Self-skips
   when no `FOUNDATION.md` exists.

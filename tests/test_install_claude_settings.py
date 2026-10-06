@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING
 
 from forge import install_claude_settings as ics
@@ -99,15 +100,20 @@ def test_is_current_true_when_block_present_and_ref_matches() -> None:
 def test_main_writes_block_when_absent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """main() creates .claude/settings.json enabling the plugin.
 
     MOCK SETUP: get_repo_root pinned to tmp_path (no pyproject → ref main);
     argv is the bare invocation.
+    EXPECTED BEHAVIOR: the write also points at ``forge-doctor``, where a
+    machine-wide install that overrides this per-repo block is detected.
     """
     monkeypatch.setattr(ics, "get_repo_root", lambda: tmp_path)
     monkeypatch.setattr(ics.sys, "argv", ["install-forge-claude-settings"])
+    caplog.set_level(logging.INFO)
     assert ics.main() == 0
+    assert "forge-doctor" in caplog.text
     written = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert written["enabledPlugins"]["forge@forge"] is True
     assert written["extraKnownMarketplaces"]["forge"]["source"]["ref"] == "main"

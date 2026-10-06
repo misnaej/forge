@@ -285,7 +285,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_env_no_version() -> str | None` _(internal)_ — Return the name of the first truthy opt-out env var, or ``None``.
 - `wants_no_version(repo_root: Path) -> str | None` — Return the fired no-version signal, or ``None`` when none is set.
 - `_section_content(text: str) -> dict[str, set[str]]` _(internal)_ — Map each release version to its normalized non-heading content lines.
-- `stranded_added_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections gained content vs *old_text*.
+- `stranded_added_versions(old_text: str, new_text: str, latest_tag: str | None, *, ignore_new_sections: bool = False) -> list[str]` — Return released versions whose sections gained content vs *old_text*.
 - `released_deleted_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections lost content vs *old_text*.
 - `_version_heading_span(text: str, version: str) -> tuple[int | None, int | None]` _(internal)_ — Return the character span of *version*'s heading line plus its newline.
 - `restrand_changelog(old_text: str, new_text: str, latest_tag: str, bump: str) -> str` — Move entries stranded under released headings to the next open slot.
@@ -418,6 +418,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_plugin_install(plugin_name: str) -> CheckResult` _(internal)_ — Verify Claude Code has installed the named plugin locally.
 - `_check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report a Claude Code plugin cache lagging what should be loaded.
 - `_stale_cache_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
+- `_content_unknown_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"content-unknown"`` verdict as an advisory saying what to check.
+- `_source_mismatch_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"source-mismatch"`` verdict as an advisory naming both refs.
+- `_enabled_in(settings_path: Path) -> bool | None` _(internal)_ — Return ``enabledPlugins["forge@forge"]`` from a settings file.
+- `_check_global_install(repo_root: Path) -> list[CheckResult]` _(internal)_ — Flag a machine-wide forge install alongside this repo's own.
 - `_check_version_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
 - `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
 - `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
@@ -770,12 +774,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _install-forge-claude-md — sync the forge foundation into a consumer repo._
 
 - `_foundation_text() -> str` _(internal)_ — Return the bundled FOUNDATION.md text shipped with the pip package.
-- `_forge_version() -> str` _(internal)_ — Return the installed ``forge-scripts`` version, or ``unknown``.
-- `_build_foundation_file(*, foundation: str, version: str) -> str` _(internal)_ — Render the full ``FOUNDATION.md`` content including markers.
+- `_build_foundation_file(*, foundation: str) -> str` _(internal)_ — Render the full ``FOUNDATION.md`` content including markers.
 - `_has_managed_markers(text: str) -> bool` _(internal)_ — Return True if *text* contains a forge-managed START/END pair.
-- `_normalize(text: str) -> str` _(internal)_ — Strip the version-stamped comment for drift comparison.
 - `sync_foundation(foundation_path: Path, *, check_only: bool = False, force: bool = False) -> bool` — Write or update ``FOUNDATION.md`` with the shipped foundation text.
-- `_forge_docs_readme_text(version: str) -> str` _(internal)_ — Render the ``forge-docs/README.md`` never-edit notice.
+- `_forge_docs_readme_text() -> str` _(internal)_ — Render the ``forge-docs/README.md`` never-edit notice.
 - `_forge_docs_is_self(repo_root: Path) -> bool` _(internal)_ — Return whether *repo_root*'s ``forge-docs/`` IS the shipped canonical set.
 - `_forge_docs_is_unmanaged(repo_root: Path) -> bool` _(internal)_ — Return whether an existing ``forge-docs/`` is NOT forge-managed.
 - `sync_forge_docs(repo_root: Path, *, check_only: bool = False, force: bool = False) -> bool` — Mirror the shipped ``forge-docs/`` reference set into the consumer repo.
@@ -785,8 +787,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `scaffold_claude_settings(settings_path: Path) -> bool` — Write a minimal ``.claude/settings.json`` if the file does not exist.
 - `ensure_claude_hooks_dir(hooks_dir: Path) -> bool` — Create ``.claude/hooks/`` with a README documenting the path convention.
 - `_installed_forge_scripts_version() -> str | None` _(internal)_ — Return the installed ``forge-scripts`` distribution version.
-- `_plugin_entry_version(entry: object) -> str | None` _(internal)_ — Pull the ``version`` field out of a single forge@forge entry.
-- `_installed_plugin_version(plugins_file: Path) -> str | None` _(internal)_ — Read the installed Claude Code plugin version from the manifest.
+- `_installed_plugin_version(plugins_file: Path | None = None) -> str | None` _(internal)_ — Read the installed Claude Code plugin version from the manifest.
 - `_read_configured_channel(settings_path: Path) -> str | None` _(internal)_ — Return the marketplace ``ref`` consumers set to track a forge release channel.
 - `_upstream_cache_path() -> Path` _(internal)_ — Return the upstream-version-check cache file path.
 - `class ChannelTags` — Latest release tag on each of forge's two upstream branches.
@@ -1292,6 +1293,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class _RunConfig` _(internal)_ — Configuration for a tiered test run.
 - `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig, log: RunLog) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
+- `_escalate_to_full(repo_root: Path, base_ref: str, changed: set[str], cfg: dict[str, object]) -> bool` _(internal)_ — Return whether the change set must run the full suite.
+- `_resolve_run_inputs(args: argparse.Namespace, repo_root: Path, cfg: dict[str, object]) -> tuple[str | int, str, set[str]]` _(internal)_ — Resolve what a run needs: its depth, the ref it diffs against, the changes.
+- `_coverage_additions(args: argparse.Namespace, cfg: dict[str, object], changed: set[str]) -> tuple[set[str], bool]` _(internal)_ — Resolve coverage-validation settings and collect coverage additions.
 - `main() -> int` — Select and run change-affected tests by depth; write the log.
 
 ## `forge.smart_test.coverage`
@@ -1311,6 +1315,7 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `tests_up_to(self, depth: int) -> list[str]` — Return the sorted unique test relpaths selected at *depth* or below.
 - `_roots(repo_root: Path) -> tuple[list[Path], list[Path]]` _(internal)_ — Return ``(source_dir_paths, test_dir_paths)`` as absolute paths.
 - `_iter_py(roots: Iterable[Path]) -> Iterable[Path]` _(internal)_ — Yield every ``.py`` file under *roots*.
+- `_is_test_file(path: Path) -> bool` _(internal)_ — Return whether pytest would collect *path* as a test module.
 - `all_test_files(repo_root: Path) -> set[str]` — Return every repo-relative test file under the configured test roots.
 - `_dotted(node: ast.expr) -> str | None` _(internal)_ — Return the dotted name of an attribute/name chain, or ``None``.
 - `_string_literals(args: list[ast.expr]) -> list[str]` _(internal)_ — Return the string-constant values among *args*, in order.
@@ -1318,7 +1323,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_collect_sys_modules_targets(node: ast.Call, targets: set[str]) -> None` _(internal)_ — Extract module names from a ``patch.dict("sys.modules", {…})`` call.
 - `_patch_targets(tree: ast.Module) -> set[str]` _(internal)_ — Return the dotted module-attribute targets of ``mock.patch`` calls.
 - `class _Graph` _(internal)_ — The internal import graph plus the name↔path mapping.
+- `_parse_sources(repo_root: Path, source_roots: list[Path], test_roots: list[Path], *, follow_mock_patches: bool = False) -> tuple[dict[str, tuple[str, set[str]]], set[str]]` _(internal)_ — Parse all source and test files into an import target map.
 - `build_graph(repo_root: Path, *, follow_mock_patches: bool = False, include_ancestor_edges: bool = False) -> _Graph` — Parse the repo into an internal import graph.
+- `unscanned_conftests(repo_root: Path, changed: set[str]) -> set[str]` — Return changed ``conftest.py`` files outside every test root.
+- `_conftest_edges(graph: _Graph) -> dict[str, set[str]]` _(internal)_ — Map each test module to the conftests pytest loads for it.
 - `select_tests(repo_root: Path, changed_files: set[str], max_depth: int, *, follow_mock_patches: bool = False) -> SelectionPlan` — Compute the depth-layered test selection for a change set.
 - `render_plan(plan: SelectionPlan, depth: int) -> str` — Render a parseable ``--show-files`` plan for *depth*.
 
@@ -1328,6 +1336,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `_ref_exists(repo_root: Path, ref: str) -> bool` _(internal)_ — Return whether *ref* resolves to a commit in the repo.
 - `resolve_base_ref(repo_root: Path, override: str | None = None) -> str` — Resolve the ref to diff ``HEAD`` against for change detection.
+- `effective_base_ref(repo_root: Path, base_ref: str, *, explicit: bool) -> tuple[str | None, str]` — Return the ref to diff against once ``HEAD`` itself is accounted for.
 - `head_commit_message(repo_root: Path) -> str` — Return ``HEAD``'s full commit message (subject + body).
 - `_changed_files_all_sources(repo_root: Path, base_ref: str) -> set[str]` _(internal)_ — Union every changed path across the four change sources.
 - `changed_python_files(repo_root: Path, base_ref: str) -> set[str]` — Return repo-relative ``.py`` files changed vs *base_ref*.
@@ -1374,6 +1383,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `clear_python_cache(repo_root: Path) -> None` — Delete every ``__pycache__`` directory under *repo_root*.
 - `_coverage_available() -> bool` _(internal)_ — Return whether the ``pytest-cov`` plugin is importable.
 - `run_pytest(repo_root: Path, test_paths: Sequence[str], *, coverage: bool = False, telemetry: bool = False, label: str = '') -> tuple[int, str]` — Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
+- `_finalize(code: int, output: str, *, selected: bool) -> tuple[int, str]` _(internal)_ — Apply the "no tests collected" rule to a finished pytest run.
 
 ## `forge.telemetry`
 
@@ -1601,7 +1611,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _The three surfaces a forge install presents, read once for every checker._
 
-- `read_json(path: Path) -> tuple[dict, str | None]` — Read a JSON file. Returns (data, error_message_or_None).
+- `read_json(path: Path) -> tuple[dict, str | None]` — Read a JSON object file. Returns (data, error_message_or_None).
 - `version_key(name: str) -> tuple[int, ...]` — Return a sortable key for a version-shaped directory name.
 - `find_plugin_cache(plugin_name: str) -> Path | None` — Locate a Claude Code plugin cache directory by name.
 - `find_install_dir(plugin_root: Path) -> Path | None` — Walk the Claude Code cache layout to find the active plugin install.
@@ -1612,8 +1622,22 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `editable_install_origin() -> Path | None` — Return the checkout an editable ``forge-scripts`` install points at.
 - `_direct_url() -> dict[str, object] | None` _(internal)_ — Return the distribution's parsed ``direct_url.json``, or ``None``.
 - `marketplace_clone(repo_slug: str) -> Path | None` — Local clone Claude Code keeps for the marketplace serving *repo_slug*.
+- `registered_marketplace_ref(repo_slug: str) -> str | None` — Ref the machine-wide marketplace registration for *repo_slug* tracks.
+- `_marketplace_entries(repo_slug: str) -> list[dict[str, object]]` _(internal)_ — Registry entries whose source is the GitHub repo *repo_slug*.
+- `class PluginInstall` — One install record from ``installed_plugins.json``.
+- `class PluginInstalls` — Which installed copies of a plugin bear on one repo.
+- `plugin_records(plugin: str, plugins_file: Path | None = None) -> list[dict[str, object]]` — Raw install records Claude Code keeps for *plugin*.
+- `plugin_installs(repo_root: Path, plugin_name: str) -> PluginInstalls` — Find the installed copies of *plugin_name* that bear on *repo_root*.
+- `_install_from_record(record: dict[str, object]) -> PluginInstall | None` _(internal)_ — Build a :class:`PluginInstall` from one raw record.
+- `_resolved(path: Path) -> Path` _(internal)_ — Return *path* resolved, or unchanged when resolution fails.
 - `_repo_slug(url: str) -> str | None` _(internal)_ — Return the ``owner/repo`` a git pin URL names.
-- `_hook_names(plugin_dir: Path) -> frozenset[str]` _(internal)_ — Names of the Claude Code hooks a plugin directory ships.
+- `content_digests(plugin_dir: Path) -> dict[str, str | None]` — Hash each content area of a plugin tree.
+- `_area_files(area: Path) -> list[Path] | None` _(internal)_ — List the regular files under *area* that count as content.
+- `_area_digest(area: Path) -> str | None` _(internal)_ — Hash every file under *area* by relative path and bytes.
+- `_manifest_digest(manifest: Path) -> str | None` _(internal)_ — Hash a plugin manifest with its ``version`` field removed.
+- `_repo_marketplace_ref(repo_root: Path) -> str | None` _(internal)_ — Marketplace ref this repo's own ``.claude/settings.json`` pins.
 - `class PluginCacheStatus` — What the Claude Code plugin cache says relative to what ships it.
 - `plugin_cache_status(repo_root: Path) -> PluginCacheStatus` — Compare the cached plugin against the manifest that ships it.
+- `safe_text(value: object) -> str | None` — Return *value* as text if it matches :data:`_SAFE_TEXT`, else a placeholder.
+- `_manifest_cache_status(repo_root: Path, manifest: Path) -> PluginCacheStatus` _(internal)_ — Compare a plugin-shipping repo's cached copy against its manifest.
 - `_consumer_cache_status(repo_root: Path) -> PluginCacheStatus` _(internal)_ — Compare a consumer's active cache slot against the ref it pinned.
