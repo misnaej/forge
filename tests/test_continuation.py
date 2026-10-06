@@ -193,6 +193,30 @@ def test_read_pr_state_reads_an_open_pr(
     assert (state.number, state.as_of, state.wrapup) == ("61", "abc1234", "fresh")
 
 
+def test_read_pr_state_skipped_draft_ci_reads_not_run(
+    ignored_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A draft whose checks were all skipped never reads as passed in the panel."""
+    view = {
+        "number": 61,
+        "state": "OPEN",
+        "headRefOid": "abc1234deadbeef",
+        "baseRefName": "main",
+        "mergeable": "MERGEABLE",
+        "isDraft": True,
+        "statusCheckRollup": [
+            {"name": "ci", "status": "COMPLETED", "conclusion": "SKIPPED"}
+        ],
+    }
+    _fake_gh(monkeypatch, returncode=0, stdout=json.dumps(view))
+    monkeypatch.setattr(
+        cont, "wrapup_freshness", lambda _n: type("F", (), {"fresh": True})()
+    )
+    state = cont.read_pr_state(ignored_repo)
+    assert state is not None
+    assert state.ci == "CI-not-run-1-skipped-draft-PR"
+
+
 def test_read_pr_state_no_pr_is_none_fields_and_other_errors_are_unreadable(
     ignored_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

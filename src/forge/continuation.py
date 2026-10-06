@@ -59,7 +59,7 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
-_PR_FIELDS = "number,state,headRefOid,baseRefName,mergeable,statusCheckRollup"
+_PR_FIELDS = "number,state,headRefOid,baseRefName,mergeable,statusCheckRollup,isDraft"
 _NO_PR_MARKER = "no pull requests found"
 _SHORT_SHA = 7
 _FRESHNESS_WORD = {True: "fresh", False: "stale", None: "unknown"}
@@ -133,7 +133,9 @@ def read_pr_state(root: Path) -> PrState | None:
             str(view.get("mergeable") or ""), counts[0] if counts else None
         ).summary,
         ci=sanitize(
-            summarize_rollup(rollup) if isinstance(rollup, list) else "no checks"
+            summarize_rollup(rollup, is_draft=view.get("isDraft") is True)
+            if isinstance(rollup, list)
+            else "no checks"
         ),
         wrapup=_FRESHNESS_WORD[wrapup_freshness(number).fresh],
         as_of=sanitize(str(view.get("headRefOid") or "")[:_SHORT_SHA]),

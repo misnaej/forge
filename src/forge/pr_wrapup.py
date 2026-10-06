@@ -90,6 +90,7 @@ from forge.pr_wrapup_compose import (
     render_code_quality,
     render_issue_management,
     render_wrapup,
+    rollup_not_run,
     summarize_rollup,
     unfilled_slots,
 )
@@ -163,7 +164,7 @@ _REPORT_FLAGS: Final[tuple[tuple[str, str], ...]] = (
 )
 
 _PR_VIEW_FIELDS: Final[str] = (
-    "number,headRefOid,baseRefName,mergeable,statusCheckRollup,body,title"
+    "number,headRefOid,baseRefName,mergeable,statusCheckRollup,isDraft,body,title"
 )
 
 
@@ -567,7 +568,8 @@ def post_gates(
 
     Args:
         view: ``gh pr view --json`` fields (``headRefOid``, ``baseRefName``,
-            ``mergeable``, optionally ``number``).
+            ``mergeable``, optionally ``number``, ``statusCheckRollup`` and
+            ``isDraft`` for the CI-not-run note).
         verified_sha: The wrap-up's ``verified-at:`` SHA.
         behind: Commits the branch is behind ``origin/<base>``, or ``None``
             when that could not be determined.
@@ -607,6 +609,17 @@ def post_gates(
         refusals.append(
             f"the branch is {behind} commit(s) behind origin/{base}: run "
             f"`git merge origin/{base}`, then re-verify with {rerun}"
+        )
+    rollup = view.get("statusCheckRollup")
+    if isinstance(rollup, list) and rollup_not_run(rollup):
+        cause = (
+            "the PR is a draft and its workflows skip drafts"
+            if view.get("isDraft") is True
+            else "every check was skipped"
+        )
+        notes.append(
+            f"CI has not run on this PR ({cause}); local verification is the "
+            "only evidence"
         )
     return refusals, notes
 
@@ -704,8 +717,8 @@ def _ci_status(pr_number: int | None, view: Mapping[str, object] | None) -> str:
 
     Args:
         pr_number: The PR, or ``None`` before it exists.
-        view: ``gh pr view --json`` fields including ``statusCheckRollup``,
-            or ``None`` when the PR could not be read.
+        view: ``gh pr view --json`` fields including ``statusCheckRollup``
+            and ``isDraft``, or ``None`` when the PR could not be read.
 
     Returns:
         The one-line CI Status.
@@ -715,9 +728,9 @@ def _ci_status(pr_number: int | None, view: Mapping[str, object] | None) -> str:
     if view is None:
         return f"unknown — could not read PR #{pr_number}"
     rollup = view.get("statusCheckRollup")
-    return (
-        summarize_rollup(rollup) if isinstance(rollup, list) else "no checks reported"
-    )
+    if not isinstance(rollup, list):
+        return "no checks reported"
+    return summarize_rollup(rollup, is_draft=view.get("isDraft") is True)
 
 
 def _branch_messages(root: Path, base_ref: str) -> str:
@@ -761,7 +774,7 @@ def _gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs:
         for flag, name in _REPORT_FLAGS
         if (text := _read_optional(getattr(args, flag))) is not None
     }
-    view = gh_pr_view(args.pr, "body,statusCheckRollup") if args.pr else None
+    view = gh_pr_view(args.pr, "body,statusCheckRollup,isDraft") if args.pr else None
     body = str(view.get("body") or "") if view else ""
     refs = find_closing_refs(f"{body}\n{_branch_messages(root, args.base)}")
     emergency = armed_state(root)
