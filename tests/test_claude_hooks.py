@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1030,114 +1032,54 @@ def test_rebase_ignores_word_in_commit_message() -> None:
 _FORCE_PUSH = "block_force_push.sh"
 
 
-def test_force_push_blocks_long_force_flag() -> None:
-    """`git push --force` is blocked."""
-    assert _run_hook(_FORCE_PUSH, "git push --force origin main") == 2
+_FORCE_PUSH_CASES = [
+    pytest.param("git push --force origin main", 2, id="blocks_long_force_flag"),
+    pytest.param(
+        "git push --force-with-lease=origin/main", 2, id="blocks_force_with_lease"
+    ),
+    pytest.param("git push -f origin main", 2, id="blocks_short_f_flag"),
+    pytest.param(
+        "git push -uf origin feat", 2, id="blocks_combined_short_flag_cluster"
+    ),
+    # `f` anywhere in a short-flag cluster forces, first or last.
+    pytest.param("git push -fu origin main", 2, id="blocks_cluster_final_f"),
+    pytest.param(
+        "git push -fq origin main", 2, id="blocks_cluster_with_f_and_other_flags"
+    ),
+    pytest.param("git push origin +main", 2, id="blocks_plus_refspec"),
+    pytest.param("git push origin main", 0, id="allows_plain_push"),
+    pytest.param("git push -u origin feat", 0, id="allows_set_upstream"),
+    pytest.param("git push --follow-tags origin main", 0, id="allows_follow_tags"),
+    pytest.param(
+        "true; git push --force origin main", 2, id="blocks_chained_after_separator"
+    ),
+    pytest.param("git  push -f origin main", 2, id="blocks_doubled_space"),
+    # The force-flag check is bounded to the matched push invocation, so an
+    # unrelated `-f`-bearing command chained after a plain push must not
+    # false-positive, and vice versa.
+    pytest.param(
+        "git push origin main; tar -f x",
+        0,
+        id="allows_unrelated_dash_f_after_separator",
+    ),
+    pytest.param(
+        'git push origin main && git commit -m "use --force later"',
+        0,
+        id="allows_force_mention_after_chained_command",
+    ),
+    pytest.param("git status", 0, id="allows_non_push_git"),
+]
 
 
-def test_force_push_blocks_force_with_lease() -> None:
-    """`git push --force-with-lease` (and its =value form) is blocked."""
-    assert _run_hook(_FORCE_PUSH, "git push --force-with-lease=origin/main") == 2
+@pytest.mark.parametrize(("command", "expected"), _FORCE_PUSH_CASES)
+def test_force_push_verdict(command: str, expected: int) -> None:
+    """Force-push verdict: 2 blocks, 0 allows (per-invocation scoping).
 
-
-def test_force_push_blocks_short_f_flag() -> None:
-    """`git push -f` (short --force) is blocked — the pre-hardening gap."""
-    assert _run_hook(_FORCE_PUSH, "git push -f origin main") == 2
-
-
-def test_force_push_blocks_combined_short_flag_cluster() -> None:
-    """A short-flag cluster containing `f` (`-uf`) is blocked."""
-    assert _run_hook(_FORCE_PUSH, "git push -uf origin feat") == 2
-
-
-def test_force_push_blocks_cluster_final_f() -> None:
-    r"""`-fu` (`f` cluster-leading) is blocked.
-
-    Regression (#348 design review): the scoped flag regex used to end in
-    `f\\b`, which only matched a cluster-final `f`. `-fu` has `f` first, so
-    the fix requires `f` to match anywhere in the cluster
-    (`-[a-zA-Z]*f[a-zA-Z]*\\b`).
+    Args:
+        command: Bash command fed to the hook.
+        expected: Expected hook exit code (2 blocks, 0 allows).
     """
-    assert _run_hook(_FORCE_PUSH, "git push -fu origin main") == 2
-
-
-def test_force_push_blocks_cluster_with_f_and_other_flags() -> None:
-    """`-fq` (`f` followed by another short flag) is blocked.
-
-    Regression (#348 design review): same cluster-final gap as `-fu` — `f`
-    must match anywhere in the cluster, not only at its end.
-    """
-    assert _run_hook(_FORCE_PUSH, "git push -fq origin main") == 2
-
-
-def test_force_push_blocks_plus_refspec() -> None:
-    """A `+`-prefixed force refspec (`origin +main`) is blocked."""
-    assert _run_hook(_FORCE_PUSH, "git push origin +main") == 2
-
-
-def test_force_push_allows_plain_push() -> None:
-    """A normal `git push origin main` is allowed."""
-    assert _run_hook(_FORCE_PUSH, "git push origin main") == 0
-
-
-def test_force_push_allows_set_upstream() -> None:
-    """`git push -u origin feat` (no `f`) is not mistaken for a force push."""
-    assert _run_hook(_FORCE_PUSH, "git push -u origin feat") == 0
-
-
-def test_force_push_allows_follow_tags() -> None:
-    """`--follow-tags` contains no short `-f` cluster and is allowed."""
-    assert _run_hook(_FORCE_PUSH, "git push --follow-tags origin main") == 0
-
-
-def test_force_push_blocks_chained_after_separator() -> None:
-    """A force push chained after a separator (`foo; git push -f`) is blocked.
-
-    Regression: the outer gate must anchor after a shell separator, not only
-    at string-start, or a chained command bypasses the block entirely.
-    """
-    assert _run_hook(_FORCE_PUSH, "true; git push --force origin main") == 2
-
-
-def test_force_push_blocks_doubled_space() -> None:
-    """`git  push -f` (a doubled space) is blocked — the gate allows any ws."""
-    assert _run_hook(_FORCE_PUSH, "git  push -f origin main") == 2
-
-
-# --- force-flag scoping is per-invocation, not command-wide (#348) ---------
-# The force-flag check is bounded to the matched push segment
-# (`[^;&|]*`), so an unrelated `-f`-bearing command chained after a plain
-# push must not false-positive, and vice versa.
-
-
-def test_force_push_allows_unrelated_dash_f_after_separator() -> None:
-    """`git push origin main; tar -f x` — a later `-f` in another command — is allowed.
-
-    Regression: without per-invocation scoping, the force-flag grep would
-    match `-f` anywhere in the command string, false-positiving on an
-    unrelated command chained after a plain push.
-    """
-    assert _run_hook(_FORCE_PUSH, "git push origin main; tar -f x") == 0
-
-
-def test_force_push_allows_force_mention_after_chained_command() -> None:
-    """A plain push chained with an unrelated `--force`-mentioning commit is allowed.
-
-    The literal word `--force` sits in a later, separator-bounded segment
-    (a commit message), so it must not taint the earlier plain-push match.
-    """
-    assert (
-        _run_hook(
-            _FORCE_PUSH,
-            'git push origin main && git commit -m "use --force later"',
-        )
-        == 0
-    )
-
-
-def test_force_push_allows_non_push_git() -> None:
-    """A non-push git command (`git status`) is not inspected."""
-    assert _run_hook(_FORCE_PUSH, "git status") == 0
+    assert _run_hook(_FORCE_PUSH, command) == expected
 
 
 # --- git_anchor.sh: shared lib integrity (#348 dedup contract) -------------
@@ -1711,54 +1653,32 @@ def test_destructive_blocks_stash_push_untracked() -> None:
 # --- git clean: -f/-d/-x/-X/--force block; dry-run (-n/--dry-run) allowed --
 
 
-def test_destructive_blocks_clean_force_flag() -> None:
-    """`git clean -f` is blocked."""
-    assert _run_hook(_DESTRUCTIVE, "git clean -f") == 2
+_DESTRUCTIVE_CLEAN_CASES = [
+    pytest.param("git clean -f", 2, id="blocks_clean_force_flag"),
+    pytest.param("git clean -fdx", 2, id="blocks_clean_clustered_fdx"),
+    pytest.param("git clean -f -d -x", 2, id="blocks_clean_separate_flags"),
+    pytest.param("git clean --force", 2, id="blocks_clean_long_force_flag"),
+    pytest.param("git clean -n", 0, id="allows_clean_dry_run_short_flag"),
+    pytest.param("git clean --dry-run", 0, id="allows_clean_dry_run_long_flag"),
+    pytest.param("git clean -nf", 0, id="allows_clean_dry_run_clustered_with_force"),
+    pytest.param(
+        "git clean --dry-run --force",
+        0,
+        id="allows_clean_dry_run_and_force_as_separate_flags",
+    ),
+    pytest.param("git clean", 0, id="allows_bare_clean"),
+]
 
 
-def test_destructive_blocks_clean_clustered_fdx() -> None:
-    """`git clean -fdx` (clustered short flags) is blocked."""
-    assert _run_hook(_DESTRUCTIVE, "git clean -fdx") == 2
+@pytest.mark.parametrize(("command", "expected"), _DESTRUCTIVE_CLEAN_CASES)
+def test_destructive_clean_verdict(command: str, expected: int) -> None:
+    """`git clean` verdict: force blocks (2); dry-run and bare clean allow (0).
 
-
-def test_destructive_blocks_clean_separate_flags() -> None:
-    """`git clean -f -d -x` (separate short flags) is blocked."""
-    assert _run_hook(_DESTRUCTIVE, "git clean -f -d -x") == 2
-
-
-def test_destructive_blocks_clean_long_force_flag() -> None:
-    """`git clean --force` is blocked."""
-    assert _run_hook(_DESTRUCTIVE, "git clean --force") == 2
-
-
-def test_destructive_allows_clean_dry_run_short_flag() -> None:
-    """`git clean -n` (dry run) is allowed — it only lists candidates."""
-    assert _run_hook(_DESTRUCTIVE, "git clean -n") == 0
-
-
-def test_destructive_allows_clean_dry_run_long_flag() -> None:
-    """`git clean --dry-run` is allowed."""
-    assert _run_hook(_DESTRUCTIVE, "git clean --dry-run") == 0
-
-
-def test_destructive_allows_clean_dry_run_clustered_with_force() -> None:
-    """`-nf` (dry-run clustered with force in the same token) short-circuits allowed.
-
-    The dry-run check runs first, so a dry-run flag anywhere in the
-    invocation stands down the force check even when `-f` sits in the
-    same cluster.
+    Args:
+        command: Bash command fed to the hook.
+        expected: Expected hook exit code (2 blocks, 0 allows).
     """
-    assert _run_hook(_DESTRUCTIVE, "git clean -nf") == 0
-
-
-def test_destructive_allows_clean_dry_run_and_force_as_separate_flags() -> None:
-    """`--dry-run --force` (both present) is allowed — dry-run wins."""
-    assert _run_hook(_DESTRUCTIVE, "git clean --dry-run --force") == 0
-
-
-def test_destructive_allows_bare_clean() -> None:
-    """A bare `git clean` (no flags at all) is allowed — nothing to delete yet."""
-    assert _run_hook(_DESTRUCTIVE, "git clean") == 0
+    assert _run_hook(_DESTRUCTIVE, command) == expected
 
 
 def test_destructive_blocks_clean_bounded_per_invocation() -> None:
@@ -2788,63 +2708,33 @@ def test_amend_uses_payload_cwd_not_process_cwd(tmp_path: Path) -> None:
     assert proc.returncode == 2
 
 
-def test_amend_pushed_commit_registered_in_plugin_json() -> None:
-    """Verify hook is wired into plugin.json's Bash PreToolUse group."""
-    manifest = json.loads(
-        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
-    )
-    pre_tool_use = manifest["hooks"]["PreToolUse"]
-    commands = [hook["command"] for group in pre_tool_use for hook in group["hooks"]]
-    assert any(_AMEND in cmd for cmd in commands)
-
-
 _CONTINUATION_DELETE = "block_continuation_delete.sh"
 
 
-def test_continuation_delete_allows_sibling_file() -> None:
-    """Deleting a `.plan/` sibling file (not CONTINUATION.md) is allowed (#241).
+_CONTINUATION_DELETE_ALLOWED = [
+    pytest.param("rm .plan/weekly_summary_2026-07-10.md", id="sibling_file"),
+    pytest.param(
+        "python -c \"import pathlib; pathlib.Path('.plan/w.md').unlink()\"",
+        id="interpreter_one_liner",
+    ),
+    pytest.param(
+        'gh issue create --body "blocked rm .plan/weekly.md and unlink"',
+        id="quoted_prose_mention",
+    ),
+    pytest.param("rm foo.plan", id="non_plan_path"),
+    pytest.param("echo CONTINUATION.md", id="mention_without_delete"),
+    pytest.param("ls .plan", id="non_delete_action"),
+]
 
-    The issue's reported false positive: a weekly-summary file living
-    alongside CONTINUATION.md must stay deletable.
+
+@pytest.mark.parametrize("command", _CONTINUATION_DELETE_ALLOWED)
+def test_continuation_delete_allows(command: str) -> None:
+    """Sibling `.plan/` files and prose mentions pass.
+
+    Args:
+        command: Bash command fed to the hook.
     """
-    assert _run_hook(_CONTINUATION_DELETE, "rm .plan/weekly_summary_2026-07-10.md") == 0
-
-
-def test_continuation_delete_allows_interpreter_one_liner() -> None:
-    """A `python -c` one-liner unlink slips through — documented, accepted gap."""
-    assert (
-        _run_hook(
-            _CONTINUATION_DELETE,
-            "python -c \"import pathlib; pathlib.Path('.plan/w.md').unlink()\"",
-        )
-        == 0
-    )
-
-
-def test_continuation_delete_allows_quoted_prose_mention() -> None:
-    """`rm`/`unlink` wording quoted inside prose (e.g. an issue body) is allowed."""
-    assert (
-        _run_hook(
-            _CONTINUATION_DELETE,
-            'gh issue create --body "blocked rm .plan/weekly.md and unlink"',
-        )
-        == 0
-    )
-
-
-def test_continuation_delete_allows_non_plan_path() -> None:
-    """`rm foo.plan` (a file merely ending in `.plan`) is not the `.plan/` dir."""
-    assert _run_hook(_CONTINUATION_DELETE, "rm foo.plan") == 0
-
-
-def test_continuation_delete_allows_mention_without_delete() -> None:
-    """Mentioning CONTINUATION.md without a delete verb is allowed."""
-    assert _run_hook(_CONTINUATION_DELETE, "echo CONTINUATION.md") == 0
-
-
-def test_continuation_delete_allows_non_delete_action() -> None:
-    """A non-delete action on `.plan` (`ls`) is allowed."""
-    assert _run_hook(_CONTINUATION_DELETE, "ls .plan") == 0
+    assert _run_hook(_CONTINUATION_DELETE, command) == 0
 
 
 def test_continuation_delete_blocks_continuation_md_direct() -> None:
@@ -3541,42 +3431,29 @@ def test_fixer_recon_allows_three_full_precommit_runs_then_blocks_fourth(
     assert "STUCK" in proc.stderr
 
 
-def test_fixer_recon_only_flag_never_counts_toward_cap(tmp_path: Path) -> None:
-    """`--only` refreshes never count toward the cap, even once it's exhausted."""
-    init_git_repo(tmp_path)
-    _seed_precommit_ledger(tmp_path, "agent-a", 3)
-    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
-    proc = _run_hook_proc(
-        _FIXER_RECON,
-        "forge-precommit --only ruff",
-        options=HookOptions(
-            agent_type="forge:precommit-fixer",
-            agent_id="agent-a",
-            session_id="sess-1",
-            cwd=tmp_path,
-            env=env,
-        ),
-    )
-    assert proc.returncode == 0
-    ledger = (code_health_dir(tmp_path) / "agent_timing.jsonl").read_text()
-    assert ledger.count('"event":"precommit_full_run"') == 3
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("forge-precommit --only ruff", id="only_flag"),
+        # --freshness runs no steps at all: the same class of exemption as
+        # --only, which a full-run classifier excluding only --only would miss.
+        pytest.param("forge-precommit --freshness", id="freshness_flag"),
+    ],
+)
+def test_fixer_recon_partial_runs_never_count_toward_cap(
+    tmp_path: Path, command: str
+) -> None:
+    """Partial / read-only precommit runs never count toward the cap, even exhausted.
 
-
-def test_fixer_recon_freshness_flag_never_counts_toward_cap(tmp_path: Path) -> None:
-    """`--freshness` read-only queries never count toward the cap, even exhausted.
-
-    BEHAVIOR: `forge-precommit --freshness` runs no steps at all (#538) —
-    the same class of exemption as `--only`'s refreshes, pinned here as
-    its own sibling test since `_is_full_precommit` only excludes
-    `--only` today (a bare `--freshness` call would otherwise be
-    misclassified as the fourth full run and blocked).
+    Args:
+        command: A forge-precommit invocation that is not a full run.
     """
     init_git_repo(tmp_path)
     _seed_precommit_ledger(tmp_path, "agent-a", 3)
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
     proc = _run_hook_proc(
         _FIXER_RECON,
-        "forge-precommit --freshness",
+        command,
         options=HookOptions(
             agent_type="forge:precommit-fixer",
             agent_id="agent-a",
@@ -4007,15 +3884,30 @@ def _record(env: dict[str, str]) -> str:
     return log.read_text(encoding="utf-8") if log.exists() else ""
 
 
-def test_keep_squash_last_ignores_unrelated_commands(tmp_path: Path) -> None:
-    """SCENARIO: an ordinary Bash call that touches no PR comment.
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("ls -la", id="ignores_unrelated_commands"),
+        pytest.param(
+            "forge-pr-squash-comment --pr 61 --bullet a --bullet b --bullet c",
+            id="does_not_recurse_on_its_own_cli",
+        ),
+    ],
+)
+def test_keep_squash_last_never_invokes_the_cli(command: str, tmp_path: Path) -> None:
+    """SCENARIO: an ordinary Bash call, or the squash CLI's own post.
 
-    MOCK SETUP: recording stub on PATH; the hook runs against `ls -la`.
-    EXPECTED BEHAVIOR: the CLI is never invoked — this hook fires on
-    every Bash call, so the non-match path must cost nothing.
+    MOCK SETUP: recording stub on PATH; the hook runs against the command.
+    EXPECTED BEHAVIOR: the CLI is never invoked — this hook fires on every
+    Bash call, so the non-match path must cost nothing, and the CLI's own
+    post already lands last (re-entering costs a round trip).
+
+    Args:
+        command: Bash command fed to the hook.
+        tmp_path: Pytest temporary directory holding the stub CLI.
     """
     env = _stub_squash_cli(tmp_path, "exit 0")
-    assert _run_hook(_KEEP_SQUASH_LAST, "ls -la", options=HookOptions(env=env)) == 0
+    assert _run_hook(_KEEP_SQUASH_LAST, command, options=HookOptions(env=env)) == 0
     assert _record(env) == ""
 
 
@@ -4036,93 +3928,67 @@ def test_keep_squash_last_runs_after_a_conversation_comment(tmp_path: Path) -> N
     assert "PR #61" in proc.stdout
 
 
-def test_keep_squash_last_runs_after_a_review_thread_reply(tmp_path: Path) -> None:
-    """SCENARIO: `/pr-comments` replies on a review thread.
-
-    MOCK SETUP: recording stub; the command is the REST replies endpoint,
-    whose comments never appear in the conversation listing.
-    EXPECTED BEHAVIOR: the PR number is read out of the endpoint path.
-    """
-    env = _stub_squash_cli(tmp_path, "exit 0")
-    command = (
-        "gh api repos/o/r/pulls/77/comments/123/replies --method POST -f body=done"
-    )
-    assert _run_hook(_KEEP_SQUASH_LAST, command, options=HookOptions(env=env)) == 0
-    assert "--pr 77" in _record(env)
-
-
-def test_keep_squash_last_does_not_recurse_on_its_own_cli(tmp_path: Path) -> None:
-    """The squash CLI's own post already lands last; re-entering costs a round trip."""
-    env = _stub_squash_cli(tmp_path, "exit 0")
-    assert (
-        _run_hook(
-            _KEEP_SQUASH_LAST,
-            "forge-pr-squash-comment --pr 61 --bullet a --bullet b --bullet c",
-            options=HookOptions(env=env),
-        )
-        == 0
-    )
-    assert _record(env) == ""
-
-
-def test_keep_squash_last_runs_despite_trailing_cli_name_mention(
-    tmp_path: Path,
-) -> None:
-    """A CLI-name mention inside an argument does not exempt a raw post.
-
-    Only a command *starting with* (or chained to) the CLI name is its own
-    post; naming it inside a `--body` string is still a raw `gh pr comment`
-    that must re-enter the guard.
-    """
-    env = _stub_squash_cli(tmp_path, "exit 0")
-    assert (
-        _run_hook(
-            _KEEP_SQUASH_LAST,
+@pytest.mark.parametrize(
+    ("command", "pr_arg"),
+    [
+        pytest.param(
+            "gh api repos/o/r/pulls/77/comments/123/replies --method POST -f body=done",
+            "--pr 77",
+            id="runs_after_a_review_thread_reply",
+        ),
+        pytest.param(
             'gh pr comment 61 --body "see forge-pr-squash-comment"',
-            options=HookOptions(env=env),
-        )
-        == 0
-    )
-    assert "--pr 61" in _record(env)
-
-
-def test_keep_squash_last_is_silent_on_a_no_op(tmp_path: Path) -> None:
-    """A comment that is already newest produces no agent-visible output."""
-    env = _stub_squash_cli(tmp_path, 'echo "squash comment is already the newest"')
-    proc = _run_hook_proc(
-        _KEEP_SQUASH_LAST, "gh pr comment 61 --body x", options=HookOptions(env=env)
-    )
-    assert proc.returncode == 0
-    assert proc.stdout.strip() == ""
-
-
-def test_keep_squash_last_stays_silent_when_no_squash_comment_exists(
-    tmp_path: Path,
+            "--pr 61",
+            id="runs_despite_trailing_cli_name_mention",
+        ),
+    ],
+)
+def test_keep_squash_last_runs_for_the_named_pr(
+    command: str, pr_arg: str, tmp_path: Path
 ) -> None:
-    """SCENARIO: replies land on a PR whose squash message is not authored yet.
+    """SCENARIO: review-thread reply or raw post naming the CLI in `--body`.
 
-    MOCK SETUP: the stub exits 1, as the CLI does with nothing to move.
+    MOCK SETUP: recording stub reports a successful re-post.
+    EXPECTED BEHAVIOR: the CLI runs for the PR named in the command; a
+    CLI-name mention in an argument does not exempt a raw post.
+
+    Args:
+        command: Bash command fed to the hook.
+        pr_arg: The `--pr <N>` argument the CLI is expected to receive.
+        tmp_path: Pytest temporary directory holding the stub CLI.
+    """
+    env = _stub_squash_cli(tmp_path, "exit 0")
+    assert _run_hook(_KEEP_SQUASH_LAST, command, options=HookOptions(env=env)) == 0
+    assert pr_arg in _record(env)
+
+
+@pytest.mark.parametrize(
+    "stub_body",
+    [
+        pytest.param(
+            'echo "squash comment is already the newest"', id="is_silent_on_a_no_op"
+        ),
+        pytest.param("exit 1", id="stays_silent_when_no_squash_comment_exists"),
+    ],
+)
+def test_keep_squash_last_is_silent(stub_body: str, tmp_path: Path) -> None:
+    """SCENARIO: the comment is already newest, or no squash message is authored yet.
+
+    MOCK SETUP: the stub reports a no-op, or exits 1 as the CLI does with
+    nothing to move.
     EXPECTED BEHAVIOR: exit 0 and no output — the mid-review state is
     normal, and a post-tool hook must never fail a working command.
+
+    Args:
+        stub_body: Shell body of the stub CLI standing in for the real one.
+        tmp_path: Pytest temporary directory holding the stub CLI.
     """
-    env = _stub_squash_cli(tmp_path, "exit 1")
+    env = _stub_squash_cli(tmp_path, stub_body)
     proc = _run_hook_proc(
         _KEEP_SQUASH_LAST, "gh pr comment 61 --body x", options=HookOptions(env=env)
     )
     assert proc.returncode == 0
     assert proc.stdout.strip() == ""
-
-
-def test_keep_squash_last_registered_as_a_post_tool_hook() -> None:
-    """plugin.json wires the hook on PostToolUse(Bash), not as a blocker."""
-    manifest = json.loads(
-        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
-    )
-    post = manifest["hooks"]["PostToolUse"]
-    bash_groups = [group for group in post if group.get("matcher") == "Bash"]
-    assert len(bash_groups) == 1
-    commands = [hook["command"] for hook in bash_groups[0]["hooks"]]
-    assert any(_KEEP_SQUASH_LAST in cmd for cmd in commands)
 
 
 # --- block_raw_wrapup_post.sh: the wrap-up is posted only via the CLI ------
@@ -4238,14 +4104,21 @@ def test_raw_wrapup_post_allows_an_empty_command() -> None:
     assert _run_hook(_RAW_WRAPUP_POST, "") == 0
 
 
-def test_raw_wrapup_post_registered_in_plugin_json() -> None:
-    """plugin.json wires the hook on PreToolUse(Bash), not as a passive check."""
+@pytest.mark.parametrize(
+    "hook",
+    [
+        pytest.param(_AMEND, id="amend_pushed_commit"),
+        pytest.param(_RAW_WRAPUP_POST, id="raw_wrapup_post"),
+    ],
+)
+def test_hook_registered_in_plugin_json_pre_tool_use(hook: str) -> None:
+    """plugin.json wires the hook into the PreToolUse group, not as a passive check."""
     manifest = json.loads(
         (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
     )
     pre_tool_use = manifest["hooks"]["PreToolUse"]
-    commands = [hook["command"] for group in pre_tool_use for hook in group["hooks"]]
-    assert any(_RAW_WRAPUP_POST in cmd for cmd in commands)
+    commands = [h["command"] for group in pre_tool_use for h in group["hooks"]]
+    assert any(hook in cmd for cmd in commands)
 
 
 # --- warn_stale_wrapup.sh: post-push staleness reminder --------------------
@@ -4306,16 +4179,28 @@ def _stub_wrapup_freshness_clis(
     return env
 
 
-def test_warn_stale_wrapup_ignores_non_push_command(tmp_path: Path) -> None:
-    """SCENARIO: an ordinary Bash call with no `git push` in it.
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("ls -la", id="non_push_command"),
+        # GIT_ANCHOR needs `git` right after a shell separator, which text
+        # inside a quoted argument never provides.
+        pytest.param('echo "please run git push later"', id="quoted_mention"),
+    ],
+)
+def test_warn_stale_wrapup_ignores_non_push(tmp_path: Path, command: str) -> None:
+    """SCENARIO: a Bash call with no real `git push` in it.
 
     MOCK SETUP: both CLIs stubbed and ready to answer.
     EXPECTED BEHAVIOR: the hook exits before probing either CLI — this
     hook fires on every Bash call, so the non-match path must cost nothing.
+
+    Args:
+        command: A command with no `git push` invocation.
     """
     env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
     proc = _run_hook_proc(
-        _WARN_STALE_WRAPUP, "ls -la", options=HookOptions(cwd=tmp_path, env=env)
+        _WARN_STALE_WRAPUP, command, options=HookOptions(cwd=tmp_path, env=env)
     )
     assert proc.returncode == 0
     assert proc.stdout == ""
@@ -4462,37 +4347,6 @@ def test_warn_stale_wrapup_fires_in_compound_command(tmp_path: Path) -> None:
     assert "PR #42" in proc.stdout
 
 
-def test_warn_stale_wrapup_ignores_quoted_mention(tmp_path: Path) -> None:
-    """A `git push` mention inside a quoted string body must not anchor.
-
-    MOCK SETUP: both CLIs stubbed and ready to answer; GIT_ANCHOR requires
-    `git` immediately after a shell separator, which text inside a quoted
-    argument never provides.
-    EXPECTED BEHAVIOR: the hook exits before probing either CLI.
-    """
-    env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
-    proc = _run_hook_proc(
-        _WARN_STALE_WRAPUP,
-        'echo "please run git push later"',
-        options=HookOptions(cwd=tmp_path, env=env),
-    )
-    assert proc.returncode == 0
-    assert proc.stdout == ""
-    assert _record(env) == ""
-
-
-def test_warn_stale_wrapup_registered_as_a_post_tool_hook() -> None:
-    """plugin.json wires the hook on PostToolUse(Bash), not as a blocker."""
-    manifest = json.loads(
-        (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
-    )
-    post = manifest["hooks"]["PostToolUse"]
-    bash_groups = [group for group in post if group.get("matcher") == "Bash"]
-    assert len(bash_groups) == 1
-    commands = [hook["command"] for hook in bash_groups[0]["hooks"]]
-    assert any(_WARN_STALE_WRAPUP in cmd for cmd in commands)
-
-
 # --- warn_generated_conflicts.sh: post-merge generated-artifact instruction -
 
 _WARN_GENERATED_CONFLICTS = "warn_generated_conflicts.sh"
@@ -4605,7 +4459,15 @@ def test_warn_generated_conflicts_silent_when_forge_resync_missing(
     assert proc.stdout == ""
 
 
-def test_warn_generated_conflicts_registered_as_a_post_tool_hook() -> None:
+@pytest.mark.parametrize(
+    "hook",
+    [
+        pytest.param(_KEEP_SQUASH_LAST, id="keep_squash_last"),
+        pytest.param(_WARN_STALE_WRAPUP, id="warn_stale_wrapup"),
+        pytest.param(_WARN_GENERATED_CONFLICTS, id="warn_generated_conflicts"),
+    ],
+)
+def test_hook_registered_as_a_post_tool_hook(hook: str) -> None:
     """plugin.json wires the hook on PostToolUse(Bash), not as a blocker."""
     manifest = json.loads(
         (_HOOKS_DIR.parent / ".claude-plugin" / "plugin.json").read_text()
@@ -4613,8 +4475,8 @@ def test_warn_generated_conflicts_registered_as_a_post_tool_hook() -> None:
     post = manifest["hooks"]["PostToolUse"]
     bash_groups = [group for group in post if group.get("matcher") == "Bash"]
     assert len(bash_groups) == 1
-    commands = [hook["command"] for hook in bash_groups[0]["hooks"]]
-    assert any(_WARN_GENERATED_CONFLICTS in cmd for cmd in commands)
+    commands = [h["command"] for h in bash_groups[0]["hooks"]]
+    assert any(hook in cmd for cmd in commands)
 
 
 # --- log_agent_timing.sh: SubagentStart/Stop/PostToolUse ledger append -----
@@ -5034,7 +4896,7 @@ def _run_verdict_hook(
         "session_id": "s1",
     }
     return subprocess.run(
-        [shutil_bash(), str(_HOOKS_DIR / _REQUIRE_VERDICT)],
+        [_shutil_bash(), str(_HOOKS_DIR / _REQUIRE_VERDICT)],
         input=json.dumps(payload),
         capture_output=True,
         text=True,
@@ -5044,7 +4906,7 @@ def _run_verdict_hook(
     )
 
 
-def shutil_bash() -> str:
+def _shutil_bash() -> str:
     """Absolute path of bash, resolved on the test runner's own PATH."""
     found = shutil.which("bash")
     assert found
@@ -5719,6 +5581,260 @@ def test_help_exemption_does_not_leak(hook: str, command: str) -> None:
         command: Shell command with help-like token to execute through the hook.
     """
     assert _run_hook(hook, command) == _BLOCK
+
+
+# --- git_anchor.sh scanner: committed snapshot + quoting parity -------------
+# The command-position scanner is one shared awk program every guard trusts;
+# a refactor that quietly changes what it blanks blinds them all. The
+# snapshot pins its output over a corpus so a change is either provably
+# neutral or a deliberate, reviewed regeneration.
+
+_SNAPSHOT_PATH = Path(__file__).with_name("command_positions_snapshot.json")
+_SNAPSHOT_ENV = "FORGE_UPDATE_SNAPSHOT"
+
+# Commands from the amend quote-desync tests, the help-case tables, and the
+# quoting shapes found in review (inline there, so restated here).
+_SNAPSHOT_EXTRA_COMMANDS = [
+    'git commit -m "\\"" --amend -m "z"',
+    'git commit -m \'"\' --amend -m "z"',
+    'git commit -m "it\'s" --amend -m "don\'t"',
+    "git commit -m 'say \"hi' --amend -m 'there\"'",
+    "git commit \\--amend",
+    "git \\commit --amend",
+    "git commit -m $'it\\'s ok' --amend",
+    "git commit --a\\\nmend",
+    "git commit -m \\$'X\\' --amend puppy",
+    "git commit -m $$'x\\' --amend puppy",
+    "git --no-pager commit --amend",
+    'git commit -m "use --amend later"',
+    "GIT_DIR=/tmp/x git commit --amend",
+    "sudo -n git commit --amend",
+    "(git commit --amend)",
+    "git commit --amend-ish -m x",
+    "gh pr create --help",
+    "gh pr merge --help",
+    "git commit -h",
+    "git reset -h",
+    "pip install --help",
+    "git rebase --help",
+    "gh pr create --title x; echo --help",
+    "git commit -m -h",
+    "git commit -m -h --no-verify",
+    "git commit -- -h",
+    'git commit "-h"',
+    # Arithmetic, comment and heredoc-opener shapes — the three scanner
+    # pieces the refactor moves, so the snapshot guards each of them.
+    "echo $((1+2)); git push -f",
+    "((x++)) && git push -f origin main",
+    "echo $(( (1+2) * 3 )) # git push -f",
+    "x=1 # git push --force",
+    "echo a#b; git push -f",
+    "echo ${x#y} git push -f",
+    "echo foo \\# git push -f",
+    "git push origin main # --force",
+    "cat <<EOF\ngit push -f\nEOF",
+    "cat <<'EOF'\ngit push -f $(x)\nEOF",
+    "cat <<-EOF\n\tgit push -f\n\tEOF",
+    "bash <<EOF\ngit push -f\nEOF",
+    "sh <<'EOF'\ngit push --force\nEOF",
+    "cat <<EOF | sh\ngit push -f\nEOF",
+    "ssh host <<EOF\ngit push -f\nEOF",
+    "cat <<EOF\n$(git push -f)\nEOF",
+    "cat <<<'git push -f'",
+    "bash <<<'git push -f'",
+    "cat << EOF; git push -f\nbody\nEOF",
+    # Wrapper shapes the scanner detects.
+    "bash -c 'git push -f'",
+    "bash -o posix -c 'git push -f'",
+    "ssh -o BatchMode=yes host 'git push -f'",
+    "eval 'git push -f'",
+    'sudo bash -lc "git push --force"',
+    'echo ok; sh -c "git push -f"',
+    # Padded wrappers: the wrapper sits far before its payload.
+    "bash " + "-o posix " * 30 + "-c 'git push -f'",
+    "ssh " + "-o BatchMode=yes " * 20 + "host 'git push -f'",
+    "sh " + "-o posix " * 30 + "<<EOF\ngit push -f\nEOF",
+]
+
+
+def _snapshot_corpus() -> list[str]:
+    """Build the deduplicated, order-stable snapshot corpus.
+
+    Returns:
+        Every command from the position and sequencer tables plus the
+        extra shapes, first occurrence wins.
+    """
+    commands = [param.values[1] for param in _POSITION_CASES]
+    commands += list(_SEQUENCER_CASES)
+    commands += _SNAPSHOT_EXTRA_COMMANDS
+    return list(dict.fromkeys(commands))
+
+
+def _scanner_view(command: str, *, words: bool) -> str:
+    """Run the shared lib's ``command_positions`` over *command*.
+
+    Args:
+        command: The shell command to scan.
+        words: Use the ``--words`` view (quoted spans keep their words).
+
+    Returns:
+        The view the scanner prints.
+    """
+    flag = "--words " if words else ""
+    script = f'source "$1/git_anchor.sh"; command_positions {flag}"$2"'
+    return subprocess.run(
+        ["bash", "-c", script, "_", str(_HOOKS_DIR), command],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def _compute_snapshot() -> dict[str, dict[str, str]]:
+    """Scan the whole corpus in both views.
+
+    Returns:
+        Mapping of command to its ``positions`` and ``words`` views.
+    """
+    return {
+        command: {
+            "positions": _scanner_view(command, words=False),
+            "words": _scanner_view(command, words=True),
+        }
+        for command in _snapshot_corpus()
+    }
+
+
+def test_command_positions_snapshot_is_unchanged() -> None:
+    """SCENARIO: the scanner's output over the corpus matches the saved file.
+
+    Regenerate deliberately with ``FORGE_UPDATE_SNAPSHOT=1``.
+    """
+    actual = _compute_snapshot()
+    if os.environ.get(_SNAPSHOT_ENV) == "1":
+        _SNAPSHOT_PATH.write_text(
+            json.dumps(actual, indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        return
+    expected = json.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    diffs = [
+        f"{command!r}\n  expected: {expected.get(command)!r}\n  actual:   {views!r}"
+        for command, views in actual.items()
+        if expected.get(command) != views
+    ]
+    diffs += [f"{c!r}\n  missing from corpus" for c in expected if c not in actual]
+    assert not diffs, (
+        f"{len(diffs)} scanner snapshot case(s) differ "
+        f"(regenerate with {_SNAPSHOT_ENV}=1 if deliberate):\n" + "\n".join(diffs)
+    )
+
+
+# Each case is a force push placed inside or outside one quoting construct.
+# The plain path and the `bash -c '<case>'` path run different quote
+# handlers, so they must reach the same verdict or the handlers drifted.
+_QUOTING_CASES = [
+    pytest.param("echo 'git push -f'", _ALLOW, id="single-quoted-text"),
+    pytest.param("echo 'x'; git push -f", _BLOCK, id="after-single-quotes"),
+    pytest.param("echo 'it'\\''s'; git push -f", _BLOCK, id="single-quote-splice"),
+    pytest.param('echo "git push -f"', _ALLOW, id="double-quoted-text"),
+    pytest.param('echo "a \\" b"; git push -f', _BLOCK, id="escaped-dquote-then-live"),
+    pytest.param('echo "a \\" git push -f"', _ALLOW, id="escaped-dquote-stays-inside"),
+    pytest.param("echo $'a\\'b'; git push -f", _BLOCK, id="ansi-c-escaped-quote"),
+    pytest.param("echo $'git push -f'", _ALLOW, id="ansi-c-text"),
+    pytest.param("echo $$'x'; git push -f", _BLOCK, id="double-dollar-toggle"),
+    pytest.param("echo \\$'x'; git push -f", _BLOCK, id="escaped-dollar-toggle"),
+    pytest.param("echo \\\ngit push -f", _ALLOW, id="backslash-newline-argument"),
+    pytest.param("true; \\\ngit push -f", _BLOCK, id="backslash-newline-before-verb"),
+    pytest.param('echo "$(git push -f)"', _BLOCK, id="nested-subst-in-dquotes"),
+    pytest.param(
+        'echo "$(echo "x"; git push -f)"', _BLOCK, id="nested-quotes-in-subst"
+    ),
+    pytest.param("echo `git push -f`", _BLOCK, id="backtick-subst"),
+    pytest.param('echo "`git push -f`"', _BLOCK, id="backtick-in-dquotes"),
+]
+
+
+@pytest.mark.parametrize(("case", "expected"), _QUOTING_CASES)
+def test_quoting_constructs_agree_between_plain_and_wrapped_paths(
+    case: str, expected: int
+) -> None:
+    """SCENARIO: a quoting construct is read the same bare and under `bash -c`.
+
+    Args:
+        case: Command with a force push inside or outside a quoted construct.
+        expected: Expected verdict for both paths.
+    """
+    plain = _run_hook("block_force_push.sh", case)
+    wrapped = _run_hook("block_force_push.sh", f"bash -c {shlex.quote(case)}")
+
+    assert plain == wrapped == expected
+
+
+# The scanner once read only the last 240 characters to spot a wrapper; the
+# padded cases must exceed it to prove that window is gone.
+_OLD_FIXED_WINDOW = 240
+_POSIX_PAD = "-o posix " * 30
+_SSH_PAD = "-o BatchMode=yes " * 20
+_PADDED_WRAPPER_CASES = [
+    pytest.param(f"bash {_POSIX_PAD}-c 'git push -f'", id="bash-options"),
+    pytest.param(f"sh {_POSIX_PAD}-c 'git push --force'", id="sh-options"),
+    pytest.param(f'bash {_POSIX_PAD}-lc "git push -f origin main"', id="bash-cluster"),
+    pytest.param(f"ssh {_SSH_PAD}host 'git push -f'", id="ssh-options"),
+    pytest.param(f"sh {_POSIX_PAD}<<EOF\ngit push -f\nEOF", id="heredoc-to-shell"),
+    pytest.param(f"bash {_POSIX_PAD}<<<'git push -f'", id="here-string"),
+]
+
+
+@pytest.mark.parametrize("command", _PADDED_WRAPPER_CASES)
+def test_padded_wrapper_cannot_hide_a_force_push(command: str) -> None:
+    """SCENARIO: harmless options pad a wrapper far from its payload.
+
+    A wrapper is detected across its whole simple command, so no amount of
+    padding moves it out of view.
+
+    Args:
+        command: A wrapped force push behind 270+ characters of options —
+            longer than the fixed window the scanner used to read.
+    """
+    assert len(command) > _OLD_FIXED_WINDOW
+    assert _run_hook(_FORCE_PUSH, command) == 2
+
+
+def test_padded_wrapper_with_a_harmless_payload_is_allowed() -> None:
+    """The fix blocks wrapped force pushes, not long wrappers."""
+    assert _run_hook(_FORCE_PUSH, f"bash {_POSIX_PAD}-c 'echo hi'") == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(
+            "echo " + "x " * 25000 + f"; bash {_POSIX_PAD}-c 'git push -f'",
+            id="long-simple-command-then-wrapper",
+        ),
+        pytest.param(
+            "bash " + "-o posix " * 5500 + "-c 'git push -f'",
+            id="wrapper-padded-to-50kb",
+        ),
+    ],
+)
+def test_scanner_stays_fast_on_a_50kb_single_line_command(command: str) -> None:
+    """A 50 KB one-line command is scanned in linear time.
+
+    Wrapper detection reads the whole simple command; checking only when the
+    previous word could end a wrapper keeps that from going quadratic. The
+    bound is deliberately loose (a linear scan takes well under a second; the
+    quadratic version took about 18 s), so a loaded runner cannot trip it.
+
+    Args:
+        command: A ~50 KB command ending in a wrapped force push.
+    """
+    start = time.monotonic()
+    verdict = _run_hook(_FORCE_PUSH, command)
+    elapsed = time.monotonic() - start
+
+    assert verdict == 2
+    assert elapsed < 10
 
 
 @pytest.mark.parametrize(

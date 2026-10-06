@@ -683,12 +683,32 @@ def _run_git(*args: str, cwd: Path | None = None) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+# A push or fetch crosses the network; a credential prompt nobody can
+# answer, or a stalled remote, must end instead of hanging the caller
+# (FOUNDATION §15).
+PUSH_TIMEOUT_S = 120
+
+
+def _log_git_timeout(args: tuple[str, ...], timeout: float | None) -> None:
+    """Log the one-line ``git <verb> timed out`` notice, without a traceback.
+
+    A timeout's stack says nothing the line does not; a traceback in a CI
+    log reads as a crash in forge rather than an unresponsive remote.
+
+    Args:
+        args: The git argv tail that timed out.
+        timeout: The bound, in seconds, that elapsed.
+    """
+    logger.error("git %s timed out after %ss", args[0] if args else "", timeout)
+
+
 def run_git(
     *args: str,
     cwd: Path | None = None,
     check: bool = True,
     log_errors: bool = True,
     env: Mapping[str, str] | None = None,
+    timeout: float | None = None,
 ) -> str:
     """Run ``git`` with *args* in *cwd* and return stripped stdout.
 
@@ -710,6 +730,10 @@ def run_git(
         env: Variables to set for this invocation only, merged over the
             current environment (e.g. ``GIT_INDEX_FILE`` pointing at a
             scratch index).
+        timeout: Hard bound in seconds on the invocation; ``None`` (the
+            default) waits indefinitely. Pass one for anything that
+            crosses the network (:data:`PUSH_TIMEOUT_S`), where a
+            stalled remote would otherwise hang the caller.
 
     Returns:
         Trimmed stdout.
@@ -723,6 +747,10 @@ def run_git(
             invisible. Invariant for callers: never pass a
             credential-bearing arg or URL (e.g. a token-embedded remote)
             — a failure would echo it verbatim into CI logs.
+        subprocess.TimeoutExpired: When *timeout* elapses, whatever
+            ``check`` says — a git that never answered has no exit
+            status to tolerate. One ``git <verb> timed out after <N>s``
+            line is logged first (when ``log_errors`` is ``True``).
     """
     try:
         proc = subprocess.run(
@@ -732,7 +760,12 @@ def run_git(
             text=True,
             check=check,
             env={**os.environ, **env} if env is not None else None,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired:
+        if log_errors:
+            _log_git_timeout(args, timeout)
+        raise
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
         if log_errors and detail:
@@ -1073,7 +1106,9 @@ def fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool:
 
     A caller that only compares against a remote branch must not hang on a
     credential prompt nobody can answer (FOUNDATION §15): the fetch runs
-    with ``GIT_TERMINAL_PROMPT=0``, and any failure is returned, not raised.
+    with ``GIT_TERMINAL_PROMPT=0`` and is bounded by :data:`PUSH_TIMEOUT_S`
+    so a stalled remote cannot hang it either, and any failure — a timeout
+    included — is returned, not raised.
 
     Args:
         repo_root: Git repo root.
@@ -1095,15 +1130,48 @@ def fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool:
             cwd=repo_root,
             env={"GIT_TERMINAL_PROMPT": "0"},
             log_errors=False,
+            timeout=PUSH_TIMEOUT_S,
         )
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return False
     return True
 
 
-# A push crosses the network; a credential prompt nobody can answer, or a
-# stalled remote, must end instead of hanging the caller (FOUNDATION §15).
-PUSH_TIMEOUT_S = 120
+def tag_on_remote(repo_root: Path, tag: str) -> bool | None:
+    """Ask ``origin`` whether it holds *tag*, never prompting or hanging.
+
+    The one remote tag probe for forge's tag-cutting CLIs. It consults the
+    remote only: a caller that has just created *tag* locally learns
+    nothing from the local ref about whether a push landed. Bounded by
+    :data:`PUSH_TIMEOUT_S` with ``GIT_TERMINAL_PROMPT=0``, because it
+    typically runs right after a push to the same remote has stalled.
+
+    Args:
+        repo_root: Git repo root.
+        tag: Tag name to look for (e.g. ``v1.2.3``).
+
+    Returns:
+        ``True`` when the remote holds *tag*; ``False`` when it answered
+        and does not; ``None`` when the query failed or timed out, so
+        the remote's state is unknown.
+    """
+    try:
+        # No `--` guard needed: the pattern always starts with
+        # `refs/tags/`, so a dash-prefixed tag can never parse as an option.
+        listing = run_git(
+            "ls-remote",
+            "--tags",
+            "origin",
+            f"refs/tags/{tag}",
+            cwd=repo_root,
+            env={"GIT_TERMINAL_PROMPT": "0"},
+            log_errors=False,
+            timeout=PUSH_TIMEOUT_S,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    return bool(listing)
+
 
 # Environment variables that reconfigure git for one process — a
 # `core.hooksPath` set this way silently skips the pre-commit hook — or
@@ -2234,11 +2302,15 @@ def get_modified_files(
     prefix: str | tuple[str, ...] | None = None,
     repo_root: Path | None = None,
     base_branch: str = "main",
+    include_unstaged: bool = True,
 ) -> list[str]:
     """Get list of modified files from git.
 
     Detects files modified in the current branch compared to the base
-    branch, including branch commits, staged files, and unstaged changes.
+    branch, including branch commits, staged files, and unstaged changes
+    to tracked files. An untracked file is never listed: git's diff does
+    not know it exists until it is added, so a caller checking this set
+    must say so rather than imply the file was looked at.
 
     Strategy:
         - Feature branch: all files modified vs the base ref from
@@ -2246,6 +2318,14 @@ def get_modified_files(
           first, local ``<base_branch>`` as offline fallback
           (branch commits + staged + unstaged)
         - Base branch: files modified vs previous commit
+
+    With ``include_unstaged=False`` no path reads the working tree: on a
+    feature branch the result is the branch commits plus the index, and
+    an empty one stays empty (the previous-commit fallback would report
+    the base branch's last change as this branch's). On the base branch,
+    a detached ``HEAD`` or an unresolvable base, it is the last commit
+    (``HEAD~1..HEAD``) plus the index — a CI merge checkout is exactly
+    that last commit.
 
     Args:
         suffix: File suffix to filter by. Defaults to '.py'.
@@ -2261,6 +2341,10 @@ def get_modified_files(
             Callers with a loaded ``[tool.forge]`` config pass
             ``cfg.base_branch`` (``forge.config.select_diff_files`` does);
             the default matches the config default.
+        include_unstaged: Count working-tree edits that are not staged.
+            ``False`` answers "what is committed or staged", on every
+            path — the set a gate that must see the commit's own content
+            reads.
 
     Returns:
         Deduplicated list of modified file paths matching the filters.
@@ -2287,6 +2371,8 @@ def get_modified_files(
                 suffix=suffix,
                 prefix=prefix,
             )
+            if not include_unstaged:
+                return sorted(set(branch_files + staged_files))
             unstaged_files = _parse_files(
                 _run_git("diff", "--name-only", cwd=repo_root),
                 suffix=suffix,
@@ -2296,6 +2382,21 @@ def get_modified_files(
             all_files = branch_files + staged_files + unstaged_files
             if all_files:
                 return sorted(set(all_files))
+
+    if not include_unstaged:
+        # `git diff HEAD~1` alone compares against the working tree; the
+        # commit view takes the last commit and the index separately.
+        last_commit = _parse_files(
+            _run_git("diff", "--name-only", "HEAD~1", "HEAD", cwd=repo_root),
+            suffix=suffix,
+            prefix=prefix,
+        )
+        staged = _parse_files(
+            _run_git("diff", "--name-only", "--cached", cwd=repo_root),
+            suffix=suffix,
+            prefix=prefix,
+        )
+        return sorted(set(last_commit + staged))
 
     # Fallback: compare to previous commit
     logger.info("Checking files modified compared to previous commit...")
@@ -2359,12 +2460,12 @@ def get_untracked_files(
 
     The complement to :func:`get_tracked_files`: files present on disk but
     absent from the index and **not** gitignored (``git ls-files --others
-    --exclude-standard``) — the "forgot to ``git add``" set: used to warn
-    when a first-party source file is silently skipped by a tracked-set
-    scan, and to count a changelog fragment that is written but not yet
-    staged. A gitignored file is *deliberately*
-    out of scope (issue #161) and is never listed here — that is exactly
-    what ``--exclude-standard`` filters out.
+    --exclude-standard``) — the "forgot to ``git add``" set. Every
+    tracked-set or diff-based check is blind to these files, so this is
+    what their callers list as *not checked*, leaving the add-or-leave-out
+    decision to whoever reads it; it never makes a file count as present.
+    A gitignored file is *deliberately* out of scope and is never listed
+    here — that is exactly what ``--exclude-standard`` filters out.
 
     Args:
         suffix: File suffix to filter by. Defaults to '.py'.

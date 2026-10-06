@@ -13,6 +13,10 @@ Run the standard commit workflow:
    Agent(subagent_type="forge:precommit-fixer", prompt="Clear all pre-commit failures.")
    ```
 
+   **Decide each untracked file its hand-back lists**, per the rule in
+   `agents/git-commit-push.md` "Untracked files" — name the ones to add
+   in step 2; ask the user when you cannot tell.
+
 2. **Run `git-commit-push`** to stage and commit:
    ```
    Agent(subagent_type="forge:git-commit-push", prompt="Commit changes with message: $ARGUMENTS")

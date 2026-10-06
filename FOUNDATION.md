@@ -474,6 +474,14 @@ advisories with the suggested pin; they never edit pins.
   product but not the codebase: no class/function names or internals; lead
   with the consequence, not the mechanism; say plainly when results stop
   being comparable. Technical detail belongs under `Changes`.
+- **A close keyword closes the whole issue.** GitHub acts on
+  `Closes`/`Fixes`/`Resolves #N` anywhere in the description — inside a
+  sentence too — and closes the issue when the PR merges into the
+  default branch, however little of it the PR delivers. A PR delivering
+  part of an issue writes `Part of #N`; only the PR that completes it
+  closes it. Forge's own style is one bare `Closes #N` per line, and
+  publishing warns, best effort, when the description appears to close
+  an issue that form does not list.
 
 ### PR finalization — verify first, never block on CI
 
@@ -948,6 +956,20 @@ about the session (§1, absence of evidence). Do not answer this by
 comparing plugin and package version numbers: that check was built,
 shipped and removed once already, because the command it named
 truthfully answered that nothing was out of date.
+
+**A repo can also load the wrong copy outright.** The plugin loads fine,
+behaves like an old release, and every update says current — restarting
+changes nothing. Two causes, both machine-wide. First, a **global
+(user-scope) install** beside the repo's own can shadow it; recovery is
+removing it (`claude plugin uninstall forge@forge --scope user`) — a
+per-repo `enabledPlugins` `false` is no fix, since project settings
+override user settings and it disables forge in that repo entirely.
+Second, the **marketplace registration** is one per machine, tracking
+whatever ref the first repo registered — `/plugin update` fetches from
+it, so a repo pinning another ref needs it re-pointed. `forge-doctor`
+reports the global install when the repo enables forge and the mismatch
+when the repo pins forge, and judges this repo's own install record when
+one exists (else it says the verdict came from the newest cached copy).
 
 ### Consumer Claude Code hook path convention
 

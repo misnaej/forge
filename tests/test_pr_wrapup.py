@@ -1450,6 +1450,47 @@ def test_main_compose_delta_mode_renders_prior_sha_rollup_and_checked_issue_mana
     assert "the PR body was not searched" not in written
 
 
+def test_main_compose_names_an_issue_the_body_closes_inside_a_sentence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: the PR body closes one issue on a bare line and one mid-sentence.
+
+    MOCK SETUP: `mod.gh_pr_view` returns that body and a passing rollup;
+    `mod.wrapup_freshness` returns a prior SHA so delta mode needs no
+    reporters.
+    EXPECTED BEHAVIOR: Issue Management lists the bare-line issue and
+    names the mid-sentence one as also closed — the body is wired through
+    compose to the renderer.
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        mod,
+        "gh_pr_view",
+        lambda *_a, **_kw: {
+            "body": "Closes #508\n\nThis also closes #504's doctor half.\n",
+            "statusCheckRollup": [
+                {"name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        mod,
+        "wrapup_freshness",
+        lambda _pr: WrapupFreshness(fresh=True, latest_verified_at="abc1234"),
+    )
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps({"mode": "delta", "reporters": [], "reasons": []}))
+
+    rc = mod.main(["compose", "--base", "HEAD", "--pr", "61", "--plan", str(plan_path)])
+
+    assert rc == 0
+    written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
+    assert (
+        "Closes #508 — GitHub would also close (on merge into the default branch): #504"
+    ) in written
+
+
 def test_main_compose_draft_pr_with_only_skipped_checks_renders_draft_wording(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

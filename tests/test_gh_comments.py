@@ -476,7 +476,7 @@ def test_delete_comment_false_and_warns_on_failure(
 # ---------------------------------------------------------------------------
 
 
-def assert_no_raw_field_reads_a_file(cmd: list[str]) -> None:
+def _assert_no_raw_field_reads_a_file(cmd: list[str]) -> None:
     """Assert no `gh api` raw-field flag in *cmd* carries an `@` value.
 
     Stated as an invariant over argv rather than as an expected list,
@@ -550,7 +550,7 @@ def test_patch_comment_true_with_expected_argv_and_body(
         "body=@-",
     ]
     assert captured["input"] == "new body"
-    assert_no_raw_field_reads_a_file(cast("list[str]", captured["cmd"]))
+    _assert_no_raw_field_reads_a_file(cast("list[str]", captured["cmd"]))
 
 
 def test_patch_comment_false_and_warns_on_failure(

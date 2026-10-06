@@ -146,10 +146,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class Finding` — One audit observation with provenance.
   - `render(self) -> str` — Render this finding as a single block in the log file.
 - `under_module_prefix(module: str, prefix: str) -> bool` — Return whether *module* equals *prefix* or is a dotted child of it.
-- `make_audit_parser(prog: str, description: str) -> argparse.ArgumentParser` — Build the shared CLI surface for an audit script.
+- `make_audit_parser(prog: str, description: str, *, honours_scope: bool = True) -> argparse.ArgumentParser` — Build the shared CLI surface for an audit script.
 - `resolve_roots(roots: list[str] | None) -> list[Path]` — Resolve the effective scan roots.
 - `_is_excluded(path: Path) -> bool` _(internal)_ — Return ``True`` if ``path`` lies under any default-excluded directory.
 - `iter_files(scope: Scope, roots: list[Path], *, suffix: str = '.py') -> Iterator[Path]` — Yield matching files under ``roots`` respecting ``scope``.
+- `select_like_audit(root: Path, rels: list[str], *, suffix: str | tuple[str, ...] = '.py', roots: list[Path] | None = None) -> list[str]` — Keep the *rels* an audit's file selection would include.
+- `untracked_summary_line(scope: Scope, *, suffix: str | tuple[str, ...] = '.py', roots: list[Path] | None = None, root: Path | None = None) -> str` — Return the note naming untracked files a changed-files run left out.
 - `relpath(path: Path) -> str` — Render ``path`` relative to the repo root for log stability.
 - `read_finding_count(log_text: str) -> int` — Return the ``# findings: N`` count :func:`write_log` puts in a log header.
 - `read_scope(log_text: str) -> str | None` — Return the ``# scope:`` value :func:`write_log` puts in a log header.
@@ -285,7 +287,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_env_no_version() -> str | None` _(internal)_ — Return the name of the first truthy opt-out env var, or ``None``.
 - `wants_no_version(repo_root: Path) -> str | None` — Return the fired no-version signal, or ``None`` when none is set.
 - `_section_content(text: str) -> dict[str, set[str]]` _(internal)_ — Map each release version to its normalized non-heading content lines.
-- `stranded_added_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections gained content vs *old_text*.
+- `stranded_added_versions(old_text: str, new_text: str, latest_tag: str | None, *, ignore_new_sections: bool = False) -> list[str]` — Return released versions whose sections gained content vs *old_text*.
 - `released_deleted_versions(old_text: str, new_text: str, latest_tag: str | None) -> list[str]` — Return released versions whose sections lost content vs *old_text*.
 - `_version_heading_span(text: str, version: str) -> tuple[int | None, int | None]` _(internal)_ — Return the character span of *version*'s heading line plus its newline.
 - `restrand_changelog(old_text: str, new_text: str, latest_tag: str, bump: str) -> str` — Move entries stranded under released headings to the next open slot.
@@ -301,11 +303,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_parse_bump_line_and_body(path: Path, lines: list[str]) -> tuple[str, str, list[str]]` _(internal)_ — Validate bump line and extract level and body.
 - `_check_no_versions_or_headings(name: str, body: str) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
 - `validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]` — Parse *path* into a :class:`Fragment`, collecting every violation.
+- `_validate_fragment_text(path: Path, text: str) -> tuple[Fragment | None, list[str]]` _(internal)_ — Apply :func:`validate_fragment`'s contract to *text* as *path*'s content.
 - `discover_fragments(root: Path) -> list[Path]` — Return pending fragment files under ``changelog.d/``, filename-sorted.
 - `max_level(fragments: list[Fragment]) -> str` — Return the strongest bump level among *fragments*.
 - `assemble_changelog(text: str, fragments: list[Fragment], version: str, *, date: str = '') -> str` — Insert a new release heading built from *fragments* into *text*.
 - `_collect_valid_fragments(root: Path) -> tuple[list[Fragment], list[str]]` _(internal)_ — Parse every pending fragment, splitting valid ones from errors.
 - `check_pending(root: Path) -> list[str]` — Validate every pending fragment under *root*.
+- `check_staged(root: Path, paths: list[str]) -> list[str]` — Validate the staged (index) copy of each fragment in *paths*.
 - `branch_added_fragments(root: Path) -> list[str]` — Return the fragment paths this branch adds and the base does not have.
 - `_fragments_in_tag_tree(root: Path, tag: str) -> set[str]` _(internal)_ — Return the repo-relative fragment paths present in *tag*'s tree.
 - `_partition_by_release_tag(root: Path, fragments: list[Fragment]) -> tuple[list[tuple[str, list[Fragment]]], list[Fragment]]` _(internal)_ — Group *fragments* by the earliest tag whose tree holds each one.
@@ -363,11 +367,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_existing_dirs(repo_root: Path, dirs: list[str]) -> list[str]` _(internal)_ — Filter *dirs* to existing in-repo paths, de-duplicated, order-preserving.
 - `resolve_tool_roots(repo_root: Path, tool: str, *, include_tests: bool = False) -> list[str]` — Resolve the scan roots a layout-consuming *tool* should use.
 - `declared_layout_dirs(repo_root: Path, *, include_tests: bool = True) -> list[str] | None` — Return the explicitly declared layout dirs, or ``None`` if undeclared.
+- `resolve_test_naming_roots(repo_root: Path) -> list[str]` — Resolve the *test-only* roots the test-naming check scans.
 - `filter_under_roots(files: list[str], roots: list[str]) -> list[str]` — Keep only *files* that live under one of *roots* (source-tree scoping).
 - `filter_excluded(files: list[str], globs: list[str]) -> list[str]` — Drop *files* matching any exclude *glob* (the ``[tool.forge].exclude`` half).
 - `select_diff_files(repo_root: Path, *, roots: list[str] | None = None, apply_exclude: bool = False, drop_deleted: bool = True, suffix: str = '.py') -> list[str]` — Select the modified files a diff-scoped step should check.
 - `tracked_files_under_roots(repo_root: Path, roots: list[str], *, suffix: str = '.py') -> list[str]` — Select the git-tracked files under *roots*, minus repo-wide excludes.
 - `_warn_untracked_under_roots(repo_root: Path, roots: list[str], suffix: str) -> None` _(internal)_ — Warn (dev-loop only) when untracked source under *roots* goes unscanned.
+- `summarize_paths(paths: list[str], *, limit: int = 10) -> str` — Render *paths* as one bounded, printable line of quoted names.
+- `_quotable_name(path: str) -> str` _(internal)_ — Return *path* made safe to quote inside a backtick code span.
 - `installed_console_scripts(name: str) -> set[str] | None` — Return *name*'s installed ``console_scripts`` entry-point names.
 
 ## `forge.continuation`
@@ -418,6 +425,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_plugin_install(plugin_name: str) -> CheckResult` _(internal)_ — Verify Claude Code has installed the named plugin locally.
 - `_check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report a Claude Code plugin cache lagging what should be loaded.
 - `_stale_cache_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
+- `_content_unknown_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"content-unknown"`` verdict as an advisory saying what to check.
+- `_source_mismatch_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"source-mismatch"`` verdict as an advisory naming both refs.
+- `_enabled_in(settings_path: Path) -> bool | None` _(internal)_ — Return ``enabledPlugins["forge@forge"]`` from a settings file.
+- `_check_global_install(repo_root: Path) -> list[CheckResult]` _(internal)_ — Flag a machine-wide forge install alongside this repo's own.
 - `_check_version_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
 - `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
 - `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
@@ -676,7 +687,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `gh_api(*args: str, timeout: int = GH_TIMEOUT_S) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
 - `own_login() -> str | None` — Return the GitHub login ``gh`` is authenticated as, once per process.
 - `_run_git(*args: str, cwd: Path | None = None) -> str` _(internal)_ — Run a git command and return stdout.
-- `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True, env: Mapping[str, str] | None = None) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
+- `_log_git_timeout(args: tuple[str, ...], timeout: float | None) -> None` _(internal)_ — Log the one-line ``git <verb> timed out`` notice, without a traceback.
+- `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True, env: Mapping[str, str] | None = None, timeout: float | None = None) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `_fallback_identity_args(repo_root: Path) -> list[str]` _(internal)_ — Return ``-c`` identity flags when git has no usable committer identity.
 - `create_annotated_tag(repo_root: Path, tag: str, *, commit: str = 'HEAD', force: bool = False) -> None` — Create annotated *tag* at *commit*, surviving identity-less runners.
 - `wrap_in_code_fence(text: str) -> str` — Return *text* inside a markdown code fence it cannot close.
@@ -688,6 +700,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
 - `unmerged_paths(repo_root: Path) -> list[str]` — Return the repo-relative paths currently in an unmerged index state.
 - `fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool` — Fetch *refspec* from *remote* without ever prompting for credentials.
+- `tag_on_remote(repo_root: Path, tag: str) -> bool | None` — Ask ``origin`` whether it holds *tag*, never prompting or hanging.
 - `_is_git_env_override(name: str) -> bool` _(internal)_ — Return whether *name* overrides git's config or repository per process.
 - `git_env_overrides_removed() -> Iterator[None]` — Run the body with git's per-process environment overrides removed.
 - `class PushResult` — The outcome of :func:`push_branch` or :func:`push_tag`.
@@ -724,7 +737,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
 - `is_ancestor(root: Path | None, ancestor_ref: str, descendant_ref: str) -> bool` — Return whether *ancestor_ref* is an ancestor of *descendant_ref*.
 - `added_or_moved_files(*, repo_root: Path | None = None, base_branch: str = 'main', suffix: str = '.py') -> list[str]` — Return files ADDED or RENAMED vs the base branch (``--diff-filter=AR``).
-- `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None, base_branch: str = 'main') -> list[str]` — Get list of modified files from git.
+- `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None, base_branch: str = 'main', include_unstaged: bool = True) -> list[str]` — Get list of modified files from git.
 - `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
 - `get_untracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get untracked, non-gitignored files matching the suffix/prefix filters.
 - `path_escapes_repo(repo_root: Path, path: str) -> bool` — Return True if *path* resolves outside *repo_root*.
@@ -770,12 +783,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _install-forge-claude-md — sync the forge foundation into a consumer repo._
 
 - `_foundation_text() -> str` _(internal)_ — Return the bundled FOUNDATION.md text shipped with the pip package.
-- `_forge_version() -> str` _(internal)_ — Return the installed ``forge-scripts`` version, or ``unknown``.
-- `_build_foundation_file(*, foundation: str, version: str) -> str` _(internal)_ — Render the full ``FOUNDATION.md`` content including markers.
+- `_build_foundation_file(*, foundation: str) -> str` _(internal)_ — Render the full ``FOUNDATION.md`` content including markers.
 - `_has_managed_markers(text: str) -> bool` _(internal)_ — Return True if *text* contains a forge-managed START/END pair.
-- `_normalize(text: str) -> str` _(internal)_ — Strip the version-stamped comment for drift comparison.
 - `sync_foundation(foundation_path: Path, *, check_only: bool = False, force: bool = False) -> bool` — Write or update ``FOUNDATION.md`` with the shipped foundation text.
-- `_forge_docs_readme_text(version: str) -> str` _(internal)_ — Render the ``forge-docs/README.md`` never-edit notice.
+- `_forge_docs_readme_text() -> str` _(internal)_ — Render the ``forge-docs/README.md`` never-edit notice.
 - `_forge_docs_is_self(repo_root: Path) -> bool` _(internal)_ — Return whether *repo_root*'s ``forge-docs/`` IS the shipped canonical set.
 - `_forge_docs_is_unmanaged(repo_root: Path) -> bool` _(internal)_ — Return whether an existing ``forge-docs/`` is NOT forge-managed.
 - `sync_forge_docs(repo_root: Path, *, check_only: bool = False, force: bool = False) -> bool` — Mirror the shipped ``forge-docs/`` reference set into the consumer repo.
@@ -785,8 +796,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `scaffold_claude_settings(settings_path: Path) -> bool` — Write a minimal ``.claude/settings.json`` if the file does not exist.
 - `ensure_claude_hooks_dir(hooks_dir: Path) -> bool` — Create ``.claude/hooks/`` with a README documenting the path convention.
 - `_installed_forge_scripts_version() -> str | None` _(internal)_ — Return the installed ``forge-scripts`` distribution version.
-- `_plugin_entry_version(entry: object) -> str | None` _(internal)_ — Pull the ``version`` field out of a single forge@forge entry.
-- `_installed_plugin_version(plugins_file: Path) -> str | None` _(internal)_ — Read the installed Claude Code plugin version from the manifest.
+- `_installed_plugin_version(plugins_file: Path | None = None) -> str | None` _(internal)_ — Read the installed Claude Code plugin version from the manifest.
 - `_read_configured_channel(settings_path: Path) -> str | None` _(internal)_ — Return the marketplace ``ref`` consumers set to track a forge release channel.
 - `_upstream_cache_path() -> Path` _(internal)_ — Return the upstream-version-check cache file path.
 - `class ChannelTags` — Latest release tag on each of forge's two upstream branches.
@@ -887,10 +897,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_tag_misuse_warning(repo_root: Path) -> str | None` _(internal)_ — Return a warning when ``--tag`` is used in a repo with no manifest.
 - `class TagDecision` — Outcome of ``--tag``: the tag cut, or why none was.
 - `_maybe_tag_release(repo_root: Path) -> TagDecision` _(internal)_ — Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
+- `_log_tag_push_timeout(tag: str, *, on_remote: bool | None) -> None` _(internal)_ — Tell the operator how to finish a tag push that timed out.
+- `_fetch_origin(repo_root: Path) -> bool` _(internal)_ — Run the bounded ``git fetch --prune`` the sync starts with.
 - `_gone_branches(repo_root: Path) -> list[str]` _(internal)_ — Return local branch names whose tracking remote is ``[origin/...: gone]``.
 - `_prune_gone_branches(repo_root: Path) -> tuple[list[str], list[str]]` _(internal)_ — ``git branch -d`` every branch whose remote is gone.
 - `_log_prune_result(repo_root: Path) -> None` _(internal)_ — Prune stale local branches and log the outcome.
 - `main() -> int` — Refresh main, optionally tag the release, prune stale local branches.
+- `_pull_ff_only(repo_root: Path, target_branch: str) -> bool` _(internal)_ — Fast-forward *target_branch* from origin, bounded and prompt-free.
 - `_tag_and_report(repo_root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run the post-sync tail: optional tag, optional prune, advisory.
 
 ## `forge.pip_audit_json`
@@ -926,6 +939,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_spend_emergency(root: Path) -> str | None` _(internal)_ — Consume the armed emergency sentinel, or refuse.
 - `_read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | None]` _(internal)_ — Read the wrap-up and confirm it verifies this checkout's HEAD.
 - `_gate(root: Path, branch: str, base: str) -> str | None` _(internal)_ — Return why publication is refused, or ``None`` to allow it.
+- `_warn_unlisted_closes(body_file: str) -> None` _(internal)_ — Warn when the body would close an issue forge's summary does not list.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the argument parser.
 - `main() -> int` — Entry point for ``forge-pr-create``.
 
@@ -937,6 +951,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `fenced_line_indexes(lines: list[str]) -> set[int]` — Return the indexes of *lines* inside fenced code blocks, delimiters included.
 - `strip_fences(lines: list[str]) -> list[str]` — Return *lines* without fenced code blocks (fence lines included).
 - `find_closing_refs(text: str) -> list[int]` — Return the issue numbers a PR body or commit message would close.
+- `find_loose_closing_refs(text: str) -> list[int]` — Return the closing-keyword ``#N`` references anywhere in *text*.
+- `unlisted_closing_refs(body: str) -> list[int]` — Return closing-keyword refs in *body* that the strict counter omits.
 - `touches_high_blast_radius(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`HIGH_BLAST_RADIUS_PATHS`.
 - `configured_docs_only_globs(repo_root: Path) -> tuple[str, ...]` — Return the consumer's extra docs-only globs from ``[tool.forge.pr]``.
 - `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
@@ -1037,6 +1053,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_code_quality(root: Path) -> str` _(internal)_ — Render Code Quality from the timing log and each log's freshness.
 - `_ci_status(pr_number: int | None, view: Mapping[str, object] | None) -> str` _(internal)_ — Return the CI Status line for the PR as *view* shows it.
 - `_branch_messages(root: Path, base_ref: str) -> str` _(internal)_ — Return the commit messages on HEAD since *base_ref*.
+- `_also_closed(body: str, listed: list[int]) -> list[int]` _(internal)_ — Return issues the PR body closes in prose that *listed* omits.
 - `_gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs` _(internal)_ — Collect everything ``compose`` renders from.
 - `_cmd_compose(args: argparse.Namespace) -> int` _(internal)_ — Write ``code_health/pr_wrapup.md`` with slots for the author to fill.
 - `_is_emergency_post(root: Path, text: str, pr: int) -> bool` _(internal)_ — Return whether *text* is the recorded emergency PR's own wrap-up.
@@ -1064,7 +1081,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_skipped(entry: Mapping[str, object]) -> bool` _(internal)_ — Return whether a rollup entry concluded without executing.
 - `rollup_not_run(rollup: Sequence[Mapping[str, object]]) -> bool` — Return whether checks were reported but none of them executed.
 - `summarize_rollup(rollup: Sequence[Mapping[str, object]], *, is_draft: bool = False) -> str` — Summarize ``gh pr view --json statusCheckRollup`` as one status line.
-- `render_issue_management(closing_refs: Sequence[int], *, pr_body_checked: bool) -> str` — Render the Issue Management line from the closing keywords found.
+- `render_issue_management(closing_refs: Sequence[int], *, pr_body_checked: bool, also_closed: Sequence[int] = ()) -> str` — Render the Issue Management line from the closing keywords found.
 - `unfilled_slots(text: str) -> list[str]` — Return the names of every fill-in slot still in *text*.
 - `evidence_fence(block: str) -> str` — Return only the fenced part of a ``run_gate_evidence`` block.
 
@@ -1096,6 +1113,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
 - `step_c4(repo_root: Path) -> StepResult` — Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
+- `_layering_configured(repo_root: Path) -> bool` _(internal)_ — Return whether ``[tool.forge.layering]`` gives the layering step work.
 - `step_layering(repo_root: Path) -> StepResult` — Run ``forge-audit-layering`` — layer-composition gate.
 - `step_api_digest_check(repo_root: Path) -> StepResult` — Run ``forge-gen-api-digest --check`` — api-digest drift guard (opt-in).
 - `step_cli_reference_check(repo_root: Path) -> StepResult` — Run ``forge-gen-cli-reference --check`` — cli-reference drift guard (opt-in).
@@ -1141,10 +1159,15 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `timing_markers(text: str) -> dict[str, str]` — Return each step's marker from a ``precommit_timing.log`` body.
 - `_validate_step_names(names: Sequence[str]) -> None` _(internal)_ — Raise ``ValueError`` listing any *names* that are not registered steps.
 - `resolve_steps(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepDef]` — Resolve which steps to run, in registry order.
-- `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
+- `_untracked_in_reach(repo_root: Path, step: str, scope: str, untracked: list[str]) -> list[str]` _(internal)_ — Return the *untracked* files *step* would select if they were tracked.
+- `_step_does_work(repo_root: Path, step: str) -> bool` _(internal)_ — Return whether an enabled *step* would do work rather than self-skip.
+- `relevant_untracked_files(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[tuple[str, tuple[str, ...]]]` — List untracked files that an enabled step passed over, and which steps.
+- `_untracked_note(untracked: Sequence[tuple[str, tuple[str, ...]]]) -> str` _(internal)_ — Return the one-line note naming untracked files some steps skipped.
+- `_note_untracked_in_output(result: StepResult, untracked: Sequence[tuple[str, tuple[str, ...]]]) -> None` _(internal)_ — Append the per-step untracked line to *result*'s log output.
+- `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = (), untracked: Sequence[tuple[str, tuple[str, ...]]] | None = None) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
 - `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
 - `_capped(output: str) -> str` _(internal)_ — Return *output* trimmed to the shared evidence cap.
-- `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult]) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
+- `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult], *, untracked: Sequence[tuple[str, tuple[str, ...]]] = ()) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
 - `_forced_steps(only: list[str]) -> Iterator[None]` _(internal)_ — Force explicitly named steps to run, then restore the environment.
 - `freshness_verdicts(root: Path) -> dict[str, str]` — Return each ``code_health/`` log's freshness verdict against the working tree.
 - `verdict(root: Path) -> tuple[bool, list[str]]` — Return whether every enabled step passed on the current tree.
@@ -1202,6 +1225,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_tag_exists(repo_root: Path, tag: str) -> bool` _(internal)_ — Return whether *tag* already exists locally or on ``origin``.
 - `_select_branch_guard(repo_root: Path, base_branch: str, *, from_changelog_mode: bool) -> str | None` _(internal)_ — Choose the appropriate branch guard for the release mode.
 - `_prepare_from_changelog(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Resolve and validate the tag declared in CHANGELOG.md.
+- `_resolve_push_timeout(repo_root: Path, tag: str) -> int` _(internal)_ — Decide the outcome of a tag push that hit :data:`PUSH_TIMEOUT_S`.
 - `_cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> int` _(internal)_ — Create the annotated *tag* on ``HEAD`` and push it to ``origin``.
 - `main() -> int` — Cut the ``vX.Y.Z`` release tag — bumped off the latest tag, or declared.
 
@@ -1292,6 +1316,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class _RunConfig` _(internal)_ — Configuration for a tiered test run.
 - `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig, log: RunLog) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
+- `_escalate_to_full(repo_root: Path, base_ref: str, changed: set[str], cfg: dict[str, object]) -> bool` _(internal)_ — Return whether the change set must run the full suite.
+- `_resolve_run_inputs(args: argparse.Namespace, repo_root: Path, cfg: dict[str, object]) -> tuple[str | int, str, set[str]]` _(internal)_ — Resolve what a run needs: its depth, the ref it diffs against, the changes.
+- `_coverage_additions(args: argparse.Namespace, cfg: dict[str, object], changed: set[str]) -> tuple[set[str], bool]` _(internal)_ — Resolve coverage-validation settings and collect coverage additions.
 - `main() -> int` — Select and run change-affected tests by depth; write the log.
 
 ## `forge.smart_test.coverage`
@@ -1311,6 +1338,7 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `tests_up_to(self, depth: int) -> list[str]` — Return the sorted unique test relpaths selected at *depth* or below.
 - `_roots(repo_root: Path) -> tuple[list[Path], list[Path]]` _(internal)_ — Return ``(source_dir_paths, test_dir_paths)`` as absolute paths.
 - `_iter_py(roots: Iterable[Path]) -> Iterable[Path]` _(internal)_ — Yield every ``.py`` file under *roots*.
+- `_is_test_file(path: Path) -> bool` _(internal)_ — Return whether pytest would collect *path* as a test module.
 - `all_test_files(repo_root: Path) -> set[str]` — Return every repo-relative test file under the configured test roots.
 - `_dotted(node: ast.expr) -> str | None` _(internal)_ — Return the dotted name of an attribute/name chain, or ``None``.
 - `_string_literals(args: list[ast.expr]) -> list[str]` _(internal)_ — Return the string-constant values among *args*, in order.
@@ -1318,7 +1346,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_collect_sys_modules_targets(node: ast.Call, targets: set[str]) -> None` _(internal)_ — Extract module names from a ``patch.dict("sys.modules", {…})`` call.
 - `_patch_targets(tree: ast.Module) -> set[str]` _(internal)_ — Return the dotted module-attribute targets of ``mock.patch`` calls.
 - `class _Graph` _(internal)_ — The internal import graph plus the name↔path mapping.
+- `_parse_sources(repo_root: Path, source_roots: list[Path], test_roots: list[Path], *, follow_mock_patches: bool = False) -> tuple[dict[str, tuple[str, set[str]]], set[str]]` _(internal)_ — Parse all source and test files into an import target map.
 - `build_graph(repo_root: Path, *, follow_mock_patches: bool = False, include_ancestor_edges: bool = False) -> _Graph` — Parse the repo into an internal import graph.
+- `unscanned_conftests(repo_root: Path, changed: set[str]) -> set[str]` — Return changed ``conftest.py`` files outside every test root.
+- `_conftest_edges(graph: _Graph) -> dict[str, set[str]]` _(internal)_ — Map each test module to the conftests pytest loads for it.
 - `select_tests(repo_root: Path, changed_files: set[str], max_depth: int, *, follow_mock_patches: bool = False) -> SelectionPlan` — Compute the depth-layered test selection for a change set.
 - `render_plan(plan: SelectionPlan, depth: int) -> str` — Render a parseable ``--show-files`` plan for *depth*.
 
@@ -1328,6 +1359,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `_ref_exists(repo_root: Path, ref: str) -> bool` _(internal)_ — Return whether *ref* resolves to a commit in the repo.
 - `resolve_base_ref(repo_root: Path, override: str | None = None) -> str` — Resolve the ref to diff ``HEAD`` against for change detection.
+- `effective_base_ref(repo_root: Path, base_ref: str, *, explicit: bool) -> tuple[str | None, str]` — Return the ref to diff against once ``HEAD`` itself is accounted for.
 - `head_commit_message(repo_root: Path) -> str` — Return ``HEAD``'s full commit message (subject + body).
 - `_changed_files_all_sources(repo_root: Path, base_ref: str) -> set[str]` _(internal)_ — Union every changed path across the four change sources.
 - `changed_python_files(repo_root: Path, base_ref: str) -> set[str]` — Return repo-relative ``.py`` files changed vs *base_ref*.
@@ -1374,6 +1406,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `clear_python_cache(repo_root: Path) -> None` — Delete every ``__pycache__`` directory under *repo_root*.
 - `_coverage_available() -> bool` _(internal)_ — Return whether the ``pytest-cov`` plugin is importable.
 - `run_pytest(repo_root: Path, test_paths: Sequence[str], *, coverage: bool = False, telemetry: bool = False, label: str = '') -> tuple[int, str]` — Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
+- `_finalize(code: int, output: str, *, selected: bool) -> tuple[int, str]` _(internal)_ — Apply the "no tests collected" rule to a finished pytest run.
 
 ## `forge.telemetry`
 
@@ -1590,7 +1623,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `verify_file(filepath: Path) -> list[Issue]` — Verify test naming standards in a single file.
 - `_check_file_name_alignment(filepath: Path) -> list[Issue]` _(internal)_ — Verify the ``test_`` prefix on test file names (Rule 2).
 - `_check_duplicate_file_names(all_files: list[Path]) -> list[Issue]` _(internal)_ — Check for duplicate or ambiguous file names.
-- `_test_scan_roots(repo_root: Path) -> list[str]` _(internal)_ — Resolve the *test-only* scan roots for ``--scope all`` (issue #83).
 - `_resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list[str]` _(internal)_ — Return repo-relative test file paths from CLI arg, scope, or git diff.
 - `_scan_files(py_files: list[str], repo_root: Path) -> tuple[list[Issue], list[str], int]` _(internal)_ — Verify each file, plus a cross-file duplicate-name check.
 - `_log_warnings(warnings: list[Issue]) -> None` _(internal)_ — Print warnings grouped by file.
@@ -1601,7 +1633,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _The three surfaces a forge install presents, read once for every checker._
 
-- `read_json(path: Path) -> tuple[dict, str | None]` — Read a JSON file. Returns (data, error_message_or_None).
+- `read_json(path: Path) -> tuple[dict, str | None]` — Read a JSON object file. Returns (data, error_message_or_None).
 - `version_key(name: str) -> tuple[int, ...]` — Return a sortable key for a version-shaped directory name.
 - `find_plugin_cache(plugin_name: str) -> Path | None` — Locate a Claude Code plugin cache directory by name.
 - `find_install_dir(plugin_root: Path) -> Path | None` — Walk the Claude Code cache layout to find the active plugin install.
@@ -1612,8 +1644,22 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `editable_install_origin() -> Path | None` — Return the checkout an editable ``forge-scripts`` install points at.
 - `_direct_url() -> dict[str, object] | None` _(internal)_ — Return the distribution's parsed ``direct_url.json``, or ``None``.
 - `marketplace_clone(repo_slug: str) -> Path | None` — Local clone Claude Code keeps for the marketplace serving *repo_slug*.
+- `registered_marketplace_ref(repo_slug: str) -> str | None` — Ref the machine-wide marketplace registration for *repo_slug* tracks.
+- `_marketplace_entries(repo_slug: str) -> list[dict[str, object]]` _(internal)_ — Registry entries whose source is the GitHub repo *repo_slug*.
+- `class PluginInstall` — One install record from ``installed_plugins.json``.
+- `class PluginInstalls` — Which installed copies of a plugin bear on one repo.
+- `plugin_records(plugin: str, plugins_file: Path | None = None) -> list[dict[str, object]]` — Raw install records Claude Code keeps for *plugin*.
+- `plugin_installs(repo_root: Path, plugin_name: str) -> PluginInstalls` — Find the installed copies of *plugin_name* that bear on *repo_root*.
+- `_install_from_record(record: dict[str, object]) -> PluginInstall | None` _(internal)_ — Build a :class:`PluginInstall` from one raw record.
+- `_resolved(path: Path) -> Path` _(internal)_ — Return *path* resolved, or unchanged when resolution fails.
 - `_repo_slug(url: str) -> str | None` _(internal)_ — Return the ``owner/repo`` a git pin URL names.
-- `_hook_names(plugin_dir: Path) -> frozenset[str]` _(internal)_ — Names of the Claude Code hooks a plugin directory ships.
+- `content_digests(plugin_dir: Path) -> dict[str, str | None]` — Hash each content area of a plugin tree.
+- `_area_files(area: Path) -> list[Path] | None` _(internal)_ — List the regular files under *area* that count as content.
+- `_area_digest(area: Path) -> str | None` _(internal)_ — Hash every file under *area* by relative path and bytes.
+- `_manifest_digest(manifest: Path) -> str | None` _(internal)_ — Hash a plugin manifest with its ``version`` field removed.
+- `_repo_marketplace_ref(repo_root: Path) -> str | None` _(internal)_ — Marketplace ref this repo's own ``.claude/settings.json`` pins.
 - `class PluginCacheStatus` — What the Claude Code plugin cache says relative to what ships it.
 - `plugin_cache_status(repo_root: Path) -> PluginCacheStatus` — Compare the cached plugin against the manifest that ships it.
+- `safe_text(value: object) -> str | None` — Return *value* as text if it matches :data:`_SAFE_TEXT`, else a placeholder.
+- `_manifest_cache_status(repo_root: Path, manifest: Path) -> PluginCacheStatus` _(internal)_ — Compare a plugin-shipping repo's cached copy against its manifest.
 - `_consumer_cache_status(repo_root: Path) -> PluginCacheStatus` _(internal)_ — Compare a consumer's active cache slot against the ref it pinned.

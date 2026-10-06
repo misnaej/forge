@@ -209,6 +209,10 @@ def main() -> int:
         json.dumps(_merge(settings, ref), indent=2) + "\n", encoding="utf-8"
     )
     logger.info("Enabled %s @ %s in %s.", PLUGIN_KEY, ref, settings_path)
+    logger.info(
+        "Run `forge-doctor` to check plugin scope: a machine-wide forge "
+        "install or marketplace source can override this repo's own."
+    )
     return 0
 
 

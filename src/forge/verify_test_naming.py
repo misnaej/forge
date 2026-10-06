@@ -44,8 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from forge.config import (
-    load_config,
-    read_tool_forge_section,
+    resolve_test_naming_roots,
     select_diff_files,
     tracked_files_under_roots,
 )
@@ -544,29 +543,6 @@ def _check_duplicate_file_names(all_files: list[Path]) -> list[Issue]:
 SEPARATOR = "=" * 80
 
 
-def _test_scan_roots(repo_root: Path) -> list[str]:
-    """Resolve the *test-only* scan roots for ``--scope all`` (issue #83).
-
-    Mirrors :func:`forge.config.resolve_tool_roots`'s precedence but for the
-    test tree alone (not source): a per-tool
-    ``[tool.forge.test_naming_check].paths`` override wins, else the repo-wide
-    ``[tool.forge].test_dirs``. Test-naming scans tests only, so it must not
-    pull in source roots the way ``resolve_tool_roots(include_tests=True)``
-    would.
-
-    Args:
-        repo_root: Repository root path.
-
-    Returns:
-        Repo-relative test-directory roots to scope the tracked set against.
-    """
-    forge = read_tool_forge_section(repo_root)
-    tool = forge.get("test_naming_check")
-    if isinstance(tool, dict) and isinstance(tool.get("paths"), list):
-        return [str(p) for p in tool["paths"]]
-    return load_config(repo_root).test_dirs
-
-
 def _resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list[str]:
     """Return repo-relative test file paths from CLI arg, scope, or git diff.
 
@@ -578,7 +554,7 @@ def _resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list
 
     Returns:
         List of repo-relative test file paths. Both scopes resolve the same
-        test roots via :func:`_test_scan_roots` (so a custom
+        test roots via :func:`forge.config.resolve_test_naming_roots` (so a custom
         ``[tool.forge].test_dirs`` applies uniformly, not just to ``"all"``)
         and drop repo-wide ``[tool.forge].exclude`` globs.
     """
@@ -594,7 +570,7 @@ def _resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list
             return [str(test_file.relative_to(repo_root))]
         except ValueError:
             return [str(test_file)]
-    roots = _test_scan_roots(repo_root)
+    roots = resolve_test_naming_roots(repo_root)
     if scope == SCOPE_ALL:
         return tracked_files_under_roots(repo_root, roots)
     return select_diff_files(repo_root, roots=roots, apply_exclude=True)

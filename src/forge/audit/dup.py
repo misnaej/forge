@@ -62,6 +62,7 @@ from forge.audit.common import (
     make_audit_parser,
     relpath,
     resolve_roots,
+    untracked_summary_line,
     write_log,
 )
 from forge.git_utils import configure_cli_logging
@@ -608,6 +609,7 @@ def run(scope: Scope, roots: list[Path], config: DupConfig) -> int:
         changed = {relpath(p) for p in changed_abs}
         if not changed:
             summary = _summary(0, 0, 0, 0, n_changed=0)
+            summary += untracked_summary_line(scope)
             write_log("dup", [], summary, output=config.output, scope=scope)
             return 0
 
@@ -667,7 +669,7 @@ def run(scope: Scope, roots: list[Path], config: DupConfig) -> int:
         len(near_pairs),
         len(name_groups),
         n_changed=n_changed,
-    )
+    ) + untracked_summary_line(scope)
     write_log("dup", findings, summary, output=config.output, scope=scope)
     return exit_code_for(findings)
 

@@ -46,6 +46,7 @@ from forge.audit.common import (
     make_audit_parser,
     relpath,
     resolve_roots,
+    untracked_summary_line,
     write_log,
 )
 from forge.git_utils import (
@@ -617,7 +618,7 @@ def run(scope: Scope, roots: list[Path], config: DepsConfig) -> int:
         f"Scanned {len(modules)} modules. "
         f"Found {n_cycles} cycle(s); "
         f"{len(findings) - n_cycles} other finding(s)."
-    )
+    ) + untracked_summary_line(scope)
     write_log("deps", findings, summary, output=config.output, scope=scope)
     return exit_code_for(findings)
 

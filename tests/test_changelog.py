@@ -210,6 +210,41 @@ def test_stranded_flags_entry_moved_into_released_heading() -> None:
     assert changelog.stranded_added_versions(old, new, "v1.11.0") == ["v1.11.0"]
 
 
+def test_stranded_new_section_reported_by_default_skipped_when_ignored() -> None:
+    """A released version's section absent from old_text is a backfill when ignored."""
+    old = "## v0.1.0\n\n- old\n"
+    new = "## v0.2.0\n\n- backfilled\n\n## v0.1.0\n\n- old\n"
+    assert changelog.stranded_added_versions(old, new, "v0.2.0") == ["v0.2.0"]
+    assert (
+        changelog.stranded_added_versions(old, new, "v0.2.0", ignore_new_sections=True)
+        == []
+    )
+
+
+def test_stranded_gain_in_existing_section_reported_in_both_modes() -> None:
+    """A section present in old_text that gained a line is stranded either way."""
+    for ignore in (False, True):
+        result = changelog.stranded_added_versions(
+            _STRAND_OLD, _STRAND_NEW, "v0.2.0", ignore_new_sections=ignore
+        )
+        assert result == ["v0.2.0"]
+
+
+def test_stranded_gain_under_empty_released_heading_still_reported() -> None:
+    """A heading present but empty at the tag is not new: an added entry strands.
+
+    The backfill exemption keys on the heading existing at the comparison
+    point, not on it having content — otherwise any empty released heading
+    would become a place to slip work in untagged.
+    """
+    old = "## v0.2.0\n\n## v0.1.0\n- first\n"
+    new = "## v0.2.0\n- slipped in\n\n## v0.1.0\n- first\n"
+    result = changelog.stranded_added_versions(
+        old, new, "v0.2.0", ignore_new_sections=True
+    )
+    assert result == ["v0.2.0"]
+
+
 # ---------------------------------------------------------------------------
 # released_deleted_versions
 # ---------------------------------------------------------------------------
