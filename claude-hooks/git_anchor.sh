@@ -129,6 +129,10 @@ function rescan(t,   r) {
     PD++; r = scan(t, 1, 0); PD--
     return ";" r ";"
 }
+# One shell word at i, quotes removed — the payload of a wrapper such as
+# `bash -c`. Its quote rules must match scan()s own handlers (single,
+# double and $-quotes there); the quoting-parity test runs every case
+# both ways so the two cannot drift.
 function pword(s, i,   n, w, c, d, k, j, ch, e) {
     n = length(s); w = ""
     while (i <= n) {
@@ -216,7 +220,32 @@ function comment_end(s, i,   j) {
     j = index(substr(s, i), "\n")
     return (j == 0) ? length(s) + 1 : i + j - 1
 }
-function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, q, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, dash, pc, bd, pa, wt, qs, rl) {
+# `<<word` / `<<-word` at i (the `<<<` here-string is handled before
+# this). Sets HW (delimiter, quotes removed; "" when there is none), HQ
+# (delimiter was quoted: body is literal), HD (`<<-`: leading tabs
+# stripped), HX (the body is fed to a shell — `bash <<EOF`, read from
+# *before*, the text the scanner emitted so far, or `<<EOF | sh`, read
+# from the rest of the line) and HPOS (position after the delimiter).
+# Two heredoc-to-shell patterns, two regexes: RE_FEED and RE_PIPESH.
+function heredoc_open(s, i, before,   n, k, ch, j, rl) {
+    n = length(s); k = i + 2; HD = 0
+    if (substr(s, k, 1) == "-") { HD = 1; k++ }
+    while (substr(s, k, 1) == " " || substr(s, k, 1) == "\t") k++
+    HW = ""; HQ = 0; HX = 0
+    while (k <= n) {
+        ch = substr(s, k, 1)
+        if (index(" \t\n;&|()<>", ch)) break
+        if (ch == "\047" || ch == "\"" || ch == "\\") { HQ = 1; k++; continue }
+        HW = HW ch; k++
+    }
+    if (HW != "") {
+        j = index(substr(s, k), "\n")
+        rl = (j == 0) ? substr(s, k) : substr(s, k, j - 1)
+        HX = (before ~ RE_FEED || rl ~ RE_PIPESH)
+    }
+    HPOS = k
+}
+function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, pc, bd, pa, wt, qs) {
     n = length(s); out = ""; depth = 0; dollar = 0; nh = 0; bd = 0; pa = 0
     while (i <= n) {
         c = substr(s, i, 1)
@@ -237,6 +266,8 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
             if (d != "\n") out = out neut(d)
             dollar = 0; i += 2; continue
         }
+        # Quote handlers: keep in step with pword(), which reads the same
+        # quoting when it extracts a wrapper payload.
         if (c == "\047") {
             ansi = dollar; dollar = 0
             k = i + 1; dec = ""
@@ -300,23 +331,9 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
         if (c == "#" && is_comment(s, i, pc, bd, mode)) { i = comment_end(s, i); continue }
         if (c == "<" && substr(s, i, 3) == "<<<") { out = out "<<<"; i += 3; dollar = 0; continue }
         if (c == "<" && substr(s, i + 1, 1) == "<") {
-            k = i + 2; dash = 0
-            if (substr(s, k, 1) == "-") { dash = 1; k++ }
-            while (substr(s, k, 1) == " " || substr(s, k, 1) == "\t") k++
-            w = ""; q = 0
-            while (k <= n) {
-                ch = substr(s, k, 1)
-                if (index(" \t\n;&|()<>", ch)) break
-                if (ch == "\047" || ch == "\"" || ch == "\\") { q = 1; k++; continue }
-                w = w ch; k++
-            }
-            if (w != "") {
-                j = index(substr(s, k), "\n")
-                rl = (j == 0) ? substr(s, k) : substr(s, k, j - 1)
-                nh++; hdl[nh] = w; hq[nh] = q; ht[nh] = dash
-                hx[nh] = (tail(out) ~ RE_FEED || rl ~ RE_PIPESH)
-            }
-            out = out "<<_"; i = k; dollar = 0; continue
+            heredoc_open(s, i, tail(out))
+            if (HW != "") { nh++; hdl[nh] = HW; hq[nh] = HQ; ht[nh] = HD; hx[nh] = HX }
+            out = out "<<_"; i = HPOS; dollar = 0; continue
         }
         if (c == "\n") {
             out = out "\n"; i++; dollar = 0
