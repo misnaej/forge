@@ -107,7 +107,7 @@ def test_main_invokes_every_selected_subaudit(
     assert rc == 0
     expected_calls = [f"forge-audit-{n}" for n in audit_all.SUB_AUDITS]
     assert invoked == expected_calls
-    summary = (tmp_path / "code_health" / "audit_summary.log").read_text()
+    summary = (git_utils.code_health_dir(tmp_path) / "audit_summary.log").read_text()
     assert "# forge-audit-all" in summary
     assert "# subaudits:" in summary
 
@@ -229,7 +229,7 @@ def test_main_summary_log_stamps_real_tree(
 
     assert rc == 0
     lines = (
-        (tmp_path / "code_health" / "audit_summary.log")
+        (git_utils.code_health_dir(tmp_path) / "audit_summary.log")
         .read_text(encoding="utf-8")
         .splitlines()
     )

@@ -61,7 +61,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from forge.config import resolve_tool_roots
-from forge.git_utils import configure_cli_logging, repo_root
+from forge.git_utils import code_health_dir, configure_cli_logging, repo_root
 from forge.smart_test.coverage import load_export
 
 
@@ -69,7 +69,7 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_LOG = Path("code_health") / "pytest.log"
+DEFAULT_LOG_NAME = "pytest.log"
 DEFAULT_TOP = 25
 # Committed at the repo root (pytest-split's `.test_durations` precedent)
 # so the baseline is diffable in review — never under code_health/,
@@ -555,6 +555,22 @@ def _source_roots() -> list[str]:
         return []
 
 
+def _default_log() -> Path:
+    """Return the pytest log read when ``--log`` is not given.
+
+    Returns:
+        ``pytest.log`` in the repo's step-log directory, or in
+        ``./code_health`` when the repo root cannot be resolved — the
+        reporter promises to exit ``0`` outside a repo too, where a
+        missing log reads as "no timing data".
+    """
+    try:
+        root = repo_root()
+    except SystemExit:
+        root = Path.cwd()
+    return code_health_dir(root) / DEFAULT_LOG_NAME
+
+
 def _read_source(log: str) -> str:
     """Read the pytest log from a file path or stdin.
 
@@ -594,10 +610,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--log",
-        default=str(DEFAULT_LOG),
+        default=None,
         help=(
             "Path to the pytest log to parse, or '-' for stdin "
-            f"(default: {DEFAULT_LOG})."
+            f"(default: <code_health>/{DEFAULT_LOG_NAME})."
         ),
     )
     parser.add_argument(
@@ -644,7 +660,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    source = _read_source(args.log)
+    source = _read_source(args.log or str(_default_log()))
     durations = parse_durations(source)
     blocks = [format_report(durations, args.top)]
     if args.baseline:

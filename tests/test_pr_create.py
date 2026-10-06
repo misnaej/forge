@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import pr_create
+from forge.git_utils import code_health_dir
 from tests.conftest import GIT_ENV, commit_all, init_git_repo
 
 
@@ -56,12 +57,12 @@ def _write_wrapup(repo: Path, sha: str, *, mode_line: str | None = None) -> None
     """Write a `code_health/pr_wrapup.md` naming *sha*, optionally with a mode line.
 
     Args:
-        repo: Repo root to write under — matches `WRAPUP_PATH`'s
+        repo: Repo root to write under — matches `WRAPUP_NAME`'s
             repo-relative resolution.
         sha: Commit sha (full or short) to embed in the `verified-at:` line.
         mode_line: Optional `wrapup-mode: ...` header line to append.
     """
-    code_health = repo / "code_health"
+    code_health = code_health_dir(repo)
     code_health.mkdir(parents=True, exist_ok=True)
     lines = ["# PR Wrap-up", "", f"verified-at: {sha}"]
     if mode_line is not None:
@@ -400,7 +401,7 @@ def test_only_the_wrap_up_header_verifies_not_a_quoted_stamp(
     (repo / "file.txt").write_text("x")
     commit_all(repo, "second commit")
     head_sha = _head_sha(repo)
-    code_health = repo / "code_health"
+    code_health = code_health_dir(repo)
     code_health.mkdir(parents=True, exist_ok=True)
     (code_health / "pr_wrapup.md").write_text(
         "\n".join(

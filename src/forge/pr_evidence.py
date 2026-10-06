@@ -32,11 +32,12 @@ import subprocess
 from typing import TYPE_CHECKING, Final
 
 from forge.audit.all import SUB_AUDITS
-from forge.audit.common import CODE_HEALTH_DIR, read_finding_count, sanitize_log_text
+from forge.audit.common import read_finding_count, read_scope, sanitize_log_text
 from forge.changelog_fragments import branch_added_fragments
 from forge.config import is_fragments_mode, load_config
 from forge.git_utils import (
     EVIDENCE_OUTPUT_CAP,
+    code_health_dir,
     log_freshness,
     resolve_base_branch_ref,
     resolve_pr_base_ref,
@@ -233,7 +234,7 @@ def _timing_snapshot(root: Path, log_name: str = "precommit_timing") -> dict[str
     Returns:
         Step name → marker; empty when no run left that timing log.
     """
-    timing = root / CODE_HEALTH_DIR / f"{log_name}.log"
+    timing = code_health_dir(root) / f"{log_name}.log"
     if not timing.is_file():
         return {}
     return timing_markers(timing.read_text(encoding="utf-8"))
@@ -292,7 +293,7 @@ def _audit_result(root: Path, name: str, current: str | None) -> list[str]:
         detail = (proc.stderr or proc.stdout).strip().splitlines()
         msg = f"exited {proc.returncode}" + (f": {detail[-1]}" if detail else "")
         raise _UnavailableError(msg)
-    log = root / CODE_HEALTH_DIR / f"audit_{name}.log"
+    log = code_health_dir(root) / f"audit_{name}.log"
     verdict = log_freshness(log, current)
     if verdict != "fresh":
         msg = f"{log.name} is {verdict} after the run"
@@ -315,14 +316,16 @@ def _reported_audit(root: Path, name: str, current: str | None) -> list[str]:
     Returns:
         One line.
     """
-    log = root / CODE_HEALTH_DIR / f"audit_{name}.log"
+    log = code_health_dir(root) / f"audit_{name}.log"
     if not log.is_file():
         return [f"no log — run `forge-audit-{name} --scope full`"]
     verdict = log_freshness(log, current)
     if verdict != "fresh":
         return [f"{verdict} — re-run at full scope"]
-    count = read_finding_count(log.read_text(encoding="utf-8", errors="replace"))
-    return [f"fresh, {count if count >= 0 else '?'} finding(s)"]
+    text = log.read_text(encoding="utf-8", errors="replace")
+    count = read_finding_count(text)
+    scope = read_scope(text) or "scope unknown"
+    return [f"fresh, {scope}, {count if count >= 0 else '?'} finding(s)"]
 
 
 def _audit_lines(root: Path, base: str, current: str | None) -> list[str]:

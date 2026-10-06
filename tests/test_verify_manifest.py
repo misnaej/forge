@@ -6,6 +6,7 @@ import json
 from typing import TYPE_CHECKING
 
 from forge import verify_manifest
+from forge.git_utils import code_health_dir
 
 
 if TYPE_CHECKING:
@@ -21,7 +22,7 @@ def test_skipped_when_no_plugin_dir(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-manifest"])
     assert verify_manifest.main() == 0
-    log = (tmp_path / "code_health" / "manifest_json.log").read_text()
+    log = (code_health_dir(tmp_path) / "manifest_json.log").read_text()
     assert "skipped" in log
 
 
@@ -34,7 +35,7 @@ def test_pass_on_valid_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-manifest"])
     assert verify_manifest.main() == 0
-    assert "OK" in (tmp_path / "code_health" / "manifest_json.log").read_text()
+    assert "OK" in (code_health_dir(tmp_path) / "manifest_json.log").read_text()
 
 
 def test_fail_on_invalid_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -45,7 +46,7 @@ def test_fail_on_invalid_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-manifest"])
     assert verify_manifest.main() == 1
-    log = (tmp_path / "code_health" / "manifest_json.log").read_text()
+    log = (code_health_dir(tmp_path) / "manifest_json.log").read_text()
     assert "plugin.json" in log
 
 
@@ -86,7 +87,7 @@ def test_fail_on_injected_key_via_escaped_quotes(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-manifest"])
     assert verify_manifest.main() == 1
-    log = (tmp_path / "code_health" / "manifest_json.log").read_text()
+    log = (code_health_dir(tmp_path) / "manifest_json.log").read_text()
     assert "plugin.json" in log
 
 
@@ -100,7 +101,7 @@ def test_fail_on_v_prefixed_version(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-manifest"])
     assert verify_manifest.main() == 1
-    log = (tmp_path / "code_health" / "manifest_json.log").read_text()
+    log = (code_health_dir(tmp_path) / "manifest_json.log").read_text()
     assert "plugin.json" in log
 
 
@@ -114,7 +115,7 @@ def test_fail_on_non_string_version(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-manifest"])
     assert verify_manifest.main() == 1
-    log = (tmp_path / "code_health" / "manifest_json.log").read_text()
+    log = (code_health_dir(tmp_path) / "manifest_json.log").read_text()
     assert "must be a string" in log
 
 

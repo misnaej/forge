@@ -383,7 +383,7 @@ def run(scope: Scope, roots: list[Path], config: DataConfig) -> int:
         f"{counts[Severity.MEDIUM]} MEDIUM (schema), "
         f"{counts[Severity.LOW]} LOW (skipped)."
     )
-    write_log("data", findings, summary, output=config.output)
+    write_log("data", findings, summary, output=config.output, scope=scope)
     return exit_code_for(findings)
 
 

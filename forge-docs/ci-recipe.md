@@ -118,6 +118,9 @@ Notes:
   even when tests fail — slow + failing is when you most want the list.
   It is read-only and always exits `0`, so it never changes the job's
   pass/fail.
+- The tee'd `code_health/pytest.log` is **not evidence**: it carries no
+  `# produced-at:` stamp, lives only on the runner, and exists to feed
+  `forge-slow-tests-report` in the same job. Nothing should gate on it.
 
 - `install-forge-bootstrap` is idempotent — running it on every CI
   job is cheap and guarantees the managed artifacts (`FOUNDATION.md`,
@@ -130,6 +133,25 @@ Notes:
   `forge.run_context.is_non_interactive()` returns true under GitHub
   Actions / GitLab CI / etc., so the gates fire automatically. No
   `--skip` flags needed.
+
+### Gating on a `code_health/` log yourself
+
+Per FOUNDATION §13, a log that is missing, empty, unstamped or
+incomplete means *unknown*, and a gate must fail on unknown — a bare `grep -q FAIL` passes when the file
+is absent. Prefer the verdict command, which already applies that rule:
+
+```yaml
+      - name: Gate on the pre-commit verdict
+        run: forge-precommit --verdict   # non-zero unless every enabled step passed on this tree
+```
+
+If you must read a log directly, guard it first:
+
+```bash
+log=code_health/ruff.log
+test -s "$log" || { echo "unknown: $log missing or empty"; exit 1; }
+head -1 "$log" | grep -q '^# produced-at: ' || { echo "unknown: $log unstamped"; exit 1; }
+```
 
 ### Stranded-changelog gate as a required PR check (single-track repos)
 

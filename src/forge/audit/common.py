@@ -21,7 +21,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from forge.config import declared_layout_dirs, load_config
-from forge.git_utils import get_modified_files, produced_at_stamp, repo_root
+from forge.git_utils import (
+    code_health_dir,
+    get_modified_files,
+    produced_at_stamp,
+    repo_root,
+)
 
 
 if TYPE_CHECKING:
@@ -30,8 +35,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-CODE_HEALTH_DIR = "code_health"
 
 DEFAULT_ROOTS: tuple[str, ...] = (
     "src",
@@ -205,7 +208,8 @@ def make_audit_parser(prog: str, description: str) -> argparse.ArgumentParser:
         "--output",
         type=Path,
         default=None,
-        help="Override log path. Defaults to code_health/audit_<name>.log.",
+        help="Override log path. Defaults to audit_<name>.log in the log "
+        "directory (code_health/, or $FORGE_CODE_HEALTH_DIR when set).",
     )
     return parser
 
@@ -318,12 +322,29 @@ def read_finding_count(log_text: str) -> int:
     return -1
 
 
+def read_scope(log_text: str) -> str | None:
+    """Return the ``# scope:`` value :func:`write_log` puts in a log header.
+
+    Args:
+        log_text: Full log contents.
+
+    Returns:
+        ``"full"`` / ``"changed"``, or ``None`` when the log predates the
+        line or was written without a scope — unknown, never assumed full.
+    """
+    for line in log_text.splitlines()[:10]:
+        if line.startswith("# scope:"):
+            return line.split(":", 1)[1].strip() or None
+    return None
+
+
 def write_log(
     name: str,
     findings: Iterable[Finding],
     summary: str,
     *,
     output: Path | None = None,
+    scope: Scope | None = None,
 ) -> Path:
     """Write findings + summary to ``code_health/audit_<name>.log``.
 
@@ -337,12 +358,17 @@ def write_log(
         findings: Iterable of ``Finding`` records, severity-ordered upstream.
         summary: One-paragraph wrap-up rendered above the per-finding list.
         output: Override path. Defaults to ``code_health/audit_<name>.log``.
+        scope: The scope the audit ran at. Written as a ``# scope:`` header
+            line, because a changed-files run writes the same file a full
+            run does and a reader cannot tell them apart otherwise
+            (FOUNDATION §13). Placed within the first ten lines, which is
+            all :func:`read_finding_count` scans.
 
     Returns:
         Path to the written log.
     """
     root = repo_root()
-    log_dir = root / CODE_HEALTH_DIR
+    log_dir = code_health_dir(root)
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = output if output is not None else log_dir / f"audit_{name}.log"
 
@@ -351,6 +377,7 @@ def write_log(
     lines = [
         produced_at_stamp(root),
         f"# forge-audit-{name}",
+        *([f"# scope: {scope.value}"] if scope is not None else []),
         f"# findings: {len(findings_list)}",
         "",
         "## Summary",

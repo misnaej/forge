@@ -30,6 +30,16 @@ CLI is the per-repo answer.
 
 You never edit forge's source to configure it — only `pyproject.toml`.
 
+One environment variable sits outside both homes: **`FORGE_CODE_HEALTH_DIR`**
+relocates the `code_health/` log directory (absolute, or relative to the
+repo root). It is a testing aid — point it at a temp directory in your test
+suite's setup so tests that run forge CLIs never overwrite the real logs
+agents read as evidence. Leave it unset everywhere else; if you do set it
+for an agent session, set it before the session starts — the Claude Code
+hooks that count a fixer's runs read their ledger from the same directory,
+so moving it mid-session starts that count afresh. Keep a relocated
+directory private to you: forge writes logs there and trusts what it reads.
+
 ---
 
 ## Quick start

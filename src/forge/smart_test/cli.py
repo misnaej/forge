@@ -8,7 +8,9 @@ before higher ones run, keeping the feedback loop tight. Writes the
 run output to two sinks: ``code_health/smart_test.log`` for
 ``forge:precommit-fixer`` (FOUNDATION §13) and ``code_health/pytest.log``
 so ``forge-slow-tests-report``'s no-argument default works after any
-smart-test run.
+smart-test run. Both are stamped when the run starts, grow tier by tier,
+end with a ``# complete:`` line, and are written by one run at a time
+(:mod:`forge.smart_test.run_log`).
 
 Usage:
 
@@ -28,10 +30,10 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from forge import config as _config
-from forge.git_utils import configure_cli_logging, produced_at_stamp
+from forge.git_utils import configure_cli_logging
 from forge.smart_test import coverage as cov_stage
 from forge.smart_test import lifecycle
 from forge.smart_test.dependencies import (
@@ -46,7 +48,17 @@ from forge.smart_test.git_helpers import (
     head_commit_message,
     resolve_base_ref,
 )
+from forge.smart_test.run_log import (
+    LockHeldError,
+    RunLog,
+    acquire_lock,
+    release_lock,
+)
 from forge.smart_test.runner import clear_python_cache, run_pytest
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 configure_cli_logging()
@@ -54,8 +66,8 @@ logger = logging.getLogger(__name__)
 
 _FULL = "full"
 _DEPTH_CHOICES = ("0", "1", "2", _FULL)
-_LOG_RELPATH = Path("code_health") / "smart_test.log"
-_PYTEST_LOG_RELPATH = Path("code_health") / "pytest.log"
+_LOG_NAME = "smart_test.log"
+_PYTEST_LOG_NAME = "pytest.log"
 # Default CI directive: [depth-N] or [full] anywhere in the commit message.
 # Override via [tool.forge.smart_test].commit_directive_re.
 _DEPTH_DIRECTIVE_RE = r"\[(?:depth-(?P<n>[0-2])|(?P<full>full))\]"
@@ -113,26 +125,39 @@ def _parse_depth(raw: str) -> int | str:
     return int(raw)
 
 
-def _write_log(repo_root: Path, body: str) -> None:
-    """Write *body* to ``code_health/smart_test.log`` and ``pytest.log``.
+def _with_run_log(
+    repo_root: Path, header: str, run: Callable[[RunLog], tuple[int, str]]
+) -> int:
+    """Run *run* holding the log lock, with the log stamped up front.
 
-    Two sinks by design, same content: ``smart_test.log`` is what
-    ``forge:precommit-fixer`` reads (FOUNDATION §13), while
-    ``pytest.log`` is ``forge-slow-tests-report``'s documented default
-    input — writing it here makes the reporter's no-argument invocation
-    true after any smart-test run. Both open with the same
-    :func:`forge.git_utils.produced_at_stamp`, so a test result names the
-    tree it was run against.
+    The stamp names the tree the tests are about to run against; *run*
+    appends each tier as it finishes; the ``# complete:`` line goes last,
+    so an interrupted run leaves a log readers treat as unknown.
 
     Args:
         repo_root: Git repo root.
-        body: Full captured run output.
+        header: First body text of the log.
+        run: The test run; receives the log, returns ``(exit_code,
+            console_output)``.
+
+    Returns:
+        The run's exit code, or ``1`` when another live run holds the
+        lock (nothing is run or written then).
     """
-    stamped = f"{produced_at_stamp(repo_root)}\n{body}"
-    for relpath in (_LOG_RELPATH, _PYTEST_LOG_RELPATH):
-        log_path = repo_root / relpath
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text(stamped, encoding="utf-8")
+    try:
+        lock = acquire_lock(repo_root)
+    except LockHeldError as exc:
+        sys.stderr.write(f"forge-smart-test: {exc}\n")
+        return 1
+    try:
+        log = RunLog.for_repo(repo_root, (_LOG_NAME, _PYTEST_LOG_NAME))
+        log.start(repo_root, header)
+        code, output = run(log)
+        log.complete("passed" if code == 0 else f"failed (exit {code})")
+        logger.info("%s", output.rstrip())
+        return code
+    finally:
+        release_lock(lock)
 
 
 def _run_full(
@@ -233,6 +258,7 @@ def _run_tiers(
     depth: int,
     plan: SelectionPlan,
     config: _RunConfig,
+    log: RunLog,
 ) -> tuple[int, str]:
     """Run depth batches 0..*depth* with fail-fast between them.
 
@@ -246,13 +272,20 @@ def _run_tiers(
         depth: Highest depth to run (0, 1, or 2).
         plan: The precomputed static selection.
         config: Run configuration (coverage, extra_depth0, header).
+        log: The run log; each section is appended as soon as it exists
+            (the header is already in it).
 
     Returns:
         ``(exit_code, combined_output)`` across the batches that ran.
     """
     output = [config.header]
+
+    def emit(text: str) -> None:
+        output.append(text)
+        log.append(text)
+
     if not (set(plan.tests_up_to(depth)) | config.extra_depth0):
-        output.append("No tests reach the changed files — nothing to run.\n")
+        emit("No tests reach the changed files — nothing to run.\n")
         return 0, "".join(output)
 
     already: set[str] = set()
@@ -265,7 +298,7 @@ def _run_tiers(
             continue
         already.update(batch)
         clear_python_cache(repo_root)
-        output.append(f"\n=== depth {tier}: {len(batch)} test file(s) ===\n")
+        emit(f"\n=== depth {tier}: {len(batch)} test file(s) ===\n")
         code, out = run_pytest(
             repo_root,
             batch,
@@ -273,11 +306,11 @@ def _run_tiers(
             telemetry=config.telemetry,
             label=f"depth{tier}",
         )
-        output.append(out)
+        emit(out)
         if code != 0:
-            output.append(f"\nFAILED at depth {tier} — skipping higher depths.\n")
+            emit(f"\nFAILED at depth {tier} — skipping higher depths.\n")
             return code, "".join(output)
-    output.append("\nAll selected depth tiers passed.\n")
+    emit("\nAll selected depth tiers passed.\n")
     return 0, "".join(output)
 
 
@@ -388,16 +421,19 @@ def main() -> int:
         if args.show_files:
             logger.info("📋 Tests covering changed code (depth full): the entire suite")
             return 0
-        code, body = _run_full(
-            repo_root,
-            cfg,
-            changed,
-            all_tests=args.all_tests,
-            telemetry=args.telemetry,
-        )
-        _write_log(repo_root, body)
-        logger.info("%s", body.rstrip())
-        return code
+
+        def full(log: RunLog) -> tuple[int, str]:
+            code, body = _run_full(
+                repo_root,
+                cfg,
+                changed,
+                all_tests=args.all_tests,
+                telemetry=args.telemetry,
+            )
+            log.append(body)
+            return code, body
+
+        return _with_run_log(repo_root, "", full)
 
     depth = cast("int", depth_raw)
     plan = select_tests(repo_root, changed, depth, follow_mock_patches=follow)
@@ -427,10 +463,11 @@ def main() -> int:
         header=header,
         telemetry=args.telemetry,
     )
-    code, body = _run_tiers(repo_root, depth, plan, config)
-    _write_log(repo_root, body)
-    logger.info("%s", body.rstrip())
-    return code
+    return _with_run_log(
+        repo_root,
+        header,
+        lambda log: _run_tiers(repo_root, depth, plan, config, log),
+    )
 
 
 if __name__ == "__main__":

@@ -48,6 +48,7 @@ from forge import pip_audit_json
 from forge.config import resolve_tool_roots
 from forge.git_utils import (
     capturing_to_step_log,
+    code_health_dir,
     configure_cli_logging,
     repo_root,
 )
@@ -118,8 +119,8 @@ def active_cve_ids(root: Path, audit_json: Path | None = None) -> set[str] | Non
             ``pip_audit`` pre-commit step. When given, its contents are read
             instead of invoking pip-audit, so the two steps share **one** scan
             per commit (#78). A relative path resolves against *root*; a path
-            that resolves outside the repo is refused (skipped) so the public
-            flag cannot read arbitrary files.
+            that resolves outside the repo (and outside the log directory) is
+            refused (skipped) so the public flag cannot read arbitrary files.
 
     Returns:
         The set of live IDs (each ``id`` plus its ``aliases``, so a CVE-keyed
@@ -134,7 +135,11 @@ def active_cve_ids(root: Path, audit_json: Path | None = None) -> set[str] | Non
         # than turning the JSON read into an arbitrary-file-read oracle.
         candidate = audit_json if audit_json.is_absolute() else root / audit_json
         path = candidate.resolve()
-        if not path.is_relative_to(root.resolve()):
+        # The log directory may be relocated outside the repo
+        # (FORGE_CODE_HEALTH_DIR); the sidecar lives there, so it is the
+        # one other place a read is allowed.
+        allowed = (root.resolve(), code_health_dir(root).resolve())
+        if not any(path.is_relative_to(base) for base in allowed):
             logger.info("(--audit-json %s is outside the repo — skipped)", audit_json)
             return None
         try:

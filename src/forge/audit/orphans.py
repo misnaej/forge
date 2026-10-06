@@ -157,7 +157,9 @@ def run(scope: Scope, roots: list[Path], config: OrphansConfig) -> int:
     v = vulture.Vulture(verbose=False)  # type: ignore[attr-defined]
     paths = _scavenge_paths(scope, roots)
     if not paths:
-        write_log("orphans", [], "No paths to scavenge.", output=config.output)
+        write_log(
+            "orphans", [], "No paths to scavenge.", output=config.output, scope=scope
+        )
         return 0
     v.scavenge([str(p) for p in paths])
     items = list(v.get_unused_code(min_confidence=config.min_confidence))
@@ -167,7 +169,7 @@ def run(scope: Scope, roots: list[Path], config: OrphansConfig) -> int:
         f"Found {len(findings)} unused symbol(s) "
         f"(min_confidence={config.min_confidence})."
     )
-    write_log("orphans", findings, summary, output=config.output)
+    write_log("orphans", findings, summary, output=config.output, scope=scope)
     return exit_code_for(findings)
 
 

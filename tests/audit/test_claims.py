@@ -18,6 +18,7 @@ from forge.audit.claims import (
     run,
 )
 from forge.audit.common import Scope, Severity
+from forge.git_utils import code_health_dir
 from tests.audit.conftest import make_fake_repo
 
 
@@ -173,7 +174,7 @@ def test_run_extracts_claims_from_module(fake_repo: Path) -> None:
         [fake_repo / "src"],
         ClaimsConfig(lexicon=frozenset({"kl", "conserved"})),
     )
-    log_path = fake_repo / "code_health" / "audit_claims.log"
+    log_path = code_health_dir(fake_repo) / "audit_claims.log"
     log_text = log_path.read_text(encoding="utf-8")
     assert "[REVIEW]" in log_text
     assert "Lower KL" in log_text
@@ -191,7 +192,7 @@ def test_run_zero_findings_when_lexicon_empty(fake_repo: Path) -> None:
         [fake_repo / "src"],
         ClaimsConfig(lexicon=frozenset()),
     )
-    log_path = fake_repo / "code_health" / "audit_claims.log"
+    log_path = code_health_dir(fake_repo) / "audit_claims.log"
     log_text = log_path.read_text(encoding="utf-8")
     assert "# findings: 0" in log_text
     assert code == 0

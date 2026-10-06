@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import telemetry
+from forge.git_utils import code_health_dir
 
 
 if TYPE_CHECKING:
@@ -315,7 +316,7 @@ def test_append_history_empty_summary_writes_na_peak_rss(tmp_path: Path) -> None
         cmd=["true"], summary=None, exit_code=0, elapsed=1.5
     )
     telemetry._append_history(tmp_path, history, label="")
-    history_log = tmp_path / "code_health" / "telemetry_history.log"
+    history_log = code_health_dir(tmp_path) / "telemetry_history.log"
     line = history_log.read_text(encoding="utf-8")
     assert "peak_rss=n/a" in line
     assert "label=-" in line
@@ -334,7 +335,7 @@ def test_append_history_second_call_appends_without_disturbing_first(
     )
     telemetry._append_history(tmp_path, first_history, label="r1")
     first_line = (
-        (tmp_path / "code_health" / "telemetry_history.log")
+        (code_health_dir(tmp_path) / "telemetry_history.log")
         .read_text(encoding="utf-8")
         .splitlines()[0]
     )
@@ -346,7 +347,7 @@ def test_append_history_second_call_appends_without_disturbing_first(
     telemetry._append_history(tmp_path, second_history, label="r2")
 
     lines = (
-        (tmp_path / "code_health" / "telemetry_history.log")
+        (code_health_dir(tmp_path) / "telemetry_history.log")
         .read_text(encoding="utf-8")
         .splitlines()
     )
@@ -378,8 +379,8 @@ def test_render_history_unparsable_content_returns_0_and_logs_hint(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A ledger file that parses to zero rows still returns 0, with its own hint."""
-    history_log = tmp_path / "code_health" / "telemetry_history.log"
-    history_log.parent.mkdir(parents=True)
+    history_log = code_health_dir(tmp_path) / "telemetry_history.log"
+    history_log.parent.mkdir(parents=True, exist_ok=True)
     history_log.write_text(_HISTORY_LINE_NO_EQUALS, encoding="utf-8")
     with caplog.at_level(logging.INFO, logger="forge.telemetry"):
         code = telemetry._render_history(tmp_path)
@@ -739,7 +740,7 @@ def test_run_command_integration_captures_child_output_and_writes_log(
 
     assert code == 3
     assert "hello" in output
-    log_path = tmp_path / "code_health" / "telemetry.log"
+    log_path = code_health_dir(tmp_path) / "telemetry.log"
     assert log_path.exists()
     log_text = log_path.read_text(encoding="utf-8")
     assert "exit code: 3" in log_text
@@ -775,7 +776,7 @@ def test_run_command_integration_capture_false_streams_and_still_writes_log(
 
     assert code == 3
     assert output == ""
-    log_path = tmp_path / "code_health" / "telemetry.log"
+    log_path = code_health_dir(tmp_path) / "telemetry.log"
     assert log_path.exists()
     assert "exit code: 3" in log_path.read_text(encoding="utf-8")
 
@@ -804,11 +805,11 @@ def test_run_command_integration_with_label_writes_labeled_log_and_history(
     code, _ = telemetry.run_command(cmd, tmp_path, capture=True, label="r1")
 
     assert code == 0
-    labeled_log = tmp_path / "code_health" / "telemetry_r1.log"
-    default_log = tmp_path / "code_health" / "telemetry.log"
+    labeled_log = code_health_dir(tmp_path) / "telemetry_r1.log"
+    default_log = code_health_dir(tmp_path) / "telemetry.log"
     assert labeled_log.exists()
     assert not default_log.exists()
-    history_path = tmp_path / "code_health" / "telemetry_history.log"
+    history_path = code_health_dir(tmp_path) / "telemetry_history.log"
     first_lines = history_path.read_text(encoding="utf-8").splitlines()
     assert len(first_lines) == 1
     assert "label=r1" in first_lines[0]
@@ -852,7 +853,7 @@ def test_run_command_sample_first_wait_avoids_extra_interval_latency(
 
     assert code == 0
     assert wall < 1.0
-    log_text = (tmp_path / "code_health" / "telemetry.log").read_text(encoding="utf-8")
+    log_text = (code_health_dir(tmp_path) / "telemetry.log").read_text(encoding="utf-8")
     match = re.search(r"duration:\s*([\d.]+)s", log_text)
     assert match is not None
     assert float(match.group(1)) < 1.0
@@ -875,7 +876,7 @@ def test_render_plot_missing_matplotlib_logs_hint_and_skips_png(
     with caplog.at_level(logging.INFO, logger="forge.telemetry"):
         telemetry._render_plot(tmp_path, samples)
 
-    assert not (tmp_path / "code_health" / "telemetry.png").exists()
+    assert not (code_health_dir(tmp_path) / "telemetry.png").exists()
     assert "matplotlib" in caplog.text
     assert "telemetry" in caplog.text
 
@@ -883,7 +884,7 @@ def test_render_plot_missing_matplotlib_logs_hint_and_skips_png(
 def test_render_plot_empty_samples_is_a_noop(tmp_path: Path) -> None:
     """No samples means no PNG is attempted at all."""
     telemetry._render_plot(tmp_path, [])
-    assert not (tmp_path / "code_health" / "telemetry.png").exists()
+    assert not (code_health_dir(tmp_path) / "telemetry.png").exists()
 
 
 def test_render_plot_writes_png_when_matplotlib_available(tmp_path: Path) -> None:
@@ -894,7 +895,7 @@ def test_render_plot_writes_png_when_matplotlib_available(tmp_path: Path) -> Non
         telemetry.Sample(elapsed=1.0, rss_mb=2.0, cpu_percent=20.0),
     ]
     telemetry._render_plot(tmp_path, samples)
-    png = tmp_path / "code_health" / "telemetry.png"
+    png = code_health_dir(tmp_path) / "telemetry.png"
     assert png.exists()
     assert png.stat().st_size > 0
 
@@ -907,7 +908,7 @@ def test_render_plot_with_label_writes_suffixed_png_only(tmp_path: Path) -> None
         telemetry.Sample(elapsed=1.0, rss_mb=2.0, cpu_percent=20.0),
     ]
     telemetry._render_plot(tmp_path, samples, label="r1")
-    labeled_png = tmp_path / "code_health" / "telemetry_r1.png"
+    labeled_png = code_health_dir(tmp_path) / "telemetry_r1.png"
     assert labeled_png.exists()
     assert labeled_png.stat().st_size > 0
-    assert not (tmp_path / "code_health" / "telemetry.png").exists()
+    assert not (code_health_dir(tmp_path) / "telemetry.png").exists()

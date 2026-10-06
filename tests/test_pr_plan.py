@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import pr_plan
+from forge.git_utils import code_health_dir
 from forge.pr_delta import PROVENANCE_GATE_STEPS
 from tests.conftest import GIT_ENV, CapturedCalls, init_git_repo, make_fake_run
 
@@ -1155,7 +1156,7 @@ def test_main_evidence_flag_leaves_plan_json_and_exit_unchanged(
 
     def _fake_write_pack(root: Path, **_kwargs: object) -> Path:
         stdout_at_pack_time["out"] = capsys.readouterr().out
-        return root / "code_health" / "pr_evidence.log"
+        return code_health_dir(root) / "pr_evidence.log"
 
     monkeypatch.setattr(pr_plan, "write_pack", _fake_write_pack)
 
@@ -1184,7 +1185,7 @@ def test_main_without_evidence_flag_never_writes_a_pack(
 
     assert rc == 0
     capsys.readouterr()
-    assert not (repo / "code_health" / "pr_evidence.log").exists()
+    assert not (code_health_dir(repo) / "pr_evidence.log").exists()
 
 
 def test_main_evidence_pack_failure_is_logged_not_raised(
@@ -1254,7 +1255,7 @@ def test_write_evidence_forwards_pr_body_only_with_a_pr_number(
 
     def _fake_write_pack(root: Path, **kwargs: object) -> Path:
         write_pack_calls["pr_body"] = kwargs["pr_body"]
-        return root / "code_health" / "pr_evidence.log"
+        return code_health_dir(root) / "pr_evidence.log"
 
     monkeypatch.setattr(pr_plan, "gh_pr_view", _fake_gh_pr_view)
     monkeypatch.setattr(pr_plan, "write_pack", _fake_write_pack)

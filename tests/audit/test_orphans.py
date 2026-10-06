@@ -19,7 +19,7 @@ from forge.audit.orphans import (
     _severity,
     run,
 )
-from forge.git_utils import missing_dependency_hint
+from forge.git_utils import code_health_dir, missing_dependency_hint
 
 
 if TYPE_CHECKING:
@@ -218,7 +218,7 @@ def test_run_returns_zero_when_no_findings(
     fake = FakeVulture(items=[])
     monkeypatch.setattr(orphans, "_load_vulture", lambda: fake)
     code = run(Scope.FULL, [fake_repo / "src"], OrphansConfig())
-    log_path = fake_repo / "code_health" / "audit_orphans.log"
+    log_path = code_health_dir(fake_repo) / "audit_orphans.log"
     log_text = log_path.read_text(encoding="utf-8")
     assert "# findings: 0" in log_text
     assert code == 0
@@ -243,7 +243,7 @@ def test_run_returns_one_when_medium_findings(
     )
     monkeypatch.setattr(orphans, "_load_vulture", lambda: fake)
     code = run(Scope.FULL, [fake_repo / "src"], OrphansConfig())
-    log_path = fake_repo / "code_health" / "audit_orphans.log"
+    log_path = code_health_dir(fake_repo) / "audit_orphans.log"
     log_text = log_path.read_text(encoding="utf-8")
     assert "[MEDIUM]" in log_text
     assert code == 1
@@ -268,7 +268,7 @@ def test_run_low_only_returns_zero(
     )
     monkeypatch.setattr(orphans, "_load_vulture", lambda: fake)
     code = run(Scope.FULL, [fake_repo / "src"], OrphansConfig())
-    log_path = fake_repo / "code_health" / "audit_orphans.log"
+    log_path = code_health_dir(fake_repo) / "audit_orphans.log"
     log_text = log_path.read_text(encoding="utf-8")
     assert "[LOW]" in log_text
     assert code == 0
@@ -296,7 +296,7 @@ def test_run_passes_min_confidence_to_vulture(
         [fake_repo / "src"],
         OrphansConfig(min_confidence=90),
     )
-    log_path = fake_repo / "code_health" / "audit_orphans.log"
+    log_path = code_health_dir(fake_repo) / "audit_orphans.log"
     log_text = log_path.read_text(encoding="utf-8")
     assert "# findings: 0" in log_text
     assert code == 0

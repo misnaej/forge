@@ -14,6 +14,7 @@ import datetime as _dt
 import subprocess
 from typing import TYPE_CHECKING
 
+from forge.git_utils import code_health_dir
 from forge.smart_test import lifecycle
 from tests.conftest import GIT_ENV as _GIT_ENV
 from tests.conftest import init_git_repo
@@ -367,7 +368,7 @@ def test_append_history_writes_one_well_formed_line_and_creates_dir(
         differential_mismatches=0,
     )
     lifecycle.append_history(tmp_path, metrics)
-    log = tmp_path / lifecycle.HISTORY_RELPATH
+    log = code_health_dir(tmp_path) / lifecycle.HISTORY_NAME
     assert log.exists()
     lines = log.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
@@ -392,7 +393,7 @@ def test_append_history_zero_total_files_no_zero_division(tmp_path: Path) -> Non
         differential_mismatches=0,
     )
     lifecycle.append_history(tmp_path, metrics)
-    log = tmp_path / lifecycle.HISTORY_RELPATH
+    log = code_health_dir(tmp_path) / lifecycle.HISTORY_NAME
     assert "dev_fraction=0.000" in log.read_text(encoding="utf-8")
 
 
@@ -408,7 +409,7 @@ def test_append_history_two_calls_append(tmp_path: Path) -> None:
             differential_mismatches=0,
         )
         lifecycle.append_history(tmp_path, metrics)
-    log = tmp_path / lifecycle.HISTORY_RELPATH
+    log = code_health_dir(tmp_path) / lifecycle.HISTORY_NAME
     lines = log.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
     assert "label=full" in lines[0]

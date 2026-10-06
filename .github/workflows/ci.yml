@@ -75,18 +75,21 @@ jobs:
       # bearing: an unspecified `run:` step is `bash -e {0}`, with no
       # pipefail, so `pytest | tee` would exit with tee's status and a
       # failing suite would report success. Only the explicit form gets
-      # `bash --noprofile --norc -eo pipefail {0}`.
+      # `bash --noprofile --norc -eo pipefail {0}`. The tee'd log is
+      # unstamped and never evidence: it only feeds the slow-tests
+      # report below, in this job. It goes to the runner's temp dir, not
+      # code_health/: forge's own suite fails the session when anything
+      # writes the real code_health/ while it runs, and a tee writing
+      # there during the run is exactly such a write.
       - name: pytest (full suite, durations captured)
         shell: bash
-        run: |
-          mkdir -p code_health
-          pytest -q | tee code_health/pytest.log
+        run: pytest -q | tee "$RUNNER_TEMP/pytest.log"
 
       # Perf visibility on every run, pass or fail — a slow AND failing
       # suite is when the ranking matters most. Reporter never gates.
       - name: forge-slow-tests-report (slowest tests + baseline compare)
         if: always()
-        run: forge-slow-tests-report --baseline
+        run: forge-slow-tests-report --log "$RUNNER_TEMP/pytest.log" --baseline
 
       # Same drift check the post-merge / post-checkout hooks run locally:
       # the foundation block in CLAUDE.md must match FOUNDATION.md as

@@ -16,18 +16,22 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import os
 import sys
 from typing import TYPE_CHECKING
 
+import pytest
+
+from forge.git_utils import code_health_dir
 from forge.smart_test import cli
 from forge.smart_test.dependencies import SelectionPlan
+from forge.smart_test.run_log import LOCK_NAME, RunLog
 from tests.conftest import PRODUCED_AT_RE, CapturedCalls, log_body
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
-
-    import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -129,39 +133,186 @@ def test_parse_depth_full_sentinel() -> None:
     assert cli._parse_depth("full") == cli._FULL
 
 
-def test_write_log_creates_code_health_dir_and_writes(tmp_path: Path) -> None:
-    """_write_log creates the code_health/ directory and writes the body.
+def _writes(text: str) -> Callable[[RunLog], tuple[int, str]]:
+    """Return a run function that appends *text* to the log and passes.
 
-    Two sinks, same content: ``smart_test.log`` (precommit-fixer's input)
-    and ``pytest.log`` (``forge-slow-tests-report``'s documented default).
-    Line 1 of each is asserted to actually match the ``# produced-at:``
-    provenance stamp shape (FOUNDATION §13) before ``log_body`` strips it
-    — a writer that dropped the stamp would otherwise pass this
-    assertion by accident, since `log_body` degrades gracefully when line
-    1 isn't a stamp. The remaining body is compared via ``log_body``, not
-    part of the caller-supplied text under test here.
+    Args:
+        text: Text the returned run function appends to the log.
+
+    Returns:
+        A run function that writes *text* and reports exit code 0.
     """
-    cli._write_log(tmp_path, "some output\n")
-    log = tmp_path / "code_health" / "smart_test.log"
-    assert log.exists()
-    assert PRODUCED_AT_RE.fullmatch(log.read_text(encoding="utf-8").splitlines()[0])
-    assert log_body(log) == "some output\n"
-    pytest_log = tmp_path / "code_health" / "pytest.log"
-    assert pytest_log.exists()
-    assert PRODUCED_AT_RE.fullmatch(
-        pytest_log.read_text(encoding="utf-8").splitlines()[0]
+
+    def run(log: RunLog) -> tuple[int, str]:
+        log.append(text)
+        return 0, ""
+
+    return run
+
+
+def _sinks(repo: Path) -> tuple[Path, Path]:
+    """Return the two run-log sinks (``smart_test.log``, ``pytest.log``).
+
+    Args:
+        repo: Repository root whose code-health directory holds the sinks.
+
+    Returns:
+        The ``smart_test.log`` and ``pytest.log`` paths.
+    """
+    return code_health_dir(repo) / "smart_test.log", code_health_dir(
+        repo
+    ) / "pytest.log"
+
+
+@pytest.mark.parametrize(
+    ("code", "verdict"),
+    [(0, "passed"), (3, "failed (exit 3)")],
+)
+def test_with_run_log_stamps_before_run_and_completes_after(
+    tmp_path: Path, code: int, verdict: str
+) -> None:
+    """Both sinks are stamped before the run starts and end with the verdict.
+
+    The snapshot is taken inside the run function, so a writer that only
+    stamped at the end would fail it. The lock is gone afterwards.
+
+    Args:
+        code: Exit code the run function returns.
+        verdict: Verdict text expected on the final ``# complete:`` line.
+    """
+    seen: dict[str, str] = {}
+
+    def run(log: RunLog) -> tuple[int, str]:
+        seen["at_start"] = log.paths[0].read_text(encoding="utf-8")
+        log.append("tier output\n")
+        return code, "console"
+
+    assert cli._with_run_log(tmp_path, "HEADER\n", run) == code
+
+    assert PRODUCED_AT_RE.fullmatch(seen["at_start"].splitlines()[0])
+    assert seen["at_start"].endswith("HEADER\n")
+    for sink in _sinks(tmp_path):
+        text = sink.read_text(encoding="utf-8")
+        assert PRODUCED_AT_RE.fullmatch(text.splitlines()[0])
+        assert log_body(sink) == f"HEADER\ntier output\n\n# complete: {verdict}\n"
+    assert not (code_health_dir(tmp_path) / LOCK_NAME).exists()
+
+
+def test_with_run_log_run_that_raises_leaves_stamped_log_without_complete_line(
+    tmp_path: Path,
+) -> None:
+    """An interrupted run keeps its stamp, never claims completion, frees the lock."""
+
+    def run(_log: RunLog) -> tuple[int, str]:
+        msg = "boom"
+        raise RuntimeError(msg)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        cli._with_run_log(tmp_path, "H\n", run)
+
+    for sink in _sinks(tmp_path):
+        text = sink.read_text(encoding="utf-8")
+        assert PRODUCED_AT_RE.fullmatch(text.splitlines()[0])
+        assert "# complete:" not in text
+    assert not (code_health_dir(tmp_path) / LOCK_NAME).exists()
+
+
+def test_with_run_log_held_lock_exits_1_and_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A live holder's lock makes the run refuse: exit 1, no run, no log."""
+    health = code_health_dir(tmp_path)
+    health.mkdir(parents=True, exist_ok=True)
+    (health / LOCK_NAME).write_text(f"{os.getpid()} 2026-01-01T00:00:00+00:00\n")
+    calls: list[RunLog] = []
+
+    def run(log: RunLog) -> tuple[int, str]:
+        calls.append(log)
+        return 0, ""
+
+    assert cli._with_run_log(tmp_path, "H\n", run) == 1
+
+    assert calls == []
+    assert not any(sink.exists() for sink in _sinks(tmp_path))
+    assert str(os.getpid()) in capsys.readouterr().err
+    # The foreign lock is not ours to remove.
+    assert (health / LOCK_NAME).exists()
+
+
+def test_with_run_log_second_run_overwrites_first_runs_log(tmp_path: Path) -> None:
+    """A later run truncates both sinks rather than appending to the old one."""
+    cli._with_run_log(tmp_path, "", _writes("first\n"))
+    cli._with_run_log(tmp_path, "", _writes("second\n"))
+
+    for sink in _sinks(tmp_path):
+        assert log_body(sink) == "second\n\n# complete: passed\n"
+
+
+def test_run_tiers_appends_each_tier_section_as_it_finishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every tier's section lands in the log before the next tier runs.
+
+    SCENARIO: two tiers; the fake ``run_pytest`` reads the log at call time.
+    MOCK SETUP: ``run_pytest`` and ``clear_python_cache`` replaced in ``cli``.
+    EXPECTED BEHAVIOR: when tier 1 runs, tier 0's section is already on disk.
+    """
+    log = RunLog.for_repo(tmp_path, ("smart_test.log",))
+    log.start(tmp_path, "HEADER\n")
+    snapshots: list[str] = []
+
+    def fake_run_pytest(
+        _root: Path, paths: list[str], **_kw: object
+    ) -> tuple[int, str]:
+        snapshots.append(log.paths[0].read_text(encoding="utf-8"))
+        return 0, f"ran {paths}\n"
+
+    monkeypatch.setattr(cli, "run_pytest", fake_run_pytest)
+    monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
+    plan = _make_plan(depth0=["tests/test_a.py"], depth1=["tests/test_b.py"])
+    config = cli._RunConfig(
+        coverage=False, extra_depth0=set(), header="HEADER\n", telemetry=False
     )
-    assert log_body(pytest_log) == "some output\n"
+
+    code, output = cli._run_tiers(tmp_path, 1, plan, config, log)
+
+    assert code == 0
+    assert "ran [" not in snapshots[0]
+    assert "ran ['tests/test_a.py']" in snapshots[1]
+    assert "ran ['tests/test_b.py']" not in snapshots[1]
+    written = log_body(log.paths[0])
+    assert written == output
+    assert written.endswith("All selected depth tiers passed.\n")
 
 
-def test_write_log_overwrites_existing_log(tmp_path: Path) -> None:
-    """A second _write_log call overwrites the previous content in both sinks."""
-    cli._write_log(tmp_path, "first\n")
-    cli._write_log(tmp_path, "second\n")
-    log = tmp_path / "code_health" / "smart_test.log"
-    assert log_body(log) == "second\n"
-    pytest_log = tmp_path / "code_health" / "pytest.log"
-    assert log_body(pytest_log) == "second\n"
+def test_run_tiers_fail_fast_logs_failure_and_skips_higher_tiers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing tier is logged with its marker and no later tier runs."""
+    log = RunLog.for_repo(tmp_path, ("smart_test.log",))
+    log.start(tmp_path, "")
+    ran: list[list[str]] = []
+
+    def fake_run_pytest(
+        _root: Path, paths: list[str], **_kw: object
+    ) -> tuple[int, str]:
+        ran.append(paths)
+        return 1, "red\n"
+
+    monkeypatch.setattr(cli, "run_pytest", fake_run_pytest)
+    monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
+    plan = _make_plan(depth0=["tests/test_a.py"], depth1=["tests/test_b.py"])
+    config = cli._RunConfig(
+        coverage=False, extra_depth0=set(), header="", telemetry=False
+    )
+
+    code, _output = cli._run_tiers(tmp_path, 1, plan, config, log)
+
+    assert code == 1
+    assert ran == [["tests/test_a.py"]]
+    text = log_body(log.paths[0])
+    assert "red\n" in text
+    assert "FAILED at depth 0 — skipping higher depths." in text
 
 
 def test_main_show_files_prints_plan_and_exits_0(
@@ -371,12 +522,12 @@ def test_main_log_written_after_run(
 
     cli.main()
 
-    log_path = tmp_path / "code_health" / "smart_test.log"
-    assert log_path.exists()
-    assert "run output" in log_path.read_text(encoding="utf-8")
-    pytest_log_path = tmp_path / "code_health" / "pytest.log"
-    assert pytest_log_path.exists()
-    assert "run output" in pytest_log_path.read_text(encoding="utf-8")
+    for sink in _sinks(tmp_path):
+        text = sink.read_text(encoding="utf-8")
+        assert PRODUCED_AT_RE.fullmatch(text.splitlines()[0])
+        assert "run output" in text
+        assert text.endswith("# complete: passed\n")
+    assert not (code_health_dir(tmp_path) / LOCK_NAME).exists()
 
 
 def test_main_changed_test_file_not_run_twice(
@@ -1298,7 +1449,7 @@ def test_run_full_appends_exactly_one_history_line(
     )
     cli._run_full(tmp_path, {}, changed=set())
 
-    log = tmp_path / "code_health" / "smart_test_history.log"
+    log = code_health_dir(tmp_path) / "smart_test_history.log"
     lines = log.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     assert "label=full" in lines[0]

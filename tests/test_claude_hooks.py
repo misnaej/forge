@@ -14,10 +14,16 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
+from forge.git_utils import code_health_dir
 from tests.conftest import GIT_ENV, init_git_repo, init_single_track_repo
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 _HOOKS_DIR = Path(__file__).resolve().parents[1] / "claude-hooks"
@@ -131,7 +137,7 @@ def _write_wrapup(repo: Path, sha: str) -> None:
             `--show-toplevel` resolution.
         sha: Commit sha (full or short) to embed in the `verified-at:` line.
     """
-    code_health = repo / "code_health"
+    code_health = code_health_dir(repo)
     code_health.mkdir(parents=True, exist_ok=True)
     (code_health / "pr_wrapup.md").write_text(f"# PR Wrap-up\n\nverified-at: {sha}\n")
 
@@ -3468,7 +3474,7 @@ def _seed_precommit_ledger(repo: Path, agent_id: str, count: int) -> None:
         agent_id: The agent id every seeded line carries.
         count: How many lines to write.
     """
-    code_health = repo / "code_health"
+    code_health = code_health_dir(repo)
     code_health.mkdir(parents=True, exist_ok=True)
     lines = [
         f'{{"ts":"2026-01-01T00:00:{i:02d}Z","event":"precommit_full_run",'
@@ -3508,7 +3514,7 @@ def test_fixer_recon_allows_three_full_precommit_runs_then_blocks_fourth(
         ),
     )
     assert proc.returncode == 0
-    ledger_two = (repo_two / "code_health" / "agent_timing.jsonl").read_text()
+    ledger_two = (code_health_dir(repo_two) / "agent_timing.jsonl").read_text()
     assert ledger_two.count('"event":"precommit_full_run"') == 3
     last_line = ledger_two.strip().splitlines()[-1]
     assert '"agent_id":"agent-a"' in last_line
@@ -3552,7 +3558,7 @@ def test_fixer_recon_only_flag_never_counts_toward_cap(tmp_path: Path) -> None:
         ),
     )
     assert proc.returncode == 0
-    ledger = (tmp_path / "code_health" / "agent_timing.jsonl").read_text()
+    ledger = (code_health_dir(tmp_path) / "agent_timing.jsonl").read_text()
     assert ledger.count('"event":"precommit_full_run"') == 3
 
 
@@ -3580,7 +3586,7 @@ def test_fixer_recon_freshness_flag_never_counts_toward_cap(tmp_path: Path) -> N
         ),
     )
     assert proc.returncode == 0
-    ledger = (tmp_path / "code_health" / "agent_timing.jsonl").read_text()
+    ledger = (code_health_dir(tmp_path) / "agent_timing.jsonl").read_text()
     assert ledger.count('"event":"precommit_full_run"') == 3
 
 
@@ -3600,7 +3606,7 @@ def test_fixer_recon_env_prefixed_full_run_counts(tmp_path: Path) -> None:
         ),
     )
     assert proc.returncode == 0
-    ledger = (tmp_path / "code_health" / "agent_timing.jsonl").read_text()
+    ledger = (code_health_dir(tmp_path) / "agent_timing.jsonl").read_text()
     assert ledger.count('"event":"precommit_full_run"') == 1
 
 
@@ -3633,7 +3639,7 @@ def test_fixer_recon_no_agent_id_allowed_and_writes_nothing(tmp_path: Path) -> N
         options=HookOptions(agent_type="forge:precommit-fixer", cwd=tmp_path, env=env),
     )
     assert proc.returncode == 0
-    assert not (tmp_path / "code_health" / "agent_timing.jsonl").exists()
+    assert not (code_health_dir(tmp_path) / "agent_timing.jsonl").exists()
 
 
 def test_fixer_recon_tolerates_garbled_ledger_line(tmp_path: Path) -> None:
@@ -3645,7 +3651,7 @@ def test_fixer_recon_tolerates_garbled_ledger_line(tmp_path: Path) -> None:
     count the valid lines exactly.
     """
     init_git_repo(tmp_path)
-    ledger = tmp_path / "code_health" / "agent_timing.jsonl"
+    ledger = code_health_dir(tmp_path) / "agent_timing.jsonl"
     junk = "not-valid-json-at-all\n"
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
 
@@ -4679,7 +4685,7 @@ def test_log_agent_timing_subagent_stop_appends_expected_line_shape(
     proc = _run_agent_timing_hook(payload, cwd=tmp_path)
     assert proc.returncode == 0
     line = (
-        (tmp_path / "code_health" / "agent_timing.jsonl")
+        (code_health_dir(tmp_path) / "agent_timing.jsonl")
         .read_text(encoding="utf-8")
         .strip()
     )
@@ -4709,7 +4715,7 @@ def test_log_agent_timing_post_tool_use_records_file_path_from_tool_input(
     ``notebook_path``) was unpinned.
     """
     init_git_repo(tmp_path)
-    ledger = tmp_path / "code_health" / "agent_timing.jsonl"
+    ledger = code_health_dir(tmp_path) / "agent_timing.jsonl"
 
     edit_payload = {
         "hook_event_name": "PostToolUse",
@@ -4757,7 +4763,7 @@ def test_log_agent_timing_post_tool_use_keeps_duration_ms(tmp_path: Path) -> Non
     proc = _run_agent_timing_hook(payload, cwd=tmp_path)
     assert proc.returncode == 0
     line = (
-        (tmp_path / "code_health" / "agent_timing.jsonl")
+        (code_health_dir(tmp_path) / "agent_timing.jsonl")
         .read_text(encoding="utf-8")
         .strip()
     )
@@ -4803,7 +4809,7 @@ def test_log_agent_timing_forge_no_agent_timing_env_writes_nothing(
     }
     proc = _run_agent_timing_hook(payload, cwd=tmp_path, env=env)
     assert proc.returncode == 0
-    assert not (tmp_path / "code_health").exists()
+    assert not (code_health_dir(tmp_path) / "agent_timing.jsonl").exists()
 
 
 def test_log_agent_timing_non_git_cwd_writes_nothing(tmp_path: Path) -> None:
@@ -4820,7 +4826,7 @@ def test_log_agent_timing_non_git_cwd_writes_nothing(tmp_path: Path) -> None:
     }
     proc = _run_agent_timing_hook(payload, cwd=tmp_path)
     assert proc.returncode == 0
-    assert not (tmp_path / "code_health").exists()
+    assert not (code_health_dir(tmp_path) / "agent_timing.jsonl").exists()
 
 
 def test_log_agent_timing_prefers_claude_project_dir_over_payload_cwd(
@@ -4849,7 +4855,7 @@ def test_log_agent_timing_prefers_claude_project_dir_over_payload_cwd(
     proc = _run_agent_timing_hook(payload, cwd=non_git_cwd, env=env)
     assert proc.returncode == 0
     line = (
-        (proj / "code_health" / "agent_timing.jsonl")
+        (code_health_dir(proj) / "agent_timing.jsonl")
         .read_text(encoding="utf-8")
         .strip()
     )
@@ -4875,7 +4881,7 @@ def test_log_agent_timing_malformed_stdin_writes_nothing(tmp_path: Path) -> None
         cwd=tmp_path,
     )
     assert proc.returncode == 0
-    assert not (tmp_path / "code_health" / "agent_timing.jsonl").exists()
+    assert not (code_health_dir(tmp_path) / "agent_timing.jsonl").exists()
 
 
 def test_log_agent_timing_hook_wired_for_all_events() -> None:
@@ -5055,7 +5061,7 @@ def _verdict_blocks(repo: Path, agent_id: str) -> list[dict[str, object]]:
     Returns:
         List of block records from the timing ledger.
     """
-    ledger = repo / "code_health" / "agent_timing.jsonl"
+    ledger = code_health_dir(repo) / "agent_timing.jsonl"
     if not ledger.exists():
         return []
     rows = [json.loads(line) for line in ledger.read_text().splitlines() if line]
@@ -5189,11 +5195,127 @@ def test_verdict_hook_allows_stuck_that_quotes_first_failing_line(
 def test_verdict_hook_fails_open_when_ledger_unwritable(tmp_path: Path) -> None:
     """If the block-once mark cannot be written, the stop is allowed, not looped."""
     init_git_repo(tmp_path)
-    (tmp_path / "code_health").write_text("a file, not a directory\n")
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("a file, not a directory\n")
     env = _verdict_env(tmp_path, exit_code=1, output=_TYPECHECK_FAIL_OUTPUT)
+    env["FORGE_CODE_HEALTH_DIR"] = str(blocker)
     proc = _run_verdict_hook(tmp_path, env, message="all done")
     assert proc.returncode == 0
     assert "block" not in proc.stdout
+
+
+def _repo_and_logs(tmp_path: Path) -> tuple[Path, Path]:
+    """Return a fresh git repo and an absolute log dir outside it."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    return repo, tmp_path / "relocated-logs"
+
+
+def _timing_hook_writes_there(tmp_path: Path) -> None:
+    """Test that agent timing hook writes to relocated code_health dir."""
+    repo, logs = _repo_and_logs(tmp_path)
+    payload = {
+        "hook_event_name": "SubagentStop",
+        "session_id": "s1",
+        "agent_id": "a1",
+        "agent_type": "forge:design-checker",
+    }
+    env = {**os.environ, "FORGE_CODE_HEALTH_DIR": str(logs)}
+    assert _run_agent_timing_hook(payload, cwd=repo, env=env).returncode == 0
+    assert (logs / "agent_timing.jsonl").is_file()
+    assert not (repo / "code_health").exists()
+
+
+def _recon_hook_writes_there(tmp_path: Path) -> None:
+    """Test that precommit-fixer recon hook writes to relocated code_health dir."""
+    repo, logs = _repo_and_logs(tmp_path)
+    env = {
+        **os.environ,
+        "CLAUDE_PROJECT_DIR": str(repo),
+        "FORGE_CODE_HEALTH_DIR": str(logs),
+    }
+    proc = _run_hook_proc(
+        _FIXER_RECON,
+        "forge-precommit",
+        options=HookOptions(
+            agent_type="forge:precommit-fixer",
+            agent_id="agent-a",
+            session_id="s1",
+            cwd=repo,
+            env=env,
+        ),
+    )
+    assert proc.returncode == 0
+    assert '"event":"precommit_full_run"' in (logs / "agent_timing.jsonl").read_text()
+    assert not (repo / "code_health").exists()
+
+
+def _verdict_hook_writes_there(tmp_path: Path) -> None:
+    """Test that precommit-fixer verdict hook writes to relocated code_health dir."""
+    repo, logs = _repo_and_logs(tmp_path)
+    env = _verdict_env(tmp_path, exit_code=1, output=_TYPECHECK_FAIL_OUTPUT)
+    env["FORGE_CODE_HEALTH_DIR"] = str(logs)
+    proc = _run_verdict_hook(repo, env, message="all done")
+    assert "block" in proc.stdout
+    assert '"event":"verdict_block"' in (logs / "agent_timing.jsonl").read_text()
+    assert not (repo / "code_health").exists()
+
+
+def _stale_wrapup_hook_reads_there(tmp_path: Path) -> None:
+    """Test that stale wrapup warning hook reads from relocated code_health dir."""
+    repo, logs = _repo_and_logs(tmp_path)
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        env=GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    logs.mkdir()
+    (logs / "pr_wrapup.md").write_text(f"# PR Wrap-up\n\nverified-at: {sha}\n")
+    env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false")
+    env["FORGE_CODE_HEALTH_DIR"] = str(logs)
+    proc = _run_hook_proc(
+        _WARN_STALE_WRAPUP,
+        "git push origin my-branch",
+        options=HookOptions(cwd=repo, env=env),
+    )
+    assert proc.returncode == 0
+    # Suppressed because the wrap-up in the relocated dir names HEAD.
+    assert proc.stdout == ""
+    assert _record(env) == ""
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        _timing_hook_writes_there,
+        _recon_hook_writes_there,
+        _verdict_hook_writes_there,
+        _stale_wrapup_hook_reads_there,
+    ],
+    ids=[
+        "log_agent_timing",
+        "block_fixer_recon",
+        "require_fixer_verdict",
+        "warn_stale_wrapup",
+    ],
+)
+def test_hooks_honour_an_absolute_code_health_override(
+    tmp_path: Path, scenario: Callable[[Path], None]
+) -> None:
+    """Each log-touching hook reads/writes the relocated dir, never the repo's.
+
+    The hooks must resolve the log directory exactly as
+    ``forge.git_utils.code_health_dir`` does, or a relocated directory splits
+    the evidence between two places.
+
+    Args:
+        scenario: Callable that exercises one hook against the given temp dir.
+    """
+    scenario(tmp_path)
 
 
 # Guards locate a command by its POSITION in the shell grammar, not by text
@@ -5597,3 +5719,42 @@ def test_help_exemption_does_not_leak(hook: str, command: str) -> None:
         command: Shell command with help-like token to execute through the hook.
     """
     assert _run_hook(hook, command) == _BLOCK
+
+
+@pytest.mark.parametrize(
+    "override",
+    [None, "logs/ch", "ABSOLUTE"],
+    ids=["unset", "relative", "absolute"],
+)
+def test_shell_hook_resolves_log_dir_like_code_health_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: str | None
+) -> None:
+    """``log_agent_timing.sh`` lands its ledger where ``code_health_dir`` says.
+
+    Both sides run under the same environment value, so a drift between
+    the shell rule and the Python resolver (unset, repo-relative, absolute)
+    splits the evidence between two directories.
+
+    Args:
+        override: ``FORGE_CODE_HEALTH_DIR`` value; ``None`` leaves it unset
+            and ``"ABSOLUTE"`` selects an absolute path under ``tmp_path``.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    if override is None:
+        monkeypatch.delenv("FORGE_CODE_HEALTH_DIR", raising=False)
+    else:
+        value = str(tmp_path / "abs-logs") if override == "ABSOLUTE" else override
+        monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", value)
+    payload = {
+        "hook_event_name": "SubagentStop",
+        "session_id": "s1",
+        "agent_id": "a1",
+        "agent_type": "forge:design-checker",
+    }
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo)}
+
+    assert _run_agent_timing_hook(payload, cwd=repo, env=env).returncode == 0
+
+    assert (code_health_dir(repo) / "agent_timing.jsonl").is_file()

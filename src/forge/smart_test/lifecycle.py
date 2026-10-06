@@ -32,7 +32,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from forge.git_utils import run_git
+from forge.git_utils import code_health_dir, run_git
 from forge.ledger import append_ledger_line
 
 
@@ -49,7 +49,7 @@ class RunMetrics:
 
 
 STAMP_RELPATH = Path(".forge-full-run")
-HISTORY_RELPATH = Path("code_health") / "smart_test_history.log"
+HISTORY_NAME = "smart_test_history.log"
 
 DEFAULT_SKIP_DAYS = 30
 DEFAULT_STAMP_MAX_AGE_HOURS = 48
@@ -253,7 +253,7 @@ def append_history(repo_root: Path, metrics: RunMetrics) -> None:
     """
     frac = (metrics.dev_files / metrics.total_files) if metrics.total_files else 0.0
     append_ledger_line(
-        repo_root / HISTORY_RELPATH,
+        code_health_dir(repo_root) / HISTORY_NAME,
         {
             "label": metrics.label,
             "wall_s": f"{metrics.wall_s:.1f}",

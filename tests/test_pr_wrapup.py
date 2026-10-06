@@ -34,6 +34,7 @@ import pytest
 
 from forge import pr_wrapup as mod
 from forge.emergency import EmergencyState, write_state
+from forge.git_utils import code_health_dir
 from forge.pr_plan import WrapupFreshness
 from forge.pr_wrapup_compose import slot
 from tests.conftest import CapturedCalls, init_git_repo
@@ -1293,7 +1294,7 @@ def test_main_compose_writes_the_wrapup_file_and_prints_the_slot_count(
     assert rc == 0
     out = capsys.readouterr().out
     assert "1 slot(s) to fill: summary" in out
-    written = (tmp_path / "code_health" / "pr_wrapup.md").read_text(encoding="utf-8")
+    written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
     assert "wrapup-mode: light" in written
     assert "small diff" in written
 
@@ -1382,7 +1383,7 @@ def test_main_compose_armed_emergency_skips_reporters_and_sets_wrapup_mode(
     rc = mod.main(["compose", "--base", "HEAD", "--plan", str(plan_path)])
 
     assert rc == 0
-    written = (tmp_path / "code_health" / "pr_wrapup.md").read_text(encoding="utf-8")
+    written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
     assert "wrapup-mode: emergency" in written
     assert written.count("SKIPPED (emergency: ledger #777)") == 3
 
@@ -1424,7 +1425,7 @@ def test_main_compose_delta_mode_renders_prior_sha_rollup_and_checked_issue_mana
     rc = mod.main(["compose", "--base", "HEAD", "--pr", "61", "--plan", str(plan_path)])
 
     assert rc == 0
-    written = (tmp_path / "code_health" / "pr_wrapup.md").read_text(encoding="utf-8")
+    written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
     assert written.count("PASS — unchanged since abc1234 (delta)") == 3
     assert "✅ passed (1 checks)" in written
     assert "Closes #99" in written
@@ -1455,7 +1456,7 @@ def test_main_compose_pr_view_unavailable_reports_unknown_ci_and_unsearched_body
     rc = mod.main(["compose", "--base", "HEAD", "--pr", "61", "--plan", str(plan_path)])
 
     assert rc == 0
-    written = (tmp_path / "code_health" / "pr_wrapup.md").read_text(encoding="utf-8")
+    written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
     assert "unknown — could not read PR #61" in written
     assert "the PR body was not searched" in written
 
@@ -1484,7 +1485,7 @@ def test_main_compose_pr_view_without_rollup_reports_no_checks(
     rc = mod.main(["compose", "--base", "HEAD", "--pr", "61", "--plan", str(plan_path)])
 
     assert rc == 0
-    written = (tmp_path / "code_health" / "pr_wrapup.md").read_text(encoding="utf-8")
+    written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
     assert "no checks reported" in written
 
 
@@ -1524,7 +1525,7 @@ def test_main_compose_light_regen_gates_or_fences_the_evidence(
         assert "light-regen provenance gates failed" in capsys.readouterr().out
     else:
         assert rc == 0
-        written = (tmp_path / "code_health" / "pr_wrapup.md").read_text(
+        written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(
             encoding="utf-8"
         )
         start = written.index("## Documentation Check")
@@ -1549,8 +1550,8 @@ def test_main_compose_code_quality_overrides_unstamped_environment_step_log(
     """
     init_git_repo(tmp_path)
     monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
-    health = tmp_path / "code_health"
-    health.mkdir()
+    health = code_health_dir(tmp_path)
+    health.mkdir(exist_ok=True)
     (health / "precommit_timing.log").write_text(
         "# produced-at: tree=unknown head=abc1234 2026-01-01T00:00:00+00:00\n"
         "forge-precommit per-step timing (newest run overwrites)\n\n"
@@ -1567,5 +1568,5 @@ def test_main_compose_code_quality_overrides_unstamped_environment_step_log(
     rc = mod.main(["compose", "--base", "HEAD", "--plan", str(plan_path)])
 
     assert rc == 0
-    written = (tmp_path / "code_health" / "pr_wrapup.md").read_text(encoding="utf-8")
+    written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
     assert "not verified at this tree: env_sync" not in written

@@ -853,7 +853,8 @@ def run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int:
         Always ``0``. Non-blocking by design until Layer 3 trim PRs
         converge.
     """
-    del scope  # unused — agent set is small enough to scan in full
+    # The agent set is small enough to scan in full at any scope; *scope*
+    # is only recorded in the log header.
     root = repo_root()
     foundation_path = root / "FOUNDATION.md"
 
@@ -874,7 +875,13 @@ def run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int:
                 ),
             )
         ]
-        write_log("agents", findings, "FOUNDATION.md missing", output=config.output)
+        write_log(
+            "agents",
+            findings,
+            "FOUNDATION.md missing",
+            output=config.output,
+            scope=scope,
+        )
         return 0
     foundation_text = foundation_path.read_text(encoding="utf-8")
     foundation_ngrams = _ngrams(_tokens(foundation_text), SHARED_TOKEN_MIN)
@@ -887,7 +894,9 @@ def run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int:
             else " and ".join(f"{root}/{d}" for d in AGENT_DEFINITION_DIRS)
         )
         logger.info("No agent files under %s", scanned)
-        write_log("agents", [], "No agent files found.", output=config.output)
+        write_log(
+            "agents", [], "No agent files found.", output=config.output, scope=scope
+        )
         return 0
     agents = [_parse_agent(p, root) for p in agent_paths]
 
@@ -900,7 +909,7 @@ def run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int:
     findings.extend(_cross_agent_duplicate_findings(agents))
 
     summary = _render_summary(agents, findings)
-    write_log("agents", findings, summary, output=config.output)
+    write_log("agents", findings, summary, output=config.output, scope=scope)
     return 0
 
 

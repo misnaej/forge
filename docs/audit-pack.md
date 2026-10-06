@@ -287,13 +287,16 @@ SAP (abstractness alignment).
 Logs follow the foundation `code_health/<check>.log` convention. The
 header opens with the `# produced-at:` stamp naming the tree the findings
 describe (`forge-precommit --freshness` compares it with the current
-tree) and carries the finding count; the body lists findings ordered by
+tree), says the scope the audit ran at (`full`, or `changed` — only the
+files changed against the base; a log without the line is of unknown
+scope), and carries the finding count; the body lists findings ordered by
 severity. Format is stable across the suite — agents parse all six logs
 with one schema.
 
 ```text
 # produced-at: tree=<40-hex tree sha> head=<short sha>[+dirty] 2026-05-15T07:32:37+00:00
 # forge-audit-<name>
+# scope: full|changed
 # findings: N
 
 ## Summary

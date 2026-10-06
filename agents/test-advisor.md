@@ -57,7 +57,11 @@ pr=$(gh pr view --json number --jq '.number' 2>/dev/null || echo "?")
 5. Emit a compliance report: ✅ / ⚠️ / ❌ per dimension with `file:line`,
    naming the §8 rule each finding maps to; when the smart-test history
    ledger shows lifecycle-skip candidates, list them (report-only).
-6. A mutation probe (plant a bug, see whether the tests catch it) runs
+6. Check new tests' cost with the techniques in test-writer's step 6
+   (`agents/test-writer.md`), using the timings from its report or a
+   fresh `code_health/` log — **never re-run tests to measure**; with no
+   timing evidence, say "no timing evidence" rather than guessing.
+7. A mutation probe (plant a bug, see whether the tests catch it) runs
    only in a `forge-scratch-repo snapshot --worktree` copy, addressed by
    its absolute path — never by editing the source under review
    (FOUNDATION §11 "Probing").

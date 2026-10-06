@@ -38,7 +38,6 @@ from typing import TYPE_CHECKING
 
 from forge.audit import common
 from forge.audit.common import (
-    CODE_HEALTH_DIR,
     Finding,
     Scope,
     Severity,
@@ -49,7 +48,12 @@ from forge.audit.common import (
     resolve_roots,
     write_log,
 )
-from forge.git_utils import configure_cli_logging, produced_at_stamp, repo_root
+from forge.git_utils import (
+    code_health_dir,
+    configure_cli_logging,
+    produced_at_stamp,
+    repo_root,
+)
 from forge.import_graph import (
     closest_known,
     extract_import_targets,
@@ -528,7 +532,7 @@ def _write_tree_log(tree: str, *, output: Path | None) -> Path:
     if output is not None:
         log_dir = output.parent
     else:
-        log_dir = common.repo_root() / CODE_HEALTH_DIR
+        log_dir = code_health_dir(common.repo_root())
     log_path = log_dir / TREE_LOG_NAME
     log_dir.mkdir(parents=True, exist_ok=True)
     stamp = produced_at_stamp(common.repo_root())
@@ -614,7 +618,7 @@ def run(scope: Scope, roots: list[Path], config: DepsConfig) -> int:
         f"Found {n_cycles} cycle(s); "
         f"{len(findings) - n_cycles} other finding(s)."
     )
-    write_log("deps", findings, summary, output=config.output)
+    write_log("deps", findings, summary, output=config.output, scope=scope)
     return exit_code_for(findings)
 
 

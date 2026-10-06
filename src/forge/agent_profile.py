@@ -54,7 +54,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
-from forge.git_utils import configure_cli_logging, repo_root, run_git
+from forge.git_utils import code_health_dir, configure_cli_logging, repo_root, run_git
 from forge.ledger import append_ledger_line, parse_ledger
 
 
@@ -65,8 +65,8 @@ if TYPE_CHECKING:
 configure_cli_logging()
 logger = logging.getLogger(__name__)
 
-LEDGER_RELPATH = Path("code_health") / "agent_timing.jsonl"
-HISTORY_RELPATH = Path("code_health") / "agent_profile_history.log"
+LEDGER_NAME = "agent_timing.jsonl"
+HISTORY_NAME = "agent_profile_history.log"
 
 #: A gap between two consecutive records longer than this is idle time
 #: (a sleeping monitor, a human away, a laptop lid) — it counts toward
@@ -324,9 +324,9 @@ def subagent_edits(
     Returns:
         The receipt. Check ``known`` before reading ``by_file``.
     """
-    ledger = root / LEDGER_RELPATH
+    ledger = code_health_dir(root) / LEDGER_NAME
     if not ledger.is_file():
-        return EditReceipt(known=False, reason=f"no ledger at {LEDGER_RELPATH}")
+        return EditReceipt(known=False, reason=f"no ledger at {ledger}")
     wanted = set(paths) if paths is not None else None
     by_file: dict[str, set[str]] = defaultdict(set)
     seen_any = False
@@ -1187,7 +1187,7 @@ def append_history(root: Path, runs: list[AgentRun], label: str) -> None:
         label: Run label (``-`` when unlabeled).
     """
     append_ledger_line(
-        root / HISTORY_RELPATH,
+        code_health_dir(root) / HISTORY_NAME,
         {
             "label": label or "-",
             "runs": len(runs),
@@ -1209,7 +1209,7 @@ def _render_history(root: Path) -> int:
     Returns:
         Process exit status, always ``0``.
     """
-    path = root / HISTORY_RELPATH
+    path = code_health_dir(root) / HISTORY_NAME
     if not path.is_file():
         logger.info(
             "No agent-profile history at %s — run forge-agent-profile first.", path
@@ -1244,7 +1244,10 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--ledger", type=Path, help=f"Hook ledger (default: <repo>/{LEDGER_RELPATH})."
+        "--ledger",
+        type=Path,
+        help=f"Hook ledger (default: {LEDGER_NAME} in the log directory — "
+        "<repo>/code_health/, or $FORGE_CODE_HEALTH_DIR when set).",
     )
     parser.add_argument(
         "--transcripts",
@@ -1337,7 +1340,7 @@ def main() -> int:
     if args.since and since is None:
         logger.error("--since must be an ISO-8601 timestamp, got %r", args.since)
         return 2
-    ledger_path = args.ledger or root / LEDGER_RELPATH
+    ledger_path = args.ledger or code_health_dir(root) / LEDGER_NAME
     events = list(_iter_jsonl(ledger_path)) if ledger_path.is_file() else []
     runs = filter_runs(
         collect_runs(ledger_path, args.transcripts),

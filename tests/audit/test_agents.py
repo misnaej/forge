@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from forge.audit import agents as audit_agents
 from forge.audit.common import Severity
+from forge.git_utils import code_health_dir
 
 
 if TYPE_CHECKING:
@@ -724,7 +725,7 @@ def test_run_writes_log_and_returns_zero(
         rc = audit_agents.main()
 
     assert rc == 0
-    log = (tmp_path / "code_health" / "audit_agents.log").read_text()
+    log = (code_health_dir(tmp_path) / "audit_agents.log").read_text()
     assert "# forge-audit-agents" in log
     assert "| good" in log
     assert "_TEMPLATE" not in log  # underscore-prefixed files skipped
@@ -760,7 +761,7 @@ def test_run_writes_log_when_no_agent_files(
         rc = audit_agents.main()
 
     assert rc == 0
-    log = (tmp_path / "code_health" / "audit_agents.log").read_text()
+    log = (code_health_dir(tmp_path) / "audit_agents.log").read_text()
     assert "No agent files found." in log
 
 
@@ -779,7 +780,7 @@ def test_run_records_critical_finding_when_foundation_missing(
         rc = audit_agents.main()
 
     assert rc == 0  # non-blocking
-    log = (tmp_path / "code_health" / "audit_agents.log").read_text()
+    log = (code_health_dir(tmp_path) / "audit_agents.log").read_text()
     assert "CRITICAL" in log
     assert "FOUNDATION.md not found" in log
 

@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING
 
 from forge.config import read_tool_forge_section
 from forge.git_utils import (
+    code_health_dir,
     configure_cli_logging,
     missing_dependency_hint,
     repo_root,
@@ -297,7 +298,7 @@ def _append_history(root: Path, history: _RunHistory, label: str) -> None:
         f"{history.summary.peak_rss_mb:.1f}MB" if history.summary is not None else "n/a"
     )
     append_ledger_line(
-        root / "code_health" / "telemetry_history.log",
+        code_health_dir(root) / "telemetry_history.log",
         {
             "label": label or "-",
             "exit": history.exit_code,
@@ -321,7 +322,7 @@ def _render_history(root: Path) -> int:
     Returns:
         ``0`` always — reading history is informational, never a gate.
     """
-    path = root / "code_health" / "telemetry_history.log"
+    path = code_health_dir(root) / "telemetry_history.log"
     if not path.is_file():
         logger.info("No telemetry history at %s — run forge-telemetry first.", path)
         return 0
@@ -371,7 +372,7 @@ def _render_plot(root: Path, samples: list[Sample], label: str = "") -> None:
     cpu_axis.set_ylabel("host CPU (%)", color="tab:orange")
     fig.tight_layout()
     stem = f"telemetry_{label}" if label else "telemetry"
-    out = root / "code_health" / f"{stem}.png"
+    out = code_health_dir(root) / f"{stem}.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out)
     plt.close(fig)

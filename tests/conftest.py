@@ -13,6 +13,12 @@ page renderer shared by every suite that fakes ``gh_comments.gh_api``, the
 ``log_body``) shared by every suite asserting on a ``code_health/*.log``
 writer (FOUNDATION §13), and ``timing_log``, the ``precommit_timing.log``
 body builder shared by the wrap-up-compose and evidence-pack suites.
+
+It also isolates the suite from the real evidence: every test gets its own
+``code_health/`` directory through ``FORGE_CODE_HEALTH_DIR`` (inherited by
+CLIs a test runs as subprocesses), and the session fails at the end, naming
+the files, if anything changed the real checkout's ``code_health/`` — the
+backstop for a module that builds the path without the resolver.
 """
 
 from __future__ import annotations
@@ -22,16 +28,16 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
-from forge.git_utils import PushResult
+from forge.git_utils import CODE_HEALTH_ENV, PushResult
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
 
 # Shared git author/committer identity for real-git tests, so commits and
@@ -129,6 +135,88 @@ def log_body(path: Path) -> str:
     if sep and first_line.startswith("# produced-at:"):
         return rest
     return text
+
+
+# The checkout's own evidence directory — what agents read instead of
+# re-running checks. No test may write it (FOUNDATION §13).
+_REAL_CODE_HEALTH = Path(__file__).resolve().parents[1] / "code_health"
+_SNAPSHOT_KEY = pytest.StashKey[dict[str, tuple[int, int]]]()
+# Written by the Claude Code hooks of whatever agent session is running the
+# suite (one line per tool call) — a separate process that does not share
+# the tests' environment, so it legitimately changes during any run.
+_LIVE_SESSION_FILES = frozenset({"agent_timing.jsonl"})
+
+
+def _code_health_snapshot(directory: Path) -> dict[str, tuple[int, int]]:
+    """Return ``{relative path: (size, mtime_ns)}`` for every file under *directory*.
+
+    Args:
+        directory: Directory to fingerprint (missing → empty).
+
+    Returns:
+        The fingerprint map.
+    """
+    if not directory.is_dir():
+        return {}
+    snapshot = {}
+    for path in directory.rglob("*"):
+        if path.is_file():
+            stat = path.stat()
+            snapshot[path.relative_to(directory).as_posix()] = (
+                stat.st_size,
+                stat.st_mtime_ns,
+            )
+    return snapshot
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Fingerprint the real ``code_health/`` before any test runs.
+
+    Args:
+        session: The pytest session.
+    """
+    session.stash[_SNAPSHOT_KEY] = _code_health_snapshot(_REAL_CODE_HEALTH)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Fail the session when a test changed the real ``code_health/``.
+
+    Args:
+        session: The pytest session.
+        exitstatus: The status the run would otherwise exit with.
+    """
+    before = session.stash.get(_SNAPSHOT_KEY, None)
+    if before is None:
+        return
+    after = _code_health_snapshot(_REAL_CODE_HEALTH)
+    changed = sorted(
+        name
+        for name in before.keys() | after.keys()
+        if before.get(name) != after.get(name) and name not in _LIVE_SESSION_FILES
+    )
+    if not changed:
+        return
+    session.config.get_terminal_writer().line(
+        "\nFAILED: the test session changed the real code_health/ — evidence agents "
+        "read. A module built the path without forge.git_utils.code_health_dir, or "
+        "a test wrote there directly (or another process wrote it during the run): "
+        + ", ".join(changed),
+        red=True,
+    )
+    if exitstatus == 0:
+        session.exitstatus = 1
+
+
+@pytest.fixture(autouse=True)
+def _isolated_code_health(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point every test's ``code_health/`` at a fresh temp directory.
+
+    Set in the environment, so CLIs a test runs as subprocesses inherit
+    it; a test that needs a specific directory overrides the variable.
+    """
+    monkeypatch.setenv(CODE_HEALTH_ENV, str(tmp_path_factory.mktemp("code_health")))
 
 
 @pytest.fixture(autouse=True)

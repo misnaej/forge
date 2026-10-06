@@ -187,7 +187,7 @@ def test_under_used_silent_when_artifacts_present(
     """When every artifact exists, no advisory results are returned."""
     monkeypatch.setattr(doctor.shutil, "which", lambda _name: "/usr/bin/found")
     for _cli, relpath, _rec in doctor._UNDERUSED_ARTIFACTS:
-        artifact = tmp_path / relpath
+        artifact = doctor._artifact_path(tmp_path, relpath)
         artifact.parent.mkdir(parents=True, exist_ok=True)
         artifact.write_text("present")
     results = doctor._check_under_used_capabilities(tmp_path)

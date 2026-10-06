@@ -35,7 +35,12 @@ fi
 [ -n "$AGENT_ID" ] || exit 0
 ROOT=${CLAUDE_PROJECT_DIR:-}
 [ -n "$ROOT" ] && [ -e "$ROOT/.git" ] || ROOT=$(git -C "${CWD:-.}" rev-parse --show-toplevel 2>/dev/null) || exit 0
-LEDGER="$ROOT/code_health/agent_timing.jsonl"
+# Log directory: FORGE_CODE_HEALTH_DIR when set (absolute, or relative to
+# the repo root), else <root>/code_health — the same rule as
+# forge.git_utils.code_health_dir, so this hook and the Python readers agree.
+CH_DIR=${FORGE_CODE_HEALTH_DIR:-code_health}
+case "$CH_DIR" in /*) ;; *) CH_DIR="$ROOT/$CH_DIR" ;; esac
+LEDGER="$CH_DIR/agent_timing.jsonl"
 
 # Already blocked once: let it through so a genuinely stuck agent can stop.
 NEEDLE=$(jq -rn --arg a "$AGENT_ID" '"\"agent_id\":" + ($a | tojson)' 2>/dev/null) || NEEDLE=""
@@ -76,7 +81,7 @@ esac
 # The block-once mark must be on disk BEFORE blocking: a block whose mark
 # cannot be written would recur on every stop and never end, so in that
 # case the stop is allowed instead (fail open, never loop).
-mkdir -p "$ROOT/code_health" 2>/dev/null || exit 0
+mkdir -p "$CH_DIR" 2>/dev/null || exit 0
 LINE=$(jq -cn --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg s "$SESSION_ID" \
     --arg a "$AGENT_ID" --arg t "$AGENT_TYPE" \
     '{ts: $ts, event: "verdict_block", session_id: $s, agent_id: $a, agent_type: $t}' \

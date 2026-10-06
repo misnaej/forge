@@ -3648,6 +3648,115 @@ def test_working_tree_sha_dirty_tracked_file_differs_and_leaves_repo_untouched(
     assert staged_diff == ""
 
 
+def test_code_health_dir_unset_is_the_in_repo_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no override, logs live in ``<repo>/code_health``."""
+    monkeypatch.delenv(git_utils.CODE_HEALTH_ENV, raising=False)
+
+    assert git_utils.code_health_dir(tmp_path) == tmp_path / "code_health"
+
+
+@pytest.mark.parametrize(
+    ("override", "expected_rel"),
+    [("custom/logs", "custom/logs"), ("logs", "logs")],
+)
+def test_code_health_dir_relative_override_resolves_under_repo_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    override: str,
+    expected_rel: str,
+) -> None:
+    """A relative override is taken relative to the repo root, not the cwd.
+
+    Args:
+        override: Relative value set in the code-health environment variable.
+        expected_rel: Path, relative to the repo root, the directory resolves to.
+    """
+    monkeypatch.setenv(git_utils.CODE_HEALTH_ENV, override)
+
+    assert git_utils.code_health_dir(tmp_path) == tmp_path / expected_rel
+
+
+def test_code_health_dir_absolute_override_replaces_repo_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An absolute override wins outright, wherever the repo is."""
+    elsewhere = tmp_path / "elsewhere"
+    monkeypatch.setenv(git_utils.CODE_HEALTH_ENV, str(elsewhere))
+    repo = tmp_path / "repo"
+
+    assert git_utils.code_health_dir(repo) == elsewhere
+
+
+def test_code_health_dir_empty_override_falls_back_to_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty variable is treated as unset, not as the repo root."""
+    monkeypatch.setenv(git_utils.CODE_HEALTH_ENV, "")
+
+    assert git_utils.code_health_dir(tmp_path) == tmp_path / "code_health"
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [
+        ("build/logs", ["code_health", "build/logs"]),
+        ("code_health", ["code_health"]),
+        (".", ["code_health"]),
+    ],
+    ids=["in-repo-override", "override-equals-default", "repo-root"],
+)
+def test_stamp_excluded_paths_adds_an_in_repo_override_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    override: str,
+    expected: list[str],
+) -> None:
+    """A relocated in-repo log dir joins the default; duplicates collapse.
+
+    Args:
+        override: Value set in the code-health environment variable.
+        expected: Excluded paths the stamp helper should return.
+    """
+    monkeypatch.setenv(git_utils.CODE_HEALTH_ENV, override)
+
+    assert git_utils._stamp_excluded_paths(tmp_path) == expected
+
+
+def test_stamp_excluded_paths_outside_repo_override_keeps_only_the_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A log dir outside the repo is invisible to git already."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setenv(git_utils.CODE_HEALTH_ENV, str(tmp_path / "outside"))
+
+    assert git_utils._stamp_excluded_paths(repo) == ["code_health"]
+
+
+def test_working_tree_sha_ignores_logs_in_an_in_repo_override_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Writing a log into a relocated in-repo dir never moves the stamp.
+
+    Otherwise each log written in one run would see its sibling's untracked
+    file and read dirty.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    monkeypatch.setenv(git_utils.CODE_HEALTH_ENV, "build/logs")
+    before = git_utils.working_tree_sha(tmp_path)
+
+    logs = git_utils.code_health_dir(tmp_path)
+    logs.mkdir(parents=True)
+    (logs / "some.log").write_text("noise\n")
+
+    assert git_utils.working_tree_sha(tmp_path) == before
+    assert before == git_utils.get_tree_sha(tmp_path, "HEAD")
+
+
 def test_working_tree_sha_excludes_code_health_dir(tmp_path: Path) -> None:
     """An untracked file under ``code_health/`` never moves the fingerprint.
 
@@ -4194,7 +4303,7 @@ def test_capturing_to_step_log_stamps_line_one(tmp_path: Path) -> None:
     with git_utils.capturing_to_step_log(tmp_path, "demo2"):
         logging.getLogger().info("captured line")
 
-    log_path = tmp_path / "code_health" / "demo2.log"
+    log_path = git_utils.code_health_dir(tmp_path) / "demo2.log"
     first_line, _, rest = log_path.read_text(encoding="utf-8").partition("\n")
     match = PRODUCED_AT_RE.fullmatch(first_line)
     assert match is not None

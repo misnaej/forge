@@ -359,7 +359,7 @@ def run(scope: Scope, roots: list[Path], config: SuppressionsConfig) -> int:
         f"{counts[Severity.MEDIUM]} MEDIUM, "
         f"{counts[Severity.LOW]} LOW."
     )
-    write_log("suppressions", findings, summary, output=config.output)
+    write_log("suppressions", findings, summary, output=config.output, scope=scope)
     return exit_code_for(findings)
 
 

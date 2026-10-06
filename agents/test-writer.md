@@ -43,6 +43,22 @@ Apply the testing documentation standards in
    (`git show <base>:<path>`) or run it in a
    `forge-scratch-repo snapshot --ref <base>` copy — never stash or
    restore in the shared checkout (FOUNDATION §2, §11 "Probing").
+6. **Judge each new test's cost from the run you just did** (FOUNDATION
+   §7 "Cost", §18) — relative to the process under test, never an
+   absolute threshold. The slowest-durations section your `pytest` run
+   prints is the evidence; do not re-run to measure. A test whose time is
+   out of proportion with what it checks gets rewritten, or kept with a
+   one-line `Long by design: <reason>` in its docstring and named in
+   your report. Techniques:
+   - a long process runs **once**, and several assertions read that one
+     result;
+   - expensive setup is shared through module- or session-scoped
+     fixtures;
+   - invalid input should fail before the long process starts — test
+     that fail-fast path cheaply;
+   - decision logic is tested apart from the slow process, behind a seam
+     (§7 DIP);
+   - shrink inputs, never assertions.
 
 ## Scope Boundaries
 
@@ -64,6 +80,7 @@ TEST-WRITER COMPLETE
 Files written: <paths>
 Cases added: <count> (happy-path: N, edge/error: N)
 pytest: <N passed / N failed>  (command run)
+Timings: <new tests over 1s with their durations, or "none over 1s">; Long by design: <names, or none>
 Standards applied: naming, fixture naming, mock docs, Null Objects
 NEXT: forge:test-advisor (review) → forge:precommit-fixer
 ```

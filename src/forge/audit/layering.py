@@ -595,6 +595,7 @@ def run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int:
             [],
             "No [tool.forge.layering] layers configured — nothing to enforce.",
             output=config.output,
+            scope=scope,
         )
         return 0
 
@@ -670,6 +671,7 @@ def run(scope: Scope, roots: list[Path], config: LayeringConfig) -> int:
             n_unclassified=n_unclassified,
         ),
         output=config.output,
+        scope=scope,
     )
     return exit_code_for(findings)
 

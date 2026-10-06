@@ -7,6 +7,7 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from forge import verify_plugin_version
+from forge.git_utils import code_health_dir
 from tests.conftest import GIT_ENV as _GIT_ENV
 from tests.conftest import init_git_repo as _init_git_repo
 
@@ -70,7 +71,7 @@ def test_skipped_without_plugin_json(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 0
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "no .claude-plugin/plugin.json" in log
 
 
@@ -81,7 +82,7 @@ def test_skipped_without_tags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 0
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "no git tags" in log
 
 
@@ -103,7 +104,7 @@ def test_main_fails_when_no_tags_and_declared_version_undocumented(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 1
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "revert it and let" in log
 
 
@@ -134,7 +135,7 @@ def test_fail_when_version_not_strictly_greater(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 1
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "must be strictly greater" in log
 
 
@@ -163,7 +164,7 @@ def test_pass_when_version_ahead(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 0
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "> latest tag" in log
 
 
@@ -181,7 +182,7 @@ def test_skipped_on_release_commit(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 0
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "release tag" in log
 
 
@@ -221,7 +222,7 @@ def test_skipped_when_tree_matches_tag_via_ours_merge(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 0
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "release tag" in log
 
 
@@ -278,7 +279,7 @@ def test_main_skips_when_head_reproduces_older_tag(
     # HEAD's tree == v1.0.0's tree (an older tag) → guard skips, even
     # though plugin.json 1.0.0 < latest tag v1.1.0.
     assert verify_plugin_version.main() == 0
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "release tag" in log
 
 
@@ -340,7 +341,7 @@ def test_skips_when_release_branch_only_adds_changelog(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 0
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "release tag" in log
 
 
@@ -401,7 +402,7 @@ def test_fragments_mode_manifest_at_tag_with_valid_pending_passes(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 0
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "manifest parked at/behind latest tag" in log
     assert "1 pending fragment(s)" in log
 
@@ -419,7 +420,7 @@ def test_fragments_mode_manifest_at_tag_with_zero_pending_passes(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 0
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "0 pending fragment(s)" in log
 
 
@@ -439,7 +440,7 @@ def test_fragments_mode_invalid_fragment_fails_listing_error(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 1
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "invalid fragment" in log
     assert "unknown type 'bogus'" in log
 
@@ -459,7 +460,7 @@ def test_fragments_mode_manifest_below_tag_with_valid_fragments_passes(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 0
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "parked at/behind latest tag" in log
 
 
@@ -475,7 +476,7 @@ def test_fragments_mode_manifest_below_tag_invalid_fragment_fails(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 1
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "invalid fragment" in log
 
 
@@ -494,7 +495,7 @@ def test_fragments_mode_manifest_ahead_of_tag_still_passes(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 0
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "> latest tag" in log
 
 
@@ -517,7 +518,7 @@ def test_fragments_mode_manifest_ahead_with_pending_fragments_fails(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 1
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "release computation is stale" in log
 
 
@@ -533,7 +534,7 @@ def test_headings_mode_manifest_at_tag_still_fails(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 1
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "must be strictly greater" in log
 
 
@@ -650,5 +651,5 @@ def test_main_fails_when_declared_version_undocumented_in_fragment_mode(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["verify-forge-plugin-version"])
     assert verify_plugin_version.main() == 1
-    log = (tmp_path / "code_health" / "plugin_version.log").read_text()
+    log = (code_health_dir(tmp_path) / "plugin_version.log").read_text()
     assert "revert it and let" in log

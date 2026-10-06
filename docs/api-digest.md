@@ -152,7 +152,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `iter_files(scope: Scope, roots: list[Path], *, suffix: str = '.py') -> Iterator[Path]` — Yield matching files under ``roots`` respecting ``scope``.
 - `relpath(path: Path) -> str` — Render ``path`` relative to the repo root for log stability.
 - `read_finding_count(log_text: str) -> int` — Return the ``# findings: N`` count :func:`write_log` puts in a log header.
-- `write_log(name: str, findings: Iterable[Finding], summary: str, *, output: Path | None = None) -> Path` — Write findings + summary to ``code_health/audit_<name>.log``.
+- `read_scope(log_text: str) -> str | None` — Return the ``# scope:`` value :func:`write_log` puts in a log header.
+- `write_log(name: str, findings: Iterable[Finding], summary: str, *, output: Path | None = None, scope: Scope | None = None) -> Path` — Write findings + summary to ``code_health/audit_<name>.log``.
 - `exit_code_for(findings: Iterable[Finding]) -> int` — Map findings to a process exit code.
 - `count_by_severity(findings: Iterable[Finding]) -> dict[Severity, int]` — Tally findings per severity tier.
 
@@ -403,6 +404,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_declared_lower_bound(repo_root: Path, tool: str) -> str | None` _(internal)_ — Return the lower bound *tool* is pinned to in an extras group.
 - `_step_tool_drift(repo_root: Path, step: str, tool: str) -> CheckResult | None` _(internal)_ — Report an installed step tool older than the version this repo pins.
 - `_check_step_tools(repo_root: Path) -> list[CheckResult]` _(internal)_ — Verify the external tool for each enabled pre-commit step is on PATH.
+- `_artifact_path(repo_root: Path, relpath: str) -> Path` _(internal)_ — Resolve an :data:`_UNDERUSED_ARTIFACTS` path against *repo_root*.
 - `_check_under_used_capabilities(repo_root: Path) -> list[CheckResult]` _(internal)_ — Surface installed-but-never-run forge capabilities.
 - `_print_human(results: list[CheckResult]) -> None` _(internal)_ — Print a human-readable report, separating blocking and INFO results.
 - `main() -> int` — Run all forge-doctor checks and print the results.
@@ -647,6 +649,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `console_script_modules(distribution: str = FORGE_DIST_NAME) -> dict[str, str] | None` — Map an installed distribution's console-script names to their modules.
 - `forge_cli_argv(name: str, *, caller: str | None = None) -> list[str]` — Return argv that runs forge CLI *name* from the running installation.
 - `require_cli(name: str, *, caller: str | None = None, extra: str | None = None, hint: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
+- `code_health_dir(repo_root: Path) -> Path` — Return the directory forge writes and reads its step logs in.
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
 - `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.
 - `gh_api(*args: str, timeout: int = GH_TIMEOUT_S) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
@@ -680,6 +683,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `merge_base_with_head(root: Path | None, base_branch: str) -> str` — Return the merge-base SHA of ``HEAD`` and the resolved base ref.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 - `write_tree(repo_root: Path) -> str | None` — Return the tree SHA of the current **index** via ``git write-tree``.
+- `_stamp_excluded_paths(repo_root: Path) -> list[str]` _(internal)_ — Return the repo-relative log directories a tree stamp leaves out.
 - `working_tree_sha(repo_root: Path) -> str | None` — Return the tree SHA of the working tree as ``git add -A`` would commit it.
 - `_tree_without_logs(repo_root: Path, populate: tuple[str, ...], *, source_index: Path | None) -> str | None` _(internal)_ — Write a tree from a scratch index with ``code_health/`` removed.
 - `build_stamp(tree: str | None, head: str, *, dirty: bool, now: datetime) -> str` — Render the ``# produced-at:`` first line of a ``code_health/`` log.
@@ -1216,6 +1220,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `format_coverage_ranking(durations: list[Duration], data: dict[str, object], source_roots: list[str], *, top: int, truncated: bool) -> str` — Rank test functions by unique covered statements per second.
 - `durations_truncated(text: str) -> bool` — Return whether pytest actually hid durations entries in *text*.
 - `_source_roots() -> list[str]` _(internal)_ — Return the roots to scope counted statements to.
+- `_default_log() -> Path` _(internal)_ — Return the pytest log read when ``--log`` is not given.
 - `_read_source(log: str) -> str` _(internal)_ — Read the pytest log from a file path or stdin.
 - `main() -> int` — Entry point for ``forge-slow-tests-report``.
 
@@ -1231,10 +1236,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_smart_test_config(repo_root: Path) -> dict[str, object]` _(internal)_ — Return the ``[tool.forge.smart_test]`` table, or ``{}`` when absent.
 - `_depth_from_commit(repo_root: Path, cfg: dict[str, object]) -> str | None` _(internal)_ — Read a depth directive from ``HEAD``'s commit message, if present.
 - `_parse_depth(raw: str) -> int | str` _(internal)_ — Map a ``--depth`` token to an int tier or the ``full`` sentinel.
-- `_write_log(repo_root: Path, body: str) -> None` _(internal)_ — Write *body* to ``code_health/smart_test.log`` and ``pytest.log``.
+- `_with_run_log(repo_root: Path, header: str, run: Callable[[RunLog], tuple[int, str]]) -> int` _(internal)_ — Run *run* holding the log lock, with the log stamped up front.
 - `_run_full(repo_root: Path, cfg: dict[str, object], changed: set[str], *, all_tests: bool = False, telemetry: bool = False) -> tuple[int, str]` _(internal)_ — Run the ``full`` tier with lifecycle deselection and metrics.
 - `class _RunConfig` _(internal)_ — Configuration for a tiered test run.
-- `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
+- `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig, log: RunLog) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
 - `main() -> int` — Select and run change-affected tests by depth; write the log.
 
@@ -1291,6 +1296,25 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `stamp_age_hours(repo_root: Path) -> float | None` — Return the stamp's age in hours, or ``None`` when unreadable.
 - `failed_files(pytest_output: str) -> set[str]` — Extract failing test-file paths from pytest output.
 - `append_history(repo_root: Path, metrics: RunMetrics) -> None` — Append one record-only metrics line for a full run.
+
+## `forge.smart_test.run_log`
+
+> _Single-writer lock and incremental log sink for ``forge-smart-test``._
+
+- `class LockHeldError` — Another live ``forge-smart-test`` run holds the log lock.
+- `_pid_alive(pid: int) -> bool` _(internal)_ — Return whether a process with *pid* exists.
+- `_read_holder(lock: Path) -> tuple[int, str]` _(internal)_ — Read the ``<pid> <started>`` line a lock file holds.
+- `_take_over_stale(lock: Path, dead_pid: int) -> None` _(internal)_ — Move a stale lock out of the way without clobbering a live one.
+- `_create_lock(lock: Path, line: str) -> bool` _(internal)_ — Create *lock* already holding *line*, failing if it exists.
+- `_holder_live(lock: Path, pid: int) -> bool` _(internal)_ — Return whether the lock's recorded holder must be respected.
+- `acquire_lock(repo_root: Path) -> Path` — Take the log-directory lock for this process.
+- `release_lock(lock: Path) -> None` — Remove the lock if this process still holds it.
+- `_write_sink(path: Path, text: str, *, append: bool) -> None` _(internal)_ — Write *text* to *path* without following a symlink there.
+- `class RunLog` — The two log sinks of one run, written incrementally.
+  - `for_repo(cls, repo_root: Path, names: tuple[str, ...]) -> RunLog` — Build the sinks for *repo_root*'s log directory.
+  - `start(self, repo_root: Path, header: str = '') -> None` — Truncate the sinks and write the start-of-run stamp and header.
+  - `append(self, text: str) -> None` — Append *text* to every sink.
+  - `complete(self, verdict: str) -> None` — Write the completion line that marks the log whole.
 
 ## `forge.smart_test.runner`
 

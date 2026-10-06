@@ -397,7 +397,7 @@ def run(scope: Scope, roots: list[Path], config: ClaimsConfig) -> int:
         f"Extracted {len(findings)} candidate claim(s) for verification. "
         f"Lexicon size: {len(config.lexicon)}."
     )
-    write_log("claims", findings, summary, output=config.output)
+    write_log("claims", findings, summary, output=config.output, scope=scope)
     return exit_code_for(findings)
 
 
