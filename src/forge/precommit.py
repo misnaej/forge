@@ -1182,9 +1182,10 @@ def step_foundation_md_check(repo_root: Path) -> StepResult:
 
     The provenance gate behind the ``/pr`` regen-verified light path: a
     resync PR's ``FOUNDATION.md`` must byte-reproduce the shipped
-    ``forge/data/FOUNDATION.md`` (version banner ignored — the same rule
-    ``install-forge-claude-md`` syncs by). A hand edit, an unmanaged
-    file, or a stale copy FAILS — falling the PR back to the full
+    ``forge/data/FOUNDATION.md`` (the same byte-for-byte rule
+    ``install-forge-claude-md`` syncs by; the banner carries no version).
+    A hand edit, an unmanaged file, a stale copy, or one still carrying
+    the older versioned banner FAILS — falling the PR back to the full
     review round.
 
     **Editable-install self-reference is a FAIL, not a pass**: in
@@ -1243,8 +1244,7 @@ def step_foundation_md_check(repo_root: Path) -> StepResult:
             name="foundation_md_check",
             passed=True,
             output=(
-                "FOUNDATION.md reproduces the installed forge-scripts "
-                "foundation (version banner ignored)."
+                "FOUNDATION.md byte-reproduces the installed forge-scripts foundation."
             ),
         )
     return StepResult(

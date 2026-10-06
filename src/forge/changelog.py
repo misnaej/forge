@@ -421,7 +421,11 @@ def _section_content(text: str) -> dict[str, set[str]]:
 
 
 def stranded_added_versions(
-    old_text: str, new_text: str, latest_tag: str | None
+    old_text: str,
+    new_text: str,
+    latest_tag: str | None,
+    *,
+    ignore_new_sections: bool = False,
 ) -> list[str]:
     """Return released versions whose sections gained content vs *old_text*.
 
@@ -448,6 +452,14 @@ def stranded_added_versions(
         new_text: Full current ``CHANGELOG.md`` contents.
         latest_tag: Latest ``v*`` tag, or ``None`` (no tags → nothing can
             be stranded; returns empty).
+        ignore_new_sections: Skip versions with no section in *old_text*.
+            A section that first appears after the comparison point is an
+            assembler backfill — the release assembly files notes under
+            the heading of a version already tagged — not entries slipped
+            in under a released heading. Only ``forge-release`` sets it:
+            backfill happens only in fragments mode, where the pre-commit
+            step skips this check, so the pre-commit and restrand callers
+            stay strict.
 
     Returns:
         Distinct stranded versions in file order; empty when none.
@@ -457,9 +469,12 @@ def stranded_added_versions(
         return []
     old_sections = _section_content(old_text)
     new_sections = _section_content(new_text)
+    old_versions = {v for v in _governing_versions(old_text) if v is not None}
     stranded: list[str] = []
     for version in _governing_versions(new_text):
         if version is None or version in stranded:
+            continue
+        if ignore_new_sections and version not in old_versions:
             continue
         parsed = parse_semver(version)
         if parsed is None or parsed > tag:
