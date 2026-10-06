@@ -232,9 +232,12 @@ Re-invoke me without arguments. See FOUNDATION §3.
 
 - **Fix ALL violations**, including pre-existing ones (FOUNDATION §4).
 - **`ARG001` / `ARG002` (unused argument) — FIX, never suppress:**
-  0. **Test parameters are never removed or renamed** (`test_*.py`,
-     `*_test.py`, `conftest.py`): any one may be a side-effect fixture.
-     List it under "Human attention required".
+  **Before step 1 — test code is off-limits.** In `test_*.py`,
+  `*_test.py`, `conftest.py` or any file under `tests/`, never remove or
+  rename a parameter of any function (fixtures included): any one may
+  be a side-effect fixture, and renaming it to `_x` switches the
+  request off just as removal does. This overrides steps 1–5 — stop
+  and list it under "Human attention required".
   1. Grep callers for keyword usage: `grep -rn "param_name=" .` scoped to source dirs.
   2. Check whether the function overrides an abstract / parent method (interface contract).
   3. If callers pass by keyword OR it's an interface method → prefix with `_` (keeps the position) AND update keyword call sites.

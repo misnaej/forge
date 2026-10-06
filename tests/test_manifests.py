@@ -435,7 +435,9 @@ def test_fixer_and_docs_agents_protect_side_effect_fixtures() -> None:
     docs agent carries the matching caution.
     """
     fixer = " ".join((REPO_ROOT / "agents" / "precommit-fixer.md").read_text().split())
-    assert "Test parameters are never removed or renamed" in fixer
+    assert "never remove or rename a parameter of any function" in fixer
+    assert "`conftest.py`" in fixer
+    assert "This overrides steps 1" in fixer
     assert "Human attention required" in fixer
     assert "Never rewrite a docstring to match a signature change you made" in fixer
     docs = " ".join(
