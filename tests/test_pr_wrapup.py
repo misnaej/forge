@@ -36,6 +36,7 @@ from forge import pr_wrapup as mod
 from forge.emergency import EmergencyState, write_state
 from forge.git_utils import code_health_dir
 from forge.pr_plan import WrapupFreshness
+from forge.pr_squash_comment import SQUASH_MARKER
 from forge.pr_wrapup_compose import slot
 from tests.conftest import CapturedCalls, init_git_repo
 
@@ -246,6 +247,29 @@ def test_validate_wrapup_reports_many_violations_for_a_narrated_body(
     assert any("is a status line" in p for p in problems)
     assert any("words over a budget" in p for p in problems)
     assert len(problems) >= 5
+
+
+@pytest.mark.parametrize("marker_line", [SQUASH_MARKER, f"  {SQUASH_MARKER}\t"])
+def test_validate_wrapup_rejects_an_embedded_squash_marker_line(
+    clean_wrapup_body: str, marker_line: str
+) -> None:
+    """A line that is exactly the squash marker (whitespace aside) is refused.
+
+    Args:
+        clean_wrapup_body: A body that otherwise validates.
+        marker_line: The offending line to append.
+    """
+    problems = mod.validate_wrapup(clean_wrapup_body + marker_line + "\n")
+    assert any("squash-merge section" in p for p in problems)
+
+
+def test_validate_wrapup_accepts_an_inline_mention_of_the_squash_marker() -> None:
+    """A sentence that merely mentions the marker mid-line is not a squash section."""
+    body = _body(
+        [VERIFIED_AT, "wrapup-mode: full", "One summary line."],
+        overrides={"Recommendation": f"Approve; see the {SQUASH_MARKER} comment."},
+    )
+    assert not any("squash-merge section" in p for p in mod.validate_wrapup(body))
 
 
 def test_validate_wrapup_requires_verified_at_first_line() -> None:

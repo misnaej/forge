@@ -379,7 +379,9 @@ def parse_paged_json(raw: str) -> list[Any]:
     return items
 
 
-def list_marker_comments(pr_number: int, marker: str) -> list[dict[str, object]] | None:
+def list_marker_comments(
+    pr_number: int, marker: str, *, anchored: bool = False
+) -> list[dict[str, object]] | None:
     """Return this identity's comments on *pr_number* carrying *marker*, oldest first.
 
     Only comments authored by the login ``gh`` is signed in as
@@ -392,6 +394,13 @@ def list_marker_comments(pr_number: int, marker: str) -> list[dict[str, object]]
         pr_number: GitHub PR number.
         marker: The invisible HTML-comment marker a CLI stamps on its
             own posts.
+        anchored: Match only a comment whose body *starts* with the
+            marker (after leading whitespace). Needed by a CLI whose own
+            posts always open with the marker, because another comment
+            may quote its marker mid-text — and the caller deletes what
+            matches. The default substring match suits markers that sit
+            at the end of a body, or bodies later wrapped in
+            ``<details>``.
 
     Returns:
         One ``{"id", "body", "created_at", "author"}`` mapping per own
@@ -414,7 +423,9 @@ def list_marker_comments(pr_number: int, marker: str) -> list[dict[str, object]]
         return None
     own: list[dict[str, object]] = []
     for comment in parse_paged_json(raw):
-        if marker not in str(comment.get("body", "")):
+        body = str(comment.get("body", ""))
+        found = body.lstrip().startswith(marker) if anchored else marker in body
+        if not found:
             continue
         if comment.get("author") != me:
             logger.warning(

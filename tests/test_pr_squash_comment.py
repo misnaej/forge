@@ -200,11 +200,11 @@ def test_check_word_count_over_cap_reports_header_and_breakdown() -> None:
     # so counting occurrences of the label below isn't thrown off by a
     # coincidental match in the previewed content.
     title = "feat: message with five words here"  # 6 words
-    bullets = [" ".join(["word"] * 15)] * 3  # 45 words
+    bullets = [" ".join(["word"] * n) for n in (17, 17, 16)]  # 50 words
     problems = mod._check_word_count(title, bullets)
     text = "\n".join(problems).lower()
-    assert "51 words" in text
-    assert "(cut 1)" in text
+    assert "56 words" in text
+    assert "(cut 6)" in text
     assert text.count("bullet") >= 3
     assert text.count("title") == 1
     assert "bullet 1" in text
@@ -226,7 +226,7 @@ def test_check_word_count_truncates_a_long_part_with_ellipsis() -> None:
     """
     title = "feat: short title"  # 3 words
     long_bullet = "alphabetazetadelta" * 5  # one long word, no spaces
-    other_bullets = [" ".join(["word"] * 24)] * 2  # 48 words
+    other_bullets = [" ".join(["word"] * 26)] * 2  # 52 words
     bullets = [long_bullet, *other_bullets]
     problems = mod._check_word_count(title, bullets)
     text = "\n".join(problems)
@@ -259,7 +259,7 @@ def test_check_word_count_preview_drops_terminal_escape_sequences() -> None:
     """
     title = "feat: title with five words"  # 5 words
     escape_bullet = "escape \x1b[31m alert message here"  # 5 tokens
-    other_bullets = [" ".join(["word"] * 21)] * 2  # 42 words
+    other_bullets = [" ".join(["word"] * 24)] * 2  # 48 words
     bullets = [escape_bullet, *other_bullets]
     problems = mod._check_word_count(title, bullets)
     text = "\n".join(problems)
@@ -277,7 +277,7 @@ def test_check_word_count_whitespace_only_bullet_shows_as_empty() -> None:
     rendering an indistinguishable blank line.
     """
     title = " ".join(["word"] * 40)  # 40 words
-    bullets = ["   ", " ".join(["word"] * 15)]  # whitespace-only + 15 words = 55 total
+    bullets = ["   ", " ".join(["word"] * 16)]  # whitespace-only + 16 words = 56 total
     problems = mod._check_word_count(title, bullets)
     text = "\n".join(problems)
     assert "(empty)" in text
@@ -417,24 +417,129 @@ def test_list_squash_comments_delegates_to_shared_marker_listing(
     ``tests/test_gh_comments.py``); this only pins the delegation — the
     right PR number and :data:`mod.SQUASH_MARKER` reach the shared call.
     """
-    calls: list[tuple[int, str]] = []
+    calls: list[tuple[int, str, bool]] = []
 
-    def _fake_list(pr_number: int, marker: str) -> list[dict[str, object]]:
+    def _fake_list(
+        pr_number: int, marker: str, *, anchored: bool = False
+    ) -> list[dict[str, object]]:
         """Record the delegation call and return a canned result.
 
         Args:
             pr_number: PR number passed through by the caller.
             marker: Marker string passed through by the caller.
+            anchored: Anchoring flag passed through by the caller.
 
         Returns:
             A single canned comment mapping.
         """
-        calls.append((pr_number, marker))
+        calls.append((pr_number, marker, anchored))
         return [OLD_SQUASH_COMMENT]
 
     monkeypatch.setattr(mod, "list_marker_comments", _fake_list)
     assert mod._list_squash_comments(61) == [OLD_SQUASH_COMMENT]
-    assert calls == [(61, mod.SQUASH_MARKER)]
+    assert calls == [(61, mod.SQUASH_MARKER, True)]
+
+
+# A wrap-up that quotes the squash marker mid-body, with its own marker last.
+WRAPUP_QUOTING_SQUASH = {
+    "id": 888,
+    "body": (
+        "verified-at: abc1234\n"
+        f"Note: the squash comment starts with {mod.SQUASH_MARKER} verbatim.\n\n"
+        "<!-- forge:pr-wrapup -->\n"
+    ),
+    "created_at": "2026-01-02T00:00:00Z",
+    "author": "octocat",
+}
+
+
+def test_squash_listing_ignores_a_wrapup_quoting_the_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCENARIO: a wrap-up embeds the squash marker mid-body.
+
+    MOCK SETUP: the issue-comments listing returns the real squash
+    comment plus that wrap-up; ``subprocess.run`` captures writes.
+    EXPECTED BEHAVIOR: the listing sees only the squash comment, posting
+    deletes only it, and ``ensure_last`` neither re-posts nor deletes
+    the wrap-up.
+    """
+    calls: list[list[str]] = []
+
+    def _fake_api(path: str, *args: str, **_kw: object) -> str | None:
+        """Serve both comments, and activity stamps older than the squash.
+
+        Args:
+            path: The gh api endpoint path.
+            *args: Trailing gh api arguments; the last is the jq filter.
+            **_kw: Additional keyword arguments (unused).
+
+        Returns:
+            A canned JSON page for the endpoint under test.
+        """
+        jq = args[-1] if args else ""
+        if "issues/61/comments" in path:
+            if "body" in jq:
+                return page_json(OLD_SQUASH_COMMENT, WRAPUP_QUOTING_SQUASH)
+            return page_json("2026-01-01T00:00:00Z")
+        return page_json()
+
+    def _fake_run(cmd: list[str], **_kw: object) -> FakeProc:
+        calls.append(cmd)
+        return FakeProc()
+
+    monkeypatch.setattr(mod, "gh_api", _fake_api)
+    monkeypatch.setattr("forge.gh_comments.gh_api", _fake_api)
+    monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fake_run)
+
+    listed = mod._list_squash_comments(61)
+    assert listed is not None
+    assert [c["id"] for c in listed] == [555]
+
+    assert mod.post_squash_comment(61, "<new body>") == 0
+    deletes = [c[-1] for c in calls if c[:4] == ["gh", "api", "-X", "DELETE"]]
+    assert len(deletes) == 1
+    assert deletes[0].endswith("/issues/comments/555")
+
+    calls.clear()
+    assert mod.ensure_last(61) == 0
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("total_words", "warns", "refused", "cut"),
+    [(50, False, False, 0), (53, True, False, 3), (56, False, True, 6)],
+)
+def test_word_band_validate_and_warning(
+    *, total_words: int, warns: bool, refused: bool, cut: int
+) -> None:
+    """The 50/55 band: at target silent, 51-55 warns only, over 55 refuses.
+
+    Args:
+        total_words: Whole-message word count under test.
+        warns: Whether ``word_cap_warning`` should return a warning.
+        refused: Whether ``validate`` should report the word-count problem.
+        cut: Words over the 50-word target.
+    """
+    title = "feat: one two"  # 3 words
+    rest = total_words - 3
+    bullets = [
+        " ".join(["w"] * n) for n in (rest // 3, rest // 3, rest - 2 * (rest // 3))
+    ]
+    problems = mod.validate(title, bullets)
+    warning = mod.word_cap_warning(title, bullets)
+    if refused:
+        assert len(problems) == 1
+        assert f"cut {cut}" in problems[0]
+        assert warning is None
+    else:
+        assert problems == []
+        if warns:
+            assert warning is not None
+            assert str(total_words) in warning
+            assert f"cut {cut}" in warning
+        else:
+            assert warning is None
 
 
 # ---------------------------------------------------------------------------
@@ -911,3 +1016,24 @@ def test_main_ensure_last_errors_without_an_existing_comment(
     monkeypatch.setattr("forge.gh_comments.gh_api", lambda *_a, **_kw: page_json())
     sys.argv.extend(["--pr", "61"])
     assert mod.main() == 1
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_dry_run_warns_on_stderr_for_a_message_over_target(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A 53-word message dry-runs fine: body on stdout, warning on stderr."""
+    bullets = [" ".join(["w"] * n) for n in (17, 17, 16)]  # 50 + 3-word title
+    sys.argv.extend(
+        [
+            "--dry-run",
+            "--title",
+            "feat: one two",
+            *(item for b in bullets for item in ("--bullet", b)),
+        ]
+    )
+    assert mod.main() == 0
+    captured = capsys.readouterr()
+    assert captured.out == mod.build_body("feat: one two", bullets)
+    assert "forge-pr-squash-comment: warning: " in captured.err
+    assert "53 words" in captured.err

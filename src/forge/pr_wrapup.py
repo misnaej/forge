@@ -78,7 +78,7 @@ from forge.pr_delta import (
     strip_fences,
 )
 from forge.pr_plan import added_paths, classify, gh_pr_view, wrapup_freshness
-from forge.pr_squash_comment import ensure_last
+from forge.pr_squash_comment import SQUASH_MARKER, ensure_last
 from forge.pr_wrapup_compose import (
     PENDING_CI,
     ComposeError,
@@ -392,7 +392,34 @@ def validate_wrapup(text: str) -> list[str]:
         + _check_sections(sections)
         + _check_budget(head, sections)
         + _check_attribution(text)
+        + _check_no_squash_section(text)
     )
+
+
+def _check_no_squash_section(text: str) -> list[str]:
+    """Refuse a wrap-up that embeds the squash-merge message.
+
+    The squash message is its own comment (FOUNDATION §6); a wrap-up
+    carrying the squash marker on a line of its own is a pasted squash
+    section, and the comment tools that find squash comments by their
+    marker could act on it. A prose mention of the marker inside a
+    sentence is fine.
+
+    Args:
+        text: The wrap-up markdown.
+
+    Returns:
+        One violation when a line is exactly the squash marker.
+    """
+    if any(line.strip() == SQUASH_MARKER for line in text.splitlines()):
+        return [
+            (
+                f"the wrap-up embeds a squash-merge section (a `{SQUASH_MARKER}` "
+                "line) — the squash message is a separate comment posted by "
+                "forge-pr-squash-comment; remove it from the wrap-up"
+            )
+        ]
+    return []
 
 
 def _collapse(existing: list[dict[str, object]], new_sha: str) -> int:

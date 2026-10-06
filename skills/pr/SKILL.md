@@ -417,7 +417,8 @@ Verification is done, fixes are committed, and the wrap-up is authored
 ### Squash-merge message hard rules
 
 `forge-pr-squash-comment` enforces (check the bullets before posting):
-- **Maximum 50 words.** If over, rewrite tighter.
+- **Target 50 words.** 51–55 posts with a warning naming what to trim;
+  over 55 is refused. Rewrite tighter rather than living in the band.
 - **3–5 bullet points.** Not 6, not 2.
 - **Conventional commit format** for the title line: `<type>: <brief description>`
 - **No prose paragraphs.** Title + bullets only, in two separate fences —
