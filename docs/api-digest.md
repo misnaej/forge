@@ -1061,7 +1061,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `render_code_quality(timing_log: str | None, verdicts: Mapping[str, str], expected_steps: Sequence[str], *, pytest_line: str | None, pytest_verdict: str | None) -> str` — Render the one-line Code Quality status, by exception.
 - `pytest_summary_line(log_text: str | None) -> str | None` — Return the last pytest summary fragment in *log_text*.
 - `_entry_name(entry: Mapping[str, object]) -> str` _(internal)_ — Return a rollup entry's display name.
-- `summarize_rollup(rollup: Sequence[Mapping[str, object]]) -> str` — Summarize ``gh pr view --json statusCheckRollup`` as one status line.
+- `_skipped(entry: Mapping[str, object]) -> bool` _(internal)_ — Return whether a rollup entry concluded without executing.
+- `rollup_not_run(rollup: Sequence[Mapping[str, object]]) -> bool` — Return whether checks were reported but none of them executed.
+- `summarize_rollup(rollup: Sequence[Mapping[str, object]], *, is_draft: bool = False) -> str` — Summarize ``gh pr view --json statusCheckRollup`` as one status line.
 - `render_issue_management(closing_refs: Sequence[int], *, pr_body_checked: bool) -> str` — Render the Issue Management line from the closing keywords found.
 - `unfilled_slots(text: str) -> list[str]` — Return the names of every fill-in slot still in *text*.
 - `evidence_fence(block: str) -> str` — Return only the fenced part of a ``run_gate_evidence`` block.

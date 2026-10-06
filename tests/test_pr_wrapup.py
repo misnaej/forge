@@ -857,6 +857,35 @@ def test_post_gates_unknown_mergeability_is_a_note_not_a_refusal() -> None:
     assert any("UNKNOWN" in n for n in notes)
 
 
+@pytest.mark.parametrize(
+    ("is_draft", "names_draft"), [(True, True), (False, False)], ids=["draft", "ready"]
+)
+def test_post_gates_all_skipped_rollup_adds_a_note_never_a_refusal(
+    *, is_draft: bool, names_draft: bool
+) -> None:
+    """All-skipped CI adds note; draft cause named only for drafts.
+
+    Args:
+        is_draft: Whether the PR is marked as a draft.
+        names_draft: Whether the note should mention that it is a draft.
+    """
+    view = {
+        "number": 61,
+        "headRefOid": "7ab3e4e1234567890abcdef",
+        "baseRefName": "main",
+        "mergeable": "MERGEABLE",
+        "isDraft": is_draft,
+        "statusCheckRollup": [
+            {"name": "ci", "status": "COMPLETED", "conclusion": "SKIPPED"}
+        ],
+    }
+    refusals, notes = mod.post_gates(view, "7ab3e4e", behind=0, emergency=False)
+    assert refusals == []
+    assert len(notes) == 1
+    assert "CI has not run" in notes[0]
+    assert ("draft" in notes[0]) is names_draft
+
+
 def test_post_gates_behind_none_is_a_note_not_a_refusal() -> None:
     """An unresolvable base comparison is reported, not refused."""
     view = {
@@ -1419,6 +1448,42 @@ def test_main_compose_delta_mode_renders_prior_sha_rollup_and_checked_issue_mana
     assert "✅ passed (1 checks)" in written
     assert "Closes #99" in written
     assert "the PR body was not searched" not in written
+
+
+def test_main_compose_draft_pr_with_only_skipped_checks_renders_draft_wording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: `compose --pr N` on a draft whose workflows skipped every job.
+
+    MOCK SETUP: `mod.gh_pr_view` returns `isDraft: True` and one skipped
+    check; the light-code plan needs no reporter reports.
+    EXPECTED BEHAVIOR: CI Status says CI did not run and names the draft,
+    and never claims a pass.
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        mod,
+        "gh_pr_view",
+        lambda *_a, **_kw: {
+            "body": "Closes #7",
+            "isDraft": True,
+            "statusCheckRollup": [
+                {"name": "ci", "status": "COMPLETED", "conclusion": "SKIPPED"}
+            ],
+        },
+    )
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({"mode": "light-code", "reporters": [], "reasons": ["small diff"]})
+    )
+
+    rc = mod.main(["compose", "--base", "HEAD", "--pr", "61", "--plan", str(plan_path)])
+
+    assert rc == 0
+    written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
+    assert "⚪ CI not run — 1 skipped (draft PR)" in written
+    assert "✅ passed" not in written
 
 
 def test_main_compose_pr_view_unavailable_reports_unknown_ci_and_unsearched_body(

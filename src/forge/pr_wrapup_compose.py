@@ -44,6 +44,7 @@ _FAILED_CONCLUSIONS: Final[frozenset[str]] = frozenset(
 )
 _FAILED_STATES: Final[frozenset[str]] = frozenset({"FAILURE", "ERROR"})
 _PENDING_STATES: Final[frozenset[str]] = frozenset({"PENDING", "EXPECTED"})
+_NOT_RUN_CONCLUSIONS: Final[frozenset[str]] = frozenset({"SKIPPED"})
 _PYTEST_SUMMARY_RE: Final[re.Pattern[str]] = re.compile(
     r"\d+ (?:passed|failed|errors?)\b[^\n]*? in [\d.]+s"
 )
@@ -385,15 +386,50 @@ def _entry_name(entry: Mapping[str, object]) -> str:
     return " ".join(str(entry.get("name") or entry.get("context") or "?").split())
 
 
-def summarize_rollup(rollup: Sequence[Mapping[str, object]]) -> str:
-    """Summarize ``gh pr view --json statusCheckRollup`` as one status line.
+def _skipped(entry: Mapping[str, object]) -> bool:
+    """Return whether a rollup entry concluded without executing.
+
+    Args:
+        entry: A rollup check entry mapping.
+    """
+    return str(entry.get("conclusion") or "") in _NOT_RUN_CONCLUSIONS
+
+
+def rollup_not_run(rollup: Sequence[Mapping[str, object]]) -> bool:
+    """Return whether checks were reported but none of them executed.
 
     Args:
         rollup: ``CheckRun`` / ``StatusContext`` entries.
 
     Returns:
-        ``no checks reported``, ``❌ failed: …``, ``⏳ running: …`` or
-        ``✅ passed (<n> checks)`` — a failure outranks a running check.
+        ``True`` for a non-empty rollup whose every entry was skipped;
+        ``False`` when there are no checks at all, which is a different
+        statement ("no checks reported").
+    """
+    return bool(rollup) and all(_skipped(e) for e in rollup)
+
+
+def summarize_rollup(
+    rollup: Sequence[Mapping[str, object]], *, is_draft: bool = False
+) -> str:
+    """Summarize ``gh pr view --json statusCheckRollup`` as one status line.
+
+    A skipped check executed nothing, so it never counts toward "passed":
+    a workflow gated off drafts skips every job, and calling that a pass
+    asserts verification that never happened. ``NEUTRAL`` still counts as
+    ran — GitHub uses it for checks that ran without a verdict.
+
+    Args:
+        rollup: ``CheckRun`` / ``StatusContext`` entries.
+        is_draft: Whether the PR is a draft, named as the likely reason
+            when nothing ran.
+
+    Returns:
+        ``no checks reported``, ``❌ failed: …``, ``⏳ running: …``,
+        ``⚪ CI not run — <n> skipped`` (``(draft PR)`` appended for a
+        draft), ``✅ passed (<x> of <n> ran, <y> skipped)`` or
+        ``✅ passed (<n> checks)`` — a failure outranks a running check,
+        and both outrank skips.
     """
     if not rollup:
         return "no checks reported"
@@ -413,6 +449,13 @@ def summarize_rollup(rollup: Sequence[Mapping[str, object]]) -> str:
     ]
     if running:
         return f"⏳ running: {', '.join(running)}"
+    if rollup_not_run(rollup):
+        draft = " (draft PR)" if is_draft else ""
+        return f"⚪ CI not run — {len(rollup)} skipped{draft}"
+    skipped = sum(1 for e in rollup if _skipped(e))
+    if skipped:
+        ran = len(rollup) - skipped
+        return f"✅ passed ({ran} of {len(rollup)} ran, {skipped} skipped)"
     return f"✅ passed ({len(rollup)} checks)"
 
 

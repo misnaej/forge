@@ -24,6 +24,7 @@ from forge.pr_wrapup_compose import (
     render_code_quality,
     render_issue_management,
     render_wrapup,
+    rollup_not_run,
     slot,
     summarize_rollup,
     unfilled_slots,
@@ -551,6 +552,71 @@ def test_summarize_rollup_status_context_legacy_shapes() -> None:
     assert summarize_rollup([{"context": "ci/legacy", "state": "ERROR"}]) == (
         "❌ failed: ci/legacy"
     )
+
+
+_SKIPPED = {"name": "deploy", "status": "COMPLETED", "conclusion": "SKIPPED"}
+_OK = {"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"}
+
+
+@pytest.mark.parametrize(
+    ("rollup", "is_draft", "expected"),
+    [
+        ([_SKIPPED, _SKIPPED], False, "⚪ CI not run — 2 skipped"),
+        ([_SKIPPED, _SKIPPED], True, "⚪ CI not run — 2 skipped (draft PR)"),
+        ([_OK, _SKIPPED], False, "✅ passed (1 of 2 ran, 1 skipped)"),
+        (
+            [
+                _SKIPPED,
+                {"name": "test", "status": "COMPLETED", "conclusion": "FAILURE"},
+            ],
+            False,
+            "❌ failed: test",
+        ),
+        (
+            [_SKIPPED, {"name": "build", "status": "IN_PROGRESS", "conclusion": ""}],
+            False,
+            "⏳ running: build",
+        ),
+        (
+            [{"name": "lint", "status": "COMPLETED", "conclusion": "NEUTRAL"}],
+            False,
+            "✅ passed (1 checks)",
+        ),
+        (
+            [{"context": "ci/legacy", "state": "SUCCESS"}, _SKIPPED],
+            False,
+            "✅ passed (1 of 2 ran, 1 skipped)",
+        ),
+    ],
+    ids=[
+        "all-skipped",
+        "all-skipped-draft",
+        "partial-skip",
+        "skipped-and-failed",
+        "skipped-and-running",
+        "neutral-counts-as-ran",
+        "status-context-with-skipped",
+    ],
+)
+def test_summarize_rollup_skipped_checks_never_count_as_passed(
+    rollup: list[dict[str, str]], expected: str, *, is_draft: bool
+) -> None:
+    """A skipped check executed nothing, so only ran checks may read as passed.
+
+    Args:
+        rollup: List of check entries to summarize.
+        expected: Expected summary string.
+        is_draft: Whether the PR is in draft status.
+    """
+    result = summarize_rollup(rollup, is_draft=is_draft)
+    assert result == expected
+    if expected.startswith("⚪"):
+        assert "passed" not in result
+
+
+def test_rollup_not_run_is_false_for_an_empty_rollup() -> None:
+    """No checks at all is "no checks reported", not "CI not run"."""
+    assert rollup_not_run([]) is False
 
 
 # ---------------------------------------------------------------------------
