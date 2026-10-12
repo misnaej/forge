@@ -26,10 +26,11 @@ the hook or agent runs**. Both higher layers shell out to its CLIs:
   until they install layer 1.
 - **Layer 3 (plugin)** — the agents/skills orchestrate the CLIs
   (`forge:precommit-fixer` → `forge-precommit`, `forge:git-commit-push` →
-  the gate, …). The plugin installs **once, globally** in Claude Code
-  (`~/.claude`), but it drives CLIs that must exist in **each repo's**
-  env. *Downside:* install the plugin, then open a repo whose env lacks
-  `forge-scripts`, and the agents fail the moment they invoke a CLI. The
+  the gate, …). The plugin is **enabled per repo** (Track 3), but its
+  marketplace source is registered **once per machine** (`~/.claude`),
+  and it drives CLIs that must exist in **each repo's** env. *Downside:*
+  enable the plugin in a repo whose env lacks `forge-scripts`, and the
+  agents fail the moment they invoke a CLI. The
   plugin's pure **safety hooks** (`block_*`, `check_*`) are the exception —
   bash + jq, they need neither layer 1 nor 2.
 
@@ -239,7 +240,8 @@ under an **earlier release's version** — and if that slot already
 existed, kept the earlier release's files. `/plugin update` compares
 version names only, so it reports "already at the latest version" and
 changes nothing, while every version check stays green. `forge-doctor`
-flags the slot when its hooks differ from the pinned release. The fix is
+flags the slot when its content (agents, skills, hooks or manifest)
+differs from the pinned release. The fix is
 to discard the slot so it refills from the pin:
 
 1. Move your plugin pin (marketplace ref) to an adoptable tag.

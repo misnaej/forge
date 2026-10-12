@@ -20,6 +20,10 @@ Checks:
   5. Pre-commit step tools (opt-in steps only) — the tool for each enabled
      step is on PATH, and its installed version is not below this repo's
      pinned floor; both are advisories, never a failing exit code.
+  6. Plugin scope (advisories) — a machine-wide forge install alongside
+     this repo's own, a machine-wide marketplace tracking another ref than
+     this repo pins, and a cache verdict that had to fall back to the
+     newest cached copy because no install record names this repo.
 
 Usage:
     forge-doctor                              # human-readable
@@ -38,6 +42,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from forge import config
+from forge.claude_settings_schema import PLUGIN_KEY
 from forge.config import installed_console_scripts
 from forge.git_utils import (
     FORGE_DIST_NAME,
@@ -49,6 +54,7 @@ from forge.git_utils import (
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
+    SOURCE_MISMATCH_REMEDIATION,
     STALE_CACHE_REMEDIATION,
     PluginCacheStatus,
     find_install_dir,
@@ -56,7 +62,9 @@ from forge.version_surfaces import (
     hook_sidecar_version,
     pip_version,
     plugin_cache_status,
+    plugin_records,
     read_json,
+    safe_text,
 )
 
 
@@ -64,6 +72,16 @@ from forge.version_surfaces import (
 # surface (e.g. a pip-only consumer with no git hooks) has nothing to
 # compare against and must be skipped, not flagged.
 _MIN_SURFACES_TO_COMPARE = 2
+
+# Claude Code's user-scope settings: ``enabledPlugins`` here turns a plugin
+# on in every repo on the machine, the other half of a global install.
+USER_SETTINGS = Path.home() / ".claude" / "settings.json"
+
+# Verdicts that judged a cached copy — the only ones a fallback to the
+# newest copy can have misdescribed.
+_CACHE_VERDICTS = frozenset(
+    {"current", "behind", "unparsed", "stale-content", "content-unknown"}
+)
 
 
 @dataclass
@@ -220,58 +238,204 @@ def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
     ships the plugin can be ``"behind"`` — its cache declares an older
     version, which ``/plugin update`` moves. A consumer gets
     ``"stale-content"``: the declared version has not moved and cannot, so
-    the only advice that can succeed is discarding the slot.
+    the only advice that can succeed is discarding the slot. A consumer
+    whose machine-wide marketplace tracks another ref gets
+    ``"source-mismatch"``, which no per-repo command clears.
 
     Args:
         repo_root: Repo whose manifest ships the plugin, or a consumer
             repo whose pin names the content that should be loaded.
 
     Returns:
-        One advisory result when the cache lags, otherwise an empty
-        list — no plugin, no cache and an unreadable version are all
-        "nothing to say", not findings.
+        One advisory result per finding — plus one saying the verdict came
+        from the newest cached copy when no install record names this
+        repo — otherwise an empty list: no plugin, no cache and an
+        unreadable version are all "nothing to say", not findings.
     """
     status = plugin_cache_status(repo_root)
+    results: list[CheckResult] = []
     if status.state == "stale-content":
-        return [_stale_cache_advisory(status)]
-    if status.state != "behind":
-        return []
-    return [
-        CheckResult(
-            name="version_skew:plugin_cache",
-            passed=False,
-            info=True,
-            detail=(
-                f"plugin cache at v{status.cached}, behind this repo's manifest "
-                f"v{status.declared} — run `{SKEW_REMEDIATION['plugin cache']}`"
-            ),
+        results.append(_stale_cache_advisory(status))
+    elif status.state == "source-mismatch":
+        results.append(_source_mismatch_advisory(status))
+    elif status.state == "content-unknown":
+        results.append(_content_unknown_advisory(status))
+    elif status.state == "behind":
+        results.append(
+            CheckResult(
+                name="version_skew:plugin_cache",
+                passed=False,
+                info=True,
+                detail=(
+                    f"plugin cache at v{status.cached}, behind this repo's "
+                    f"manifest v{status.declared} — run "
+                    f"`{SKEW_REMEDIATION['plugin cache']}`"
+                ),
+            )
         )
-    ]
+    if status.fallback and status.state in _CACHE_VERDICTS:
+        results.append(
+            CheckResult(
+                name="plugin:own_copy",
+                passed=False,
+                info=True,
+                detail=(
+                    "no install record names this repo, so the plugin cache "
+                    f"verdict above judged the newest cached copy "
+                    f"(v{status.cached}), which may be another repo's — not "
+                    "necessarily the copy this repo loads"
+                ),
+            )
+        )
+    return results
 
 
 def _stale_cache_advisory(status: PluginCacheStatus) -> CheckResult:
     """Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
 
     Args:
-        status: The ``"stale-content"`` verdict, carrying the hooks the
-            slot is missing.
+        status: The ``"stale-content"`` verdict, carrying the content
+            areas that differ.
 
     Returns:
-        An advisory ``CheckResult`` listing the missing hooks — the
-        concrete thing not running — and a remediation that can converge.
+        An advisory ``CheckResult`` naming the differing areas — where the
+        running plugin departs from the pinned one — and a remediation
+        that can converge.
     """
-    missing = ", ".join(status.missing_hooks)
+    areas = ", ".join(status.stale_areas)
     return CheckResult(
         name="version_skew:plugin_cache",
         passed=False,
         info=True,
         detail=(
             f"STALE PLUGIN: cache slot v{status.cached} does not carry the "
-            f"content pinned at {status.declared} — "
-            f"{len(status.missing_hooks)} hook(s) never load: {missing}. "
+            f"content pinned at {status.declared} — differs in: {areas}. "
             f"{STALE_CACHE_REMEDIATION.format(plugin=status.plugin_name)}"
         ),
     )
+
+
+def _content_unknown_advisory(status: PluginCacheStatus) -> CheckResult:
+    """Wrap a ``"content-unknown"`` verdict as an advisory saying what to check.
+
+    Silence here would read as "current", which nothing established.
+
+    Args:
+        status: The ``"content-unknown"`` verdict.
+
+    Returns:
+        An advisory ``CheckResult`` with the manual check and the
+        slot-clearing remediation.
+    """
+    return CheckResult(
+        name="version_skew:plugin_cache",
+        passed=False,
+        info=True,
+        detail=(
+            f"plugin cache v{status.cached} could not be compared with the "
+            f"content pinned at {status.declared}: a plugin tree exceeded the "
+            "hashing size caps, so whether the loaded copy is current is "
+            "unknown. Compare the cache slot with the pinned release by hand, "
+            f"or {STALE_CACHE_REMEDIATION.format(plugin=status.plugin_name)}"
+        ),
+    )
+
+
+def _source_mismatch_advisory(status: PluginCacheStatus) -> CheckResult:
+    """Wrap a ``"source-mismatch"`` verdict as an advisory naming both refs.
+
+    Args:
+        status: The ``"source-mismatch"`` verdict, carrying the ref this
+            repo pins and the ref the machine-wide registration tracks.
+
+    Returns:
+        An advisory ``CheckResult`` with the re-pointing remediation.
+    """
+    remediation = SOURCE_MISMATCH_REMEDIATION.format(
+        plugin=status.plugin_name,
+        repo=status.source_repo or "<owner/repo>",
+        ref=status.source_ref,
+    )
+    return CheckResult(
+        name="plugin:source",
+        passed=False,
+        info=True,
+        detail=(
+            f"PLUGIN SOURCE MISMATCH: this repo pins {status.source_ref}, but "
+            f"the machine-wide {status.plugin_name} marketplace tracks "
+            f"{status.registered_ref} — every repo on this machine updates "
+            "from that one registration, so this repo can run another "
+            f"release while updates report it current. {remediation}"
+        ),
+    )
+
+
+def _enabled_in(settings_path: Path) -> bool | None:
+    """Return ``enabledPlugins["forge@forge"]`` from a settings file.
+
+    Args:
+        settings_path: A Claude Code ``settings.json``-shaped file.
+
+    Returns:
+        The boolean the file sets, or ``None`` when the file is absent,
+        unreadable, not a JSON object, or sets nothing for forge.
+    """
+    data, err = read_json(settings_path)
+    enabled = data.get("enabledPlugins") if err is None else None
+    if not isinstance(enabled, dict):
+        return None
+    value = enabled.get(PLUGIN_KEY)
+    return value if isinstance(value, bool) else None
+
+
+def _check_global_install(repo_root: Path) -> list[CheckResult]:
+    """Flag a machine-wide forge install alongside this repo's own.
+
+    Claude Code offers no way to keep a user-scope plugin out of a repo
+    that enables its own copy, nor to pin a plugin per repo, so a global
+    install can shadow the repo's copy: the repo then runs an older forge
+    while every update reports it current. Which copy wins is Claude
+    Code's decision and not observable here, so the finding is that both
+    are present — never a claim about which loads.
+
+    Args:
+        repo_root: Repo whose ``.claude/settings.json`` and
+            ``.claude/settings.local.json`` say whether it enables forge.
+
+    Returns:
+        One advisory result when forge is installed or enabled at user
+        scope and this repo also enables it; otherwise an empty list.
+    """
+    claude_dir = repo_root / ".claude"
+    local = _enabled_in(claude_dir / "settings.local.json")
+    repo_enabled = (
+        local if local is not None else _enabled_in(claude_dir / "settings.json")
+    )
+    if not repo_enabled:
+        return []
+    user_record = any(
+        record.get("scope") == "user" for record in plugin_records(PLUGIN_KEY)
+    )
+    if not user_record and not _enabled_in(USER_SETTINGS):
+        return []
+    return [
+        CheckResult(
+            name="plugin:global_install",
+            passed=False,
+            info=True,
+            detail=(
+                "forge is installed or enabled machine-wide (user scope) and "
+                "this repo enables its own copy too — the global copy can "
+                "shadow this repo's, so it may run an older forge while every "
+                "update reports it current. Fix: `claude plugin uninstall "
+                f"{PLUGIN_KEY} --scope user` and keep forge enabled per repo "
+                "(a per-repo enabledPlugins false is no fix: it turns forge "
+                "off in that repo entirely). "
+                "The pip package is per environment, but the plugin source "
+                "is per machine."
+            ),
+        )
+    ]
 
 
 def _check_version_skew(repo_root: Path) -> list[CheckResult]:
@@ -432,17 +596,27 @@ def _check_plugin_manifests(
     plugin_ok = plugin_err is None and plugin_data.get("name") == plugin_name
     market_ok = market_err is None and market_data.get("name") == plugin_name
 
+    # The manifests sit in a user-writable cache; their values and the
+    # read errors (which embed paths and exception text) are echoed only
+    # in a form that cannot carry control characters into the report.
+    plugin_detail = (
+        f"name={safe_text(plugin_data.get('name'))}, "
+        f"version={safe_text(plugin_data.get('version'))}"
+    )
     return [
         CheckResult(
             name="plugin.json",
             passed=plugin_ok,
-            detail=plugin_err
-            or f"name={plugin_data.get('name')}, version={plugin_data.get('version')}",
+            detail=repr(plugin_err) if plugin_err else plugin_detail,
         ),
         CheckResult(
             name="marketplace.json",
             passed=market_ok,
-            detail=market_err or f"name={market_data.get('name')}",
+            detail=(
+                repr(market_err)
+                if market_err
+                else f"name={safe_text(market_data.get('name'))}"
+            ),
         ),
     ]
 
@@ -776,7 +950,9 @@ def main() -> int:
         results.extend(_check_plugin_contents(plugin_root))
 
     results.extend(_check_version_skew(Path.cwd()))
-    results.extend(_check_plugin_cache_skew(Path.cwd()))
+    if not args.skip_plugin_checks:
+        results.extend(_check_plugin_cache_skew(Path.cwd()))
+        results.extend(_check_global_install(Path.cwd()))
     results.extend(_surface_pin_revision(Path.cwd()))
     results.extend(_check_under_used_capabilities(Path.cwd()))
 
