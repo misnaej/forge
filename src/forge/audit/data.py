@@ -44,6 +44,7 @@ from forge.audit.common import (
     make_audit_parser,
     relpath,
     resolve_roots,
+    untracked_summary_line,
     write_log,
 )
 from forge.git_utils import configure_cli_logging, missing_dependency_hint
@@ -382,7 +383,7 @@ def run(scope: Scope, roots: list[Path], config: DataConfig) -> int:
         f"Found {counts[Severity.HIGH]} HIGH (parse / column mismatch), "
         f"{counts[Severity.MEDIUM]} MEDIUM (schema), "
         f"{counts[Severity.LOW]} LOW (skipped)."
-    )
+    ) + untracked_summary_line(scope, suffix=tuple(config.suffixes))
     write_log("data", findings, summary, output=config.output, scope=scope)
     return exit_code_for(findings)
 

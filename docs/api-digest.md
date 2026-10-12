@@ -146,10 +146,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class Finding` — One audit observation with provenance.
   - `render(self) -> str` — Render this finding as a single block in the log file.
 - `under_module_prefix(module: str, prefix: str) -> bool` — Return whether *module* equals *prefix* or is a dotted child of it.
-- `make_audit_parser(prog: str, description: str) -> argparse.ArgumentParser` — Build the shared CLI surface for an audit script.
+- `make_audit_parser(prog: str, description: str, *, honours_scope: bool = True) -> argparse.ArgumentParser` — Build the shared CLI surface for an audit script.
 - `resolve_roots(roots: list[str] | None) -> list[Path]` — Resolve the effective scan roots.
 - `_is_excluded(path: Path) -> bool` _(internal)_ — Return ``True`` if ``path`` lies under any default-excluded directory.
 - `iter_files(scope: Scope, roots: list[Path], *, suffix: str = '.py') -> Iterator[Path]` — Yield matching files under ``roots`` respecting ``scope``.
+- `select_like_audit(root: Path, rels: list[str], *, suffix: str | tuple[str, ...] = '.py', roots: list[Path] | None = None) -> list[str]` — Keep the *rels* an audit's file selection would include.
+- `untracked_summary_line(scope: Scope, *, suffix: str | tuple[str, ...] = '.py', roots: list[Path] | None = None, root: Path | None = None) -> str` — Return the note naming untracked files a changed-files run left out.
 - `relpath(path: Path) -> str` — Render ``path`` relative to the repo root for log stability.
 - `read_finding_count(log_text: str) -> int` — Return the ``# findings: N`` count :func:`write_log` puts in a log header.
 - `read_scope(log_text: str) -> str | None` — Return the ``# scope:`` value :func:`write_log` puts in a log header.
@@ -301,11 +303,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_parse_bump_line_and_body(path: Path, lines: list[str]) -> tuple[str, str, list[str]]` _(internal)_ — Validate bump line and extract level and body.
 - `_check_no_versions_or_headings(name: str, body: str) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
 - `validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]` — Parse *path* into a :class:`Fragment`, collecting every violation.
+- `_validate_fragment_text(path: Path, text: str) -> tuple[Fragment | None, list[str]]` _(internal)_ — Apply :func:`validate_fragment`'s contract to *text* as *path*'s content.
 - `discover_fragments(root: Path) -> list[Path]` — Return pending fragment files under ``changelog.d/``, filename-sorted.
 - `max_level(fragments: list[Fragment]) -> str` — Return the strongest bump level among *fragments*.
 - `assemble_changelog(text: str, fragments: list[Fragment], version: str, *, date: str = '') -> str` — Insert a new release heading built from *fragments* into *text*.
 - `_collect_valid_fragments(root: Path) -> tuple[list[Fragment], list[str]]` _(internal)_ — Parse every pending fragment, splitting valid ones from errors.
 - `check_pending(root: Path) -> list[str]` — Validate every pending fragment under *root*.
+- `check_staged(root: Path, paths: list[str]) -> list[str]` — Validate the staged (index) copy of each fragment in *paths*.
 - `branch_added_fragments(root: Path) -> list[str]` — Return the fragment paths this branch adds and the base does not have.
 - `_fragments_in_tag_tree(root: Path, tag: str) -> set[str]` _(internal)_ — Return the repo-relative fragment paths present in *tag*'s tree.
 - `_partition_by_release_tag(root: Path, fragments: list[Fragment]) -> tuple[list[tuple[str, list[Fragment]]], list[Fragment]]` _(internal)_ — Group *fragments* by the earliest tag whose tree holds each one.
@@ -363,11 +367,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_existing_dirs(repo_root: Path, dirs: list[str]) -> list[str]` _(internal)_ — Filter *dirs* to existing in-repo paths, de-duplicated, order-preserving.
 - `resolve_tool_roots(repo_root: Path, tool: str, *, include_tests: bool = False) -> list[str]` — Resolve the scan roots a layout-consuming *tool* should use.
 - `declared_layout_dirs(repo_root: Path, *, include_tests: bool = True) -> list[str] | None` — Return the explicitly declared layout dirs, or ``None`` if undeclared.
+- `resolve_test_naming_roots(repo_root: Path) -> list[str]` — Resolve the *test-only* roots the test-naming check scans.
 - `filter_under_roots(files: list[str], roots: list[str]) -> list[str]` — Keep only *files* that live under one of *roots* (source-tree scoping).
 - `filter_excluded(files: list[str], globs: list[str]) -> list[str]` — Drop *files* matching any exclude *glob* (the ``[tool.forge].exclude`` half).
 - `select_diff_files(repo_root: Path, *, roots: list[str] | None = None, apply_exclude: bool = False, drop_deleted: bool = True, suffix: str = '.py') -> list[str]` — Select the modified files a diff-scoped step should check.
 - `tracked_files_under_roots(repo_root: Path, roots: list[str], *, suffix: str = '.py') -> list[str]` — Select the git-tracked files under *roots*, minus repo-wide excludes.
 - `_warn_untracked_under_roots(repo_root: Path, roots: list[str], suffix: str) -> None` _(internal)_ — Warn (dev-loop only) when untracked source under *roots* goes unscanned.
+- `summarize_paths(paths: list[str], *, limit: int = 10) -> str` — Render *paths* as one bounded, printable line of quoted names.
+- `_quotable_name(path: str) -> str` _(internal)_ — Return *path* made safe to quote inside a backtick code span.
 - `installed_console_scripts(name: str) -> set[str] | None` — Return *name*'s installed ``console_scripts`` entry-point names.
 
 ## `forge.continuation`
@@ -730,7 +737,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
 - `is_ancestor(root: Path | None, ancestor_ref: str, descendant_ref: str) -> bool` — Return whether *ancestor_ref* is an ancestor of *descendant_ref*.
 - `added_or_moved_files(*, repo_root: Path | None = None, base_branch: str = 'main', suffix: str = '.py') -> list[str]` — Return files ADDED or RENAMED vs the base branch (``--diff-filter=AR``).
-- `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None, base_branch: str = 'main') -> list[str]` — Get list of modified files from git.
+- `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None, base_branch: str = 'main', include_unstaged: bool = True) -> list[str]` — Get list of modified files from git.
 - `get_tracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get all git-tracked files matching the suffix/prefix filters.
 - `get_untracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get untracked, non-gitignored files matching the suffix/prefix filters.
 - `path_escapes_repo(repo_root: Path, path: str) -> bool` — Return True if *path* resolves outside *repo_root*.
@@ -1102,6 +1109,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
 - `step_c4(repo_root: Path) -> StepResult` — Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
+- `_layering_configured(repo_root: Path) -> bool` _(internal)_ — Return whether ``[tool.forge.layering]`` gives the layering step work.
 - `step_layering(repo_root: Path) -> StepResult` — Run ``forge-audit-layering`` — layer-composition gate.
 - `step_api_digest_check(repo_root: Path) -> StepResult` — Run ``forge-gen-api-digest --check`` — api-digest drift guard (opt-in).
 - `step_cli_reference_check(repo_root: Path) -> StepResult` — Run ``forge-gen-cli-reference --check`` — cli-reference drift guard (opt-in).
@@ -1147,10 +1155,15 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `timing_markers(text: str) -> dict[str, str]` — Return each step's marker from a ``precommit_timing.log`` body.
 - `_validate_step_names(names: Sequence[str]) -> None` _(internal)_ — Raise ``ValueError`` listing any *names* that are not registered steps.
 - `resolve_steps(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepDef]` — Resolve which steps to run, in registry order.
-- `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
+- `_untracked_in_reach(repo_root: Path, step: str, scope: str, untracked: list[str]) -> list[str]` _(internal)_ — Return the *untracked* files *step* would select if they were tracked.
+- `_step_does_work(repo_root: Path, step: str) -> bool` _(internal)_ — Return whether an enabled *step* would do work rather than self-skip.
+- `relevant_untracked_files(repo_root: Path, *, skip: Sequence[str] = (), only: Sequence[str] = ()) -> list[tuple[str, tuple[str, ...]]]` — List untracked files that an enabled step passed over, and which steps.
+- `_untracked_note(untracked: Sequence[tuple[str, tuple[str, ...]]]) -> str` _(internal)_ — Return the one-line note naming untracked files some steps skipped.
+- `_note_untracked_in_output(result: StepResult, untracked: Sequence[tuple[str, tuple[str, ...]]]) -> None` _(internal)_ — Append the per-step untracked line to *result*'s log output.
+- `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = (), untracked: Sequence[tuple[str, tuple[str, ...]]] | None = None) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
 - `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
 - `_capped(output: str) -> str` _(internal)_ — Return *output* trimmed to the shared evidence cap.
-- `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult]) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
+- `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult], *, untracked: Sequence[tuple[str, tuple[str, ...]]] = ()) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
 - `_forced_steps(only: list[str]) -> Iterator[None]` _(internal)_ — Force explicitly named steps to run, then restore the environment.
 - `freshness_verdicts(root: Path) -> dict[str, str]` — Return each ``code_health/`` log's freshness verdict against the working tree.
 - `verdict(root: Path) -> tuple[bool, list[str]]` — Return whether every enabled step passed on the current tree.
@@ -1606,7 +1619,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `verify_file(filepath: Path) -> list[Issue]` — Verify test naming standards in a single file.
 - `_check_file_name_alignment(filepath: Path) -> list[Issue]` _(internal)_ — Verify the ``test_`` prefix on test file names (Rule 2).
 - `_check_duplicate_file_names(all_files: list[Path]) -> list[Issue]` _(internal)_ — Check for duplicate or ambiguous file names.
-- `_test_scan_roots(repo_root: Path) -> list[str]` _(internal)_ — Resolve the *test-only* scan roots for ``--scope all`` (issue #83).
 - `_resolve_test_files(repo_root: Path, target: str | None, scope: str) -> list[str]` _(internal)_ — Return repo-relative test file paths from CLI arg, scope, or git diff.
 - `_scan_files(py_files: list[str], repo_root: Path) -> tuple[list[Issue], list[str], int]` _(internal)_ — Verify each file, plus a cross-file duplicate-name check.
 - `_log_warnings(warnings: list[Issue]) -> None` _(internal)_ — Print warnings grouped by file.

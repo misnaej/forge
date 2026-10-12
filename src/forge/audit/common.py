@@ -20,10 +20,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from forge.config import declared_layout_dirs, load_config
+from forge.config import declared_layout_dirs, load_config, summarize_paths
 from forge.git_utils import (
     code_health_dir,
     get_modified_files,
+    get_untracked_files,
     produced_at_stamp,
     repo_root,
 )
@@ -178,25 +179,41 @@ def under_module_prefix(module: str, prefix: str) -> bool:
     return module == prefix or module.startswith(f"{prefix}.")
 
 
-def make_audit_parser(prog: str, description: str) -> argparse.ArgumentParser:
+def make_audit_parser(
+    prog: str, description: str, *, honours_scope: bool = True
+) -> argparse.ArgumentParser:
     """Build the shared CLI surface for an audit script.
 
     Args:
         prog: Console-script name (e.g. ``"forge-audit-dup"``).
         description: One-line description shown in ``--help``.
+        honours_scope: Whether ``--scope changed`` narrows this audit.
+            ``False`` keeps the flag for a uniform CLI but says, truthfully,
+            that the audit reads everything either way.
 
     Returns:
         Parser with ``--scope``, ``--roots``, ``--output`` registered.
     """
     parser = argparse.ArgumentParser(prog=prog, description=description)
+    scope_help = (
+        (
+            "Audit scope. 'full' scans roots; 'changed' limits the report to "
+            "tracked files modified vs the configured base branch (committed, "
+            "staged or not); untracked files are never treated as changed, "
+            "and the log summary names them."
+        )
+        if honours_scope
+        else (
+            "Accepted for parity with the other forge-audit-* CLIs; this "
+            "audit reads every file it covers, untracked ones included, at "
+            "either scope."
+        )
+    )
     parser.add_argument(
         "--scope",
         choices=[s.value for s in Scope],
         default=Scope.FULL.value,
-        help=(
-            "Audit scope. 'full' scans roots; 'changed' scans files "
-            "modified vs the configured base branch."
-        ),
+        help=scope_help,
     )
     parser.add_argument(
         "--roots",
@@ -262,7 +279,8 @@ def iter_files(
     """Yield matching files under ``roots`` respecting ``scope``.
 
     For ``Scope.CHANGED``, defers to ``git_utils.get_modified_files`` so the
-    list matches what pre-commit sees on a feature branch.
+    list matches what pre-commit sees on a feature branch — untracked files
+    included in neither; :func:`untracked_summary_line` names them.
 
     Args:
         scope: ``FULL`` or ``CHANGED``.
@@ -287,6 +305,88 @@ def iter_files(
         for path in r.rglob(f"*{suffix}"):
             if path.is_file() and not _is_excluded(path):
                 yield path
+
+
+def select_like_audit(
+    root: Path,
+    rels: list[str],
+    *,
+    suffix: str | tuple[str, ...] = ".py",
+    roots: list[Path] | None = None,
+) -> list[str]:
+    """Keep the *rels* an audit's file selection would include.
+
+    The filters mirror the audit's own: *suffix*, the default-excluded
+    directories (as :func:`iter_files` applies them), and — for an audit
+    whose findings come from a walk of its roots — those *roots*.
+
+    Args:
+        root: Git repo root the paths are relative to.
+        rels: Repo-relative candidate paths.
+        suffix: File extension(s) the audit reads, with the dot.
+        roots: Absolute scan roots to keep files under; ``None`` keeps
+            files anywhere (an audit reading the whole diff).
+
+    Returns:
+        The kept paths, in input order.
+    """
+    kept: list[str] = []
+    for rel in rels:
+        abs_path = (root / rel).resolve()
+        if not rel.endswith(suffix) or _is_excluded(abs_path):
+            continue
+        if roots is not None and not any(abs_path.is_relative_to(r) for r in roots):
+            continue
+        kept.append(rel)
+    return kept
+
+
+def untracked_summary_line(
+    scope: Scope,
+    *,
+    suffix: str | tuple[str, ...] = ".py",
+    roots: list[Path] | None = None,
+    root: Path | None = None,
+) -> str:
+    """Return the note naming untracked files a changed-files run left out.
+
+    A changed-files selection is git's diff, which never lists an
+    untracked file, so such a file is never treated as changed — most
+    audits then do not read it at all — and saying so beats a clean log a
+    reader takes to cover it. A full run walks the disk and sees untracked
+    files, so it gets no note. Each audit appends the result to its own
+    summary, passing its own suffix and roots.
+
+    Args:
+        scope: The scope the audit ran at.
+        suffix: File extension(s) the audit reads, with the dot.
+        roots: As for :func:`select_like_audit`.
+        root: Git repo root; defaults to the process-wide repo root the
+            audit itself runs against.
+
+    Returns:
+        ``""`` for a full run, when nothing is left out, or outside a git
+        work tree (the ``git`` query fails there and yields no output);
+        otherwise the note, starting with a newline so it appends to a
+        summary as is. Gitignored files are never named.
+    """
+    if scope is not Scope.CHANGED:
+        return ""
+    root = root if root is not None else repo_root()
+    skipped = select_like_audit(
+        root,
+        get_untracked_files(suffix="", repo_root=root),
+        suffix=suffix,
+        roots=roots,
+    )
+    if not skipped:
+        return ""
+    return (
+        f"\nUntracked, not treated as changed: {len(skipped)} — "
+        f"{summarize_paths(skipped)}. Changed mode reads git's diff, which "
+        "lists no untracked file; add them if they belong to this work, "
+        "leave them out if not."
+    )
 
 
 def relpath(path: Path) -> str:

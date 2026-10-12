@@ -51,6 +51,7 @@ from forge.audit.common import (
     make_audit_parser,
     relpath,
     resolve_roots,
+    untracked_summary_line,
     write_log,
 )
 from forge.git_utils import configure_cli_logging, require_cli
@@ -358,7 +359,7 @@ def run(scope: Scope, roots: list[Path], config: SuppressionsConfig) -> int:
         f"{counts[Severity.HIGH]} HIGH (bare), "
         f"{counts[Severity.MEDIUM]} MEDIUM, "
         f"{counts[Severity.LOW]} LOW."
-    )
+    ) + untracked_summary_line(scope)
     write_log("suppressions", findings, summary, output=config.output, scope=scope)
     return exit_code_for(findings)
 

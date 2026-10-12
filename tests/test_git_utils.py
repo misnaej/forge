@@ -361,6 +361,55 @@ def test_get_modified_files_applies_prefix_tuple(
     assert files == ["test/old.py", "tests/new.py"]
 
 
+def test_get_modified_files_without_unstaged_keeps_commit_view_and_never_falls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``include_unstaged=False`` drops working-tree edits and the HEAD~1 fallback.
+
+    A branch with nothing committed or staged yet must answer "nothing",
+    not the previous commit's files — on a fresh branch those belong to
+    the base branch's last change.
+    """
+    _stub_branch_path(
+        monkeypatch,
+        tmp_path,
+        current_branch="feat/x",
+        diff_outputs={
+            "origin/main...HEAD": "",
+            "--cached": "",
+            "": "src/c.py\n",
+            "HEAD~1": "changelog.d/base.added.md\n",
+        },
+    )
+    assert git_utils.get_modified_files(suffix="", include_unstaged=False) == []
+    assert git_utils.get_modified_files(suffix="") == ["src/c.py"]
+
+
+def test_get_modified_files_without_unstaged_on_base_reads_last_commit_and_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On the base branch the commit view is ``HEAD~1..HEAD`` plus the index.
+
+    The working-tree fallback (``git diff HEAD~1``) would also report an
+    unstaged edit, which no commit carries.
+    """
+    _stub_branch_path(
+        monkeypatch,
+        tmp_path,
+        current_branch="main",
+        diff_outputs={
+            "HEAD": "src/last.py\n",
+            "--cached": "src/staged.py\n",
+            "HEAD~1": "src/last.py\nsrc/staged.py\nsrc/worktree.py\n",
+        },
+    )
+    assert git_utils.get_modified_files(include_unstaged=False) == [
+        "src/last.py",
+        "src/staged.py",
+    ]
+    assert "src/worktree.py" in git_utils.get_modified_files()
+
+
 def test_get_modified_files_main_falls_back_to_head_prev(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

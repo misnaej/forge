@@ -44,6 +44,7 @@ from forge.audit.common import (
     make_audit_parser,
     relpath,
     resolve_roots,
+    untracked_summary_line,
     write_log,
 )
 from forge.git_utils import configure_cli_logging, repo_root
@@ -396,7 +397,7 @@ def run(scope: Scope, roots: list[Path], config: ClaimsConfig) -> int:
         f"Scanned {n_files} file(s). "
         f"Extracted {len(findings)} candidate claim(s) for verification. "
         f"Lexicon size: {len(config.lexicon)}."
-    )
+    ) + untracked_summary_line(scope)
     write_log("claims", findings, summary, output=config.output, scope=scope)
     return exit_code_for(findings)
 

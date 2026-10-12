@@ -926,6 +926,7 @@ def main() -> int:
             "agents/_TEMPLATE.md. Non-blocking initially; promoted after "
             "Layer 3 trim PRs."
         ),
+        honours_scope=False,
     )
     args = parser.parse_args()
     scope = Scope(args.scope)

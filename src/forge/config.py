@@ -438,6 +438,29 @@ def declared_layout_dirs(
     return _existing_dirs(repo_root, roots)
 
 
+def resolve_test_naming_roots(repo_root: Path) -> list[str]:
+    """Resolve the *test-only* roots the test-naming check scans.
+
+    Mirrors :func:`resolve_tool_roots`'s precedence but for the test tree
+    alone: a ``[tool.forge.test_naming_check].paths`` override wins, else
+    the repo-wide ``[tool.forge].test_dirs``. Test naming scans tests only,
+    so it must not pull in source roots the way
+    ``resolve_tool_roots(include_tests=True)`` would. Shared by the check
+    itself and by pre-commit's untracked-file note, which must name the
+    same files the check would have selected.
+
+    Args:
+        repo_root: Repository root path.
+
+    Returns:
+        Repo-relative test-directory roots.
+    """
+    tool = read_tool_forge_section(repo_root).get("test_naming_check")
+    if isinstance(tool, dict) and isinstance(tool.get("paths"), list):
+        return [str(p) for p in tool["paths"]]
+    return load_config(repo_root).test_dirs
+
+
 def filter_under_roots(files: list[str], roots: list[str]) -> list[str]:
     """Keep only *files* that live under one of *roots* (source-tree scoping).
 
@@ -520,6 +543,10 @@ def select_diff_files(
     ``project_excludes``). ``drop_deleted`` is the one behavior every step
     shares: a path deleted in the diff still appears in
     ``git diff --name-only`` but errors when handed to a tool that opens it.
+
+    The selection is git's diff, so an untracked file is never in it; the
+    pre-commit run lists such files as not checked instead of passing over
+    them in silence.
 
     Args:
         repo_root: Git repo root (threaded through to ``get_modified_files``
@@ -643,6 +670,51 @@ def _warn_untracked_under_roots(repo_root: Path, roots: list[str], suffix: str) 
             suffix,
             ", ".join(roots),
         )
+
+
+def summarize_paths(paths: list[str], *, limit: int = 10) -> str:
+    """Render *paths* as one bounded, printable line of quoted names.
+
+    Shared by every untracked-file note (pre-commit step logs, the run
+    summary, ``--verdict``, the audit logs) so they name files the same
+    way. A file name is untrusted data that lands in logs agents read as
+    evidence, so each is quoted as a code span (its own backticks
+    escaped), capped in length, and stripped of non-printable characters
+    — it can neither start a line of its own nor read as prose.
+
+    Args:
+        paths: Repo-relative paths, in the order to show them.
+        limit: How many names to show before summarising the rest.
+
+    Returns:
+        The backtick-quoted names, comma-separated, ending
+        ``… (+N more)`` past *limit*.
+    """
+    shown = [f"`{_quotable_name(p)}`" for p in paths[:limit]]
+    more = len(paths) - limit
+    tail = f", … (+{more} more)" if more > 0 else ""
+    return ", ".join(shown) + tail
+
+
+_NAME_CAP = 80
+
+
+def _quotable_name(path: str) -> str:
+    r"""Return *path* made safe to quote inside a backtick code span.
+
+    Args:
+        path: One untrusted repo-relative path.
+
+    Returns:
+        The path with non-printables as ``?``, anything past
+        :data:`_NAME_CAP` characters cut to an ellipsis, and backslashes
+        then backticks escaped — backslashes first, so a name ending in
+        ``\\`` cannot escape the closing backtick.
+    """
+    text = "".join(ch if ch.isprintable() else "?" for ch in path)
+    if len(text) > _NAME_CAP:
+        text = text[: _NAME_CAP - 1] + "…"
+    return text.replace("\\", "\\\\").replace("`", "\\`")
 
 
 def installed_console_scripts(name: str) -> set[str] | None:

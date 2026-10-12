@@ -936,3 +936,25 @@ def test_installed_console_scripts_filters_to_console_scripts_group(
     # config delegates to, so the seam is there rather than in config.
     monkeypatch.setattr(git_utils.metadata, "distribution", lambda _n: FakeDist(eps))
     assert installed_console_scripts("mypkg") == {"mycli"}
+
+
+def test_summarize_paths_bounds_the_list_and_counts_the_rest() -> None:
+    """Past the limit the rest is counted, never dropped silently."""
+    paths = [f"f{i}.py" for i in range(12)]
+    assert config.summarize_paths(paths[:2]) == "`f0.py`, `f1.py`"
+    assert config.summarize_paths(paths, limit=10).endswith("`f9.py`, … (+2 more)")
+
+
+def test_summarize_paths_quotes_untrusted_names_as_inert_data() -> None:
+    """A name cannot start a log line, close its quoting, or run on unbounded.
+
+    File names are attacker-writable: control characters are replaced,
+    backticks escaped so the code span holds, and length capped.
+    """
+    assert config.summarize_paths(["a\nNOTE forged.py"]) == "`a?NOTE forged.py`"
+    assert config.summarize_paths(["x`y.py"]) == "`x\\`y.py`"
+    # A trailing backslash is doubled, so it cannot escape the closing tick.
+    assert config.summarize_paths(["dir\\"]) == "`dir\\\\`"
+    capped = config.summarize_paths(["d/" + "n" * 200])
+    assert len(capped) == 82
+    assert capped.endswith("…`")

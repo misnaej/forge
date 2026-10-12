@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
 
 from forge import git_utils
-from forge.audit import common
+from forge.audit import common, dup
 from forge.audit.common import (
     Finding,
     Scope,
@@ -22,7 +23,7 @@ from forge.audit.common import (
     write_log,
 )
 from tests.audit.conftest import write_pyproject
-from tests.conftest import PRODUCED_AT_RE, commit_all
+from tests.conftest import GIT_ENV, PRODUCED_AT_RE, commit_all
 from tests.conftest import init_git_repo as _init_git_repo
 
 
@@ -453,6 +454,84 @@ def test_write_log_records_scope_header_and_count_still_parses(
     assert f"# scope: {scope.value}" in text.splitlines()[:10]
     assert read_finding_count(text) == 1
     assert read_scope(text) == scope.value
+
+
+def test_changed_scope_names_untracked_files_without_auditing_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A changed-files run reads only git's diff and says what it never saw.
+
+    End to end through a real audit: the tracked edit is audited, the
+    untracked module is not yielded, and the log summary names it — while
+    the scope and finding-count readers still parse. A non-``.py`` scratch
+    file is not this audit's concern.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    commit_all(tmp_path, "seed")
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        check=True,
+    )
+    (tmp_path / "src" / "a.py").write_text("x = 2\n", encoding="utf-8")
+    (tmp_path / "src" / "new.py").write_text("y = 1\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("scratch\n", encoding="utf-8")
+    monkeypatch.setattr(common, "repo_root", lambda: tmp_path)
+
+    audited = [relpath(p) for p in iter_files(Scope.CHANGED, [])]
+    dup.run(Scope.CHANGED, [tmp_path / "src"], dup.DupConfig())
+    text = (git_utils.code_health_dir(tmp_path) / "audit_dup.log").read_text(
+        encoding="utf-8"
+    )
+
+    assert audited == ["src/a.py"]
+    [note] = [ln for ln in text.splitlines() if ln.startswith("Untracked")]
+    assert note.startswith("Untracked, not treated as changed: 1 — `src/new.py`.")
+    assert read_scope(text) == "changed"
+    assert read_finding_count(text) == 0
+
+
+def test_untracked_summary_line_keeps_to_the_audits_own_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only files the audit would select are named: its suffix, roots, exclusions.
+
+    A full run walks the disk and sees untracked files, so it says nothing.
+    """
+    _init_git_repo(tmp_path)
+    for rel in ("src/a.py", "src/build/b.py", "scripts/c.py", "src/d.csv"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("", encoding="utf-8")
+    monkeypatch.setattr(common, "repo_root", lambda: tmp_path)
+    src = [(tmp_path / "src").resolve()]
+
+    assert common.untracked_summary_line(Scope.FULL) == ""
+    rooted = common.untracked_summary_line(Scope.CHANGED, roots=src)
+    assert "1 — `src/a.py`." in rooted
+    anywhere = common.untracked_summary_line(Scope.CHANGED)
+    assert "2 — `scripts/c.py`, `src/a.py`." in anywhere
+    data = common.untracked_summary_line(Scope.CHANGED, suffix=(".csv", ".json"))
+    assert "1 — `src/d.csv`." in data
+
+
+def test_untracked_summary_line_outside_git_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Outside a git work tree the query yields nothing, so there is no note."""
+    (tmp_path / "a.py").write_text("", encoding="utf-8")
+    monkeypatch.setattr(common, "repo_root", lambda: tmp_path)
+    assert common.untracked_summary_line(Scope.CHANGED) == ""
+
+
+def test_agents_audit_scope_help_does_not_claim_changed_mode() -> None:
+    """The agents audit reads every agent file at either scope; its help says so."""
+    parser = make_audit_parser("forge-audit-agents", "d", honours_scope=False)
+    text = " ".join(parser.format_help().split())
+    assert "untracked ones included, at either scope" in text
+    assert "never treated as changed" not in text
 
 
 def test_write_log_without_scope_omits_the_header_line(fake_repo: Path) -> None:

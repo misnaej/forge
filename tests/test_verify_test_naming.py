@@ -269,18 +269,20 @@ def test_main_returns_zero_when_target_missing(
 
 
 # ---------------------------------------------------------------------------
-# _test_scan_roots (issue #83 — test-only root resolution for --scope all)
+# resolve_test_naming_roots (test-only root resolution, both scopes)
 # ---------------------------------------------------------------------------
 
 
-def test_test_scan_roots_no_pyproject_detects_tests_dir(tmp_path: Path) -> None:
+def test_resolve_test_naming_roots_no_pyproject_detects_tests_dir(
+    tmp_path: Path,
+) -> None:
     """With no pyproject.toml, auto-detects tests/ from the disk layout."""
     (tmp_path / "tests").mkdir()
-    result = verify_test_naming._test_scan_roots(tmp_path)
+    result = config.resolve_test_naming_roots(tmp_path)
     assert "tests" in result
 
 
-def test_test_scan_roots_per_tool_paths_override_wins(tmp_path: Path) -> None:
+def test_resolve_test_naming_roots_per_tool_paths_override_wins(tmp_path: Path) -> None:
     """[tool.forge.test_naming_check].paths overrides test_dirs and auto-detect."""
     (tmp_path / "integration").mkdir()
     (tmp_path / "tests").mkdir()
@@ -290,18 +292,18 @@ def test_test_scan_roots_per_tool_paths_override_wins(tmp_path: Path) -> None:
         "[tool.forge.test_naming_check]\n"
         'paths = ["integration"]\n'
     )
-    result = verify_test_naming._test_scan_roots(tmp_path)
+    result = config.resolve_test_naming_roots(tmp_path)
     assert result == ["integration"]
 
 
-def test_test_scan_roots_falls_back_to_test_dirs(tmp_path: Path) -> None:
+def test_resolve_test_naming_roots_falls_back_to_test_dirs(tmp_path: Path) -> None:
     """With no per-tool paths key, returns [tool.forge].test_dirs."""
     (tmp_path / "pyproject.toml").write_text('[tool.forge]\ntest_dirs = ["suite"]\n')
-    result = verify_test_naming._test_scan_roots(tmp_path)
+    result = config.resolve_test_naming_roots(tmp_path)
     assert "suite" in result
 
 
-def test_test_scan_roots_non_list_paths_falls_back(tmp_path: Path) -> None:
+def test_resolve_test_naming_roots_non_list_paths_falls_back(tmp_path: Path) -> None:
     """Paths = 'string' (not a list) is rejected; falls back to test_dirs."""
     (tmp_path / "tests").mkdir()
     (tmp_path / "pyproject.toml").write_text(
@@ -310,13 +312,13 @@ def test_test_scan_roots_non_list_paths_falls_back(tmp_path: Path) -> None:
         "[tool.forge.test_naming_check]\n"
         'paths = "string"\n'
     )
-    result = verify_test_naming._test_scan_roots(tmp_path)
+    result = config.resolve_test_naming_roots(tmp_path)
     assert "tests" in result
     assert "string" not in result
 
 
-def test_test_scan_roots_excludes_source_dirs(tmp_path: Path) -> None:
-    """_test_scan_roots returns test_dirs only — never source_dirs.
+def test_resolve_test_naming_roots_excludes_source_dirs(tmp_path: Path) -> None:
+    """resolve_test_naming_roots returns test_dirs only — never source_dirs.
 
     Even when both source_dirs and test_dirs are configured and both
     directories exist on disk, the result must contain the test root
@@ -327,7 +329,7 @@ def test_test_scan_roots_excludes_source_dirs(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n'
     )
-    result = verify_test_naming._test_scan_roots(tmp_path)
+    result = config.resolve_test_naming_roots(tmp_path)
     assert "src" not in result
     assert "tests" in result
 
@@ -341,7 +343,7 @@ def test_test_scan_roots_excludes_source_dirs(tmp_path: Path) -> None:
 # ``forge.verify_test_naming.*`` where they're looked up); ``get_modified_files``
 # is patched at ``forge.config.*`` instead, since ``select_diff_files`` calls it
 # as a module-local name there. A pyproject.toml or on-disk tests/ dir is
-# written to tmp_path so load_config and _test_scan_roots produce controlled
+# written to tmp_path so load_config and resolve_test_naming_roots produce controlled
 # roots and exclude lists. No real git state is required.
 
 
@@ -352,10 +354,10 @@ def test_resolve_test_files_scope_all_delegates_to_tracked_files_under_roots(
     """scope=all delegates file selection to tracked_files_under_roots.
 
     SCENARIO: _resolve_test_files must forward the exact repo_root and the
-        exact roots _test_scan_roots computed to tracked_files_under_roots
+        exact roots resolve_test_naming_roots computed to tracked_files_under_roots
         (the composed root+exclude selector, covered directly in
         test_config.py) and return its result verbatim.
-    MOCK SETUP: tests/ exists on disk so _test_scan_roots resolves to
+    MOCK SETUP: tests/ exists on disk so resolve_test_naming_roots resolves to
         ["tests"]; tracked_files_under_roots is patched to record its
         (repo_root, roots) call args and return a fixed file list.
     EXPECTED BEHAVIOR: _resolve_test_files returns the patched list, and the
