@@ -5654,6 +5654,18 @@ _SNAPSHOT_EXTRA_COMMANDS = [
     "bash " + "-o posix " * 30 + "-c 'git push -f'",
     "ssh " + "-o BatchMode=yes " * 20 + "host 'git push -f'",
     "sh " + "-o posix " * 30 + "<<EOF\ngit push -f\nEOF",
+    # Options after `-c`, redirections among the words, path-qualified ssh.
+    "bash -c -x 'git push -f'",
+    "bash 2>&1 -c 'git push -f'",
+    "bash -c >out 'git push -f'",
+    "bash -c 2> /dev/null 'git push -f'",
+    "ssh h 2>&1 'git push -f'",
+    "/usr/bin/ssh host 'git push -f'",
+    "bash 2>/dev/null <<'EOF'\ngit push -f\nEOF",
+    "bash 2>/dev/null <<<'git push -f'",
+    "bash -c 'echo hi' & echo 'git push -f'",
+    "a &>/dev/null; echo 'git push -f'",
+    "bash -c 'echo hi' >'git push -f'",
 ]
 
 
@@ -5834,6 +5846,121 @@ def test_scanner_stays_fast_on_a_50kb_single_line_command(command: str) -> None:
     elapsed = time.monotonic() - start
 
     assert verdict == 2
+    assert elapsed < 10
+
+
+# One shape per class the scanner once read past: an option after `-c`, a
+# redirection among the options (before and after `-c`), a path-qualified
+# ssh, and a redirection beside a heredoc / here-string fed to a shell.
+# Each runs with a hidden force push and with a harmless payload.
+_SHAPED_WRAPPERS = [
+    pytest.param("bash -c -x {p}", id="option-after-c"),
+    pytest.param("bash 2>&1 -c {p}", id="redirect-before-c"),
+    pytest.param("bash -c >out {p}", id="redirect-after-c"),
+    pytest.param("bash {{fd}}>x -c {p}", id="named-fd-redirect"),
+    pytest.param("bash &>log -c {p}", id="amp-redirect"),
+    pytest.param("bash >|f -c {p}", id="clobber-redirect"),
+    pytest.param("bash -o x>y -c {p}", id="redirect-inside-option"),
+    pytest.param("ssh -o x>y host {p}", id="ssh-redirect-inside-option"),
+    pytest.param("/usr/bin/ssh host {p}", id="path-qualified-ssh"),
+    pytest.param("bash 2>/dev/null <<'EOF'\n{b}\nEOF", id="heredoc-with-redirect"),
+    pytest.param("bash 2>/dev/null <<<{p}", id="here-string-with-redirect"),
+]
+
+
+@pytest.mark.parametrize("shape", _SHAPED_WRAPPERS)
+def test_wrapper_shape_cannot_hide_a_force_push(shape: str) -> None:
+    """SCENARIO: options or redirections sit between a wrapper and its payload.
+
+    Args:
+        shape: Wrapper template; ``{p}`` is the quoted payload, ``{b}`` the
+            heredoc body.
+    """
+    command = shape.format(p="'git push -f'", b="git push -f")
+    assert _run_hook(_FORCE_PUSH, command) == _BLOCK
+
+
+@pytest.mark.parametrize("shape", _SHAPED_WRAPPERS)
+def test_wrapper_shape_with_a_harmless_payload_is_allowed(shape: str) -> None:
+    """The same shapes around ``echo hi`` stay allowed.
+
+    Args:
+        shape: Wrapper template; ``{p}`` is the quoted payload, ``{b}`` the
+            heredoc body.
+    """
+    command = shape.format(p="'echo hi'", b="echo hi")
+    assert _run_hook(_FORCE_PUSH, command) == _ALLOW
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("bash -c 'echo hi' & echo 'git push -f'", id="lone-amp-separates"),
+        pytest.param("a &>/dev/null; echo 'git push -f'", id="amp-redirect-then-semi"),
+        pytest.param("bash -c 'echo hi' # 'git push -f'", id="comment-after-payload"),
+        pytest.param("bash -c 'echo hi' >'git push -f'", id="redirect-target-text"),
+        pytest.param("bash -c 'echo hi' 2>'git push -f'", id="fd-redirect-target"),
+    ],
+)
+def test_wrapper_neighbours_that_are_not_payloads_are_allowed(command: str) -> None:
+    """A separator, a comment or a redirection target is never a payload.
+
+    Args:
+        command: A harmless wrapper beside text naming a force push.
+    """
+    assert _run_hook(_FORCE_PUSH, command) == _ALLOW
+
+
+def test_every_word_after_a_shell_c_payload_is_rescanned() -> None:
+    """Accepted false block: a later argument naming a force push is read too.
+
+    Options may follow ``-c``, so every later word is a payload candidate;
+    a guarded ``$0`` / positional argument costs the user a ``!``.
+    """
+    assert _run_hook(_FORCE_PUSH, "bash -c 'echo hi' _ 'git push -f'") == _BLOCK
+
+
+@pytest.mark.parametrize(
+    ("hook", "command"),
+    [
+        pytest.param(_RAW_GIT, "bash -c -x 'git commit -m x'", id="raw-git"),
+        pytest.param("block_raw_ruff.sh", "bash 2>&1 -c 'ruff check .'", id="raw-ruff"),
+    ],
+)
+def test_wrapper_shapes_reach_every_guard(hook: str, command: str) -> None:
+    """The scanner is shared, so other guards see the unwrapped payload too.
+
+    Args:
+        hook: Guard hook under test.
+        command: A wrapper shape hiding that guard's command.
+    """
+    assert _run_hook(hook, command) == _BLOCK
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(
+            "bash " + "2>/dev/null " * 4500 + "-c 'git push -f'",
+            id="redirect-padded-to-50kb",
+        ),
+        pytest.param(
+            "bash -c " + "-x " * 16500 + "'git push -f'",
+            id="options-after-c-padded-to-50kb",
+        ),
+    ],
+)
+def test_scanner_stays_fast_on_50kb_of_redirections_or_options(command: str) -> None:
+    """Redirection padding and post-``-c`` options are scanned in linear time.
+
+    Args:
+        command: A ~50 KB command ending in a wrapped force push.
+    """
+    start = time.monotonic()
+    verdict = _run_hook(_FORCE_PUSH, command)
+    elapsed = time.monotonic() - start
+
+    assert verdict == _BLOCK
     assert elapsed < 10
 
 
