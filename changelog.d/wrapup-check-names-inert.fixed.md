@@ -1,3 +1,0 @@
-bump: patch
-
-- **A CI check's name can no longer inject markdown into a PR wrap-up or stop it from posting.** The wrap-up's CI Status line printed check names exactly as GitHub reported them, and those names are chosen by whoever wrote the workflow or the integration posting the status, so a name could render as a link, a mention or HTML in the maintainer's public comment, hide the rest of it behind an unclosed comment, or look like an unfilled slot and make `forge-pr-wrapup post` refuse to publish. Each name now appears as inline code with comment markers removed, is shortened to 60 characters, and at most five failing or running checks are named, the rest counted as `+N more`.

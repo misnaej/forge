@@ -20,6 +20,13 @@ change groups by conventional-commit type (**Features / Fixes / Refactor
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v10.1.1 — 2026-10-12
+
+### Fixes
+- **A force push or other guarded command hidden in a `bash -c` or `ssh` payload is now caught even when options or redirections sit around it.** The guards already looked inside commands handed to a shell, but only in the plain layout: an option after `-c` (`bash -c -x '…'`), a redirection among the options (`bash 2>&1 -c '…'`, `bash -c >out '…'`, `ssh host 2>&1 '…'`), a redirection beside a heredoc or here-string fed to a shell, or ssh named by its full path (`/usr/bin/ssh`) let the payload through unchecked. Every guard now reads past these forms. One deliberate side effect: after a `bash -c` payload, later arguments are checked too, so `bash -c '…' _ 'git push -f'` is refused even though bash would not run that last argument — run it yourself with `!` if you mean it.
+- **Raw `ruff check` / `ruff format` from an agent is now refused however it is typed, not only when it starts the command.** The guard used to miss a leading space, a `VAR=value` or `sudo`/`env`/`time` prefix, `if … then` and `{ … }` blocks, a path to the binary (`.venv/bin/ruff`), `python -m ruff`, ruff options before the subcommand (`ruff -q check`, `ruff --config x check`), and runners such as `uv run`, `uvx`, `pixi run`, `poetry run`, `pipenv run`, `conda run` and `pipx run`. All of these now block; help requests, other ruff verbs (`ruff rule`), `fix-forge-ruff` and quoted mentions stay allowed.
+- **A CI check's name can no longer inject markdown into a PR wrap-up or stop it from posting.** The wrap-up's CI Status line printed check names exactly as GitHub reported them, and those names are chosen by whoever wrote the workflow or the integration posting the status, so a name could render as a link, a mention or HTML in the maintainer's public comment, hide the rest of it behind an unclosed comment, or look like an unfilled slot and make `forge-pr-wrapup post` refuse to publish. Each name now appears as inline code with comment markers removed, is shortened to 60 characters, and at most five failing or running checks are named, the rest counted as `+N more`.
+
 ## v10.1.0 — 2026-10-12
 
 ### Features
