@@ -362,6 +362,8 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
             pw = substr(out, pws + 1); sub(/[ \t]+$/, "", pw)
             mpw = unredir(pw); spw = mpw
             sub(/^[ \t]+/, "", spw); sub(/[ \t]+$/, "", spw)
+            # A redirection word (2>&1) leaves spw empty; carry the last real
+            # word so a -c or wrapper name behind it is still seen.
             if (prr && spw == "") spw = lw
             lw = spw; prr = isr
             wt = 0
