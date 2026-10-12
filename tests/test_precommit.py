@@ -26,7 +26,15 @@ from unittest.mock import patch
 
 import pytest
 
-from forge import config, emergency, git_utils, precommit, regen_docs, version_surfaces
+from forge import (
+    config,
+    emergency,
+    git_utils,
+    install_claudemd,
+    precommit,
+    regen_docs,
+    version_surfaces,
+)
 from forge.pip_audit_json import AuditRun
 from forge.run_context import _CI_MARKERS
 from forge.smart_test import lifecycle as _lifecycle
@@ -2799,6 +2807,21 @@ def test_step_foundation_md_check_passes_when_matches_installed(
     result = precommit.step_foundation_md_check(tmp_path)
     assert result.passed
     assert "reproduces the installed" in result.output
+
+
+def test_step_foundation_md_check_passes_on_synced_file_unstubbed(
+    tmp_path: Path,
+) -> None:
+    """A FOUNDATION.md written by `sync_foundation` passes the real step.
+
+    No stubs: the installed foundation is the real packaged one, so this
+    pins that the writer and the checker agree on "in sync" (a version in
+    the banner once made them disagree across installs).
+    """
+    install_claudemd.sync_foundation(tmp_path / "FOUNDATION.md")
+    result = precommit.step_foundation_md_check(tmp_path)
+    assert result.passed, result.output
+    assert not result.skipped
 
 
 def test_step_foundation_md_check_fails_when_divergent(

@@ -3,7 +3,7 @@
 # MOCKING STRATEGY: the foundation-drift and upstream-version checks read
 # forge's installed version and query GitHub; both are stubbed so tests are
 # offline and deterministic.
-#   - _foundation_text / _forge_version: return canned content/versions.
+#   - _foundation_text: returns canned content.
 #   - check_upstream / _upstream_cache_path / is_non_interactive: neutralized;
 #     tests that exercise check_upstream directly inject their own `fetch=`
 #     fake and an isolated cache path (never the network).
@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -30,17 +31,14 @@ def _patch_inputs(
     monkeypatch: pytest.MonkeyPatch,
     *,
     foundation: str = _FAKE_FOUNDATION,
-    version: str = "1.2.3",
 ) -> None:
-    """Stub the FOUNDATION text and forge version readers.
+    """Stub the FOUNDATION text reader.
 
     Args:
         monkeypatch: Pytest fixture.
         foundation: Text to return from ``_foundation_text``.
-        version: Version string to return from ``_forge_version``.
     """
     monkeypatch.setattr(install_claudemd, "_foundation_text", lambda: foundation)
-    monkeypatch.setattr(install_claudemd, "_forge_version", lambda: version)
     # No real upstream queries during tests. Tests that exercise
     # `check_upstream` directly pass their own `fetch=` and isolated
     # cache path; the global stub here guards every other test from
@@ -50,7 +48,7 @@ def _patch_inputs(
 
 
 # ---------------------------------------------------------------------------
-# sync_foundation: writes/updates FOUNDATION.md with markers + version stamp.
+# sync_foundation: writes/updates FOUNDATION.md with markers + version-free banner.
 # ---------------------------------------------------------------------------
 
 
@@ -67,7 +65,8 @@ def test_creates_fresh_foundation(
     assert "<!-- forge:foundation-managed v1 START -->" in text
     assert "<!-- forge:foundation-managed v1 END -->" in text
     assert "Fake foundation content" in text
-    assert "Synced from forge-scripts 1.2.3" in text
+    assert "Synced from" not in text
+    assert not re.search(r"\d+\.\d+\.\d+", text.split("Fake foundation")[0])
 
 
 def test_idempotent_when_in_sync(
@@ -82,23 +81,53 @@ def test_idempotent_when_in_sync(
     assert not changed
 
 
-def test_version_drift_is_not_foundation_drift(
+def test_old_versioned_banner_is_drift_once_then_in_sync(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Version-string change alone is not flagged as drift.
+    """A file with the pre-version-free banner is drift once, then healed.
 
-    A dev install embeds a ``dev<N>+g<hash>`` version that differs every
-    commit, but the FOUNDATION text is identical. ``--check`` must
-    return 'in sync'.
+    The banner no longer names a version, so an old ``Synced from
+    forge-scripts X`` file differs byte-for-byte: ``--check`` reports it,
+    one sync rewrites it, and the next check is clean.
     """
+    _patch_inputs(monkeypatch)
     target = tmp_path / "FOUNDATION.md"
-    _patch_inputs(monkeypatch, version="1.0.1.dev3+gabc1234")
-    install_claudemd.sync_foundation(target)
+    target.write_text(
+        "<!-- forge:foundation-managed v1 START -->\n"
+        "<!-- DO NOT EDIT — managed by forge. Synced from forge-scripts "
+        "1.0.0 by install-forge-claude-md.\n"
+        "     To upgrade: re-run install-forge-claude-md after pulling a "
+        "new forge version. -->\n\n"
+        f"{_FAKE_FOUNDATION.rstrip()}\n\n"
+        "<!-- forge:foundation-managed v1 END -->\n"
+    )
 
-    _patch_inputs(monkeypatch, version="1.0.1.dev9+gdef9876")
-    drift = install_claudemd.sync_foundation(target, check_only=True)
-    assert not drift, "version-only change must not trigger drift"
+    assert install_claudemd.sync_foundation(target, check_only=True) is True
+    assert install_claudemd.sync_foundation(target) is True
+    assert "Synced from" not in target.read_text()
+    assert install_claudemd.sync_foundation(target, check_only=True) is False
+
+
+def test_foundation_render_is_deterministic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two renders are byte-identical whatever forge version is installed.
+
+    The banner takes no version input, so the file cannot churn between
+    checkouts running different forge builds.
+    """
+    _patch_inputs(monkeypatch)
+    first = tmp_path / "a" / "FOUNDATION.md"
+    second = tmp_path / "b" / "FOUNDATION.md"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    with patch("importlib.metadata.version", return_value="1.0.1.dev3+gabc1234"):
+        install_claudemd.sync_foundation(first)
+    with patch("importlib.metadata.version", return_value="9.9.9"):
+        install_claudemd.sync_foundation(second)
+    assert first.read_bytes() == second.read_bytes()
 
 
 def test_detects_drift_on_foundation_change(
@@ -185,7 +214,7 @@ def test_sync_forge_docs_creates_fresh_pages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """sync_forge_docs() writes each mirrored page plus the never-edit README."""
-    _patch_inputs(monkeypatch, version="1.2.3")
+    _patch_inputs(monkeypatch)
     _fake_docs_package(monkeypatch, tmp_path / "pkg")
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -201,7 +230,8 @@ def test_sync_forge_docs_creates_fresh_pages(
     assert f"{install_claudemd.FORGE_DOCS_BLOCK_NAME} v1 START" in readme
     for name in install_claudemd.FORGE_DOCS_PAGES:
         assert name in readme
-    assert "1.2.3" in readme
+    assert "Synced from" not in readme
+    assert not re.search(r"\d+\.\d+\.\d+", readme)
 
 
 def test_sync_forge_docs_idempotent_when_in_sync(
@@ -266,6 +296,35 @@ def test_sync_forge_docs_heals_hand_edit_on_next_sync(
     assert target.read_text() == f"# {healed_name}\n\nFake content.\n"
 
 
+def test_sync_forge_docs_old_versioned_readme_is_drift_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A README with the old versioned banner is drift once, then healed."""
+    _patch_inputs(monkeypatch)
+    _fake_docs_package(monkeypatch, tmp_path / "pkg")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    install_claudemd.sync_forge_docs(repo)
+    readme = repo / install_claudemd.FORGE_DOCS_DIR / install_claudemd.FORGE_DOCS_README
+    current = readme.read_text()
+    old_banner = (
+        "<!-- DO NOT EDIT — managed by forge. Synced from forge-scripts "
+        "1.0.0 by install-forge-claude-md. -->"
+    )
+    new_banner = (
+        "<!-- DO NOT EDIT — managed by forge. Run install-forge-claude-md "
+        "to sync it after upgrading forge. -->"
+    )
+    assert new_banner in current
+    readme.write_text(current.replace(new_banner, old_banner))
+
+    assert install_claudemd.sync_forge_docs(repo, check_only=True) is True
+    assert install_claudemd.sync_forge_docs(repo) is True
+    assert readme.read_text() == current
+    assert install_claudemd.sync_forge_docs(repo, check_only=True) is False
+
+
 def test_sync_forge_docs_partial_package_writes_only_available_pages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -277,7 +336,7 @@ def test_sync_forge_docs_partial_package_writes_only_available_pages(
     ``if name in available`` filter must skip the missing one rather than
     crashing on a ``FileNotFoundError`` from ``src.joinpath(name).read_text()``.
     """
-    _patch_inputs(monkeypatch, version="1.2.3")
+    _patch_inputs(monkeypatch)
     available_pages = install_claudemd.FORGE_DOCS_PAGES[:2]
     missing_page = install_claudemd.FORGE_DOCS_PAGES[2]
     _fake_docs_package(
@@ -319,7 +378,7 @@ def test_forge_docs_is_self_returns_false_on_as_file_os_error(
     # Seed the managed README sentinel so the unmanaged-dir guard doesn't
     # short-circuit the sync before the as_file OSError path is exercised.
     (docs_dir / install_claudemd.FORGE_DOCS_README).write_text(
-        install_claudemd._forge_docs_readme_text("0.0.0")
+        install_claudemd._forge_docs_readme_text()
     )
 
     def _raise_os_error(_ref: object) -> None:
@@ -451,13 +510,31 @@ def test_foundation_matches_installed_in_sync_true(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A version-only difference (dev banner) still counts as matching."""
+    """A file written by sync_foundation matches the installed foundation."""
     target = tmp_path / "FOUNDATION.md"
-    _patch_inputs(monkeypatch, version="1.0.1.dev3+gabc1234")
+    _patch_inputs(monkeypatch)
     install_claudemd.sync_foundation(target)
 
-    _patch_inputs(monkeypatch, version="1.0.1.dev9+gdef9876")
     assert install_claudemd.foundation_matches_installed(target) is True
+
+
+def test_foundation_matches_installed_old_banner_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A file still carrying the old versioned banner no longer matches."""
+    _patch_inputs(monkeypatch)
+    target = tmp_path / "FOUNDATION.md"
+    target.write_text(
+        "<!-- forge:foundation-managed v1 START -->\n"
+        "<!-- DO NOT EDIT — managed by forge. Synced from forge-scripts "
+        "1.0.0 by install-forge-claude-md.\n"
+        "     To upgrade: re-run install-forge-claude-md after pulling a "
+        "new forge version. -->\n\n"
+        f"{_FAKE_FOUNDATION.rstrip()}\n\n"
+        "<!-- forge:foundation-managed v1 END -->\n"
+    )
+    assert install_claudemd.foundation_matches_installed(target) is False
 
 
 def test_foundation_matches_installed_divergent_body_false(

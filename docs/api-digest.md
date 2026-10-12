@@ -770,12 +770,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _install-forge-claude-md — sync the forge foundation into a consumer repo._
 
 - `_foundation_text() -> str` _(internal)_ — Return the bundled FOUNDATION.md text shipped with the pip package.
-- `_forge_version() -> str` _(internal)_ — Return the installed ``forge-scripts`` version, or ``unknown``.
-- `_build_foundation_file(*, foundation: str, version: str) -> str` _(internal)_ — Render the full ``FOUNDATION.md`` content including markers.
+- `_build_foundation_file(*, foundation: str) -> str` _(internal)_ — Render the full ``FOUNDATION.md`` content including markers.
 - `_has_managed_markers(text: str) -> bool` _(internal)_ — Return True if *text* contains a forge-managed START/END pair.
-- `_normalize(text: str) -> str` _(internal)_ — Strip the version-stamped comment for drift comparison.
 - `sync_foundation(foundation_path: Path, *, check_only: bool = False, force: bool = False) -> bool` — Write or update ``FOUNDATION.md`` with the shipped foundation text.
-- `_forge_docs_readme_text(version: str) -> str` _(internal)_ — Render the ``forge-docs/README.md`` never-edit notice.
+- `_forge_docs_readme_text() -> str` _(internal)_ — Render the ``forge-docs/README.md`` never-edit notice.
 - `_forge_docs_is_self(repo_root: Path) -> bool` _(internal)_ — Return whether *repo_root*'s ``forge-docs/`` IS the shipped canonical set.
 - `_forge_docs_is_unmanaged(repo_root: Path) -> bool` _(internal)_ — Return whether an existing ``forge-docs/`` is NOT forge-managed.
 - `sync_forge_docs(repo_root: Path, *, check_only: bool = False, force: bool = False) -> bool` — Mirror the shipped ``forge-docs/`` reference set into the consumer repo.

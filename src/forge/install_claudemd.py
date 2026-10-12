@@ -82,15 +82,6 @@ END_MARKER_RE = re.compile(
     rf"<!-- {re.escape(BLOCK_NAME)} v\d+ END -->",
     re.MULTILINE,
 )
-# The version-stamped comment is informational only — different installs
-# (tagged release vs editable dev build) embed different version strings.
-# Drift detection normalizes it away so the FOUNDATION text is the only
-# thing that triggers a re-sync.
-VERSION_LINE_RE = re.compile(
-    r"<!-- DO NOT EDIT.*? Synced from forge-scripts [^>]*? "
-    r"by install-forge-claude-md\..*?-->\n?",
-    re.DOTALL,
-)
 INCLUDE_DIRECTIVE = "@FOUNDATION.md"
 INCLUDE_DIRECTIVE_RE = re.compile(
     r"^\s*@FOUNDATION\.md\s*$",
@@ -186,35 +177,24 @@ def _foundation_text() -> str:
     return resources.files("forge").joinpath("data/FOUNDATION.md").read_text()
 
 
-def _forge_version() -> str:
-    """Return the installed ``forge-scripts`` version, or ``unknown``.
-
-    Returns:
-        Semver string from ``importlib.metadata``, or ``"unknown"`` when
-        the package isn't pip-installed (rare; tests).
-    """
-    try:
-        return metadata.version("forge-scripts")
-    except metadata.PackageNotFoundError:
-        return "unknown"
-
-
-def _build_foundation_file(*, foundation: str, version: str) -> str:
+def _build_foundation_file(*, foundation: str) -> str:
     """Render the full ``FOUNDATION.md`` content including markers.
+
+    The banner names no forge version: checkouts legitimately run
+    different installed versions, and a version in the file would either
+    go stale (an unchanged body counts as in sync) or churn commits
+    between them. ``forge-doctor`` reports which forge is installed.
 
     Args:
         foundation: Foundation content to embed verbatim.
-        version: Installed forge version string (for traceability).
 
     Returns:
         Full file content, ready to write to ``FOUNDATION.md``.
     """
     return (
         f"<!-- {BLOCK_NAME} v{BLOCK_VERSION} START -->\n"
-        f"<!-- DO NOT EDIT — managed by forge. Synced from forge-scripts "
-        f"{version} by install-forge-claude-md.\n"
-        f"     To upgrade: re-run install-forge-claude-md after pulling a "
-        f"new forge version. -->\n\n"
+        f"<!-- DO NOT EDIT — managed by forge. Run install-forge-claude-md "
+        f"to sync it after upgrading forge. -->\n\n"
         f"{foundation.rstrip()}\n\n"
         f"<!-- {BLOCK_NAME} v{BLOCK_VERSION} END -->\n"
     )
@@ -235,22 +215,6 @@ def _has_managed_markers(text: str) -> bool:
     return bool(start and end and start.start() < end.start())
 
 
-def _normalize(text: str) -> str:
-    """Strip the version-stamped comment for drift comparison.
-
-    Args:
-        text: Raw ``FOUNDATION.md`` content (existing on disk or freshly
-            rendered).
-
-    Returns:
-        *text* with the ``<!-- DO NOT EDIT ... -->`` banner removed. The
-        remaining content (foundation body + START/END markers) is what
-        we actually diff against, so version drift between dev/editable
-        installs and tagged releases doesn't trigger spurious re-syncs.
-    """
-    return VERSION_LINE_RE.sub("", text)
-
-
 def sync_foundation(
     foundation_path: Path,
     *,
@@ -269,10 +233,7 @@ def sync_foundation(
         True if the file changed (or would change in ``check_only`` mode);
         False if already in sync.
     """
-    new_content = _build_foundation_file(
-        foundation=_foundation_text(),
-        version=_forge_version(),
-    )
+    new_content = _build_foundation_file(foundation=_foundation_text())
     if not foundation_path.exists():
         if check_only:
             return True
@@ -289,7 +250,9 @@ def sync_foundation(
         )
         return False
 
-    if _normalize(new_content) == _normalize(existing):
+    # Byte equality: the render is version-free, so a file still carrying
+    # the older versioned banner differs once and the next sync rewrites it.
+    if new_content == existing:
         logger.info("✓ %s already in sync", foundation_path.name)
         return False
 
@@ -315,11 +278,11 @@ FORGE_DOCS_README = "README.md"
 FORGE_DOCS_BLOCK_NAME = "forge:docs-managed"
 
 
-def _forge_docs_readme_text(version: str) -> str:
+def _forge_docs_readme_text() -> str:
     """Render the ``forge-docs/README.md`` never-edit notice.
 
-    Args:
-        version: Installed forge version string (for traceability).
+    Version-free for the same reason as the FOUNDATION banner (see
+    :func:`_build_foundation_file`).
 
     Returns:
         Full README content for the mirrored folder.
@@ -327,8 +290,8 @@ def _forge_docs_readme_text(version: str) -> str:
     pages = "\n".join(f"- `{name}`" for name in FORGE_DOCS_PAGES)
     return (
         f"<!-- {FORGE_DOCS_BLOCK_NAME} v{BLOCK_VERSION} START -->\n"
-        f"<!-- DO NOT EDIT — managed by forge. Synced from forge-scripts "
-        f"{version} by install-forge-claude-md. -->\n\n"
+        f"<!-- DO NOT EDIT — managed by forge. Run install-forge-claude-md "
+        f"to sync it after upgrading forge. -->\n\n"
         "# forge-docs — forge's shipped reference pages\n\n"
         "**Do not edit anything in this folder.** Every file is a verbatim\n"
         "mirror of the forge repository's `forge-docs/` reference set — the\n"
@@ -441,12 +404,12 @@ def sync_forge_docs(
         for name in FORGE_DOCS_PAGES
         if name in available
     }
-    desired[FORGE_DOCS_README] = _forge_docs_readme_text(_forge_version())
+    desired[FORGE_DOCS_README] = _forge_docs_readme_text()
     changed = False
     for name, content in desired.items():
         path = target_dir / name
         existing = path.read_text() if path.exists() else None
-        if existing is not None and _normalize(existing) == _normalize(content):
+        if existing == content:
             continue
         changed = True
         if check_only:
@@ -469,29 +432,25 @@ def foundation_matches_installed(foundation_path: Path) -> bool:
 
     The provenance seam for ``forge-precommit --only foundation_md_check``
     (the ``/pr`` regen-verified light path): ``True`` only when the file
-    exists, carries the managed START/END markers, and its normalized
-    content equals a fresh render from the installed package — the same
-    version-banner-insensitive rule :func:`sync_foundation` uses, so the
-    two can never disagree about what "in sync" means.
+    exists, carries the managed START/END markers, and its content equals
+    a fresh render from the installed package byte for byte — the same
+    rule :func:`sync_foundation` uses, so the two can never disagree about
+    what "in sync" means.
 
     Args:
         foundation_path: Path to the consumer repo's ``FOUNDATION.md``.
 
     Returns:
-        ``True`` when the file byte-reproduces the shipped foundation
-        (modulo the version banner); ``False`` when missing, unmanaged,
-        or divergent.
+        ``True`` when the file byte-reproduces the shipped foundation;
+        ``False`` when missing, unmanaged, divergent, or still carrying the
+        older versioned banner.
     """
     if not foundation_path.exists():
         return False
     existing = foundation_path.read_text()
     if not _has_managed_markers(existing):
         return False
-    new_content = _build_foundation_file(
-        foundation=_foundation_text(),
-        version=_forge_version(),
-    )
-    return _normalize(new_content) == _normalize(existing)
+    return _build_foundation_file(foundation=_foundation_text()) == existing
 
 
 def _claudemd_has_include(text: str) -> bool:
