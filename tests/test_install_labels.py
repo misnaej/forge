@@ -56,6 +56,17 @@ def test_canonical_labels_include_emergency_mode() -> None:
     assert "emergency-mode" in names
 
 
+def test_canonical_labels_include_needs_recheck() -> None:
+    """`needs-recheck` is applied by triage's post-merge overlap sweep.
+
+    A plan-ready issue whose named files a merge changed loses
+    `plan-ready` and gains `needs-recheck`; the label must be in the
+    canonical schema for `install-forge-labels` to create it up front.
+    """
+    names = {label["name"] for label in install_labels.CANONICAL_LABELS}
+    assert "needs-recheck" in names
+
+
 def test_existing_labels_parses_gh_json(monkeypatch: pytest.MonkeyPatch) -> None:
     """_existing_labels returns the set of names from gh label list JSON output."""
     stdout = json.dumps([{"name": "bug"}, {"name": "tier-1-critical"}])

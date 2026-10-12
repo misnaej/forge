@@ -510,6 +510,24 @@ options:
                        prevent.
 ```
 
+## forge-plan-check
+
+```text
+usage: forge-plan-check [-h] {prerequisites,drift,overlap} ...
+
+Mechanical premise and prerequisite checks for a plan (exit 0 clean, 1
+finding, 2 unknown or refused).
+
+positional arguments:
+  {prerequisites,drift,overlap}
+    prerequisites       Have all Requires: entries landed?
+    drift               Merges touching the plan's files since.
+    overlap             Open issues naming a merged PR's files.
+
+options:
+  -h, --help            show this help message and exit
+```
+
 ## forge-post-checkout
 
 ```text

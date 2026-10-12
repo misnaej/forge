@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import logging
 from typing import cast
 
@@ -429,6 +430,13 @@ def test_parse_paged_json_skips_malformed_line(
         items = mod.parse_paged_json(raw)
     assert items == [{"id": 1}, {"id": 2}]
     assert "unparseable" in caplog.text
+
+
+def test_parse_paged_json_strict_raises_on_malformed_line() -> None:
+    """Strict mode fails closed: a partial listing never reads as complete."""
+    raw = f"{page_json({'id': 1})}\nnot json"
+    with pytest.raises(json.JSONDecodeError):
+        mod.parse_paged_json(raw, strict=True)
 
 
 # ---------------------------------------------------------------------------
