@@ -49,6 +49,9 @@ _PYTEST_SUMMARY_RE: Final[re.Pattern[str]] = re.compile(
     r"\d+ (?:passed|failed|errors?)\b[^\n]*? in [\d.]+s"
 )
 _SLOT_RE: Final[re.Pattern[str]] = re.compile(r"<!-- forge:fill (?P<name>.*?) -->")
+_BACKTICK_RUN_RE: Final[re.Pattern[str]] = re.compile(r"`+")
+_NAME_MAX: Final[int] = 60
+_NAMES_SHOWN: Final[int] = 5
 
 
 class ComposeError(ValueError):
@@ -370,20 +373,74 @@ def pytest_summary_line(log_text: str | None) -> str | None:
     return matches[-1] if matches else None
 
 
-def _entry_name(entry: Mapping[str, object]) -> str:
-    """Return a rollup entry's display name.
+def _code_span(text: str) -> str:
+    """Return *text* as one markdown inline code span it cannot close.
 
-    Whitespace runs collapse to one space: the name is GitHub-sourced text
-    joined into the one-line CI Status, so a newline in it must not start
-    a line of its own.
+    The delimiter is one backtick longer than the longest backtick run in
+    *text*, the inline counterpart of
+    :func:`forge.git_utils.wrap_in_code_fence`. CommonMark strips one
+    space from each side of a span's content, so the padding added when
+    *text* starts or ends with a backtick keeps that backtick from fusing
+    with the delimiter.
+
+    Args:
+        text: Non-empty single-line content.
+
+    Returns:
+        *text* wrapped in a backtick delimiter.
+    """
+    longest = max((len(run) for run in _BACKTICK_RUN_RE.findall(text)), default=0)
+    fence = "`" * (longest + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
+def _entry_name(entry: Mapping[str, object]) -> str:
+    """Return a rollup entry's display name as inert inline code.
+
+    The name is chosen by whoever authored the workflow or the
+    status-posting integration, and it lands in a maintainer's public
+    comment, so it is untrusted text: as live markdown it could carry
+    links, mentions or HTML, and an unclosed ``<!--`` would hide the rest
+    of the comment. Comment markers are removed in a loop because removing
+    one can join its neighbours into a new one (``<!<!---->--``); a forged
+    ``<!-- forge:fill … -->`` would otherwise make the posted wrap-up read
+    as unfilled. Whitespace runs collapse to one space so a newline cannot
+    start a line of its own in the one-line CI Status, and the length cap
+    keeps a verbose name from blowing the wrap-up's word budget.
 
     Args:
         entry: One ``statusCheckRollup`` entry.
 
     Returns:
-        The check-run name or status-context name.
+        The check-run name or status-context name, capped at
+        ``_NAME_MAX`` characters and wrapped in an inline code span.
     """
-    return " ".join(str(entry.get("name") or entry.get("context") or "?").split())
+    name = str(entry.get("name") or entry.get("context") or "?")
+    while "<!--" in name or "-->" in name:
+        name = name.replace("<!--", "").replace("-->", "")
+    name = " ".join(name.split()) or "?"
+    if len(name) > _NAME_MAX:
+        name = name[: _NAME_MAX - 1].rstrip() + "…"
+    return _code_span(name)
+
+
+def _name_list(names: Sequence[str]) -> str:
+    """Join display names, listing at most ``_NAMES_SHOWN`` of them.
+
+    A large matrix can fail dozens of checks at once; naming every one
+    would swamp the CI Status line and the wrap-up's word budget.
+
+    Args:
+        names: Display names from :func:`_entry_name`.
+
+    Returns:
+        Comma-joined names, with ``+<m> more`` appended when some were cut.
+    """
+    shown = list(names[:_NAMES_SHOWN])
+    if len(names) > _NAMES_SHOWN:
+        shown.append(f"+{len(names) - _NAMES_SHOWN} more")
+    return ", ".join(shown)
 
 
 def _skipped(entry: Mapping[str, object]) -> bool:
@@ -428,7 +485,9 @@ def summarize_rollup(
             when nothing ran.
 
     Returns:
-        ``no checks reported``, ``❌ failed: …``, ``⏳ running: …``,
+        ``no checks reported``, ``❌ failed: <names>``,
+        ``⏳ running: <names>`` (each name an inline code span; at most
+        five are listed, then ``+<m> more``),
         ``⚪ CI not run — <n> skipped`` (``(draft PR)`` appended for a
         draft), ``✅ passed (<x> of <n> ran, <y> skipped)`` or
         ``✅ passed (<n> checks)`` — a failure outranks a running check,
@@ -443,7 +502,7 @@ def summarize_rollup(
         or str(e.get("state") or "") in _FAILED_STATES
     ]
     if failed:
-        return f"❌ failed: {', '.join(failed)}"
+        return f"❌ failed: {_name_list(failed)}"
     running = [
         _entry_name(e)
         for e in rollup
@@ -451,7 +510,7 @@ def summarize_rollup(
         or str(e.get("state") or "") in _PENDING_STATES
     ]
     if running:
-        return f"⏳ running: {', '.join(running)}"
+        return f"⏳ running: {_name_list(running)}"
     if rollup_not_run(rollup):
         draft = " (draft PR)" if is_draft else ""
         return f"⚪ CI not run — {len(rollup)} skipped{draft}"
