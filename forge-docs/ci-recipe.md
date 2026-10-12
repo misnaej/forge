@@ -374,8 +374,11 @@ the stale-local-tag gap entirely — the remote is always current.
 Add a job to your CI workflow that runs after your tests, on pushes to
 the base branch only. `forge-release --from-changelog` cuts the version
 the CHANGELOG top heading declares; it is idempotent (already tagged →
-exit 0) and race-tolerant (a concurrent manual cut of the same version
-counts as success), so re-runs and races are safe.
+exit 0, including after an assembly that backfilled notes for tagged
+versions) and race-tolerant (a concurrent manual cut of the same version
+counts as success), so re-runs and races are safe. The one deliberate
+failure is stranded work — entries added under a section that already
+existed at the tag — which exits 1 with the repair to run.
 
 ```yaml
   tag-release:
