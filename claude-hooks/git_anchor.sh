@@ -48,9 +48,16 @@
 # script — is refused by block_raw_git.sh as a tripwire, not a
 # boundary), git aliases (`git -c alias.x='!…' x`), wrappers that take
 # a separate argument (`sudo -u root`, `timeout 5`, `xargs`,
-# `find -exec`), and other git verbs that overwrite files or move refs
-# (`read-tree -u`, `checkout-index -f`, `branch -f`) — the guards are
-# tripwires for the routes agents were seen to take, not a sandbox.
+# `find -exec`), other git verbs that overwrite files or move refs
+# (`read-tree -u`, `checkout-index -f`, `branch -f`), a redirection placed
+# BEFORE the wrapper's command name (`2>&1 bash -c '…'`, issue #737),
+# payloads assembled from several arguments or positional parameters
+# (`bash -c 'git "$@"' _ push -f`, `ssh h git push '-f'`, issue #738),
+# and a quoted redirection target containing a blank before a payload
+# (`bash -c > 'a b' '…'`: the --words view keeps the blank, so the target
+# reads as two words there and the payload is not unwrapped in that view) —
+# the guards are tripwires for the routes agents were seen to take, not a
+# sandbox.
 GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|nohup|nice|time|then|do|else|elif|[{!]|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+)*'
 # shellcheck disable=SC2034  # consumed by sourcing hooks
 SEG_ANCHOR='^[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|nohup|nice|time|then|do|else|elif|[{!]|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+)*'
@@ -83,12 +90,26 @@ GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|
 #   `ssh <host> "…"` or `bash <<<"…"` stays visible, re-scanned with its
 #   own quoting, between two `;` marks — so each guard applies its
 #   existing rule to the wrapped command exactly as if it were typed
-#   directly. The payload is the WHOLE shell word after the wrapper —
-#   adjacent quoted and unquoted spans concatenate (`bash -c 'a'"; b"`),
-#   and every later quoted argument of `eval` / `ssh` joins it. A heredoc
-#   fed to a shell (`bash <<EOF`, `ssh host <<EOF`, or a heredoc line that
-#   pipes into one: `cat <<EOF | sh`) is kept as commands for the same
-#   reason;
+#   directly. A payload is a WHOLE shell word — adjacent quoted and
+#   unquoted spans concatenate (`bash -c 'a'"; b"`). Once a shell `-c`
+#   payload is found, EVERY later word of the same simple command is a
+#   payload candidate too, quoted or not, so an option after `-c`
+#   (`bash -c -x '…'`, `-o posix`, `--`) cannot shift the real payload out
+#   of view; a later quoted argument of `eval` / `ssh` is re-scanned the
+#   same way, each one separately (never joined into one string). A
+#   heredoc fed to a shell (`bash <<EOF`, `ssh host <<EOF`, or a heredoc
+#   line that pipes into one: `cat <<EOF | sh`) is kept as commands for
+#   the same reason;
+# - redirections (`2>&1`, `>out`, `<in`, `&>log`, `>|f`, `{fd}>x`, with or
+#   without a blank before the target) are not words of the command:
+#   wrapper detection reads past them, so `bash 2>&1 -c '…'`,
+#   `bash -c >out '…'`, `ssh h 2>&1 '…'` and `bash 2>/dev/null <<<'…'` are
+#   wrappers like their unredirected forms, and a redirection's target is
+#   never taken for a payload. The `&` / `|` inside `>&` `<&` `&>` `&>>`
+#   `>|` is part of the operator, not a separator (`|&` and a lone `&`
+#   still are). `ssh` is recognised by path too (`/usr/bin/ssh`). The
+#   emitted text is unchanged — only detection reads the
+#   redirection-stripped copy;
 # - an escaped separator (`\;`) is a literal, so it is emitted as `_`;
 # - when unsure, the scanner keeps text VISIBLE (a false block costs a
 #   `!`; a bypass costs the guard): `#` starts a comment only at an
@@ -125,6 +146,61 @@ function wtype(t) {
     if (t ~ RE_EVAL) return 2
     if (t ~ RE_SSH) return 3
     return 0
+}
+# A run of n blanks (grown by doubling, so linear in total).
+function blanks(n) { while (length(SP) < n) SP = SP SP; return substr(SP, 1, n) }
+# Same-length copy of t with every redirection blanked — an optional fd
+# number or {name} at a word start, the operator (`<` `>` `>>` `>|` `<>`
+# `>&` `<&` `&>` `&>>`), optional blanks, then the target (empty when t
+# ends there). `<<`, `<<-`, `<<<` and the emitted `<<_` are left alone:
+# they are heredoc / here-string openers, which the wrapper regexes read.
+# Same length, so offsets into t stay valid for the chain-base move.
+function unredir(t,   n, k, a, r, c, d, f, j, e) {
+    n = length(t); a = 1; r = ""; k = 1
+    while (k <= n) {
+        c = substr(t, k, 1)
+        if (c == "<" && substr(t, k + 1, 1) == "<") { while (substr(t, k, 1) == "<") k++; continue }
+        if (!(c == "<" || c == ">" || (c == "&" && substr(t, k + 1, 1) == ">"))) { k++; continue }
+        f = k; j = k - 1
+        while (j >= a && substr(t, j, 1) ~ /[0-9]/) j--
+        if (j < k - 1 && (j < 1 || index(" \t", substr(t, j, 1)))) f = j + 1
+        else if (substr(t, k - 1, 1) == "}") {
+            j = k - 2
+            while (j >= a && substr(t, j, 1) ~ /[A-Za-z0-9_]/) j--
+            if (j >= a && j < k - 2 && substr(t, j, 1) == "{" && (j == 1 || index(" \t", substr(t, j - 1, 1)))) f = j
+        }
+        d = substr(t, k + 1, 1); e = k + 1
+        if (c == "&") e = (substr(t, k + 2, 1) == ">") ? k + 3 : k + 2
+        else if (d != "" && index((c == ">") ? ">|&" : ">&", d)) e = k + 2
+        while (e <= n && index(" \t", substr(t, e, 1))) e++
+        while (e <= n && !index(" \t\n;&|()<>", substr(t, e, 1))) e++
+        r = r substr(t, a, f - a) blanks(e - f); a = e; k = e
+    }
+    return r substr(t, a)
+}
+# The `&` or `|` at i belongs to a redirection operator (`>&` `<&` `&>`
+# `&>>` `>|`), so it does not end the command; `|&` and a lone `&` do.
+function redir_amp(s, i, c, pc) {
+    if (c == "&" && substr(s, i + 1, 1) == ">") return 1
+    if ((c == "&" && (pc == ">" || pc == "<")) || (c == "|" && pc == ">")) return substr(s, i - 2, 1) != "\\"
+    return 0
+}
+# The word at i is part of a redirection, not an argument: it starts with
+# an fd-numbered operator (`2>x`, `{fd}>x`) or is the target of the
+# operator before it (`> x`, `<x`, `>& 2`) — a `<<<` here-string operand
+# is not, it is the payload of `bash <<<`.
+function redir_word(s, i,   k, ch) {
+    if (substr(s, i, 40) ~ /^([0-9]+|[{][A-Za-z_][A-Za-z0-9_]*[}])(>|<[^<]|<$)/) return 1
+    k = i - 1
+    while (k >= 1 && index(" \t", substr(s, k, 1))) k--
+    if (k < 1) return 0
+    ch = substr(s, k, 1)
+    if (ch == "&" || ch == "|") {
+        k--
+        if (!(substr(s, k, 1) == ">" || (ch == "&" && substr(s, k, 1) == "<"))) return 0
+    } else if (ch != "<" && ch != ">") return 0
+    if (substr(s, k - 1, 1) == "\\") return 0
+    return substr(s, k - 2, 3) != "<<<"
 }
 function rescan(t,   r) {
     if (PD >= 4) return ";" t ";"
@@ -226,8 +302,9 @@ function comment_end(s, i,   j) {
 # this). Sets HW (delimiter, quotes removed; "" when there is none), HQ
 # (delimiter was quoted: body is literal), HD (`<<-`: leading tabs
 # stripped), HX (the body is fed to a shell — `bash <<EOF`, read from
-# *before*, the current wrapper chain the scanner emitted, or `<<EOF | sh`, read
-# from the rest of the line) and HPOS (position after the delimiter).
+# *before*, the current wrapper chain the scanner emitted with its
+# redirections blanked, or `<<EOF | sh`, read from the rest of the line)
+# and HPOS (position after the delimiter).
 # Two heredoc-to-shell patterns, two regexes: RE_FEED and RE_PIPESH.
 function heredoc_open(s, i, before,   n, k, ch, j, rl) {
     n = length(s); k = i + 2; HD = 0
@@ -253,36 +330,60 @@ function heredoc_open(s, i, before,   n, k, ch, j, rl) {
 # any word once `ssh` has been seen (only a quoted word can then be the
 # payload) — so the full regex runs only when that word fits. It reads from
 # cb, the chain base: past the last character no wrapper regex can span
-# (a separator, `<`, `>`, `(`, `)`), which is also why a match can never
-# start before it — except the `<<<` here-string, which is why the base
-# moves only after the previous word has been checked. pws marks where the previous word began; hsh / hssh
+# (a separator, `(`, `)`, or the `<` of a heredoc / here-string opener),
+# which is also why a match can never start before it — except the `<<<`
+# here-string, which is why the base moves only after the previous word
+# has been checked. pws marks where the previous word began; hsh / hssh
 # record a shell name / `ssh` in the current chain.
-function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, pc, bd, pa, wt, qs, cb, pws, pw, hsh, hssh) {
+#
+# Redirections are read past, never through: the previous word and the
+# chain are checked on unredir() copies (same length, so cb / pws offsets
+# hold), a word that is itself a redirection or its target (redir_word)
+# is skipped — rt marks one in progress and moves pws past it when it
+# ends, and lw / prr let the next word see the last real word behind it,
+# in constant work per word, so padding with redirections stays linear.
+# psh marks that a shell `-c` payload was found: every later word of the
+# simple command is then re-scanned as a payload too (options may follow
+# `-c`), until a separator clears it with pa.
+function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, pc, bd, pa, wt, qs, cb, pws, pw, hsh, hssh, psh, isr, rt, prr, lw, mpw, spw) {
     n = length(s); out = ""; depth = 0; dollar = 0; nh = 0; bd = 0; pa = 0
-    cb = 0; pws = 0; hsh = 0; hssh = 0
+    cb = 0; pws = 0; hsh = 0; hssh = 0; psh = 0; rt = 0; prr = 0; lw = ""
     while (i <= n) {
         c = substr(s, i, 1)
         pc = (i == 1) ? "\n" : substr(s, i - 1, 1)
-        if (index(";&|\n()", c)) { pa = 0; cb = length(out); pws = cb + 1; hsh = 0; hssh = 0 }
+        if (rt && index(" \t<>", c)) { pws = length(out); rt = 0 }
+        if (index(";&|\n()", c) && !redir_amp(s, i, c, pc)) {
+            pa = 0; psh = 0; rt = 0; prr = 0; lw = ""
+            cb = length(out); pws = cb + 1; hsh = 0; hssh = 0
+        }
         if (!index(" \t\n;&|()<>", c) && index(" \t<", pc)) {
             qs = (c == "\047" || c == "\"" || (c == "$" && index("\047\"", substr(s, i + 1, 1))))
+            isr = redir_word(s, i)
             pw = substr(out, pws + 1); sub(/[ \t]+$/, "", pw)
+            mpw = unredir(pw); spw = mpw
+            sub(/^[ \t]+/, "", spw); sub(/[ \t]+$/, "", spw)
+            if (prr && spw == "") spw = lw
+            lw = spw; prr = isr
             wt = 0
-            if ((hsh && pw ~ /^-[A-Za-z]*c[A-Za-z]*$/) || pw ~ /<<<$/ || pw ~ RE_EVALW || (qs && hssh))
-                wt = wtype(substr(out, cb + 1))
+            if (!isr && ((hsh && spw ~ /^-[A-Za-z]*c[A-Za-z]*$/) || spw ~ /<<<$/ || spw ~ RE_EVALW || (qs && hssh)))
+                wt = wtype(unredir(substr(out, cb + 1)))
             # Order matters: the base moves past pw only after the check
             # above, or a `bash <<<` chain would be cut before it is read.
-            if (match(pw, /[\n;&|()<>][^\n;&|()<>]*$/)) { cb = pws + RSTART; hsh = 0; hssh = 0 }
-            if (pw ~ RE_HEADW) hsh = 1
-            if (pw ~ RE_SSHW) hssh = 1
-            pws = length(out)
-            if (wt == 0 && pa && qs) wt = 2
+            if (match(mpw, /[\n;&|()<>][^\n;&|()<>]*$/)) { cb = pws + RSTART; hsh = 0; hssh = 0 }
+            if (spw ~ RE_HEADW) hsh = 1
+            if (spw ~ RE_SSHW) hssh = 1
+            pws = length(out); rt = isr
+            if (!isr && wt == 0) {
+                if (psh && !(c == "#" && is_comment(s, i, pc, bd, mode))) wt = 1
+                else if (pa && qs) wt = 2
+            }
             if (wt == 1 || (wt && qs)) {
                 w = pword(s, i); out = out rescan(w); i = WPOS
-                cb = length(out); pws = cb; hsh = 0; hssh = 0
+                cb = length(out); pws = cb; hsh = 0; hssh = 0; lw = ""; prr = 0
+                if (wt == 1) psh = 1
                 pa = (wt >= 2); dollar = 0; continue
             }
-            if (wt == 2) { out = out ";"; cb = length(out); pws = cb; hsh = 0; hssh = 0 }
+            if (wt == 2) { out = out ";"; cb = length(out); pws = cb; hsh = 0; hssh = 0; lw = ""; prr = 0 }
         }
         if (c == "\\") {
             d = substr(s, i + 1, 1)
@@ -354,7 +455,7 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
         if (c == "#" && is_comment(s, i, pc, bd, mode)) { i = comment_end(s, i); continue }
         if (c == "<" && substr(s, i, 3) == "<<<") { out = out "<<<"; i += 3; dollar = 0; continue }
         if (c == "<" && substr(s, i + 1, 1) == "<") {
-            heredoc_open(s, i, substr(out, cb + 1))
+            heredoc_open(s, i, unredir(substr(out, cb + 1)))
             if (HW != "") { nh++; hdl[nh] = HW; hq[nh] = HQ; ht[nh] = HD; hx[nh] = HX }
             out = out "<<_"; i = HPOS; dollar = 0; continue
         }
@@ -382,18 +483,19 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
     return out
 }
 BEGIN {
-    PD = 0
+    PD = 0; SP = " "
     B = "(^|[ \t\n;&|()!{}])"
     SHELLS = "([^ \t\n;&|()<>]*/)?(bash|sh|zsh|dash|ksh)"
+    SSHH = "([^ \t\n;&|()<>]*/)?ssh"
     ARG = "[ \t]+[^ \t\n;&|()<>]+"
     RE_SHELLC = B SHELLS "(" ARG ")*[ \t]+-[A-Za-z]*c[A-Za-z]*[ \t]+$"
     RE_EVAL = B "eval[ \t]+$"
-    RE_SSH = B "ssh(" ARG ")+[ \t]+$"
+    RE_SSH = B SSHH "(" ARG ")+[ \t]+$"
     RE_HSTR = B SHELLS "(" ARG ")*[ \t]*<<<[ \t]*$"
-    RE_FEED = B "(" SHELLS "|ssh)(" ARG ")*[ \t]*$"
-    RE_PIPESH = "[|][ \t]*([^ \t\n;&|()<>]+[ \t]+)*(" SHELLS "|ssh)([ \t;&|)]|$)"
+    RE_FEED = B "(" SHELLS "|" SSHH ")(" ARG ")*[ \t]*$"
+    RE_PIPESH = "[|][ \t]*([^ \t\n;&|()<>]+[ \t]+)*(" SHELLS "|" SSHH ")([ \t;&|)]|$)"
     RE_HEADW = B SHELLS "$"
-    RE_SSHW = B "ssh$"
+    RE_SSHW = B SSHH "$"
     RE_EVALW = B "eval$"
 }
 { src = (NR == 1) ? $0 : src "\n" $0 }

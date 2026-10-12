@@ -518,5 +518,49 @@
  "sh -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix <<EOF\ngit push -f\nEOF": {
   "positions": "sh -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix <<_\ngit push -f\n",
   "words": "sh -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix <<_\ngit push -f\n"
+ },
+ "bash -c -x 'git push -f'": {
+  "positions": "bash -c ;-x; ;git push -f;\n",
+  "words": "bash -c ;-x; ;git push -f;\n"
+ },
+ "bash 2>&1 -c 'git push -f'": {
+  "positions": "bash 2>&1 -c ;git push -f;\n",
+  "words": "bash 2>&1 -c ;git push -f;\n"
+ },
+ "bash -c >out 'git push -f'": {
+  "positions": "bash -c >out ;git push -f;\n",
+  "words": "bash -c >out ;git push -f;\n"
+ },
+ "bash -c 2> /dev/null 'git push -f'": {
+  "positions": "bash -c 2> /dev/null ;git push -f;\n",
+  "words": "bash -c 2> /dev/null ;git push -f;\n"
+ },
+ "ssh h 2>&1 'git push -f'": {
+  "positions": "ssh h 2>&1 ;git push -f;\n",
+  "words": "ssh h 2>&1 ;git push -f;\n"
+ },
+ "/usr/bin/ssh host 'git push -f'": {
+  "positions": "/usr/bin/ssh host ;git push -f;\n",
+  "words": "/usr/bin/ssh host ;git push -f;\n"
+ },
+ "bash 2>/dev/null <<'EOF'\ngit push -f\nEOF": {
+  "positions": "bash 2>/dev/null <<_\ngit push -f\n",
+  "words": "bash 2>/dev/null <<_\ngit push -f\n"
+ },
+ "bash 2>/dev/null <<<'git push -f'": {
+  "positions": "bash 2>/dev/null <<<;git push -f;\n",
+  "words": "bash 2>/dev/null <<<;git push -f;\n"
+ },
+ "bash -c 'echo hi' & echo 'git push -f'": {
+  "positions": "bash -c ;echo hi; & echo _\n",
+  "words": "bash -c ;echo hi; & echo git push -f\n"
+ },
+ "a &>/dev/null; echo 'git push -f'": {
+  "positions": "a &>/dev/null; echo _\n",
+  "words": "a &>/dev/null; echo git push -f\n"
+ },
+ "bash -c 'echo hi' >'git push -f'": {
+  "positions": "bash -c ;echo hi; >_\n",
+  "words": "bash -c ;echo hi; >git push -f\n"
  }
 }
