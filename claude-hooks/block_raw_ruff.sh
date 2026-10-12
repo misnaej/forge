@@ -23,13 +23,13 @@ source "$ANCHOR_LIB"
 # shared command-positions view (git_anchor.sh): quoted bodies (PR
 # descriptions, commit messages mentioning "ruff") are blanked there and
 # never fire, while `bash -c "ruff check ..."` stays visible and does.
-# RUFF_ANCHOR is the shared separator + command-prefix run (leading
-# whitespace, `VAR=val`, `sudo`/`env`/`command`/`time`/`nohup`/`nice`,
-# `then`/`do`/`{`/`!`), then an optional `python[N] -m`, an optional path
-# to ruff (`/usr/bin/ruff`, `.venv/bin/ruff`), and a bounded run of ruff's
-# global options before the subcommand (`-q`, `--isolated`,
-# `--config <file>`). No trailing word boundary, so it matches everything
-# the start-anchored pattern it replaced matched. fix-forge-ruff and
+# RUFF_ANCHOR is the shared separator + command-prefix run from
+# git_anchor.sh (leading whitespace and words such as `VAR=val`, `sudo`,
+# `env`, `time`, `then`, `{`, `!`), then an optional `python[N] -m`, an
+# optional path to ruff (`/usr/bin/ruff`, `.venv/bin/ruff`), and a bounded
+# run of ruff's global options before the subcommand (`-q`, `--isolated`,
+# `--config <file>`). It has no trailing word boundary, so `ruff checks`
+# is caught too. fix-forge-ruff and
 # similar one-token wrappers don't match: their `ruff` follows neither a
 # separator, a prefix word nor a `/`.
 #
