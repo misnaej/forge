@@ -2972,6 +2972,70 @@ def test_continuation_delete_allows_named_sibling_beside_readonly_plan_mention()
     assert _run_hook(_CONTINUATION_DELETE, "rm -f .plan/note.md && ls -A .plan/") == 0
 
 
+# --- block_raw_ruff.sh: one row per bypass class of the old anchor -----------
+
+_RAW_RUFF = "block_raw_ruff.sh"
+
+
+_RAW_RUFF_BLOCKED = [
+    pytest.param(" ruff check .", id="leading_space"),
+    pytest.param("RUFF_CACHE_DIR=/tmp/x ruff check .", id="env_assignment"),
+    pytest.param("sudo ruff format src", id="command_prefix"),
+    pytest.param("if true; then ruff check .; fi", id="shell_grouping"),
+    pytest.param(".venv/bin/ruff check .", id="path_qualified"),
+    pytest.param("python3 -m ruff check .", id="python_m"),
+    pytest.param("ruff --config ruff.toml check .", id="global_option"),
+    pytest.param("uv run ruff check .", id="runner"),
+]
+
+
+_RAW_RUFF_ALLOWED = [
+    pytest.param("ruff check --help", id="help"),
+    pytest.param("python -m ruff check --help", id="python_m_help"),
+    pytest.param("echo ruff check", id="echo_mention"),
+    pytest.param("fix-forge-ruff check", id="fix_forge_ruff"),
+    pytest.param("dir/fix-forge-ruff check", id="fix_forge_ruff_path"),
+    pytest.param('git commit -m "x; ruff check ."', id="commit_message"),
+    pytest.param("forge-precommit --only ruff", id="forge_precommit_only"),
+    pytest.param("ruff rule E501", id="ruff_rule"),
+]
+
+
+@pytest.mark.parametrize("command", _RAW_RUFF_BLOCKED)
+def test_raw_ruff_blocks(command: str) -> None:
+    """Each shape the old start-anchored pattern let through now blocks.
+
+    Args:
+        command: Bash command fed to the hook.
+    """
+    assert _run_hook(_RAW_RUFF, command) == 2
+
+
+@pytest.mark.parametrize("command", _RAW_RUFF_ALLOWED)
+def test_raw_ruff_allows(command: str) -> None:
+    """Help requests, mentions, wrappers and other ruff verbs pass.
+
+    Args:
+        command: Bash command fed to the hook.
+    """
+    assert _run_hook(_RAW_RUFF, command) == 0
+
+
+def test_raw_ruff_prefix_derived_from_shared_anchor() -> None:
+    """The prefix cut from the shared anchor still matches a leading-space ruff.
+
+    The hook takes its command-prefix run from the shared lib by cutting
+    the anchor at its command name, and refuses every command when that
+    cut fails. A lib shape change would therefore block this command
+    through the fail-closed branch, not the real rule — so the test pins
+    both the block and the reason.
+    """
+    proc = _run_hook_proc(_RAW_RUFF, " ruff check .")
+    assert proc.returncode == 2
+    assert "could not derive" not in proc.stderr
+    assert "raw 'ruff' from Bash is forbidden" in proc.stderr
+
+
 _UNVERIFIED_PR_CREATE = "block_unverified_pr_create.sh"
 
 

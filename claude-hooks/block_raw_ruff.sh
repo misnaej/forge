@@ -19,16 +19,62 @@ if [ ! -r "$ANCHOR_LIB" ]; then
 fi
 source "$ANCHOR_LIB"
 
-# Anchor: ruff at start-of-string or after a shell separator (incl. the
-# `(` of a subshell or command substitution), matched on the shared
-# command-positions view (git_anchor.sh): quoted bodies (PR descriptions,
-# commit messages mentioning "ruff") are blanked there and never fire,
-# while `bash -c "ruff check ..."` stays visible and does. fix-forge-ruff*
-# and similar one-token wrappers don't match because ruff sits mid-string
-# in those. A help request (`ruff check --help`) runs no check.
+# Anchor: a real `ruff check` / `ruff format` invocation, matched on the
+# shared command-positions view (git_anchor.sh): quoted bodies (PR
+# descriptions, commit messages mentioning "ruff") are blanked there and
+# never fire, while `bash -c "ruff check ..."` stays visible and does.
+# RUFF_ANCHOR is the shared separator + command-prefix run (leading
+# whitespace, `VAR=val`, `sudo`/`env`/`command`/`time`/`nohup`/`nice`,
+# `then`/`do`/`{`/`!`), then an optional `python[N] -m`, an optional path
+# to ruff (`/usr/bin/ruff`, `.venv/bin/ruff`), and a bounded run of ruff's
+# global options before the subcommand (`-q`, `--isolated`,
+# `--config <file>`). No trailing word boundary, so it matches everything
+# the start-anchored pattern it replaced matched. fix-forge-ruff and
+# similar one-token wrappers don't match: their `ruff` follows neither a
+# separator, a prefix word nor a `/`.
+#
+# The runner rule covers `<runner> run … ruff check` (uv, pixi, poetry,
+# pipenv, conda, pipx; plus `uvx ruff check`): anything up to the next
+# separator may sit between the runner and ruff — the shape
+# block_install_deps.sh uses for `<mgr> run … pip install`.
+#
+# A help request (`ruff check --help`) runs no check and stays allowed.
+#
+# Accepted residuals (documented, deliberately out of scope — a tripwire
+# for the routes agents take, not a sandbox):
+# - a redirection word before the command (`2>&1 ruff check`), the family
+#   residual tracked in issue #737;
+# - `xargs ruff check` and `find … -exec ruff check`;
+# - ruff run from an interpreter subprocess or a script file;
+# - variable indirection and `${IFS}` splicing (`$R check`);
+# - ruff verbs other than check/format (`ruff rule`, `ruff clean`, …);
+# - the shared help exemption reads any `-h` token on the invocation, so a
+#   wrapper flag spelled `-h` (`nice -h ruff check`) counts as a help
+#   request and is allowed.
 CMDPOS=$(command_positions "$COMMAND")
-RUFF_RE='(^|[;&|(]\s*)ruff\s+(check|format)'
-if echo "$CMDPOS" | grep -qE "$RUFF_RE" && ! guard_help_only "$CMDPOS" "$RUFF_RE"; then
+# The prefix is taken from the shared anchor, not copied: a copy drifts
+# the moment the lib learns a new wrapper word, and this hook would
+# silently miss it. If the lib's shape changes so the cut no longer
+# applies, refuse everything rather than guard with a broken anchor.
+RUFF_PREFIX="${GIT_ANCHOR%%git\[\[:space:\]\]+*}"
+case "$RUFF_PREFIX" in
+    "$GIT_ANCHOR" | "" | *git*) RUFF_PREFIX_OK=0 ;;
+    '(^|[;&|(])[[:space:]]*'*) RUFF_PREFIX_OK=1 ;;
+    *) RUFF_PREFIX_OK=0 ;;
+esac
+if [ "$RUFF_PREFIX_OK" != 1 ]; then
+    echo "BLOCKED: could not derive the command prefix from GIT_ANCHOR in $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+RUFF_VERB='ruff[[:space:]]+((--config)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+)*(check|format)'
+RUFF_ANCHOR="${RUFF_PREFIX}(([^[:space:];&|()]*/)?python[0-9.]*[[:space:]]+-m[[:space:]]+)?([^[:space:];&|()]*/)?${RUFF_VERB}"
+RUFF_RUNNER="${RUFF_PREFIX}(uvx|pipx[[:space:]]+run|(uv|pixi|poetry|pipenv|conda)[[:space:]]+run)[[:space:]]([^;&|]*[[:space:]/])?${RUFF_VERB}"
+# invoked <regex> — a real invocation matching <regex> that is not only a
+# help request.
+invoked() {
+    echo "$CMDPOS" | grep -qE "$1" && ! guard_help_only "$CMDPOS" "$1"
+}
+if invoked "$RUFF_ANCHOR" || invoked "$RUFF_RUNNER"; then
     echo "BLOCKED: raw 'ruff' from Bash is forbidden (FOUNDATION §2). Use forge-precommit — it verifies and self-heals (ruff format + ruff check --fix --unsafe-fixes on failure). Agents delegate to the forge:precommit-fixer agent." >&2
     exit 2
 fi
