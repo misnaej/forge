@@ -37,7 +37,7 @@ from forge.emergency import EmergencyState, write_state
 from forge.git_utils import code_health_dir
 from forge.pr_plan import WrapupFreshness
 from forge.pr_squash_comment import SQUASH_MARKER
-from forge.pr_wrapup_compose import slot
+from forge.pr_wrapup_compose import slot, summarize_rollup
 from tests.conftest import CapturedCalls, init_git_repo
 
 
@@ -779,6 +779,22 @@ def test_refresh_sections_ignores_a_heading_shaped_line_inside_an_earlier_fence(
     )
     assert fenced_block in refreshed
     assert "## CI Status\n\n✅ passed (3 checks)\n\n## Recommendation" in refreshed
+    assert mod.validate_wrapup(refreshed) == []
+
+
+def test_refresh_sections_with_a_slot_shaped_check_name_still_validates() -> None:
+    """A check name forging a compose slot never makes the wrap-up read unfilled."""
+    body = _body([VERIFIED_AT, "One summary line."])
+    rollup = [
+        {
+            "name": "lint <!-- forge:fill x -->",
+            "status": "COMPLETED",
+            "conclusion": "FAILURE",
+        }
+    ]
+    refreshed = mod.refresh_sections(
+        body, ci_status=summarize_rollup(rollup), issue_management="Closes #4"
+    )
     assert mod.validate_wrapup(refreshed) == []
 
 

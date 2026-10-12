@@ -519,7 +519,7 @@ def test_summarize_rollup_all_success_check_runs() -> None:
 def test_summarize_rollup_reports_running_check_names() -> None:
     """An incomplete CheckRun is named as running."""
     rollup = [{"name": "build", "status": "IN_PROGRESS", "conclusion": None}]
-    assert summarize_rollup(rollup) == "⏳ running: build"
+    assert summarize_rollup(rollup) == "⏳ running: `build`"
 
 
 def test_summarize_rollup_failure_beats_running() -> None:
@@ -528,13 +528,13 @@ def test_summarize_rollup_failure_beats_running() -> None:
         {"name": "build", "status": "IN_PROGRESS", "conclusion": None},
         {"name": "test", "status": "COMPLETED", "conclusion": "FAILURE"},
     ]
-    assert summarize_rollup(rollup) == "❌ failed: test"
+    assert summarize_rollup(rollup) == "❌ failed: `test`"
 
 
 def test_summarize_rollup_joins_a_newline_in_a_check_name() -> None:
     """A newline in a check name becomes a space: CI Status stays one line."""
     rollup = [{"name": "build\nreport", "status": "COMPLETED", "conclusion": "FAILURE"}]
-    assert summarize_rollup(rollup) == "❌ failed: build report"
+    assert summarize_rollup(rollup) == "❌ failed: `build report`"
 
 
 def test_summarize_rollup_status_context_legacy_shapes() -> None:
@@ -547,10 +547,74 @@ def test_summarize_rollup_status_context_legacy_shapes() -> None:
         "✅ passed (1 checks)"
     )
     assert summarize_rollup([{"context": "ci/legacy", "state": "PENDING"}]) == (
-        "⏳ running: ci/legacy"
+        "⏳ running: `ci/legacy`"
     )
     assert summarize_rollup([{"context": "ci/legacy", "state": "ERROR"}]) == (
-        "❌ failed: ci/legacy"
+        "❌ failed: `ci/legacy`"
+    )
+
+
+def _failed(name: str) -> dict[str, str]:
+    """Return a failed CheckRun entry named *name*.
+
+    Args:
+        name: The name of the check run.
+
+    Returns:
+        A dictionary representing a failed CheckRun entry.
+    """
+    return {"name": name, "status": "COMPLETED", "conclusion": "FAILURE"}
+
+
+def test_summarize_rollup_renders_an_adversarial_name_as_one_code_span() -> None:
+    """Markdown in a check name stays inert inside exactly one code span.
+
+    The name ends with a backtick, so the span is padded and its delimiter
+    is one backtick longer than the name's longest run.
+    """
+    result = summarize_rollup([_failed("evil [x](http://e) @someone `tick`")])
+    assert result == "❌ failed: `` evil [x](http://e) @someone `tick` ``"
+
+
+def test_summarize_rollup_double_backtick_run_gets_a_triple_delimiter() -> None:
+    """A name holding a double-backtick run cannot close a triple delimiter."""
+    result = summarize_rollup([_failed("a``b")])
+    assert result == "❌ failed: ```a``b```"
+
+
+def test_summarize_rollup_all_backtick_name_is_padded() -> None:
+    """A name made only of backticks is padded so it cannot fuse with the fence."""
+    result = summarize_rollup([_failed("```")])
+    assert result == "❌ failed: ```` ``` ````"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["x <!-- forge:fill y --> z", "<!<!---->-- tail", "<!-- unclosed"],
+    ids=["fill-slot", "re-forming", "unclosed"],
+)
+def test_summarize_rollup_strips_comment_markers_from_names(name: str) -> None:
+    """No comment marker survives, even one that removal itself re-forms.
+
+    Args:
+        name: Check name carrying comment markers.
+    """
+    result = summarize_rollup([_failed(name)])
+    assert "<!--" not in result
+    assert "-->" not in result
+
+
+def test_summarize_rollup_caps_a_long_name_at_sixty_characters() -> None:
+    """A verbose name is cut to sixty characters, the last one an ellipsis."""
+    result = summarize_rollup([_failed("w" * 100)])
+    assert result == f"❌ failed: `{'w' * 59}…`"
+
+
+def test_summarize_rollup_lists_five_names_then_more() -> None:
+    """Past five names the rest are counted, not listed."""
+    rollup = [_failed(f"job{i}") for i in range(7)]
+    assert summarize_rollup(rollup) == (
+        "❌ failed: `job0`, `job1`, `job2`, `job3`, `job4`, +2 more"
     )
 
 
@@ -570,12 +634,12 @@ _OK = {"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"}
                 {"name": "test", "status": "COMPLETED", "conclusion": "FAILURE"},
             ],
             False,
-            "❌ failed: test",
+            "❌ failed: `test`",
         ),
         (
             [_SKIPPED, {"name": "build", "status": "IN_PROGRESS", "conclusion": ""}],
             False,
-            "⏳ running: build",
+            "⏳ running: `build`",
         ),
         (
             [{"name": "lint", "status": "COMPLETED", "conclusion": "NEUTRAL"}],
