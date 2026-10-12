@@ -216,6 +216,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_install_claudemd.py: tests for install_claudemd
    - test_install_claude_settings.py: tests for install_claude_settings
    - test_claude_hooks.py: black-box tests for the `claude-hooks/*.sh` safety hooks (subprocess + JSON stdin)
+   - command_positions_snapshot.json: saved output of the shared command scanner over a command corpus, pinned by `tests/test_claude_hooks.py`; regenerate with `FORGE_UPDATE_SNAPSHOT=1`
    - test_claude_settings_schema.py: tests for the shared claude_settings_schema module (scaffold copy, write/read round-trip)
    - test_upgrade.py: tests for upgrade (forge-upgrade CLI)
    - test_resync.py: tests for resync (forge-resync CLI)

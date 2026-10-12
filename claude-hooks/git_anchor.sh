@@ -116,9 +116,11 @@ GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|
 # returned — the guard then behaves as it did before the pre-pass existed.
 _GUARD_CMDPOS_AWK='
 function neut(t) { gsub(/[;&|()`<>\n!{}]/, "_", t); return t }
-function tail(o) { return length(o) > 240 ? substr(o, length(o) - 239) : o }
-function wtype(o,   t) {
-    t = tail(o)
+# Wrapper type of the command so far. t is the current wrapper chain — the
+# output since the chain base cb (see scan), however long: a fixed-size
+# window let padding (`bash -o posix -o posix … -c`) push the wrapper out
+# of view.
+function wtype(t) {
     if (t ~ RE_SHELLC || t ~ RE_HSTR) return 1
     if (t ~ RE_EVAL) return 2
     if (t ~ RE_SSH) return 3
@@ -129,6 +131,10 @@ function rescan(t,   r) {
     PD++; r = scan(t, 1, 0); PD--
     return ";" r ";"
 }
+# One shell word at i, quotes removed — the payload of a wrapper such as
+# `bash -c`. Its quote rules must match scan()s own handlers (single,
+# double and $-quotes there); the quoting-parity test runs every case
+# both ways so the two cannot drift.
 function pword(s, i,   n, w, c, d, k, j, ch, e) {
     n = length(s); w = ""
     while (i <= n) {
@@ -191,27 +197,100 @@ function hdline(s,   n, k, ch, out, sb) {
     }
     return out
 }
-function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, q, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, dash, pc, bd, pa, wt, qs, rl) {
+# `$((…))` / `((…))`: arithmetic, emitted verbatim up to its balanced
+# close. Its parentheses are not subshells, so they must not move the
+# mode-1 depth count. Returns the text; the position after it is in APOS.
+function arith(s, i,   n, k, d, ch) {
+    n = length(s); d = 0
+    for (k = i; k <= n; k++) {
+        ch = substr(s, k, 1)
+        if (ch == "(") d++
+        else if (ch == ")") { d--; if (d == 0) break }
+    }
+    APOS = k + 1
+    return substr(s, i, k - i + 1)
+}
+# A `#` opens a comment only where bash would: at a word start (after a
+# blank or separator, not an escaped blank), outside `${…}` (where `#` is
+# an operator) and outside backticks (mode 2, whose close ends the scan).
+function is_comment(s, i, pc, bd, mode) {
+    if (mode == 2 || bd != 0 || !index(" \t\n;&|()", pc)) return 0
+    return !(index(" \t", pc) && substr(s, i - 2, 1) == "\\")
+}
+# Position of the newline ending the comment at i (or past the end).
+function comment_end(s, i,   j) {
+    j = index(substr(s, i), "\n")
+    return (j == 0) ? length(s) + 1 : i + j - 1
+}
+# `<<word` / `<<-word` at i (the `<<<` here-string is handled before
+# this). Sets HW (delimiter, quotes removed; "" when there is none), HQ
+# (delimiter was quoted: body is literal), HD (`<<-`: leading tabs
+# stripped), HX (the body is fed to a shell — `bash <<EOF`, read from
+# *before*, the current wrapper chain the scanner emitted, or `<<EOF | sh`, read
+# from the rest of the line) and HPOS (position after the delimiter).
+# Two heredoc-to-shell patterns, two regexes: RE_FEED and RE_PIPESH.
+function heredoc_open(s, i, before,   n, k, ch, j, rl) {
+    n = length(s); k = i + 2; HD = 0
+    if (substr(s, k, 1) == "-") { HD = 1; k++ }
+    while (substr(s, k, 1) == " " || substr(s, k, 1) == "\t") k++
+    HW = ""; HQ = 0; HX = 0
+    while (k <= n) {
+        ch = substr(s, k, 1)
+        if (index(" \t\n;&|()<>", ch)) break
+        if (ch == "\047" || ch == "\"" || ch == "\\") { HQ = 1; k++; continue }
+        HW = HW ch; k++
+    }
+    if (HW != "") {
+        j = index(substr(s, k), "\n")
+        rl = (j == 0) ? substr(s, k) : substr(s, k, j - 1)
+        HX = (before ~ RE_FEED || rl ~ RE_PIPESH)
+    }
+    HPOS = k
+}
+# Wrapper detection reads the whole current simple command, with no size
+# cap, in linear time. Every wrapper regex ends in a shape the previous
+# word alone reveals — a `-…c…` flag after a shell name, `<<<`, `eval`, or
+# any word once `ssh` has been seen (only a quoted word can then be the
+# payload) — so the full regex runs only when that word fits. It reads from
+# cb, the chain base: past the last character no wrapper regex can span
+# (a separator, `<`, `>`, `(`, `)`), which is also why a match can never
+# start before it — except the `<<<` here-string, which is why the base
+# moves only after the previous word has been checked. pws marks where the previous word began; hsh / hssh
+# record a shell name / `ssh` in the current chain.
+function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, pc, bd, pa, wt, qs, cb, pws, pw, hsh, hssh) {
     n = length(s); out = ""; depth = 0; dollar = 0; nh = 0; bd = 0; pa = 0
+    cb = 0; pws = 0; hsh = 0; hssh = 0
     while (i <= n) {
         c = substr(s, i, 1)
         pc = (i == 1) ? "\n" : substr(s, i - 1, 1)
-        if (index(";&|\n()", c)) pa = 0
+        if (index(";&|\n()", c)) { pa = 0; cb = length(out); pws = cb + 1; hsh = 0; hssh = 0 }
         if (!index(" \t\n;&|()<>", c) && index(" \t<", pc)) {
-            wt = wtype(out)
             qs = (c == "\047" || c == "\"" || (c == "$" && index("\047\"", substr(s, i + 1, 1))))
+            pw = substr(out, pws + 1); sub(/[ \t]+$/, "", pw)
+            wt = 0
+            if ((hsh && pw ~ /^-[A-Za-z]*c[A-Za-z]*$/) || pw ~ /<<<$/ || pw ~ RE_EVALW || (qs && hssh))
+                wt = wtype(substr(out, cb + 1))
+            # Order matters: the base moves past pw only after the check
+            # above, or a `bash <<<` chain would be cut before it is read.
+            if (match(pw, /[\n;&|()<>][^\n;&|()<>]*$/)) { cb = pws + RSTART; hsh = 0; hssh = 0 }
+            if (pw ~ RE_HEADW) hsh = 1
+            if (pw ~ RE_SSHW) hssh = 1
+            pws = length(out)
             if (wt == 0 && pa && qs) wt = 2
             if (wt == 1 || (wt && qs)) {
                 w = pword(s, i); out = out rescan(w); i = WPOS
+                cb = length(out); pws = cb; hsh = 0; hssh = 0
                 pa = (wt >= 2); dollar = 0; continue
             }
-            if (wt == 2) out = out ";"
+            if (wt == 2) { out = out ";"; cb = length(out); pws = cb; hsh = 0; hssh = 0 }
         }
         if (c == "\\") {
             d = substr(s, i + 1, 1)
             if (d != "\n") out = out neut(d)
             dollar = 0; i += 2; continue
         }
+        # Quote handlers: keep in step with pword(), which reads the same
+        # quoting when it extracts a wrapper payload.
         if (c == "\047") {
             ansi = dollar; dollar = 0
             k = i + 1; dec = ""
@@ -263,13 +342,7 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
             sb = scan(s, i + 1, 2); out = out "(" sb ")"; i = RPOS; dollar = 0; continue
         }
         if (c == "(" && substr(s, i + 1, 1) == "(" && (pc == "$" || index(" \t\n;&|(", pc))) {
-            d = 0
-            for (k = i; k <= n; k++) {
-                ch = substr(s, k, 1)
-                if (ch == "(") d++
-                else if (ch == ")") { d--; if (d == 0) break }
-            }
-            out = out substr(s, i, k - i + 1); i = k + 1; dollar = 0; continue
+            out = out arith(s, i); i = APOS; dollar = 0; continue
         }
         if (c == "(") { if (mode == 1) depth++; out = out c; i++; dollar = 0; continue }
         if (c == ")") {
@@ -278,31 +351,12 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
         }
         if (c == "{" && pc == "$") bd++
         if (c == "}" && bd > 0) bd--
-        if (c == "#" && mode != 2 && bd == 0 && index(" \t\n;&|()", pc) \
-            && !(index(" \t", pc) && substr(s, i - 2, 1) == "\\")) {
-            j = index(substr(s, i), "\n")
-            i = (j == 0) ? n + 1 : i + j - 1
-            continue
-        }
+        if (c == "#" && is_comment(s, i, pc, bd, mode)) { i = comment_end(s, i); continue }
         if (c == "<" && substr(s, i, 3) == "<<<") { out = out "<<<"; i += 3; dollar = 0; continue }
         if (c == "<" && substr(s, i + 1, 1) == "<") {
-            k = i + 2; dash = 0
-            if (substr(s, k, 1) == "-") { dash = 1; k++ }
-            while (substr(s, k, 1) == " " || substr(s, k, 1) == "\t") k++
-            w = ""; q = 0
-            while (k <= n) {
-                ch = substr(s, k, 1)
-                if (index(" \t\n;&|()<>", ch)) break
-                if (ch == "\047" || ch == "\"" || ch == "\\") { q = 1; k++; continue }
-                w = w ch; k++
-            }
-            if (w != "") {
-                j = index(substr(s, k), "\n")
-                rl = (j == 0) ? substr(s, k) : substr(s, k, j - 1)
-                nh++; hdl[nh] = w; hq[nh] = q; ht[nh] = dash
-                hx[nh] = (tail(out) ~ RE_FEED || rl ~ RE_PIPESH)
-            }
-            out = out "<<_"; i = k; dollar = 0; continue
+            heredoc_open(s, i, substr(out, cb + 1))
+            if (HW != "") { nh++; hdl[nh] = HW; hq[nh] = HQ; ht[nh] = HD; hx[nh] = HX }
+            out = out "<<_"; i = HPOS; dollar = 0; continue
         }
         if (c == "\n") {
             out = out "\n"; i++; dollar = 0
@@ -338,6 +392,9 @@ BEGIN {
     RE_HSTR = B SHELLS "(" ARG ")*[ \t]*<<<[ \t]*$"
     RE_FEED = B "(" SHELLS "|ssh)(" ARG ")*[ \t]*$"
     RE_PIPESH = "[|][ \t]*([^ \t\n;&|()<>]+[ \t]+)*(" SHELLS "|ssh)([ \t;&|)]|$)"
+    RE_HEADW = B SHELLS "$"
+    RE_SSHW = B "ssh$"
+    RE_EVALW = B "eval$"
 }
 { src = (NR == 1) ? $0 : src "\n" $0 }
 END { printf "%s\n", scan(src, 1, 0) }
