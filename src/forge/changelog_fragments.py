@@ -90,6 +90,7 @@ from forge.git_utils import (
     run_gate_evidence,
     run_git,
     tag_commit_date,
+    tag_on_remote,
     v_tags,
 )
 
@@ -956,16 +957,10 @@ def _create_and_push_tag(root: Path, version: str, level: str, n_fragments: int)
     push = push_tag(root, version)
     if not push.ok:
         # Local _tag_exists is useless here — this function just created
-        # that ref; only the remote can attest a concurrent winner.
-        remote_tag = run_git(
-            "ls-remote",
-            "--tags",
-            "origin",
-            f"refs/tags/{version}",
-            cwd=root,
-            check=False,
-        )
-        if remote_tag.strip():
+        # that ref; only the remote can attest a concurrent winner. An
+        # unanswered probe (None) cannot attest one, so it falls through
+        # to the failure report, as an unreadable listing always did.
+        if tag_on_remote(root, version):
             emit(f"auto-tag: {version} appeared remotely — another runner won.")
             return 0
         emit(
