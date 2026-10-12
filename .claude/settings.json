@@ -34,7 +34,7 @@
       "Bash(forge-gen-cli-reference)",
       "Bash(forge-gen-api-digest)",
       "Bash(forge-gen-commit-types)",
-      "Bash(forge-continuation-append *)",
+      "Bash(forge-continuation *)",
       "Bash(forge-pr-squash-comment *)",
       "Bash(install-forge-githooks *)",
       "Bash(install-forge-claude-md *)",
