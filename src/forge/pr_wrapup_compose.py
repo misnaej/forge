@@ -391,6 +391,9 @@ def _skipped(entry: Mapping[str, object]) -> bool:
 
     Args:
         entry: A rollup check entry mapping.
+
+    Returns:
+        True when the entry's conclusion is a not-run conclusion.
     """
     return str(entry.get("conclusion") or "") in _NOT_RUN_CONCLUSIONS
 

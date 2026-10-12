@@ -143,11 +143,19 @@ def _writes(text: str) -> Callable[[RunLog], tuple[int, str]]:
         A run function that writes *text* and reports exit code 0.
     """
 
-    def run(log: RunLog) -> tuple[int, str]:
+    def _run(log: RunLog) -> tuple[int, str]:
+        """Run one fake tier.
+
+        Args:
+            log: Run log that receives *text*.
+
+        Returns:
+            ``(0, "")``.
+        """
         log.append(text)
         return 0, ""
 
-    return run
+    return _run
 
 
 def _sinks(repo: Path) -> tuple[Path, Path]:
@@ -182,12 +190,20 @@ def test_with_run_log_stamps_before_run_and_completes_after(
     """
     seen: dict[str, str] = {}
 
-    def run(log: RunLog) -> tuple[int, str]:
+    def _run(log: RunLog) -> tuple[int, str]:
+        """Run one fake tier.
+
+        Args:
+            log: Run log inspected at tier start.
+
+        Returns:
+            ``(code, "console")``.
+        """
         seen["at_start"] = log.paths[0].read_text(encoding="utf-8")
         log.append("tier output\n")
         return code, "console"
 
-    assert cli._with_run_log(tmp_path, "HEADER\n", run) == code
+    assert cli._with_run_log(tmp_path, "HEADER\n", _run) == code
 
     assert PRODUCED_AT_RE.fullmatch(seen["at_start"].splitlines()[0])
     assert seen["at_start"].endswith("HEADER\n")
@@ -203,12 +219,20 @@ def test_with_run_log_run_that_raises_leaves_stamped_log_without_complete_line(
 ) -> None:
     """An interrupted run keeps its stamp, never claims completion, frees the lock."""
 
-    def run(_log: RunLog) -> tuple[int, str]:
+    def _run(_log: RunLog) -> tuple[int, str]:
+        """Run one fake tier.
+
+        Args:
+            _log: Run log (unused).
+
+        Raises:
+            RuntimeError: Always.
+        """
         msg = "boom"
         raise RuntimeError(msg)
 
     with pytest.raises(RuntimeError, match="boom"):
-        cli._with_run_log(tmp_path, "H\n", run)
+        cli._with_run_log(tmp_path, "H\n", _run)
 
     for sink in _sinks(tmp_path):
         text = sink.read_text(encoding="utf-8")
@@ -226,11 +250,19 @@ def test_with_run_log_held_lock_exits_1_and_writes_nothing(
     (health / LOCK_NAME).write_text(f"{os.getpid()} 2026-01-01T00:00:00+00:00\n")
     calls: list[RunLog] = []
 
-    def run(log: RunLog) -> tuple[int, str]:
+    def _run(log: RunLog) -> tuple[int, str]:
+        """Run one fake tier.
+
+        Args:
+            log: Run log, recorded in ``calls``.
+
+        Returns:
+            ``(0, "")``.
+        """
         calls.append(log)
         return 0, ""
 
-    assert cli._with_run_log(tmp_path, "H\n", run) == 1
+    assert cli._with_run_log(tmp_path, "H\n", _run) == 1
 
     assert calls == []
     assert not any(sink.exists() for sink in _sinks(tmp_path))
@@ -261,13 +293,23 @@ def test_run_tiers_appends_each_tier_section_as_it_finishes(
     log.start(tmp_path, "HEADER\n")
     snapshots: list[str] = []
 
-    def fake_run_pytest(
+    def _fake_run_pytest(
         _root: Path, paths: list[str], **_kw: object
     ) -> tuple[int, str]:
+        """Record the invocation and return success.
+
+        Args:
+            _root: Repository root (unused).
+            paths: Test paths requested.
+            **_kw: Extra keyword arguments (unused).
+
+        Returns:
+            ``(0, output)`` naming the requested paths.
+        """
         snapshots.append(log.paths[0].read_text(encoding="utf-8"))
         return 0, f"ran {paths}\n"
 
-    monkeypatch.setattr(cli, "run_pytest", fake_run_pytest)
+    monkeypatch.setattr(cli, "run_pytest", _fake_run_pytest)
     monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
     plan = _make_plan(depth0=["tests/test_a.py"], depth1=["tests/test_b.py"])
     config = cli._RunConfig(
@@ -293,13 +335,23 @@ def test_run_tiers_fail_fast_logs_failure_and_skips_higher_tiers(
     log.start(tmp_path, "")
     ran: list[list[str]] = []
 
-    def fake_run_pytest(
+    def _fake_run_pytest(
         _root: Path, paths: list[str], **_kw: object
     ) -> tuple[int, str]:
+        r"""Record the invocation and fail.
+
+        Args:
+            _root: Repository root (unused).
+            paths: Test paths requested.
+            **_kw: Extra keyword arguments (unused).
+
+        Returns:
+            ``(1, "red\\n")``.
+        """
         ran.append(paths)
         return 1, "red\n"
 
-    monkeypatch.setattr(cli, "run_pytest", fake_run_pytest)
+    monkeypatch.setattr(cli, "run_pytest", _fake_run_pytest)
     monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
     plan = _make_plan(depth0=["tests/test_a.py"], depth1=["tests/test_b.py"])
     config = cli._RunConfig(
@@ -1105,6 +1157,57 @@ def test_main_depth1_nonpython_change_escalates_to_full(
     assert recorded
     assert recorded[0]["label"] == "full"
     assert recorded[0]["coverage"] is True
+
+
+@pytest.mark.parametrize("trigger", ["root_commit", "unscanned_conftest"])
+def test_main_unsafe_diff_escalates_depth0_to_full(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    trigger: str,
+) -> None:
+    """A root commit or a repo-root conftest change escalates to the full suite.
+
+    Args:
+        trigger: The scenario to test - "root_commit" or "unscanned_conftest".
+
+    SCENARIO: ``--depth 0``; either no previous commit exists to diff
+        against, or the only change is a conftest outside every test root.
+    MOCK SETUP: cli.resolve_base_ref -> "main"; cli.effective_base_ref and
+        cli.changed_python_files stubbed per trigger; run_pytest captured.
+    EXPECTED BEHAVIOR: the single run_pytest call carries ``label="full"``.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "0"])
+    monkeypatch.setattr(cli, "resolve_base_ref", lambda _r, _b: "main")
+    root_commit = trigger == "root_commit"
+    monkeypatch.setattr(
+        cli,
+        "effective_base_ref",
+        lambda _r, _b, **_kw: (None, "root") if root_commit else ("main", ""),
+    )
+    monkeypatch.setattr(
+        cli,
+        "changed_python_files",
+        lambda _r, _ref: set() if root_commit else {"conftest.py"},
+    )
+    labels: list[str] = []
+
+    def _fake(
+        _root: object,
+        _paths: list[str],
+        *,
+        coverage: bool = False,
+        telemetry: bool = False,
+        label: str = "",
+    ) -> tuple[int, str]:
+        del coverage, telemetry
+        labels.append(label)
+        return 0, "ok"
+
+    monkeypatch.setattr(cli, "run_pytest", _fake)
+
+    assert cli.main() == 0
+    assert labels == ["full"]
 
 
 def test_main_depth1_ignored_glob_change_no_escalation(

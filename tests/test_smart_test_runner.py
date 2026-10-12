@@ -99,17 +99,32 @@ def test_run_pytest_paths_sorted_in_command(
     assert a_idx < z_idx
 
 
-def test_run_pytest_exit5_normalized_to_0(
+def test_run_pytest_exit5_with_paths_stays_5_and_explains(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pytest exit code 5 (no tests collected) is normalized to 0."""
+    """Exit 5 for a named selection is a failure with an explanation appended."""
     monkeypatch.setattr(runner, "_coverage_available", lambda: False)
     monkeypatch.setattr(
         subprocess, "run", make_fake_run(stdout="no tests", returncode=5)
     )
-    code, _ = runner.run_pytest(tmp_path, ["tests/test_x.py"])
+    code, output = runner.run_pytest(tmp_path, ["tests/test_x.py"])
+    assert code == 5
+    assert "collected no tests" in output
+
+
+def test_run_pytest_exit5_whole_suite_normalized_to_0(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exit 5 with nothing named (whole-suite coverage run) is still benign."""
+    monkeypatch.setattr(runner, "_coverage_available", lambda: False)
+    monkeypatch.setattr(
+        subprocess, "run", make_fake_run(stdout="no tests", returncode=5)
+    )
+    code, output = runner.run_pytest(tmp_path, [], coverage=True)
     assert code == 0
+    assert "collected no tests" not in output
 
 
 def test_run_pytest_nonzero_exit_propagated(
@@ -245,23 +260,24 @@ def test_run_pytest_telemetry_delegates_to_run_command(
     assert captured["label"] == "depth0"
 
 
-def test_run_pytest_telemetry_delegate_exit5_normalized_to_0(
+def test_run_pytest_telemetry_delegate_exit5_with_paths_stays_5(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Exit code 5 from the telemetry delegate is normalized to 0.
+    """Exit code 5 from the telemetry delegate stays 5 for a named selection.
 
-    SCENARIO: ``telemetry=True``; the delegate reports pytest's "no tests
-        collected" exit code (5).
-    MOCK SETUP: ``telemetry_mod.telemetry_available`` → True;
+    SCENARIO: ``telemetry=True`` with test paths; the delegate reports
+        pytest's "no tests collected" exit code (5).
+    MOCK SETUP: ``telemetry_mod.telemetry_available`` -> True;
         ``telemetry_mod.run_command`` stubbed to return ``(5, "")``.
-    EXPECTED BEHAVIOR: ``run_pytest`` normalizes the returned code to 0, same
-        as the plain subprocess path.
+    EXPECTED BEHAVIOR: code stays 5 and the explanation is appended, same as
+        the plain subprocess path.
     """
     monkeypatch.setattr(runner.telemetry_mod, "telemetry_available", lambda: True)
     monkeypatch.setattr(runner.telemetry_mod, "run_command", lambda *_a, **_kw: (5, ""))
-    code, _ = runner.run_pytest(tmp_path, ["tests/test_x.py"], telemetry=True)
-    assert code == 0
+    code, output = runner.run_pytest(tmp_path, ["tests/test_x.py"], telemetry=True)
+    assert code == 5
+    assert "collected no tests" in output
 
 
 def test_run_pytest_telemetry_unavailable_falls_back_with_notice(

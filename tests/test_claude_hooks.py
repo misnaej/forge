@@ -5034,7 +5034,7 @@ def _run_verdict_hook(
         "session_id": "s1",
     }
     return subprocess.run(
-        [shutil_bash(), str(_HOOKS_DIR / _REQUIRE_VERDICT)],
+        [_shutil_bash(), str(_HOOKS_DIR / _REQUIRE_VERDICT)],
         input=json.dumps(payload),
         capture_output=True,
         text=True,
@@ -5044,7 +5044,7 @@ def _run_verdict_hook(
     )
 
 
-def shutil_bash() -> str:
+def _shutil_bash() -> str:
     """Absolute path of bash, resolved on the test runner's own PATH."""
     found = shutil.which("bash")
     assert found

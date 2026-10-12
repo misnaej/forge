@@ -103,6 +103,18 @@ def _iter_py(roots: Iterable[Path]) -> Iterable[Path]:
         yield from root.rglob("*.py")
 
 
+def _is_test_file(path: Path) -> bool:
+    """Return whether pytest would collect *path* as a test module.
+
+    Args:
+        path: The file path to check.
+
+    Returns:
+        True if pytest would collect this path as a test module.
+    """
+    return path.name.startswith("test_") or path.name.endswith("_test.py")
+
+
 def all_test_files(repo_root: Path) -> set[str]:
     """Return every repo-relative test file under the configured test roots.
 
@@ -119,7 +131,7 @@ def all_test_files(repo_root: Path) -> set[str]:
     _, tests = _roots(repo_root)
     found: set[str] = set()
     for path in _iter_py(tests):
-        if path.name.startswith("test_") or path.name.endswith("_test.py"):
+        if _is_test_file(path):
             found.add(path.relative_to(repo_root).as_posix())
     return found
 
@@ -258,42 +270,25 @@ class _Graph:
     test_modules: set[str] = field(default_factory=set)
 
 
-def build_graph(
+def _parse_sources(
     repo_root: Path,
+    source_roots: list[Path],
+    test_roots: list[Path],
     *,
     follow_mock_patches: bool = False,
-    include_ancestor_edges: bool = False,
-) -> _Graph:
-    """Parse the repo into an internal import graph.
-
-    Source files are named by climbing the ``__init__.py`` chain from
-    the file's parent to find the real import root (e.g.
-    ``src/forge/x.py`` → ``forge.x`` when ``src`` has no
-    ``__init__.py``); test files resolve rooted at the repo so they
-    namespace distinctly (``tests/test_x.py`` → ``tests.test_x``) while
-    their ``from forge.x import …`` edges still point at the source
-    module. Only edges to known internal modules are kept; external
-    imports are dropped.
+) -> tuple[dict[str, tuple[str, set[str]]], set[str]]:
+    """Parse all source and test files into an import target map.
 
     Args:
         repo_root: Git repo root.
-        follow_mock_patches: When ``True``, a test file's ``mock.patch``
-            string targets are added as edges alongside its (opt-in)
-            imports — ``patch("pkg.mod.attr")`` becomes a dep on ``pkg.mod``
-            even with no import statement. Off by default.
-        include_ancestor_edges: When ``True``, every known module gains
-            edges to its known ancestor packages
-            (:func:`forge.import_graph.ancestor_edges`) — importing
-            ``a.b.c`` executes the ancestor ``__init__`` files, so a
-            package ``__init__`` edit reaches its descendants' tests in
-            the reverse walk. Off by default (design-time consumers model
-            declared imports only).
+        source_roots: List of source root paths.
+        test_roots: List of test root paths.
+        follow_mock_patches: Whether to follow mock.patch targets.
 
     Returns:
-        The populated :class:`_Graph`.
+        ``(parsed, test_modules)``: module name → ``(rel_path, targets)``,
+        and the names of collectable test modules.
     """
-    source_roots, test_roots = _roots(repo_root)
-
     parsed: dict[str, tuple[str, set[str]]] = {}
     test_modules: set[str] = set()
     for path in _iter_py([*source_roots, *test_roots]):
@@ -316,10 +311,55 @@ def build_graph(
         rel = path.relative_to(repo_root).as_posix()
         targets = extract_import_targets(tree, name, include_type_checking=True)
         if is_test:
-            test_modules.add(name)
+            # Only files pytest collects are tests; a conftest or a helper
+            # under a test root is a dependency, never a selected test.
+            if _is_test_file(path):
+                test_modules.add(name)
             if follow_mock_patches:
                 targets = targets | _patch_targets(tree)
         parsed[name] = (rel, targets)
+    return parsed, test_modules
+
+
+def build_graph(
+    repo_root: Path,
+    *,
+    follow_mock_patches: bool = False,
+    include_ancestor_edges: bool = False,
+) -> _Graph:
+    """Parse the repo into an internal import graph.
+
+    Source files are named by climbing the ``__init__.py`` chain from
+    the file's parent to find the real import root (e.g.
+    ``src/forge/x.py`` → ``forge.x`` when ``src`` has no
+    ``__init__.py``); test files resolve rooted at the repo so they
+    namespace distinctly (``tests/test_x.py`` → ``tests.test_x``) while
+    their ``from forge.x import …`` edges still point at the source
+    module. Only edges to known internal modules are kept; external
+    imports are dropped. Every test module also gains edges to the
+    ``conftest.py`` files pytest loads for it (see :func:`_conftest_edges`).
+
+    Args:
+        repo_root: Git repo root.
+        follow_mock_patches: When ``True``, a test file's ``mock.patch``
+            string targets are added as edges alongside its (opt-in)
+            imports — ``patch("pkg.mod.attr")`` becomes a dep on ``pkg.mod``
+            even with no import statement. Off by default.
+        include_ancestor_edges: When ``True``, every known module gains
+            edges to its known ancestor packages
+            (:func:`forge.import_graph.ancestor_edges`) — importing
+            ``a.b.c`` executes the ancestor ``__init__`` files, so a
+            package ``__init__`` edit reaches its descendants' tests in
+            the reverse walk. Off by default (design-time consumers model
+            declared imports only).
+
+    Returns:
+        The populated :class:`_Graph`.
+    """
+    source_roots, test_roots = _roots(repo_root)
+    parsed, test_modules = _parse_sources(
+        repo_root, source_roots, test_roots, follow_mock_patches=follow_mock_patches
+    )
 
     known = set(parsed)
     graph = _Graph(test_modules=test_modules)
@@ -327,10 +367,70 @@ def build_graph(
         graph.path_of[name] = rel
         resolved = {m for t in targets if (m := closest_known(t, known)) and m != name}
         graph.imports[name] = resolved
+    for name, conftests in _conftest_edges(graph).items():
+        graph.imports[name] |= conftests
     if include_ancestor_edges:
         for name, ancestors in ancestor_edges(known).items():
             graph.imports[name] |= ancestors
     return graph
+
+
+def unscanned_conftests(repo_root: Path, changed: set[str]) -> set[str]:
+    """Return changed ``conftest.py`` files outside every test root.
+
+    A conftest under a test root reaches its tests through the graph
+    (see :func:`_conftest_edges`); one elsewhere — typically at the repo
+    root, applying to the whole suite — never enters the graph, so the
+    only safe answer is the full suite.
+
+    Args:
+        repo_root: Git repo root.
+        changed: Repo-relative changed paths.
+
+    Returns:
+        The changed conftest paths no test root contains.
+    """
+    _, test_roots = _roots(repo_root)
+    return {
+        rel
+        for rel in changed
+        if rel.rpartition("/")[2] == "conftest.py"
+        and not any((repo_root / rel).is_relative_to(tr) for tr in test_roots)
+    }
+
+
+def _conftest_edges(graph: _Graph) -> dict[str, set[str]]:
+    """Map each test module to the conftests pytest loads for it.
+
+    pytest runs every test under the ``conftest.py`` files of its folder
+    and each ancestor folder, without any import statement naming them,
+    so the edge has to be modelled: without it a conftest edit — often an
+    autouse fixture every test runs under — reaches no test at all.
+
+    Args:
+        graph: The graph with ``path_of`` and ``test_modules`` populated.
+
+    Returns:
+        Test module → the conftest modules that apply to it.
+    """
+    conftest_in: dict[str, str] = {}
+    for name, rel in graph.path_of.items():
+        folder, _, filename = rel.rpartition("/")
+        if filename == "conftest.py":
+            conftest_in[folder] = name
+    edges: dict[str, set[str]] = {}
+    for name in graph.test_modules:
+        folder = graph.path_of[name].rpartition("/")[0]
+        found: set[str] = set()
+        while True:
+            if (conftest := conftest_in.get(folder)) is not None:
+                found.add(conftest)
+            if not folder:
+                break
+            folder = folder.rpartition("/")[0]
+        if found:
+            edges[name] = found
+    return edges
 
 
 def select_tests(

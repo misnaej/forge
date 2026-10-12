@@ -68,6 +68,48 @@ def resolve_base_ref(repo_root: Path, override: str | None = None) -> str:
     return "HEAD"
 
 
+def effective_base_ref(
+    repo_root: Path, base_ref: str, *, explicit: bool
+) -> tuple[str | None, str]:
+    """Return the ref to diff against once ``HEAD`` itself is accounted for.
+
+    On the base branch the resolved base *is* ``HEAD``'s commit, so the
+    diff is empty and every run passes having tested nothing — a CI job
+    after each merge stays green forever. With a clean tree the change
+    that matters is the last commit, so compare against ``HEAD^1``. A
+    caller-supplied ``--base`` is never second-guessed, and local edits
+    on the base branch keep the usual meaning (test those edits).
+
+    Args:
+        repo_root: Git repo root.
+        base_ref: The ref :func:`resolve_base_ref` chose.
+        explicit: Whether *base_ref* came from the caller's ``--base``.
+
+    Returns:
+        ``(ref, reason)``: *base_ref* with an empty reason when it stands;
+        ``"HEAD^1"`` with the reason when it was replaced; ``None`` with
+        the reason when ``HEAD`` is a root commit and there is no previous
+        commit to compare against (the caller runs the full suite).
+    """
+    if explicit or base_ref.startswith("-"):
+        return base_ref, ""
+    head = run_git("rev-parse", "HEAD", cwd=repo_root, check=False)
+    base = run_git("rev-parse", f"{base_ref}^{{commit}}", cwd=repo_root, check=False)
+    if not head or head != base:
+        return base_ref, ""
+    if run_git("status", "--porcelain", cwd=repo_root, check=False):
+        return base_ref, ""
+    if not ref_exists(repo_root, "HEAD^1"):
+        return None, (
+            f"{base_ref} is HEAD and HEAD is a root commit — no previous "
+            "commit to compare against"
+        )
+    return "HEAD^1", (
+        f"{base_ref} is HEAD with a clean tree — comparing against the "
+        "previous commit (HEAD^1)"
+    )
+
+
 def head_commit_message(repo_root: Path) -> str:
     """Return ``HEAD``'s full commit message (subject + body).
 

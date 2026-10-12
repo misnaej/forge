@@ -436,3 +436,87 @@ def test_changed_non_python_files_empty_ignore_globs_only_filters_py(
     (tmp_path / "code.py").write_text("x = 1\n", encoding="utf-8")
     result = git_helpers.changed_non_python_files(tmp_path, "HEAD")
     assert result == {"README.md"}
+
+
+def _commit_file(repo: Path, name: str) -> None:
+    """Create and commit a file to a git repository.
+
+    Args:
+        repo: Repository path.
+        name: Name of the file to create and commit.
+    """
+    (repo / name).write_text("x = 1\n")
+    subprocess.run(["git", "add", name], cwd=repo, env=_GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", f"add {name}"],
+        cwd=repo,
+        env=_GIT_ENV,
+        check=True,
+    )
+
+
+def test_effective_base_ref_clean_base_branch_compares_to_previous_commit(
+    tmp_path: Path,
+) -> None:
+    """On the base branch with a clean tree the diff is the last commit."""
+    init_git_repo(tmp_path)
+    _commit_file(tmp_path, "foo.py")
+    ref, reason = git_helpers.effective_base_ref(tmp_path, "main", explicit=False)
+    assert ref == "HEAD^1"
+    assert reason
+
+
+def test_effective_base_ref_root_commit_returns_none(tmp_path: Path) -> None:
+    """A root commit has no previous commit: the caller must run everything."""
+    init_git_repo(tmp_path)
+    ref, reason = git_helpers.effective_base_ref(tmp_path, "main", explicit=False)
+    assert ref is None
+    assert "root commit" in reason
+
+
+def test_effective_base_ref_dirty_tree_keeps_base(tmp_path: Path) -> None:
+    """Staged edits on the base branch keep the usual meaning: test the edits."""
+    init_git_repo(tmp_path)
+    _commit_file(tmp_path, "foo.py")
+    (tmp_path / "bar.py").write_text("y = 1\n")
+    subprocess.run(["git", "add", "bar.py"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    assert git_helpers.effective_base_ref(tmp_path, "main", explicit=False) == (
+        "main",
+        "",
+    )
+
+
+def test_effective_base_ref_explicit_base_never_second_guessed(
+    tmp_path: Path,
+) -> None:
+    """A caller-supplied ``--base`` is returned unchanged even when it is HEAD."""
+    init_git_repo(tmp_path)
+    _commit_file(tmp_path, "foo.py")
+    assert git_helpers.effective_base_ref(tmp_path, "main", explicit=True) == (
+        "main",
+        "",
+    )
+
+
+def test_effective_base_ref_flag_shaped_base_returned_unchanged(
+    tmp_path: Path,
+) -> None:
+    """Behavior: a ``-``-prefixed base is never probed as a ref (option injection)."""
+    init_git_repo(tmp_path)
+    assert git_helpers.effective_base_ref(tmp_path, "-x", explicit=False) == ("-x", "")
+
+
+def test_clean_base_branch_last_commit_change_is_detected(tmp_path: Path) -> None:
+    """Behavior: regression for the false green.
+
+    A post-merge run on the base branch with a clean tree must still see the
+    last commit's changed module.
+    """
+    init_git_repo(tmp_path)
+    _commit_file(tmp_path, "mod.py")
+    _commit_file(tmp_path, "other.py")
+    base = git_helpers.resolve_base_ref(tmp_path)
+    ref, _reason = git_helpers.effective_base_ref(tmp_path, base, explicit=False)
+    assert ref is not None
+    changed = git_helpers.changed_python_files(tmp_path, ref)
+    assert changed == {"other.py"}

@@ -247,11 +247,17 @@ def test_failed_replace_removes_the_staging_file_and_keeps_the_note(
     path = _note(ignored_repo)
     before = path.read_bytes()
 
-    def fail_replace(self: Path, target: object) -> None:
+    def _fail_replace(self: Path, target: object) -> None:
+        """Simulate a failing atomic replace.
+
+        Args:
+            self: Path being replaced.
+            target: Replacement destination (unused).
+        """
         msg = "disk full"
         raise OSError(msg)
 
-    monkeypatch.setattr(type(path), "replace", fail_replace)
+    monkeypatch.setattr(type(path), "replace", _fail_replace)
     with pytest.raises(OSError, match="disk full"):
         cs.write_state(ignored_repo, attempt="blocked:ruff")
     assert path.read_bytes() == before
