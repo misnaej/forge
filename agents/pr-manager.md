@@ -56,7 +56,7 @@ gh api repos/<owner>/<repo>/pulls/<PR#>/comments/<comment_id>/replies -X POST -f
 
 ## Task: Write PR Description
 
-Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR descriptions"](../FOUNDATION.md#6-git--pr-workflow) — do not restate. Auto-close needs **bare** `Closes #N`/`Fixes #N`/`Resolves #N` on its own line — no bold or list-item prefix (GitHub's parser rejects those); `Addresses #N` is partial-completion, no auto-close.
+Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR descriptions"](../FOUNDATION.md#6-git--pr-workflow) — do not restate. Write each closed issue as a bare `Closes #N`/`Fixes #N`/`Resolves #N` on its own line: that is forge's style rule, the form its summary counts. It is not what GitHub requires — GitHub closes on the keyword anywhere in prose, so never put one next to an issue this PR only partly delivers; write `Part of #N` there (same section of FOUNDATION §6).
 
 ## Task: Write Squash-Merge Message
 

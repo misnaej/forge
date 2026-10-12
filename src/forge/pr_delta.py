@@ -185,13 +185,31 @@ _FENCE_RE: Final[re.Pattern[str]] = re.compile(
 # may end in a full stop, comma or semicolon after the last number, as
 # GitHub accepts; anything else after it (prose) keeps the line unmatched.
 _CLOSING_KEYWORD: Final[str] = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
+# Issue numbers are capped at nine digits: `int()` refuses a string past
+# Python's 4300-digit limit, so an unbounded run in an untrusted body would
+# crash the caller. The trailing `\b` makes a longer run not match at all
+# rather than match its first nine digits.
+_ISSUE_NUMBER: Final[str] = r"\d{1,9}"
 _CLOSING_ITEM_RE: Final[re.Pattern[str]] = re.compile(
-    rf"\b{_CLOSING_KEYWORD}\s+#(\d+)\b", re.IGNORECASE
+    rf"\b{_CLOSING_KEYWORD}\s+#({_ISSUE_NUMBER})\b", re.IGNORECASE
 )
 _CLOSING_LINE_RE: Final[re.Pattern[str]] = re.compile(
-    rf"^{_CLOSING_KEYWORD}\s+#\d+(?:[\s,]+(?:{_CLOSING_KEYWORD}\s+)?#\d+)*[.,;]*$",
+    rf"^{_CLOSING_KEYWORD}\s+#{_ISSUE_NUMBER}"
+    rf"(?:[\s,]+(?:{_CLOSING_KEYWORD}\s+)?#{_ISSUE_NUMBER})*[.,;]*$",
     re.IGNORECASE,
 )
+# GitHub reads a closing keyword anywhere in prose, an optional colon
+# included. The leading `\b` keeps a word that merely ends in a keyword
+# ("prefixes #5") from counting, and requiring whitespace straight before
+# `#` keeps `owner/repo#N` and issue URLs out. Those usually name another
+# repository's issue; a same-repo URL still closes, so the scan stays a
+# lower bound.
+_LOOSE_CLOSING_RE: Final[re.Pattern[str]] = re.compile(
+    rf"\b{_CLOSING_KEYWORD}:?\s+#({_ISSUE_NUMBER})\b", re.IGNORECASE
+)
+# An inline code span: a backtick run closed by a run of the same length.
+# Text inside one is quoted, not prose GitHub acts on.
+_CODE_SPAN_RE: Final[re.Pattern[str]] = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 
 
 def fenced_line_indexes(lines: list[str]) -> set[int]:
@@ -267,6 +285,45 @@ def find_closing_refs(text: str) -> list[int]:
             if ref not in refs:
                 refs.append(ref)
     return refs
+
+
+def find_loose_closing_refs(text: str) -> list[int]:
+    """Return the closing-keyword ``#N`` references anywhere in *text*.
+
+    A best-effort lower bound on what GitHub closes when the PR merges
+    into the default branch. Unlike :func:`find_closing_refs`, a keyword
+    inside a sentence counts, because GitHub acts on it there: "closes
+    #504's doctor half" closes all of #504. The difference between the
+    two lists is what a reader of forge's summary would not expect to see
+    closed. Fenced blocks and inline code spans are skipped, and the
+    ``GH-N``, issue-URL and ``owner/repo#N`` forms are not recognised.
+
+    Args:
+        text: PR body or any markdown.
+
+    Returns:
+        Issue numbers in first-appearance order, without duplicates.
+    """
+    refs: list[int] = []
+    for line in strip_fences(text.splitlines()):
+        for number in _LOOSE_CLOSING_RE.findall(_CODE_SPAN_RE.sub(" ", line)):
+            ref = int(number)
+            if ref not in refs:
+                refs.append(ref)
+    return refs
+
+
+def unlisted_closing_refs(body: str) -> list[int]:
+    """Return closing-keyword refs in *body* that the strict counter omits.
+
+    Args:
+        body: PR description.
+
+    Returns:
+        Loose-only issue numbers in first-appearance order.
+    """
+    strict = find_closing_refs(body)
+    return [ref for ref in find_loose_closing_refs(body) if ref not in strict]
 
 
 def touches_high_blast_radius(changed_paths: list[str]) -> list[str]:

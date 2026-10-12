@@ -103,6 +103,11 @@ comment rather than the conversation that produced it, so a payload that
 starts at the change list hands them the very gap this flow exists to
 close.
 
+**A plan that splits the issue across PRs names which PR closes it.**
+Every other PR writes `Part of #<N>`: a close keyword anywhere in a PR
+description closes the whole issue on merge (FOUNDATION §6 "PR
+descriptions"), dropping the undelivered rest from the backlog.
+
 The issue body — the original ask — is never edited. Report the
 recorded comment URL and stop; the comment on the issue is the record,
 and execution belongs to `/sentinel` or a later session.
