@@ -97,9 +97,12 @@
 # GIT_ANCHOR at the first `git[[:space:]]+` and refuses every command when
 # the cut prefix still contains `git`.
 GUARD_REDIR='(([0-9]+|[{][[:alnum:]_]+[}])?(<<<|<<-?|<>|>>|>[|]|>&|<&|&>>|&>|<|>)[[:space:]]*([^[:space:];&|()<>]|[(][^()]*[)])+)+'
+# GUARD_BINPATH: an optional directory path before a tool or wrapper name
+# (rationale in the header above).
 GUARD_BINPATH='([^[:space:];&|()<>]*[/])?'
 # The command-prefix run (VAR=val, wrapper and compound words — each
-# wrapper optionally path-qualified — wrapper flag tokens, redirections) and git's global-option run, shared by the
+# wrapper optionally path-qualified — wrapper flag tokens, redirections)
+# and git's global-option run, shared by the
 # anchors so a word learned once is learned everywhere.
 _GUARD_PREFIX='(([[:alnum:]_]+=[^[:space:]]+|'"${GUARD_BINPATH}"'(command|env|exec|builtin|sudo|nohup|nice|time)|then|do|else|elif|[{!]|-[^[:space:]]+|'"${GUARD_REDIR}"')[[:space:]]+)*'
 _GUARD_GIT_OPTS='((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
