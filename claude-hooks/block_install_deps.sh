@@ -101,6 +101,12 @@ block() {
 
 CMDPOS=$(command_positions "$COMMAND")
 WORDS=$(command_positions --words "$COMMAND")
+# The command boundary every rule below starts from (see the header), then
+# any run of the keywords that start a command inside a compound and of
+# redirection words (`2>&1 pip install`, GUARD_REDIR in git_anchor.sh).
+# It accepts no `VAR=val` or wrapper word (`sudo`, `env`) yet, so
+# `sudo pip install x` is still unmatched — tracked as its own issue (#752).
+CMD_PFX='(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
 # invoked <regex> — a real invocation matching <regex> that is not only a
 # help request.
 invoked() {
@@ -120,8 +126,8 @@ invoked() {
 # the second being the very form this hook's own --locked advisory recommends.
 # `python -m pip` is covered here too; the bare-pip rule below understands that
 # form but anchors to a command start, which `run` has already consumed.
-if invoked '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*(conda|pipenv|uv|poetry|pixi)[[:space:]]+run\b' &&
-    echo "$WORDS" | grep -qE '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*(conda|pipenv|uv|poetry|pixi)[[:space:]]+run\b[^;&|]*\b((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*[[:space:]]+install|conda[[:space:]]+(install|create|update|env[[:space:]]+(create|update)))\b' &&
+if invoked "${CMD_PFX}"'(conda|pipenv|uv|poetry|pixi)[[:space:]]+run\b' &&
+    echo "$WORDS" | grep -qE "${CMD_PFX}"'(conda|pipenv|uv|poetry|pixi)[[:space:]]+run\b[^;&|]*\b((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*[[:space:]]+install|conda[[:space:]]+(install|create|update|env[[:space:]]+(create|update)))\b' &&
     { blocked pip || blocked conda || blocked pipenv || blocked uv || blocked poetry || blocked pixi; }; then
     block
 fi
@@ -158,7 +164,9 @@ if blocked pixi; then
             echo "BLOCKED: \`pixi $verb\` is not on the agent allowlist ($(printf '%s' "$PIXI_ALLOWED_VERBS" | tr '|' ' ')). Unrecognised pixi verbs block by default — most of pixi's surface writes pixi.toml, pixi.lock, or the global tool store. If this one only reads, tell the user to run it themselves with: ! $COMMAND" >&2
             exit 2
         fi
-    done < <(printf '%s\n' "$CMDPOS" | tr ';&|(){}!' '\n')
+    # Redirections are blanked before the split, so the `&` of
+    # `2>&1 pixi add x` cannot cut `pixi` away from its segment start.
+    done < <(guard_unredir "$CMDPOS" | tr ';&|(){}!' '\n')
 fi
 
 # Read-only commands for every manager stay allowed (coarse fast-path). Note
@@ -173,17 +181,17 @@ fi
 # substring inside a quoted body (e.g. an issue body mentioning `pip
 # install`) doesn't trigger. (Accepted slip-through: `xargs pip install`.)
 if blocked pip || blocked conda; then
-    if invoked '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*|conda) (install|create|env (create|update)|update)'; then
+    if invoked "${CMD_PFX}"'((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*|conda) (install|create|env (create|update)|update)'; then
         block
     fi
 fi
-if blocked pipenv && invoked '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*pipenv[[:space:]]+(install|sync|lock|update|uninstall)\b'; then
+if blocked pipenv && invoked "${CMD_PFX}"'pipenv[[:space:]]+(install|sync|lock|update|uninstall)\b'; then
     block
 fi
-if blocked poetry && invoked '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*poetry[[:space:]]+(add|install|update|lock|remove)\b'; then
+if blocked poetry && invoked "${CMD_PFX}"'poetry[[:space:]]+(add|install|update|lock|remove)\b'; then
     block
 fi
-if blocked uv && invoked '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*uv[[:space:]]+(add|sync|lock|remove|(pip|tool|python)[[:space:]]+install)\b'; then
+if blocked uv && invoked "${CMD_PFX}"'uv[[:space:]]+(add|sync|lock|remove|(pip|tool|python)[[:space:]]+install)\b'; then
     block
 fi
 
@@ -192,15 +200,15 @@ fi
 # rule out statically. Advisory, not a block: the command is legitimate
 # (it is how tests run), and an agent that adopts the flag never sees this
 # line again.
-if blocked pixi && echo "$CMDPOS" | grep -qE '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*pixi[[:space:]]+(run|shell)\b' &&
+if blocked pixi && echo "$CMDPOS" | grep -qE "${CMD_PFX}"'pixi[[:space:]]+(run|shell)\b' &&
     ! echo "$WORDS" | grep -qE '\-\-(locked|frozen)\b'; then
     echo "NOTE: \`pixi run\` / \`pixi shell\` rewrite pixi.lock when the manifest changed. Pass \`--locked\` — it still installs from the lock, but fails instead of re-solving (FOUNDATION §2)."
 fi
 
 # forge-upgrade --apply runs pip install --force-reinstall internally;
 # it's an explicit setup-script affordance, not for agents.
-if invoked '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*forge-upgrade(\s|$)' &&
-    echo "$WORDS" | grep -qE '(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+)*forge-upgrade(\s|$).*--apply\b'; then
+if invoked "${CMD_PFX}"'forge-upgrade(\s|$)' &&
+    echo "$WORDS" | grep -qE "${CMD_PFX}"'forge-upgrade(\s|$).*--apply\b'; then
     echo "BLOCKED: forge-upgrade --apply runs pip install. Agents must not. Tell the user the exact command to run themselves with: ! $COMMAND" >&2
     exit 2
 fi

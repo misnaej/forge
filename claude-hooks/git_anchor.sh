@@ -21,13 +21,14 @@
 # - a leading run of `VAR=val` assignments, `command`/`env`/`exec`/
 #   `builtin`/`sudo`/`nohup`/`nice`/`time` wrappers (incl. wrapper flag
 #   tokens like `sudo -n`) and the shell words that start a command inside
-#   a compound (`then`, `do`, `else`, `elif`, `{`, `!`), so
-#   `GIT_DIR=x git ...` and `if …; then git …; fi` can't slip the gate;
+#   a compound (`then`, `do`, `else`, `elif`, `{`, `!`), and redirection
+#   words (GUARD_REDIR, below), so `GIT_DIR=x git ...`,
+#   `if …; then git …; fi` and `2>&1 git …` can't slip the gate;
 # - a bounded run of git GLOBAL options between `git` and the subcommand
 #   (`--no-pager`, `-c k=v`, `-C <dir>`, attached `-C<dir>`,
 #   `--git-dir=<x>` and `--git-dir <x>`, likewise `--work-tree`,
-#   `--namespace`, `--exec-path`, `--config-env`), so
-#   `git --no-pager <verb>` can't slip it either.
+#   `--namespace`, `--exec-path`, `--config-env`) and redirection words,
+#   so `git --no-pager <verb>` and `git 2>&1 <verb>` can't slip it either.
 #
 # SEG_ANCHOR is the same shape anchored to segment start, for hooks that
 # split a compound command at separators and evaluate each segment.
@@ -49,18 +50,45 @@
 # boundary), git aliases (`git -c alias.x='!…' x`), wrappers that take
 # a separate argument (`sudo -u root`, `timeout 5`, `xargs`,
 # `find -exec`), other git verbs that overwrite files or move refs
-# (`read-tree -u`, `checkout-index -f`, `branch -f`), a redirection placed
-# BEFORE the wrapper's command name (`2>&1 bash -c '…'`, issue #737),
+# (`read-tree -u`, `checkout-index -f`, `branch -f`),
 # payloads assembled from several arguments or positional parameters
 # (`bash -c 'git "$@"' _ push -f`, `ssh h git push '-f'`, issue #738),
-# and a quoted redirection target containing a blank before a payload
+# a quoted redirection target containing a blank before a payload
 # (`bash -c > 'a b' '…'`: the --words view keeps the blank, so the target
-# reads as two words there and the payload is not unwrapped in that view) —
-# the guards are tripwires for the routes agents were seen to take, not a
-# sandbox.
-GIT_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|nohup|nice|time|then|do|else|elif|[{!]|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+)*'
+# reads as two words there and the payload is not unwrapped in that view;
+# likewise `> 'a b' git push` reads as a redirection then the word `b` in
+# the --words view, so a guard reading flags there loses that invocation),
+# a redirection among the ARGUMENTS of a guarded command, where a guard
+# reads it as an argument (`git push 2>&1 -f`, issue #751), a redirection
+# between a valued git option and its value (`git -C 2>&1 <dir> push`: the
+# anchor takes the redirection for the value, and `<dir>` then ends the
+# option run), and one accepted false block: `x &>log git push`, where
+# git is only an argument, reads as `&` followed by a redirected
+# `git push` — it costs a `!` — the guards are tripwires for the routes
+# agents were seen to take, not a sandbox.
+#
+# GUARD_REDIR is one or more redirection words: an optional fd number or
+# `{name}`, the operator (`<<<` `<<` `<<-` `<>` `>>` `>|` `>&` `<&` `&>>`
+# `&>` `<` `>`), optional blanks, then a target of non-separator
+# characters or one level of `(…)`. The shell accepts one wherever a word
+# of the command may stand — before the command name (`2>&1 git push`)
+# and between a tool and its subcommand (`git 2>&1 push`) — so every
+# anchor below reads past it in those places. It holds no `/` (a hook
+# splices GIT_ANCHOR into a `s/…//` sed expression) and no backslash
+# (guard_git_invocations hands the anchor to awk -v, which would eat it);
+# a test pins both. It also never spells the letters `git` — hence `[0-9]`,
+# not `[[:digit:]]` — because block_raw_ruff cuts its prefix out of
+# GIT_ANCHOR at the first `git[[:space:]]+` and refuses every command when
+# the cut prefix still contains `git`.
+GUARD_REDIR='(([0-9]+|[{][[:alnum:]_]+[}])?(<<<|<<-?|<>|>>|>[|]|>&|<&|&>>|&>|<|>)[[:space:]]*([^[:space:];&|()<>]|[(][^()]*[)])+)+'
+# The command-prefix run (VAR=val, wrapper and compound words, wrapper
+# flag tokens, redirections) and git's global-option run, shared by the
+# anchors so a word learned once is learned everywhere.
+_GUARD_PREFIX='(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|nohup|nice|time|then|do|else|elif|[{!]|-[^[:space:]]+|'"${GUARD_REDIR}"')[[:space:]]+)*'
+_GUARD_GIT_OPTS='((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
+GIT_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
 # shellcheck disable=SC2034  # consumed by sourcing hooks
-SEG_ANCHOR='^[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|nohup|nice|time|then|do|else|elif|[{!]|-[^[:space:]]+)[[:space:]]+)*git[[:space:]]+((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+)*'
+SEG_ANCHOR='^[[:space:]]*'"${_GUARD_PREFIX}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
 
 # GH_ANCHOR is the same shape for `gh`: a real invocation at line-start
 # (leading whitespace included — the hand-rolled `^gh` patterns this
@@ -78,9 +106,9 @@ SEG_ANCHOR='^[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|
 # command group (`pr[[:space:]]+${GH_OPTS}merge`) or match a second stage
 # on another view (`gh[[:space:]]+${GH_OPTS}api`) use it in those places.
 # shellcheck disable=SC2034  # consumed by sourcing hooks
-GH_OPTS='(-[^[:space:]]+[[:space:]]+([^[:space:]]+[[:space:]]+)?)*'
+GH_OPTS='(-[^[:space:]]+[[:space:]]+([^[:space:]]+[[:space:]]+)?|'"${GUARD_REDIR}"'[[:space:]]+)*'
 # shellcheck disable=SC2034  # consumed by sourcing hooks
-GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|nohup|nice|time|then|do|else|elif|[{!]|-[^[:space:]]+)[[:space:]]+)*gh[[:space:]]+'"${GH_OPTS}"
+GH_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}"'gh[[:space:]]+'"${GH_OPTS}"
 
 # ---- Command positions ----------------------------------------------------
 #
@@ -144,22 +172,14 @@ GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|
 # Payload re-scans are capped at four levels; deeper payloads are emitted
 # unscanned and visible (fail closed). If awk itself fails the raw text is
 # returned — the guard then behaves as it did before the pre-pass existed.
-_GUARD_CMDPOS_AWK='
-function neut(t) { gsub(/[;&|()`<>\n!{}]/, "_", t); return t }
-# Wrapper type of the command so far. t is the current wrapper chain — the
-# output since the chain base cb (see scan), however long: a fixed-size
-# window let padding (`bash -o posix -o posix … -c`) push the wrapper out
-# of view.
-function wtype(t) {
-    if (t ~ RE_SHELLC || t ~ RE_HSTR) return 1
-    if (t ~ RE_EVAL) return 2
-    if (t ~ RE_SSH) return 3
-    return 0
-}
+# The redirection blanker, one copy: the scanner below includes it, and
+# guard_unredir runs it alone.
+_GUARD_UNREDIR_AWK='
 # A run of n blanks (grown by doubling, so linear in total).
 function blanks(n) { while (length(SP) < n) SP = SP SP; return substr(SP, 1, n) }
 # Same-length copy of t with every redirection blanked — an optional fd
-# number or {name} at a word start, the operator (`<` `>` `>>` `>|` `<>`
+# number or {name} at a word start (after a blank, a newline or one of
+# `;&|()`, or at the start of t), the operator (`<` `>` `>>` `>|` `<>`
 # `>&` `<&` `&>` `&>>`), optional blanks, then the target (empty when t
 # ends there). `<<`, `<<-`, `<<<` and the emitted `<<_` are left alone:
 # they are heredoc / here-string openers, which the wrapper regexes read.
@@ -172,11 +192,11 @@ function unredir(t,   n, k, a, r, c, d, f, j, e) {
         if (!(c == "<" || c == ">" || (c == "&" && substr(t, k + 1, 1) == ">"))) { k++; continue }
         f = k; j = k - 1
         while (j >= a && substr(t, j, 1) ~ /[0-9]/) j--
-        if (j < k - 1 && (j < 1 || index(" \t", substr(t, j, 1)))) f = j + 1
+        if (j < k - 1 && (j < 1 || index(" \t\n;&|()", substr(t, j, 1)))) f = j + 1
         else if (substr(t, k - 1, 1) == "}") {
             j = k - 2
             while (j >= a && substr(t, j, 1) ~ /[A-Za-z0-9_]/) j--
-            if (j >= a && j < k - 2 && substr(t, j, 1) == "{" && (j == 1 || index(" \t", substr(t, j - 1, 1)))) f = j
+            if (j >= a && j < k - 2 && substr(t, j, 1) == "{" && (j == 1 || index(" \t\n;&|()", substr(t, j - 1, 1)))) f = j
         }
         d = substr(t, k + 1, 1); e = k + 1
         if (c == "&") e = (substr(t, k + 2, 1) == ">") ? k + 3 : k + 2
@@ -186,6 +206,19 @@ function unredir(t,   n, k, a, r, c, d, f, j, e) {
         r = r substr(t, a, f - a) blanks(e - f); a = e; k = e
     }
     return r substr(t, a)
+}
+'
+_GUARD_CMDPOS_AWK="${_GUARD_UNREDIR_AWK}"'
+function neut(t) { gsub(/[;&|()`<>\n!{}]/, "_", t); return t }
+# Wrapper type of the command so far. t is the current wrapper chain — the
+# output since the chain base cb (see scan), however long: a fixed-size
+# window let padding (`bash -o posix -o posix … -c`) push the wrapper out
+# of view.
+function wtype(t) {
+    if (t ~ RE_SHELLC || t ~ RE_HSTR) return 1
+    if (t ~ RE_EVAL) return 2
+    if (t ~ RE_SSH) return 3
+    return 0
 }
 # The `&` or `|` at i belongs to a redirection operator (`>&` `<&` `&>`
 # `&>>` `>|`), so it does not end the command; `|&` and a lone `&` do.
@@ -524,6 +557,20 @@ command_positions() {
     fi
     view=$(printf '%s\n' "$1" | LC_ALL=C awk -v KEEP="$keep" "$_GUARD_CMDPOS_AWK" 2>/dev/null) || view="$1"
     printf '%s\n' "$view"
+}
+
+# guard_unredir <text>
+# Prints <text> with every redirection blanked (unredir, above): same
+# length, so a guard that splits a view at `;` `&` `|` can do it on this
+# copy without the `&` of `2>&1` cutting a command in two. If awk fails
+# the text is returned unchanged.
+guard_unredir() {
+    local out
+    out=$(printf '%s\n' "$1" | LC_ALL=C awk "${_GUARD_UNREDIR_AWK}"'
+BEGIN { SP = " " }
+{ src = (NR == 1) ? $0 : src "\n" $0 }
+END { printf "%s\n", unredir(src) }' 2>/dev/null) || out="$1"
+    printf '%s\n' "$out"
 }
 
 # guard_git_invocations <--words view> <verb>

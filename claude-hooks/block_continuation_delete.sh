@@ -37,8 +37,10 @@ source "$ANCHOR_LIB"
 # `sudo -n rm`) — without it, any flag breaks the wrapper chain and the
 # verb escapes the anchor. The delete is found on the shared
 # command-positions view (git_anchor.sh), so `rm` quoted in prose never
-# fires while `bash -c "rm …"` and `eval rm …` do.
-RM_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|xargs|-[^[:space:]]+)[[:space:]]+)*(rm|unlink)([[:space:]]|$)'
+# fires while `bash -c "rm …"` and `eval rm …` do. A redirection word
+# before the verb (`2>&1 rm …`, GUARD_REDIR in git_anchor.sh) is read
+# past like a wrapper word.
+RM_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|xargs|-[^[:space:]]+|'"${GUARD_REDIR}"')[[:space:]]+)*(rm|unlink)([[:space:]]|$)'
 if ! command_positions "$COMMAND" | grep -qE "${RM_ANCHOR}"; then
     exit 0
 fi
@@ -77,6 +79,8 @@ PLAN_DIR_RE="(^|[[:space:]\"'=(/\`])\.plan(/+([[:space:];&|)\"'\`*?{.]|$)|[[:spa
 # git's pathspec separator, `rm --` is followed by the targets themselves.
 # Chunks come from the --words view: a separator inside a quoted path
 # never splits it, and a quoted `.plan` is still the target `rm` receives.
+# Redirections are blanked first (guard_unredir), so the `&` of `2>&1`
+# never cuts a verb away from the redirection that precedes it.
 #
 # Known gap, unchanged by this shaping and predating it: a *directory*
 # delete built through command substitution (`rm -rf $(true).plan/`)
@@ -89,7 +93,7 @@ plan_dir_in_delete_chunk() {
         [ -n "$chunk" ] || continue
         echo "$chunk" | grep -qE "$RM_ANCHOR" || continue
         echo "$chunk" | grep -qE "$PLAN_DIR_RE" && return 0
-    done <<< "$(command_positions --words "$COMMAND" | tr ';&\n' '\n\n\n')"
+    done <<< "$(guard_unredir "$(command_positions --words "$COMMAND")" | tr ';&\n' '\n\n\n')"
     return 1
 }
 if echo "$COMMAND" | grep -qE "$CONTINUATION_RE" || plan_dir_in_delete_chunk; then
