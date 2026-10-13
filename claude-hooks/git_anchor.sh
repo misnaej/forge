@@ -76,9 +76,11 @@
 # reads it as an argument (`git push 2>&1 -f`, issue #751), a redirection
 # between a valued git option and its value (`git -C 2>&1 <dir> push`: the
 # anchor takes the redirection for the value, and `<dir>` then ends the
-# option run), a quoted or escaped command name (`'git' push`,
-# `\git push`, `'/usr/bin/git' push`, issue #749), and one accepted
-# false block: `x &>log git push`, where
+# option run), a command word hidden by escapes inside `$'…'`
+# (`$'\x67it' push`), a quoted command word holding a variable or a blank
+# (`"$G" push`, `'git push'` as one word), a quoted global-option value
+# containing a blank (`git -C 'a b' push -f`, issue #754), and one
+# accepted false block: `x &>log git push`, where
 # git is only an argument, reads as `&` followed by a redirected
 # `git push` — it costs a `!` — the guards are tripwires for the routes
 # agents were seen to take, not a sandbox.
@@ -139,8 +141,11 @@ GH_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'gh[[:space:
 # PR body, a grep pattern or a heredoc that merely mentions a guarded
 # command never fires, while a command the shell runs is always seen:
 #
-# - single-quoted, double-quoted and `$'…'` spans become one `_` each;
-#   comments are dropped; quoted-delimiter heredoc bodies are blanked;
+# - single-quoted, double-quoted and `$'…'` spans become one `_` each,
+#   except a word whose quoted parts decode to one plain word
+#   (`'git' push`, `g"it" push`, `git 'push' -f`), which is emitted as that
+#   word because the shell runs it as one (a quoted `-h` / `--help` stays
+#   `_`); comments are dropped; quoted-delimiter heredoc bodies are blanked;
 # - `$(…)` and backticks stay visible wherever they execute — unquoted,
 #   inside double quotes, inside an unquoted-delimiter heredoc body — and
 #   are emitted as `(…)`, so the anchors' `(` separator sees their start;
@@ -323,6 +328,48 @@ function pword(s, i,   n, w, c, d, k, j, ch, e) {
     WPOS = i
     return w
 }
+# A quoted word that the shell runs as one plain word: the word at i with
+# its quotes removed (`'git'`, `g"it"`, `$'pr'`), or "" when it is not one
+# — then scan()s handlers below blank it as before. Decoded only when at
+# least one piece is quoted, every piece is literal (single-quoted text;
+# double-quoted or $"…" text with no `$`, backtick or backslash; $'…'
+# text with no backslash; unquoted characters; a backslash-escaped plain
+# character), every quote is closed, and the result is a run of
+# [A-Za-z0-9_@%+=:,./-]. A quoted `-h` / `--help` stays blank, so the help
+# exemption (guard_help_only) never widens. Its quote rules must match
+# scan()s handlers and pword(). Reads one word: linear. Sets LPOS to the
+# position after the word.
+function litword(s, i,   n, w, q, c, d, k, j, body) {
+    n = length(s); w = ""; q = 0
+    while (i <= n) {
+        c = substr(s, i, 1)
+        if (index(" \t\n;&|()<>", c)) break
+        if (c == "\\") {
+            d = substr(s, i + 1, 1)
+            if (d !~ /^[A-Za-z0-9_@%+=:,.\/-]$/) return ""
+            w = w d; i += 2; continue
+        }
+        k = 0
+        if (c == "$") {
+            d = substr(s, i + 1, 1)
+            if (d != "\047" && d != "\"") return ""
+            k = (d == "\047"); i++; c = d
+        }
+        if (c == "\047" || c == "\"") {
+            j = index(substr(s, i + 1), c)
+            if (j == 0) return ""
+            body = substr(s, i + 1, j - 1)
+            if ((k || c == "\"") && index(body, "\\")) return ""
+            if (c == "\"" && body ~ /[$`]/) return ""
+            w = w body; q = 1; i = i + j + 1; continue
+        }
+        if (c !~ /^[A-Za-z0-9_@%+=:,.\/-]$/) return ""
+        w = w c; i++
+    }
+    if (!q || w !~ /^[A-Za-z0-9_@%+=:,.\/-]+$/ || w == "-h" || w == "--help") return ""
+    LPOS = i
+    return w
+}
 function hdline(s,   n, k, ch, out, sb) {
     n = length(s); k = 1; out = ""
     while (k <= n) {
@@ -408,8 +455,8 @@ function heredoc_open(s, i, before,   n, k, ch, j, rl) {
 # psh marks that a shell `-c` payload was found: every later word of the
 # simple command is then re-scanned as a payload too (options may follow
 # `-c`), until a separator clears it with pa.
-function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, pc, bd, pa, wt, qs, cb, pws, pw, hsh, hssh, psh, isr, rt, prr, lw, mpw, spw) {
-    n = length(s); out = ""; depth = 0; dollar = 0; nh = 0; bd = 0; pa = 0
+function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, pc, bd, pa, wt, qs, cb, pws, pw, hsh, hssh, psh, isr, rt, prr, lw, mpw, spw, st, lt) {
+    n = length(s); out = ""; depth = 0; dollar = 0; nh = 0; bd = 0; pa = 0; st = i
     cb = 0; pws = 0; hsh = 0; hssh = 0; psh = 0; rt = 0; prr = 0; lw = ""
     while (i <= n) {
         c = substr(s, i, 1)
@@ -449,6 +496,19 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
                 pa = (wt >= 2); dollar = 0; continue
             }
             if (wt == 2) { out = out ";"; cb = length(out); pws = cb; hsh = 0; hssh = 0; lw = ""; prr = 0 }
+        }
+        # At an unescaped word start (an even run of backslashes before pc),
+        # a quoted word that decodes to one plain word is emitted as that
+        # word, so `'git' push -f` is the command the shell runs. The
+        # --words view keeps quoted words already; there it only drops the
+        # `$` of a `$'…'` / `$"…"` word, which the quote handlers keep.
+        if (bd == 0 && !index(" \t\n;&|()<>", c) && (i == st || index(" \t\n;&|()<>`", pc))) {
+            j = i - 2
+            while (j >= 1 && substr(s, j, 1) == "\\") j--
+            if ((i - 2 - j) % 2 == 0) {
+                lt = litword(s, i)
+                if (lt != "") { out = out lt; i = LPOS; dollar = 0; continue }
+            }
         }
         if (c == "\\") {
             d = substr(s, i + 1, 1)
@@ -634,7 +694,10 @@ guard_git_invocations() {
 # True when <verb regex> matches at least one invocation in the view and
 # EVERY such invocation asks for help: a `--help` / `-h` token in its own
 # segment (up to the next `;` `&` `|` `)` or newline), outside quotes
-# (quoted spans are already blanked in the view), before any standalone
+# (quoted spans are already blanked in the view; the scanner deliberately
+# keeps a quoted `-h` / `--help` blank even though it decodes other quoted
+# plain words, so `git commit "-h"` is not a help request here — the
+# exemption never widens), before any standalone
 # `--` (after it, `-h` is a path or refspec), and not directly after
 # another dash-option (`-m -h` hands `-h` to `-m` as its value, and the
 # command runs). `… ; echo --help` therefore exempts nothing. Help is

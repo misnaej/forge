@@ -88,11 +88,11 @@
   "words": "bash -c ;cd x && git push -f;\n"
  },
  "git push \"--force\" origin feat": {
-  "positions": "git push _ origin feat\n",
+  "positions": "git push --force origin feat\n",
   "words": "git push --force origin feat\n"
  },
  "git commit \"--no-verify\" -m x": {
-  "positions": "git commit _ -m x\n",
+  "positions": "git commit --no-verify -m x\n",
   "words": "git commit --no-verify -m x\n"
  },
  "git push --force; echo --help": {
@@ -152,7 +152,7 @@
   "words": "bash -c ;gh pr comment 1 --body-file code_health/pr_wrapup.md;\n"
  },
  "git push origin \"HEAD:main\"": {
-  "positions": "git push origin _\n",
+  "positions": "git push origin HEAD:main\n",
   "words": "git push origin HEAD:main\n"
  },
  "echo `echo #`; git push -f": {
@@ -304,11 +304,11 @@
   "words": "git revert --quit | git revert HEAD\n"
  },
  "git commit -m \"\\\"\" --amend -m \"z\"": {
-  "positions": "git commit -m _ --amend -m _\n",
+  "positions": "git commit -m _ --amend -m z\n",
   "words": "git commit -m \" --amend -m z\n"
  },
  "git commit -m '\"' --amend -m \"z\"": {
-  "positions": "git commit -m _ --amend -m _\n",
+  "positions": "git commit -m _ --amend -m z\n",
   "words": "git commit -m \" --amend -m z\n"
  },
  "git commit -m \"it's\" --amend -m \"don't\"": {
@@ -562,5 +562,97 @@
  "bash -c 'echo hi' >'git push -f'": {
   "positions": "bash -c ;echo hi; >_\n",
   "words": "bash -c ;echo hi; >git push -f\n"
+ },
+ "gh 'pr' merge 9": {
+  "positions": "gh pr merge 9\n",
+  "words": "gh pr merge 9\n"
+ },
+ "gh pr \"merge\" 9": {
+  "positions": "gh pr merge 9\n",
+  "words": "gh pr merge 9\n"
+ },
+ "'gh' pr merge 9": {
+  "positions": "gh pr merge 9\n",
+  "words": "gh pr merge 9\n"
+ },
+ "git 'push' -f": {
+  "positions": "git push -f\n",
+  "words": "git push -f\n"
+ },
+ "'git' push -f": {
+  "positions": "git push -f\n",
+  "words": "git push -f\n"
+ },
+ "\"git\" push -f": {
+  "positions": "git push -f\n",
+  "words": "git push -f\n"
+ },
+ "g'it' push -f": {
+  "positions": "git push -f\n",
+  "words": "git push -f\n"
+ },
+ "$'git' push -f": {
+  "positions": "git push -f\n",
+  "words": "git push -f\n"
+ },
+ "git '--no-pager' push -f": {
+  "positions": "git --no-pager push -f\n",
+  "words": "git --no-pager push -f\n"
+ },
+ "'sudo' git push -f": {
+  "positions": "sudo git push -f\n",
+  "words": "sudo git push -f\n"
+ },
+ "'bash' -c 'git push -f'": {
+  "positions": "bash -c ;git push -f;\n",
+  "words": "bash -c ;git push -f;\n"
+ },
+ "bash -c \"'git' push -f\"": {
+  "positions": "bash -c ;git push -f;\n",
+  "words": "bash -c ;git push -f;\n"
+ },
+ "echo ok; 'git' push -f": {
+  "positions": "echo ok; git push -f\n",
+  "words": "echo ok; git push -f\n"
+ },
+ "echo $('git' push -f)": {
+  "positions": "echo $(git push -f)\n",
+  "words": "echo $(git push -f)\n"
+ },
+ "'/usr/bin/git' push -f": {
+  "positions": "/usr/bin/git push -f\n",
+  "words": "/usr/bin/git push -f\n"
+ },
+ "'ruff' check .": {
+  "positions": "ruff check .\n",
+  "words": "ruff check .\n"
+ },
+ "pip install x; echo pip 'show'": {
+  "positions": "pip install x; echo pip show\n",
+  "words": "pip install x; echo pip show\n"
+ },
+ "pip show x && pip install y": {
+  "positions": "pip show x && pip install y\n",
+  "words": "pip show x && pip install y\n"
+ },
+ "echo 'git' push -f": {
+  "positions": "echo git push -f\n",
+  "words": "echo git push -f\n"
+ },
+ "git commit -m 'git push -f'": {
+  "positions": "git commit -m _\n",
+  "words": "git commit -m git push -f\n"
+ },
+ "gh pr create --body \"gh pr merge 9\"": {
+  "positions": "gh pr create --body _\n",
+  "words": "gh pr create --body gh pr merge 9\n"
+ },
+ "gh 'pr merge' 9": {
+  "positions": "gh _ 9\n",
+  "words": "gh pr merge 9\n"
+ },
+ "git 'push' origin 'feat'": {
+  "positions": "git push origin feat\n",
+  "words": "git push origin feat\n"
  }
 }
