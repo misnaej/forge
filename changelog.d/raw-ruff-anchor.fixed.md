@@ -1,3 +1,0 @@
-bump: patch
-
-- **Raw `ruff check` / `ruff format` from an agent is now refused however it is typed, not only when it starts the command.** The guard used to miss a leading space, a `VAR=value` or `sudo`/`env`/`time` prefix, `if … then` and `{ … }` blocks, a path to the binary (`.venv/bin/ruff`), `python -m ruff`, ruff options before the subcommand (`ruff -q check`, `ruff --config x check`), and runners such as `uv run`, `uvx`, `pixi run`, `poetry run`, `pipenv run`, `conda run` and `pipx run`. All of these now block; help requests, other ruff verbs (`ruff rule`), `fix-forge-ruff` and quoted mentions stay allowed.
