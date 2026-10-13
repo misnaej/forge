@@ -73,25 +73,24 @@ fi
 # `git clean` with any of -f/-d/-x/-X (clustered or separate) or --force.
 # A dry run (`-n`/--dry-run) short-circuits — it only lists candidates and
 # is the sanctioned way to REPORT untracked state — but the exemption is
-# evaluated PER INVOCATION: the command is split at shell separators so
-# `git clean -n; git clean -f` still blocks on the second segment.
-# Segments come from the --words view, so a separator inside a quoted
-# argument never splits an invocation and a quoted mention never forms one.
-# Redirections are blanked before the split (guard_unredir), so the `&` of
-# `2>&1 git clean -fd` cannot cut `git` away from its segment start.
-_guarded 'clean\b' && while IFS= read -r seg; do
-    if echo "$seg" | grep -qE "${SEG_ANCHOR}clean\b"; then
-        # Flags are scanned only AFTER the `clean` token, so a wrapper's
-        # own flag (`sudo -n git clean -f`) can't masquerade as dry-run.
-        rest="${seg#*clean}"
-        if echo "$rest" | grep -qE '(^|[[:space:]])(--dry-run\b|-[a-zA-Z]*n)'; then
-            continue
-        fi
-        if echo "$rest" | grep -qE '(^|[[:space:]])(--force\b|-[a-zA-Z]*[fdxX])'; then
-            _block "git clean" "It deletes untracked files permanently — no reflog, no index, no recovery; report the untracked paths instead (\`git clean -n\` to list them)."
-        fi
+# evaluated PER INVOCATION (guard_git_invocations), so
+# `git clean -n; git clean -f` still blocks on the second invocation.
+# Invocations come from the --words view, so a separator inside a quoted
+# argument never ends an invocation and a quoted mention never forms one.
+# Redirections are blanked first (guard_unredir), so the `&` of
+# `git clean 2>&1 -fd` cannot end the invocation before its flags.
+# Flags are read only from the arguments AFTER the matched `clean` verb,
+# so neither a wrapper's own flag (`sudo -n git clean -f`) nor a `clean`
+# spelled earlier in the prefix (`X=clean-n git clean -fd`) can
+# masquerade as a dry run.
+_guarded 'clean\b' && while IFS=$'\t' read -r _ rest; do
+    if echo "$rest" | grep -qE '(^|[[:space:]])(--dry-run\b|-[a-zA-Z]*n)'; then
+        continue
     fi
-done < <(guard_unredir "$WORDS" | tr ';&|(' '\n')
+    if echo "$rest" | grep -qE '(^|[[:space:]])(--force\b|-[a-zA-Z]*[fdxX])'; then
+        _block "git clean" "It deletes untracked files permanently — no reflog, no index, no recovery; report the untracked paths instead (\`git clean -n\` to list them)."
+    fi
+done <<< "$(guard_git_invocations "$(guard_unredir "$WORDS")" clean)"
 
 # Discard-everything restores: the pathspec `.` (or `./`) as the whole
 # target, with any run of flags tolerated in between so `git checkout -f .`

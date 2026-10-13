@@ -1244,7 +1244,7 @@ def test_git_anchor_lib_defines_both_anchors() -> None:
 
 
 def test_guard_redir_holds_no_slash_or_backslash() -> None:
-    """`GUARD_REDIR` and the anchors built from it hold no `/` and no backslash.
+    """`GUARD_REDIR` holds no `/` and no backslash.
 
     `block_protected_branches.sh` splices `GIT_ANCHOR` into a `s/…//` sed
     expression, where a `/` would end the pattern early, and
@@ -1252,10 +1252,26 @@ def test_guard_redir_holds_no_slash_or_backslash() -> None:
     backslash escapes — either character would silently change the anchor
     in those consumers while every direct grep kept working.
     """
-    values = _sourced_lib_values("GUARD_REDIR", "GIT_ANCHOR", "SEG_ANCHOR")
-    for name, value in values.items():
-        assert "/" not in value, f"{name} contains '/'"
+    value = _sourced_lib_values("GUARD_REDIR")["GUARD_REDIR"]
+    assert "/" not in value, "GUARD_REDIR contains '/'"
+    assert "\\" not in value, "GUARD_REDIR contains a backslash"
+
+
+def test_composed_anchors_hold_slash_only_bracketed_and_no_backslash() -> None:
+    """The composed anchors hold no backslash, and a `/` only as `[/]`.
+
+    The directory part in front of a command name needs a `/`; written as
+    the bracket `[/]` it survives the `s/…//` sed consumer, where a bare
+    `/` would end the pattern early. A backslash would be eaten by
+    `awk -v` in `guard_git_invocations`.
+    """
+    names = ("GUARD_BINPATH", "GIT_ANCHOR", "SEG_ANCHOR", "GH_ANCHOR")
+    values = _sourced_lib_values(*names)
+    for name in names:
+        value = values[name]
         assert "\\" not in value, f"{name} contains a backslash"
+        assert "/" not in value.replace("[/]", ""), f"{name} has a bare '/'"
+    assert "[/]" in values["GUARD_BINPATH"]
 
 
 # --- Redirection words before a command or its subcommand ---------------------
@@ -1323,6 +1339,81 @@ def test_guards_do_not_take_a_redirection_target_for_a_command(
 
     `> git push -f` writes to a file named `git` and runs `push`; after
     `echo` git is only an argument.
+
+    Args:
+        hook: Hook script under test.
+        command: A command the hook allows.
+    """
+    assert _run_hook(hook, command) == 0
+
+
+# --- Path-qualified command names ---------------------------------------------
+# `/usr/bin/git push -f` runs the same git as `git push -f`, so a directory
+# in front of a tool or wrapper name must not hide the invocation. One row
+# per class of path and per guard family that locates a command.
+
+_BINPATH_BLOCKED = [
+    pytest.param(_FORCE_PUSH, "/usr/bin/git push -f origin feat", id="absolute_git"),
+    pytest.param(_FORCE_PUSH, "./bin/git push --force", id="relative_git"),
+    pytest.param(_PR_MERGE, "/usr/bin/gh pr merge 9", id="absolute_gh"),
+    pytest.param(_FORCE_PUSH, "/usr/bin/env git push -f", id="path_wrapper"),
+    pytest.param(_FORCE_PUSH, "2>&1 /usr/bin/git push -f", id="after_redirection"),
+    pytest.param(
+        "block_git_destructive.sh", "/usr/bin/git clean -fd", id="destructive_clean"
+    ),
+    pytest.param(
+        "block_git_destructive.sh", "/usr/bin/git stash", id="destructive_stash"
+    ),
+    pytest.param(_PROTECTED, "/usr/bin/git push origin main", id="protected_push"),
+    pytest.param(
+        "block_branch_deletion.sh",
+        "/usr/bin/gh api -X DELETE repos/o/n/git/refs/heads/main",
+        id="gh_api_delete",
+    ),
+    pytest.param("block_raw_ruff.sh", "/usr/bin/env ruff check .", id="ruff_wrapper"),
+    pytest.param(
+        "block_raw_git.sh",
+        "/usr/bin/env python3 -c 'import os; os.system(\"git commit -m x\")'",
+        id="interpreter_runner",
+    ),
+    pytest.param(
+        "block_git_destructive.sh", "X=clean-n git clean -fd", id="clean_in_prefix"
+    ),
+]
+
+
+@pytest.mark.parametrize(("hook", "command"), _BINPATH_BLOCKED)
+def test_guards_read_past_a_directory_path(hook: str, command: str) -> None:
+    """A tool or wrapper named by its path blocks like the bare name.
+
+    The last row pins that `git clean` flags are read after the matched
+    `clean` verb, never after a `clean` spelled earlier in the prefix.
+
+    Args:
+        hook: Hook script under test.
+        command: A command the hook refuses.
+    """
+    assert _run_hook(hook, command) == 2
+
+
+_BINPATH_ALLOWED = [
+    pytest.param(_FORCE_PUSH, "forge-git-x push -f", id="other_name_with_git"),
+    pytest.param(_PR_MERGE, "my-gh pr merge 9", id="other_name_with_gh"),
+    pytest.param(_FORCE_PUSH, "echo /usr/bin/git push -f", id="path_is_an_argument"),
+    pytest.param(_PROTECTED, "/usr/bin/git push origin feat", id="plain_push"),
+    pytest.param("block_raw_git.sh", "/usr/bin/git push --help", id="help_request"),
+    pytest.param(_PR_MERGE, "/usr/bin/gh pr view 9", id="gh_read_only"),
+    pytest.param(_FORCE_PUSH, ">/tmp/git push -f", id="path_is_redirect_target"),
+]
+
+
+@pytest.mark.parametrize(("hook", "command"), _BINPATH_ALLOWED)
+def test_guards_do_not_take_a_path_for_a_command_it_is_not(
+    hook: str, command: str
+) -> None:
+    """A directory path never turns another name, a mention or a safe verb into a block.
+
+    `>/tmp/git push -f` writes to the file `/tmp/git` and runs `push`.
 
     Args:
         hook: Hook script under test.

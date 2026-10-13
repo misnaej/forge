@@ -56,6 +56,9 @@ CMDPOS=$(command_positions "$COMMAND")
 # the moment the lib learns a new wrapper word, and this hook would
 # silently miss it. If the lib's shape changes so the cut no longer
 # applies, refuse everything rather than guard with a broken anchor.
+# The cut prefix ends with the anchor's optional directory path
+# (GUARD_BINPATH), so a path-qualified wrapper or runner
+# (`/usr/bin/env ruff check`, `/usr/bin/uvx ruff check`) is caught too.
 RUFF_PREFIX="${GIT_ANCHOR%%git\[\[:space:\]\]+*}"
 case "$RUFF_PREFIX" in
     "$GIT_ANCHOR" | "" | *git*) RUFF_PREFIX_OK=0 ;;
