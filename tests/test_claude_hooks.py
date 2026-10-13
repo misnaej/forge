@@ -1322,13 +1322,20 @@ def test_guards_do_not_take_a_redirection_target_for_a_command(
     """A redirection never turns a mention, a plain push or a help request into a block.
 
     `> git push -f` writes to a file named `git` and runs `push`; after
-    `echo` git is only an argument.
+    `echo` git is only an argument. The protected-branch guard also refuses
+    any push made while the checkout itself sits on a protected branch — CI
+    on `main` does — so its rows run as the commit agent, which that
+    current-branch check exempts, leaving only the refspec-destination
+    check under test.
 
     Args:
         hook: Hook script under test.
         command: A command the hook allows.
     """
-    assert _run_hook(hook, command) == 0
+    options = (
+        HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
+    )
+    assert _run_hook(hook, command, options=options) == 0
 
 
 # A command each hook's guard would normally block — any command works here,
