@@ -104,6 +104,8 @@ WORDS=$(command_positions --words "$COMMAND")
 # The command boundary every rule below starts from (see the header), then
 # any run of the keywords that start a command inside a compound and of
 # redirection words (`2>&1 pip install`, GUARD_REDIR in git_anchor.sh).
+# It accepts no `VAR=val` or wrapper word (`sudo`, `env`) yet, so
+# `sudo pip install x` is still unmatched — tracked as its own issue (#752).
 CMD_PFX='(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
 # invoked <regex> — a real invocation matching <regex> that is not only a
 # help request.

@@ -76,7 +76,10 @@
 # anchor below reads past it in those places. It holds no `/` (a hook
 # splices GIT_ANCHOR into a `s/…//` sed expression) and no backslash
 # (guard_git_invocations hands the anchor to awk -v, which would eat it);
-# a test pins both.
+# a test pins both. It also never spells the letters `git` — hence `[0-9]`,
+# not `[[:digit:]]` — because block_raw_ruff cuts its prefix out of
+# GIT_ANCHOR at the first `git[[:space:]]+` and refuses every command when
+# the cut prefix still contains `git`.
 GUARD_REDIR='(([0-9]+|[{][[:alnum:]_]+[}])?(<<<|<<-?|<>|>>|>[|]|>&|<&|&>>|&>|<|>)[[:space:]]*([^[:space:];&|()<>]|[(][^()]*[)])+)+'
 # The command-prefix run (VAR=val, wrapper and compound words, wrapper
 # flag tokens, redirections) and git's global-option run, shared by the
