@@ -1413,13 +1413,19 @@ def test_guards_do_not_take_a_path_for_a_command_it_is_not(
 ) -> None:
     """A directory path never turns another name, a mention or a safe verb into a block.
 
-    `>/tmp/git push -f` writes to the file `/tmp/git` and runs `push`.
+    `>/tmp/git push -f` writes to the file `/tmp/git` and runs `push`. The
+    protected-branch guard also refuses any push while the checkout sits on
+    a protected branch (CI on `main` does), so its rows run as the commit
+    agent, which that check exempts, leaving the refspec rule under test.
 
     Args:
         hook: Hook script under test.
         command: A command the hook allows.
     """
-    assert _run_hook(hook, command) == 0
+    options = (
+        HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
+    )
+    assert _run_hook(hook, command, options=options) == 0
 
 
 # A command each hook's guard would normally block — any command works here,
