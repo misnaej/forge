@@ -1211,11 +1211,124 @@ def test_git_guard_hooks_have_no_local_anchor_definition() -> None:
         )
 
 
+def _sourced_lib_values(*names: str) -> dict[str, str]:
+    """Return the value each named variable holds after sourcing `git_anchor.sh`.
+
+    Args:
+        *names: Shell variable names to read.
+
+    Returns:
+        Each name mapped to its value (empty when the lib leaves it unset).
+    """
+    script = 'source "$1"; shift; for v in "$@"; do printf "%s\\0" "${!v}"; done'
+    proc = subprocess.run(
+        ["bash", "-c", script, "_", str(_HOOKS_DIR / _GIT_ANCHOR_LIB), *names],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return dict(zip(names, proc.stdout.split("\0"), strict=False))
+
+
 def test_git_anchor_lib_defines_both_anchors() -> None:
-    """`git_anchor.sh` itself defines both `GIT_ANCHOR` and `SEG_ANCHOR`."""
-    text = (_HOOKS_DIR / _GIT_ANCHOR_LIB).read_text()
-    assert "GIT_ANCHOR='" in text
-    assert "SEG_ANCHOR='" in text
+    """Sourcing `git_anchor.sh` leaves every shared anchor defined and non-empty.
+
+    The anchors are assembled from shared parts, so the lib's text no
+    longer spells `GIT_ANCHOR='…'` literally; what every consumer relies on
+    is the value a `source` leaves behind.
+    """
+    names = ("GIT_ANCHOR", "SEG_ANCHOR", "GH_ANCHOR", "GH_OPTS", "GUARD_REDIR")
+    values = _sourced_lib_values(*names)
+    for name in names:
+        assert values.get(name), f"{name} is empty after sourcing the lib"
+
+
+def test_guard_redir_holds_no_slash_or_backslash() -> None:
+    """`GUARD_REDIR` and the anchors built from it hold no `/` and no backslash.
+
+    `block_protected_branches.sh` splices `GIT_ANCHOR` into a `s/…//` sed
+    expression, where a `/` would end the pattern early, and
+    `guard_git_invocations` hands it to `awk -v`, which processes
+    backslash escapes — either character would silently change the anchor
+    in those consumers while every direct grep kept working.
+    """
+    values = _sourced_lib_values("GUARD_REDIR", "GIT_ANCHOR", "SEG_ANCHOR")
+    for name, value in values.items():
+        assert "/" not in value, f"{name} contains '/'"
+        assert "\\" not in value, f"{name} contains a backslash"
+
+
+# --- Redirection words before a command or its subcommand ---------------------
+# The shell accepts a redirection wherever a word of the command may
+# stand, so `2>&1 git push -f` is a real force push. One row per class of
+# redirection word and per guard family that locates a command by hand.
+
+_REDIRECTION_BLOCKED = [
+    pytest.param(_FORCE_PUSH, ">out git push -f", id="plain_target_before_git"),
+    pytest.param(_FORCE_PUSH, "2>&1 git push -f", id="fd_dup_before_git"),
+    pytest.param(_PR_MERGE, "&>log gh pr merge 1", id="both_streams_before_gh"),
+    pytest.param(_FORCE_PUSH, "{fd}>x git push -f", id="named_fd_before_git"),
+    pytest.param(_FORCE_PUSH, ">a>b git push -f", id="glued_redirections"),
+    pytest.param(_FORCE_PUSH, "> out git push -f", id="blank_before_target"),
+    pytest.param(_FORCE_PUSH, ">$(mktemp) git push -f", id="substitution_target"),
+    pytest.param(_FORCE_PUSH, "sudo 2>&1 git push -f", id="after_wrapper"),
+    pytest.param(_FORCE_PUSH, "git 2>&1 push -f", id="git_before_subcommand"),
+    pytest.param(_PR_MERGE, "gh 2>&1 pr merge 1", id="gh_before_subcommand"),
+    pytest.param("block_raw_ruff.sh", "ruff 2>&1 check .", id="ruff_before_subcommand"),
+    pytest.param("block_raw_ruff.sh", "2>&1 ruff check .", id="before_ruff"),
+    pytest.param("block_continuation_delete.sh", "2>&1 rm -rf .plan/", id="before_rm"),
+    pytest.param(
+        "block_git_destructive.sh", "2>&1 git clean -fd", id="before_git_clean"
+    ),
+    pytest.param(_INSTALL_DEPS, "2>&1 pixi add x", id="before_pixi"),
+    pytest.param(_INSTALL_DEPS, "2>&1 pip install x", id="before_pip"),
+    pytest.param(
+        "block_raw_git.sh",
+        ">x python -c 'import os; os.system(\"git commit -m x\")'",
+        id="before_interpreter",
+    ),
+    pytest.param(
+        "block_branch_deletion.sh",
+        "2>&1 gh api -X DELETE repos/o/n/git/refs/heads/main",
+        id="before_gh_api",
+    ),
+]
+
+
+@pytest.mark.parametrize(("hook", "command"), _REDIRECTION_BLOCKED)
+def test_guards_read_past_a_redirection_word(hook: str, command: str) -> None:
+    """A redirection before a command, or between a tool and its subcommand, blocks.
+
+    Args:
+        hook: Hook script under test.
+        command: A command the hook refuses without the redirection.
+    """
+    assert _run_hook(hook, command) == 2
+
+
+_REDIRECTION_ALLOWED = [
+    pytest.param(_FORCE_PUSH, "> git push -f", id="git_is_the_target"),
+    pytest.param(_FORCE_PUSH, "echo 2>&1 git push -f", id="git_is_an_argument"),
+    pytest.param(_FORCE_PUSH, "2>&1 git push origin feat", id="plain_push_force"),
+    pytest.param(_PROTECTED, "2>&1 git push origin feat", id="plain_push_protected"),
+    pytest.param("block_raw_git.sh", "2>&1 git push --help", id="help_request"),
+]
+
+
+@pytest.mark.parametrize(("hook", "command"), _REDIRECTION_ALLOWED)
+def test_guards_do_not_take_a_redirection_target_for_a_command(
+    hook: str, command: str
+) -> None:
+    """A redirection never turns a mention, a plain push or a help request into a block.
+
+    `> git push -f` writes to a file named `git` and runs `push`; after
+    `echo` git is only an argument.
+
+    Args:
+        hook: Hook script under test.
+        command: A command the hook allows.
+    """
+    assert _run_hook(hook, command) == 0
 
 
 # A command each hook's guard would normally block — any command works here,

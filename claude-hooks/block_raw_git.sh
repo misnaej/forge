@@ -107,8 +107,11 @@ fi
 # commit-agent bypass. This is a tripwire for the recorded route, not a
 # boundary: a script file run as `python x.py`, or a verb assembled at
 # runtime, is not seen (documented residuals, git_anchor.sh).
-INTERP_PFX='(([[:alnum:]_]+=[^[:space:]]+|then|do|else|elif|[{!]|-[^[:space:]]+)[[:space:]]+)*'
-INTERP_RUNNER='((command|env|exec|builtin|sudo|nice|nohup|time|timeout|stdbuf|xargs|uvx|npx|bunx|(uv|pixi|poetry|pipenv|pdm|hatch|rye|conda|mamba|micromamba)[[:space:]]+run)([[:space:]]+[^[:space:];&|()]+)*[[:space:]]+)?'
+# A redirection word (GUARD_REDIR, git_anchor.sh) may stand before the
+# interpreter or the runner and among the runner's arguments
+# (`>x python -c …`, `env 2>&1 python -c …`).
+INTERP_PFX='(([[:alnum:]_]+=[^[:space:]]+|then|do|else|elif|[{!]|-[^[:space:]]+|'"${GUARD_REDIR}"')[[:space:]]+)*'
+INTERP_RUNNER='((command|env|exec|builtin|sudo|nice|nohup|time|timeout|stdbuf|xargs|uvx|npx|bunx|(uv|pixi|poetry|pipenv|pdm|hatch|rye|conda|mamba|micromamba)[[:space:]]+run)([[:space:]]+([^[:space:];&|()]+|'"${GUARD_REDIR}"'))*[[:space:]]+)?'
 INTERP_NAME='([^[:space:];&|()]*/)?(python[0-9.]*|pypy[0-9.]*|node|nodejs|perl|ruby|bun|deno|php)'
 INTERP_RE="(^|[;&|(])[[:space:]]*${INTERP_PFX}${INTERP_RUNNER}${INTERP_NAME}([[:space:]]|\$)"
 INTERP_TOKEN_RE='^(.*/)?(python[0-9.]*|pypy[0-9.]*|node|nodejs|perl|ruby|bun|deno|php)$'

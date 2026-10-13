@@ -27,8 +27,10 @@ source "$ANCHOR_LIB"
 # git_anchor.sh (leading whitespace and words such as `VAR=val`, `sudo`,
 # `env`, `time`, `then`, `{`, `!`), then an optional `python[N] -m`, an
 # optional path to ruff (`/usr/bin/ruff`, `.venv/bin/ruff`), and a bounded
-# run of ruff's global options before the subcommand (`-q`, `--isolated`,
-# `--config <file>`). It has no trailing word boundary, so `ruff checks`
+# run of ruff's global options and redirection words before the
+# subcommand (`-q`, `--isolated`, `--config <file>`, `2>&1`). Redirection
+# words before the command come with the shared prefix (GUARD_REDIR in
+# git_anchor.sh). It has no trailing word boundary, so `ruff checks`
 # is caught too. fix-forge-ruff and
 # similar one-token wrappers don't match: their `ruff` follows neither a
 # separator, a prefix word nor a `/`.
@@ -42,8 +44,6 @@ source "$ANCHOR_LIB"
 #
 # Accepted residuals (documented, deliberately out of scope — a tripwire
 # for the routes agents take, not a sandbox):
-# - a redirection word before the command (`2>&1 ruff check`), the family
-#   residual tracked in issue #737;
 # - `xargs ruff check` and `find … -exec ruff check`;
 # - ruff run from an interpreter subprocess or a script file;
 # - variable indirection and `${IFS}` splicing (`$R check`);
@@ -66,7 +66,7 @@ if [ "$RUFF_PREFIX_OK" != 1 ]; then
     echo "BLOCKED: could not derive the command prefix from GIT_ANCHOR in $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
     exit 2
 fi
-RUFF_VERB='ruff[[:space:]]+((--config)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+)*(check|format)'
+RUFF_VERB='ruff[[:space:]]+((--config)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*(check|format)'
 RUFF_ANCHOR="${RUFF_PREFIX}(([^[:space:];&|()]*/)?python[0-9.]*[[:space:]]+-m[[:space:]]+)?([^[:space:];&|()]*/)?${RUFF_VERB}"
 RUFF_RUNNER="${RUFF_PREFIX}(uvx|pipx[[:space:]]+run|(uv|pixi|poetry|pipenv|conda)[[:space:]]+run)[[:space:]]([^;&|]*[[:space:]/])?${RUFF_VERB}"
 # invoked <regex> — a real invocation matching <regex> that is not only a

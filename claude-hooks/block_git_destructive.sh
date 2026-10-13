@@ -77,6 +77,8 @@ fi
 # `git clean -n; git clean -f` still blocks on the second segment.
 # Segments come from the --words view, so a separator inside a quoted
 # argument never splits an invocation and a quoted mention never forms one.
+# Redirections are blanked before the split (guard_unredir), so the `&` of
+# `2>&1 git clean -fd` cannot cut `git` away from its segment start.
 _guarded 'clean\b' && while IFS= read -r seg; do
     if echo "$seg" | grep -qE "${SEG_ANCHOR}clean\b"; then
         # Flags are scanned only AFTER the `clean` token, so a wrapper's
@@ -89,7 +91,7 @@ _guarded 'clean\b' && while IFS= read -r seg; do
             _block "git clean" "It deletes untracked files permanently — no reflog, no index, no recovery; report the untracked paths instead (\`git clean -n\` to list them)."
         fi
     fi
-done < <(printf '%s\n' "$WORDS" | tr ';&|(' '\n')
+done < <(guard_unredir "$WORDS" | tr ';&|(' '\n')
 
 # Discard-everything restores: the pathspec `.` (or `./`) as the whole
 # target, with any run of flags tolerated in between so `git checkout -f .`
