@@ -957,10 +957,41 @@ def test_gh_guards_block_a_repo_override_before_the_subcommand(
     the create guard now refuses every raw invocation outright, so a
     block proves the override did not hide the subcommand from the
     match — which is the only thing this test is about.
+
+    gh accepts ANY option there, and between a command group and its
+    action too (a valued flag before the subcommand takes the next word),
+    so `GH_OPTS` reads past every dash word plus one optional value: the
+    method-override and hostname forms below reached a delete or a merge
+    before it did. GET calls, a quoted/echoed mention, a non-merge `pr`
+    action and a help request stay allowed.
     """
     repo, _sha = git_repo_with_commit
     assert _run_hook(_PR_MERGE, "gh --repo owner/name pr merge 5 --squash") == 2
     assert _run_hook(_PR_MERGE, "gh -R owner/name pr merge 5 --squash") == 2
+    for blocked in (
+        "gh -X DELETE api repos/o/n/git/refs/heads/main",
+        "gh --hostname github.com api -X DELETE repos/o/n/git/refs/heads/main",
+        "gh --repo o/n api -X DELETE repos/o/n/git/refs/heads/main",
+        "gh -R o/n api --method DELETE repos/o/n/branches/main",
+    ):
+        assert _run_hook("block_branch_deletion.sh", blocked) == 2, blocked
+    for blocked in (
+        "gh -X PUT api repos/o/n/pulls/9/merge",
+        "gh --hostname github.com api -X PUT repos/o/n/pulls/9/merge",
+        "gh --repo o/n api -X PUT repos/o/n/pulls/9/merge",
+        "gh pr -R o/n merge 9",
+        "gh pr --repo=o/n merge 9",
+    ):
+        assert _run_hook(_PR_MERGE, blocked) == 2, blocked
+    for allowed in (
+        "gh --hostname github.com api repos/o/n/branches/main",
+        "gh -R o/n api repos/o/n/pulls/9",
+        "echo gh -X DELETE api repos/o/n/git/refs/heads/main",
+    ):
+        assert _run_hook("block_branch_deletion.sh", allowed) == 0, allowed
+        assert _run_hook(_PR_MERGE, allowed) == 0, allowed
+    assert _run_hook(_PR_MERGE, "gh pr -R o/n view 9") == 0
+    assert _run_hook(_PR_MERGE, "gh pr -R o/n merge --help") == 0
     assert (
         _run_hook(
             "block_unverified_pr_create.sh",
@@ -4024,6 +4055,38 @@ def test_keep_squash_last_runs_for_the_named_pr(
     env = _stub_squash_cli(tmp_path, "exit 0")
     assert _run_hook(_KEEP_SQUASH_LAST, command, options=HookOptions(env=env)) == 0
     assert pr_arg in _record(env)
+
+
+@pytest.mark.parametrize(
+    ("here", "fires"),
+    [
+        pytest.param("o/n", True, id="runs_when_the_override_names_this_repo"),
+        pytest.param("other/repo", False, id="silent_when_it_names_another_repo"),
+    ],
+)
+def test_keep_squash_last_honours_a_repo_override(
+    here: str, *, fires: bool, tmp_path: Path
+) -> None:
+    """SCENARIO: a comment posted with `--repo` before the subcommand.
+
+    MOCK SETUP: recording squash stub, plus a `gh` stub answering
+    `gh repo view` with *here*.
+    EXPECTED BEHAVIOR: the option no longer hides the comment; the re-post
+    runs only when the override names the current repository — another
+    repo's PR number means nothing here.
+
+    Args:
+        here: The `nameWithOwner` the stubbed `gh repo view` reports.
+        fires: Whether the squash CLI is expected to run.
+        tmp_path: Pytest temporary directory holding the stubs.
+    """
+    env = _stub_squash_cli(tmp_path, "exit 0")
+    gh = tmp_path / "gh"
+    gh.write_text(f"#!/usr/bin/env bash\necho {here}\n", encoding="utf-8")
+    gh.chmod(0o755)
+    command = "gh --repo o/n pr comment 9 --body x"
+    assert _run_hook(_KEEP_SQUASH_LAST, command, options=HookOptions(env=env)) == 0
+    assert ("--pr 9" in _record(env)) is fires
 
 
 @pytest.mark.parametrize(

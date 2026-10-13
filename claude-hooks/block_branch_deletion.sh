@@ -116,7 +116,7 @@ while IFS= read -r seg; do
         [ -n "$blocked" ] && break
     fi
 
-    if echo "$seg" | grep -qE 'gh[[:space:]]+api' \
+    if echo "$seg" | grep -qE "gh[[:space:]]+${GH_OPTS}api" \
         && echo "$seg" | grep -qiE '(-X|--method)[[:space:]=]+DELETE'; then
         for b in $protected; do
             if echo "$seg" | grep -qE "(refs/heads/|/branches/)${b}${bound}"; then
