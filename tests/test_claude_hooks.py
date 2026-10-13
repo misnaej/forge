@@ -529,10 +529,9 @@ def test_install_deps_blocks_uv_install_forms(command: str) -> None:
 def test_install_deps_blocks_pixi_lock_despite_leading_pip_list() -> None:
     """A leading read-only segment does not shadow a later pixi mutation.
 
-    `pip list` alone matches the shared read-only fast-path, which is
-    checked anywhere in the command rather than per segment. The pixi
-    verb loop runs before that fast-path, so this command must still
-    block on the `pixi lock` segment.
+    `pip list` only reads, but a read-only segment never vouches for the
+    rest of the command: the pixi verb loop judges each segment, so this
+    command must still block on the `pixi lock` segment.
     """
     assert _run_hook(_INSTALL_DEPS, "pip list && pixi lock") == 2
 
@@ -3358,20 +3357,27 @@ def test_unverified_pr_create_allows_forge_pr_create_cli() -> None:
     )
 
 
-def test_unverified_pr_create_allows_skip_gate_env_prefix() -> None:
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("FORGE_SKIP_WRAPUP_GATE=1 gh pr create --title x", id="bare"),
+        pytest.param(
+            'FORGE_SKIP_WRAPUP_GATE="1" gh pr create --title x', id="quoted-value"
+        ),
+    ],
+)
+def test_unverified_pr_create_allows_skip_gate_env_prefix(command: str) -> None:
     """The explicit `FORGE_SKIP_WRAPUP_GATE=1` prefix still allows a raw create.
 
     Sanctioned bypass, unchanged by the move: a human running it directly,
     or the user explicitly requesting the skip — never the agent's own
-    judgment.
+    judgment. A quoted value sets the same variable for gh, so the scanner
+    reads it as the same prefix; pinned so that equivalence is deliberate.
+
+    Args:
+        command: The raw create, with the skip prefix in each spelling.
     """
-    assert (
-        _run_hook(
-            _UNVERIFIED_PR_CREATE,
-            "FORGE_SKIP_WRAPUP_GATE=1 gh pr create --title x",
-        )
-        == 0
-    )
+    assert _run_hook(_UNVERIFIED_PR_CREATE, command) == 0
 
 
 def test_no_safety_hook_reads_the_emergency_sentinel() -> None:
@@ -5933,6 +5939,109 @@ def test_guards_locate_commands_by_position_not_by_text(
     assert _run_hook(hook, command) == expected
 
 
+# The shell removes quotes before it runs a word, so a quoted word that
+# decodes to one plain word is that word: `'git' push -f` is a force push.
+# Quoted text that stays text (a message, a body, `'pr merge'` as ONE
+# argument) must still be inert.
+_QUOTED_WORD_CASES = [
+    pytest.param("block_pr_merge.sh", "gh 'pr' merge 9", _BLOCK, id="gh-quoted-group"),
+    pytest.param("block_pr_merge.sh", 'gh pr "merge" 9', _BLOCK, id="gh-quoted-action"),
+    pytest.param("block_pr_merge.sh", "'gh' pr merge 9", _BLOCK, id="gh-quoted-name"),
+    pytest.param("block_force_push.sh", "git 'push' -f", _BLOCK, id="git-quoted-verb"),
+    pytest.param(
+        "block_force_push.sh", "'git' push -f", _BLOCK, id="git-single-quoted"
+    ),
+    pytest.param(
+        "block_force_push.sh", '"git" push -f', _BLOCK, id="git-double-quoted"
+    ),
+    pytest.param("block_force_push.sh", "g'it' push -f", _BLOCK, id="git-split-quote"),
+    pytest.param("block_force_push.sh", "$'git' push -f", _BLOCK, id="git-ansi-c"),
+    pytest.param(
+        "block_force_push.sh",
+        "git '--no-pager' push -f",
+        _BLOCK,
+        id="quoted-global-opt",
+    ),
+    pytest.param(
+        "block_force_push.sh", "'sudo' git push -f", _BLOCK, id="quoted-wrapper"
+    ),
+    pytest.param(
+        "block_force_push.sh", "'bash' -c 'git push -f'", _BLOCK, id="quoted-shell-name"
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "bash -c \"'git' push -f\"",
+        _BLOCK,
+        id="quoted-in-payload",
+    ),
+    pytest.param(
+        "block_force_push.sh", "echo ok; 'git' push -f", _BLOCK, id="after-separator"
+    ),
+    pytest.param(
+        "block_force_push.sh", "echo $('git' push -f)", _BLOCK, id="in-substitution"
+    ),
+    pytest.param(
+        "block_force_push.sh", "'/usr/bin/git' push -f", _BLOCK, id="quoted-binpath"
+    ),
+    pytest.param("block_raw_ruff.sh", "'ruff' check .", _BLOCK, id="ruff-quoted"),
+    pytest.param(
+        "block_install_deps.sh",
+        "pip install x; echo pip 'show'",
+        _BLOCK,
+        id="install-beside-quoted-show",
+    ),
+    pytest.param(
+        "block_install_deps.sh",
+        "pip show x && pip install y",
+        _BLOCK,
+        id="install-after-show",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "echo 'git' push -f",
+        _ALLOW,
+        id="quoted-word-as-argument",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "git commit -m 'git push -f'",
+        _ALLOW,
+        id="quoted-message",
+    ),
+    pytest.param(
+        "block_pr_merge.sh",
+        'gh pr create --body "gh pr merge 9"',
+        _ALLOW,
+        id="quoted-body",
+    ),
+    pytest.param(
+        "block_pr_merge.sh", "gh 'pr merge' 9", _ALLOW, id="one-quoted-argument"
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "git 'push' origin 'feat'",
+        _ALLOW,
+        id="quoted-plain-push",
+    ),
+]
+
+
+@pytest.mark.parametrize(("hook", "command", "expected"), _QUOTED_WORD_CASES)
+def test_quoted_plain_word_is_read_as_that_word(
+    hook: str,
+    command: str,
+    expected: int,
+) -> None:
+    """SCENARIO: a quoted word the shell runs as one plain word is seen.
+
+    Args:
+        hook: Name of the guard hook to test.
+        command: Shell command to execute through the hook.
+        expected: Expected return code (0 for allow, 2 for block).
+    """
+    assert _run_hook(hook, command) == expected
+
+
 @pytest.mark.parametrize(
     ("hook", "command"),
     [
@@ -6069,6 +6178,31 @@ _SNAPSHOT_EXTRA_COMMANDS = [
     "bash -c 'echo hi' & echo 'git push -f'",
     "a &>/dev/null; echo 'git push -f'",
     "bash -c 'echo hi' >'git push -f'",
+    # Quoted words that decode to one plain word, and quoted text that does
+    # not (the quoted-word table).
+    "gh 'pr' merge 9",
+    'gh pr "merge" 9',
+    "'gh' pr merge 9",
+    "git 'push' -f",
+    "'git' push -f",
+    '"git" push -f',
+    "g'it' push -f",
+    "$'git' push -f",
+    "git '--no-pager' push -f",
+    "'sudo' git push -f",
+    "'bash' -c 'git push -f'",
+    "bash -c \"'git' push -f\"",
+    "echo ok; 'git' push -f",
+    "echo $('git' push -f)",
+    "'/usr/bin/git' push -f",
+    "'ruff' check .",
+    "pip install x; echo pip 'show'",
+    "pip show x && pip install y",
+    "echo 'git' push -f",
+    "git commit -m 'git push -f'",
+    'gh pr create --body "gh pr merge 9"',
+    "gh 'pr merge' 9",
+    "git 'push' origin 'feat'",
 ]
 
 
@@ -6166,6 +6300,9 @@ _QUOTING_CASES = [
     ),
     pytest.param("echo `git push -f`", _BLOCK, id="backtick-subst"),
     pytest.param('echo "`git push -f`"', _BLOCK, id="backtick-in-dquotes"),
+    pytest.param("'git' push -f", _BLOCK, id="quoted-command-word"),
+    pytest.param("g'it' push -f", _BLOCK, id="split-quoted-command-word"),
+    pytest.param("echo 'git' push -f", _ALLOW, id="quoted-word-as-argument"),
 ]
 
 

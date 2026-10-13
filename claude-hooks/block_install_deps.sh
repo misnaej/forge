@@ -140,9 +140,9 @@ fi
 # blocks — including verbs pixi has not shipped yet. A read-only verb caught
 # by that default costs one `!`; a missed install defeats the guard.
 #
-# Judged PER SEGMENT, before the read-only fast-path below, because that
-# fast-path matches anywhere in the command: `pixi list && pixi lock` must
-# block on the `lock` despite the `list`.
+# Judged PER SEGMENT, so a read-only segment never vouches for the rest of
+# the command: `pixi list && pixi lock` must block on the `lock` despite
+# the `list`.
 PIXI_ALLOWED_VERBS='run|shell|install|list|info|tree'
 
 if blocked pixi; then
@@ -167,14 +167,6 @@ if blocked pixi; then
     # Redirections are blanked before the split, so the `&` of
     # `2>&1 pixi add x` cannot cut `pixi` away from its segment start.
     done < <(guard_unredir "$CMDPOS" | tr ';&|(){}!' '\n')
-fi
-
-# Read-only commands for every manager stay allowed (coarse fast-path). Note
-# `conda run` is intentionally absent — `conda run <non-install>` falls
-# through harmlessly (nothing below blocks it), while `conda run pip install`
-# is already handled above.
-if echo "$CMDPOS" | grep -qE '(pip show|pip list|pip audit|pip-audit|conda (list|info|search|activate)|pipenv (--version|graph)|poetry (show|--version)|uv (pip list|--version))'; then
-    exit 0
 fi
 
 # pip / conda — anchored to command start or after a shell separator so a
