@@ -24,11 +24,25 @@
 #   a compound (`then`, `do`, `else`, `elif`, `{`, `!`), and redirection
 #   words (GUARD_REDIR, below), so `GIT_DIR=x git ...`,
 #   `if …; then git …; fi` and `2>&1 git …` can't slip the gate;
+# - a directory path in front of the tool or wrapper name (GUARD_BINPATH,
+#   below), so `/usr/bin/git …`, `./git …` and `/usr/bin/env git …` are
+#   the same invocation as `git …`. A different one-word name that merely
+#   contains the tool's name (`forge-git-x`, `my-gh`) is not;
 # - a bounded run of git GLOBAL options between `git` and the subcommand
 #   (`--no-pager`, `-c k=v`, `-C <dir>`, attached `-C<dir>`,
 #   `--git-dir=<x>` and `--git-dir <x>`, likewise `--work-tree`,
 #   `--namespace`, `--exec-path`, `--config-env`) and redirection words,
 #   so `git --no-pager <verb>` and `git 2>&1 <verb>` can't slip it either.
+#
+# GUARD_BINPATH is that optional directory part: any run of non-separator,
+# non-redirection characters ending in `/`. `<` and `>` are excluded so
+# `>/tmp/git push -f` stays a redirection target, not a command. Accepted
+# side effects: `FOO=a/git push` reads as a path-qualified git (`=` is a
+# legal path character), and a local script named git or gh is treated as
+# the real tool. The `/` is written `[/]` because block_protected_branches
+# splices GIT_ANCHOR into a `s/…//` sed expression; it holds no backslash
+# and never spells the letters `git`, for the same reasons GUARD_REDIR
+# doesn't (below).
 #
 # SEG_ANCHOR is the same shape anchored to segment start, for hooks that
 # split a compound command at separators and evaluate each segment.
@@ -62,7 +76,9 @@
 # reads it as an argument (`git push 2>&1 -f`, issue #751), a redirection
 # between a valued git option and its value (`git -C 2>&1 <dir> push`: the
 # anchor takes the redirection for the value, and `<dir>` then ends the
-# option run), and one accepted false block: `x &>log git push`, where
+# option run), a quoted or escaped command name (`'git' push`,
+# `\git push`, `'/usr/bin/git' push`, issue #749), and one accepted
+# false block: `x &>log git push`, where
 # git is only an argument, reads as `&` followed by a redirected
 # `git push` — it costs a `!` — the guards are tripwires for the routes
 # agents were seen to take, not a sandbox.
@@ -81,19 +97,24 @@
 # GIT_ANCHOR at the first `git[[:space:]]+` and refuses every command when
 # the cut prefix still contains `git`.
 GUARD_REDIR='(([0-9]+|[{][[:alnum:]_]+[}])?(<<<|<<-?|<>|>>|>[|]|>&|<&|&>>|&>|<|>)[[:space:]]*([^[:space:];&|()<>]|[(][^()]*[)])+)+'
-# The command-prefix run (VAR=val, wrapper and compound words, wrapper
-# flag tokens, redirections) and git's global-option run, shared by the
+# GUARD_BINPATH: an optional directory path before a tool or wrapper name
+# (rationale in the header above).
+GUARD_BINPATH='([^[:space:];&|()<>]*[/])?'
+# The command-prefix run (VAR=val, wrapper and compound words — each
+# wrapper optionally path-qualified — wrapper flag tokens, redirections)
+# and git's global-option run, shared by the
 # anchors so a word learned once is learned everywhere.
-_GUARD_PREFIX='(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|nohup|nice|time|then|do|else|elif|[{!]|-[^[:space:]]+|'"${GUARD_REDIR}"')[[:space:]]+)*'
+_GUARD_PREFIX='(([[:alnum:]_]+=[^[:space:]]+|'"${GUARD_BINPATH}"'(command|env|exec|builtin|sudo|nohup|nice|time)|then|do|else|elif|[{!]|-[^[:space:]]+|'"${GUARD_REDIR}"')[[:space:]]+)*'
 _GUARD_GIT_OPTS='((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
-GIT_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
+GIT_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
 # shellcheck disable=SC2034  # consumed by sourcing hooks
-SEG_ANCHOR='^[[:space:]]*'"${_GUARD_PREFIX}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
+SEG_ANCHOR='^[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
 
 # GH_ANCHOR is the same shape for `gh`: a real invocation at line-start
 # (leading whitespace included — the hand-rolled `^gh` patterns this
 # replaced were bypassed by a single leading space) or after a shell
-# separator, tolerating the same VAR=val / wrapper-token prefix run.
+# separator, tolerating the same VAR=val / wrapper-token prefix run and
+# the same optional directory path (`/usr/bin/gh`).
 #
 # GH_OPTS is the run of options gh accepts wherever a command word is
 # expected: before the subcommand (`gh -R o/r pr view 1`,
@@ -108,7 +129,7 @@ SEG_ANCHOR='^[[:space:]]*'"${_GUARD_PREFIX}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}
 # shellcheck disable=SC2034  # consumed by sourcing hooks
 GH_OPTS='(-[^[:space:]]+[[:space:]]+([^[:space:]]+[[:space:]]+)?|'"${GUARD_REDIR}"'[[:space:]]+)*'
 # shellcheck disable=SC2034  # consumed by sourcing hooks
-GH_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}"'gh[[:space:]]+'"${GH_OPTS}"
+GH_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'gh[[:space:]]+'"${GH_OPTS}"
 
 # ---- Command positions ----------------------------------------------------
 #

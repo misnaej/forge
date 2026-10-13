@@ -109,9 +109,11 @@ fi
 # runtime, is not seen (documented residuals, git_anchor.sh).
 # A redirection word (GUARD_REDIR, git_anchor.sh) may stand before the
 # interpreter or the runner and among the runner's arguments
-# (`>x python -c …`, `env 2>&1 python -c …`).
+# (`>x python -c …`, `env 2>&1 python -c …`), and the runner may be
+# path-qualified like the interpreter (`/usr/bin/env python3 -c …`;
+# GUARD_BINPATH, git_anchor.sh).
 INTERP_PFX='(([[:alnum:]_]+=[^[:space:]]+|then|do|else|elif|[{!]|-[^[:space:]]+|'"${GUARD_REDIR}"')[[:space:]]+)*'
-INTERP_RUNNER='((command|env|exec|builtin|sudo|nice|nohup|time|timeout|stdbuf|xargs|uvx|npx|bunx|(uv|pixi|poetry|pipenv|pdm|hatch|rye|conda|mamba|micromamba)[[:space:]]+run)([[:space:]]+([^[:space:];&|()]+|'"${GUARD_REDIR}"'))*[[:space:]]+)?'
+INTERP_RUNNER='('"${GUARD_BINPATH}"'(command|env|exec|builtin|sudo|nice|nohup|time|timeout|stdbuf|xargs|uvx|npx|bunx|(uv|pixi|poetry|pipenv|pdm|hatch|rye|conda|mamba|micromamba)[[:space:]]+run)([[:space:]]+([^[:space:];&|()]+|'"${GUARD_REDIR}"'))*[[:space:]]+)?'
 INTERP_NAME='([^[:space:];&|()]*/)?(python[0-9.]*|pypy[0-9.]*|node|nodejs|perl|ruby|bun|deno|php)'
 INTERP_RE="(^|[;&|(])[[:space:]]*${INTERP_PFX}${INTERP_RUNNER}${INTERP_NAME}([[:space:]]|\$)"
 INTERP_TOKEN_RE='^(.*/)?(python[0-9.]*|pypy[0-9.]*|node|nodejs|perl|ruby|bun|deno|php)$'
