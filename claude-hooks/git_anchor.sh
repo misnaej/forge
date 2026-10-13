@@ -277,8 +277,8 @@ function rescan(t,   r) {
 }
 # One shell word at i, quotes removed — the payload of a wrapper such as
 # `bash -c`. Its quote rules must match scan()s own handlers (single,
-# double and $-quotes there); the quoting-parity test runs every case
-# both ways so the two cannot drift.
+# double and $-quotes there) and litword() below; the quoting-parity test
+# runs every case both ways so they cannot drift.
 function pword(s, i,   n, w, c, d, k, j, ch, e) {
     n = length(s); w = ""
     while (i <= n) {

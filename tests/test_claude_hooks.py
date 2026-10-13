@@ -3344,20 +3344,27 @@ def test_unverified_pr_create_allows_forge_pr_create_cli() -> None:
     )
 
 
-def test_unverified_pr_create_allows_skip_gate_env_prefix() -> None:
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("FORGE_SKIP_WRAPUP_GATE=1 gh pr create --title x", id="bare"),
+        pytest.param(
+            'FORGE_SKIP_WRAPUP_GATE="1" gh pr create --title x', id="quoted-value"
+        ),
+    ],
+)
+def test_unverified_pr_create_allows_skip_gate_env_prefix(command: str) -> None:
     """The explicit `FORGE_SKIP_WRAPUP_GATE=1` prefix still allows a raw create.
 
     Sanctioned bypass, unchanged by the move: a human running it directly,
     or the user explicitly requesting the skip — never the agent's own
-    judgment.
+    judgment. A quoted value sets the same variable for gh, so the scanner
+    reads it as the same prefix; pinned so that equivalence is deliberate.
+
+    Args:
+        command: The raw create, with the skip prefix in each spelling.
     """
-    assert (
-        _run_hook(
-            _UNVERIFIED_PR_CREATE,
-            "FORGE_SKIP_WRAPUP_GATE=1 gh pr create --title x",
-        )
-        == 0
-    )
+    assert _run_hook(_UNVERIFIED_PR_CREATE, command) == 0
 
 
 def test_no_safety_hook_reads_the_emergency_sentinel() -> None:
