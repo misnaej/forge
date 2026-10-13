@@ -66,12 +66,21 @@ SEG_ANCHOR='^[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|
 # (leading whitespace included — the hand-rolled `^gh` patterns this
 # replaced were bypassed by a single leading space) or after a shell
 # separator, tolerating the same VAR=val / wrapper-token prefix run.
-# gh also takes global options before its subcommand, including the
-# arg-bearing `-R` / `--repo` (`gh --repo o/r pr view 1` is ordinary
-# syntax), so the same bounded global-option run GIT_ANCHOR allows
-# follows `gh` here.
+#
+# GH_OPTS is the run of options gh accepts wherever a command word is
+# expected: before the subcommand (`gh -R o/r pr view 1`,
+# `gh -X DELETE api …` — a valued flag there takes the next word) and
+# between a command group and its action (`gh pr -R o/r merge 9`,
+# `gh pr --repo=o/r merge 9`). gh does not limit which options may sit
+# there, so neither does this: any dash word, each optionally followed
+# by one value word — gh's own parsing rule, not a list of flag names.
+# GH_ANCHOR ends with it, and the guards that name an action after a
+# command group (`pr[[:space:]]+${GH_OPTS}merge`) or match a second stage
+# on another view (`gh[[:space:]]+${GH_OPTS}api`) use it in those places.
 # shellcheck disable=SC2034  # consumed by sourcing hooks
-GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|nohup|nice|time|then|do|else|elif|[{!]|-[^[:space:]]+)[[:space:]]+)*gh[[:space:]]+((-R|--repo)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+)*'
+GH_OPTS='(-[^[:space:]]+[[:space:]]+([^[:space:]]+[[:space:]]+)?)*'
+# shellcheck disable=SC2034  # consumed by sourcing hooks
+GH_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|nohup|nice|time|then|do|else|elif|[{!]|-[^[:space:]]+)[[:space:]]+)*gh[[:space:]]+'"${GH_OPTS}"
 
 # ---- Command positions ----------------------------------------------------
 #

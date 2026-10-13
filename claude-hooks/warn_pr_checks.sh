@@ -12,7 +12,7 @@ source "$ANCHOR_LIB"
 # Found on the shared command-positions view: a quoted mention creates
 # nothing, and neither does a help request.
 CMDPOS=$(command_positions "$COMMAND")
-CREATE_RE="${GH_ANCHOR}pr[[:space:]]+create\b"
+CREATE_RE="${GH_ANCHOR}pr[[:space:]]+${GH_OPTS}create\b"
 if echo "$CMDPOS" | grep -qE "$CREATE_RE" && ! guard_help_only "$CMDPOS" "$CREATE_RE"; then
     echo "REMINDER: Before creating a PR, verify these agents ran: design-checker, security-checker, precommit-fixer (mode: strict). Use pr-manager subagent for the full workflow."
 fi

@@ -24,7 +24,7 @@ source "$ANCHOR_LIB"
 # (git_anchor.sh) — a quoted mention writes nothing, a wrapped one does —
 # but the attribution scan below deliberately reads the RAW text: the
 # message and body prose it polices live inside quotes and heredocs.
-if ! command_positions "$COMMAND" | grep -qE "(${GIT_ANCHOR}commit\b|${GH_ANCHOR}(pr|issue|release)[[:space:]]+(create|edit|comment|review)\b|${GH_ANCHOR}api\b)"; then
+if ! command_positions "$COMMAND" | grep -qE "(${GIT_ANCHOR}commit\b|${GH_ANCHOR}(pr|issue|release)[[:space:]]+${GH_OPTS}(create|edit|comment|review)\b|${GH_ANCHOR}api\b)"; then
     exit 0
 fi
 # The `.{0,4}` after "generated with/by" tolerates a SHORT separator

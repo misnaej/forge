@@ -957,10 +957,41 @@ def test_gh_guards_block_a_repo_override_before_the_subcommand(
     the create guard now refuses every raw invocation outright, so a
     block proves the override did not hide the subcommand from the
     match — which is the only thing this test is about.
+
+    gh accepts ANY option there, and between a command group and its
+    action too (a valued flag before the subcommand takes the next word),
+    so `GH_OPTS` reads past every dash word plus one optional value: the
+    method-override and hostname forms below reached a delete or a merge
+    before it did. GET calls, a quoted/echoed mention, a non-merge `pr`
+    action and a help request stay allowed.
     """
     repo, _sha = git_repo_with_commit
     assert _run_hook(_PR_MERGE, "gh --repo owner/name pr merge 5 --squash") == 2
     assert _run_hook(_PR_MERGE, "gh -R owner/name pr merge 5 --squash") == 2
+    for blocked in (
+        "gh -X DELETE api repos/o/n/git/refs/heads/main",
+        "gh --hostname github.com api -X DELETE repos/o/n/git/refs/heads/main",
+        "gh --repo o/n api -X DELETE repos/o/n/git/refs/heads/main",
+        "gh -R o/n api --method DELETE repos/o/n/branches/main",
+    ):
+        assert _run_hook("block_branch_deletion.sh", blocked) == 2, blocked
+    for blocked in (
+        "gh -X PUT api repos/o/n/pulls/9/merge",
+        "gh --hostname github.com api -X PUT repos/o/n/pulls/9/merge",
+        "gh --repo o/n api -X PUT repos/o/n/pulls/9/merge",
+        "gh pr -R o/n merge 9",
+        "gh pr --repo=o/n merge 9",
+    ):
+        assert _run_hook(_PR_MERGE, blocked) == 2, blocked
+    for allowed in (
+        "gh --hostname github.com api repos/o/n/branches/main",
+        "gh -R o/n api repos/o/n/pulls/9",
+        "echo gh -X DELETE api repos/o/n/git/refs/heads/main",
+    ):
+        assert _run_hook("block_branch_deletion.sh", allowed) == 0, allowed
+        assert _run_hook(_PR_MERGE, allowed) == 0, allowed
+    assert _run_hook(_PR_MERGE, "gh pr -R o/n view 9") == 0
+    assert _run_hook(_PR_MERGE, "gh pr -R o/n merge --help") == 0
     assert (
         _run_hook(
             "block_unverified_pr_create.sh",
@@ -977,6 +1008,49 @@ def test_gh_guards_block_a_repo_override_before_the_subcommand(
         )
         == 2
     )
+
+
+@pytest.mark.parametrize(
+    "hook",
+    [
+        pytest.param("block_claude_attribution.sh", id="attribution"),
+        pytest.param("block_raw_wrapup_post.sh", id="raw_wrapup_post"),
+        pytest.param("block_unverified_pr_create.sh", id="unverified_pr_create"),
+    ],
+)
+def test_gh_guards_see_an_option_between_group_and_action(hook: str) -> None:
+    """`gh pr -R o/n <action>` still reaches every guard matching a `pr` action.
+
+    `GH_OPTS` sits between the command group and its action in each of
+    these patterns; the repo-override test above pins it on
+    `block_pr_merge.sh` only, so a guard that dropped the slot would let
+    the option hide its action unnoticed.
+
+    Args:
+        hook: Hook script under test; each row's command is the raw form
+            that hook refuses, with `-R o/n` between `pr` and the action.
+    """
+    command = {
+        "block_claude_attribution.sh": (
+            'gh pr -R o/n create --title x --body "Generated with Claude"'
+        ),
+        "block_raw_wrapup_post.sh": (
+            "gh pr -R o/n comment 5 --body-file code_health/pr_wrapup.md"
+        ),
+        "block_unverified_pr_create.sh": "gh pr -R o/n create --title x",
+    }[hook]
+    assert _run_hook(hook, command) == 2
+
+
+def test_warn_pr_checks_sees_an_option_between_group_and_action() -> None:
+    """The PR-creation reminder still fires for `gh pr -R o/n create`.
+
+    Advisory sibling of the guards above: same `GH_OPTS` slot, but it
+    exits 0 and signals through its reminder line instead.
+    """
+    proc = _run_hook_proc("warn_pr_checks.sh", "gh pr -R o/n create --title x")
+    assert proc.returncode == 0
+    assert "REMINDER: Before creating a PR" in proc.stdout
 
 
 _REBASE = "block_git_rebase.sh"
@@ -4024,6 +4098,54 @@ def test_keep_squash_last_runs_for_the_named_pr(
     env = _stub_squash_cli(tmp_path, "exit 0")
     assert _run_hook(_KEEP_SQUASH_LAST, command, options=HookOptions(env=env)) == 0
     assert pr_arg in _record(env)
+
+
+@pytest.mark.parametrize(
+    ("repo", "here", "fires"),
+    [
+        pytest.param("o/n", "o/n", True, id="runs_when_the_override_names_this_repo"),
+        pytest.param(
+            "o/n", "other/repo", False, id="silent_when_it_names_another_repo"
+        ),
+        pytest.param(
+            "https://github.com/O/N.git",
+            "o/n",
+            True,
+            id="runs_when_a_url_override_names_this_repo_in_other_case",
+        ),
+        pytest.param(
+            "https://github.com/O/N.git",
+            "other/repo",
+            False,
+            id="silent_when_a_url_override_names_another_repo",
+        ),
+    ],
+)
+def test_keep_squash_last_honours_a_repo_override(
+    repo: str, here: str, *, fires: bool, tmp_path: Path
+) -> None:
+    """SCENARIO: a comment posted with `--repo` before the subcommand.
+
+    MOCK SETUP: recording squash stub, plus a `gh` stub answering
+    `gh repo view` with *here*.
+    EXPECTED BEHAVIOR: the option no longer hides the comment; the re-post
+    runs only when the override names the current repository — another
+    repo's PR number means nothing here. A URL override is reduced to
+    owner/name and compared case-insensitively, as GitHub treats names.
+
+    Args:
+        repo: The value passed to `--repo` on the command line.
+        here: The `nameWithOwner` the stubbed `gh repo view` reports.
+        fires: Whether the squash CLI is expected to run.
+        tmp_path: Pytest temporary directory holding the stubs.
+    """
+    env = _stub_squash_cli(tmp_path, "exit 0")
+    gh = tmp_path / "gh"
+    gh.write_text(f"#!/usr/bin/env bash\necho {here}\n", encoding="utf-8")
+    gh.chmod(0o755)
+    command = f"gh --repo {repo} pr comment 9 --body x"
+    assert _run_hook(_KEEP_SQUASH_LAST, command, options=HookOptions(env=env)) == 0
+    assert ("--pr 9" in _record(env)) is fires
 
 
 @pytest.mark.parametrize(

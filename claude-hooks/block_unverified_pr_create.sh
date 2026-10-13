@@ -54,8 +54,8 @@ source "$ANCHOR_LIB"
 # pattern naming it never fires, `bash -c "gh pr create …"` does, and a
 # help request (`gh pr create --help`) publishes nothing.
 CMDPOS=$(command_positions "$COMMAND")
-if ! echo "$CMDPOS" | grep -qE "${GH_ANCHOR}pr[[:space:]]+create\b" \
-    || guard_help_only "$CMDPOS" "${GH_ANCHOR}pr[[:space:]]+create\b"; then
+if ! echo "$CMDPOS" | grep -qE "${GH_ANCHOR}pr[[:space:]]+${GH_OPTS}create\b" \
+    || guard_help_only "$CMDPOS" "${GH_ANCHOR}pr[[:space:]]+${GH_OPTS}create\b"; then
     exit 0
 fi
 
