@@ -6,6 +6,8 @@
 # last. That is machinery, not agent discipline: any command that
 # comments on a PR triggers `forge-pr-squash-comment --pr N`, which
 # re-posts the existing comment (quiet no-op when it is already newest).
+# A comment aimed at another repository (`-R`/`--repo` naming a repo other
+# than this checkout's) is skipped: its PR number means nothing here.
 #
 # Deliberately no `set -e`: every probe here may legitimately fail (no
 # match, no PR, no squash comment yet) and none of those are errors — a
