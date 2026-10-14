@@ -153,7 +153,7 @@ PIXI_ALLOWED_VERBS='run|shell|install|list|info|tree'
 
 if blocked pixi; then
     while IFS= read -r seg; do
-        echo "$seg" | grep -qE '^[[:space:]]*pixi([[:space:]]|$)' || continue
+        [ -n "$seg" ] || continue
         # The verb is the FIRST token after `pixi`, flags included. Skipping
         # dash-prefixed tokens looked friendlier but failed open: a flag
         # that takes a value put that value in the verb slot, so
@@ -172,7 +172,10 @@ if blocked pixi; then
         fi
     # CMDPOS has its redirections blanked, so the `&` of
     # `2>&1 pixi add x` cannot cut `pixi` away from its segment start.
-    done < <(printf '%s\n' "$CMDPOS" | tr ';&|(){}!' '\n')
+    # Segments are filtered to pixi invocations by ONE grep, not one
+    # process per segment: a command of thousands of segments must not
+    # run this hook past its timeout, and a timed-out hook does not block.
+    done < <(printf '%s\n' "$CMDPOS" | tr ';&|(){}!' '\n' | grep -E '^[[:space:]]*pixi([[:space:]]|$)' || true)
 fi
 
 # pip / conda — anchored to command start or after a shell separator so a

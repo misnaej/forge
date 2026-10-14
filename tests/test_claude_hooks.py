@@ -1491,6 +1491,50 @@ def test_guards_do_not_take_a_redirection_target_for_a_command(
     assert _run_hook(hook, command, options=options) == 0
 
 
+# --- Branch deletion behind git global options ---------------------------------
+# Behavior tests: a global option (`-C`, `--git-dir`, `-c`) between `git` and
+# `push` must not hide the push from the branch-deletion guard. Each blocked
+# row pins a bypass; each allowed row pins that the guard still judges the
+# refspec, not the mere presence of an option.
+
+_GIT_GLOBAL_OPTION_DELETE_BLOCKED = [
+    pytest.param("git -C x push origin --delete main", id="git_C_delete"),
+    pytest.param("git --git-dir=y push origin :main", id="git_dir_colon_delete"),
+    pytest.param("git -c a=b push origin :main", id="git_c_config_delete"),
+    pytest.param("sudo git -C x push origin --delete main", id="sudo_git_C_delete"),
+]
+
+
+@pytest.mark.parametrize("command", _GIT_GLOBAL_OPTION_DELETE_BLOCKED)
+def test_branch_deletion_guard_reads_past_git_global_options(command: str) -> None:
+    """A protected-branch delete is refused past any git global option before push.
+
+    Args:
+        command: The shell command handed to the branch-deletion hook.
+    """
+    assert _run_hook("block_branch_deletion.sh", command) == 2
+
+
+_GIT_GLOBAL_OPTION_PUSH_ALLOWED = [
+    pytest.param(
+        "git -C x push origin --delete feature", id="git_C_delete_unprotected"
+    ),
+    pytest.param("git -C x push origin main", id="git_C_plain_push"),
+]
+
+
+@pytest.mark.parametrize("command", _GIT_GLOBAL_OPTION_PUSH_ALLOWED)
+def test_branch_deletion_guard_allows_non_protected_pushes_with_global_options(
+    command: str,
+) -> None:
+    """Deleting a non-protected branch, or a plain push, stays allowed with `-C`.
+
+    Args:
+        command: The shell command handed to the branch-deletion hook.
+    """
+    assert _run_hook("block_branch_deletion.sh", command) == 0
+
+
 # --- Path-qualified command names ---------------------------------------------
 # `/usr/bin/git push -f` runs the same git as `git push -f`, so a directory
 # in front of a tool or wrapper name must not hide the invocation. One row
@@ -6594,6 +6638,73 @@ def test_scanner_stays_fast_on_a_50kb_single_line_command(command: str) -> None:
 
     assert verdict == 2
     assert elapsed < 10
+
+
+def test_install_guard_blocks_within_timeout_past_thousands_of_redirection_groups() -> (
+    None
+):
+    """Thousands of `>(...)` groups cannot push the install guard past its timeout.
+
+    Plugin hooks run under a 5 s timeout and a timed-out hook ALLOWS the
+    command, so a guard that is merely slow is a guard that fails open: an
+    attacker (or a generated command) pads the line with redirection groups,
+    each printed back as its own segment, until a per-segment subprocess loop
+    overruns the timeout and `pip install` slips through. The bound is far
+    inside the timeout yet loose enough for a loaded runner; the filtered
+    implementation takes a fraction of a second.
+    """
+    command = "echo " + ">(a) " * 3000 + "; pip install x"
+
+    start = time.monotonic()
+    verdict = _run_hook(_INSTALL_DEPS, command)
+    elapsed = time.monotonic() - start
+
+    assert verdict == 2
+    assert elapsed < 2.0
+
+
+@pytest.mark.parametrize(
+    ("hook", "command"),
+    [
+        pytest.param(
+            "block_branch_deletion.sh",
+            "git push origin --delete main",
+            id="branch_deletion",
+        ),
+        pytest.param(_FORCE_PUSH, "git push --force", id="force_push"),
+        pytest.param(_DESTRUCTIVE, "git reset --hard", id="git_destructive"),
+        pytest.param(_INSTALL_DEPS, "pip install x", id="install_deps"),
+        pytest.param(
+            _RAW_GIT,
+            "python -c 'import os; os.system(\"git commit -m x\")'",
+            id="raw_git",
+        ),
+        pytest.param(_PR_MERGE, "gh pr merge 5", id="pr_merge"),
+        pytest.param(_NO_VERIFY, "git commit --no-verify -m x", id="no_verify"),
+        pytest.param(_REBASE, "git rebase main", id="git_rebase"),
+    ],
+)
+def test_guard_blocks_within_timeout_past_thousands_of_command_segments(
+    hook: str, command: str
+) -> None:
+    """Thousands of leading `a;` segments cannot push a guard past its timeout.
+
+    Plugin hooks run under a 5 s timeout and a timed-out hook ALLOWS the
+    command, so a guard that is merely slow fails open: padding the line with
+    trivial segments until a per-segment cost overruns the timeout lets the
+    guarded command through. The bound is far inside the timeout yet loose
+    enough for a loaded runner.
+
+    Args:
+        hook: The guard hook script under test.
+        command: A command that guard blocks, placed after the padding.
+    """
+    start = time.monotonic()
+    verdict = _run_hook(hook, "a;" * 3000 + command)
+    elapsed = time.monotonic() - start
+
+    assert verdict == 2
+    assert elapsed < 2.0
 
 
 # One shape per class the scanner once read past: an option after `-c`, a

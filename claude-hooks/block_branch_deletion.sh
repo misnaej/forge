@@ -92,12 +92,18 @@ PY
 
 # Trailing word-boundary so "main" does not match "main-thing"/"mainframe".
 bound='([^A-Za-z0-9._/-]|$)'
+# A push segment: `git push` anywhere in it, or a git invocation the shared
+# anchor recognises — which reads past git's global options, so neither
+# `git -C x push` nor `git --git-dir=y push` hides the push. The loop and
+# its pre-filter below must use this one pattern: a segment the filter
+# drops is never judged.
+PUSH_RE="git[[:space:]]+push|${GIT_ANCHOR}push([^[:alnum:]_-]|\$)"
 blocked=""
 reason=""
 while IFS= read -r seg; do
     [ -z "$seg" ] && continue
 
-    if echo "$seg" | grep -qE 'git[[:space:]]+push'; then
+    if echo "$seg" | grep -qE "$PUSH_RE"; then
         # Blanket-dangerous push modes: delete remote refs without naming
         # a branch, so they threaten the base branch regardless of target.
         if echo "$seg" | grep -qE '(--mirror|--prune)([[:space:]=]|$)'; then
@@ -128,9 +134,11 @@ while IFS= read -r seg; do
         done
         [ -n "$blocked" ] && break
     fi
-done <<EOF
-$SEGMENTS
-EOF
+# Only the segments the rules above can act on (a push or a gh api call)
+# enter the loop, filtered by ONE grep: a loop running two subprocesses
+# per segment let a few thousand empty segments (`a;a;…;`) run this hook
+# past its timeout, and a timed-out hook does not block.
+done < <(printf '%s\n' "$SEGMENTS" | grep -E "${PUSH_RE}|gh[[:space:]]+${GH_OPTS}api" || true)
 
 if [ -n "$blocked" ]; then
     echo "BLOCKED: refusing to delete a protected remote branch (${reason}). Deleting the base branch is irreversible and bypasses server-side rulesets when run with a privileged account (an agent runs with your credentials). If this is genuinely intended, run it yourself: ! ${COMMAND}" >&2
