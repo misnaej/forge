@@ -56,10 +56,11 @@ source "$ANCHOR_LIB"
 # Commands are found on the command-positions view (git_anchor.sh) — a
 # quoted mention is not a reset, a wrapped `bash -c "git reset …"` is —
 # and their flags and pathspecs are read from the --words view, where a
-# quoted argument is still the argument git receives. `_guarded <verb-re>`
+# quoted argument is still the argument git receives, with redirections
+# blanked so `2>&1` cannot end an argument scan early. `_guarded <verb-re>`
 # is true when a real invocation exists that is not just asking for help.
 CMDPOS=$(command_positions "$COMMAND")
-WORDS=$(command_positions --words "$COMMAND")
+WORDS=$(command_positions --words --no-redir "$COMMAND")
 _guarded() {
     echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}$1" && ! guard_help_only "$CMDPOS" "${GIT_ANCHOR}$1"
 }
@@ -77,7 +78,7 @@ fi
 # `git clean -n; git clean -f` still blocks on the second invocation.
 # Invocations come from the --words view, so a separator inside a quoted
 # argument never ends an invocation and a quoted mention never forms one.
-# Redirections are blanked first (guard_unredir), so the `&` of
+# Redirections are blanked first (guard_git_invocations), so the `&` of
 # `git clean 2>&1 -fd` cannot end the invocation before its flags.
 # Flags are read only from the arguments AFTER the matched `clean` verb,
 # so neither a wrapper's own flag (`sudo -n git clean -f`) nor a `clean`
@@ -90,7 +91,7 @@ _guarded 'clean\b' && while IFS=$'\t' read -r _ rest; do
     if echo "$rest" | grep -qE '(^|[[:space:]])(--force\b|-[a-zA-Z]*[fdxX])'; then
         _block "git clean" "It deletes untracked files permanently — no reflog, no index, no recovery; report the untracked paths instead (\`git clean -n\` to list them)."
     fi
-done <<< "$(guard_git_invocations "$(guard_unredir "$WORDS")" clean)"
+done <<< "$(guard_git_invocations "$WORDS" clean)"
 
 # Discard-everything restores: the pathspec `.` (or `./`) as the whole
 # target, with any run of flags tolerated in between so `git checkout -f .`

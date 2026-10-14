@@ -1307,6 +1307,73 @@ _REDIRECTION_BLOCKED = [
         "2>&1 gh api -X DELETE repos/o/n/git/refs/heads/main",
         id="before_gh_api",
     ),
+    pytest.param(_FORCE_PUSH, "git push 2>&1 --force", id="fd_dup_before_flag"),
+    pytest.param(
+        _FORCE_PUSH, "git push &>/dev/null --force", id="both_streams_before_flag"
+    ),
+    pytest.param(
+        _FORCE_PUSH, "git push 2>&1 origin +main", id="fd_dup_before_plus_refspec"
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "git checkout 2>&1 -f",
+        id="destructive_flag_after_redir",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "git restore 2>&1 .",
+        id="destructive_restore_dot_after_redir",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "git switch 2>&1 -f main",
+        id="destructive_switch_force",
+    ),
+    pytest.param(_NO_VERIFY, "git commit 2>&1 -n -m x", id="no_verify_short_flag"),
+    pytest.param(
+        _PR_MERGE,
+        "gh api >|x repos/o/r/pulls/1/merge -X PUT",
+        id="gh_api_merge_after_redir",
+    ),
+    pytest.param(
+        "block_branch_deletion.sh",
+        "git push origin >|x --delete main",
+        id="branch_delete_after_redir",
+    ),
+    pytest.param(_INSTALL_DEPS, "pip 2>&1 install x", id="pip_redir_before_verb"),
+    pytest.param(_INSTALL_DEPS, "pip <in install x", id="pip_input_redir_before_verb"),
+    pytest.param(_INSTALL_DEPS, "uv 2>&1 add x", id="uv_redir_before_verb"),
+    pytest.param(_INSTALL_DEPS, "conda 2>&1 install x", id="conda_redir_before_verb"),
+    pytest.param(_INSTALL_DEPS, "uv run 2>&1 pip install x", id="uv_run_redir_pip"),
+    pytest.param(
+        "block_raw_git.sh",
+        "python 2>&1 -c 'import os; os.system(\"git commit -m x\")'",
+        id="interpreter_redir_before_c",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        "python <in -c 'import os; os.system(\"git commit -m x\")'",
+        id="interpreter_input_redir_before_c",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        'python <<EOF\nimport os; os.system("git commit -m x")\nEOF',
+        id="interpreter_heredoc_still_blocked",
+    ),
+    pytest.param(
+        "block_raw_ruff.sh", "uv run 2>&1 ruff check .", id="ruff_uv_run_redir"
+    ),
+    pytest.param(
+        _FORCE_PUSH, 'git push "2>&1" --force', id="quoted_redirection_is_an_arg"
+    ),
+    pytest.param(
+        _PROTECTED, "git push 2>&1 origin main", id="protected_push_after_redir"
+    ),
+    pytest.param(
+        _PROTECTED,
+        "git push origin 2>&1 HEAD:main",
+        id="protected_refspec_after_redir",
+    ),
 ]
 
 
@@ -1314,11 +1381,18 @@ _REDIRECTION_BLOCKED = [
 def test_guards_read_past_a_redirection_word(hook: str, command: str) -> None:
     """A redirection before a command, or between a tool and its subcommand, blocks.
 
+    The protected-branch rows run as the commit agent, as in the allowed
+    table, so the current-branch exemption leaves only the destination
+    check under test.
+
     Args:
         hook: Hook script under test.
         command: A command the hook refuses without the redirection.
     """
-    assert _run_hook(hook, command) == 2
+    options = (
+        HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
+    )
+    assert _run_hook(hook, command, options=options) == 2
 
 
 _REDIRECTION_ALLOWED = [
@@ -1327,6 +1401,21 @@ _REDIRECTION_ALLOWED = [
     pytest.param(_FORCE_PUSH, "2>&1 git push origin feat", id="plain_push_force"),
     pytest.param(_PROTECTED, "2>&1 git push origin feat", id="plain_push_protected"),
     pytest.param("block_raw_git.sh", "2>&1 git push --help", id="help_request"),
+    pytest.param(
+        "block_git_destructive.sh", "git stash 2>&1 list", id="stash_list_after_redir"
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        "git revert HEAD 2>&1 --no-commit",
+        id="sequencer_no_commit_after_redir",
+    ),
+    pytest.param("block_raw_git.sh", "git push 2>&1 --help", id="help_after_redir"),
+    pytest.param(
+        "block_git_destructive.sh",
+        "git restore --staged 2>&1 .",
+        id="restore_staged_dot_after_redir",
+    ),
+    pytest.param(_INSTALL_DEPS, "echo 2>&1 pip install x", id="pip_is_an_argument"),
 ]
 
 
@@ -2202,6 +2291,16 @@ def test_destructive_restore_modified_tracked_blocked(restore_repo: Path) -> Non
     (restore_repo / "f").write_text("edited\n")
     assert _restore_exit(restore_repo, "git checkout -- f") == 2
     assert _restore_exit(restore_repo, "git restore f") == 2
+
+
+def test_destructive_restore_after_redirection_judges_the_path(
+    restore_repo: Path,
+) -> None:
+    """A redirection before the path changes nothing about what the restore destroys."""
+    (restore_repo / "f").write_text("edited\n")
+    assert _restore_exit(restore_repo, "git checkout 2>&1 -- f") == 2
+    assert _restore_exit(restore_repo, "git restore 2>&1 f") == 2
+    assert _restore_exit(restore_repo, "git checkout 2>&1 -- h") == 0
 
 
 def test_destructive_restore_untracked_in_the_way_blocked(restore_repo: Path) -> None:
@@ -6237,6 +6336,43 @@ def _scanner_view(command: str, *, words: bool) -> str:
         text=True,
         check=True,
     ).stdout
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["git push 2>&1 --force", ">$(mktemp) git push -f"],
+)
+def test_command_positions_no_redir_blanks_redirections(command: str) -> None:
+    """With ``--no-redir`` no redirection operator survives, nor its substitution.
+
+    Args:
+        command: The shell command to scan, one parametrized case per call.
+    """
+    script = 'source "$1/git_anchor.sh"; command_positions --no-redir "$2"'
+    view = subprocess.run(
+        ["bash", "-c", script, "_", str(_HOOKS_DIR), command],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert ">" not in view
+    assert "mktemp" not in view
+
+
+def test_command_positions_no_redir_keeps_a_quoted_redirection_inert() -> None:
+    """A quoted ``2>&1`` is an argument, so the scanner leaves its inert form.
+
+    Only the ``--words`` view keeps quoted words; the default view blanks
+    the whole span to ``_``.
+    """
+    script = 'source "$1/git_anchor.sh"; command_positions --words --no-redir "$2"'
+    view = subprocess.run(
+        ["bash", "-c", script, "_", str(_HOOKS_DIR), 'echo "2>&1" x'],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "2__1" in view
 
 
 def _compute_snapshot() -> dict[str, dict[str, str]]:

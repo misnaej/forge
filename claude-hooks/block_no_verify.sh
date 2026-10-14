@@ -29,7 +29,7 @@ fi
 # from the --words view, where a separator inside a quoted body no longer
 # ends the invocation early and hides a flag that follows it.
 if echo "$COMMAND" | grep -qE -- '--no-verify' \
-    || command_positions --words "$COMMAND" | grep -qE "${GIT_ANCHOR}commit\b[^;&|]*[[:space:]]-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|[;&|)]|$)"; then
+    || command_positions --words --no-redir "$COMMAND" | grep -qE "${GIT_ANCHOR}commit\b[^;&|]*[[:space:]]-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|[;&|)]|$)"; then
     echo "BLOCKED: --no-verify is forbidden. Fix the violations instead of bypassing pre-commit hooks. If absolutely required, the user can run: ! $COMMAND" >&2
     exit 2
 fi

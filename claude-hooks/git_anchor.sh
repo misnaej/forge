@@ -72,9 +72,7 @@
 # reads as two words there and the payload is not unwrapped in that view;
 # likewise `> 'a b' git push` reads as a redirection then the word `b` in
 # the --words view, so a guard reading flags there loses that invocation),
-# a redirection among the ARGUMENTS of a guarded command, where a guard
-# reads it as an argument (`git push 2>&1 -f`, issue #751), a redirection
-# between a valued git option and its value (`git -C 2>&1 <dir> push`: the
+# a redirection between a valued git option and its value (`git -C 2>&1 <dir> push`: the
 # anchor takes the redirection for the value, and `<dir>` then ends the
 # option run), a command word hidden by escapes inside `$'…'`
 # (`$'\x67it' push`), a quoted command word holding a variable or a blank
@@ -210,7 +208,7 @@ function blanks(n) { while (length(SP) < n) SP = SP SP; return substr(SP, 1, n) 
 # ends there). `<<`, `<<-`, `<<<` and the emitted `<<_` are left alone:
 # they are heredoc / here-string openers, which the wrapper regexes read.
 # Same length, so offsets into t stay valid for the chain-base move.
-function unredir(t,   n, k, a, r, c, d, f, j, e) {
+function unredir(t,   n, k, a, r, c, d, f, j, e, m) {
     n = length(t); a = 1; r = ""; k = 1
     while (k <= n) {
         c = substr(t, k, 1)
@@ -228,7 +226,18 @@ function unredir(t,   n, k, a, r, c, d, f, j, e) {
         if (c == "&") e = (substr(t, k + 2, 1) == ">") ? k + 3 : k + 2
         else if (d != "" && index((c == ">") ? ">|&" : ">&", d)) e = k + 2
         while (e <= n && index(" \t", substr(t, e, 1))) e++
-        while (e <= n && !index(" \t\n;&|()<>", substr(t, e, 1))) e++
+        # The target, as GUARD_REDIR reads it: plain characters and
+        # unnested `(…)` groups, so `>$(mktemp)` is blanked whole rather
+        # than leaving `(mktemp)` to read as a subshell before the command.
+        while (e <= n) {
+            if (substr(t, e, 1) == "(") {
+                m = index(substr(t, e + 1), ")")
+                if (m > 0 && index(substr(t, e + 1, m - 1), "(") == 0) { e += m + 1; continue }
+                break
+            }
+            if (index(" \t\n;&|()<>", substr(t, e, 1))) break
+            e++
+        }
         r = r substr(t, a, f - a) blanks(e - f); a = e; k = e
     }
     return r substr(t, a)
@@ -627,16 +636,28 @@ BEGIN {
 END { printf "%s\n", scan(src, 1, 0) }
 '
 
-# command_positions [--words] <command>
+# command_positions [--words] [--no-redir] <command>
 # Prints the command-positions view of <command> (see above); with
-# --words, quoted spans keep their words.
+# --words, quoted spans keep their words. With --no-redir, every
+# redirection is blanked as guard_unredir does: a guard that reads a
+# command's ARGUMENTS up to the next `;` `&` `|` matches this copy, so
+# the `&` of `2>&1` or the `|` of `>|` cannot end the scan before a flag
+# that follows. Guards that look for a redirection target keep the
+# default view.
 command_positions() {
-    local keep=0 view
-    if [ "$1" = "--words" ]; then
-        keep=1
+    local keep=0 noredir=0 view
+    while :; do
+        case "$1" in
+            --words) keep=1 ;;
+            --no-redir) noredir=1 ;;
+            *) break ;;
+        esac
         shift
-    fi
+    done
     view=$(printf '%s\n' "$1" | LC_ALL=C awk -v KEEP="$keep" "$_GUARD_CMDPOS_AWK" 2>/dev/null) || view="$1"
+    if [ "$noredir" = 1 ]; then
+        view=$(guard_unredir "$view")
+    fi
     printf '%s\n' "$view"
 }
 
@@ -666,7 +687,9 @@ END { printf "%s\n", unredir(src) }' 2>/dev/null) || out="$1"
 # substitution is reported on its own line as well. <verb> is a literal
 # subcommand; `git checkout-index` is not a `checkout`.
 guard_git_invocations() {
-    printf '%s\n' "$1" | LC_ALL=C awk -v ANCHOR="$GIT_ANCHOR" -v VERB="$2" '
+    # Read past redirections: blanked here, not by callers, so every view
+    # a caller compares (words against positions) is blanked the same way.
+    guard_unredir "$1" | LC_ALL=C awk -v ANCHOR="$GIT_ANCHOR" -v VERB="$2" '
     {
         line = $0
         while (match(line, ANCHOR VERB)) {
@@ -693,7 +716,8 @@ guard_git_invocations() {
 # guard_help_only <command-positions view> <verb regex>
 # True when <verb regex> matches at least one invocation in the view and
 # EVERY such invocation asks for help: a `--help` / `-h` token in its own
-# segment (up to the next `;` `&` `|` `)` or newline), outside quotes
+# segment (up to the next `;` `&` `|` `)` or newline — a redirection is
+# blanked first, so the `&` of `2>&1` is not a segment end), outside quotes
 # (quoted spans are already blanked in the view; the scanner deliberately
 # keeps a quoted `-h` / `--help` blank even though it decodes other quoted
 # plain words, so `git commit "-h"` is not a help request here — the
@@ -720,6 +744,6 @@ guard_help_only() {
             prev="$tok"
         done <<< "$(printf '%s\n' "$inv" | tr -s ' \t' '\n\n')"
         [ "$ok" = 1 ] || return 1
-    done <<< "$(printf '%s\n' "$view" | grep -oE -- "${verb_re}[^;&|)]*" || true)"
+    done <<< "$(guard_unredir "$view" | grep -oE -- "${verb_re}[^;&|)]*" || true)"
     [ "$found" = 1 ]
 }

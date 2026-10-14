@@ -76,7 +76,7 @@ sequencer_blocked() {
         # exempt the commit.
         invocation="${invocation%% -- *}"
         echo "$invocation" | grep -qE "$SEQUENCER_EXEMPT_RE" || return 0
-    done <<< "$(command_positions --words "$COMMAND" | grep -oE "${SEQUENCER_RE}[^;&|)#]*" || true)"
+    done <<< "$(command_positions --words --no-redir "$COMMAND" | grep -oE "${SEQUENCER_RE}[^;&|)#]*" || true)"
     return 1
 }
 if echo "$CMDPOS" | grep -qE "$SEQUENCER_RE" \
@@ -163,7 +163,11 @@ _interp_code_source() {
 
 _inline_interp_git() {
     local view inv src
-    view=$(command_positions --words "$COMMAND")
+    # Redirections are blanked (--no-redir), so neither `python 2>&1 -c …`
+    # nor `python <in -c …` ends the invocation or reads as a script file
+    # before the `-c`; a heredoc or here-string operator is not a
+    # redirection to blank and still marks a program on stdin.
+    view=$(command_positions --words --no-redir "$COMMAND")
     while IFS= read -r inv; do
         [ -n "$inv" ] || continue
         src=$(_interp_code_source "$inv")

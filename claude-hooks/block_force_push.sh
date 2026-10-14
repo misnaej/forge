@@ -32,10 +32,12 @@ fi
 if guard_help_only "$CMDPOS" "${GIT_ANCHOR}push\b"; then
     exit 0
 fi
-WORDS=$(command_positions --words "$COMMAND")
+WORDS=$(command_positions --words --no-redir "$COMMAND")
 # Force-flag detection is scoped to the matched invocation (bounded at
 # the next command separator), so a flag in another segment of a
 # compound command never false-positives (issue #348 scoping fix).
+# Redirections are blanked (--no-redir), so the `&` of `2>&1` is not
+# taken for that separator.
 if echo "$WORDS" | grep -qE -- \
     "${GIT_ANCHOR}push\b[^;&|]*(--force|--force-with-lease|[[:space:]]-[a-zA-Z]*f[a-zA-Z]*\b|[[:space:]]\+[^[:space:]]+)"; then
     echo "BLOCKED: Force push is not allowed for agents. Suggest the user run the command themselves with: ! $COMMAND" >&2

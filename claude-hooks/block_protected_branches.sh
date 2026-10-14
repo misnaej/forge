@@ -95,7 +95,9 @@ if echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}push\b"; then
     # between invocations, and a subshell's `)` is never part of a ref.
     # Invocations come from the --words view: only real pushes are read,
     # and a quoted refspec (`"HEAD:main"`) is still the refspec git gets.
-    invocations=$(command_positions --words "$COMMAND" | grep -oE "${GIT_ANCHOR}push\b[^;&|)]*" || true)
+    # Redirections are blanked, so `2>&1` ends no invocation early and its
+    # target is never taken for a remote or refspec.
+    invocations=$(command_positions --words --no-redir "$COMMAND" | grep -oE "${GIT_ANCHOR}push\b[^;&|)]*" || true)
     while IFS= read -r invocation; do
         [ -n "$invocation" ] || continue
         push_args=$(printf '%s' "$invocation" | sed -E "s/^${GIT_ANCHOR}push//")

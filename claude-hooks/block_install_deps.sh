@@ -99,14 +99,18 @@ block() {
     exit 2
 }
 
-CMDPOS=$(command_positions "$COMMAND")
-WORDS=$(command_positions --words "$COMMAND")
+# Both views blank redirections (--no-redir), so one between a manager
+# and its verb (`pip 2>&1 install`, `pip <in install`) reads as blank
+# space and the `&` of `2>&1` never splits an invocation.
+CMDPOS=$(command_positions --no-redir "$COMMAND")
+WORDS=$(command_positions --words --no-redir "$COMMAND")
 # The command boundary every rule below starts from (see the header), then
 # any run of the keywords that start a command inside a compound and of
-# redirection words (`2>&1 pip install`, GUARD_REDIR in git_anchor.sh).
+# redirection words (GUARD_REDIR in git_anchor.sh). The views are blanked,
+# so a leading redirection arrives as whitespace after the boundary.
 # It accepts no `VAR=val` or wrapper word (`sudo`, `env`) yet, so
 # `sudo pip install x` is still unmatched — tracked as its own issue (#752).
-CMD_PFX='(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
+CMD_PFX='(^|[;&|(){}!])\s*((then|else|elif|do)[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
 # invoked <regex> — a real invocation matching <regex> that is not only a
 # help request.
 invoked() {
@@ -164,16 +168,16 @@ if blocked pixi; then
             echo "BLOCKED: \`pixi $verb\` is not on the agent allowlist ($(printf '%s' "$PIXI_ALLOWED_VERBS" | tr '|' ' ')). Unrecognised pixi verbs block by default — most of pixi's surface writes pixi.toml, pixi.lock, or the global tool store. If this one only reads, tell the user to run it themselves with: ! $COMMAND" >&2
             exit 2
         fi
-    # Redirections are blanked before the split, so the `&` of
+    # CMDPOS has its redirections blanked, so the `&` of
     # `2>&1 pixi add x` cannot cut `pixi` away from its segment start.
-    done < <(guard_unredir "$CMDPOS" | tr ';&|(){}!' '\n')
+    done < <(printf '%s\n' "$CMDPOS" | tr ';&|(){}!' '\n')
 fi
 
 # pip / conda — anchored to command start or after a shell separator so a
 # substring inside a quoted body (e.g. an issue body mentioning `pip
 # install`) doesn't trigger. (Accepted slip-through: `xargs pip install`.)
 if blocked pip || blocked conda; then
-    if invoked "${CMD_PFX}"'((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*|conda) (install|create|env (create|update)|update)'; then
+    if invoked "${CMD_PFX}"'((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*|conda)[[:space:]]+(install|create|env[[:space:]]+(create|update)|update)'; then
         block
     fi
 fi

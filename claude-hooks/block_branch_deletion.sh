@@ -61,7 +61,8 @@ fi
 # `||` before `|` so a double-pipe collapses to one break. Segments come
 # from the --words view: a separator inside a quoted argument never splits
 # an invocation, and a quoted refspec or endpoint is still read.
-SEGMENTS=$(command_positions --words "$COMMAND" | sed -E 's/(&&|\|\||;|\|)/\n/g')
+# Redirections are blanked, so the `|` of `>|` splits nothing.
+SEGMENTS=$(command_positions --words --no-redir "$COMMAND" | sed -E 's/(&&|\|\||;|\|)/\n/g')
 
 REPO_ROOT=$(echo "$INPUT" | jq -r '.cwd // empty')
 if [ -z "$REPO_ROOT" ] || ! echo "$REPO_ROOT" | grep -qE '^/'; then
