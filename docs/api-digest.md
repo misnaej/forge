@@ -270,6 +270,39 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `run(scope: Scope, roots: list[Path], config: SuppressionsConfig) -> int` — Execute the suppressions audit.
 - `main() -> int` — CLI entry point for ``forge-audit-suppressions``.
 
+## `forge.backlog_index`
+
+> _forge-backlog-index — render and write the ``📋 Backlog Index`` issue._
+
+- `class BacklogSource` — The GitHub reads the Index needs; every method returns None on failure.
+  - `open_issues(self) -> list[Issue] | None` — Return every open issue, comments included.
+  - `open_issue_count(self) -> int | None` — Return how many issues GitHub counts as open.
+  - `repo_slug(self) -> str | None` — Return the repository's ``owner/name``.
+- `class Lane` — A caller-declared extra section whose issues leave the tier sections.
+- `class IndexInputs` — Everything the render reads besides the issues themselves.
+- `class Rendered` — A rendered body and how many lines each tier shed to fit.
+- `safe_title(title: str) -> str` — Return *title* as inert single-line markdown.
+- `_tier_of(issue: Issue) -> str | None` _(internal)_ — Return the highest tier label *issue* carries, if any.
+- `_head(issue: Issue) -> str` _(internal)_ — Return the ``- #N — Title`` start every Index line shares.
+- `_tier_line(issue: Issue, hidden: frozenset[str]) -> str` _(internal)_ — Return *issue*'s tier-section line, without labels the page already states.
+- `_more_line(tier: str, count: int, slug: str | None) -> str` _(internal)_ — Return the line standing in for *count* trimmed entries of *tier*.
+- `_blocker(issue: Issue) -> str` _(internal)_ — Return what *issue* waits on, read from its ``Requires:`` line.
+- `_section(heading: str, lines: Sequence[str], count: int | None = None) -> str` _(internal)_ — Return one ``## heading (N)`` section.
+- `_lane_sections(issues: Sequence[Issue], inputs: IndexInputs) -> list[str]` _(internal)_ — Return the status lanes that follow the tier sections.
+- `_compose(issues: Sequence[Issue], tiers: Mapping[str, list[Issue]], keep: Mapping[str, int], inputs: IndexInputs) -> str` _(internal)_ — Return the body with each tier cut to its first ``keep[tier]`` lines.
+- `render(issues: Iterable[Issue], inputs: IndexInputs, *, max_chars: int = BODY_LIMIT) -> Rendered | None` — Render the Index body, trimming the lowest tiers until it fits.
+- `_plan_dates(issues: Iterable[Issue], source: PermissionSource) -> dict[int, str]` _(internal)_ — Return each plan-ready issue's validated date from its authenticated plan.
+- `gh_issue_edit(number: int, body: str) -> int` — Overwrite issue *number*'s body with *body* via ``gh issue edit``.
+- `class RunOptions` — What the caller asked for on the command line.
+- `class _RefusedError` _(internal)_ — A guard stopped the run; carries the exit code and the line to print.
+- `_locate_index(source: BacklogSource) -> tuple[int, list[Issue]]` _(internal)_ — Return the Index issue's number and every other open issue.
+- `_checked_render(listed: list[Issue], inputs: IndexInputs, max_chars: int) -> Rendered` _(internal)_ — Render the body, refusing one that is oversized or empty.
+- `run(source: BacklogSource, options: RunOptions, write: Callable[[int, str], int] = gh_issue_edit) -> int` — Read the backlog, render the Index and write it when every guard passes.
+- `_lane_arg(value: str) -> Lane` _(internal)_ — Argparse type for ``--lane LABEL=HEADING``.
+- `_recheck_arg(value: str) -> tuple[int, int]` _(internal)_ — Argparse type for ``--recheck ISSUE=PR``.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Return the ``forge-backlog-index`` argument parser.
+- `main(argv: list[str] | None = None, source: BacklogSource | None = None, write: Callable[[int, str], int] = gh_issue_edit) -> int` — Run ``forge-backlog-index``.
+
 ## `forge.changelog`
 
 > _Changelog-parsing primitives shared by forge's release tooling._
@@ -924,6 +957,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class Merge` — One first-parent commit on the base branch touching named paths.
 - `class Requires` — The ``Requires:`` entries parsed out of one or more texts.
 - `class PlanLookup` — The outcome of looking for an issue's authenticated plan.
+- `class PermissionSource` — The one read :class:`WriterCheck` needs.
+  - `permission(self, login: str) -> str | None` — Return *login*'s permission on the repo (``admin``, ``write``, ...).
 - `class GitHubSource` — The GitHub reads the checks perform; every method returns None on failure.
   - `issue(self, number: int) -> Issue | None` — Return issue *number* (body, labels, creation time).
   - `comments(self, number: int) -> list[Comment] | None` — Return every comment on issue *number*, an empty list when none.
@@ -948,7 +983,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `plan_paths(plan: Comment | None, body: str) -> tuple[list[str], bool]` — Return the files the plan names, falling back to the issue body's.
 - `parse_timestamp(value: str) -> datetime` — Parse an ISO-8601 timestamp, reading a naive one as UTC.
 - `parse_merge_log(raw: str) -> list[Merge]` — Parse ``git log --name-only --format=%x1e%H%x1f%cI%x1f%s`` output.
-- `class WriterCheck` — Tri-state write-access predicate over a :class:`GitHubSource`, cached.
+- `class WriterCheck` — Tri-state write-access predicate over a :class:`PermissionSource`, cached.
 - `_record_lookup(lookup: PlanLookup, number: int, report: Report) -> bool` _(internal)_ — Write a plan lookup's notes into *report*; ``False`` when it is unknown.
 - `_issue_and_plan(source: GitHubSource, number: int, report: Report) -> tuple[Issue, Comment | None] | None` _(internal)_ — Fetch issue *number* and its authenticated plan, recording failures.
 - `_requires_texts(issue: Issue, plan: Comment | None) -> list[str]` _(internal)_ — Return the texts whose ``Requires:`` lines count: body, then plan.
@@ -970,7 +1005,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _GitHub reads for ``forge-plan-check``: the records and the ``gh api`` adapter._
 
 - `class Comment` — One issue comment as the checks need it.
-- `class Issue` — One issue; ``comments`` is filled only by the open-issue listing.
+- `class Issue` — One issue; the fields after ``created_at`` come only from the open listing.
 - `class RefStatus` — What GitHub reports about one ``Requires:`` reference.
 - `class MergedPR` — A PR's merge state, changed files and the issues it closes.
 - `_loads(raw: str | None) -> dict[str, Any] | None` _(internal)_ — Decode one JSON object; ``None`` for a failed call, bad JSON or a non-object.
@@ -985,6 +1020,8 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `ref_status(self, number: int) -> RefStatus | None` — Return the landing status of issue-or-PR *number*.
   - `pull_request(self, number: int) -> MergedPR | None` — Return PR *number*'s merge state, changed files and closed issues.
   - `open_issues(self) -> list[Issue] | None` — Return every open issue, comments included.
+  - `open_issue_count(self) -> int | None` — Return how many issues GitHub counts as open.
+  - `repo_slug(self) -> str | None` — Return the repository's ``owner/name``.
 
 ## `forge.post_checkout`
 

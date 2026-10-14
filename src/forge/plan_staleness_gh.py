@@ -44,13 +44,15 @@ class Comment:
 
 @dataclass(frozen=True)
 class Issue:
-    """One issue; ``comments`` is filled only by the open-issue listing."""
+    """One issue; the fields after ``created_at`` come only from the open listing."""
 
     number: int
     body: str
     labels: tuple[str, ...]
     created_at: str
     comments: tuple[Comment, ...] = ()
+    title: str = ""
+    updated_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -99,15 +101,22 @@ _PR_QUERY: Final[str] = (
 _OPEN_ISSUES_QUERY: Final[str] = (
     "query($owner:String!,$name:String!,$endCursor:String)"
     "{repository(owner:$owner,name:$name){issues(states:OPEN,first:50,"
-    "after:$endCursor){pageInfo{hasNextPage endCursor} nodes{number body createdAt"
+    "after:$endCursor){pageInfo{hasNextPage endCursor} nodes{number title body"
+    " createdAt"
+    " updatedAt"
     " labels(first:50){nodes{name}} comments(last:100){totalCount"
     " nodes{databaseId body createdAt author{login}}}}}}}"
 )
 _OPEN_ISSUES_JQ: Final[str] = (
-    "[.data.repository.issues.nodes[] | {number, body, created_at: .createdAt,"
+    "[.data.repository.issues.nodes[] | {number, title, body, created_at: .createdAt,"
+    " updated_at: .updatedAt,"
     " labels: [.labels.nodes[].name], total: .comments.totalCount,"
     " comments: [.comments.nodes[] | {id: .databaseId, body, created_at: .createdAt,"
     ' author: (.author.login // "")}]}]'
+)
+_OPEN_ISSUE_COUNT_QUERY: Final[str] = (
+    "query($owner:String!,$name:String!){repository(owner:$owner,name:$name)"
+    "{issues(states:OPEN){totalCount}}}"
 )
 _COMMENTS_JQ: Final[str] = (
     '[.[] | {id, body: (.body // ""), created_at, author: (.user.login // "")}]'
@@ -401,6 +410,34 @@ class GhSource:
         except _IncompleteListingError:
             return None
 
+    def open_issue_count(self) -> int | None:
+        """Return how many issues GitHub counts as open.
+
+        Returns:
+            The open-issue total, or None when it could not be read.
+        """
+        raw = self._run(
+            "graphql",
+            *_REPO_FIELDS,
+            "-f",
+            f"query={_OPEN_ISSUE_COUNT_QUERY}",
+            "--jq",
+            ".data.repository.issues.totalCount",
+        )
+        try:
+            return int(raw) if raw is not None else None
+        except ValueError:
+            return None
+
+    def repo_slug(self) -> str | None:
+        """Return the repository's ``owner/name``.
+
+        Returns:
+            The slug, or None when it could not be read.
+        """
+        raw = self._run("repos/{owner}/{repo}", "--jq", ".full_name")
+        return raw or None
+
     def _open_issue(self, item: dict[str, Any]) -> Issue:
         """Build one listed issue, fetching all comments when the page truncated.
 
@@ -428,6 +465,8 @@ class GhSource:
                 labels=tuple(str(n) for n in item["labels"]),
                 created_at=str(item["created_at"]),
                 comments=tuple(comments),
+                title=str(item.get("title") or ""),
+                updated_at=str(item.get("updated_at") or ""),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise _IncompleteListingError from exc
