@@ -826,12 +826,20 @@ def _page(*items: object) -> str:
     return json.dumps(list(items))
 
 
-def _listed(number: int, total: int) -> dict[str, object]:
+def _listed(
+    number: int,
+    total: int,
+    *,
+    title: str | None = "Title",
+    updated_at: str | None = "2026-10-01T00:00:00Z",
+) -> dict[str, object]:
     """Return one open-issue listing entry carrying one comment.
 
     Args:
         number: Issue number.
         total: The comment total GitHub reports.
+        title: The title, or None for a null one.
+        updated_at: The last-activity timestamp, or None for a null one.
 
     Returns:
         The projected entry.
@@ -839,8 +847,10 @@ def _listed(number: int, total: int) -> dict[str, object]:
     comment = {"id": 1, "body": "hi", "created_at": PLAN_TIME, "author": "a"}
     return {
         "number": number,
+        "title": title,
         "body": "b",
         "created_at": PLAN_TIME,
+        "updated_at": updated_at,
         "labels": [],
         "total": total,
         "comments": [comment],
@@ -856,11 +866,56 @@ def test_gh_source_failed_call_and_bad_json_are_none() -> None:
     assert failed.pull_request(1) is None
     assert failed.open_issues() is None
     assert failed.permission("alice") is None
+    assert failed.open_issue_count() is None
+    assert failed.repo_slug() is None
 
     garbled = GhSource(run=RecordedGh({"issues/1": "{not json", "graphql": "[]"}))
     assert garbled.issue(1) is None
     assert garbled.comments(1) is None
     assert garbled.ref_status(1) is None
+    assert GhSource(run=RecordedGh({"graphql": "abc"})).open_issue_count() is None
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("42\n", 42), ("abc", None)])
+def test_gh_source_open_issue_count(raw: str, expected: int | None) -> None:
+    """The open total is parsed from the count query; non-numeric output is unknown.
+
+    Args:
+        raw: Raw stdout returned by the recorded `gh` graphql call.
+        expected: Open-issue count the parser should return, or None when unknown.
+    """
+    gh = RecordedGh({"graphql": raw})
+    assert GhSource(run=gh).open_issue_count() == expected
+    assert "totalCount" in gh.calls[0]
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("o/r", "o/r"), ("", None)])
+def test_gh_source_repo_slug(raw: str, expected: str | None) -> None:
+    """The slug is the repo's full name; an empty reply is unknown.
+
+    Args:
+        raw: Raw stdout returned by the recorded `gh` repo call.
+        expected: Repo slug the parser should return, or None when unknown.
+    """
+    assert GhSource(run=RecordedGh({"repos/": raw})).repo_slug() == expected
+
+
+def test_gh_source_open_issues_carry_title_and_activity() -> None:
+    """Title and updated_at map through, null becoming empty; the query asks both."""
+    gh = RecordedGh(
+        {
+            "graphql": _page(
+                _listed(1, 1),
+                _listed(2, 1, title=None, updated_at=None),
+            )
+        }
+    )
+    issues = GhSource(run=gh).open_issues()
+    assert issues is not None
+    assert (issues[0].title, issues[0].updated_at) == ("Title", "2026-10-01T00:00:00Z")
+    assert (issues[1].title, issues[1].updated_at) == ("", "")
+    assert "title" in gh.calls[0]
+    assert "updatedAt" in gh.calls[0]
 
 
 def test_gh_source_empty_comment_listing_is_an_empty_list() -> None:

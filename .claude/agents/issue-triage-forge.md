@@ -41,9 +41,10 @@ contributor rules, forge's own tests) and NOT to shipped-product issues
 (CLIs, agents, hooks, skills, FOUNDATION). The label is forge-only and is
 NOT in CANONICAL_LABELS — never create it in a consumer repo.
 
-When regenerating the 📋 Backlog Index, after the tier sections add a
-short `## 🔧 forge-internal (N)` lane listing the labelled issues by
-number+title, so the product backlog reads cleanly without them.
+When regenerating the 📋 Backlog Index, pass
+`--lane "forge-internal=🔧 forge-internal"` to `forge-backlog-index`, so
+the labelled issues leave the tier sections and the product backlog
+reads cleanly without them.
 
 <original triage request forwarded verbatim from the caller>
 """
@@ -88,8 +89,8 @@ gh label create forge-internal --color 006B75 \
 ## Output
 
 Whatever `forge:issue-triage` returns for the requested mode, plus the
-`forge-internal` label applied to qualifying issues and a `## 🔧
-forge-internal (N)` lane in any regenerated Backlog Index.
+`forge-internal` label applied to qualifying issues and the
+`forge-internal` lane in any regenerated Backlog Index.
 
 ## Success Criteria
 

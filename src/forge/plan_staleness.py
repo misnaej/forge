@@ -157,6 +157,20 @@ class PlanLookup:
     ignored: tuple[int, ...] = ()
 
 
+class PermissionSource(Protocol):
+    """The one read :class:`WriterCheck` needs."""
+
+    def permission(self, login: str) -> str | None:
+        """Return *login*'s permission on the repo (``admin``, ``write``, ...).
+
+        Args:
+            login: GitHub login to look up.
+
+        Returns:
+            The permission name, or None when it could not be read.
+        """
+
+
 class GitHubSource(Protocol):
     """The GitHub reads the checks perform; every method returns None on failure."""
 
@@ -530,9 +544,9 @@ def parse_merge_log(raw: str) -> list[Merge]:
 
 
 class WriterCheck:
-    """Tri-state write-access predicate over a :class:`GitHubSource`, cached."""
+    """Tri-state write-access predicate over a :class:`PermissionSource`, cached."""
 
-    def __init__(self, source: GitHubSource) -> None:
+    def __init__(self, source: PermissionSource) -> None:
         """Bind the predicate to *source*.
 
         Args:
