@@ -1374,6 +1374,55 @@ _REDIRECTION_BLOCKED = [
         "git push origin 2>&1 HEAD:main",
         id="protected_refspec_after_redir",
     ),
+    # A command inside a redirection target's (...) group is run by bash, so
+    # blanking the target must not erase it. Behavior tests: each pins a
+    # guard bypass found in review.
+    pytest.param(
+        "block_git_destructive.sh",
+        "echo >$(git clean -fd)",
+        id="clean_in_target_substitution",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "cat <(git clean -fd)",
+        id="clean_in_process_substitution",
+    ),
+    pytest.param(
+        _FORCE_PUSH,
+        "echo >`git push --force`",
+        id="force_push_in_backtick_target",
+    ),
+    pytest.param(
+        _FORCE_PUSH,
+        "cat <(git push 2>&1 -f)",
+        id="force_push_redir_in_process_substitution",
+    ),
+    pytest.param(
+        _NO_VERIFY,
+        "echo >$(git commit -n -m x)",
+        id="no_verify_in_target_substitution",
+    ),
+    pytest.param(
+        "block_branch_deletion.sh",
+        "echo >$(git push origin :main)",
+        id="branch_delete_in_target_substitution",
+    ),
+    pytest.param(
+        _PROTECTED,
+        "echo >$(git push origin HEAD:main)",
+        id="protected_in_target_substitution",
+    ),
+    pytest.param(
+        _INSTALL_DEPS,
+        "echo x 2>$(pip install x)",
+        id="install_in_stderr_target_substitution",
+    ),
+    pytest.param(_INSTALL_DEPS, "cat <(pixi add x)", id="pixi_in_process_substitution"),
+    pytest.param(
+        "block_raw_ruff.sh",
+        "echo >$(ruff check .)",
+        id="ruff_in_target_substitution",
+    ),
 ]
 
 
@@ -6355,8 +6404,30 @@ def test_command_positions_no_redir_blanks_redirections(command: str) -> None:
         text=True,
         check=True,
     ).stdout
-    assert ">" not in view
-    assert "mktemp" not in view
+    # A blanked target's (...) group is printed back on its own later line
+    # (bash runs it), so only the command line itself is checked.
+    first_line = view.splitlines()[0]
+    assert ">" not in first_line
+    assert "mktemp" not in first_line
+
+
+def test_command_positions_no_redir_prints_a_blanked_target_group_back() -> None:
+    """A blanked target's ``(...)`` group is a command bash runs, so it re-emerges.
+
+    The first line is the blanked command line; the group follows on its
+    own line so the guards still see the command inside it.
+    """
+    script = 'source "$1/git_anchor.sh"; command_positions --words --no-redir "$2"'
+    view = subprocess.run(
+        ["bash", "-c", script, "_", str(_HOOKS_DIR), "echo >$(git clean -fd)"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    lines = view.splitlines()
+    assert ">" not in lines[0]
+    assert "git clean" not in lines[0]
+    assert "(git clean -fd)" in lines[1:]
 
 
 def test_command_positions_no_redir_keeps_a_quoted_redirection_inert() -> None:
