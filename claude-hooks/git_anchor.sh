@@ -72,9 +72,9 @@
 # reads as two words there and the payload is not unwrapped in that view;
 # likewise `> 'a b' git push` reads as a redirection then the word `b` in
 # the --words view, so a guard reading flags there loses that invocation),
-# a redirection between a valued git option and its value (`git -C 2>&1 <dir> push`: the
-# anchor takes the redirection for the value, and `<dir>` then ends the
-# option run), a command word hidden by escapes inside `$'…'`
+# a redirection between a valued git option and its value
+# (`git -C 2>&1 <dir> push`: the anchor takes the redirection for the
+# value, and `<dir>` then ends the option run), a command word hidden by escapes inside `$'…'`
 # (`$'\x67it' push`), a quoted command word holding a variable or a blank
 # (`"$G" push`, `'git push'` as one word), a quoted global-option value
 # containing a blank (`git -C 'a b' push -f`, issue #754), and one
@@ -89,7 +89,9 @@
 # characters or one level of `(…)`. The shell accepts one wherever a word
 # of the command may stand — before the command name (`2>&1 git push`)
 # and between a tool and its subcommand (`git 2>&1 push`) — so every
-# anchor below reads past it in those places. It holds no `/` (a hook
+# anchor below reads past it in those places. Among a command's
+# ARGUMENTS a guard instead reads a copy with redirections blanked
+# (`command_positions --no-redir`, guard_unredir). It holds no `/` (a hook
 # splices GIT_ANCHOR into a `s/…//` sed expression) and no backslash
 # (guard_git_invocations hands the anchor to awk -v, which would eat it);
 # a test pins both. It also never spells the letters `git` — hence `[0-9]`,
@@ -229,10 +231,17 @@ function unredir(t,   n, k, a, r, c, d, f, j, e, m) {
         # The target, as GUARD_REDIR reads it: plain characters and
         # unnested `(…)` groups, so `>$(mktemp)` is blanked whole rather
         # than leaving `(mktemp)` to read as a subshell before the command.
+        # A group is a command bash runs (`>$(git clean -fd)`, `<(…)`), so
+        # each one blanked is recorded in G[1..NG]: guard_unredir prints
+        # them back on lines of their own, where guards still see them.
         while (e <= n) {
             if (substr(t, e, 1) == "(") {
                 m = index(substr(t, e + 1), ")")
-                if (m > 0 && index(substr(t, e + 1, m - 1), "(") == 0) { e += m + 1; continue }
+                if (m > 0 && index(substr(t, e + 1, m - 1), "(") == 0) {
+                    G[++NG] = substr(t, e, m + 1)
+                    e += m + 1
+                    continue
+                }
                 break
             }
             if (index(" \t\n;&|()<>", substr(t, e, 1))) break
@@ -664,14 +673,24 @@ command_positions() {
 # guard_unredir <text>
 # Prints <text> with every redirection blanked (unredir, above): same
 # length, so a guard that splits a view at `;` `&` `|` can do it on this
-# copy without the `&` of `2>&1` cutting a command in two. If awk fails
-# the text is returned unchanged.
+# copy without the `&` of `2>&1` cutting a command in two. A target's
+# `(…)` group holds a command bash runs, so each one blanked is printed
+# again, redirections blanked, on a line of its own after the text: a
+# guard reading these lines still sees `git clean -fd` in
+# `echo >$(git clean -fd)`. If awk fails the text is returned unchanged.
 guard_unredir() {
     local out
     out=$(printf '%s\n' "$1" | LC_ALL=C awk "${_GUARD_UNREDIR_AWK}"'
 BEGIN { SP = " " }
 { src = (NR == 1) ? $0 : src "\n" $0 }
-END { printf "%s\n", unredir(src) }' 2>/dev/null) || out="$1"
+END {
+    NG = 0
+    r = unredir(src)
+    n = NG
+    for (i = 1; i <= n; i++) H[i] = G[i]
+    printf "%s\n", r
+    for (i = 1; i <= n; i++) printf "%s\n", unredir(H[i])
+}' 2>/dev/null) || out="$1"
     printf '%s\n' "$out"
 }
 

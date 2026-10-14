@@ -107,7 +107,9 @@ WORDS=$(command_positions --words --no-redir "$COMMAND")
 # The command boundary every rule below starts from (see the header), then
 # any run of the keywords that start a command inside a compound and of
 # redirection words (GUARD_REDIR in git_anchor.sh). The views are blanked,
-# so a leading redirection arrives as whitespace after the boundary.
+# so a leading redirection arrives as whitespace after the boundary; the
+# GUARD_REDIR term is left for the heredoc and here-string openers
+# (`<<<x pip install`), which the blanking keeps.
 # It accepts no `VAR=val` or wrapper word (`sudo`, `env`) yet, so
 # `sudo pip install x` is still unmatched — tracked as its own issue (#752).
 CMD_PFX='(^|[;&|(){}!])\s*((then|else|elif|do)[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
