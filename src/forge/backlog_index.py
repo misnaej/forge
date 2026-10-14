@@ -19,6 +19,10 @@ when tiers 1 and 2 alone do not fit, the run refuses and the old Index
 stands. Issue titles are world-writable, so they are neutralised before
 they reach the posted body: no mention pings, no planted references.
 
+The Index is found by its exact title alone. Anyone can open a second
+issue with that title, and every run then refuses until it is closed —
+a nuisance, never a write: the body is always generated here.
+
 Exit codes:
     0  written (or rendered, with ``--dry-run``)
     1  refused — incomplete listing, no or several Index issues, empty or
@@ -95,9 +99,17 @@ _STATED_LABELS: Final[frozenset[str]] = frozenset(
 
 _ZWSP: Final[str] = "\u200b"
 _WHITESPACE_RE: Final[re.Pattern[str]] = re.compile(r"\s+")
-_MENTION_RE: Final[re.Pattern[str]] = re.compile(r"@(?=\w)")
-_REFERENCE_RE: Final[re.Pattern[str]] = re.compile(r"#(?=\d)")
-_LINK_RE: Final[re.Pattern[str]] = re.compile(r"\]\(")
+# Each pattern GitHub would act on in a title, and the inert form it becomes.
+# A zero-width space changes nothing a reader sees; ``&lt;`` renders as ``<``.
+_NEUTRALISE: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
+    (re.compile(r"<"), "&lt;"),
+    (re.compile(r"@(?=\w)"), "@" + _ZWSP),
+    (re.compile(r"#(?=\d)"), "#" + _ZWSP),
+    (re.compile(r"\b(GH)-(?=\d)", re.IGNORECASE), r"\1" + _ZWSP + "-"),
+    (re.compile(r"\]\("), "]" + _ZWSP + "("),
+    (re.compile(r":(?=//)"), ":" + _ZWSP),
+    (re.compile(r"\b(www)\.", re.IGNORECASE), r"\1" + _ZWSP + "."),
+)
 _PAIR_RE: Final[re.Pattern[str]] = re.compile(r"^([^=]+)=(.+)$")
 
 
@@ -158,9 +170,11 @@ def safe_title(title: str) -> str:
 
     Titles are written by anyone who can open an issue, and the Index is
     posted under the caller's account: a raw ``@name`` would ping, a raw
-    ``#N`` would plant a cross-reference on another issue, and a raw link
-    would render as one. A zero-width space breaks each without changing
-    what a reader sees.
+    ``#N`` or ``GH-N`` would plant a cross-reference on another issue,
+    and a markdown link, a bare URL or ``www.`` address, or raw HTML
+    would render as live markup. Each is broken without changing what a
+    reader sees, and newlines are collapsed so a title cannot open a
+    heading or list item.
 
     Args:
         title: Issue title as GitHub reports it.
@@ -169,9 +183,9 @@ def safe_title(title: str) -> str:
         The neutralised title.
     """
     text = _WHITESPACE_RE.sub(" ", title).strip()
-    text = _MENTION_RE.sub("@" + _ZWSP, text)
-    text = _REFERENCE_RE.sub("#" + _ZWSP, text)
-    return _LINK_RE.sub("]" + _ZWSP + "(", text)
+    for pattern, inert in _NEUTRALISE:
+        text = pattern.sub(inert, text)
+    return text
 
 
 def _tier_of(issue: Issue) -> str | None:

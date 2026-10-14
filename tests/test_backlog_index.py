@@ -261,7 +261,11 @@ def test_status_lanes_and_untiered(issue: Issue, expected: str) -> None:
     [
         ("@octocat hi", "@\u200boctocat hi"),
         ("fixes #12", "fixes #\u200b12"),
-        ("[x](http://e)", "[x]\u200b(http://e)"),
+        ("[x](http://e)", "[x]\u200b(http:\u200b//e)"),
+        ("see https://evil.example", "see https:\u200b//evil.example"),
+        ("see www.evil.example", "see www\u200b.evil.example"),
+        ('<img src="x"> pixel', '&lt;img src="x"> pixel'),
+        ("fixes GH-12", "fixes GH\u200b-12"),
         ("a\nb  c", "a b c"),
     ],
 )
