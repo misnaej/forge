@@ -6860,6 +6860,39 @@ def test_guard_that_runs_out_of_time_blocks() -> None:
 
 
 @pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param("sleep 30 | cat", id="pipeline"),
+        pytest.param("x=$(sleep 30 | cat)", id="pipeline-in-substitution"),
+        pytest.param("(trap '' TERM; sleep 30)", id="child-ignoring-term"),
+    ],
+)
+def test_watchdog_blocks_whatever_the_guard_is_waiting_on(
+    tmp_path: Path, body: str
+) -> None:
+    """Behavior: a guard past its deadline exits 2 even mid-pipeline.
+
+    Killing a pipeline's upstream stage first would hand the downstream
+    stage an early EOF and let the guard reach its own `exit 0`; the
+    watchdog must signal the guard before its children, and KILL a child
+    that ignores TERM. The deadline is shortened to 1 s for the test.
+
+    Args:
+        body: Shell the guard is busy running when the deadline passes.
+    """
+    script = tmp_path / "guard.sh"
+    script.write_text(
+        "set -e\nCOMMAND=x\n"
+        f"source {shlex.quote(str(_HOOKS_DIR / 'git_anchor.sh'))}\n"
+        f"GUARD_DEADLINE_S=1\nguard_begin\n{body}\nexit 0\n"
+    )
+    start = time.monotonic()
+    proc = subprocess.run(["bash", str(script)], capture_output=True, check=False)
+    assert proc.returncode == 2
+    assert time.monotonic() - start < 4.0
+
+
+@pytest.mark.parametrize(
     "spelling",
     [
         pytest.param("git restore {abs}/f", id="restore"),

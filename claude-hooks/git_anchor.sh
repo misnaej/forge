@@ -661,14 +661,16 @@ END { printf "%s\n", scan(src, 1, 0) }
 #     would make Claude Code wait for it after every command.
 GUARD_MAX_CHARS=131072
 GUARD_DEADLINE_S=4
-# _guard_kill_tree <pid> <spare pid> — TERM every descendant of <pid>,
-# deepest first, except <spare pid> and its descendants.
+# _guard_kill_tree <pid> <spare pid> — signal (TERM, or GUARD_KILL_SIGNAL)
+# every descendant of <pid>, deepest first, except <spare pid> and its
+# descendants. Needs `pgrep`: without it no child is signalled, and the
+# guard then stops only once its running child finishes on its own.
 _guard_kill_tree() {
     local c
     for c in $(pgrep -P "$1" 2> /dev/null); do
         [ "$c" = "$2" ] && continue
         _guard_kill_tree "$c" "$2"
-        kill -TERM "$c" 2> /dev/null || true
+        kill "-${GUARD_KILL_SIGNAL:-TERM}" "$c" 2> /dev/null || true
     done
 }
 guard_begin() {
@@ -689,8 +691,17 @@ guard_begin() {
         sleeper=$!
         wait "$sleeper"
         trap - TERM
-        _guard_kill_tree "$hook_pid" "$(sh -c 'echo $PPID')"
+        # The guard FIRST, its children second: killed first, a pipeline's
+        # upstream stage would hand the downstream one an early EOF, the
+        # guard would judge the truncated input as harmless and reach its
+        # own `exit 0` before the TERM landed. Bash holds the trap until
+        # the foreground child exits, which the tree kill then forces; a
+        # child ignoring TERM gets KILL after a short grace.
         kill -TERM "$hook_pid" 2> /dev/null
+        self="$(sh -c 'echo $PPID')"
+        _guard_kill_tree "$hook_pid" "$self"
+        sleep 0.5
+        kill -0 "$hook_pid" 2> /dev/null && GUARD_KILL_SIGNAL=KILL _guard_kill_tree "$hook_pid" "$self"
     ) < /dev/null > /dev/null 2>&1 &
     GUARD_WATCHDOG_PID=$!
     # `|| true`: under a guard's `set -e`, a failing command in an EXIT trap
