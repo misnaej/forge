@@ -22,7 +22,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-guard_refuse_oversized
+guard_begin
 
 # No self-exemption for forge-pr-wrapup: its internal `gh pr comment` runs
 # as a subprocess, never as the Bash tool's command, and the block regex

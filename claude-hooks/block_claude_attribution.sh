@@ -20,7 +20,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-guard_refuse_oversized
+guard_begin
 # The history-writing command is found on the command-positions view
 # (git_anchor.sh) — a quoted mention writes nothing, a wrapped one does —
 # but the attribution scan below deliberately reads the RAW text: the

@@ -42,7 +42,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-guard_refuse_oversized
+guard_begin
 # No pathname expansion: the per-invocation word splitting below
 # (`toks=($inv)`) must never glob a word such as `*`.
 set -f

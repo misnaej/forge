@@ -647,19 +647,56 @@ BEGIN {
 END { printf "%s\n", scan(src, 1, 0) }
 '
 
-# guard_refuse_oversized — blocks (exit 2) when $COMMAND is longer than
-# GUARD_MAX_COMMAND_BYTES. Every blocking guard calls it right after
-# sourcing this lib. A guard must read the whole command, so its cost
-# grows with the command's length, and a hook that runs past its timeout
-# does not block — the command runs. Past this size the guards cannot
-# promise an answer in time, so the command is refused instead. The
-# command is not echoed back: at this size it would flood the message.
-GUARD_MAX_COMMAND_BYTES=131072
-guard_refuse_oversized() {
-    if [ "${#COMMAND}" -gt "$GUARD_MAX_COMMAND_BYTES" ]; then
-        echo "BLOCKED: this command is ${#COMMAND} characters, over the $GUARD_MAX_COMMAND_BYTES the guards can judge within their timeout — and a guard that runs out of time lets a command through, so oversized commands are refused. Write large content with the Write tool, split the command, or run it yourself with \`!\`." >&2
+# guard_begin — every blocking guard calls it right after sourcing this
+# lib. A PreToolUse hook that runs past its timeout (5 s, plugin.json) is
+# killed WITHOUT blocking — the command runs — so a guard must never be
+# slow, and must fail closed when it is:
+#   - a command longer than GUARD_MAX_CHARS is refused outright: a guard
+#     reads the whole command, so its cost grows with the length, and the
+#     command is not echoed back (it would flood the message);
+#   - a watchdog stops the guard at GUARD_DEADLINE_S and blocks. Bash runs
+#     a trap only once its foreground child exits, so the watchdog first
+#     terminates the guard's child processes, then the guard itself. Its
+#     output goes to /dev/null: a background job holding the hook's stdout
+#     would make Claude Code wait for it after every command.
+GUARD_MAX_CHARS=131072
+GUARD_DEADLINE_S=4
+# _guard_kill_tree <pid> <spare pid> — TERM every descendant of <pid>,
+# deepest first, except <spare pid> and its descendants.
+_guard_kill_tree() {
+    local c
+    for c in $(pgrep -P "$1" 2> /dev/null); do
+        [ "$c" = "$2" ] && continue
+        _guard_kill_tree "$c" "$2"
+        kill -TERM "$c" 2> /dev/null || true
+    done
+}
+guard_begin() {
+    local hook_pid=$$
+    if [ "${#COMMAND}" -gt "$GUARD_MAX_CHARS" ]; then
+        echo "BLOCKED: this command is ${#COMMAND} characters, over the $GUARD_MAX_CHARS the guards can judge within their timeout — and a guard that runs out of time lets a command through, so oversized commands are refused. Write large content with the Write tool, split the command, or run it yourself with \`!\`." >&2
         exit 2
     fi
+    trap 'echo "BLOCKED: this guard could not finish judging the command within ${GUARD_DEADLINE_S}s, and a guard that runs out of time would let it through, so it is refused. Simplify or split the command, or run it yourself with \`!\`." >&2; exit 2' TERM
+    (
+        # The watchdog must reach its final kill whatever fails before it:
+        # a guard's `set -e` would end it at the first failed `kill`.
+        set +e
+        # Told to stop (the guard finished in time), it ends its own sleep,
+        # so a normal exit costs one signal and leaves nothing running.
+        trap 'kill "$sleeper" 2> /dev/null; exit 0' TERM
+        sleep "$GUARD_DEADLINE_S" &
+        sleeper=$!
+        wait "$sleeper"
+        trap - TERM
+        _guard_kill_tree "$hook_pid" "$(sh -c 'echo $PPID')"
+        kill -TERM "$hook_pid" 2> /dev/null
+    ) < /dev/null > /dev/null 2>&1 &
+    GUARD_WATCHDOG_PID=$!
+    # `|| true`: under a guard's `set -e`, a failing command in an EXIT trap
+    # replaces the exit status — a watchdog already gone would turn a
+    # block (2) into 1, which allows.
+    trap 'kill -TERM "$GUARD_WATCHDOG_PID" 2> /dev/null || true' EXIT
 }
 
 # command_positions [--words] [--no-redir] <command>

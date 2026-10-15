@@ -42,7 +42,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-guard_refuse_oversized
+guard_begin
 
 # Cheap text bail FIRST — this hook fires on every Bash call, so the two
 # git subprocess queries below run only on a real `git commit … --amend`

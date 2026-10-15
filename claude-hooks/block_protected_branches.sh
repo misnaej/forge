@@ -35,7 +35,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-guard_refuse_oversized
+guard_begin
 # Only inspect git commit / git push — checkout, status, log, etc. always
 # allowed. Commands are found on the command-positions view (git_anchor.sh):
 # a quoted mention is not a push, `bash -c "git push origin main"` is; a

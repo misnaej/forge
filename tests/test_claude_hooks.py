@@ -6842,6 +6842,61 @@ def test_force_push_allows_a_large_command_under_the_limit() -> None:
     assert _run_hook(_FORCE_PUSH, "a" * 100000) == 0
 
 
+def test_guard_that_runs_out_of_time_blocks() -> None:
+    """Behavior: a guard still judging at its deadline blocks instead of timing out.
+
+    A hook killed by its 5 s timeout allows the command. Thousands of
+    minimal inline-interpreter invocations under the size limit keep the
+    raw-git guard busy past its own deadline; the watchdog must turn that
+    into a block (exit 2) before the hook timeout. Long by design: the
+    deadline is the thing under test.
+    """
+    command = "bun -e a;" * 14300 + " python -c 'git commit'"
+    start = time.monotonic()
+    verdict = _run_hook("block_raw_git.sh", command)
+    elapsed = time.monotonic() - start
+    assert verdict == 2
+    assert elapsed < 5.0
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        pytest.param("git restore {abs}/f", id="restore"),
+        pytest.param("git checkout -- {abs}/f", id="checkout"),
+    ],
+)
+def test_destructive_restore_blocks_an_absolute_path_to_modified_work(
+    restore_repo: Path, spelling: str
+) -> None:
+    """Behavior: an absolute pathspec cannot hide a modified file.
+
+    Git accepts an absolute path inside the work tree; the guard does not
+    resolve it against the repository, so it is unknowable and blocks.
+
+    Args:
+        spelling: The restore command, with ``{abs}`` for the repo root.
+    """
+    (restore_repo / "f").write_text("edited\n")
+    assert _restore_exit(restore_repo, spelling.format(abs=restore_repo)) == 2
+
+
+def test_destructive_restore_blocks_a_path_holding_the_record_separator(
+    restore_repo: Path,
+) -> None:
+    """Behavior: a modified file whose name holds byte 0x01 is not split away.
+
+    The guard's status reader uses 0x01 as its record separator, so a name
+    holding it cannot be matched reliably and the directory is unknowable.
+    """
+    name = "c\x01x"
+    (restore_repo / name).write_text("one\n")
+    _git(restore_repo, "add", "--", name)
+    _git(restore_repo, "commit", "-q", "-m", "odd name")
+    (restore_repo / name).write_text("edited\n")
+    assert _restore_exit(restore_repo, f"git restore {name}") == 2
+
+
 @pytest.mark.parametrize(
     ("count", "expected"),
     [pytest.param(33, 2, id="over-directory-cap"), pytest.param(32, 0, id="at-cap")],

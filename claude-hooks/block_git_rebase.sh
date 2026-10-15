@@ -30,7 +30,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-guard_refuse_oversized
+guard_begin
 # Commands are found on the command-positions view (git_anchor.sh): a
 # quoted mention is not a rebase, a wrapped `bash -c "git rebase …"` is.
 CMDPOS=$(command_positions "$COMMAND")

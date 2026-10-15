@@ -18,7 +18,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-guard_refuse_oversized
+guard_begin
 
 # Anchor: a real `ruff check` / `ruff format` invocation, matched on the
 # shared command-positions view (git_anchor.sh): quoted bodies (PR

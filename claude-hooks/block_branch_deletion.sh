@@ -46,7 +46,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-guard_refuse_oversized
+guard_begin
 
 # Cheap bail: no real git push or gh api at all. Found on the shared
 # command-positions view, so a quoted mention never counts and

@@ -48,7 +48,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-guard_refuse_oversized
+guard_begin
 
 # `gh pr create` at a real command position — found on the
 # command-positions view (git_anchor.sh), so a quoted mention or a grep

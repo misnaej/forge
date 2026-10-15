@@ -60,7 +60,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-guard_refuse_oversized
+guard_begin
 
 # Resolve the opt-out config. Prints ALL, NONE, or a comma-list of
 # managers. Defaults to ALL when pyproject / python / the key is absent —

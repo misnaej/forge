@@ -52,7 +52,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
-guard_refuse_oversized
+guard_begin
 
 # Commands are found on the command-positions view (git_anchor.sh) — a
 # quoted mention is not a reset, a wrapped `bash -c "git reset …"` is —
@@ -191,32 +191,26 @@ fi
 # (bash 3.2 has no associative arrays, so parallel indexed arrays keyed by
 # position in LS_DIRS). For a directory: LS_IN (1 inside a work tree, 0
 # not, u unknown) and LS_PREFIX (the directory relative to the repo root,
-# as `git rev-parse --show-prefix` prints it). Its tree's `git status
-# --porcelain -z --untracked-files=all` entries — a rename contributing
-# both of its paths — become three newline-delimited path lists:
-#   LS_HOLD     entries a restore would destroy (anything changed in the
-#               worktree, untracked, or staged outside a merge);
-#   LS_ALL      every entry;
-#   LS_NONCONF  entries that are not merge conflicts.
-# A pathspec is then judged by one pattern match per list, inside bash —
-# replacing one `git status -- <paths>` per invocation, and a bash loop
-# over every entry per invocation, either of which let a long chain run
-# this hook past its timeout (a timed-out hook allows the command).
-LS_DIRS=() LS_IN=() LS_PREFIX=() LS_HOLD=() LS_ALL=() LS_NONCONF=()
+# as `git rev-parse --show-prefix` prints it). The entries `git status
+# --porcelain -z --untracked-files=all -- <paths>` lists for the paths the
+# command names there are kept raw in LS_RAW, with LS_MERGING, and
+# LS_STATUS_AWK turns them into the judge's H/A/N path lists. Status is
+# asked about the named paths only, never the whole tree — a tree of many
+# untracked files made a whole-tree status slow enough to time the hook
+# out — and once per directory rather than once per invocation, which let
+# a long chain do the same (a timed-out hook allows the command).
+LS_DIRS=() LS_IN=() LS_PREFIX=() LS_RAW=() LS_MERGING=()
 LS_MAX=32
-# _live_state <dir> — sets LS_I to the cache slot for <dir>.
+# _live_state <dir> [<pathspec>...] — sets LS_I to the cache slot for <dir>,
+# reading the state of the named pathspecs on the first call for <dir>.
 _live_state() {
-    local dir="$1" i out inside prefix mh rec xy path merging=0 pending=""
-    local hold=$'\n' all=$'\n' nonconf=$'\n'
+    local dir="$1" i out inside prefix mh merging=0
     for ((i = 0; i < ${#LS_DIRS[@]}; i++)); do
         if [ "${LS_DIRS[$i]}" = "$dir" ]; then LS_I=$i; return 0; fi
     done
     LS_I=${#LS_DIRS[@]}
     LS_DIRS[LS_I]="$dir"
     LS_PREFIX[LS_I]=""
-    LS_HOLD[LS_I]=$'\n'
-    LS_ALL[LS_I]=$'\n'
-    LS_NONCONF[LS_I]=$'\n'
     # Each new directory costs two git processes; a command naming more
     # than LS_MAX of them (`git -C d1 …; git -C d2 …; …`) is judged
     # unknowable instead, so no count of directories can run this hook
@@ -234,33 +228,42 @@ _live_state() {
     LS_PREFIX[LS_I]="$prefix"
     case "$mh" in /*) ;; *) mh="$dir/$mh" ;; esac
     [ -e "$mh" ] && merging=1
+    shift
+    if [ "$#" -eq 0 ]; then LS_IN[LS_I]=1; return 0; fi
     # Records are NUL-separated; NUL cannot live in a shell variable, so it
-    # becomes \001. A path holding a tab, a newline or \001 cannot be
-    # matched reliably in this form, so the directory is then unknowable
-    # (fail closed) rather than a path that silently never matches.
-    if ! out=$(set -o pipefail; git -C "$dir" status --porcelain -z --untracked-files=all 2> /dev/null | tr '\0' '\001'); then
+    # becomes \001, and a \001 already in a path becomes \002. A path
+    # holding a tab, a newline or such a byte cannot be matched reliably in
+    # this form, so the directory is then unknowable (fail closed) rather
+    # than a path that silently never matches.
+    if ! out=$(set -o pipefail; git -C "$dir" status --porcelain -z --untracked-files=all -- "$@" 2> /dev/null | tr '\0\001' '\001\002'); then
         LS_IN[LS_I]=u
         return 0
     fi
-    case "$out" in *$'\t'* | *$'\n'*) LS_IN[LS_I]=u; return 0 ;; esac
+    case "$out" in *$'\t'* | *$'\n'* | *$'\002'*) LS_IN[LS_I]=u; return 0 ;; esac
     LS_IN[LS_I]=1
-    while IFS= read -r -d $'\001' rec; do
-        [ -n "$rec" ] || continue
-        if [ -n "$pending" ]; then
-            # The second path of a rename / copy record.
-            xy="$pending"; path="$rec"; pending=""
-        else
-            xy="${rec:0:2}"; path="${rec:3}"
-            case "$xy" in R* | C*) pending="$xy" ;; esac
-        fi
-        all+="$path"$'\n'
-        if [ "${xy:1:1}" != " " ] || [ "$merging" = 0 ]; then hold+="$path"$'\n'; fi
-        case "$xy" in DD | AU | UD | UA | DU | AA | UU) ;; *) nonconf+="$path"$'\n' ;; esac
-    done <<< "$out"
-    LS_HOLD[LS_I]="$hold"
-    LS_ALL[LS_I]="$all"
-    LS_NONCONF[LS_I]="$nonconf"
+    # Kept raw; _restore_state turns it into the H/A/N lists in one awk
+    # pass (a shell loop per entry was slow on a directory of many files).
+    LS_RAW[LS_I]="$out"
+    LS_MERGING[LS_I]="$merging"
 }
+# LS_STATUS_AWK — reads one directory's raw status (\001-separated records;
+# a rename / copy record's second field is its other path) and prints
+# `H|A|N<TAB><dir><TAB><path>` lines: H for an entry a restore would
+# destroy (changed in the worktree, untracked, or staged outside a merge),
+# A for every entry, N for every entry that is not a merge conflict.
+LS_STATUS_AWK='
+BEGIN { RS = "\001"; d = ENVIRON["D"]; merging = ENVIRON["M"] }
+$0 == "" || $0 == "\n" { next }
+{
+    if (pending != "") { xy = pending; path = $0; pending = "" }
+    else {
+        xy = substr($0, 1, 2); path = substr($0, 4)
+        if (xy ~ /^[RC]/) pending = xy
+    }
+    print "A\t" d "\t" path
+    if (substr(xy, 2, 1) != " " || merging == "0") print "H\t" d "\t" path
+    if (xy !~ /^(DD|AU|UD|UA|DU|AA|UU)$/) print "N\t" d "\t" path
+}'
 
 # The restore rules run in awk, in two passes around one bash step, so
 # that no per-invocation work happens in the shell: per-invocation shell
@@ -407,7 +410,9 @@ END { if (!bad && NWORDS != NPOS) print "UNKNOWN" }
 RESTORE_JUDGE_AWK='
 # State lines first (S in/prefix, H/A/N paths, F ref verdicts), then the
 # records from the parse.
-function meta(p) { return p ~ /@SUBST@|[$*?[{\\]/ || p ~ /^~/ || p ~ /^:/ }
+# An absolute pathspec is not resolved against the repository here, so it
+# is unknowable too — git accepts one inside the work tree.
+function meta(p) { return p ~ /@SUBST@|[$*?[{\\]/ || p ~ /^[~:\/]/ }
 # The repo-relative path a pathspec names ("" for the whole repo); sets
 # RESOLVED_OK to 0 when it climbs out of the repository.
 function resolve(prefix, p,   n, S, i, out) {
@@ -504,13 +509,22 @@ _restore_state() {
         dirs+=("$dir")
     done < <(printf '%s\n' "$records" | LC_ALL=C awk -F'\t' -v MAX="$LS_MAX" \
         '$1 == "D" { if (++n > MAX) { print "\001X"; exit } print $2 }')
+    local -a specs
     for dir in "${dirs[@]}"; do
-        _live_state "$dir"
+        # The pathspecs this directory's invocations name (J paths; C first
+        # word and paths) — status is asked about these only. Unknowable
+        # ones are left out: the judge blocks them without asking git.
+        # Word splitting is safe here: pathname expansion is off (set -f)
+        # and a pathspec holds no blank.
+        specs=($(printf '%s\n' "$records" | D="$dir" LC_ALL=C awk -F'\t' '
+            ($1 == "J" || $1 == "C") && $2 == ENVIRON["D"] {
+                for (i = 4; i <= NF; i++)
+                    if ($i != "" && $i !~ /@SUBST@|[$*?[{\\]/ && $i !~ /^[~:\/]/ && !($i in seen)) { seen[$i] = 1; print $i }
+            }'))
+        _live_state "$dir" "${specs[@]}"
         printf 'S\t%s\t%s\t%s\n' "$dir" "${LS_IN[LS_I]}" "${LS_PREFIX[LS_I]}"
         [ "${LS_IN[LS_I]}" = 1 ] || continue
-        printf '%s' "${LS_HOLD[LS_I]}" | D="$dir" LC_ALL=C awk 'NF { print "H\t" ENVIRON["D"] "\t" $0 }'
-        printf '%s' "${LS_ALL[LS_I]}" | D="$dir" LC_ALL=C awk 'NF { print "A\t" ENVIRON["D"] "\t" $0 }'
-        printf '%s' "${LS_NONCONF[LS_I]}" | D="$dir" LC_ALL=C awk 'NF { print "N\t" ENVIRON["D"] "\t" $0 }'
+        printf '%s' "${LS_RAW[LS_I]}" | D="$dir" M="${LS_MERGING[LS_I]}" LC_ALL=C awk "$LS_STATUS_AWK"
         # Every candidate ref of this directory in ONE git process; a
         # `^{commit}` that does not resolve prints `… missing`.
         words=$(printf '%s\n' "$records" | D="$dir" LC_ALL=C awk -F'\t' '$1 == "R" && $2 == ENVIRON["D"] { print $3 }')
