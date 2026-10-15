@@ -14,6 +14,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+guard_refuse_oversized
 # Only check git commit/push commands, not arbitrary text containing the
 # string. Commands are found on the command-positions view (git_anchor.sh):
 # a quoted mention is not a commit, `bash -c "git commit …"` is.

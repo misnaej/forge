@@ -42,6 +42,10 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+guard_refuse_oversized
+# No pathname expansion: the per-invocation word splitting below
+# (`toks=($inv)`) must never glob a word such as `*`.
+set -f
 # Commands are found on the command-positions view (git_anchor.sh): a
 # quoted mention is not a commit, `bash -c "git commit …"` is. Asking a
 # guarded verb for help runs nothing and stays allowed.
@@ -75,7 +79,7 @@ sequencer_blocked() {
         # `git revert HEAD -- --no-commit` passes a path, it does not
         # exempt the commit.
         invocation="${invocation%% -- *}"
-        echo "$invocation" | grep -qE "$SEQUENCER_EXEMPT_RE" || return 0
+        [[ $invocation =~ $SEQUENCER_EXEMPT_RE ]] || return 0
     done <<< "$(command_positions --words --no-redir "$COMMAND" | grep -oE "${SEQUENCER_RE}[^;&|)#]*" || true)"
     return 1
 }
@@ -127,14 +131,20 @@ GIT_WORD_RE='(^|[^[:alnum:]_.-])git([^[:alnum:]_./-]|$)'
 # `stdin` (`-`, a heredoc or here-string, or a bare interpreter fed by a
 # pipe) or nothing (a script file or `-m module` — not inline code, so
 # `python3 -m pytest -k git` is not this rule's business).
+#
+# Sets SRC rather than printing it, and splits words with the shell's own
+# word splitting (pathname expansion is off for the hook): it runs once
+# per interpreter invocation, and a process per invocation let a long
+# chain run this hook past its timeout — which allows the command.
 _interp_code_source() {
     local inv="$1" tok k=-1 i skip=0 piped=0
     local -a toks
+    SRC=""
     case "$inv" in [[:space:]]*'|'* | '|'*) piped=1 ;; esac
     # Drop the separator run the anchor matched (`|`, `;`, `(` …), which
     # may be glued to the first word.
     inv="${inv#"${inv%%[![:space:]\;\&\|\(]*}"}"
-    read -ra toks <<< "$inv"
+    toks=($inv)
     for ((i = 0; i < ${#toks[@]}; i++)); do
         if [[ "${toks[$i]}" =~ $INTERP_TOKEN_RE ]]; then k=$i; break; fi
     done
@@ -143,26 +153,26 @@ _interp_code_source() {
         tok="${toks[$i]}"
         if [ "$skip" = 1 ]; then skip=0; continue; fi
         case "$tok" in
-            '<<'*) echo stdin; return 0 ;;
-            -) echo stdin; return 0 ;;
+            '<<'*) SRC=stdin; return 0 ;;
+            -) SRC=stdin; return 0 ;;
             --) return 0 ;;
             -W | -X | -Q | -r | -I | -M | --require | --import | --loader | --experimental-loader) skip=1 ;;
-            --eval | --eval=* | --print | --print=*) echo inline; return 0 ;;
+            --eval | --eval=* | --print | --print=*) SRC=inline; return 0 ;;
             -m) return 0 ;;
             --*) ;;
-            -*[ceEp]*) echo inline; return 0 ;;
+            -*[ceEp]*) SRC=inline; return 0 ;;
             -*) ;;
             *) return 0 ;;
         esac
     done
     # Reached the end with no script and no inline code: the interpreter
     # reads its program from stdin — a pipe, or a heredoc on a later line.
-    [ "$piped" = 1 ] && echo stdin
+    [ "$piped" = 1 ] && SRC=stdin
     return 0
 }
 
 _inline_interp_git() {
-    local view inv src
+    local view inv
     # Redirections are blanked (--no-redir), so neither `python 2>&1 -c …`
     # nor `python <in -c …` ends the invocation or reads as a script file
     # before the `-c`; a heredoc or here-string operator is not a
@@ -170,19 +180,20 @@ _inline_interp_git() {
     view=$(command_positions --words --no-redir "$COMMAND")
     while IFS= read -r inv; do
         [ -n "$inv" ] || continue
-        src=$(_interp_code_source "$inv")
+        _interp_code_source "$inv"
         # Only the code the interpreter runs counts — `python -c 'print(1)'
         # && git status` runs git from the shell, not the interpreter. A
         # heredoc body is not on the invocation's line, so for one the raw
         # text from the first `<<` on is read; a program arriving on stdin
-        # from a pipe is read from the whole raw command.
-        case "$src" in
-            inline) echo "$inv" | grep -qE "$GIT_WORD_RE" && return 0 ;;
+        # from a pipe is read from the whole raw command. Both are matched
+        # with bash's own regex engine — no process per invocation.
+        case "$SRC" in
+            inline) [[ $inv =~ $GIT_WORD_RE ]] && return 0 ;;
             stdin)
-                if echo "$inv" | grep -qE '<<'; then
-                    printf '%s\n' "${COMMAND#*<<}" | grep -qE "$GIT_WORD_RE" && return 0
+                if [[ $inv == *'<<'* ]]; then
+                    [[ ${COMMAND#*<<} =~ $GIT_WORD_RE ]] && return 0
                 else
-                    printf '%s\n' "$COMMAND" | grep -qE "$GIT_WORD_RE" && return 0
+                    [[ $COMMAND =~ $GIT_WORD_RE ]] && return 0
                 fi
                 ;;
         esac

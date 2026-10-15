@@ -24,6 +24,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+guard_refuse_oversized
 
 # `gh pr merge` at a real invocation position (see GH_ANCHOR in
 # git_anchor.sh for the exact shape). A plain space ahead of `gh` with

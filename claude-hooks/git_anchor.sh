@@ -232,13 +232,15 @@ function unredir(t,   n, k, a, r, c, d, f, j, e, m) {
         # unnested `(…)` groups, so `>$(mktemp)` is blanked whole rather
         # than leaving `(mktemp)` to read as a subshell before the command.
         # A group is a command bash runs (`>$(git clean -fd)`, `<(…)`), so
-        # each one blanked is recorded in G[1..NG]: guard_unredir prints
-        # them back on lines of their own, where guards still see them.
+        # each one blanked is recorded in G[1..NG] when REC is set (only
+        # guard_unredir sets it; calls from the scanner record nothing):
+        # guard_unredir prints them back on lines of their own, where
+        # guards still see them.
         while (e <= n) {
             if (substr(t, e, 1) == "(") {
                 m = index(substr(t, e + 1), ")")
                 if (m > 0 && index(substr(t, e + 1, m - 1), "(") == 0) {
-                    G[++NG] = substr(t, e, m + 1)
+                    if (REC) G[++NG] = substr(t, e, m + 1)
                     e += m + 1
                     continue
                 }
@@ -645,13 +647,31 @@ BEGIN {
 END { printf "%s\n", scan(src, 1, 0) }
 '
 
+# guard_refuse_oversized — blocks (exit 2) when $COMMAND is longer than
+# GUARD_MAX_COMMAND_BYTES. Every blocking guard calls it right after
+# sourcing this lib. A guard must read the whole command, so its cost
+# grows with the command's length, and a hook that runs past its timeout
+# does not block — the command runs. Past this size the guards cannot
+# promise an answer in time, so the command is refused instead. The
+# command is not echoed back: at this size it would flood the message.
+GUARD_MAX_COMMAND_BYTES=131072
+guard_refuse_oversized() {
+    if [ "${#COMMAND}" -gt "$GUARD_MAX_COMMAND_BYTES" ]; then
+        echo "BLOCKED: this command is ${#COMMAND} characters, over the $GUARD_MAX_COMMAND_BYTES the guards can judge within their timeout — and a guard that runs out of time lets a command through, so oversized commands are refused. Write large content with the Write tool, split the command, or run it yourself with \`!\`." >&2
+        exit 2
+    fi
+}
+
 # command_positions [--words] [--no-redir] <command>
 # Prints the command-positions view of <command> (see above); with
 # --words, quoted spans keep their words. With --no-redir, every
 # redirection is blanked as guard_unredir does: a guard that reads a
 # command's ARGUMENTS up to the next `;` `&` `|` matches this copy, so
 # the `&` of `2>&1` or the `|` of `>|` cannot end the scan before a flag
-# that follows. Guards that look for a redirection target keep the
+# that follows. A command inside a blanked target (`>$(…)`, `<(…)`)
+# follows as an extra line, so a --no-redir view can have more lines than
+# the default one: read it as a set of segments, never pair its lines
+# with another view's. Guards that look for a redirection target keep the
 # default view.
 command_positions() {
     local keep=0 noredir=0 view
@@ -681,7 +701,7 @@ command_positions() {
 guard_unredir() {
     local out
     out=$(printf '%s\n' "$1" | LC_ALL=C awk "${_GUARD_UNREDIR_AWK}"'
-BEGIN { SP = " " }
+BEGIN { SP = " "; REC = 1 }
 { src = (NR == 1) ? $0 : src "\n" $0 }
 END {
     NG = 0
@@ -745,24 +765,28 @@ guard_git_invocations() {
 # another dash-option (`-m -h` hands `-h` to `-m` as its value, and the
 # command runs). `… ; echo --help` therefore exempts nothing. Help is
 # the only central exemption — dry-run forms stay per-hook.
+#
+# Every invocation is judged in one awk pass. A process per invocation let
+# a long chain of harmless invocations run a guard past its hook timeout —
+# and a timed-out hook allows the command.
 guard_help_only() {
-    local view="$1" verb_re="$2" inv tok prev ok found=0
-    while IFS= read -r inv; do
-        [ -n "$inv" ] || continue
-        found=1
-        inv="${inv%% -- *}"
-        ok=0
-        prev=""
-        while IFS= read -r tok; do
-            [ -n "$tok" ] || continue
-            case "$tok" in
-                --help | -h)
-                    case "$prev" in -*) ;; *) ok=1 ;; esac
-                    ;;
-            esac
-            prev="$tok"
-        done <<< "$(printf '%s\n' "$inv" | tr -s ' \t' '\n\n')"
-        [ "$ok" = 1 ] || return 1
-    done <<< "$(guard_unredir "$view" | grep -oE -- "${verb_re}[^;&|)]*" || true)"
-    [ "$found" = 1 ]
+    local out
+    out=$(guard_unredir "$1" | grep -oE -- "${2}[^;&|)]*" | LC_ALL=C awk '
+{
+    found = 1
+    s = $0
+    i = index(s, " -- ")
+    if (i) s = substr(s, 1, i - 1)
+    n = split(s, T, /[ \t]+/)
+    ok = 0; prev = ""
+    for (k = 1; k <= n; k++) {
+        t = T[k]
+        if (t == "") continue
+        if ((t == "--help" || t == "-h") && substr(prev, 1, 1) != "-") ok = 1
+        prev = t
+    }
+    if (!ok) { print "no"; exit }
+}
+END { if (!found) print "none" }') || return 1
+    [ -z "$out" ]
 }

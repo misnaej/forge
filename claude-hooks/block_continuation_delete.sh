@@ -19,6 +19,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+guard_refuse_oversized
 
 # Command-position anchor, adapted from the family idiom in
 # block_raw_git.sh / block_force_push.sh / block_git_rebase.sh with ONE

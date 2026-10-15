@@ -22,6 +22,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+guard_refuse_oversized
 # Find the push on the command-positions view (quoted mentions are not
 # pushes; `bash -c "git push -f"` is), then read its flags from the
 # --words view, where a quoted `"--force"` is still the flag git receives.

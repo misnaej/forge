@@ -1535,6 +1535,52 @@ def test_branch_deletion_guard_allows_non_protected_pushes_with_global_options(
     assert _run_hook("block_branch_deletion.sh", command) == 0
 
 
+# Behavior tests: the branch-deletion guard reads push words the way git does
+# (prefix-abbreviated long options, short clusters, empty-source refspecs,
+# any positional naming the protected branch). Each row pins a distinct
+# bypass or a distinct over-block, so none duplicates another.
+_BRANCH_DELETION_VERDICTS = [
+    pytest.param("git push --delete origin main", 2, id="delete-long"),
+    pytest.param("git push -d origin main", 2, id="delete-short"),
+    pytest.param("git push --delete origin feature main", 2, id="delete-second-ref"),
+    pytest.param("git push origin +:main", 2, id="plus-empty-source"),
+    pytest.param("git push origin :heads/main", 2, id="colon-heads"),
+    pytest.param("git push origin -fd main", 2, id="cluster-fd"),
+    pytest.param("git push --del origin main", 2, id="delete-prefix"),
+    pytest.param("git push --mir origin", 2, id="mirror-prefix"),
+    pytest.param("git push --pru origin", 2, id="prune-prefix"),
+    pytest.param(
+        "gh api -XDELETE repos/o/r/git/refs/heads/main", 2, id="gh-attached-X"
+    ),
+    pytest.param(
+        "gh api -X DELETE repos/o/r/git/refs/heads/main/", 2, id="gh-trailing-slash"
+    ),
+    pytest.param("(cd x && git push -d origin main)", 2, id="subshell-delete"),
+    pytest.param("git push origin --delete main-thing", 0, id="delete-lookalike"),
+    pytest.param("git push origin feature:main", 0, id="feature-to-main-not-delete"),
+    pytest.param("git push -o x origin main", 0, id="push-option-value"),
+    pytest.param("git push origin -- --delete", 0, id="after-double-dash"),
+    pytest.param("git push --dry-run origin feature", 0, id="dry-run-feature"),
+    pytest.param(
+        "gh api -X DELETE repos/o/r/git/refs/heads/main-old", 0, id="gh-main-old"
+    ),
+    pytest.param(
+        "git -c push.default=simple branch -d main", 0, id="local-branch-delete"
+    ),
+]
+
+
+@pytest.mark.parametrize(("command", "expected"), _BRANCH_DELETION_VERDICTS)
+def test_branch_deletion_guard_verdict(command: str, expected: int) -> None:
+    """The branch-deletion guard blocks protected-branch deletes and nothing else.
+
+    Args:
+        command: The shell command handed to the branch-deletion hook.
+        expected: ``2`` when it must be blocked, ``0`` when allowed.
+    """
+    assert _run_hook("block_branch_deletion.sh", command) == expected
+
+
 # --- Path-qualified command names ---------------------------------------------
 # `/usr/bin/git push -f` runs the same git as `git push -f`, so a directory
 # in front of a tool or wrapper name must not hide the invocation. One row
@@ -6705,6 +6751,116 @@ def test_guard_blocks_within_timeout_past_thousands_of_command_segments(
 
     assert verdict == 2
     assert elapsed < 2.0
+
+
+@pytest.mark.parametrize(
+    ("hook", "padding", "command", "agent_type"),
+    [
+        pytest.param(
+            "block_branch_deletion.sh",
+            "git push origin feature",
+            "git push origin :main",
+            "",
+            id="branch_deletion",
+        ),
+        pytest.param(
+            _PROTECTED,
+            "git push origin feature",
+            "git push origin HEAD:main",
+            "forge:git-commit-push",
+            id="protected_branches",
+        ),
+        pytest.param(
+            _INSTALL_DEPS, "pixi run --locked x", "pixi add y", "", id="install_deps"
+        ),
+        pytest.param(
+            _RAW_GIT, "git revert --abort", "git revert HEAD", "", id="raw_git"
+        ),
+        pytest.param(
+            _DESTRUCTIVE,
+            "git checkout feature",
+            "git checkout -f",
+            "",
+            id="git_destructive",
+        ),
+    ],
+)
+def test_guard_blocks_within_timeout_past_thousands_of_matching_segments(
+    hook: str, padding: str, command: str, agent_type: str
+) -> None:
+    """Thousands of guard-shaped harmless segments cannot time a guard out.
+
+    Padding made of segments the guard must actually parse (not trivial `a;`)
+    is the real attack shape: a timed-out hook ALLOWS the command, so the
+    per-segment cost on matching segments must stay linear and cheap.
+
+    Args:
+        hook: The guard hook script under test.
+        padding: A harmless segment the guard recognises and allows.
+        command: The blocked command placed after the padding.
+        agent_type: Agent identity to run the hook as, or empty.
+    """
+    start = time.monotonic()
+    verdict = _run_hook(
+        hook,
+        (padding + ";") * 3000 + command,
+        options=HookOptions(agent_type=agent_type),
+    )
+    elapsed = time.monotonic() - start
+
+    assert verdict == 2
+    assert elapsed < 2.0
+
+
+# Every blocking Bash guard refuses an oversized command (a timed-out hook
+# allows). Discovered from the directory, not from the call, so a new guard
+# that forgets the refusal fails here. The exemptions guard file edits
+# (Edit/Write), not Bash commands. block_fixer_recon.sh only acts for the
+# fixer agent, so it is run as that agent.
+_SIZE_EXEMPT_HOOKS = {"block_forge_docs_edits.sh", "block_protected_files.sh"}
+_SIZE_GUARDED_HOOKS = sorted(
+    path.name
+    for path in _HOOKS_DIR.glob("block_*.sh")
+    if path.name not in _SIZE_EXEMPT_HOOKS
+)
+
+
+@pytest.mark.parametrize("hook", _SIZE_GUARDED_HOOKS)
+def test_blocking_hook_refuses_an_oversized_command(hook: str) -> None:
+    """A 140000-char harmless command is refused outright by every size-guarded hook.
+
+    Args:
+        hook: A block_* hook that calls the shared oversize refusal.
+    """
+    agent = "forge:precommit-fixer" if hook == "block_fixer_recon.sh" else ""
+    verdict = _run_hook(hook, "a" * 140000, options=HookOptions(agent_type=agent))
+    assert verdict == 2
+
+
+def test_force_push_allows_a_large_command_under_the_limit() -> None:
+    """A 100000-char harmless command is below the limit and passes."""
+    assert _run_hook(_FORCE_PUSH, "a" * 100000) == 0
+
+
+@pytest.mark.parametrize(
+    ("count", "expected"),
+    [pytest.param(33, 2, id="over-directory-cap"), pytest.param(32, 0, id="at-cap")],
+)
+def test_destructive_restore_caps_distinct_directories(
+    tmp_path: Path, count: int, expected: int
+) -> None:
+    """Judging live state per directory is capped: past the cap the guard blocks.
+
+    Under the cap the directories are non-repositories (nothing to lose), so
+    the restores are allowed.
+
+    Args:
+        count: Number of distinct directories named.
+        expected: Expected hook exit code.
+    """
+    command = " ; ".join(f"git -C d{i} checkout -- x" for i in range(count))
+    verdict = _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path))
+    assert verdict == expected
 
 
 # One shape per class the scanner once read past: an option after `-c`, a

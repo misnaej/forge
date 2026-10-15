@@ -52,6 +52,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+guard_refuse_oversized
 
 # Commands are found on the command-positions view (git_anchor.sh) — a
 # quoted mention is not a reset, a wrapped `bash -c "git reset …"` is —
@@ -61,8 +62,27 @@ source "$ANCHOR_LIB"
 # is true when a real invocation exists that is not just asking for help.
 CMDPOS=$(command_positions "$COMMAND")
 WORDS=$(command_positions --words --no-redir "$COMMAND")
+# Per-invocation work below splits words with the shell's own word
+# splitting (`toks=($x)`) rather than `read <<<` — a here-string costs a
+# pipe or temp file each time, and per-invocation cost is what lets a long
+# chain run a hook past its timeout. Pathname expansion is off so a word
+# like `*` is never globbed by that splitting.
+set -f
+# Answers are cached per verb: each costs two matches of the full anchor
+# over the whole command, which on a long command is the slowest thing
+# this hook does, and several rules ask about the same verb.
+GUARDED_CACHE=$'\n'
 _guarded() {
-    echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}$1" && ! guard_help_only "$CMDPOS" "${GIT_ANCHOR}$1"
+    case "$GUARDED_CACHE" in
+        *$'\n'"1 $1"$'\n'*) return 0 ;;
+        *$'\n'"0 $1"$'\n'*) return 1 ;;
+    esac
+    if echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}$1" && ! guard_help_only "$CMDPOS" "${GIT_ANCHOR}$1"; then
+        GUARDED_CACHE+="1 $1"$'\n'
+        return 0
+    fi
+    GUARDED_CACHE+="0 $1"$'\n'
+    return 1
 }
 
 # `git reset` — every form. The blanket ban subsumes the --hard/--merge
@@ -84,11 +104,15 @@ fi
 # so neither a wrapper's own flag (`sudo -n git clean -f`) nor a `clean`
 # spelled earlier in the prefix (`X=clean-n git clean -fd`) can
 # masquerade as a dry run.
+# Matched with bash's own regex engine: a process per invocation let a
+# long chain of `git clean -n;` run this hook past its timeout.
+CLEAN_DRY_RE='(^|[[:space:]])(--dry-run([^[:alnum:]_-]|$)|-[a-zA-Z]*n)'
+CLEAN_FORCE_RE='(^|[[:space:]])(--force([^[:alnum:]_-]|$)|-[a-zA-Z]*[fdxX])'
 _guarded 'clean\b' && while IFS=$'\t' read -r _ rest; do
-    if echo "$rest" | grep -qE '(^|[[:space:]])(--dry-run\b|-[a-zA-Z]*n)'; then
+    if [[ $rest =~ $CLEAN_DRY_RE ]]; then
         continue
     fi
-    if echo "$rest" | grep -qE '(^|[[:space:]])(--force\b|-[a-zA-Z]*[fdxX])'; then
+    if [[ $rest =~ $CLEAN_FORCE_RE ]]; then
         _block "git clean" "It deletes untracked files permanently — no reflog, no index, no recovery; report the untracked paths instead (\`git clean -n\` to list them)."
     fi
 done <<< "$(guard_git_invocations "$WORDS" clean)"
@@ -125,7 +149,7 @@ _stash_blocked() {
     local -a toks
     while IFS=$'\t' read -r _ tail; do
         sub=""
-        read -ra toks <<< "$tail"
+        toks=($tail)
         for tok in "${toks[@]}"; do
             case "$tok" in -*) ;; *) sub="$tok"; break ;; esac
         done
@@ -163,211 +187,357 @@ if echo "$CMDPOS" | grep -qE '(^|[[:space:];&|(!{])(cd|pushd|popd)([[:space:];&|
     CMDPOS_CHDIR=1
 fi
 
-# _invocation_dir <anchor prefix> — prints the directory a git invocation
-# runs in (payload cwd, then each `-C`); fails when it cannot be known.
-_invocation_dir() {
-    local dir="$PAYLOAD_CWD" tok next=0
-    local -a toks
-    [ "$CMDPOS_CHDIR" = 0 ] || return 1
-    read -ra toks <<< "$1"
-    for tok in "${toks[@]}"; do
-        if [ "$next" = 1 ]; then
-            case "$tok" in *'$'* | *'@SUBST@'* | '~'*) return 1 ;; esac
-            case "$tok" in /*) dir="$tok" ;; *) dir="$dir/$tok" ;; esac
-            next=0
+# Live state, read ONCE per directory however many invocations name it
+# (bash 3.2 has no associative arrays, so parallel indexed arrays keyed by
+# position in LS_DIRS). For a directory: LS_IN (1 inside a work tree, 0
+# not, u unknown) and LS_PREFIX (the directory relative to the repo root,
+# as `git rev-parse --show-prefix` prints it). Its tree's `git status
+# --porcelain -z --untracked-files=all` entries — a rename contributing
+# both of its paths — become three newline-delimited path lists:
+#   LS_HOLD     entries a restore would destroy (anything changed in the
+#               worktree, untracked, or staged outside a merge);
+#   LS_ALL      every entry;
+#   LS_NONCONF  entries that are not merge conflicts.
+# A pathspec is then judged by one pattern match per list, inside bash —
+# replacing one `git status -- <paths>` per invocation, and a bash loop
+# over every entry per invocation, either of which let a long chain run
+# this hook past its timeout (a timed-out hook allows the command).
+LS_DIRS=() LS_IN=() LS_PREFIX=() LS_HOLD=() LS_ALL=() LS_NONCONF=()
+LS_MAX=32
+# _live_state <dir> — sets LS_I to the cache slot for <dir>.
+_live_state() {
+    local dir="$1" i out inside prefix mh rec xy path merging=0 pending=""
+    local hold=$'\n' all=$'\n' nonconf=$'\n'
+    for ((i = 0; i < ${#LS_DIRS[@]}; i++)); do
+        if [ "${LS_DIRS[$i]}" = "$dir" ]; then LS_I=$i; return 0; fi
+    done
+    LS_I=${#LS_DIRS[@]}
+    LS_DIRS[LS_I]="$dir"
+    LS_PREFIX[LS_I]=""
+    LS_HOLD[LS_I]=$'\n'
+    LS_ALL[LS_I]=$'\n'
+    LS_NONCONF[LS_I]=$'\n'
+    # Each new directory costs two git processes; a command naming more
+    # than LS_MAX of them (`git -C d1 …; git -C d2 …; …`) is judged
+    # unknowable instead, so no count of directories can run this hook
+    # past its timeout.
+    if [ "$LS_I" -ge "$LS_MAX" ]; then LS_IN[LS_I]=u; return 0; fi
+    if ! out=$(git -C "$dir" rev-parse --is-inside-work-tree --show-prefix --git-path MERGE_HEAD 2> /dev/null); then
+        # Not a repository (or not readable as one): git would refuse the
+        # restore, as before.
+        LS_IN[LS_I]=0
+        return 0
+    fi
+    inside="${out%%$'\n'*}"; out="${out#*$'\n'}"
+    prefix="${out%%$'\n'*}"; mh="${out#*$'\n'}"
+    if [ "$inside" != true ]; then LS_IN[LS_I]=0; return 0; fi
+    LS_PREFIX[LS_I]="$prefix"
+    case "$mh" in /*) ;; *) mh="$dir/$mh" ;; esac
+    [ -e "$mh" ] && merging=1
+    # Records are NUL-separated; NUL cannot live in a shell variable, so it
+    # becomes \001. A path holding a tab, a newline or \001 cannot be
+    # matched reliably in this form, so the directory is then unknowable
+    # (fail closed) rather than a path that silently never matches.
+    if ! out=$(set -o pipefail; git -C "$dir" status --porcelain -z --untracked-files=all 2> /dev/null | tr '\0' '\001'); then
+        LS_IN[LS_I]=u
+        return 0
+    fi
+    case "$out" in *$'\t'* | *$'\n'*) LS_IN[LS_I]=u; return 0 ;; esac
+    LS_IN[LS_I]=1
+    while IFS= read -r -d $'\001' rec; do
+        [ -n "$rec" ] || continue
+        if [ -n "$pending" ]; then
+            # The second path of a rename / copy record.
+            xy="$pending"; path="$rec"; pending=""
+        else
+            xy="${rec:0:2}"; path="${rec:3}"
+            case "$xy" in R* | C*) pending="$xy" ;; esac
+        fi
+        all+="$path"$'\n'
+        if [ "${xy:1:1}" != " " ] || [ "$merging" = 0 ]; then hold+="$path"$'\n'; fi
+        case "$xy" in DD | AU | UD | UA | DU | AA | UU) ;; *) nonconf+="$path"$'\n' ;; esac
+    done <<< "$out"
+    LS_HOLD[LS_I]="$hold"
+    LS_ALL[LS_I]="$all"
+    LS_NONCONF[LS_I]="$nonconf"
+}
+
+# The restore rules run in awk, in two passes around one bash step, so
+# that no per-invocation work happens in the shell: per-invocation shell
+# work — processes, or even just interpreted bash — let a long chain of
+# harmless invocations run this hook past its timeout, and a timed-out
+# hook allows the command.
+#
+#   1. RESTORE_PARSE_AWK reads every invocation once: it checks the word
+#      counts of the two views, finds the directory the invocation runs in
+#      (payload cwd, then each `-C`), applies the checkout / restore
+#      argument rules, and prints one record per invocation still to judge
+#      (`J` paths, or `C` a checkout whose first word may be a ref), the
+#      directories (`D`) and candidate refs (`R`) those need — or `UNKNOWN`
+#      when an invocation cannot be read, which blocks.
+#   2. _restore_state (bash) reads each directory's live state once
+#      (_live_state, at most LS_MAX directories) and resolves all of its
+#      candidate refs in ONE `git cat-file --batch-check`.
+#   3. RESTORE_JUDGE_AWK judges every record against that state.
+#
+# Unchanged rules, in the order the parse applies them —
+# checkout: `--` ends the options; `-m`/`--conflict=…` and any accepted
+# abbreviation of `--ours`/`--theirs`/`--merge`/`--conflict` mark conflict
+# resolution; `--pa…` (patch) and a short cluster holding `p` are
+# unknowable; `-b`/`-B`/`--orphan` create a branch and restore nothing.
+# Without `--`, `git checkout <ref> [paths]` restores only the paths after
+# a ref — so the first word matters only when reading it as a ref or as a
+# path gives different answers, and only then is git asked.
+# restore: as checkout, plus `--staged` (4) / `--worktree` (3) / `-S` /
+# `-W`, `--source[=]`/`-s <tree>`, `--ignore-unmerged`; `--staged`
+# without `--worktree` only unstages and is allowed.
+# A path is unknowable — blocked — when it holds a glob, `$`, `~`, `{`, a
+# backslash, pathspec magic (`:`) or a command substitution, or climbs out
+# of the repository; conflict-only paths are exempt under a conflict flag.
+RESTORE_PARSE_AWK='
+function abbrev(t, long, min) { return length(t) >= min && substr(long, 1, length(t)) == t }
+function emit_dir(d) { if (!(d in SEEN)) { SEEN[d] = 1; print "D\t" d } }
+function unknown() { print "UNKNOWN"; bad = 1; exit }
+# The directory one invocation runs in, or "" when it cannot be known.
+function inv_dir(pre,   n, P, i, t, dir, next1, nextc) {
+    if (CHDIR) return ""
+    dir = ENVIRON["CWD"]; next1 = 0; nextc = 0
+    n = split(pre, P, /[ \t]+/)
+    for (i = 1; i <= n; i++) {
+        t = P[i]
+        if (t == "") continue
+        if (next1) {
+            if (t ~ /[$]|@SUBST@/ || t ~ /^~/) return ""
+            dir = (t ~ /^\//) ? t : dir "/" t
+            next1 = 0; continue
+        }
+        if (nextc) {
+            if (tolower(t) ~ /worktree/) return ""
+            nextc = 0; continue
+        }
+        if (t == "-C") { next1 = 1; continue }
+        if (t == "-c") { nextc = 1; continue }
+        if (t ~ /^-C./) {
+            t = substr(t, 3)
+            if (t ~ /[$]|@SUBST@/ || t ~ /^~/) return ""
+            dir = (t ~ /^\//) ? t : dir "/" t
             continue
-        fi
-        if [ "$next" = c ]; then
-            # `-c core.worktree=…` relocates the work tree (config keys
-            # are case-insensitive).
-            case "$(printf '%s' "$tok" | tr '[:upper:]' '[:lower:]')" in *worktree*) return 1 ;; esac
-            next=0
+        }
+        if (t ~ /^(--git-dir|--work-tree|--config-env|GIT_DIR=|GIT_WORK_TREE=|GIT_INDEX_FILE=|GIT_CONFIG_)/) return ""
+    }
+    return dir
+}
+# First file: the command-positions view; second: the --words view. They
+# must yield the same invocations (END), each with the same word count.
+FILENAME == ARGV[1] { if ($0 != "") NPOS++; POSN[FNR] = $0; next }
+{
+    line = $0
+    if (line == "") next
+    NWORDS++
+    k = index(line, "\t")
+    pre = substr(line, 1, k - 1); tail = substr(line, k + 1)
+    p = POSN[FNR]; p = substr(p, index(p, "\t") + 1)
+    nw = split(tail, W, /[ \t]+/); np = split(p, Q, /[ \t]+/)
+    cw = 0; for (i = 1; i <= nw; i++) if (W[i] != "") cw++
+    cq = 0; for (i = 1; i <= np; i++) if (Q[i] != "") cq++
+    if (cw != cq) unknown()
+    dir = inv_dir(pre)
+    if (dir == "") unknown()
+    dd = 0; conflict = 0; branchop = 0; staged = 0; worktree = 0; src = 0
+    nb = 0; na = 0
+    split("", B); split("", A)
+    for (i = 1; i <= nw; i++) {
+        t = W[i]
+        if (t == "") continue
+        if (dd) { A[++na] = t; continue }
+        if (VERB == "restore" && src) { src = 0; continue }
+        if (t == "--") { dd = 1; continue }
+        if (t == "-m" || t ~ /^--conflict=/) { conflict = 1; continue }
+        if (t ~ /^--pa/) unknown()
+        if (VERB == "checkout") {
+            if (t == "-b" || t == "-B" || t == "--orphan") { branchop = 1; continue }
+            if (t ~ /^--/) {
+                if (abbrev(t, "--ours", 4) || abbrev(t, "--theirs", 4) || abbrev(t, "--merge", 4) || abbrev(t, "--conflict", 4)) conflict = 1
+                continue
+            }
+            if (t ~ /^-.*p/) unknown()
+            if (t ~ /^-/) continue
+            B[++nb] = t
+        } else {
+            if (t ~ /^--source=/) continue
+            if (t ~ /^--/) {
+                if (abbrev(t, "--staged", 4)) staged = 1
+                else if (abbrev(t, "--worktree", 3)) worktree = 1
+                else if (abbrev(t, "--source", 4)) src = 1
+                else if (abbrev(t, "--ours", 4) || abbrev(t, "--theirs", 4) || abbrev(t, "--merge", 4) || abbrev(t, "--conflict", 4) || abbrev(t, "--ignore-unmerged", 4)) conflict = 1
+                continue
+            }
+            if (t ~ /^-s./) continue
+            if (t ~ /^-.*p/) unknown()
+            if (t ~ /^-/) {
+                if (t ~ /S/) staged = 1
+                if (t ~ /W/) worktree = 1
+                if (t == "-s") src = 1
+                continue
+            }
+            A[++na] = t
+        }
+    }
+    if (VERB == "restore") {
+        if (staged && !worktree) next
+        out = ""; for (i = 1; i <= na; i++) out = out "\t" A[i]
+        emit_dir(dir); print "J\t" dir "\t" conflict out
+        next
+    }
+    if (dd) {
+        out = ""; for (i = 1; i <= na; i++) out = out "\t" A[i]
+        emit_dir(dir); print "J\t" dir "\t" conflict out
+        next
+    }
+    if (branchop || nb == 0) next
+    if (B[1] ~ /[$]|@SUBST@/) unknown()
+    out = ""; for (i = 2; i <= nb; i++) out = out "\t" B[i]
+    emit_dir(dir)
+    if (!((dir SUBSEP B[1]) in RSEEN)) { RSEEN[dir, B[1]] = 1; print "R\t" dir "\t" B[1] }
+    print "C\t" dir "\t" conflict "\t" B[1] out
+}
+END { if (!bad && NWORDS != NPOS) print "UNKNOWN" }
+'
+
+RESTORE_JUDGE_AWK='
+# State lines first (S in/prefix, H/A/N paths, F ref verdicts), then the
+# records from the parse.
+function meta(p) { return p ~ /@SUBST@|[$*?[{\\]/ || p ~ /^~/ || p ~ /^:/ }
+# The repo-relative path a pathspec names ("" for the whole repo); sets
+# RESOLVED_OK to 0 when it climbs out of the repository.
+function resolve(prefix, p,   n, S, i, out) {
+    RESOLVED_OK = 1; out = ""
+    n = split(prefix p, S, "/")
+    for (i = 1; i <= n; i++) {
+        if (S[i] == "" || S[i] == ".") continue
+        if (S[i] == "..") {
+            if (out == "") { RESOLVED_OK = 0; return "" }
+            if (index(out, "/")) sub(/\/[^\/]*$/, "", out); else out = ""
             continue
-        fi
-        case "$tok" in
-            -C) next=1 ;;
-            -c) next=c ;;
-            -C?*) tok="${tok#-C}"
-                case "$tok" in *'$'* | *'@SUBST@'* | '~'*) return 1 ;; esac
-                case "$tok" in /*) dir="$tok" ;; *) dir="$dir/$tok" ;; esac ;;
-            --git-dir* | --work-tree* | --config-env* | GIT_DIR=* | GIT_WORK_TREE=* \
-                | GIT_INDEX_FILE=* | GIT_CONFIG_*) return 1 ;;
-        esac
-    done
-    printf '%s\n' "$dir"
+        }
+        out = (out == "") ? S[i] : out "/" S[i]
+    }
+    return out
 }
-
-# _paths_hold_work <dir> <path>... — true when restoring <path>s in <dir>
-# could destroy work, or when that cannot be determined.
-_paths_hold_work() {
-    local dir="$1" p st merging=0 line y
-    shift
-    [ "$#" -gt 0 ] || return 1
-    for p in "$@"; do
-        case "$p" in
-            *'@SUBST@'* | *'$'* | *'*'* | *'?'* | *'['* | *'{'* | '~'* | :* | *'\'*) return 0 ;;
-        esac
-    done
-    git -C "$dir" rev-parse --is-inside-work-tree > /dev/null 2>&1 || return 1
-    git -C "$dir" rev-parse -q --verify MERGE_HEAD > /dev/null 2>&1 && merging=1
-    st=$(git -C "$dir" status --porcelain --untracked-files=all -- "$@" 2> /dev/null) || return 0
-    while IFS= read -r line; do
-        [ -n "$line" ] || continue
-        y="${line:1:1}"
-        if [ "$y" != " " ] || [ "$merging" = 0 ]; then
-            return 0
-        fi
-    done <<< "$st"
-    return 1
+# Does a path list (kind H, A or N) of dir hold an entry spec covers?
+function covers(kind, dir, spec) {
+    if (spec == "") return (CNT[kind, dir] > 0)
+    return ((kind, dir, spec) in EXACT) || ((kind, dir, spec) in UNDER)
 }
-
-# _abbrev <token> <long option> <min length> — true when <token> is
-# <long option> or an abbreviation git accepts for it (git takes any
-# unambiguous prefix of a long option, so `--fo` is `--force`).
-_abbrev() {
-    [ "${#1}" -ge "$3" ] && [ "${2#"$1"}" != "$2" ]
+function add(kind, dir, path,   d) {
+    EXACT[kind, dir, path] = 1; CNT[kind, dir]++
+    d = path
+    while (sub(/\/[^\/]*$/, "", d)) UNDER[kind, dir, d] = 1
 }
-
-# _only_conflicts <dir> <path>... — true when every named path is
-# unmerged and none holds anything else. `--ours`/`--theirs`/`--merge`/
-# `--conflict` are conflict-resolution flags, but on a path that is NOT
-# in conflict they simply overwrite it from the index, discarding edits —
-# so they are exempt only for paths that are actually conflicted.
-_only_conflicts() {
-    local dir="$1" st line p
-    shift
-    [ "$#" -gt 0 ] || return 1
-    for p in "$@"; do
-        case "$p" in
-            *'@SUBST@'* | *'$'* | *'*'* | *'?'* | *'['* | *'{'* | '~'* | :* | *'\'*) return 1 ;;
-        esac
-    done
-    st=$(git -C "$dir" status --porcelain --untracked-files=all -- "$@" 2> /dev/null) || return 1
-    [ -n "$st" ] || return 1
-    while IFS= read -r line; do
-        [ -n "$line" ] || continue
-        case "${line:0:2}" in DD | AU | UD | UA | DU | AA | UU) ;; *) return 1 ;; esac
-    done <<< "$st"
+function hold_work(dir, n, P,   i, s) {
+    if (n == 0) return 0
+    for (i = 1; i <= n; i++) if (meta(P[i])) return 1
+    if (IN[dir] == "0") return 0
+    if (IN[dir] != "1") return 1
+    for (i = 1; i <= n; i++) {
+        s = resolve(PREFIX[dir], P[i])
+        if (!RESOLVED_OK) return 1
+        if (covers("H", dir, s)) return 1
+    }
     return 0
 }
+function only_conflicts(dir, n, P,   i, s, any) {
+    if (n == 0) return 0
+    for (i = 1; i <= n; i++) if (meta(P[i])) return 0
+    if (IN[dir] != "1") return 0
+    any = 0
+    for (i = 1; i <= n; i++) {
+        s = resolve(PREFIX[dir], P[i])
+        if (!RESOLVED_OK) return 0
+        if (covers("N", dir, s)) return 0
+        if (covers("A", dir, s)) any = 1
+    }
+    return any
+}
+function judged(dir, conflict, n, P) {
+    if (conflict && only_conflicts(dir, n, P)) return 0
+    return hold_work(dir, n, P)
+}
+BEGIN { FS = "\t" }
+$1 == "X" { print "BLOCK"; exit }
+$1 == "S" { IN[$2] = $3; PREFIX[$2] = $4; next }
+$1 == "H" || $1 == "A" || $1 == "N" { add($1, $2, $3); next }
+$1 == "F" { ISREF[$2, $3] = $4; next }
+$1 == "J" {
+    n = 0; for (i = 4; i <= NF; i++) P[++n] = $i
+    if (judged($2, $3, n, P)) { print "BLOCK"; exit }
+    next
+}
+$1 == "C" {
+    n = 0; for (i = 5; i <= NF; i++) P[++n] = $i
+    as_ref = judged($2, $3, n, P)
+    m = 0; Q[++m] = $4; for (i = 5; i <= NF; i++) Q[++m] = $i
+    as_path = judged($2, $3, m, Q)
+    if (as_ref == as_path) { if (as_ref) { print "BLOCK"; exit } next }
+    # The readings disagree: git decides whether the first word is a ref
+    # (a lookup that failed reads as "not a ref", as before).
+    r = (($2, $4) in ISREF && ISREF[$2, $4] == "1") ? as_ref : as_path
+    if (r) { print "BLOCK"; exit }
+    next
+}
+'
 
-# _checkout_holds_work <dir> <args> — checkout argument rules (see above).
-_checkout_holds_work() {
-    local dir="$1" tok dd=0 branchop=0 conflict=0
-    local -a before=() after=() paths=() toks
-    read -ra toks <<< "$2"
-    for tok in "${toks[@]}"; do
-        if [ "$dd" = 1 ]; then after+=("$tok"); continue; fi
-        case "$tok" in
-            --) dd=1 ;;
-            -m | --conflict=*) conflict=1 ;;
-            --pa*) return 0 ;;
-            -b | -B | --orphan) branchop=1 ;;
-            --*)
-                if _abbrev "$tok" --ours 4 || _abbrev "$tok" --theirs 4 \
-                    || _abbrev "$tok" --merge 4 || _abbrev "$tok" --conflict 4; then
-                    conflict=1
-                fi
-                ;;
-            # `-p` (patch) restores hunks interactively — with no pathspec,
-            # across the whole tree. Treated as unknowable.
-            -*p*) return 0 ;;
-            -*) ;;
-            *) before+=("$tok") ;;
-        esac
-    done
-    if [ "$dd" = 1 ]; then
-        paths=("${after[@]}")
-    elif [ "$branchop" = 0 ] && [ "${#before[@]}" -gt 0 ]; then
-        case "${before[0]}" in *'@SUBST@'* | *'$'*) return 0 ;; esac
-        if git -C "$dir" rev-parse -q --verify "${before[0]}^{commit}" > /dev/null 2>&1; then
-            # `git checkout <branch>` alone carries local edits across (git
-            # refuses to clobber them); only paths after the ref are restored.
-            paths=("${before[@]:1}")
-        else
-            paths=("${before[@]}")
+# _restore_state <records> — prints the judge's state lines for every
+# directory and ref the parse records name. Directory values reach awk
+# through the environment, never `-v`, which would rewrite a backslash in
+# them and judge a directory other than the one the command runs in.
+_restore_state() {
+    local records="$1" dir words out
+    local -a dirs=()
+    # More directories than the state cache holds is unknowable, which
+    # blocks; awk stops at the cap so no count reaches a shell loop.
+    while IFS= read -r dir; do
+        if [ "$dir" = $'\001X' ]; then
+            printf 'X\n'
+            return 0
         fi
-    else
-        return 1
-    fi
-    if [ "$conflict" = 1 ] && _only_conflicts "$dir" "${paths[@]}"; then
-        return 1
-    fi
-    _paths_hold_work "$dir" "${paths[@]}"
-}
-
-# _restore_holds_work <dir> <args> — restore argument rules (see above).
-_restore_holds_work() {
-    local dir="$1" tok dd=0 staged=0 worktree=0 src=0 conflict=0
-    local -a paths=() toks
-    read -ra toks <<< "$2"
-    for tok in "${toks[@]}"; do
-        if [ "$dd" = 1 ]; then paths+=("$tok"); continue; fi
-        if [ "$src" = 1 ]; then src=0; continue; fi
-        case "$tok" in
-            --) dd=1 ;;
-            -m | --conflict=*) conflict=1 ;;
-            --pa*) return 0 ;;
-            --source=*) ;;
-            --*)
-                if _abbrev "$tok" --staged 4; then staged=1
-                elif _abbrev "$tok" --worktree 3; then worktree=1
-                elif _abbrev "$tok" --source 4; then src=1
-                elif _abbrev "$tok" --ours 4 || _abbrev "$tok" --theirs 4 \
-                    || _abbrev "$tok" --merge 4 || _abbrev "$tok" --conflict 4 \
-                    || _abbrev "$tok" --ignore-unmerged 4; then conflict=1
-                fi
-                ;;
-            -s?*) ;;
-            -*p*) return 0 ;;
-            -*)
-                case "$tok" in *S*) staged=1 ;; esac
-                case "$tok" in *W*) worktree=1 ;; esac
-                case "$tok" in -s) src=1 ;; esac
-                ;;
-            *) paths+=("$tok") ;;
-        esac
+        dirs+=("$dir")
+    done < <(printf '%s\n' "$records" | LC_ALL=C awk -F'\t' -v MAX="$LS_MAX" \
+        '$1 == "D" { if (++n > MAX) { print "\001X"; exit } print $2 }')
+    for dir in "${dirs[@]}"; do
+        _live_state "$dir"
+        printf 'S\t%s\t%s\t%s\n' "$dir" "${LS_IN[LS_I]}" "${LS_PREFIX[LS_I]}"
+        [ "${LS_IN[LS_I]}" = 1 ] || continue
+        printf '%s' "${LS_HOLD[LS_I]}" | D="$dir" LC_ALL=C awk 'NF { print "H\t" ENVIRON["D"] "\t" $0 }'
+        printf '%s' "${LS_ALL[LS_I]}" | D="$dir" LC_ALL=C awk 'NF { print "A\t" ENVIRON["D"] "\t" $0 }'
+        printf '%s' "${LS_NONCONF[LS_I]}" | D="$dir" LC_ALL=C awk 'NF { print "N\t" ENVIRON["D"] "\t" $0 }'
+        # Every candidate ref of this directory in ONE git process; a
+        # `^{commit}` that does not resolve prints `… missing`.
+        words=$(printf '%s\n' "$records" | D="$dir" LC_ALL=C awk -F'\t' '$1 == "R" && $2 == ENVIRON["D"] { print $3 }')
+        [ -n "$words" ] || continue
+        out=$(printf '%s\n' "$words" | LC_ALL=C awk '{ print $0 "^{commit}" }' \
+            | git -C "$dir" cat-file --batch-check 2> /dev/null) || out=""
+        paste -d '\t' <(printf '%s\n' "$words") <(printf '%s\n' "$out") \
+            | D="$dir" LC_ALL=C awk -F'\t' '{ print "F\t" ENVIRON["D"] "\t" $1 "\t" (($2 ~ / commit /) ? 1 : 0) }'
     done
-    if [ "$staged" = 1 ] && [ "$worktree" = 0 ]; then
-        return 1
-    fi
-    if [ "$conflict" = 1 ] && _only_conflicts "$dir" "${paths[@]}"; then
-        return 1
-    fi
-    _paths_hold_work "$dir" "${paths[@]}"
 }
 
-# _restore_blocked <verb> — true when any <verb> invocation holds work.
-# The --words view supplies the arguments; the command-positions view
-# (one `_` per quoted span) must yield the same invocations with the same
-# number of words, or a quoted path held spaces and the words are not the
-# paths git receives — fail closed.
+# _restore_blocked <verb> — true when any <verb> invocation holds work, or
+# when one cannot be read. The --words view supplies the arguments; the
+# command-positions view (one `_` per quoted span) must yield the same
+# invocations with the same number of words, or a quoted path held spaces
+# and the words are not the paths git receives — fail closed.
 _restore_blocked() {
-    local verb="$1" pre tail dir i=0 n_words n_pos
-    local -a word_lines=() pos_lines=()
-    local line
-    # Plain read loops, not mapfile: the hooks stay portable to bash 3.2
-    # (macOS default), where a bash-4 builtin would error — and an
-    # erroring hook exits non-2, which allows the command.
-    while IFS= read -r line; do word_lines+=("$line"); done \
-        <<< "$(guard_git_invocations "$WORDS" "$verb")"
-    while IFS= read -r line; do pos_lines+=("$line"); done \
-        <<< "$(guard_git_invocations "$CMDPOS" "$verb")"
-    [ "${#word_lines[@]}" = "${#pos_lines[@]}" ] || return 0
-    for ((i = 0; i < ${#word_lines[@]}; i++)); do
-        [ -n "${word_lines[$i]}" ] || continue
-        IFS=$'\t' read -r pre tail <<< "${word_lines[$i]}"
-        n_words=$(wc -w <<< "$tail")
-        n_pos=$(wc -w <<< "${pos_lines[$i]#*$'\t'}")
-        [ "$n_words" = "$n_pos" ] || return 0
-        dir=$(_invocation_dir "$pre") || return 0
-        if [ "$verb" = checkout ]; then
-            _checkout_holds_work "$dir" "$tail" && return 0
-        else
-            _restore_holds_work "$dir" "$tail" && return 0
-        fi
-    done
-    return 1
+    local verb="$1" records verdict
+    records=$(CWD="$PAYLOAD_CWD" LC_ALL=C awk -v VERB="$verb" -v CHDIR="$CMDPOS_CHDIR" \
+        "$RESTORE_PARSE_AWK" \
+        <(guard_git_invocations "$CMDPOS" "$verb") \
+        <(guard_git_invocations "$WORDS" "$verb")) || return 0
+    case "$records" in *UNKNOWN*) return 0 ;; esac
+    [ -n "$records" ] || return 1
+    verdict=$({ _restore_state "$records"; printf '%s\n' "$records" | grep -E $'^(J|C)\t'; } \
+        | LC_ALL=C awk "$RESTORE_JUDGE_AWK") || return 0
+    [ "$verdict" = BLOCK ]
 }
 
 if _guarded 'checkout\b' && _restore_blocked checkout; then
@@ -379,27 +549,23 @@ fi
 
 # Forced branch switches discard local modifications instead of refusing:
 # `git checkout -f|--force` (any form) and `git switch -f|--force|
-# --discard-changes`.
+# --discard-changes`. One awk pass over every invocation.
 _forced_switch() {
-    local verb="$1" tail tok
-    local -a toks
-    while IFS=$'\t' read -r _ tail; do
-        read -ra toks <<< "$tail"
-        for tok in "${toks[@]}"; do
-            case "$tok" in
-                --) break ;;
-                --*)
-                    if _abbrev "$tok" --force 3 || _abbrev "$tok" --discard-changes 4; then
-                        return 0
-                    fi
-                    ;;
-                -*f*) return 0 ;;
-            esac
-        done
-    done <<< "$(guard_git_invocations "$WORDS" "$verb")"
-    return 1
+    local hit
+    hit=$(guard_git_invocations "$WORDS" "$1" | LC_ALL=C awk '
+function abbrev(t, long, min) { return length(t) >= min && substr(long, 1, length(t)) == t }
+{
+    n = split(substr($0, index($0, "\t") + 1), T, /[ \t]+/)
+    for (i = 1; i <= n; i++) {
+        t = T[i]
+        if (t == "") continue
+        if (t == "--") break
+        if (t ~ /^--/) { if (abbrev(t, "--force", 3) || abbrev(t, "--discard-changes", 4)) { print "y"; exit } continue }
+        if (t ~ /^-.*f/) { print "y"; exit }
+    }
+}') || return 0
+    [ -n "$hit" ]
 }
 if { _guarded 'checkout\b' && _forced_switch checkout; } || { _guarded 'switch\b' && _forced_switch switch; }; then
     _block "git checkout/switch --force" "A forced switch throws away uncommitted modifications instead of refusing; switch without --force, or stop and report the local changes."
 fi
-

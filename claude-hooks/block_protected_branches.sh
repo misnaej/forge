@@ -35,6 +35,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+guard_refuse_oversized
 # Only inspect git commit / git push — checkout, status, log, etc. always
 # allowed. Commands are found on the command-positions view (git_anchor.sh):
 # a quoted mention is not a push, `bash -c "git push origin main"` is; a
@@ -97,32 +98,34 @@ if echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}push\b"; then
     # and a quoted refspec (`"HEAD:main"`) is still the refspec git gets.
     # Redirections are blanked, so `2>&1` ends no invocation early and its
     # target is never taken for a remote or refspec.
-    invocations=$(command_positions --words --no-redir "$COMMAND" | grep -oE "${GIT_ANCHOR}push\b[^;&|)]*" || true)
-    while IFS= read -r invocation; do
-        [ -n "$invocation" ] || continue
-        push_args=$(printf '%s' "$invocation" | sed -E "s/^${GIT_ANCHOR}push//")
-        remote_seen=0
-        for tok in $push_args; do
-            # Skip option flags (e.g. -u, --force, --force-with-lease=...).
-            case "$tok" in -*) continue ;; esac
-            # The first bare token is the remote; the rest are refspecs.
-            if [ "$remote_seen" -eq 0 ]; then
-                remote_seen=1
-                continue
-            fi
-            # Destination = text after the last ':' (src:dst), or the whole
-            # token (push <branch>). Strip a leading '+' (force) and a
-            # fully-qualified 'refs/heads/' prefix so the bare branch name
-            # compares against the protected list.
-            dst=${tok##*:}
-            dst=${dst#+}
-            dst=${dst#refs/heads/}
-            if echo "$protected" | grep -qFx "$dst"; then
-                echo "BLOCKED: push targets protected branch '$dst' (per [tool.forge] in pyproject.toml). Open a PR; never push directly to a protected branch. If truly intentional, the user runs it: ! $COMMAND" >&2
-                exit 2
-            fi
-        done
-    done <<< "$invocations"
+    #
+    # All invocations are judged in ONE awk pass: per-token processes let a
+    # few hundred harmless pushes run this hook past its timeout, and a
+    # timed-out hook does not block. Per invocation: option words are
+    # skipped (`-u`, `--force`, `--force-with-lease=…`), the first bare
+    # word is the remote, every later one a refspec whose destination —
+    # after the last `:`, without a leading `+` or `refs/heads/` — is
+    # compared with the protected list.
+    dst=$(command_positions --words --no-redir "$COMMAND" \
+        | grep -oE "${GIT_ANCHOR}push\b[^;&|)]*" \
+        | LC_ALL=C awk -v ANCHOR="${GIT_ANCHOR}push" -v PROTECTED="$protected" '
+BEGIN { NP = split(PROTECTED, P, /[[:space:]]+/) }
+{
+    if (!match($0, ANCHOR)) next
+    n = split(substr($0, RSTART + RLENGTH), T, /[[:space:]]+/)
+    remote = 0
+    for (i = 1; i <= n; i++) {
+        t = T[i]
+        if (t == "" || substr(t, 1, 1) == "-") continue
+        if (!remote) { remote = 1; continue }
+        d = t; sub(/^.*:/, "", d); sub(/^\+/, "", d); sub(/^refs\/heads\//, "", d)
+        for (j = 1; j <= NP; j++) if (P[j] != "" && d == P[j]) { print d; exit }
+    }
+}') || dst="(the refspec check could not run)"
+    if [ -n "$dst" ]; then
+        echo "BLOCKED: push targets protected branch '$dst' (per [tool.forge] in pyproject.toml). Open a PR; never push directly to a protected branch. If truly intentional, the user runs it: ! $COMMAND" >&2
+        exit 2
+    fi
 fi
 
 # (2) The canonical commit/push path bypasses the *current-branch* check

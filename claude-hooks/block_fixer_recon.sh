@@ -69,6 +69,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+guard_refuse_oversized
 
 _block() {
     echo "BLOCKED: precommit-fixer's Bash is limited to forge-precommit, the step CLIs, forge-smart-test --depth 0, and targeted pytest node-ids — the code_health/ logs are the only evidence (agents/precommit-fixer.md, FOUNDATION §3). '$1' is outside that set; do not run reconnaissance, read the logs." >&2

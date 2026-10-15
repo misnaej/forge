@@ -60,6 +60,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+guard_refuse_oversized
 
 # Resolve the opt-out config. Prints ALL, NONE, or a comma-list of
 # managers. Defaults to ALL when pyproject / python / the key is absent —
@@ -152,30 +153,31 @@ fi
 PIXI_ALLOWED_VERBS='run|shell|install|list|info|tree'
 
 if blocked pixi; then
-    while IFS= read -r seg; do
-        [ -n "$seg" ] || continue
-        # The verb is the FIRST token after `pixi`, flags included. Skipping
-        # dash-prefixed tokens looked friendlier but failed open: a flag
-        # that takes a value put that value in the verb slot, so
-        # `pixi --manifest-path run lock` read as the allowed `run` and the
-        # real verb was never inspected. Anything that is not immediately
-        # an allowed verb blocks; `pixi -q list` costs one `!`.
-        rest="${seg#*pixi}"
-        verb=$(printf '%s' "$rest" | tr -s '[:space:]' '\n' | grep -v '^$' | head -1)
-        # Terminal forms that dispatch no subcommand at all.
-        case "$verb" in
-        "" | --version | -V | --help | -h | help) continue ;;
-        esac
-        if ! printf '%s' "$verb" | grep -qE "^($PIXI_ALLOWED_VERBS)$"; then
-            echo "BLOCKED: \`pixi $verb\` is not on the agent allowlist ($(printf '%s' "$PIXI_ALLOWED_VERBS" | tr '|' ' ')). Unrecognised pixi verbs block by default — most of pixi's surface writes pixi.toml, pixi.lock, or the global tool store. If this one only reads, tell the user to run it themselves with: ! $COMMAND" >&2
-            exit 2
-        fi
-    # CMDPOS has its redirections blanked, so the `&` of
-    # `2>&1 pixi add x` cannot cut `pixi` away from its segment start.
-    # Segments are filtered to pixi invocations by ONE grep, not one
-    # process per segment: a command of thousands of segments must not
-    # run this hook past its timeout, and a timed-out hook does not block.
-    done < <(printf '%s\n' "$CMDPOS" | tr ';&|(){}!' '\n' | grep -E '^[[:space:]]*pixi([[:space:]]|$)' || true)
+    # The verb is the FIRST token after `pixi`, flags included. Skipping
+    # dash-prefixed tokens looked friendlier but failed open: a flag
+    # that takes a value put that value in the verb slot, so
+    # `pixi --manifest-path run lock` read as the allowed `run` and the
+    # real verb was never inspected. Anything that is not immediately
+    # an allowed verb blocks; `pixi -q list` costs one `!`. Terminal forms
+    # (`--version`, `-V`, `--help`, `-h`, `help`) dispatch no subcommand.
+    #
+    # CMDPOS has its redirections blanked, so the `&` of `2>&1 pixi add x`
+    # cannot cut `pixi` away from its segment start. Every segment is
+    # judged in ONE awk pass: per-segment processes let a few hundred
+    # harmless `pixi run x;` segments run this hook past its timeout, and a
+    # timed-out hook does not block. Prints the first disallowed verb.
+    verb=$(printf '%s\n' "$CMDPOS" | tr ';&|(){}!' '\n' | LC_ALL=C awk -v OK="$PIXI_ALLOWED_VERBS" '
+/^[[:space:]]*pixi([[:space:]]|$)/ {
+    n = split(substr($0, index($0, "pixi") + 4), T, /[[:space:]]+/)
+    v = ""
+    for (i = 1; i <= n; i++) if (T[i] != "") { v = T[i]; break }
+    if (v == "" || v == "--version" || v == "-V" || v == "--help" || v == "-h" || v == "help") next
+    if (v !~ ("^(" OK ")$")) { print v; exit }
+}') || verb="(the pixi verb check could not run)"
+    if [ -n "$verb" ]; then
+        echo "BLOCKED: \`pixi $verb\` is not on the agent allowlist ($(printf '%s' "$PIXI_ALLOWED_VERBS" | tr '|' ' ')). Unrecognised pixi verbs block by default — most of pixi's surface writes pixi.toml, pixi.lock, or the global tool store. If this one only reads, tell the user to run it themselves with: ! $COMMAND" >&2
+        exit 2
+    fi
 fi
 
 # pip / conda — anchored to command start or after a shell separator so a
